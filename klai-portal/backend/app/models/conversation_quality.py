@@ -95,9 +95,7 @@ class ConversationQualityJudgment(Base):
     judged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     anonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Consecutive failed judge attempts (parse or LLM-call failure) since the
-    # row was created; reset has no code path today because a success always
-    # writes a non-NULL outcome, which the selection queries then exclude
-    # regardless of this count. _MAX_JUDGE_ATTEMPTS in conversation_judge.py
-    # is the cutoff.
+    # row was created; reset to 0 by a successful UPSERT. _MAX_JUDGE_ATTEMPTS
+    # in conversation_judge.py is the cutoff the selection queries apply.
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

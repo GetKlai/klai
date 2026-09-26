@@ -135,9 +135,9 @@ _EXCLUDE_SQL = """
 _UPSERT_SQL = """
 INSERT INTO conversation_quality_judgments
       (org_id, channel, external_conversation_id, outcome, failure_category,
-       reasoning, confidence, suggested_action, model_used, judged_at)
+       reasoning, confidence, suggested_action, model_used, judged_at, last_attempted_at)
 VALUES (:org_id, 'librechat', :external_conversation_id, :outcome, :failure_category,
-        :reasoning, :confidence, :suggested_action, :model_used, NOW())
+        :reasoning, :confidence, :suggested_action, :model_used, NOW(), NOW())
 ON CONFLICT (external_conversation_id) DO UPDATE SET
     outcome = EXCLUDED.outcome,
     failure_category = EXCLUDED.failure_category,
@@ -145,12 +145,16 @@ ON CONFLICT (external_conversation_id) DO UPDATE SET
     confidence = EXCLUDED.confidence,
     suggested_action = EXCLUDED.suggested_action,
     model_used = EXCLUDED.model_used,
-    judged_at = NOW()
+    judged_at = NOW(),
+    last_attempted_at = NOW(),
+    failed_attempts = 0
 """
 
 # Marks one failed attempt (LLM call or parse failure) without a verdict —
 # same shape and same WHERE-guard reasoning as conversation_judge._FAIL_UPSERT_SQL,
-# on the external_conversation_id conflict target this channel uses.
+# on the external_conversation_id conflict target this channel uses. A
+# success also sets last_attempted_at and resets failed_attempts to 0 (see
+# _UPSERT_SQL above) — every attempt, success or failure, moves it.
 _FAIL_UPSERT_SQL = """
 INSERT INTO conversation_quality_judgments
       (org_id, channel, external_conversation_id, model_used, failed_attempts, last_attempted_at, judged_at)

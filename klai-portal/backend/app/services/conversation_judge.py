@@ -274,24 +274,21 @@ def _parse_verdict(raw: str) -> dict:
     suggested_action = data.get("suggested_action")
 
     # Observed in prod (26 Sep 2026, VictoriaLogs conversation_judge_parse_failed
-    # / librechat_judge_parse_failed): mistral-medium-3.5 sometimes puts a
-    # failure_category literal (e.g. "policy_refusal") in the outcome slot
-    # instead of leaving it in failure_category, for conversations where the
-    # assistant declined for a policy reason — the two enums share literals
-    # and the prompt never says the fields are independent. Deterministic
-    # across passes for the same conversation (temperature 0.1), not a
-    # one-off flake, so treat it as the failure_category the model meant
-    # rather than discarding the verdict every night. "unresolved" is the
-    # only outcome the schema allows alongside a non-"none" failure_category
-    # (see the docstring above), and policy_refusal already keeps this out of
-    # _GAP_TYPE_FOR_JUDGE_CAUSE, so no knowledge gap is filed for it.
-    if (
-        isinstance(outcome, str)
-        and outcome not in _OUTCOMES
-        and outcome in _FAILURE_CATEGORIES
-        and outcome != "none"
-        and failure_category in (None, "none")
-    ):
+    # / librechat_judge_parse_failed): mistral-medium-3.5 sometimes puts
+    # "policy_refusal" in the outcome slot instead of leaving it in
+    # failure_category, for conversations where the assistant declined for a
+    # policy reason — the two enums share that one literal and the prompt
+    # never says the fields are independent. Deterministic across passes for
+    # the same conversation (temperature 0.1), not a one-off flake, so treat
+    # it as the failure_category the model meant rather than discarding the
+    # verdict every night. "unresolved" is the only outcome the schema allows
+    # alongside a non-"none" failure_category (see the docstring above), and
+    # policy_refusal already keeps this out of _GAP_TYPE_FOR_JUDGE_CAUSE, so
+    # no knowledge gap is filed for it. Deliberately narrow to this one
+    # evidence-confirmed literal: any OTHER invalid outcome (e.g.
+    # "retrieval_miss", which WOULD file a gap) stays a parse failure, bounded
+    # by _MAX_JUDGE_ATTEMPTS like any other unparsable response.
+    if outcome == "policy_refusal" and failure_category in (None, "none"):
         failure_category = outcome
         outcome = "unresolved"
 
@@ -323,9 +320,9 @@ def _parse_verdict(raw: str) -> dict:
 _UPSERT_SQL = """
 INSERT INTO conversation_quality_judgments
       (org_id, conversation_id, channel, outcome, failure_category,
-       reasoning, confidence, suggested_action, model_used, judged_at)
+       reasoning, confidence, suggested_action, model_used, judged_at, last_attempted_at)
 VALUES (:org_id, :conversation_id, :channel, :outcome, :failure_category,
-        :reasoning, :confidence, :suggested_action, :model_used, NOW())
+        :reasoning, :confidence, :suggested_action, :model_used, NOW(), NOW())
 ON CONFLICT (conversation_id) DO UPDATE SET
     outcome = EXCLUDED.outcome,
     failure_category = EXCLUDED.failure_category,
@@ -333,12 +330,16 @@ ON CONFLICT (conversation_id) DO UPDATE SET
     confidence = EXCLUDED.confidence,
     suggested_action = EXCLUDED.suggested_action,
     model_used = EXCLUDED.model_used,
-    judged_at = NOW()
+    judged_at = NOW(),
+    last_attempted_at = NOW(),
+    failed_attempts = 0
 """
 
 # Marks one failed attempt (LLM call or parse failure) without a verdict:
 # outcome/confidence/judged_at stay NULL, only failed_attempts and
-# last_attempted_at move. The WHERE guard on the DO UPDATE branch is
+# last_attempted_at move (a success also sets last_attempted_at and resets
+# failed_attempts to 0, see _UPSERT_SQL — every attempt, success or failure,
+# moves it). The WHERE guard on the DO UPDATE branch is
 # defense-in-depth: a conversation whose row already carries a real verdict
 # must never lose it to a stale retry that reached this far anyway.
 # RETURNING failed_attempts lets the caller log the exclusion exactly once,
@@ -622,10 +623,14 @@ async def _judge_run_once() -> dict[str, int]:
                  WHERE wc.outcome IS NOT NULL
                    AND wc.is_preview = false
                    AND wc.is_test = false
-                   AND cqj.id IS NULL
+                   -- Same retry condition as _judge_org's candidate SELECT:
+                   -- a row stuck below the retry cap must keep its org
+                   -- discoverable, not just the per-conversation query.
+                   AND (cqj.id IS NULL OR (cqj.outcome IS NULL AND cqj.failed_attempts < :max_attempts))
                  ORDER BY wc.org_id
                 """
             ),
+            {"max_attempts": _MAX_JUDGE_ATTEMPTS},
         )
         org_ids = list(org_result.scalars().all())
 

@@ -684,6 +684,10 @@ def test_upsert_overwrites_by_external_id_and_never_duplicates():
     ):
         assert f"{field_name} = EXCLUDED.{field_name}" in upsert
     assert "judged_at = NOW()" in upsert
+    # Every attempt moves last_attempted_at, success or failure; a success
+    # also resets the failed-attempts streak (see _FAIL_UPSERT_SQL).
+    assert "last_attempted_at = NOW()" in upsert
+    assert "failed_attempts = 0" in upsert
     # conversation_id is not written at all — it stays NULL for this channel.
     assert "conversation_id" not in upsert.replace("external_conversation_id", "")
 

@@ -354,6 +354,60 @@ async def test_selection_query_requires_outcome_and_skips_preview_and_judged():
 
 
 @pytest.mark.asyncio
+async def test_org_discovery_rediscovers_an_org_with_only_a_failed_attempt_so_far():
+    """Regression: the org-discovery query (_judge_run_once) must use the
+    same retry condition as the per-conversation SELECT (_judge_org) — a
+    conversation whose only judge attempt failed once (outcome IS NULL,
+    failed_attempts < cap) must keep its org discoverable, not just the
+    per-conversation query. An org-level 'cqj.id IS NULL only' condition
+    would silently stop visiting that org forever after its first failure."""
+    from app.services import conversation_judge as cj
+
+    org = _OrgDb(
+        org_id=1,
+        outcome={100: "resolved"},
+        messages={100: [("user", "q", None, None)]},
+        attempts={100: 1},  # one failed attempt so far, still under the cap
+    )
+
+    @asynccontextmanager
+    async def _tenant(org_id):
+        assert org_id == 1
+        yield org
+
+    captured_sql: list[str] = []
+
+    @asynccontextmanager
+    async def _cross():
+        db = AsyncMock()
+
+        async def _exec(stmt, params=None, **kwargs):
+            captured_sql.append(str(stmt))
+            res = MagicMock()
+            res.scalars.return_value.all.return_value = [1]
+            return res
+
+        db.execute = _exec
+        yield db
+
+    with (
+        patch.object(cj, "cross_org_session", _cross),
+        patch.object(cj, "tenant_scoped_session", _tenant),
+        patch.object(cj, "_call_judge_llm", AsyncMock(return_value=_verdict_raw())),
+    ):
+        result = await cj._judge_run_once()
+
+    # The org was actually revisited and its conversation judged — not just
+    # a query-shape assertion.
+    assert result == {"org_count": 1, "judged_count": 1}
+    assert set(org.inserts) == {100}
+
+    discovery_sql = captured_sql[0]
+    assert "failed_attempts" in discovery_sql, "discovery query must use the same retry condition as _judge_org"
+    assert "cqj.outcome IS NULL" in discovery_sql
+
+
+@pytest.mark.asyncio
 async def test_upsert_overwrites_and_never_duplicates():
     """Storage is INSERT … ON CONFLICT (conversation_id) DO UPDATE with
     judged_at=NOW() — idempotent by the uq_conversation_quality_judgments
@@ -373,6 +427,10 @@ async def test_upsert_overwrites_and_never_duplicates():
     ):
         assert f"{field_name} = EXCLUDED.{field_name}" in upsert
     assert "judged_at = NOW()" in upsert
+    # Every attempt moves last_attempted_at, success or failure; a success
+    # also resets the failed-attempts streak (see _FAIL_UPSERT_SQL).
+    assert "last_attempted_at = NOW()" in upsert
+    assert "failed_attempts = 0" in upsert
 
 
 # ---------------------------------------------------------------------------
@@ -457,14 +515,13 @@ async def test_invalid_judge_json_is_skipped_and_batch_continues():
     assert result["judged_count"] == 1
 
 
-def test_failure_category_literal_in_outcome_slot_is_normalized():
-    """Observed in prod (26 Sep 2026): mistral-medium-3.5 sometimes returns a
-    failure_category literal (e.g. 'policy_refusal') as `outcome` for a
-    conversation the assistant declined for policy reasons. That is repaired
-    to outcome='unresolved' + the returned literal as failure_category,
-    instead of discarding the verdict every night — deterministic per
-    conversation at temperature 0.1, so retrying never produces a different
-    answer."""
+def test_policy_refusal_in_outcome_slot_is_normalized():
+    """Observed in prod (26 Sep 2026): mistral-medium-3.5 sometimes returns
+    'policy_refusal' as `outcome` for a conversation the assistant declined
+    for policy reasons. That is repaired to outcome='unresolved' + the
+    returned literal as failure_category, instead of discarding the verdict
+    every night — deterministic per conversation at temperature 0.1, so
+    retrying never produces a different answer."""
     from app.services.conversation_judge import _parse_verdict
 
     verdict = _parse_verdict(
@@ -482,16 +539,20 @@ def test_failure_category_literal_in_outcome_slot_is_normalized():
     assert verdict["failure_category"] == "policy_refusal"
 
 
-def test_a_genuinely_invalid_outcome_still_raises():
-    """The normalization only covers a known failure_category literal; any
-    other invalid value is still a parse failure."""
+@pytest.mark.parametrize("outcome", ["retrieval_miss", "retrieval_wrong", "generation_error", "fixed"])
+def test_any_other_invalid_outcome_still_raises(outcome):
+    """The normalization is deliberately narrow to the one evidence-confirmed
+    literal ('policy_refusal'): a different failure_category literal in the
+    outcome slot (e.g. 'retrieval_miss') must NOT be silently repaired — that
+    would file a knowledge gap from an invalid verdict. It stays a parse
+    failure, bounded by the retry cap like any other unparsable response."""
     from app.services.conversation_judge import _parse_verdict
 
     with pytest.raises(ValueError, match="invalid outcome"):
         _parse_verdict(
             json.dumps(
                 {
-                    "outcome": "fixed",
+                    "outcome": outcome,
                     "failure_category": "none",
                     "reasoning": "…",
                     "confidence": "high",
