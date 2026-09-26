@@ -84,7 +84,7 @@ jobs:
         working-directory: klai-knowledge-ingest
     services:
       postgres:
-        image: postgres:17.10-alpine
+        image: postgres:17.11-alpine
         env:
           POSTGRES_USER: klai
           POSTGRES_PASSWORD: klai

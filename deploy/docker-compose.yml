@@ -200,7 +200,7 @@ services:
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
     logging: *log-rotation
-    image: mongo:8.2.12
+    image: mongo:8.3.11
     restart: unless-stopped
     ulimits:
       nofile:
@@ -260,7 +260,7 @@ services:
   # ─── listmonk PostgreSQL (mailing.getklai.com) ───────────────────────────
   listmonk-db:
     logging: *log-rotation
-    image: postgres:17.10-alpine
+    image: postgres:17.11-alpine
     restart: unless-stopped
     volumes:
       - listmonk-postgres-data:/var/lib/postgresql/data
@@ -279,7 +279,7 @@ services:
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
     logging: *log-rotation
-    image: getmeili/meilisearch:v1.53.0
+    image: getmeili/meilisearch:v1.54.0
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
@@ -2346,7 +2346,7 @@ services:
   # candidate first, then editing here.
   firecrawl-postgres:
     logging: *log-rotation
-    image: postgres:18.4-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: firecrawl
@@ -2492,7 +2492,7 @@ services:
   # no volume.
   crm-postgres:
     logging: *log-rotation
-    image: postgres:16.13-alpine
+    image: postgres:16.15-alpine
     restart: unless-stopped
     volumes:
       - crm-postgres-data:/var/lib/postgresql/data
@@ -2537,7 +2537,7 @@ services:
   # schema that the restored dump would collide with.
   umami-postgres:
     logging: *log-rotation
-    image: postgres:16.13-alpine
+    image: postgres:16.15-alpine
     restart: unless-stopped
     volumes:
       - umami-postgres-data:/var/lib/postgresql/data
@@ -2565,7 +2565,7 @@ services:
   # arrives by pg_dump from 12 and restore into 17, verified table by table.
   fider-postgres:
     logging: *log-rotation
-    image: postgres:17.10-alpine
+    image: postgres:17.11-alpine
     restart: unless-stopped
     volumes:
       - fider-postgres-data:/var/lib/postgresql/data
