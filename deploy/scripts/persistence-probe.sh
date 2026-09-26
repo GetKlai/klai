@@ -77,7 +77,7 @@ if p=$(_named_volume_path klai-core_postgres-data) && [ -n "${p}" ]; then
 fi
 
 # MongoDB (named volume) — newest WAL file.
-if p=$(_named_volume_path klai-core_mongodb-data) && [ -n "${p}" ]; then
+if p=$(_named_volume_path klai-core_mongodb-data-80) && [ -n "${p}" ]; then
   newest=$(_newest_in_dir "${p}")
   [ -n "${newest}" ] && TARGETS+=("mongodb|${newest}")
 fi

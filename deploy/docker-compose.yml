@@ -110,11 +110,11 @@ volumes:
   caddy-data:
   caddy-config:
   caddy-tenants:
-  # mongodb-data holds the 8.2-written files and is no longer mounted: MongoDB
-  # does not support a Community binary downgrade from 8.2 to 8.0, so the move
-  # back to the 8.0 LTS line on 2026-09-26 was a mongodump/mongorestore into
-  # mongodb-data-80. Kept as the rollback copy; remove after 2026-10-10.
-  mongodb-data:
+  # MongoDB does not support a Community binary downgrade from 8.2 to 8.0, so
+  # the move back to the 8.0 LTS line on 2026-09-26 was a mongodump/
+  # mongorestore into this new volume. The 8.2-written klai-core_mongodb-data
+  # is left on core-01, undeclared and unmounted, as the rollback copy
+  # (docker-cleanup never prunes volumes); remove it after 2026-10-10.
   mongodb-data-80:
   postgres-data:
   redis-data:
