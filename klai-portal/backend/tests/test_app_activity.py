@@ -1113,3 +1113,14 @@ async def test_mark_conversation_as_test_404_for_another_org() -> None:
 
     assert response.status_code == 404
     assert db.params_for("UPDATE widget_conversations") == []
+
+
+def test_judge_queries_never_surface_a_failed_only_attempt_row() -> None:
+    """A conversation whose every judge attempt has failed so far has a row
+    (migration 839f2c3165ba's failed_attempts bookkeeping) but no verdict —
+    it must render exactly like "no row" until a verdict actually lands, so
+    every read of this table filters on outcome IS NOT NULL."""
+    from app.api.app_activity import _JUDGE_DETAIL_SQL, _JUDGE_SNAPSHOT_SQL, _JUDGES_SQL
+
+    for sql in (_JUDGES_SQL, _JUDGE_DETAIL_SQL, _JUDGE_SNAPSHOT_SQL):
+        assert "outcome IS NOT NULL" in sql

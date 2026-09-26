@@ -1,5 +1,13 @@
 """ConversationQualityJudgment ORM model — SPEC-CHAT-QUALITY-LOOP-001 REQ-1/REQ-5.
 
+``outcome``/``confidence``/``judged_at`` are nullable: a row can also
+represent a conversation that has only ever failed to be judged (migration
+839f2c3165ba, production incident 26 Sep 2026 — see
+``app/services/conversation_judge.py``'s ``_MAX_JUDGE_ATTEMPTS``).
+``failed_attempts`` counts consecutive failed passes; once it reaches that
+cutoff the conversation is excluded from further attempts the same way a
+successfully judged one is.
+
 Nightly LLM-as-judge verdict for a finished conversation, webchat or
 LibreChat, enriching (not replacing) the cheap real-time heuristic in
 ``widget_conversations.outcome`` (``app/services/widget_outcome.py``) for
@@ -20,10 +28,9 @@ are purged (``widget_messages_retention_days``) — a quote surviving past the
 conversation it came from is itself identifiable content. See
 SPEC-CHAT-QUALITY-LOOP-001 §6.
 
-DDL lives in
-``post_deploy_b7e4f1a9c3d2_conversation_quality_judgments_rls.sql``
-(klai-owned table, Cat-D RLS) — this class only describes the shape for the
-ORM layer.
+DDL lives in ``post_deploy_b7e4f1a9c3d2_conversation_quality_judgments_rls.sql``
+and later ``post_deploy_*`` migrations on this table (klai-owned, Cat-D RLS)
+— this class only describes the shape for the ORM layer.
 """
 
 from datetime import datetime
@@ -38,7 +45,6 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -50,7 +56,8 @@ class ConversationQualityJudgment(Base):
     __table_args__ = (
         CheckConstraint("channel IN ('webchat', 'librechat')", name="ck_cqj_channel"),
         CheckConstraint(
-            "outcome IN ('resolved','partially_resolved','unresolved','escalated','out_of_scope','abandoned_early')",
+            "outcome IS NULL OR outcome IN "
+            "('resolved','partially_resolved','unresolved','escalated','out_of_scope','abandoned_early')",
             name="ck_cqj_outcome",
         ),
         CheckConstraint(
@@ -59,7 +66,7 @@ class ConversationQualityJudgment(Base):
             "'policy_refusal','scope_mismatch','user_confusion','none')",
             name="ck_cqj_failure_category",
         ),
-        CheckConstraint("confidence IN ('high','medium','low')", name="ck_cqj_confidence"),
+        CheckConstraint("confidence IS NULL OR confidence IN ('high','medium','low')", name="ck_cqj_confidence"),
         UniqueConstraint("conversation_id", name="uq_conversation_quality_judgments_conversation"),
         UniqueConstraint("external_conversation_id", name="uq_conversation_quality_judgments_external_conversation"),
         Index("ix_conversation_quality_judgments_org_judged", "org_id", "judged_at"),
@@ -79,11 +86,16 @@ class ConversationQualityJudgment(Base):
     # Mongo ObjectId string for channel='librechat' rows; NULL for webchat
     # rows (which use conversation_id instead). See module docstring.
     external_conversation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    outcome: Mapped[str] = mapped_column(String(24), nullable=False)
+    outcome: Mapped[str | None] = mapped_column(String(24), nullable=True)
     failure_category: Mapped[str | None] = mapped_column(String(24), nullable=True)
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
-    confidence: Mapped[str] = mapped_column(String(8), nullable=False)
+    confidence: Mapped[str | None] = mapped_column(String(8), nullable=True)
     suggested_action: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_used: Mapped[str] = mapped_column(String(64), nullable=False)
-    judged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    judged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     anonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Consecutive failed judge attempts (parse or LLM-call failure) since the
+    # row was created; reset to 0 by a successful UPSERT. _MAX_JUDGE_ATTEMPTS
+    # in conversation_judge.py is the cutoff the selection queries apply.
+    failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

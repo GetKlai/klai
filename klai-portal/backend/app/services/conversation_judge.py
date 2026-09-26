@@ -95,6 +95,15 @@ JUDGE_QUESTION_MAX_CHARS = 500
 # 18 hours in which a finished conversation can be judged.
 _RETENTION_SAFETY_MARGIN = timedelta(hours=6)
 
+# A conversation whose judge attempt fails (LLM call or parse) is retried on
+# the next pass, but not forever: production incident 26 Sep 2026 had a
+# handful of LibreChat conversations parse-failing on every 30-minute pass,
+# all night, every night, for no new information each time. After this many
+# consecutive failed attempts (migration 839f2c3165ba's failed_attempts
+# column) the conversation is excluded by the same query that already
+# excludes a successfully judged one, and the exclusion is logged once.
+_MAX_JUDGE_ATTEMPTS = 3
+
 # Enum sets mirrored from the ck_cqj_* CHECK constraints on
 # conversation_quality_judgments (app/models/conversation_quality.py) — a
 # verdict outside them would fail at INSERT time anyway, so reject it as a
@@ -264,6 +273,25 @@ def _parse_verdict(raw: str) -> dict:
     reasoning = data.get("reasoning")
     suggested_action = data.get("suggested_action")
 
+    # Observed in prod (26 Sep 2026, VictoriaLogs conversation_judge_parse_failed
+    # / librechat_judge_parse_failed): mistral-medium-3.5 sometimes puts
+    # "policy_refusal" in the outcome slot instead of leaving it in
+    # failure_category, for conversations where the assistant declined for a
+    # policy reason — the two enums share that one literal and the prompt
+    # never says the fields are independent. Deterministic across passes for
+    # the same conversation (temperature 0.1), not a one-off flake, so treat
+    # it as the failure_category the model meant rather than discarding the
+    # verdict every night. "unresolved" is the only outcome the schema allows
+    # alongside a non-"none" failure_category (see the docstring above), and
+    # policy_refusal already keeps this out of _GAP_TYPE_FOR_JUDGE_CAUSE, so
+    # no knowledge gap is filed for it. Deliberately narrow to this one
+    # evidence-confirmed literal: any OTHER invalid outcome (e.g.
+    # "retrieval_miss", which WOULD file a gap) stays a parse failure, bounded
+    # by _MAX_JUDGE_ATTEMPTS like any other unparsable response.
+    if outcome == "policy_refusal" and failure_category in (None, "none"):
+        failure_category = outcome
+        outcome = "unresolved"
+
     if not isinstance(outcome, str) or outcome not in _OUTCOMES:
         raise ValueError(f"invalid outcome: {outcome!r}")
     if not isinstance(confidence, str) or confidence not in _CONFIDENCES:
@@ -292,9 +320,9 @@ def _parse_verdict(raw: str) -> dict:
 _UPSERT_SQL = """
 INSERT INTO conversation_quality_judgments
       (org_id, conversation_id, channel, outcome, failure_category,
-       reasoning, confidence, suggested_action, model_used, judged_at)
+       reasoning, confidence, suggested_action, model_used, judged_at, last_attempted_at)
 VALUES (:org_id, :conversation_id, :channel, :outcome, :failure_category,
-        :reasoning, :confidence, :suggested_action, :model_used, NOW())
+        :reasoning, :confidence, :suggested_action, :model_used, NOW(), NOW())
 ON CONFLICT (conversation_id) DO UPDATE SET
     outcome = EXCLUDED.outcome,
     failure_category = EXCLUDED.failure_category,
@@ -302,7 +330,30 @@ ON CONFLICT (conversation_id) DO UPDATE SET
     confidence = EXCLUDED.confidence,
     suggested_action = EXCLUDED.suggested_action,
     model_used = EXCLUDED.model_used,
-    judged_at = NOW()
+    judged_at = NOW(),
+    last_attempted_at = NOW(),
+    failed_attempts = 0
+"""
+
+# Marks one failed attempt (LLM call or parse failure) without a verdict:
+# outcome/confidence/judged_at stay NULL, only failed_attempts and
+# last_attempted_at move (a success also sets last_attempted_at and resets
+# failed_attempts to 0, see _UPSERT_SQL — every attempt, success or failure,
+# moves it). The WHERE guard on the DO UPDATE branch is
+# defense-in-depth: a conversation whose row already carries a real verdict
+# must never lose it to a stale retry that reached this far anyway.
+# RETURNING failed_attempts lets the caller log the exclusion exactly once,
+# on the attempt that reaches _MAX_JUDGE_ATTEMPTS.
+_FAIL_UPSERT_SQL = """
+INSERT INTO conversation_quality_judgments
+      (org_id, conversation_id, channel, model_used, failed_attempts, last_attempted_at, judged_at)
+VALUES (:org_id, :conversation_id, :channel, :model_used, 1, NOW(), NULL)
+ON CONFLICT (conversation_id) DO UPDATE SET
+    failed_attempts = conversation_quality_judgments.failed_attempts + 1,
+    last_attempted_at = NOW(),
+    model_used = EXCLUDED.model_used
+    WHERE conversation_quality_judgments.outcome IS NULL
+RETURNING failed_attempts
 """
 
 
@@ -420,7 +471,11 @@ async def _judge_org(org_id: int) -> int:
                    AND wc.outcome IS NOT NULL
                    AND wc.is_preview = false
                    AND wc.is_test = false
-                   AND cqj.id IS NULL
+                   -- No row yet, or every attempt so far failed (outcome
+                   -- still NULL) and the retry cap is not reached — a
+                   -- successfully judged row (outcome IS NOT NULL) or one
+                   -- that exhausted its attempts is excluded either way.
+                   AND (cqj.id IS NULL OR (cqj.outcome IS NULL AND cqj.failed_attempts < :max_attempts))
                    -- Same per-org cutoff as widget_messages_retention, minus
                    -- _RETENTION_SAFETY_MARGIN.
                    AND wc.started_at > now()
@@ -435,6 +490,7 @@ async def _judge_org(org_id: int) -> int:
                 "batch_size": _BATCH_SIZE,
                 "default_days": settings.widget_messages_retention_days,
                 "safety_margin": _RETENTION_SAFETY_MARGIN,
+                "max_attempts": _MAX_JUDGE_ATTEMPTS,
             },
         )
         conv_ids = [row.id for row in conv_result.all()]
@@ -474,17 +530,36 @@ async def _judge_org(org_id: int) -> int:
             turns = turns_by_conv[conv_id]
             signals = _derive_signals(turns, had_handoff=conv_id in handoff_ids)
             user_prompt = _build_user_prompt(turns, **signals)
+            fail_params = {
+                "org_id": org_id,
+                "conversation_id": conv_id,
+                "channel": "webchat",
+                "model_used": settings.conversation_judge_model,
+            }
             try:
                 raw = await _call_judge_llm(model=settings.conversation_judge_model, user=user_prompt)
             except Exception:
-                # One tenant's flaky LLM call costs this conversation, not
-                # the batch; nothing was written so the next pass retries.
+                # One tenant's flaky LLM call costs this conversation, not the
+                # batch; the attempt is recorded so a permanently failing
+                # conversation stops being retried after _MAX_JUDGE_ATTEMPTS.
                 logger.warning("conversation_judge_llm_failed", conversation_id=conv_id, exc_info=True)
+                fail_row = (await db.execute(text(_FAIL_UPSERT_SQL), fail_params)).first()
+                attempts = fail_row.failed_attempts if fail_row is not None else 0
+                if attempts >= _MAX_JUDGE_ATTEMPTS:
+                    logger.warning(
+                        "conversation_judge_excluded", conversation_id=conv_id, attempts=attempts, exc_info=True
+                    )
                 continue
             try:
                 verdict = _parse_verdict(raw)
             except Exception:
                 logger.warning("conversation_judge_parse_failed", conversation_id=conv_id, exc_info=True)
+                fail_row = (await db.execute(text(_FAIL_UPSERT_SQL), fail_params)).first()
+                attempts = fail_row.failed_attempts if fail_row is not None else 0
+                if attempts >= _MAX_JUDGE_ATTEMPTS:
+                    logger.warning(
+                        "conversation_judge_excluded", conversation_id=conv_id, attempts=attempts, exc_info=True
+                    )
                 continue
             # conversation_id is NULLABLE on the table only for the later
             # anonymization sweep (REQ-4); rows written here always set it.
@@ -548,10 +623,14 @@ async def _judge_run_once() -> dict[str, int]:
                  WHERE wc.outcome IS NOT NULL
                    AND wc.is_preview = false
                    AND wc.is_test = false
-                   AND cqj.id IS NULL
+                   -- Same retry condition as _judge_org's candidate SELECT:
+                   -- a row stuck below the retry cap must keep its org
+                   -- discoverable, not just the per-conversation query.
+                   AND (cqj.id IS NULL OR (cqj.outcome IS NULL AND cqj.failed_attempts < :max_attempts))
                  ORDER BY wc.org_id
                 """
             ),
+            {"max_attempts": _MAX_JUDGE_ATTEMPTS},
         )
         org_ids = list(org_result.scalars().all())
 

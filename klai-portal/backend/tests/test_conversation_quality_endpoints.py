@@ -110,6 +110,18 @@ async def test_platform_quality_route_reads_other_org_judgment() -> None:
     assert audit.await_args.args[1:] == ("bot-conversations", WIDGET_UUID)
 
 
+def test_platform_quality_route_never_surfaces_a_failed_only_attempt_row() -> None:
+    """A conversation whose every judge attempt has failed so far (migration
+    839f2c3165ba's failed_attempts bookkeeping) has a row but no verdict; the
+    route must render it as 404 ("not judged yet") the same as no row at all."""
+    import inspect
+
+    from app.api.admin.platform import platform_bot_conversation_quality
+
+    source = inspect.getsource(platform_bot_conversation_quality)
+    assert "outcome IS NOT NULL" in source
+
+
 @pytest.mark.asyncio
 async def test_tenant_admin_gets_403_on_platform_quality_route() -> None:
     from app.api.admin.platform import router

@@ -38,7 +38,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import cross_org_session, tenant_scoped_session
 from app.core.provisioning_names import provisioning_names_for_slug
-from app.services.conversation_judge import _call_judge_llm, _parse_verdict, file_judge_gap
+from app.services.conversation_judge import _MAX_JUDGE_ATTEMPTS, _call_judge_llm, _parse_verdict, file_judge_gap
 
 logger = structlog.get_logger()
 
@@ -122,6 +122,10 @@ _EXCLUDE_SQL = """
                   FROM conversation_quality_judgments
                  WHERE channel = 'librechat'
                    AND org_id = :org_id
+                   -- Successfully judged (outcome IS NOT NULL), or every
+                   -- attempt so far failed and the retry cap is reached: a
+                   -- row still short of that cap stays a candidate.
+                   AND (outcome IS NOT NULL OR failed_attempts >= :max_attempts)
 """
 
 # Raw SQL for the same RLS Cat-D reason as the webchat UPSERT; conflict
@@ -131,9 +135,9 @@ _EXCLUDE_SQL = """
 _UPSERT_SQL = """
 INSERT INTO conversation_quality_judgments
       (org_id, channel, external_conversation_id, outcome, failure_category,
-       reasoning, confidence, suggested_action, model_used, judged_at)
+       reasoning, confidence, suggested_action, model_used, judged_at, last_attempted_at)
 VALUES (:org_id, 'librechat', :external_conversation_id, :outcome, :failure_category,
-        :reasoning, :confidence, :suggested_action, :model_used, NOW())
+        :reasoning, :confidence, :suggested_action, :model_used, NOW(), NOW())
 ON CONFLICT (external_conversation_id) DO UPDATE SET
     outcome = EXCLUDED.outcome,
     failure_category = EXCLUDED.failure_category,
@@ -141,7 +145,26 @@ ON CONFLICT (external_conversation_id) DO UPDATE SET
     confidence = EXCLUDED.confidence,
     suggested_action = EXCLUDED.suggested_action,
     model_used = EXCLUDED.model_used,
-    judged_at = NOW()
+    judged_at = NOW(),
+    last_attempted_at = NOW(),
+    failed_attempts = 0
+"""
+
+# Marks one failed attempt (LLM call or parse failure) without a verdict —
+# same shape and same WHERE-guard reasoning as conversation_judge._FAIL_UPSERT_SQL,
+# on the external_conversation_id conflict target this channel uses. A
+# success also sets last_attempted_at and resets failed_attempts to 0 (see
+# _UPSERT_SQL above) — every attempt, success or failure, moves it.
+_FAIL_UPSERT_SQL = """
+INSERT INTO conversation_quality_judgments
+      (org_id, channel, external_conversation_id, model_used, failed_attempts, last_attempted_at, judged_at)
+VALUES (:org_id, 'librechat', :external_conversation_id, :model_used, 1, NOW(), NULL)
+ON CONFLICT (external_conversation_id) DO UPDATE SET
+    failed_attempts = conversation_quality_judgments.failed_attempts + 1,
+    last_attempted_at = NOW(),
+    model_used = EXCLUDED.model_used
+    WHERE conversation_quality_judgments.outcome IS NULL
+RETURNING failed_attempts
 """
 
 
@@ -305,7 +328,7 @@ async def _judge_org(org_id: int, slug: str) -> int:
     judged = 0
     pending_gaps: list[tuple[str, str, dict]] = []
     async with tenant_scoped_session(org_id) as db:
-        excl_result = await db.execute(text(_EXCLUDE_SQL), {"org_id": org_id})
+        excl_result = await db.execute(text(_EXCLUDE_SQL), {"org_id": org_id, "max_attempts": _MAX_JUDGE_ATTEMPTS})
         excluded = {row.external_conversation_id for row in excl_result.all()}
 
         conversations = await asyncio.to_thread(_sync_fetch_conversations, db_name, _BATCH_SIZE, sorted(excluded))
@@ -329,6 +352,11 @@ async def _judge_org(org_id: int, slug: str) -> int:
                 continue
             signals = _derive_signals(docs)
             user_prompt = _build_user_prompt(turns, **signals)
+            fail_params = {
+                "org_id": org_id,
+                "external_conversation_id": cid,
+                "model_used": settings.conversation_judge_model,
+            }
             try:
                 raw = await _call_judge_llm(
                     model=settings.conversation_judge_model,
@@ -337,13 +365,22 @@ async def _judge_org(org_id: int, slug: str) -> int:
                 )
             except Exception:
                 # One flaky LLM call costs this conversation, not the batch;
-                # nothing was written so the next pass retries.
+                # the attempt is recorded so a permanently failing
+                # conversation stops being retried after _MAX_JUDGE_ATTEMPTS.
                 logger.warning("librechat_judge_llm_failed", conversation_id=cid, exc_info=True)
+                fail_row = (await db.execute(text(_FAIL_UPSERT_SQL), fail_params)).first()
+                attempts = fail_row.failed_attempts if fail_row is not None else 0
+                if attempts >= _MAX_JUDGE_ATTEMPTS:
+                    logger.warning("librechat_judge_excluded", conversation_id=cid, attempts=attempts, exc_info=True)
                 continue
             try:
                 verdict = _parse_verdict(raw)
             except Exception:
                 logger.warning("librechat_judge_parse_failed", conversation_id=cid, exc_info=True)
+                fail_row = (await db.execute(text(_FAIL_UPSERT_SQL), fail_params)).first()
+                attempts = fail_row.failed_attempts if fail_row is not None else 0
+                if attempts >= _MAX_JUDGE_ATTEMPTS:
+                    logger.warning("librechat_judge_excluded", conversation_id=cid, attempts=attempts, exc_info=True)
                 continue
             await db.execute(
                 text(_UPSERT_SQL),
