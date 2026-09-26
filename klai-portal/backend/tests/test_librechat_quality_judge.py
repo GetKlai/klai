@@ -172,14 +172,17 @@ class _OrgDb:
     """One tenant's RLS-scoped session over the judgment table.
 
     Simulates the exclude query: rows listed in ``judged_external`` already
-    have a judgment row for this org and channel. Records every UPSERT;
-    raises if asked to read or write another org's rows.
+    have a successful judgment row for this org and channel; rows in
+    ``attempts`` have only failed attempts so far (excluded once the count
+    reaches ``_MAX_JUDGE_ATTEMPTS``). Records every UPSERT; raises if asked to
+    read or write another org's rows.
     """
 
     org_id: int
     judged_external: set[str] = field(default_factory=set)
     inserts: dict[str, dict] = field(default_factory=dict)
     sql_log: list[str] = field(default_factory=list)
+    attempts: dict[str, int] = field(default_factory=dict)
 
     def _result(self, rows):
         res = MagicMock()
@@ -191,14 +194,25 @@ class _OrgDb:
         pass
 
     async def execute(self, stmt, params: dict | None = None, **kwargs):
+        from app.services.conversation_judge import _MAX_JUDGE_ATTEMPTS
+
         sql = str(stmt)
         self.sql_log.append(sql)
         assert params is not None, "every query in this fake session expects params"
         if "SELECT external_conversation_id" in sql:
             assert "channel = 'librechat'" in sql, "exclude query must scope to the librechat channel"
             assert params["org_id"] == self.org_id, "exclude SELECT leaked another org's id"
-            rows = [MagicMock(external_conversation_id=e) for e in sorted(self.judged_external)]
+            excluded = set(self.judged_external) | {cid for cid, n in self.attempts.items() if n >= _MAX_JUDGE_ATTEMPTS}
+            rows = [MagicMock(external_conversation_id=e) for e in sorted(excluded)]
             return self._result(rows)
+        if "RETURNING failed_attempts" in sql:
+            assert "'librechat'" in sql, "fail-UPSERT must pin channel='librechat'"
+            assert params["org_id"] == self.org_id, "fail-UPSERT leaked another org's id"
+            cid = params["external_conversation_id"]
+            self.attempts[cid] = self.attempts.get(cid, 0) + 1
+            res = MagicMock()
+            res.first.return_value = MagicMock(failed_attempts=self.attempts[cid])
+            return res
         if "INSERT INTO conversation_quality_judgments" in sql:
             assert "'librechat'" in sql, "UPSERT must pin channel='librechat'"
             assert params["org_id"] == self.org_id, "UPSERT leaked another org's id"
@@ -591,6 +605,59 @@ async def test_invalid_judge_json_is_skipped_and_batch_continues():
     assert warn.call_args.kwargs["exc_info"] is True
     assert set(org.inserts) == {"c2"}
     assert result["judged_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Bounded retries: a LibreChat conversation that always fails to parse is
+# attempted at most _MAX_JUDGE_ATTEMPTS times across passes, then excluded.
+# Production incident 26 Sep 2026: 8 conversations were parse-failing on
+# every 30-minute pass, all night, every night, because nothing was written
+# on failure.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_failing_conversation_is_retried_at_most_max_attempts():
+    from app.services import librechat_quality_judge as lj
+    from app.services.conversation_judge import _MAX_JUDGE_ATTEMPTS
+
+    mongo = _FakeMongo(
+        {
+            "librechat-voys": {
+                "conversations": [_conv("c1", minutes=5)],
+                "messages": [
+                    _msg("c1", user=True, minutes=0, text="q1"),
+                    _msg("c1", user=False, minutes=1, text="a1"),
+                ],
+            }
+        }
+    )
+    org = _OrgDb(org_id=7)
+    llm = AsyncMock(return_value="not valid json at all")
+    warn = MagicMock()
+
+    with (
+        patch(f"{_LJ}.pymongo.MongoClient", mongo.client),
+        patch.object(lj, "cross_org_session", _cross_org_returning([(7, "voys", ["librechat_quality_judge"])])),
+        patch.object(lj, "tenant_scoped_session", _tenant_returning(org)),
+        patch.object(lj, "_call_judge_llm", llm),
+        patch.object(lj.logger, "warning", warn),
+    ):
+        for _ in range(_MAX_JUDGE_ATTEMPTS):
+            result = await lj.librechat_judge_run_once()
+            assert result["judged_count"] == 0
+
+        llm.reset_mock()
+        result_again = await lj.librechat_judge_run_once()
+
+    assert result_again["judged_count"] == 0
+    llm.assert_not_awaited()
+    assert org.attempts["c1"] == _MAX_JUDGE_ATTEMPTS
+    assert org.inserts == {}, "a permanently failing conversation never gets a verdict row"
+    excluded_logs = [c for c in warn.call_args_list if c.args[0] == "librechat_judge_excluded"]
+    assert len(excluded_logs) == 1, "the exclusion is logged exactly once, on the final attempt"
+    assert excluded_logs[0].kwargs["conversation_id"] == "c1"
+    assert excluded_logs[0].kwargs["attempts"] == _MAX_JUDGE_ATTEMPTS
 
 
 # ---------------------------------------------------------------------------

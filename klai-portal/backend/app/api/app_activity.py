@@ -110,6 +110,10 @@ _JUDGES_SQL = """
 SELECT conversation_id, outcome, failure_category, confidence, reasoning
   FROM conversation_quality_judgments
  WHERE conversation_id = ANY(:ids)
+   -- A conversation whose every judge attempt has failed so far (migration
+   -- 839f2c3165ba's failed_attempts bookkeeping) has a row but no verdict;
+   -- it must render the same as "no row" until a verdict actually lands.
+   AND outcome IS NOT NULL
 """
 
 # Same reviewer join as _MESSAGE_REVIEWS_SQL: the list's expandable row shows
@@ -191,12 +195,14 @@ _JUDGE_DETAIL_SQL = """
 SELECT outcome, failure_category, reasoning, confidence, suggested_action, judged_at
   FROM conversation_quality_judgments
  WHERE conversation_id = :conversation_id
+   AND outcome IS NOT NULL
 """
 
 _JUDGE_SNAPSHOT_SQL = """
 SELECT outcome, failure_category
   FROM conversation_quality_judgments
  WHERE conversation_id = :conversation_id
+   AND outcome IS NOT NULL
 """
 
 _MESSAGE_PROBE_SQL = """

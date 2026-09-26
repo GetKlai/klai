@@ -122,9 +122,10 @@ class _OrgDb:
     """One tenant's RLS-scoped session over widget tables.
 
     Simulates the selection contract: a conversation is a candidate only when
-    its stored ``outcome`` is non-NULL, ``is_preview`` is False and no
-    judgment row exists yet (the cqj.id IS NULL join). Records every UPSERT;
-    raises if asked to write another org's row.
+    its stored ``outcome`` is non-NULL, ``is_preview`` is False, and either no
+    judgment row exists yet or every attempt so far failed (``attempts``)
+    without reaching the retry cap. Records every UPSERT; raises if asked to
+    write another org's row.
     """
 
     org_id: int
@@ -137,6 +138,7 @@ class _OrgDb:
     other_org_judged: set[int] = field(default_factory=set)
     existing_gaps: set[int] = field(default_factory=set)  # still-open gap rows for that conversation
     marked_test: set[int] = field(default_factory=set)
+    attempts: dict[int, int] = field(default_factory=dict)  # failed_attempts of a not-yet-judged row
 
     def _result(self, rows):
         res = MagicMock()
@@ -148,6 +150,8 @@ class _OrgDb:
         pass
 
     async def execute(self, stmt, params=None, **kwargs):
+        from app.services.conversation_judge import _MAX_JUDGE_ATTEMPTS
+
         sql = str(stmt)
         if "SELECT wc.id" in sql:
             assert params["org_id"] == self.org_id, "candidate SELECT leaked another org's id"
@@ -158,6 +162,7 @@ class _OrgDb:
                 and cid not in self.preview
                 and cid not in self.judged
                 and cid not in self.other_org_judged
+                and self.attempts.get(cid, 0) < _MAX_JUDGE_ATTEMPTS
             ]
             return self._result(rows[: params["batch_size"]])
         if "SELECT conversation_id, role, content, sources, rating" in sql:
@@ -174,6 +179,14 @@ class _OrgDb:
             ids = params["conv_ids"]
             assert all(i in self.outcome for i in ids), "cross-org handoff read"
             return self._result([MagicMock(conversation_id=cid) for cid in ids if cid in self.handoffs])
+        if "RETURNING failed_attempts" in sql:
+            assert params["org_id"] == self.org_id, "fail-UPSERT leaked another org's id"
+            conv_id = params["conversation_id"]
+            assert conv_id in self.outcome, f"fail-UPSERT {conv_id} not owned by org {self.org_id}"
+            self.attempts[conv_id] = self.attempts.get(conv_id, 0) + 1
+            res = MagicMock()
+            res.first.return_value = MagicMock(failed_attempts=self.attempts[conv_id])
+            return res
         if "INSERT INTO conversation_quality_judgments" in sql:
             assert params["org_id"] == self.org_id, "UPSERT leaked another org's id"
             conv_id = params["conversation_id"]
@@ -444,6 +457,50 @@ async def test_invalid_judge_json_is_skipped_and_batch_continues():
     assert result["judged_count"] == 1
 
 
+def test_failure_category_literal_in_outcome_slot_is_normalized():
+    """Observed in prod (26 Sep 2026): mistral-medium-3.5 sometimes returns a
+    failure_category literal (e.g. 'policy_refusal') as `outcome` for a
+    conversation the assistant declined for policy reasons. That is repaired
+    to outcome='unresolved' + the returned literal as failure_category,
+    instead of discarding the verdict every night — deterministic per
+    conversation at temperature 0.1, so retrying never produces a different
+    answer."""
+    from app.services.conversation_judge import _parse_verdict
+
+    verdict = _parse_verdict(
+        json.dumps(
+            {
+                "outcome": "policy_refusal",
+                "failure_category": None,
+                "reasoning": "De assistent weigerde de vraag te beantwoorden.",
+                "confidence": "high",
+                "suggested_action": None,
+            }
+        )
+    )
+    assert verdict["outcome"] == "unresolved"
+    assert verdict["failure_category"] == "policy_refusal"
+
+
+def test_a_genuinely_invalid_outcome_still_raises():
+    """The normalization only covers a known failure_category literal; any
+    other invalid value is still a parse failure."""
+    from app.services.conversation_judge import _parse_verdict
+
+    with pytest.raises(ValueError, match="invalid outcome"):
+        _parse_verdict(
+            json.dumps(
+                {
+                    "outcome": "fixed",
+                    "failure_category": "none",
+                    "reasoning": "…",
+                    "confidence": "high",
+                    "suggested_action": None,
+                }
+            )
+        )
+
+
 @pytest.mark.asyncio
 async def test_schema_mismatch_is_skipped():
     """Valid JSON but an enum value outside the SPEC schema is a schema
@@ -468,6 +525,88 @@ async def test_schema_mismatch_is_skipped():
     assert warn.call_args.args[0] == "conversation_judge_parse_failed"
     assert org.inserts == {}
     assert result["judged_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Bounded retries: a conversation that always fails to parse is attempted at
+# most _MAX_JUDGE_ATTEMPTS times across passes, then excluded (production
+# incident 26 Sep 2026 — the same conversation was retried every 30-minute
+# pass all night, forever, because nothing was ever written on failure).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_failing_conversation_is_retried_at_most_max_attempts():
+    from app.services import conversation_judge as cj
+    from app.services.conversation_judge import _MAX_JUDGE_ATTEMPTS
+
+    org = _OrgDb(org_id=1, outcome={100: "resolved"}, messages={100: [("user", "q", None, None)]})
+
+    @asynccontextmanager
+    async def _tenant(org_id):
+        yield org
+
+    llm = AsyncMock(return_value="not valid json at all")
+    warn = MagicMock()
+
+    with (
+        patch.object(cj, "tenant_scoped_session", _tenant),
+        patch.object(cj, "_call_judge_llm", llm),
+        patch.object(cj.logger, "warning", warn),
+    ):
+        # One pass per attempt, like the real 30-minute cadence.
+        for _ in range(_MAX_JUDGE_ATTEMPTS):
+            judged = await cj._judge_org(1)
+            assert judged == 0
+
+        # The conversation has now exhausted its attempts and must never be
+        # fetched — let alone call the LLM — again.
+        llm.reset_mock()
+        judged_again = await cj._judge_org(1)
+
+    assert judged_again == 0
+    llm.assert_not_awaited()
+    assert org.attempts[100] == _MAX_JUDGE_ATTEMPTS
+    assert org.inserts == {}, "a permanently failing conversation never gets a verdict row"
+    excluded_logs = [c for c in warn.call_args_list if c.args[0] == "conversation_judge_excluded"]
+    assert len(excluded_logs) == 1, "the exclusion is logged exactly once, on the final attempt"
+    assert excluded_logs[0].kwargs["conversation_id"] == 100
+    assert excluded_logs[0].kwargs["attempts"] == _MAX_JUDGE_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_a_transient_failure_is_retried_and_then_succeeds():
+    """A conversation that fails once (LLM hiccup) and succeeds on the next
+    pass is judged normally — the attempt counter does not block recovery."""
+    from app.services import conversation_judge as cj
+
+    org = _OrgDb(org_id=1, outcome={100: "resolved"}, messages={100: [("user", "q", None, None)]})
+
+    @asynccontextmanager
+    async def _tenant(org_id):
+        yield org
+
+    calls = 0
+
+    async def _fails_once_then_succeeds(*, model: str, user: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("LiteLLM hiccup")
+        return _verdict_raw()
+
+    with (
+        patch.object(cj, "tenant_scoped_session", _tenant),
+        patch.object(cj, "_call_judge_llm", _fails_once_then_succeeds),
+    ):
+        first = await cj._judge_org(1)
+        second = await cj._judge_org(1)
+
+    assert first == 0
+    assert second == 1
+    assert org.attempts[100] == 1
+    assert set(org.inserts) == {100}
+    assert org.inserts[100]["outcome"] == "resolved"
 
 
 # ---------------------------------------------------------------------------

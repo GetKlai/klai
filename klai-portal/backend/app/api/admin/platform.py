@@ -1124,6 +1124,10 @@ async def platform_bot_conversation_quality(
                        suggested_action, judged_at
                   FROM conversation_quality_judgments
                  WHERE conversation_id = :conv_id
+                   -- A conversation whose every judge attempt has failed so
+                   -- far has a row but no verdict yet; render it as 404
+                   -- ("not judged yet") the same as no row at all.
+                   AND outcome IS NOT NULL
                 """
             ),
             {"conv_id": conv_id},
