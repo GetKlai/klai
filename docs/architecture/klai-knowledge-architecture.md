@@ -69,8 +69,8 @@ This section captures what is running in production as of March 2026 (infrastruc
 > models are **not** core-01 docker-compose services — they run on **gpu-01** and
 > are reached over the `172.18.0.1` autossh tunnel (`TEI_URL=:7997`,
 > `TEI_RERANKER_URL=:7998`, `SPARSE_SIDECAR_URL=:8001`). Transcription is the Vexa
-> `transcription-service` on gpu-01, not a `whisper-server` container. The LiteLLM
-> fallback is `klai-medium` (Mistral Medium), not Ollama. See
+> `transcription-service` on gpu-01, not a `whisper-server` container. The only LiteLLM
+> fallback is `klai-primary` → `klai-large` (Mistral Large), not Ollama. See
 > [`platform.md`](platform.md) for the live model stack.
 
 ### What exists today
@@ -92,7 +92,7 @@ This section captures what is running in production as of March 2026 (infrastruc
 | `gitea` | core-01 | Self-hosted Git | One repo per org KB; content store for klai-docs |
 | `searxng` | core-01 | Self-hosted web search | Startpage + DuckDuckGo |
 | PostgreSQL | core-01 | Relational store | `knowledge` schema (now populated — see below), `docs`, `portal` schemas. pgvector no longer used. |
-| LiteLLM | core-01 | LLM routing | Mistral stack (`klai-fast/primary/medium/large` = Mistral Small/Medium/Large); fallback `klai-medium`; routing via `custom_router.py` |
+| LiteLLM | core-01 | LLM routing | Mistral stack (`klai-fast/primary/medium/large` = Mistral Small/Medium/Large); fallback `klai-primary` → `klai-large`, daily spend ceiling per deployment; routing via `custom_router.py` |
 | FalkorDB + Graphiti | core-01 | Knowledge graph | `GRAPHITI_ENABLED=true`; live graph search leg in RRF |
 | Zitadel | core-01 | Auth/OIDC | Tenant isolation; all services use same instance |
 

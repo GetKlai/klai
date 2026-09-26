@@ -1,4 +1,30 @@
 model_list:
+  # Daily spend ceiling per Mistral deployment: max_budget (USD) per
+  # budget_duration. LiteLLM 1.96.2 enforces this in
+  # router_strategy/budget_limiter.py: a deployment whose spend in the current
+  # window has reached max_budget is filtered out before selection, and with
+  # no deployment left the request fails with "No deployments available -
+  # crossed budget" (HTTP 500 at the proxy), which the
+  # litellm_budget_exhausted alert pages on. klai-primary then falls back to
+  # klai-large; the other aliases have no fallback.
+  # Numbers, per deployment per day: normal Small spend is ~$5-12/day, mostly
+  # klai-fast (background ingest), so klai-fast 25 and klai-primary 10 (chat,
+  # a few calls per hour). Large is ~$0-2/day and also absorbs klai-primary's
+  # fallback: 10. Medium should only serve RAGAS faithfulness, answer
+  # grounding, judges and support analysis (~$5/day): 8, tight on purpose so
+  # a routing mistake that sends bulk traffic to Medium stops within a day.
+  # Prices are pinned per deployment because LiteLLM's bundled cost map has no
+  # entry for mistral-small-2603 or mistral-medium-3.5; without these fields
+  # their cost is only known when the startup fetch of the remote cost map
+  # succeeds, and after a failed fetch no Small or Medium call would count.
+  # Known limits: spend is counted in process memory (this proxy has no
+  # Redis), so a restart resets it, and the window is 24h from the first call
+  # after start rather than a calendar day. klai_mistral_pool keeps an alias
+  # on order 1 until Mistral answers 402, so a spent order 1 stops the alias
+  # and order 2's budget only comes into play after a 402: worst case two
+  # budgets per alias per day. A budget that survives restarts needs Redis in
+  # router_settings (redis_host/redis_port).
+
   # Primary: Mistral Small — default for user-facing tasks
   # Routes through custom_router.py: may be upgraded to klai-large (tool calls)
   # or downgraded to klai-fast (web search content). Never use for internal services.
@@ -7,6 +33,11 @@ model_list:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY_2
       order: 2
+      input_cost_per_token: 1.5e-07
+      cache_read_input_token_cost: 1.5e-08
+      output_cost_per_token: 6.0e-07
+      max_budget: 10
+      budget_duration: 1d
     # MISTRAL_API_KEY_2 limits from Mistral's x-ratelimit headers on
     # 2026-09-25: small 1000 RPM / 500k TPM (split between klai-primary and
     # klai-fast), medium 2000 / 1M, large 30 / 800k. Budgets are 90% of that.
@@ -23,6 +54,11 @@ model_list:
       # Both are Pro with pay-as-you-go off, so each stops at its allowance
       # and Mistral answers 402, which moves traffic to the next account.
       order: 1
+      input_cost_per_token: 1.5e-07
+      cache_read_input_token_cost: 1.5e-08
+      output_cost_per_token: 6.0e-07
+      max_budget: 10
+      budget_duration: 1d
     # Mistral headers measured in prod on 2026-05-26:
     # mistral-small-2603 = 100 RPM / 100k TPM. klai-primary and klai-fast
     # share that same upstream model, so split the budget between aliases.
@@ -37,6 +73,11 @@ model_list:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY_2
       order: 2
+      input_cost_per_token: 1.5e-07
+      cache_read_input_token_cost: 1.5e-08
+      output_cost_per_token: 6.0e-07
+      max_budget: 25
+      budget_duration: 1d
     rpm: 400
     tpm: 350000
 
@@ -45,6 +86,11 @@ model_list:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY
       order: 1
+      input_cost_per_token: 1.5e-07
+      cache_read_input_token_cost: 1.5e-08
+      output_cost_per_token: 6.0e-07
+      max_budget: 25
+      budget_duration: 1d
     rpm: 45
     tpm: 45000
 
@@ -56,6 +102,11 @@ model_list:
       model: mistral/mistral-large-2512
       api_key: os.environ/MISTRAL_API_KEY_2
       order: 2
+      input_cost_per_token: 5.0e-07
+      cache_read_input_token_cost: 5.0e-08
+      output_cost_per_token: 1.5e-06
+      max_budget: 10
+      budget_duration: 1d
     rpm: 27
     tpm: 720000
 
@@ -64,6 +115,11 @@ model_list:
       model: mistral/mistral-large-2512
       api_key: os.environ/MISTRAL_API_KEY
       order: 1
+      input_cost_per_token: 5.0e-07
+      cache_read_input_token_cost: 5.0e-08
+      output_cost_per_token: 1.5e-06
+      max_budget: 10
+      budget_duration: 1d
     # Mistral headers measured in prod on 2026-05-26:
     # mistral-large-2512 = 15 RPM / 400k TPM.
     rpm: 13
@@ -80,6 +136,11 @@ model_list:
       model: mistral/mistral-medium-3.5
       api_key: os.environ/MISTRAL_API_KEY_2
       order: 2
+      input_cost_per_token: 1.5e-06
+      cache_read_input_token_cost: 1.5e-07
+      output_cost_per_token: 7.5e-06
+      max_budget: 8
+      budget_duration: 1d
     rpm: 1800
     tpm: 900000
 
@@ -88,6 +149,11 @@ model_list:
       model: mistral/mistral-medium-3.5
       api_key: os.environ/MISTRAL_API_KEY
       order: 1
+      input_cost_per_token: 1.5e-06
+      cache_read_input_token_cost: 1.5e-07
+      output_cost_per_token: 7.5e-06
+      max_budget: 8
+      budget_duration: 1d
     # Mistral headers measured in prod on 2026-05-26:
     # mistral-medium-3.5 = 1000 RPM / 500k TPM.
     rpm: 900
@@ -121,10 +187,13 @@ router_settings:
   # needed to keep that advance FULL-gated instead of retry-exhaustion-gated.
   # Behavioral coverage: tests/test_litellm_mistral_failover.py.
   routing_strategy: simple-shuffle
-  # klai-primary and klai-fast share the same upstream Mistral Small quota.
-  # If that pool hits TPM/RPM limits, fall back to Mistral Medium instead of
-  # making chat users wait through a 60s cooldown.
-  fallbacks: [{"klai-primary": ["klai-medium"]}, {"klai-fast": ["klai-medium"]}]
+  # Chat (klai-primary) falls back to Mistral Large when Small fails or its
+  # budget is spent: Large is the next model up that costs less than Medium on
+  # both input and output. klai-fast has no fallback: it carries bulk
+  # background traffic, and a fallback to Medium served Small-intended load at
+  # ~10x the input price from 2026-09-09 for every caller that did not send
+  # `fallbacks: []`.
+  fallbacks: [{"klai-primary": ["klai-large"]}]
   optional_pre_call_checks:
     - enforce_model_rate_limits  # Queue requests when model RPM/TPM is hit
   allowed_fails: 2

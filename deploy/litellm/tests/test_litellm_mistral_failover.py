@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import math
 import re
 import sys
 import time
@@ -100,6 +101,15 @@ def _pinned_router(real_litellm: Any, *, rpm_overrides: dict[tuple[str, int], in
         real_litellm.callbacks, klai_mistral_pool.KlaiMistralPoolHook
     )
     real_litellm.logging_callback_manager.add_litellm_callback(hook)
+    # Same class-name dedup for the budget and rpm/tpm checks each Router
+    # registers: without this removal every router would keep counting spend
+    # and tokens in the first test's instance and cache, so one test's usage
+    # would exhaust another test's budget.
+    from litellm.router_strategy.budget_limiter import RouterBudgetLimiting
+    from litellm.router_utils.pre_call_checks.model_rate_limit_check import ModelRateLimitingCheck
+
+    for check in (RouterBudgetLimiting, ModelRateLimitingCheck):
+        real_litellm.logging_callback_manager.remove_callbacks_by_type(real_litellm.callbacks, check)
 
     router = real_litellm.Router(
         model_list=deployments,
@@ -186,18 +196,18 @@ async def test_healthy_primary_order_is_not_randomly_load_balanced(
 
 
 @pytest.mark.asyncio
-async def test_primary_alias_falls_back_to_medium_without_spilling_to_order2(
+async def test_primary_alias_falls_back_to_large_without_spilling_to_order2(
     real_litellm,
 ) -> None:
     """A persistent 429 on klai-primary's order 1 must exhaust order 1 only
-    (never order 2) before the cross-model fallback to klai-medium kicks in."""
+    (never order 2) before the cross-model fallback to klai-large kicks in."""
     calls: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         api_key = _api_key_of(request)
-        is_small = "mistral-small-2603" in request.url.path or b"mistral-small-2603" in request.content
-        calls.append(("small" if is_small else "medium", api_key))
-        if is_small:
+        model = re.search(rb"mistral-(small|medium|large)", request.content).group(1).decode()
+        calls.append((model, api_key))
+        if model == "small":
             return _error_response(request, 429, "rate limited")
         return _ok_response(request)
 
@@ -218,10 +228,139 @@ async def test_primary_alias_falls_back_to_medium_without_spilling_to_order2(
     # Order 1 exhausts its own retries, then the router's order-based
     # fallback to order 2 is redirected back to order 1 (never FULL, so
     # order 2 is never eligible), and only then does the cross-model
-    # fallback to klai-medium (also order 1) take over. klai2-test-key never
-    # appears.
+    # fallback to klai-large (also order 1) take over. klai2-test-key never
+    # appears, and Medium is never called.
     assert all(key == _KLAI_KEY for _model, key in calls)
-    assert calls[-1][0] == "medium"
+    assert calls[-1][0] == "large"
+    assert "medium" not in {model for model, _key in calls}
+
+
+@pytest.mark.asyncio
+async def test_fast_alias_never_falls_back_to_medium(real_litellm) -> None:
+    """klai-fast carries bulk Small traffic. When Small keeps failing the
+    caller gets the error; the same load is never served on Medium, which
+    costs ~10x the input price."""
+    models: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        models.append(re.search(rb"mistral-(small|medium|large)", request.content).group(1).decode())
+        return _error_response(request, 429, "rate limited")
+
+    router, _hook = _pinned_router(real_litellm)
+    try:
+        with _mock_mistral_http(handler), pytest.raises(real_litellm.RateLimitError):
+            await asyncio.wait_for(
+                router.acompletion(model="klai-fast", messages=[{"role": "user", "content": "hello"}]),
+                timeout=15,
+            )
+    finally:
+        router.reset()
+
+    assert models and set(models) == {"small"}
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_over_its_daily_budget_is_not_selected(real_litellm) -> None:
+    """One call costing more than klai-medium's daily max_budget takes that
+    deployment out of selection, so the next request fails before reaching
+    Mistral. LiteLLM's own Medium price is removed from the cost map first:
+    the budget must count from the prices pinned in config.yaml, because the
+    bundled cost map has no mistral-medium-3.5 entry and the remote one is
+    only fetched at startup."""
+    config = yaml.safe_load(_CONFIG_PATH.read_text())
+    params = next(
+        entry["litellm_params"]
+        for entry in config["model_list"]
+        if entry["model_name"] == _ALIAS and entry["litellm_params"]["order"] == 1
+    )
+    prompt_tokens = math.ceil(params["max_budget"] / params["input_cost_per_token"]) + 1
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        body = _ok_response(request).json()
+        body["usage"] = {"prompt_tokens": prompt_tokens, "completion_tokens": 0, "total_tokens": prompt_tokens}
+        return httpx.Response(status_code=200, request=request, json=body)
+
+    with patch.dict(real_litellm.model_cost):
+        for key in [key for key in real_litellm.model_cost if "mistral-medium-3.5" in key]:
+            del real_litellm.model_cost[key]
+        router, _hook = _pinned_router(real_litellm)
+        deployment_id = next(
+            d["model_info"]["id"]
+            for d in router.get_model_list()
+            if d["model_name"] == _ALIAS and d["litellm_params"]["order"] == 1
+        )
+        spend_key = f"deployment_spend:{deployment_id}:{params['budget_duration']}"
+        try:
+            with _mock_mistral_http(handler):
+                await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}])
+                # Spend is recorded by a fire-and-forget success callback.
+                for _ in range(100):
+                    if await router.router_budget_logger.dual_cache.async_get_cache(spend_key):
+                        break
+                    await asyncio.sleep(0.02)
+
+                with pytest.raises(ValueError, match="crossed budget"):
+                    await asyncio.wait_for(
+                        router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello again"}]),
+                        timeout=15,
+                    )
+        finally:
+            router.reset()
+
+    assert calls == [_KLAI_KEY]
+
+
+@pytest.mark.asyncio
+async def test_a_spent_primary_budget_is_served_by_large_and_logged(real_litellm, caplog) -> None:
+    """When klai-primary's budget runs out, its fallback serves the request
+    without any error, so the ceiling being hit has to show up in the log
+    the litellm_budget_exhausted alert reads."""
+    config = yaml.safe_load(_CONFIG_PATH.read_text())
+    params = next(
+        entry["litellm_params"]
+        for entry in config["model_list"]
+        if entry["model_name"] == _PRIMARY_ALIAS and entry["litellm_params"]["order"] == 1
+    )
+    small_tokens = math.ceil(params["max_budget"] / params["input_cost_per_token"]) + 1
+    models: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = re.search(rb"mistral-(small|medium|large)", request.content).group(1).decode()
+        models.append(model)
+        body = _ok_response(request).json()
+        tokens = small_tokens if model == "small" else 1
+        body["usage"] = {"prompt_tokens": tokens, "completion_tokens": 0, "total_tokens": tokens}
+        return httpx.Response(status_code=200, request=request, json=body)
+
+    router, _hook = _pinned_router(real_litellm)
+    deployment_id = next(
+        d["model_info"]["id"]
+        for d in router.get_model_list()
+        if d["model_name"] == _PRIMARY_ALIAS and d["litellm_params"]["order"] == 1
+    )
+    spend_key = f"deployment_spend:{deployment_id}:{params['budget_duration']}"
+    try:
+        with _mock_mistral_http(handler), caplog.at_level("ERROR", logger="klai_mistral_pool"):
+            await router.acompletion(model=_PRIMARY_ALIAS, messages=[{"role": "user", "content": "hello"}])
+            for _ in range(100):
+                if await router.router_budget_logger.dual_cache.async_get_cache(spend_key):
+                    break
+                await asyncio.sleep(0.02)
+
+            response = await asyncio.wait_for(
+                router.acompletion(model=_PRIMARY_ALIAS, messages=[{"role": "user", "content": "hello again"}]),
+                timeout=15,
+            )
+    finally:
+        router.reset()
+
+    assert response.choices[0].message.content == "backup response"
+    assert models == ["small", "large"]
+    assert any(
+        record.name == "klai_mistral_pool" and "crossed budget" in record.getMessage() for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio

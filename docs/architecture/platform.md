@@ -238,7 +238,7 @@ All data stays within the EU. No closed or proprietary AI APIs from non-EU compa
 > | `klai-large` | `mistral-large-2512` | Agentic / tool use / MCP |
 > | `klai-bge-m3` | BGE-M3 on TEI (gpu-01) | Embeddings |
 >
-> The LiteLLM fallback is `klai-medium`, **not** Ollama. See
+> The only LiteLLM fallback is `klai-primary` → `klai-large`, **not** Ollama. See
 > [`.claude/rules/klai/platform/litellm.md`](../../.claude/rules/klai/platform/litellm.md).
 
 ### Approach: start with API, evaluate self-hosting
@@ -246,7 +246,7 @@ All data stays within the EU. No closed or proprietary AI APIs from non-EU compa
 **Phase 0 — Managed API (Mistral)**
 LiteLLM points to the Mistral API. Mistral is a French company, EU infrastructure by default, open weight models, DPA available, no training on customer data. Costs are variable and low at early user numbers.
 
-Fallback: `klai-medium` (Mistral Medium 3.5). On a `klai-fast`/`klai-primary` failure, LiteLLM falls back to `klai-medium` automatically (`config.yaml` `fallbacks`). (Ollama is present in the compose `inference` network but is **not** wired as a model or fallback in `config.yaml`.)
+Fallback: `klai-large` (Mistral Large), for `klai-primary` only (`config.yaml` `fallbacks`); Large is cheaper than Medium on input and output. `klai-fast` has no fallback. Every Mistral deployment has a daily spend ceiling (`max_budget` in `config.yaml`); a spent ceiling fires the `litellm_budget_exhausted` alert. (Ollama is present in the compose `inference` network but is **not** wired as a model or fallback in `config.yaml`.)
 
 **Trigger for self-hosting**: when the fixed cost of a GPU server is lower than Mistral API costs. Break-even at ~1.2 billion tokens per month (~30,000 active users at normal business usage).
 
