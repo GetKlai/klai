@@ -406,6 +406,16 @@
     },
     {
       description:
+        'MongoDB stays on the 8.0 LTS line. The 8.1-8.3 minors are short-lived \
+        releases, 8.3 needs FCV 8.2 before it starts, and Community has no \
+        binary downgrade, so leaving 8.0 is a one-way step. Move to the next \
+        LTS (9.0) deliberately.',
+      matchDatasources: ['docker'],
+      matchPackageNames: ['mongo'],
+      allowedVersions: '<8.1',
+    },
+    {
+      description:
         'Python base-image minors are a runtime upgrade of every service at \
         once (3.11/3.12 -> 3.13 arrived inside the Docker images group on \
         2026-09-25 and broke two image scans). Their own group, merged by a \

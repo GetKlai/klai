@@ -110,7 +110,12 @@ volumes:
   caddy-data:
   caddy-config:
   caddy-tenants:
+  # mongodb-data holds the 8.2-written files and is no longer mounted: MongoDB
+  # does not support a Community binary downgrade from 8.2 to 8.0, so the move
+  # back to the 8.0 LTS line on 2026-09-26 was a mongodump/mongorestore into
+  # mongodb-data-80. Kept as the rollback copy; remove after 2026-10-10.
   mongodb-data:
+  mongodb-data-80:
   postgres-data:
   redis-data:
   listmonk-postgres-data:
@@ -200,14 +205,14 @@ services:
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
     logging: *log-rotation
-    image: mongo:8.2.12
+    image: mongo:8.0.32
     restart: unless-stopped
     ulimits:
       nofile:
         soft: 64000
         hard: 64000
     volumes:
-      - mongodb-data:/data/db
+      - mongodb-data-80:/data/db
     environment:
       MONGO_INITDB_ROOT_USERNAME: klai
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
