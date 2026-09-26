@@ -32,7 +32,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from klai_image_storage.url_guard import ValidatedURL
 
-from knowledge_ingest.connector_cookies import ConnectorNotFoundError
+from knowledge_ingest.connector_cookies import ConnectorNotFoundError, StoredCredentials
 from knowledge_ingest.routes.crawl import _ProbeResponse
 from tests.test_crawl_sync_endpoint import _client_with_patches, _make_pool
 
@@ -50,6 +50,7 @@ def _probe(
     text: str = "",
     location: str | None = None,
     set_cookie: str | None = None,
+    new_cookies: dict[tuple[str, str], str] | None = None,
 ) -> _ProbeResponse:
     return _ProbeResponse(
         status_code=status_code,
@@ -58,6 +59,16 @@ def _probe(
         text=text,
         location=location,
         set_cookie=set_cookie,
+        new_cookies=new_cookies or {},
+    )
+
+
+def _creds(cookies: list[dict]) -> StoredCredentials:
+    return StoredCredentials(
+        payload={"cookies": cookies},
+        encrypted=b"blob-read-by-this-probe",
+        dek_enc=b"dek",
+        org_id=7,
     )
 
 
@@ -76,9 +87,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -104,9 +115,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -134,9 +145,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -168,9 +179,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -197,9 +208,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -227,9 +238,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -261,9 +272,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -300,9 +311,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -335,9 +346,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -363,9 +374,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -389,9 +400,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -425,9 +436,9 @@ class TestCrawlKeepaliveEndpoint:
             _client_with_patches(pool) as (client, _defer),
             patch("knowledge_ingest.routes.crawl_sync.logger", mock_logger),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -457,7 +468,7 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
                 side_effect=ConnectorNotFoundError("connector not found"),
             ),
@@ -472,9 +483,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[],
+                return_value=None,
             ),
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
@@ -487,9 +498,9 @@ class TestCrawlKeepaliveEndpoint:
         with (
             _client_with_patches(pool) as (client, _defer),
             patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=[{"name": "sid", "value": "abc123"}],
+                return_value=_creds([{"name": "sid", "value": "abc123"}]),
             ),
             patch(
                 "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
@@ -505,3 +516,83 @@ class TestCrawlKeepaliveEndpoint:
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
         assert resp.status_code == 200
         assert resp.json() == {"ok": False, "reason": "fetch_failed"}
+
+
+class TestKeepaliveStoresRefreshedSessionCookies:
+    """2026-09-26: the probe kept a wiki session touched every 30 minutes, yet
+    the login was still gone within a day. The site answers every request with
+    a fresh session cookie, and the probe threw it away, so the stored jar kept
+    replaying the value from the day it was pasted. A browser keeps the newest
+    value; the probe must too, or a site that rotates its session id logs the
+    connector out no matter how often it is touched.
+
+    Review 2026-09-26: a 200 page without a login marker is not proof the
+    stored session mattered (a public page sets an anonymous session cookie
+    too), so the same URL is fetched once without cookies and the write only
+    happens when that anonymous answer is walled. The write is also bound to
+    the blob this probe read, so a paste made meanwhile wins."""
+
+    _ARTICLE = "Welcome to the handbook. " * 20
+    _GATE = (
+        "<main><p>Intro text for the article.</p>"
+        '<h2><a href="https://wiki.example.com/login?redirect_to=/a">Log in</a>'
+        " when you want to read this article</h2></main>"
+    )
+
+    def _run(self, *, with_cookies: _ProbeResponse, anonymous: _ProbeResponse):
+        pool = _make_pool()
+        store = AsyncMock(return_value=1)
+        stored = _creds([{"name": "sid", "value": "pasted-value"}])
+        fetch_calls: list[dict | None] = []
+
+        async def _fetch(url: str, pin_map: dict, cookies: dict | None = None) -> _ProbeResponse:
+            fetch_calls.append(dict(cookies) if cookies else None)
+            return with_cookies if cookies else anonymous
+
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
+                new_callable=AsyncMock,
+                return_value=stored,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch("knowledge_ingest.routes.crawl_sync._probe_fetch", side_effect=_fetch),
+            patch("knowledge_ingest.routes.crawl_sync.store_refreshed_connector_cookies", store),
+        ):
+            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
+        assert resp.status_code == 200
+        return resp.json(), store, stored, fetch_calls
+
+    def test_session_that_unlocks_a_gated_page_stores_the_reissued_cookie(self) -> None:
+        body, store, stored, fetch_calls = self._run(
+            with_cookies=_probe(200, text=self._ARTICLE, new_cookies={("sid", "/"): "issued"}),
+            anonymous=_probe(200, text=self._GATE),
+        )
+        assert body == {"ok": True, "reason": None}
+        assert fetch_calls == [{"sid": "pasted-value"}, None]
+        store.assert_awaited_once()
+        kwargs = store.await_args.kwargs
+        assert kwargs["stored"] is stored
+        assert kwargs["hostname"] == "wiki.example.com"
+        assert kwargs["refreshed"] == {("sid", "/"): "issued"}
+
+    def test_public_page_never_overwrites_the_stored_session(self) -> None:
+        body, store, _stored, _calls = self._run(
+            with_cookies=_probe(200, text=self._ARTICLE, new_cookies={("sid", "/"): "anonymous"}),
+            anonymous=_probe(200, text=self._ARTICLE),
+        )
+        assert body == {"ok": True, "reason": None}
+        store.assert_not_awaited()
+
+    def test_logged_out_probe_never_overwrites_the_stored_session(self) -> None:
+        body, store, _stored, _calls = self._run(
+            with_cookies=_probe(200, text=self._GATE, new_cookies={("sid", "/"): "anonymous"}),
+            anonymous=_probe(200, text=self._GATE),
+        )
+        assert body["ok"] is False
+        store.assert_not_awaited()

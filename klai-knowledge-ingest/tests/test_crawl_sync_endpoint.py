@@ -174,6 +174,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=1),
+                "org_id": 7,
                 "zitadel_org_id": "999999",
                 "encrypted_credentials": encrypted,
                 "connector_dek_enc": dek_enc,
@@ -205,6 +206,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=1),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": encrypted,
                 "connector_dek_enc": dek_enc,
@@ -274,6 +276,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=2),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -303,6 +306,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=3),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -328,6 +332,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=4),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -360,6 +365,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=6),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -394,6 +400,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=5),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -421,6 +428,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=7),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -447,6 +455,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=8),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -473,6 +482,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=10),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -499,6 +509,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=11),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -525,6 +536,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=9),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,
@@ -549,6 +561,7 @@ class TestCrawlSyncEndpoint:
         pool = _make_pool(
             connector_row={
                 "id": uuid.UUID(int=1),
+                "org_id": 7,
                 "zitadel_org_id": "42",
                 "encrypted_credentials": None,
                 "connector_dek_enc": None,

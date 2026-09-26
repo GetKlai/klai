@@ -196,6 +196,22 @@ class ConnectorCredentialStore:
         plaintext_json = dek_cipher.decrypt(encrypted_credentials)
         return json.loads(plaintext_json)
 
+    def encrypt_credentials_to_blob(
+        self,
+        credentials: dict[str, Any],
+        connector_dek_enc: bytes,
+    ) -> bytes:
+        """Re-encrypt an already-decrypted payload under the org's existing DEK.
+
+        The inverse of :meth:`decrypt_credentials_from_blobs`, for a caller
+        that read the blobs with its own driver and writes the payload back
+        (knowledge-ingest persisting a session cookie the site rotated). It
+        never creates a DEK: the payload must go back under the key it was
+        read with.
+        """
+        dek_hex = self._kek_cipher.decrypt(connector_dek_enc)
+        return AESGCMCipher(bytes.fromhex(dek_hex)).encrypt(json.dumps(credentials))
+
     # @MX:WARN: rotate_kek -- wrong invocation = permanent data loss
     # @MX:REASON: Passing the wrong old_kek_hex makes every DEK unreadable under the new KEK.
     async def rotate_kek(
