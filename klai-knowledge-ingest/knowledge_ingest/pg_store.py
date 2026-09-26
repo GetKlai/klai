@@ -1704,6 +1704,39 @@ async def append_graphiti_episode_id(
     )
 
 
+async def reserve_graph_refresh_slot(conn: asyncpg.Connection, org_id: str, daily_cap: int) -> bool:
+    """Take one of the org's version-refresh slots for today (UTC); False once all are used.
+
+    One statement, so concurrent re-syncs of the same org cannot both read
+    ``cap - 1`` and overshoot: the conflicting row is locked and the WHERE is
+    evaluated against the committed count.
+    """
+    reserved = await conn.fetchval(
+        """
+        INSERT INTO knowledge.graph_refresh_budget AS budget (org_id, day, enqueued)
+        VALUES ($1, (now() AT TIME ZONE 'UTC')::date, 1)
+        ON CONFLICT (org_id, day) DO UPDATE SET enqueued = budget.enqueued + 1
+        WHERE budget.enqueued < $2
+        RETURNING enqueued
+        """,
+        org_id,
+        daily_cap,
+    )
+    return reserved is not None
+
+
+async def release_graph_refresh_slot(conn: asyncpg.Connection, org_id: str) -> None:
+    """Give back a slot whose refresh was not enqueued after all."""
+    await conn.execute(
+        """
+        UPDATE knowledge.graph_refresh_budget
+        SET enqueued = enqueued - 1
+        WHERE org_id = $1 AND day = (now() AT TIME ZONE 'UTC')::date AND enqueued > 0
+        """,
+        org_id,
+    )
+
+
 # SPEC-RAG-PARENT-CHILD-001 — parent_chunks helpers.
 
 

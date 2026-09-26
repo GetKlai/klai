@@ -17,6 +17,22 @@ _DEFAULT_MAX_CHUNKS = 200
 GRAPHITI_EXTRACTION_VERSION = 2
 
 
+def resumable_episode_ids(extra: Mapping[str, Any]) -> list[str]:
+    """Return the parts an unfinished run of the current extraction already wrote.
+
+    A retried, zombie-recovered or re-run extraction would otherwise start at
+    part 1 again, paying for every finished part twice and appending duplicate
+    episodes. ``graphiti_episode_ids_version`` is written before the first part
+    is extracted, so the ids only count when it matches: ids from an older
+    extraction version are exactly what a replacement run must delete.
+    """
+    if extra.get("graphiti_episode_complete") is not False:
+        return []
+    if extra.get("graphiti_episode_ids_version") != GRAPHITI_EXTRACTION_VERSION:
+        return []
+    return list(extra.get("graphiti_episode_ids") or [])
+
+
 def _configured_max_chunks() -> int:
     value = getattr(settings, "enrichment_max_chunks", _DEFAULT_MAX_CHUNKS)
     return value if isinstance(value, int) else _DEFAULT_MAX_CHUNKS

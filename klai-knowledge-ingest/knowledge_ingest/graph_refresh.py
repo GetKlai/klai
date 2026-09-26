@@ -9,6 +9,8 @@ re-enrichment. The caller MUST pass a connection scoped to exactly this
 
 from __future__ import annotations
 
+import time
+
 import asyncpg
 import structlog
 
@@ -22,6 +24,24 @@ from knowledge_ingest.enrichment_policy import (
 
 logger = structlog.get_logger()
 
+# A version-only refresh re-extracts a document whose content did not change,
+# so it is pure LLM spend with no deadline, and after a version bump every
+# active document of an org qualifies on its next unchanged re-sync. 300 a
+# day drains a backlog of a few thousand documents over about ten daily syncs
+# instead of in one burst. At the measured ~28 LLM calls per episode part that
+# is ~8.4k calls a day, about a tenth of a 1 req/s upstream budget, which
+# leaves the rest for live ingest.
+GRAPH_REFRESH_DAILY_CAP = 300
+
+# How long an unchanged re-sync leaves a document alone after its graph job
+# used up every retry. The job's own retries already span ~24h, so whatever
+# failed it (LLM budget, provider or FalkorDB outage) outlasted a day; a week
+# gives such an outage time to be fixed while each failing document costs at
+# most one retry cycle per week. After that it is eligible again under the
+# daily cap and resumes after the parts it stored, so nothing stays partial
+# for good.
+EXHAUSTED_COOL_OFF_SECONDS = 7 * 86_400
+
 
 async def maybe_refresh_stale_graph(
     conn: asyncpg.Connection,
@@ -34,11 +54,16 @@ async def maybe_refresh_stale_graph(
     content_type: str,
     belief_time_start: int,
     indexable_content: str,
+    user_requested: bool = False,
 ) -> str | None:
     """Queue (or apply) a graph rebuild when the artifact's extraction is stale.
 
-    Returns ``"queued"``, ``"already_queued"``, ``"skipped:<reason>"``, or
-    ``None`` when the graph is current or graphiti is disabled. Never raises:
+    ``user_requested`` is an explicit reindex of this one document: it skips
+    the cool-off and the daily cap, which exist to bound automatic refreshes.
+
+    Returns ``"queued"``, ``"already_queued"``, ``"skipped:<reason>"``,
+    ``"deferred:<reason>"``, or ``None`` when the graph is current or
+    graphiti is disabled. Never raises:
     the refresh is opportunistic — the caller's contract (content-unchanged
     skip, upload reindex) must not fail on a FalkorDB or queue hiccup, matching
     how the ingest route swallows its other graph operations ("a stranded
@@ -57,6 +82,7 @@ async def maybe_refresh_stale_graph(
             content_type=content_type,
             belief_time_start=belief_time_start,
             indexable_content=indexable_content,
+            user_requested=user_requested,
         )
     except Exception:
         logger.exception(
@@ -80,6 +106,7 @@ async def _refresh_stale_graph(
     content_type: str,
     belief_time_start: int,
     indexable_content: str,
+    user_requested: bool,
 ) -> str | None:
     if extra.get("graphiti_extraction_version", 1) >= GRAPHITI_EXTRACTION_VERSION:
         return None
@@ -110,6 +137,24 @@ async def _refresh_stale_graph(
         )
         return f"skipped:{graph_skip}"
 
+    if not user_requested:
+        deferred = None
+        exhausted_at = extra.get("graphiti_exhausted_at")
+        if exhausted_at and time.time() - exhausted_at < EXHAUSTED_COOL_OFF_SECONDS:
+            deferred = "cool_off"
+        elif not await pg_store.reserve_graph_refresh_slot(conn, org_id, GRAPH_REFRESH_DAILY_CAP):
+            deferred = "daily_cap"
+        if deferred:
+            logger.info(
+                "graph_refresh_deferred",
+                artifact_id=artifact_id,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                path=path,
+                reason=deferred,
+            )
+            return f"deferred:{deferred}"
+
     from procrastinate.exceptions import AlreadyEnqueued
 
     from knowledge_ingest import enrichment_tasks
@@ -132,7 +177,12 @@ async def _refresh_stale_graph(
             path=path,
             replace_stale=True,
         )
-    except AlreadyEnqueued:
+    except Exception as exc:
+        # No job was created, so the slot goes back whatever the reason.
+        if not user_requested:
+            await pg_store.release_graph_refresh_slot(conn, org_id)
+        if not isinstance(exc, AlreadyEnqueued):
+            raise
         logger.info(
             "graph_refresh_already_queued",
             artifact_id=artifact_id,

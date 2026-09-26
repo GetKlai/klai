@@ -127,9 +127,83 @@ async def test_backfill_creates_and_records_every_episode_for_a_long_document():
     assert first_patch == {
         "graphiti_episode_part_count": 2,
         "graphiti_episode_complete": False,
+        "graphiti_episode_ids_version": 2,
     }
     assert [call.args[2] for call in conn.execute.await_args_list[1:3]] == [
         "episode-1",
         "episode-2",
     ]
     assert final_patch["graphiti_episode_complete"] is True
+
+
+async def _backfill_two_part_document(extra: dict, episode_results: list[str]):
+    paragraph = ("A complete sentence. " * 1000).strip()
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value={"org_id": "org-1"})
+    conn.fetchval = AsyncMock(return_value=True)
+    conn.fetch = AsyncMock(
+        return_value=[
+            {
+                "id": "artifact-1",
+                "kb_slug": "support",
+                "path": "guide.md",
+                "content_type": "text/markdown",
+                "created_at": 1,
+                "extra": json.dumps({"graphiti_episode_part_count": 2, **extra}),
+            }
+        ]
+    )
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    qdrant = MagicMock()
+    qdrant.scroll = AsyncMock(
+        return_value=(
+            [
+                SimpleNamespace(
+                    payload={"artifact_id": "artifact-1", "text": f"{paragraph}\n\n{paragraph}"}
+                )
+            ],
+            None,
+        )
+    )
+    ingest_episode = AsyncMock(side_effect=episode_results)
+    delete_episodes = AsyncMock()
+
+    with (
+        patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=ctx),
+        patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
+        patch("knowledge_ingest.backfill.ingest_episode", ingest_episode),
+        patch("knowledge_ingest.backfill._get_current_edge_count", return_value=0),
+        patch("knowledge_ingest.backfill.delete_kb_episodes", delete_episodes),
+        patch("knowledge_ingest.backfill.load_entity_graph_data", AsyncMock()),
+    ):
+        await backfill.main(org_id="org-1")
+    return ingest_episode, delete_episodes
+
+
+@pytest.mark.asyncio
+async def test_interrupted_backfill_resumes_after_the_parts_it_already_wrote():
+    ingest_episode, delete_episodes = await _backfill_two_part_document(
+        {
+            "graphiti_episode_ids": ["episode-1"],
+            "graphiti_episode_ids_version": 2,
+            "graphiti_episode_complete": False,
+        },
+        ["episode-2"],
+    )
+
+    assert ingest_episode.await_count == 1
+    assert ingest_episode.await_args.kwargs["previous_episode_id"] == "episode-1"
+    delete_episodes.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_backfill_deletes_partial_episodes_of_an_older_extraction_before_starting():
+    ingest_episode, delete_episodes = await _backfill_two_part_document(
+        {"graphiti_episode_ids": ["episode-old"], "graphiti_episode_complete": False},
+        ["episode-1", "episode-2"],
+    )
+
+    delete_episodes.assert_awaited_once_with("org-1", ["episode-old"])
+    assert ingest_episode.await_count == 2

@@ -46,6 +46,7 @@ from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
     enrichment_skip_reason,
+    resumable_episode_ids,
 )
 from knowledge_ingest.episode_text import split_episode_text
 
@@ -463,30 +464,38 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 return
             from knowledge_ingest import graph as graph_module
 
+            done_ids = resumable_episode_ids(artifact["extra"])
             if replace_stale:
                 # Delete at execution time so old episodes stay readable while
-                # the bulk queue drains; retries also remove partial episodes.
-                stale_ids = await pg_store.get_episode_ids_for_document_history(
-                    conn, org_id, [artifact_id]
-                )
+                # the bulk queue drains. A resumed run keeps the parts an
+                # earlier run of this extraction already wrote.
+                stale_ids = [
+                    episode_id
+                    for episode_id in await pg_store.get_episode_ids_for_document_history(
+                        conn, org_id, [artifact_id]
+                    )
+                    if episode_id not in done_ids
+                ]
                 if stale_ids:
                     await graph_module.delete_kb_episodes(org_id, stale_ids)
-                # Null the legacy scalar too: append_graphiti_episode_id keeps
-                # an existing scalar via COALESCE, so leaving the old value in
-                # place would pin it to a just-deleted episode uuid forever.
-                # complete/part_count reset in the same write: a worker kill
-                # between this statement and the part-count update below must
-                # not leave a row that reads as "complete with zero episodes".
-                await pg_store.update_artifact_extra(
-                    conn,
-                    artifact_id,
-                    {
-                        "graphiti_episode_ids": [],
-                        "graphiti_episode_id": None,
-                        "graphiti_episode_complete": False,
-                        "graphiti_episode_part_count": 0,
-                    },
-                )
+                if not done_ids:
+                    # Null the legacy scalar too: append_graphiti_episode_id
+                    # keeps an existing scalar via COALESCE, so leaving the old
+                    # value in place would pin it to a just-deleted episode
+                    # uuid forever. complete/part_count reset in the same
+                    # write: a worker kill between this statement and the
+                    # part-count update below must not leave a row that reads
+                    # as "complete with zero episodes".
+                    await pg_store.update_artifact_extra(
+                        conn,
+                        artifact_id,
+                        {
+                            "graphiti_episode_ids": [],
+                            "graphiti_episode_id": None,
+                            "graphiti_episode_complete": False,
+                            "graphiti_episode_part_count": 0,
+                        },
+                    )
                 logger.info(
                     "graphiti_stale_episodes_replaced",
                     artifact_id=artifact_id,
@@ -507,11 +516,22 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 {
                     "graphiti_episode_part_count": len(episode_parts),
                     "graphiti_episode_complete": False,
+                    "graphiti_episode_ids_version": GRAPHITI_EXTRACTION_VERSION,
                 },
             )
-            episode_ids: list[str] = []
+            episode_ids = list(done_ids)
             entity_graph_data = graph_module.EntityGraphData()
-            for part_index, episode_text in enumerate(episode_parts):
+            if done_ids:
+                await graph_module.load_entity_graph_data(org_id, done_ids, entity_graph_data)
+                logger.info(
+                    "graphiti_episode_resumed",
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                    completed_parts=len(done_ids),
+                    expected_parts=len(episode_parts),
+                )
+            for part_index in range(len(done_ids), len(episode_parts)):
+                episode_text = episode_parts[part_index]
                 if part_index > 0:
                     # Page deletion can land while an earlier part is spending
                     # minutes in Graphiti; never regrow later parts afterward.
@@ -540,12 +560,24 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     kb_slug=kb_slug,
                     path=path,
                     entity_graph_data=entity_graph_data,
+                    previous_episode_id=episode_ids[-1] if episode_ids else None,
                 )
                 if episode_id is None:
                     attempt = context.job.attempts if context is not None else 0
                     event, exhausted = _graphiti_episode_failure_event(
                         attempt, _GRAPHITI_MAX_ATTEMPTS
                     )
+                    if exhausted:
+                        # graph_refresh.py holds an unchanged re-sync back for
+                        # a cool-off from this moment instead of starting a
+                        # new ~24h retry cycle right away. The version stays
+                        # stale, so the document is retried after the cool-off
+                        # and resumes after the parts stored so far.
+                        await pg_store.update_artifact_extra(
+                            conn,
+                            artifact_id,
+                            {"graphiti_exhausted_at": int(time.time())},
+                        )
                     (logger.error if exhausted else logger.warning)(
                         event,
                         artifact_id=artifact_id,

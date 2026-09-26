@@ -836,6 +836,28 @@ async def flush_entity_graph_data(
     )
 
 
+async def load_entity_graph_data(
+    org_id: str, episode_ids: list[str], entity_graph_data: EntityGraphData
+) -> None:
+    """Collect the entities of episodes a resumed job does not extract again.
+
+    ``flush_entity_graph_data`` overwrites the document's entity payload, so a
+    job that skips parts an earlier run already extracted must add their
+    entities back or the document loses them in Qdrant.
+    """
+    graphiti = _get_graphiti()
+    driver = graphiti.driver.clone(org_id)
+    records, _, _ = await driver.execute_query(
+        "MATCH (e:Episodic)-[:MENTIONS]->(n:Entity) WHERE e.uuid IN $uuids "
+        "RETURN DISTINCT n.uuid AS uuid, n.name AS name",
+        uuids=episode_ids,
+    )
+    entity_graph_data.extend(
+        [str(r["uuid"]) for r in records if r.get("uuid")],
+        [str(r["name"]).strip() for r in records if str(r.get("name") or "").strip()],
+    )
+
+
 async def _maybe_warn_graph_scale_from_falkordb(org_id: str) -> None:
     """Live-ingest hook for SPEC-GRAPH-SCALE-001's throttled scale warning.
 
@@ -914,6 +936,7 @@ async def ingest_episode(
     kb_slug: str = "",
     path: str = "",
     entity_graph_data: EntityGraphData | None = None,
+    previous_episode_id: str | None = None,
 ) -> str | None:
     """Ingest a document as a Graphiti episode.
 
@@ -962,6 +985,17 @@ async def ingest_episode(
                     # GetKlai/klai#1148 — suppress document-meta facts and pin
                     # the extraction language to the source language.
                     custom_extraction_instructions=_EXTRACTION_INSTRUCTIONS,
+                    # Left as None, graphiti-core 0.30.2 loads the group's
+                    # RELEVANT_SCHEMA_LIMIT (10, search/search_utils.py:64)
+                    # newest episodes in full (graphiti.py:1144-1151) and puts
+                    # them into the node extraction, node dedupe, edge and
+                    # attribute prompts (graphiti.py:1180-1226). The group is
+                    # the whole org, so that is ten unrelated documents, about
+                    # 10x the input tokens per call. A list replaces that
+                    # lookup with EpisodicNode.get_by_uuids (graphiti.py:1153):
+                    # [] loads nothing, and a later part of a split document
+                    # sees only the part before it.
+                    previous_episode_uuids=[previous_episode_id] if previous_episode_id else [],
                 )
                 ingest_ms = (time.perf_counter() - t0) * 1000
 

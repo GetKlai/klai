@@ -44,9 +44,16 @@ from knowledge_ingest.db import cross_org_admin_connection
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
     graph_episode_skip_reason,
+    resumable_episode_ids,
 )
 from knowledge_ingest.episode_text import MAX_TEXT_CHARS, split_episode_text
-from knowledge_ingest.graph import EntityGraphData, flush_entity_graph_data, ingest_episode
+from knowledge_ingest.graph import (
+    EntityGraphData,
+    delete_kb_episodes,
+    flush_entity_graph_data,
+    ingest_episode,
+    load_entity_graph_data,
+)
 
 __all__ = ["MAX_TEXT_CHARS"]
 
@@ -487,22 +494,39 @@ async def main(
                 # No truncation branch any more: split_episode_text spreads a long
                 # document across several episodes instead of dropping its tail.
                 episode_parts = split_episode_text(full_text)
-                episode_ids: list[str] = []
+                raw_extra = row["extra"] or {}
+                extra = json.loads(raw_extra) if isinstance(raw_extra, str) else raw_extra
+                # An interrupted run of this extraction resumes after its last
+                # stored part; partial episodes of an older extraction are
+                # deleted so the rebuilt list holds no foreign ids.
+                episode_ids = resumable_episode_ids(extra)
+                foreign_ids = [
+                    episode_id
+                    for episode_id in extra.get("graphiti_episode_ids") or []
+                    if episode_id not in episode_ids
+                ]
+                start_patch = {
+                    "graphiti_episode_part_count": len(episode_parts),
+                    "graphiti_episode_complete": False,
+                    "graphiti_episode_ids_version": GRAPHITI_EXTRACTION_VERSION,
+                }
+                if foreign_ids:
+                    start_patch["graphiti_episode_ids"] = episode_ids
+                    start_patch["graphiti_episode_id"] = episode_ids[0] if episode_ids else None
                 entity_graph_data = EntityGraphData()
                 try:
+                    if foreign_ids:
+                        await delete_kb_episodes(org_id, foreign_ids)
                     await _db_execute(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                         "WHERE id = $2::uuid",
-                        json.dumps(
-                            {
-                                "graphiti_episode_part_count": len(episode_parts),
-                                "graphiti_episode_complete": False,
-                            }
-                        ),
+                        json.dumps(start_patch),
                         artifact_id,
                     )
-                    for episode_text in episode_parts:
+                    if episode_ids:
+                        await load_entity_graph_data(org_id, episode_ids, entity_graph_data)
+                    for episode_text in episode_parts[len(episode_ids) :]:
                         episode_id = await asyncio.wait_for(
                             ingest_episode(
                                 artifact_id=artifact_id,
@@ -513,6 +537,7 @@ async def main(
                                 kb_slug=row["kb_slug"] or "",
                                 path=row["path"] or "",
                                 entity_graph_data=entity_graph_data,
+                                previous_episode_id=episode_ids[-1] if episode_ids else None,
                             ),
                             timeout=EPISODE_TIMEOUT,
                         )
