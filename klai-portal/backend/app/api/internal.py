@@ -1626,6 +1626,7 @@ def _regenerate_tenant_yaml_configs(
     """
     from app.services.provisioning.generators import (
         _generate_librechat_yaml,
+        _reconcilable_env_copies,
         _reconcilable_env_vars,
         reconcile_librechat_env,
     )
@@ -1635,6 +1636,7 @@ def _regenerate_tenant_yaml_configs(
     errors: list[str] = []
     env_keys_added: dict[str, list[str]] = {}
     required_env_vars = _reconcilable_env_vars()
+    copied_env_vars = _reconcilable_env_copies()
     for org in tenants:
         slug = org.slug
         if not slug:
@@ -1645,7 +1647,7 @@ def _regenerate_tenant_yaml_configs(
             tenant_yaml_dir.mkdir(parents=True, exist_ok=True)
             (tenant_yaml_dir / "librechat.yaml").write_text(tenant_yaml_content)
 
-            added_keys = reconcile_librechat_env(tenant_yaml_dir / ".env", required_env_vars)
+            added_keys = reconcile_librechat_env(tenant_yaml_dir / ".env", required_env_vars, copied_env_vars)
             if added_keys:
                 env_keys_added[slug] = added_keys
                 structlog_logger.info("tenant_env_reconciled", slug=slug, keys_added=added_keys)

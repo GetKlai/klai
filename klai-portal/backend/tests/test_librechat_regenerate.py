@@ -590,7 +590,7 @@ class TestEnvReconciliationWiring:
         redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
         docker_client = _docker_client()
 
-        def _reconcile(_env_path, _required):
+        def _reconcile(_env_path, _required, _copies):
             # Simulate getklai already having the keys (no-op) and voys missing them.
             return []
 
@@ -622,7 +622,7 @@ class TestEnvReconciliationWiring:
         redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
         docker_client = _docker_client()
 
-        def _reconcile(env_path, _required):
+        def _reconcile(env_path, _required, _copies):
             if "voys" in str(env_path):
                 raise EnvFileMissingError("tenant env file not found")
             return []
@@ -654,7 +654,7 @@ class TestEnvReconciliationWiring:
         redis_client = _redis_mock(keys_for_pattern={"configs:*": ["configs:librechat-config"]})
         docker_client = _docker_client()
 
-        def _reconcile(env_path, _required):
+        def _reconcile(env_path, _required, _copies):
             if "voys" in str(env_path):
                 raise EnvFileMissingError("tenant env file not found")
             return []

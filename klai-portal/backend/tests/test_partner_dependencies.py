@@ -171,6 +171,41 @@ async def test_valid_key_returns_auth_context():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("permissions", "admitted"),
+    [
+        ({"chat": True, "general_chat": True, "internal_chat": True}, True),
+        ({"chat": True, "general_chat": True}, False),
+    ],
+)
+async def test_partner_api_gate_is_skipped_for_the_internal_chat_key_only(permissions, admitted):
+    """The tenant's own LibreChat is not the partner product; every other key still needs partner_api."""
+    from app.api.partner_dependencies import get_partner_key
+
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeKeyRow(permissions=permissions)]),
+            FakeResult([FakeOrg(platform_unlocked_features=["widgets"])]),
+            FakeResult(),  # set_tenant
+            FakeResult([]),  # kb_access: the internal key has none
+            FakeResult(),
+        ],
+    )
+
+    patches = _partner_patches()
+    with patches[0], patches[1], patches[2], patches[3]:
+        if admitted:
+            result = await get_partner_key(request=_make_request(token="pk_live_" + "a" * 40), db=db)
+            assert result.permissions["internal_chat"] is True
+        else:
+            with pytest.raises(HTTPException) as exc:
+                await get_partner_key(request=_make_request(token="pk_live_" + "a" * 40), db=db)
+            assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_valid_key_filters_other_users_personal_kb_access_at_runtime():
     """Legacy invalid personal-KB junction rows must not enter auth.kb_access."""
     from app.api.partner_dependencies import get_partner_key

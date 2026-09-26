@@ -231,3 +231,30 @@ class TestSecretRotationSafetyInvariant:
         assert "1" * 64 not in final_content
         assert "2" * 64 not in final_content
         assert "3" * 64 not in final_content
+
+
+class TestChatEndpointKeyDefaultsToTenantLiteLLMKey:
+    """librechat.yaml expands ${KLAI_CHAT_API_KEY}; an existing tenant's default is its own LiteLLM team key."""
+
+    def test_missing_chat_key_takes_the_tenants_litellm_key(self, existing_env_file: Path):
+        existing_env_file.write_text(EXISTING_ENV + "LITELLM_API_KEY=sk-team-acme-example\n")
+
+        added = reconcile_librechat_env(
+            existing_env_file,
+            {"KLAI_CHAT_BASE_URL": "http://litellm:4000/v1"},
+            {"KLAI_CHAT_API_KEY": "LITELLM_API_KEY"},
+        )
+
+        assert added == ["KLAI_CHAT_BASE_URL", "KLAI_CHAT_API_KEY"]
+        content = existing_env_file.read_text()
+        assert "KLAI_CHAT_API_KEY=sk-team-acme-example\n" in content
+        assert content.startswith(EXISTING_ENV + "LITELLM_API_KEY=sk-team-acme-example\n")
+
+    def test_empty_source_key_raises_and_leaves_the_file_untouched(self, existing_env_file: Path):
+        existing_env_file.write_text(EXISTING_ENV + "LITELLM_API_KEY=\n")
+        before = existing_env_file.read_text()
+
+        with pytest.raises(RuntimeError, match="LITELLM_API_KEY"):
+            reconcile_librechat_env(existing_env_file, {}, {"KLAI_CHAT_API_KEY": "LITELLM_API_KEY"})
+
+        assert existing_env_file.read_text() == before
