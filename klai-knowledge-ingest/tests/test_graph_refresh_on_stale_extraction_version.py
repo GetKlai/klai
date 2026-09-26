@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 import knowledge_ingest
 from knowledge_ingest import enrichment_tasks, pg_store
 from knowledge_ingest.config import settings
+from knowledge_ingest.graph import EntityGraphData
 from knowledge_ingest.models import IngestRequest
 from knowledge_ingest.routes import ingest as ingest_route
 from knowledge_ingest.routes import kb_sources
@@ -18,6 +20,8 @@ _ARTIFACT_ID = "0f9c1a2b-3d4e-4f50-9a61-72b83c94d5e6"
 _ORG_ID = "org-graph-refresh"
 _KB_SLUG = "support"
 _PATH = "guides/page.md"
+# A document whose graph was built under an older extraction version.
+_LEGACY_GRAPH = {"graphiti_episode_ids": ["episode-old"]}
 
 
 class _TaskHandle:
@@ -81,10 +85,19 @@ async def _tenant_connection(_org_id: str):
     yield SimpleNamespace()
 
 
-async def _ingest_unchanged(req: IngestRequest, *, extra: dict, app: _ProcApp) -> dict:
+async def _ingest_unchanged(
+    req: IngestRequest, *, extra: dict, app: _ProcApp, slot_free: bool = True
+) -> dict:
     state = _artifact_state(req, extra)
     conn = _mock_conn()
     with (
+        patch.object(
+            pg_store,
+            "reserve_graph_refresh_slot",
+            AsyncMock(return_value=slot_free),
+            create=True,
+        ),
+        patch.object(pg_store, "release_graph_refresh_slot", AsyncMock(), create=True),
         patch.object(
             pg_store,
             "get_active_artifact_state",
@@ -102,7 +115,7 @@ async def test_unchanged_content_with_legacy_graph_rules_queues_replacement() ->
     req = _request()
     app = _ProcApp()
 
-    result = await _ingest_unchanged(req, extra={}, app=app)
+    result = await _ingest_unchanged(req, extra=_LEGACY_GRAPH, app=app)
 
     assert result == {
         "status": "skipped",
@@ -175,7 +188,7 @@ async def test_unchanged_navigation_page_replaces_history_with_current_skip_mark
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("extra", "expected_graph_jobs"),
-    [({}, 1), ({"graphiti_extraction_version": 2}, 0)],
+    [(_LEGACY_GRAPH, 1), ({**_LEGACY_GRAPH, "graphiti_extraction_version": 2}, 0)],
     ids=["legacy-graph-rules", "current-graph-rules"],
 )
 async def test_upload_reindex_always_enriches_and_only_refreshes_legacy_graph(
@@ -207,6 +220,9 @@ async def test_upload_reindex_always_enriches_and_only_refreshes_legacy_graph(
         patch.object(pg_store, "read_artifact_for_enrichment", AsyncMock(return_value=row)),
         patch.object(settings, "graphiti_enabled", True),
         patch.object(enrichment_tasks, "get_app", return_value=app),
+        patch.object(
+            pg_store, "reserve_graph_refresh_slot", AsyncMock(return_value=True), create=True
+        ),
     ):
         response = await kb_sources.reindex_upload(
             MagicMock(),
@@ -253,7 +269,7 @@ async def test_refresh_of_job_already_waiting_in_queue_reports_already_queued() 
     app = _ProcApp()
     app.ingest_graphiti_episode.defer_async = AsyncMock(side_effect=AlreadyEnqueued())
 
-    result = await _ingest_unchanged(req, extra={}, app=app)
+    result = await _ingest_unchanged(req, extra=_LEGACY_GRAPH, app=app)
 
     assert result["graph_refresh"] == "already_queued"
 
@@ -266,7 +282,7 @@ async def test_refresh_job_serialises_against_a_running_extraction_via_lock() ->
     req = _request()
     app = _ProcApp()
 
-    await _ingest_unchanged(req, extra={}, app=app)
+    await _ingest_unchanged(req, extra=_LEGACY_GRAPH, app=app)
 
     assert app.ingest_graphiti_episode.configure.call_args.kwargs == {
         "lock": f"graphiti:{_ARTIFACT_ID}",
@@ -356,3 +372,157 @@ async def test_normal_graph_run_stamps_current_extraction_version(graphiti_task)
         _ARTIFACT_ID,
         {"graphiti_episode_complete": True, "graphiti_extraction_version": 2},
     )
+
+
+@pytest.mark.asyncio
+async def test_version_only_refresh_beyond_the_daily_cap_is_not_enqueued() -> None:
+    app = _ProcApp()
+
+    result = await _ingest_unchanged(_request(), extra=_LEGACY_GRAPH, app=app, slot_free=False)
+
+    assert result["graph_refresh"] == "deferred:daily_cap"
+    app.ingest_graphiti_episode.defer_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_version_only_refresh_without_an_existing_episode_is_not_enqueued() -> None:
+    app = _ProcApp()
+
+    result = await _ingest_unchanged(_request(), extra={}, app=app)
+
+    assert result["graph_refresh"] == "skipped:no_episode"
+    app.ingest_graphiti_episode.defer_async.assert_not_awaited()
+
+
+class _ArtifactRow:
+    """pg_store double that merges extra patches the way the JSONB update does."""
+
+    def __init__(self, extra: dict) -> None:
+        self.extra = {"document_text": "Klai routes calls.", **copy.deepcopy(extra)}
+
+    async def read_artifact_for_enrichment(self, _conn, _artifact_id):
+        return {"extra": copy.deepcopy(self.extra)}
+
+    async def artifact_exists(self, *_args):
+        return True
+
+    async def artifact_is_active(self, *_args):
+        return True
+
+    async def get_episode_ids_for_document_history(self, *_args):
+        return list(self.extra.get("graphiti_episode_ids", []))
+
+    async def update_artifact_extra(self, _conn, _artifact_id, values):
+        self.extra.update(copy.deepcopy(values))
+
+    async def append_graphiti_episode_id(self, _conn, _artifact_id, episode_id):
+        ids = self.extra.setdefault("graphiti_episode_ids", [])
+        if episode_id not in ids:
+            ids.append(episode_id)
+
+
+async def _run_two_part_job(
+    graphiti_task,
+    row: _ArtifactRow,
+    episode_results: list[str | None],
+    *,
+    attempts: int = 0,
+    replace_stale: bool = False,
+) -> MagicMock:
+    graph_module = MagicMock()
+    graph_module.EntityGraphData = EntityGraphData
+    graph_module.ingest_episode = AsyncMock(side_effect=episode_results)
+    graph_module.delete_kb_episodes = AsyncMock()
+    graph_module.flush_entity_graph_data = AsyncMock()
+    graph_module.load_entity_graph_data = AsyncMock()
+    with (
+        patch.object(knowledge_ingest, "pg_store", row),
+        patch.object(knowledge_ingest, "graph", graph_module),
+        patch.object(enrichment_tasks, "tenant_scoped_connection", _tenant_connection),
+        patch.object(enrichment_tasks, "split_episode_text", return_value=["part 1", "part 2"]),
+    ):
+        await graphiti_task(
+            SimpleNamespace(job=SimpleNamespace(attempts=attempts)),
+            artifact_id=_ARTIFACT_ID,
+            org_id=_ORG_ID,
+            content_type="kb_article",
+            belief_time_start=1_755_820_800,
+            kb_slug=_KB_SLUG,
+            path=_PATH,
+            replace_stale=replace_stale,
+        )
+    return graph_module
+
+
+@pytest.mark.asyncio
+async def test_second_part_extraction_gets_only_the_first_part_as_context(graphiti_task) -> None:
+    graph_module = await _run_two_part_job(
+        graphiti_task, _ArtifactRow({}), ["episode-1", "episode-2"]
+    )
+
+    assert [
+        c.kwargs["previous_episode_id"] for c in graph_module.ingest_episode.await_args_list
+    ] == [
+        None,
+        "episode-1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_retried_multi_part_job_does_not_rerun_a_completed_part(graphiti_task) -> None:
+    row = _ArtifactRow(_LEGACY_GRAPH)
+    with pytest.raises(RuntimeError):
+        await _run_two_part_job(graphiti_task, row, ["episode-1", None], replace_stale=True)
+
+    graph_module = await _run_two_part_job(
+        graphiti_task, row, ["episode-2"], attempts=1, replace_stale=True
+    )
+
+    assert [c.kwargs["document_text"] for c in graph_module.ingest_episode.await_args_list] == [
+        "part 2"
+    ]
+    assert graph_module.ingest_episode.await_args.kwargs["previous_episode_id"] == "episode-1"
+    graph_module.delete_kb_episodes.assert_not_awaited()
+    graph_module.load_entity_graph_data.assert_awaited_once_with(_ORG_ID, ["episode-1"], ANY)
+    assert row.extra["graphiti_episode_ids"] == ["episode-1", "episode-2"]
+    assert row.extra["graphiti_episode_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_exhausted_graph_job_is_not_requeued_by_unchanged_resync_but_is_by_a_change(
+    graphiti_task,
+) -> None:
+    from tests.test_renamed_connector_page_supersedes_by_source_ref import (
+        _ingest_patches,
+        _make_conn,
+    )
+
+    row = _ArtifactRow({})
+    with pytest.raises(RuntimeError):
+        await _run_two_part_job(
+            graphiti_task,
+            row,
+            ["episode-1", None],
+            attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS,
+        )
+    unchanged = _request()
+    app = _ProcApp()
+
+    result = await _ingest_unchanged(unchanged, extra=row.extra, app=app)
+
+    assert "graph_refresh" not in result
+    app.ingest_graphiti_episode.defer_async.assert_not_awaited()
+
+    changed = _request(unchanged.content + "\n\nKlai now also routes chat messages.")
+    with (
+        _ingest_patches(changed, closed_rows=[]),
+        patch.object(
+            pg_store,
+            "get_active_artifact_state",
+            AsyncMock(return_value=_artifact_state(unchanged, row.extra)),
+        ),
+    ):
+        await ingest_route.ingest_document(_make_conn(), changed)
+        changed_app = enrichment_tasks.get_app()
+
+    changed_app.ingest_graphiti_episode.configure.return_value.defer_async.assert_awaited_once()

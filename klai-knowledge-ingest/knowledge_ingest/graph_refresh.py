@@ -22,6 +22,24 @@ from knowledge_ingest.enrichment_policy import (
 
 logger = structlog.get_logger()
 
+# A version-only refresh re-extracts a document whose content did not change,
+# so it is pure LLM spend with no deadline, and after a version bump every
+# active document of an org qualifies on its next unchanged re-sync. 300 a
+# day drains a backlog of a few thousand documents over about ten daily syncs
+# instead of in one burst. At the measured ~28 LLM calls per episode part that
+# is ~8.4k calls a day, about a tenth of a 1 req/s upstream budget, which
+# leaves the rest for live ingest.
+GRAPH_REFRESH_DAILY_CAP = 300
+
+
+def _has_graph_episode(extra: dict) -> bool:
+    """True when the artifact records a real episode that a refresh would replace."""
+    episode_ids = extra.get("graphiti_episode_ids")
+    if episode_ids is not None:
+        return bool(episode_ids)
+    legacy_id = extra.get("graphiti_episode_id") or ""
+    return bool(legacy_id) and legacy_id != "no-chunks" and not legacy_id.startswith("skipped:")
+
 
 async def maybe_refresh_stale_graph(
     conn: asyncpg.Connection,
@@ -37,8 +55,9 @@ async def maybe_refresh_stale_graph(
 ) -> str | None:
     """Queue (or apply) a graph rebuild when the artifact's extraction is stale.
 
-    Returns ``"queued"``, ``"already_queued"``, ``"skipped:<reason>"``, or
-    ``None`` when the graph is current or graphiti is disabled. Never raises:
+    Returns ``"queued"``, ``"already_queued"``, ``"skipped:<reason>"``,
+    ``"deferred:daily_cap"``, or ``None`` when the graph is current or
+    graphiti is disabled. Never raises:
     the refresh is opportunistic — the caller's contract (content-unchanged
     skip, upload reindex) must not fail on a FalkorDB or queue hiccup, matching
     how the ingest route swallows its other graph operations ("a stranded
@@ -110,6 +129,27 @@ async def _refresh_stale_graph(
         )
         return f"skipped:{graph_skip}"
 
+    if not _has_graph_episode(extra):
+        logger.info(
+            "graph_refresh_skipped",
+            artifact_id=artifact_id,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            path=path,
+            reason="no_episode",
+        )
+        return "skipped:no_episode"
+    if not await pg_store.reserve_graph_refresh_slot(conn, org_id, GRAPH_REFRESH_DAILY_CAP):
+        logger.info(
+            "graph_refresh_deferred",
+            artifact_id=artifact_id,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            path=path,
+            daily_cap=GRAPH_REFRESH_DAILY_CAP,
+        )
+        return "deferred:daily_cap"
+
     from procrastinate.exceptions import AlreadyEnqueued
 
     from knowledge_ingest import enrichment_tasks
@@ -133,6 +173,7 @@ async def _refresh_stale_graph(
             replace_stale=True,
         )
     except AlreadyEnqueued:
+        await pg_store.release_graph_refresh_slot(conn, org_id)
         logger.info(
             "graph_refresh_already_queued",
             artifact_id=artifact_id,

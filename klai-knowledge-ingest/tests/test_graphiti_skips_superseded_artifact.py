@@ -214,6 +214,7 @@ async def test_short_document_creates_one_episode_and_records_both_id_keys(graph
     assert pg_store.update_artifact_extra.await_args_list[0].args[2] == {
         "graphiti_episode_part_count": 1,
         "graphiti_episode_complete": False,
+        "graphiti_episode_ids_version": 2,
     }
     assert pg_store.update_artifact_extra.await_args_list[-1].args[2] == {
         "graphiti_episode_complete": True,

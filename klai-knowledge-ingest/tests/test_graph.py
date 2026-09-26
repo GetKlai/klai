@@ -359,3 +359,81 @@ def test_graphiti_injects_extraction_instructions_into_both_prompts():
     node_src = inspect.getsource(extract_nodes)
     assert "custom_extraction_instructions" in edge_src
     assert "custom_extraction_instructions" in node_src
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("previous_episode_id", "expected_uuids"),
+    [(None, []), ("ep-part-1", ["ep-part-1"])],
+    ids=["single-or-first-part", "later-part"],
+)
+async def test_ingest_episode_scopes_previous_episodes_to_the_same_document(
+    previous_episode_id, expected_uuids
+):
+    """Without an explicit list Graphiti loads the org's ten newest episodes,
+    unrelated documents included, into every extraction prompt."""
+    mock_graphiti = AsyncMock()
+    mock_graphiti.add_episode = AsyncMock(return_value=_make_episode_result("ep-new"))
+
+    with (
+        patch("knowledge_ingest.graph.settings") as mock_settings,
+        patch("knowledge_ingest.graph._get_graphiti", return_value=mock_graphiti),
+    ):
+        mock_settings.graphiti_enabled = True
+        mock_settings.graphiti_max_concurrent = 1
+        mock_settings.graphiti_episode_delay = 0
+        await graph_module.ingest_episode(
+            artifact_id="art-1",
+            document_text="Part text",
+            org_id="org-1",
+            content_type="markdown",
+            belief_time_start=1700000000,
+            previous_episode_id=previous_episode_id,
+        )
+
+    assert mock_graphiti.add_episode.call_args.kwargs["previous_episode_uuids"] == expected_uuids
+
+
+@pytest.mark.asyncio
+async def test_graphiti_explicit_previous_episodes_replace_the_recent_episode_lookup():
+    """Runs the installed graphiti-core add_episode up to node extraction.
+
+    ingest_episode relies on an explicit ``previous_episode_uuids`` list
+    skipping ``retrieve_episodes(last_n=RELEVANT_SCHEMA_LIMIT)``; a mocked
+    Graphiti cannot notice a release that changes that.
+    """
+    pytest.importorskip("graphiti_core")
+    from graphiti_core import graphiti as graphiti_core_module
+    from graphiti_core.nodes import EpisodeType, EpisodicNode
+
+    class _StopAtExtraction(Exception):
+        pass
+
+    seen: dict[str, object] = {}
+
+    async def _extract_nodes(_clients, _episode, previous_episodes, *_args):
+        seen["previous_episodes"] = previous_episodes
+        raise _StopAtExtraction
+
+    fake_graphiti = MagicMock()
+    fake_graphiti._resolve_request_scope.return_value = ("org-1", MagicMock(), MagicMock())
+    fake_graphiti.retrieve_episodes = AsyncMock(return_value=["unrelated-episode"])
+
+    with (
+        patch.object(graphiti_core_module, "extract_nodes", _extract_nodes),
+        patch.object(EpisodicNode, "get_by_uuids", AsyncMock(return_value=[])),
+        pytest.raises(_StopAtExtraction),
+    ):
+        await graphiti_core_module.Graphiti.add_episode(
+            fake_graphiti,
+            name="doc",
+            episode_body="Part text",
+            source_description="markdown",
+            reference_time=datetime.now(UTC),
+            source=EpisodeType.text,
+            group_id="org-1",
+            previous_episode_uuids=[],
+        )
+
+    fake_graphiti.retrieve_episodes.assert_not_awaited()
+    assert seen["previous_episodes"] == []

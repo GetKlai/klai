@@ -14,7 +14,7 @@ This module fills the gap: at lifespan startup, it prunes stalled worker rows
 and retries every job in `doing` status whose owner is gone.
 
 Safe to run because every task this worker handles is retry-safe:
-- ``ingest_graphiti_episode`` dedups via Episode UUID
+- ``ingest_graphiti_episode`` resumes after the last part it stored in ``graphiti_episode_ids``
 - ``enrich_document_bulk`` dedups via content_hash + artifact_id
 - ``connector_purge_task`` is fully idempotent by design (SPEC-CONNECTOR-DELETE-LIFECYCLE-001)
 - ``run_crawl`` resumes from a generation-fenced durable checkpoint

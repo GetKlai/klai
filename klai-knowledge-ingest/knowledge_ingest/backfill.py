@@ -513,6 +513,7 @@ async def main(
                                 kb_slug=row["kb_slug"] or "",
                                 path=row["path"] or "",
                                 entity_graph_data=entity_graph_data,
+                                previous_episode_id=episode_ids[-1] if episode_ids else None,
                             ),
                             timeout=EPISODE_TIMEOUT,
                         )
