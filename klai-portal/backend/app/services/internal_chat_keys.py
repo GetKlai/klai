@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.partner_api_keys import PartnerAPIKey
+from app.models.portal import PortalOrg
 from app.services.partner_keys import generate_partner_key, verify_partner_key
 
 INTERNAL_CHAT_KEY_NAME = "LibreChat internal chat"
@@ -44,6 +45,9 @@ async def mint_internal_chat_key(db: AsyncSession, org_id: int, *, rotate: bool 
     ``rotate`` every existing internal-chat key of the org is deleted in the
     same commit, so the old plaintext stops working as the new one starts.
     """
+    # Get-or-create on a shared row: the org row is locked so two concurrent
+    # switches cannot both mint a key (portal-backend.md, SELECT FOR UPDATE).
+    await db.execute(select(PortalOrg).where(PortalOrg.id == org_id).with_for_update())
     existing = await _internal_chat_keys(db, org_id)
     if existing and not rotate:
         return None

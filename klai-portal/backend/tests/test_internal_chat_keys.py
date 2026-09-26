@@ -15,7 +15,8 @@ from app.services.internal_chat_keys import INTERNAL_CHAT_RATE_LIMIT_RPM, mint_i
 def _db(existing: list) -> AsyncMock:
     db = AsyncMock()
     db.add = MagicMock()
-    setup_db(db, [FakeResult(existing)])
+    # First the org-row lock, then the existing-keys select.
+    setup_db(db, [FakeResult([]), FakeResult(existing)])
     return db
 
 
@@ -57,3 +58,13 @@ async def test_rotate_replaces_the_existing_key_in_one_commit():
     db.delete.assert_awaited_once_with(old)
     assert db.add.call_args.args[0].key_hash == hashlib.sha256(plaintext.encode()).hexdigest()
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mint_locks_the_org_row_before_it_checks_for_an_existing_key():
+    db = _db([])
+
+    await mint_internal_chat_key(db, 7)
+
+    first_statement = str(db.execute.await_args_list[0].args[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "FOR UPDATE" in first_statement

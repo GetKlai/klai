@@ -93,11 +93,14 @@ def rewrite_env(content: str, values: Mapping[str, str]) -> str:
 
 
 def _write_env(path: Path, content: str) -> None:
-    mode = path.stat().st_mode & 0o777
+    """Replace the .env atomically; the file holds the tenant's keys, so it is 0600 from its first byte."""
     tmp = path.with_name(f"{path.name}.switch")
-    tmp.write_text(content)
-    tmp.chmod(mode)
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(content)
     os.replace(tmp, path)
+    path.chmod(0o600)
 
 
 async def _load_org(slug: str) -> PortalOrg:
@@ -127,6 +130,15 @@ def _recreate(org: PortalOrg) -> None:
         org.mcp_servers or None,
         rollback_on_failure=True,
     )
+
+
+async def revoke(slug: str) -> int:
+    """Delete the org's internal-chat key once its LibreChat no longer holds it (compose tenants, after the recreate)."""
+    org = await _load_org(slug)
+    async with tenant_scoped_session(org.id) as db:
+        revoked = await revoke_internal_chat_key(db, org.id)
+    print(f"{org.slug}: revoked {revoked} internal-chat key(s)")
+    return 0
 
 
 async def switch(slug: str, target: str, *, rotate: bool = False) -> int:
@@ -162,22 +174,25 @@ async def switch(slug: str, target: str, *, rotate: bool = False) -> int:
         container = validate_slug_for_provisioning(org.slug, domain=settings.domain).librechat_container
         print(f"{container} is compose-managed and was NOT recreated. On the host run:")
         print(f"  cd /opt/klai && docker compose up -d --no-deps --force-recreate {container}")
-    else:
-        await asyncio.to_thread(_recreate, org)
-        print(f"{org.slug}: LibreChat container recreated and healthy on {target}")
+        if target == "litellm":
+            # The running container still authenticates with the internal key
+            # until the recreate; revoking it now would give every turn a 401.
+            print(f"  then: python scripts/switch_internal_chat.py {org.slug} revoke")
+        return EXIT_COMPOSE_RECREATE_PENDING
 
+    await asyncio.to_thread(_recreate, org)
+    print(f"{org.slug}: LibreChat container recreated and healthy on {target}")
     if target == "litellm":
-        async with tenant_scoped_session(org.id) as db:
-            revoked = await revoke_internal_chat_key(db, org.id)
-        print(f"{org.slug}: revoked {revoked} internal-chat key(s)")
-
-    return EXIT_COMPOSE_RECREATE_PENDING if compose_managed else 0
+        await revoke(org.slug)
+    return 0
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("slug")
-    parser.add_argument("target", choices=["portal", "litellm"])
+    parser.add_argument("target", choices=["portal", "litellm", "revoke"])
     parser.add_argument("--rotate", action="store_true")
     args = parser.parse_args()
+    if args.target == "revoke":
+        sys.exit(asyncio.run(revoke(args.slug)))
     sys.exit(asyncio.run(switch(args.slug, args.target, rotate=args.rotate)))
