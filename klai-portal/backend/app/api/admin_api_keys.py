@@ -211,11 +211,17 @@ def _rotated_key_name(name: str, now: datetime) -> str:
     return f"{name[: 128 - len(suffix)]}{suffix}"
 
 
+def _is_internal_chat(permissions: dict | None) -> bool:
+    return bool(permissions and permissions.get("internal_chat"))
+
+
 def _reject_internal_chat(permissions: dict | None) -> None:
     # An internal_chat key acts as any employee named in the request, personal
     # knowledge bases included. Only tenant provisioning may mint one, and an
-    # admin must not get its plaintext through create or rotate.
-    if permissions and permissions.get("internal_chat"):
+    # admin must not get its plaintext through create or rotate. The key that
+    # exists is the tenant's LibreChat credential (app/services/internal_chat_keys.py),
+    # so an admin may not change or delete it either.
+    if _is_internal_chat(permissions):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             detail="internal_chat keys are managed by Klai provisioning",
@@ -325,7 +331,8 @@ async def list_api_keys(
 ) -> list[ApiKeyResponse]:
     """List all API keys for the caller's org."""
     result = await db.execute(select(PartnerAPIKey).where(PartnerAPIKey.org_id == perms.org_id))
-    keys = result.scalars().all()
+    # The internal-chat key belongs to provisioning, not to the org's integrations.
+    keys = [key for key in result.scalars().all() if not _is_internal_chat(key.permissions)]
     if not keys:
         return []
 
@@ -357,6 +364,8 @@ async def get_api_key_detail(
 ) -> ApiKeyDetailResponse:
     """Get full detail for a single API key."""
     key = await _get_key_or_404(key_id, perms.org_id, db)
+    if _is_internal_chat(key.permissions):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="API key not found")
 
     kb_result = await db.execute(
         select(PartnerApiKeyKbAccess, PortalKnowledgeBase)
@@ -504,6 +513,7 @@ async def update_api_key(
     """Partial update of an API key."""
     _reject_internal_chat(body.permissions)
     key = await _get_key_or_404(key_id, perms.org_id, db)
+    _reject_internal_chat(key.permissions)
     effective_permissions = body.permissions if body.permissions is not None else key.permissions
     effective_kb_access = body.kb_access
     permissions_changed = body.permissions is not None
@@ -594,6 +604,7 @@ async def delete_api_key(
 ) -> None:
     """Permanently delete an API key and its KB access entries."""
     key = await _get_key_or_404(key_id, perms.org_id, db)
+    _reject_internal_chat(key.permissions)
 
     await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
     await db.execute(

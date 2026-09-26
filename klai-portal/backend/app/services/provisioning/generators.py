@@ -35,6 +35,9 @@ class EnvFileMissingError(RuntimeError):
     """
 
 
+LITELLM_CHAT_BASE_URL = "http://litellm:4000/v1"
+
+
 def _reconcilable_env_vars() -> dict[str, str]:
     """Single source of truth for additive per-tenant LibreChat env vars.
 
@@ -57,31 +60,46 @@ def _reconcilable_env_vars() -> dict[str, str]:
     return {
         "PORTAL_INTERNAL_URL": "http://portal-api:8010",
         "PORTAL_INTERNAL_SECRET": settings.internal_secret,
+        # The "Klai AI" endpoint in librechat.yaml expands these two. Deploy
+        # order: this backfill reaches every tenant first (portal-api deploy,
+        # then one /internal/librechat/regenerate run), the yaml that reads them
+        # lands second, per-tenant switches (scripts/switch_internal_chat.py)
+        # come after. Before the backfill a tenant would expand the literal
+        # "${KLAI_CHAT_API_KEY}" and every chat turn would fail.
+        "KLAI_CHAT_BASE_URL": LITELLM_CHAT_BASE_URL,
     }
+
+
+def _reconcilable_env_copies() -> dict[str, str]:
+    """Per-tenant additive env vars whose default is another key of the same file: target -> source.
+
+    ``KLAI_CHAT_API_KEY`` defaults to the tenant's own LiteLLM team key, which
+    only that tenant's .env holds, so it cannot be a fleet-wide value in
+    ``_reconcilable_env_vars``.
+    """
+    return {"KLAI_CHAT_API_KEY": "LITELLM_API_KEY"}
 
 
 _ENV_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
 
 
-def _parse_env_keys(content: str) -> set[str]:
-    """Return the set of KEY names defined in dotenv-formatted ``content``.
+def _env_values(content: str) -> dict[str, str]:
+    """KEY -> value for every ``KEY=value`` line of dotenv ``content``.
 
-    Ignores comments (lines starting with ``#``) and blank lines. Values may
-    contain ``=`` themselves (e.g. a Mongo URI query string) -- only the
-    first ``=`` on a ``KEY=...`` line is used to detect the key name.
+    Comments and blank lines never match the key pattern. A value may contain
+    ``=`` itself (e.g. a Mongo URI query string); only the first ``=`` splits.
     """
-    keys: set[str] = set()
+    values: dict[str, str] = {}
     for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        match = _ENV_KEY_RE.match(stripped)
+        match = _ENV_KEY_RE.match(line.strip())
         if match:
-            keys.add(match.group(1))
-    return keys
+            values[match.group(1)] = line.strip()[match.end() :]
+    return values
 
 
-def reconcile_librechat_env(env_path: Path, required: Mapping[str, str]) -> list[str]:
+def reconcile_librechat_env(
+    env_path: Path, required: Mapping[str, str], copies: Mapping[str, str] | None = None
+) -> list[str]:
     """Additively append missing keys to an existing tenant .env file.
 
     [HARD SAFETY INVARIANT] This function NEVER rewrites, reorders, or
@@ -103,17 +121,28 @@ def reconcile_librechat_env(env_path: Path, required: Mapping[str, str]) -> list
     per the house rule in ``.claude/rules/klai/infra/deploy.md`` "Atomic env
     writes".
 
+    ``copies`` maps a missing key to an existing key of the same file whose
+    value it takes. A source that is absent or empty raises: the copy feeds a
+    credential into librechat.yaml, and an empty one must not be written.
+
     Returns the list of keys that were appended, in the order they appear
-    in ``required``. An empty list means the file was left completely
-    untouched (no write, no mtime bump).
+    in ``required`` and then ``copies``. An empty list means the file was left
+    completely untouched (no write, no mtime bump).
     """
     if not env_path.exists():
         raise EnvFileMissingError(f"tenant env file not found: {env_path}")
 
     existing_content = env_path.read_text()
-    existing_keys = _parse_env_keys(existing_content)
+    existing = _env_values(existing_content)
 
-    missing = {key: value for key, value in required.items() if key not in existing_keys}
+    missing = {key: value for key, value in required.items() if key not in existing}
+    for target, source in (copies or {}).items():
+        if target in existing:
+            continue
+        value = existing.get(source, "")
+        if not value:
+            raise RuntimeError(f"cannot default {target}: {source} is missing or empty in {env_path}")
+        missing[target] = value
     if not missing:
         return []
 
@@ -318,6 +347,10 @@ REDIS_URI=redis://:{quote(settings.redis_password, safe="")}@redis:6379
 
 # AI routing via LiteLLM
 LITELLM_API_KEY={litellm_api_key}
+# The internal chat endpoint librechat.yaml expands. New tenants start on LiteLLM
+# until the one chat pipeline replaces the hook (plan step 9); until then
+# scripts/switch_internal_chat.py moves one tenant to portal-api and back.
+KLAI_CHAT_API_KEY={litellm_api_key}
 
 # Web search (shared services on klai-net)
 SEARXNG_INSTANCE_URL=http://searxng:8080

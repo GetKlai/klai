@@ -275,8 +275,11 @@ async def get_partner_key(
     await set_tenant(db, org.id)
 
     # Step 5b: Platform-feature gate — partner_api must be unlocked for this org.
-    # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C.
-    assert_platform_unlocked(org, "partner_api")
+    # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C. The internal-chat key is the
+    # tenant's own LibreChat, not the partner product, and only provisioning
+    # mints it (app/services/internal_chat_keys.py), so it skips this gate.
+    if key_row.permissions.get("internal_chat") is not True:
+        assert_platform_unlocked(org, "partner_api")
 
     # Step 6: Load KB access entries after tenant context is set. Legacy rows
     # pointing at another user's personal KB are filtered out at auth time.

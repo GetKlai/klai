@@ -176,3 +176,88 @@ async def test_admin_cannot_rotate_an_internal_chat_key(monkeypatch):
 
     assert exc.value.status_code == 403
     db.add.assert_not_called()
+
+
+# The internal-chat key is owned by provisioning (app/services/internal_chat_keys.py),
+# not by the org: an admin never sees it and cannot change or delete it.
+def _key(key_id: str, permissions: dict) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=key_id,
+        name=f"Key {key_id}",
+        description=None,
+        key_prefix="pk_live_0000",
+        permissions=permissions,
+        rate_limit_rpm=60,
+        last_used_at=None,
+        created_at="2026-09-01",
+        created_by="u",
+        rotated_to_key_id=None,
+    )
+
+
+_INTERNAL = {"chat": True, "general_chat": True, "internal_chat": True}
+_PERMS = SimpleNamespace(org_id=1, user_id="u")
+
+
+@pytest.mark.asyncio
+async def test_list_hides_the_internal_chat_key_and_keeps_normal_keys():
+    from app.api.admin_api_keys import list_api_keys
+
+    db = AsyncMock()
+    setup_db(db, [FakeResult([_key("normal", {"chat": True}), _key("internal", _INTERNAL)]), FakeResult([])])
+
+    listed = await list_api_keys(perms=_PERMS, _platform=None, db=db)
+
+    assert [key.id for key in listed] == ["normal"]
+
+
+@pytest.mark.asyncio
+async def test_detail_of_the_internal_chat_key_is_not_found(monkeypatch):
+    import app.api.admin_api_keys as admin_api_keys
+
+    monkeypatch.setattr(admin_api_keys, "_get_key_or_404", AsyncMock(return_value=_key("internal", _INTERNAL)))
+
+    with pytest.raises(HTTPException) as exc:
+        await admin_api_keys.get_api_key_detail(key_id="internal", perms=_PERMS, _platform=None, db=AsyncMock())
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_update_the_internal_chat_key(monkeypatch):
+    import app.api.admin_api_keys as admin_api_keys
+
+    key = _key("internal", _INTERNAL)
+    monkeypatch.setattr(admin_api_keys, "_get_key_or_404", AsyncMock(return_value=key))
+
+    with pytest.raises(HTTPException) as exc:
+        await admin_api_keys.update_api_key(
+            key_id="internal",
+            body=admin_api_keys.UpdateApiKeyRequest(rate_limit_rpm=10),
+            perms=_PERMS,
+            _platform=None,
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "internal_chat keys are managed by Klai provisioning"
+    assert key.rate_limit_rpm == 60
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("permissions", "refused"), [(_INTERNAL, True), ({"chat": True}, False)])
+async def test_admin_can_delete_a_normal_key_but_not_the_internal_chat_key(monkeypatch, permissions, refused):
+    import app.api.admin_api_keys as admin_api_keys
+
+    monkeypatch.setattr(admin_api_keys, "_get_key_or_404", AsyncMock(return_value=_key("k", permissions)))
+    monkeypatch.setattr(admin_api_keys, "emit_event", MagicMock())
+    db = AsyncMock()
+
+    if refused:
+        with pytest.raises(HTTPException) as exc:
+            await admin_api_keys.delete_api_key(key_id="k", perms=_PERMS, _platform=None, db=db)
+        assert exc.value.status_code == 403
+        db.execute.assert_not_awaited()
+    else:
+        await admin_api_keys.delete_api_key(key_id="k", perms=_PERMS, _platform=None, db=db)
+        db.commit.assert_awaited_once()
