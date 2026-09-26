@@ -113,6 +113,9 @@ class TestCharacterizeGenerateLibrechatEnv:
 
         assert "LITELLM_API_KEY=sk-team-key" in result
         assert "test-litellm-master" not in result
+        # librechat.yaml's chat endpoint: a new tenant starts on LiteLLM with its team key.
+        assert "KLAI_CHAT_API_KEY=sk-team-key\n" in result
+        assert "KLAI_CHAT_BASE_URL=http://litellm:4000/v1\n" in result
 
     def test_meili_tenant_key_overrides_master_key_value(self):
         """Provisioning must write the tenant-scoped Meili key, not the master key."""
