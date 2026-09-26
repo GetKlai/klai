@@ -50,6 +50,7 @@ def _probe(
     text: str = "",
     location: str | None = None,
     set_cookie: str | None = None,
+    new_cookies: dict[str, str] | None = None,
 ) -> _ProbeResponse:
     return _ProbeResponse(
         status_code=status_code,
@@ -58,6 +59,7 @@ def _probe(
         text=text,
         location=location,
         set_cookie=set_cookie,
+        new_cookies=new_cookies or {},
     )
 
 
@@ -505,3 +507,61 @@ class TestCrawlKeepaliveEndpoint:
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
         assert resp.status_code == 200
         assert resp.json() == {"ok": False, "reason": "fetch_failed"}
+
+
+class TestKeepaliveStoresRefreshedSessionCookies:
+    """2026-09-26: the probe kept a wiki session touched every 30 minutes, yet
+    the login was still gone within a day. The site answers every request with
+    a fresh session cookie, and the probe threw it away, so the stored jar kept
+    replaying the value from the day it was pasted. A browser keeps the newest
+    value; the probe must too, or a site that rotates its session id logs the
+    connector out no matter how often it is touched."""
+
+    def _run(self, probe: _ProbeResponse) -> tuple[dict, AsyncMock]:
+        pool = _make_pool()
+        store = AsyncMock(return_value=1)
+        connector_id = str(uuid.uuid4())
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_cookies",
+                new_callable=AsyncMock,
+                return_value=[{"name": "sid", "value": "pasted-value"}],
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                return_value=probe,
+            ),
+            patch("knowledge_ingest.routes.crawl_sync.store_refreshed_connector_cookies", store),
+        ):
+            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post(connector_id))
+        assert resp.status_code == 200
+        return {"body": resp.json(), "connector_id": connector_id}, store
+
+    def test_authenticated_probe_stores_the_cookie_the_site_just_issued(self) -> None:
+        result, store = self._run(
+            _probe(200, text="Welcome to the handbook. " * 20, new_cookies={"sid": "issued-value"})
+        )
+        assert result["body"] == {"ok": True, "reason": None}
+        store.assert_awaited_once()
+        kwargs = store.await_args.kwargs
+        assert str(kwargs["connector_id"]) == result["connector_id"]
+        assert kwargs["expected_zitadel_org_id"] == "42"
+        assert kwargs["hostname"] == "wiki.example.com"
+        assert kwargs["refreshed"] == {"sid": "issued-value"}
+
+    def test_logged_out_probe_never_overwrites_the_stored_session(self) -> None:
+        gate = (
+            "<main><p>Intro text for the article.</p>"
+            '<h2><a href="https://wiki.example.com/login?redirect_to=/a">Log in</a>'
+            " when you want to read this article</h2></main>"
+        )
+        result, store = self._run(_probe(200, text=gate, new_cookies={"sid": "anonymous-value"}))
+        assert result["body"]["ok"] is False
+        store.assert_not_awaited()

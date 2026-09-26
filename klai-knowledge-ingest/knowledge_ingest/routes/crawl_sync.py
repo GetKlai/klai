@@ -39,6 +39,7 @@ from knowledge_ingest.connector_cookies import (
     ConnectorNotFoundError,
     ConnectorOrgMismatchError,
     load_connector_cookies,
+    store_refreshed_connector_cookies,
 )
 from knowledge_ingest.connector_state import (
     activate_connector_resource,
@@ -585,6 +586,9 @@ async def _follow_same_host_redirects(
     last_redirect_target: str | None = None
     for hop in range(_MAX_KEEPALIVE_REDIRECTS + 1):
         result = await _probe_fetch(current_url, pin_map, cookies)
+        # Like a browser, the next hop carries whatever the site just set. The
+        # caller reads the same (mutated) dict to store rotated values.
+        cookies.update(result.new_cookies)
         if not (300 <= result.status_code < 400 and result.location):
             return result, current_url, last_redirect_target
 
@@ -682,6 +686,7 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
         for c in cookies
         if isinstance(c, dict) and c.get("name") and c.get("value")
     }
+    sent_cookies = dict(cookie_dict)
 
     try:
         validated = await validate_url_pinned(req.url)
@@ -732,6 +737,30 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
     )
     ok = 200 <= result.status_code < 300 and not auth_wall.is_walled
     reason = None if ok else (", ".join(auth_wall.match_reasons) or f"status_{result.status_code}")
+
+    # Only a session the site just confirmed as logged in is worth keeping; a
+    # logged-out answer must never overwrite the stored credentials.
+    refreshed = {
+        name: value for name, value in cookie_dict.items() if value != sent_cookies.get(name)
+    }
+    if ok and refreshed:
+        try:
+            await store_refreshed_connector_cookies(
+                connector_id=req.connector_id,
+                expected_zitadel_org_id=req.org_id,
+                pool=await get_pool(),
+                kek_hex=settings.encryption_key,
+                hostname=validated.hostname,
+                refreshed=refreshed,
+            )
+        except Exception as exc:
+            # Never log the exception text next to cookie handling; the type
+            # is enough to find the failure without risking a value in logs.
+            logger.error(
+                "crawl_keepalive_cookie_store_failed",
+                connector_id=str(req.connector_id),
+                error_type=type(exc).__name__,
+            )
 
     _log_probe_result(
         connector_id=str(req.connector_id),

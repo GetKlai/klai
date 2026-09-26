@@ -21,15 +21,16 @@ from knowledge_ingest.connector_cookies import (
     ConnectorNotFoundError,
     ConnectorOrgMismatchError,
     load_connector_cookies,
+    store_refreshed_connector_cookies,
 )
 
 
-def _build_blobs(kek_hex: str, cookies: list[dict]) -> tuple[bytes, bytes]:
+def _build_blobs(kek_hex: str, cookies: list[dict], **extra: object) -> tuple[bytes, bytes]:
     raw_dek = os.urandom(32)
     kek_cipher = AESGCMCipher(bytes.fromhex(kek_hex))
     dek_enc = kek_cipher.encrypt(raw_dek.hex())
     dek_cipher = AESGCMCipher(raw_dek)
-    encrypted = dek_cipher.encrypt(json.dumps({"cookies": cookies}))
+    encrypted = dek_cipher.encrypt(json.dumps({"cookies": cookies, **extra}))
     return encrypted, dek_enc
 
 
@@ -186,3 +187,80 @@ def test_shared_lib_still_raises_invalid_tag_on_wrong_kek() -> None:
             encrypted_credentials=encrypted,
             connector_dek_enc=dek_enc,
         )
+
+
+def _row(encrypted: bytes, dek_enc: bytes) -> dict:
+    return {
+        "id": uuid.UUID(int=1),
+        "encrypted_credentials": encrypted,
+        "zitadel_org_id": "42",
+        "connector_dek_enc": dek_enc,
+    }
+
+
+@pytest.mark.asyncio
+async def test_refreshed_session_cookie_replaces_the_stored_value() -> None:
+    """A rolling session only survives if the value the site re-issues is the
+    one replayed next time. Only the refreshed value changes; everything else
+    in the encrypted payload stays, and the write is a compare-and-swap on the
+    blob it read so a concurrent cookie paste in the portal is never
+    overwritten."""
+    kek_hex = os.urandom(32).hex()
+    encrypted, dek_enc = _build_blobs(
+        kek_hex,
+        [
+            {"name": "sid", "value": "pasted", "domain": "wiki.example.com", "path": "/"},
+            {"name": "xsrf", "value": "keep", "domain": ".wiki.example.com", "path": "/"},
+        ],
+        auth_headers={"X-Example": "unchanged"},
+    )
+    pool = _mock_pool(_row(encrypted, dek_enc))
+    pool.execute = AsyncMock(return_value="UPDATE 1")
+
+    changed = await store_refreshed_connector_cookies(
+        connector_id=uuid.UUID(int=1),
+        expected_zitadel_org_id="42",
+        pool=pool,
+        kek_hex=kek_hex,
+        hostname="wiki.example.com",
+        refreshed={"sid": "issued", "unrelated": "ignored"},
+    )
+
+    assert changed == 1
+    new_blob, connector_id, guard = pool.execute.await_args.args[1:]
+    assert connector_id == uuid.UUID(int=1)
+    assert guard == encrypted
+    payload = ConnectorCredentialStore(kek_hex).decrypt_credentials_from_blobs(
+        encrypted_credentials=new_blob, connector_dek_enc=dek_enc
+    )
+    assert payload == {
+        "cookies": [
+            {"name": "sid", "value": "issued", "domain": "wiki.example.com", "path": "/"},
+            {"name": "xsrf", "value": "keep", "domain": ".wiki.example.com", "path": "/"},
+        ],
+        "auth_headers": {"X-Example": "unchanged"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_cookie_scoped_to_another_host_is_never_rewritten() -> None:
+    """Saved cookies are host-scoped credentials: a response from one host
+    must not rewrite a same-named cookie saved for a different host."""
+    kek_hex = os.urandom(32).hex()
+    encrypted, dek_enc = _build_blobs(
+        kek_hex, [{"name": "sid", "value": "pasted", "domain": "sso.example.com", "path": "/"}]
+    )
+    pool = _mock_pool(_row(encrypted, dek_enc))
+    pool.execute = AsyncMock(return_value="UPDATE 1")
+
+    changed = await store_refreshed_connector_cookies(
+        connector_id=uuid.UUID(int=1),
+        expected_zitadel_org_id="42",
+        pool=pool,
+        kek_hex=kek_hex,
+        hostname="wiki.example.com",
+        refreshed={"sid": "issued"},
+    )
+
+    assert changed == 0
+    pool.execute.assert_not_awaited()
