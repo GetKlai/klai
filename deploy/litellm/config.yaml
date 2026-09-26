@@ -10,8 +10,10 @@ model_list:
     # MISTRAL_API_KEY_2 limits from Mistral's x-ratelimit headers on
     # 2026-09-25: small 1000 RPM / 500k TPM (split between klai-primary and
     # klai-fast), medium 2000 / 1M, large 30 / 800k. Budgets are 90% of that.
-    rpm: 450
-    tpm: 225000
+    # Small is split towards klai-fast (background ingest, measured peaks of
+    # ~237k TPM on 2026-09-26) over klai-primary (chat, a few calls per hour).
+    rpm: 50
+    tpm: 100000
 
   - model_name: klai-primary
     litellm_params:
@@ -35,8 +37,8 @@ model_list:
       model: mistral/mistral-small-2603
       api_key: os.environ/MISTRAL_API_KEY_2
       order: 2
-    rpm: 450
-    tpm: 225000
+    rpm: 400
+    tpm: 350000
 
   - model_name: klai-fast
     litellm_params:
