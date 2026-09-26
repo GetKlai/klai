@@ -147,9 +147,9 @@ async def structured_judge_call[J: BaseModel](
             "type": "json_schema",
             "json_schema": {"name": name, "strict": True, "schema": schema.model_json_schema()},
         },
-        # LiteLLM's router escalates a saturated klai-fast to klai-medium, a
-        # fallback meant for interactive chat latency. A judge that fails fast
-        # already has a safe fail direction, so it opts out per request.
+        # LiteLLM's router falls back from a failing klai-fast to klai-large, a
+        # fallback meant for interactive chat. A judge that fails fast already
+        # has a safe fail direction, so it opts out per request and stays on Small.
         # ``fallbacks: []`` and not ``disable_fallbacks``: the latter also skips
         # the same-model order-based failover (see knowledge-ingest
         # llm_throttle.add_no_fallback for the verified reasoning).

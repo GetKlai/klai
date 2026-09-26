@@ -11,7 +11,7 @@ only. The crawler increments it per changed page and per retired stale page,
 and ``pages_changed + n`` stays NULL on an old job that is recovered.
 
 Revision ID: 5b1d8f2c9a07
-Revises: e7b3c6a10f42
+Revises: a6d41f9e2c73
 Create Date: 2026-09-26
 """
 
@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "5b1d8f2c9a07"
-down_revision: str | None = "e7b3c6a10f42"
+down_revision: str | None = "a6d41f9e2c73"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

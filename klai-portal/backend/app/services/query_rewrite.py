@@ -349,7 +349,7 @@ async def rewrite_for_retrieval(
         "model": QUERY_REWRITE_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
-        # No escalation to klai-medium: a failed rewrite already falls back to
+        # Stays on Small: a failed rewrite already falls back to
         # the raw query. See turn_judge.structured_judge_call for why
         # ``fallbacks: []`` rather than ``disable_fallbacks``.
         "fallbacks": [],
