@@ -39,6 +39,7 @@ from app.core.config import settings
 from app.core.database import set_tenant
 from app.models.portal import PortalOrg
 from app.models.retrieval_gaps import PortalRetrievalGap
+from app.services.litellm_delegation import with_feature_tag
 from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
@@ -311,7 +312,10 @@ async def _embed(texts: list[str]) -> list[list[float]]:
             resp = await client.post(
                 f"{settings.litellm_base_url}/v1/embeddings",
                 headers={"Authorization": f"Bearer {settings.litellm_master_key}", **get_trace_headers()},
-                json={"model": _EMBEDDING_MODEL, "input": texts[start : start + _EMBEDDING_BATCH]},
+                json=with_feature_tag(
+                    {"model": _EMBEDDING_MODEL, "input": texts[start : start + _EMBEDDING_BATCH]},
+                    "portal:gap-embeddings",
+                ),
             )
             resp.raise_for_status()
             vectors += [item["embedding"] for item in sorted(resp.json()["data"], key=lambda item: item["index"])]

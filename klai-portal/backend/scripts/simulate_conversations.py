@@ -47,7 +47,7 @@ from app.core.config import settings  # noqa: E402
 from app.core.database import cross_org_session  # noqa: E402
 from app.models.portal import PortalOrg  # noqa: E402
 from app.models.widgets import Widget, WidgetKbAccess  # noqa: E402
-from app.services.litellm_delegation import with_delegated_org  # noqa: E402
+from app.services.litellm_delegation import with_delegated_org, with_feature_tag  # noqa: E402
 from app.services.widget_auth import generate_session_token  # noqa: E402
 
 # Real conversations with at least two visitor turns: one turn is a replay, and
@@ -186,17 +186,20 @@ async def _model(
         return await client.post(
             f"{settings.litellm_base_url}/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-            json=with_delegated_org(
-                {
-                    "model": _SIMULATION_MODEL,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                },
-                zitadel_org_id,
+            json=with_feature_tag(
+                with_delegated_org(
+                    {
+                        "model": _SIMULATION_MODEL,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                    },
+                    zitadel_org_id,
+                ),
+                "script:simulate_conversations",
             ),
         )
 

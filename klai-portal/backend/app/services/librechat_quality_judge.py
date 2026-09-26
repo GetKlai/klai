@@ -362,6 +362,7 @@ async def _judge_org(org_id: int, slug: str) -> int:
                     model=settings.conversation_judge_model,
                     user=user_prompt,
                     system=LIBRECHAT_JUDGE_SYSTEM_PROMPT,
+                    feature_tag="portal:librechat-judge",
                 )
             except Exception:
                 # One flaky LLM call costs this conversation, not the batch;

@@ -46,7 +46,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import Settings
-from app.services.litellm_delegation import with_delegated_org
+from app.services.litellm_delegation import with_delegated_org, with_feature_tag
 
 logger = structlog.get_logger()
 
@@ -127,6 +127,11 @@ async def structured_judge_call[J: BaseModel](
     ``delegated_org_id`` is set on an internal-chat turn, for the same reason as
     on its answer call: the master key belongs to no tenant, so LiteLLM masks
     personal data only when the employee's org travels with the call.
+
+    The LiteLLM spend tag is derived from ``name`` (``portal:<name-with-dashes>``)
+    -- every caller already passes a distinguishing ``name`` for the json_schema
+    and its failure log event, so this reuses it rather than adding a second
+    parameter every caller must remember to set.
     """
     failure_event = f"{name}_failed"
     body: dict = {
@@ -144,6 +149,7 @@ async def structured_judge_call[J: BaseModel](
         },
     }
     with_delegated_org(body, delegated_org_id)
+    with_feature_tag(body, f"portal:{name.replace('_', '-')}")
     try:
         async with asyncio.timeout(timeout_seconds):
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:

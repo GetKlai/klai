@@ -431,7 +431,8 @@ async def _group_and_assign(
                     ],
                     "temperature": 0.2,
                     "max_tokens": max_tokens,
-                }
+                },
+                tag="script:dry-run-merge-consolidate",
             ),
         )
         resp.raise_for_status()

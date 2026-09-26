@@ -11,6 +11,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
+from app.services.litellm_delegation import with_feature_tag
 from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
@@ -58,14 +59,17 @@ async def _call_llm(system: str, user: str, model: str, temperature: float = 0.1
         resp = await client.post(
             f"{settings.litellm_base_url}/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.litellm_master_key}", **get_trace_headers()},
-            json={
-                "model": model,
-                "temperature": temperature,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
+            json=with_feature_tag(
+                {
+                    "model": model,
+                    "temperature": temperature,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                },
+                "portal:meeting-summarizer",
+            ),
         )
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]

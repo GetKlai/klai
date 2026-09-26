@@ -212,7 +212,11 @@ async def generate_document_summary(
         await shared_klai_fast_limiter().acquire()
         async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await asyncio.wait_for(
-                client.post(url, json=add_no_fallback(payload), headers=headers),
+                client.post(
+                    url,
+                    json=add_no_fallback(payload, tag="ingest:document-summary"),
+                    headers=headers,
+                ),
                 timeout=_SUMMARY_TIMEOUT_S,
             )
             resp.raise_for_status()

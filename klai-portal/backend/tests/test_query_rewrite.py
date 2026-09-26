@@ -19,6 +19,7 @@ from app.services import query_rewrite
 class _Client:
     def __init__(self, reply: str | Exception) -> None:
         self.reply = reply
+        self.posted_json: dict | None = None
 
     def __call__(self, *_: Any, **__: Any) -> _Client:
         return self
@@ -29,7 +30,8 @@ class _Client:
     async def __aexit__(self, *_: Any) -> None:
         return None
 
-    async def post(self, *_: Any, **__: Any) -> MagicMock:
+    async def post(self, *_: Any, json: dict | None = None, **__: Any) -> MagicMock:
+        self.posted_json = json
         if isinstance(self.reply, Exception):
             raise self.reply
         response = MagicMock()
@@ -59,6 +61,26 @@ async def test_failed_rewrite_keeps_the_raw_query_and_leaves_coreference_to_retr
 
     assert result.query == "Hoe stel ik het in?"
     assert result.coreference_resolved is False
+
+
+@pytest.mark.asyncio
+async def test_rewrite_call_carries_the_feature_tag(monkeypatch):
+    """SPEC: every LiteLLM call is attributable to the feature that made it
+    (LiteLLM_SpendLogs.request_tags, from metadata.tags)."""
+    client = _Client("Wat weet je over de factuurrun?")
+    monkeypatch.setattr(query_rewrite.httpx, "AsyncClient", client)
+    settings = MagicMock(litellm_base_url="http://litellm.example.com", litellm_master_key="k")
+
+    await query_rewrite.rewrite_for_retrieval(
+        "Wat weet je over de factuurrun?",
+        [],
+        zitadel_org_id="zorg-acme",
+        kb_slugs=[],
+        pasted_correspondence=False,
+        settings=settings,
+    )
+
+    assert client.posted_json["metadata"]["tags"] == ["portal:query-rewrite"]
 
 
 @pytest.mark.asyncio

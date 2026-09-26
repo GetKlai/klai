@@ -842,7 +842,7 @@ async def test_strong_articles_on_one_topic_in_two_variants_hand_the_turn_one_qu
 
     assert VARIANT_QUESTION in _system_prompt_sent(litellm)
     writer_calls = [body for body in litellm.requests if _call_kind(body) == "clarify_question"]
-    assert [body.get("metadata") for body in writer_calls] == [DELEGATED]
+    assert [body.get("metadata") for body in writer_calls] == [_delegated_with_tag("clarify_question")]
     assert "iPhone; Android" in writer_calls[0]["messages"][1]["content"]
 
 
@@ -1107,6 +1107,19 @@ async def test_turn_judge_runs_concurrently_with_retrieval():
 
 DELEGATED = {"_klai_delegated_org_id": "zit-org-42"}
 
+# Every kind's own LiteLLM spend tag (SPEC: every call is attributable to the
+# feature that made it -- LiteLLM_SpendLogs.request_tags, from metadata.tags).
+_TAG_FOR_KIND = {
+    "turn_judge": "portal:turn-judge",
+    "query_paraphrase": "portal:query-paraphrase",
+    "answer_judge": "portal:answer-judge",
+    "off_topic_referral": "portal:off-topic-referral",
+    "clarify_question": "portal:clarify-question",
+    "grounding_check": "portal:answer-grounding",
+    "repair": "portal:answer-grounding",
+    "answer": "portal:partner-chat-answer",
+}
+
 
 def _call_kind(body: dict) -> str:
     schema = (body.get("response_format") or {}).get("json_schema", {}).get("name")
@@ -1119,6 +1132,10 @@ def _call_kind(body: dict) -> str:
 
 def _metadata_per_call(litellm: _LiteLLM) -> list[tuple[str, Any]]:
     return [(_call_kind(body), body.get("metadata")) for body in litellm.requests]
+
+
+def _delegated_with_tag(kind: str) -> dict:
+    return {**DELEGATED, "tags": [_TAG_FOR_KIND[kind]]}
 
 
 @pytest.mark.parametrize("stream", [True, False])
@@ -1140,7 +1157,7 @@ async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(mo
         "grounding_check",
         "repair",
     }
-    assert calls == [(kind, DELEGATED) for kind, _ in calls]
+    assert calls == [(kind, _delegated_with_tag(kind)) for kind, _ in calls]
 
 
 async def test_the_off_topic_referral_call_names_the_tenant(monkeypatch):
@@ -1148,4 +1165,4 @@ async def test_the_off_topic_referral_call_names_the_tenant(monkeypatch):
 
     calls = _metadata_per_call(litellm)
     assert {kind for kind, _ in calls} == {"turn_judge", "query_paraphrase", "off_topic_referral"}
-    assert calls == [(kind, DELEGATED) for kind, _ in calls]
+    assert calls == [(kind, _delegated_with_tag(kind)) for kind, _ in calls]

@@ -59,7 +59,8 @@ async def _call_llm(prompt: str, log_event: str) -> str | None:
                         "messages": [{"role": "user", "content": prompt}],
                         "max_tokens": 64,
                         "temperature": 0,
-                    }
+                    },
+                    tag="ingest:selector-ai",
                 ),
             )
             resp.raise_for_status()

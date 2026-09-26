@@ -13,6 +13,7 @@ from retrieval_api.services.llm_safety_adapter import (
     check_coreference_input,
     check_coreference_output,
 )
+from retrieval_api.services.llm_spend_tags import with_feature_tag
 
 logger = structlog.get_logger(__name__)
 
@@ -81,12 +82,15 @@ async def resolve(query: str, history: list[dict], *, telemetry_level: str = "sh
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": _rewrite_request(query, history)},
     ]
-    body = {
-        "model": settings.coreference_model,
-        "messages": messages,
-        "stream": False,
-        "temperature": 0.0,
-    }
+    body = with_feature_tag(
+        {
+            "model": settings.coreference_model,
+            "messages": messages,
+            "stream": False,
+            "temperature": 0.0,
+        },
+        "retrieval:coreference",
+    )
     headers = {}
     if settings.litellm_api_key:
         headers["Authorization"] = f"Bearer {settings.litellm_api_key}"

@@ -760,6 +760,9 @@ async def test_litellm_call_uses_triage_pattern():
     assert body["temperature"] == 0.1
     assert body["messages"][0] == {"role": "system", "content": cj.JUDGE_SYSTEM_PROMPT}
     assert body["messages"][1] == {"role": "user", "content": '{"transcript": []}'}
+    # SPEC: every LiteLLM call carries a feature tag so spend is attributable
+    # (LiteLLM_SpendLogs.request_tags, from metadata.tags).
+    assert body["metadata"]["tags"] == ["portal:conversation-judge"]
 
 
 # ---------------------------------------------------------------------------

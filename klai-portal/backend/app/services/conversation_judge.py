@@ -52,6 +52,7 @@ from app.core.config import settings
 from app.core.database import cross_org_session, tenant_scoped_session
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services.gap_events import JUDGE_CALLER_CLIENT_ID, record_gap_event, shows_unmet_need
+from app.services.litellm_delegation import with_feature_tag
 from app.services.widget_outcome import _SUPPORT_REFERRAL_TEXTS
 from app.trace import get_trace_headers
 
@@ -227,11 +228,14 @@ def _build_user_prompt(
     )
 
 
-async def _call_judge_llm(*, model: str, user: str, system: str = JUDGE_SYSTEM_PROMPT) -> str:
+async def _call_judge_llm(
+    *, model: str, user: str, system: str = JUDGE_SYSTEM_PROMPT, feature_tag: str = "portal:conversation-judge"
+) -> str:
     """One LiteLLM chat completion — mirrors ``triage._call_triage_llm``.
 
     ``system`` defaults to the webchat rubric; the LibreChat pass (REQ-5)
-    passes its own verbatim rubric, the rest of the call is channel-agnostic.
+    passes its own verbatim rubric and its own ``feature_tag``, the rest of
+    the call is channel-agnostic.
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
@@ -240,14 +244,17 @@ async def _call_judge_llm(*, model: str, user: str, system: str = JUDGE_SYSTEM_P
                 "Authorization": f"Bearer {settings.litellm_master_key}",
                 **get_trace_headers(),
             },
-            json={
-                "model": model,
-                "temperature": 0.1,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
+            json=with_feature_tag(
+                {
+                    "model": model,
+                    "temperature": 0.1,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                },
+                feature_tag,
+            ),
         )
         resp.raise_for_status()
         return str(resp.json()["choices"][0]["message"]["content"])

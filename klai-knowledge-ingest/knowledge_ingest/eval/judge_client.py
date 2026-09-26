@@ -42,6 +42,7 @@ import structlog
 from knowledge_ingest.config import settings
 from knowledge_ingest.llm_throttle import (
     NoMediumFallbackTransport,
+    TaggingTransport,
     add_no_fallback,
     shared_klai_fast_limiter,
 )
@@ -77,10 +78,15 @@ def _make_async_openai_client(*, no_fallback: bool = False):
         # klai-fast judge calls (context_precision, context_recall,
         # answer_relevancy, generate_answer) must not silently escalate to
         # klai-medium -- see llm_throttle.add_no_fallback's docstring.
-        # Faithfulness's heavy_llm deliberately does NOT pass this: it already
-        # targets klai-medium directly and has no fallback entry to suppress.
         kwargs["http_client"] = httpx.AsyncClient(
-            transport=NoMediumFallbackTransport(httpx.AsyncHTTPTransport())
+            transport=NoMediumFallbackTransport(httpx.AsyncHTTPTransport(), tag="ingest:eval")
+        )
+    else:
+        # Faithfulness's heavy_llm deliberately skips NoMediumFallbackTransport:
+        # it already targets klai-medium directly and has no fallback entry to
+        # suppress. Tag only, so spend is still attributable.
+        kwargs["http_client"] = httpx.AsyncClient(
+            transport=TaggingTransport(httpx.AsyncHTTPTransport(), tag="ingest:eval")
         )
     return AsyncOpenAI(**kwargs)
 
@@ -148,6 +154,9 @@ def _build_ragas_embeddings():
     client = AsyncOpenAI(
         base_url=f"{settings.litellm_url}/v1",
         api_key=settings.litellm_api_key or "no-key",
+        http_client=httpx.AsyncClient(
+            transport=TaggingTransport(httpx.AsyncHTTPTransport(), tag="ingest:eval")
+        ),
     )
     return embedding_factory(
         provider="openai",
@@ -234,7 +243,9 @@ async def generate_answer(
     try:
         await shared_klai_fast_limiter().acquire()
         async with _build_http_client(float(settings.rag_eval_judge_timeout), _transport) as client:
-            resp = await client.post(url, json=add_no_fallback(payload), headers=headers)
+            resp = await client.post(
+                url, json=add_no_fallback(payload, tag="ingest:eval"), headers=headers
+            )
             resp.raise_for_status()
             data = resp.json()
         return data["choices"][0]["message"]["content"]

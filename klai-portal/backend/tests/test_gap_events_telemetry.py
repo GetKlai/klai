@@ -228,3 +228,34 @@ async def test_retrieval_log_keeps_query_resolved_in_full_mode() -> None:
     mock_write.assert_awaited_once()
     kwargs = mock_write.await_args.kwargs
     assert kwargs["query_resolved"] == payload_data["query_resolved"]
+
+
+@pytest.mark.asyncio
+async def test_embed_call_carries_the_feature_tag() -> None:
+    """SPEC: every LiteLLM call is attributable to the feature that made it
+    (LiteLLM_SpendLogs.request_tags, from metadata.tags), embeddings included."""
+    from app.services import gap_events
+
+    posted: dict = {}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            posted["json"] = json
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            resp.json.return_value = {"data": [{"index": 0, "embedding": [0.1]}]}
+            return resp
+
+    with patch("httpx.AsyncClient", _Client):
+        await gap_events._embed(["hello"])
+
+    assert posted["json"]["metadata"]["tags"] == ["portal:gap-embeddings"]

@@ -148,7 +148,8 @@ async def _call_litellm(user_message: str) -> dict:
                     ],
                     "temperature": 0.0,
                     "max_tokens": 300,
-                }
+                },
+                tag="ingest:taxonomy",
             ),
         )
         resp.raise_for_status()

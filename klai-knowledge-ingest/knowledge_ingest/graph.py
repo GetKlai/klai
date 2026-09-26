@@ -456,7 +456,9 @@ def _get_graphiti() -> Graphiti:
             max_retries=0,
             http_client=httpx.AsyncClient(
                 transport=_RateLimitedTransport(
-                    wrapped=NoMediumFallbackTransport(httpx.AsyncHTTPTransport()),
+                    wrapped=NoMediumFallbackTransport(
+                        httpx.AsyncHTTPTransport(), tag="ingest:graph"
+                    ),
                     limiter=_llm_limiter,
                 )
             ),

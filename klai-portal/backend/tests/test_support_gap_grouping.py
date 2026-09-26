@@ -41,7 +41,9 @@ class _Recorder:
         self.calls = 0
         self.last_user: str | None = None
 
-    async def __call__(self, *, system: str, user: str, delegated_org_id: str | None = None) -> str:
+    async def __call__(
+        self, *, system: str, user: str, delegated_org_id: str | None = None, feature_tag: str = ""
+    ) -> str:
         self.calls += 1
         self.last_user = user
         return json.dumps(self.response)
@@ -182,7 +184,7 @@ async def test_cohorts_split_on_language_and_merge_across_diagnosis(monkeypatch)
     )
     submitted: list[dict] = []
 
-    async def call(*, system: str, user: str, delegated_org_id: str | None = None) -> str:
+    async def call(*, system: str, user: str, delegated_org_id: str | None = None, feature_tag: str = "") -> str:
         submitted.append(json.loads(user))
         return json.dumps(next(responses))
 
@@ -209,7 +211,7 @@ async def test_metadata_cohorts_share_one_timeout_budget(monkeypatch):
     """Two DIFFERENT-language batches still share one overall timeout budget."""
     monkeypatch.setattr(grp, "_GROUPING_TIMEOUT_S", 0.03)
 
-    async def call(*, system: str, user: str, delegated_org_id: str | None = None) -> str:
+    async def call(*, system: str, user: str, delegated_org_id: str | None = None, feature_tag: str = "") -> str:
         await asyncio.sleep(0.02)
         submitted = json.loads(user)
         return json.dumps(

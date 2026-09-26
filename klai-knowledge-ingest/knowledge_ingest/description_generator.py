@@ -84,7 +84,8 @@ async def _call_litellm(user_message: str) -> dict:
                     ],
                     "temperature": 0.3,
                     "max_tokens": 100,
-                }
+                },
+                tag="ingest:description-generator",
             ),
         )
         resp.raise_for_status()

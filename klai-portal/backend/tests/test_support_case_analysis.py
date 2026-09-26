@@ -614,6 +614,8 @@ async def test_llm_calls_use_configured_judge_endpoint(fake):
         assert url == "http://litellm:4000/v1/chat/completions"
         assert headers["Authorization"] == "Bearer master-key"
         assert body["model"] == "klai-medium"
+        # SPEC: every LiteLLM call is attributable to the feature that made it.
+        assert body["metadata"]["tags"] == ["portal:support-case-analysis"]
 
     extraction_body = llm_calls[0][1]
     response_schema = extraction_body["response_format"]["json_schema"]

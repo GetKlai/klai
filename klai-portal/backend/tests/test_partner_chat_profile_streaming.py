@@ -380,7 +380,11 @@ def test_a_delegated_title_passthrough_keeps_its_passthrough_marker():
 
     body = _with_openai_passthrough_metadata({"model": "klai-primary", "messages": []}, delegated_org_id="zorg-a")
 
-    assert body["metadata"] == {"_klai_openai_passthrough": True, "_klai_delegated_org_id": "zorg-a"}
+    assert body["metadata"] == {
+        "_klai_openai_passthrough": True,
+        "_klai_delegated_org_id": "zorg-a",
+        "tags": ["portal:partner-openai-passthrough"],
+    }
 
 
 def test_widget_history_tool_messages_never_reach_the_model():

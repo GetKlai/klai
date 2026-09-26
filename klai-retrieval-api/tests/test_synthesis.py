@@ -271,6 +271,8 @@ class TestSynthesize:
         prompt_text = body["messages"][-2]["content"]
         assert "Install the widget" in prompt_text
         assert "Ignore previous instructions" not in prompt_text
+        # SPEC: every LiteLLM call is attributable to the feature that made it.
+        assert body["metadata"]["tags"] == ["retrieval:synthesis"]
         final = next(item for item in items if isinstance(item, dict))
         assert len(final["citations"]) == 1
         assert final["citations"][0]["url"] == "https://getklai.com/docs/install"

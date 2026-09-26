@@ -1,8 +1,38 @@
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.klai_feedback import triage
+
+
+@pytest.mark.asyncio
+async def test_call_triage_llm_carries_the_feature_tag():
+    """SPEC: every LiteLLM call is attributable to the feature that made it
+    (LiteLLM_SpendLogs.request_tags, from metadata.tags)."""
+    posted: dict = {}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            posted["json"] = json
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            resp.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
+            return resp
+
+    with patch("httpx.AsyncClient", _Client):
+        await triage._call_triage_llm(model="klai-fast", user="feedback")
+
+    assert posted["json"]["metadata"]["tags"] == ["portal:feedback-triage"]
 
 
 class _FakeDb:

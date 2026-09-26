@@ -24,7 +24,7 @@ import structlog
 from klai_citations import rewrite_preserves_subject, salient_tokens
 
 from app.core.config import Settings
-from app.services.litellm_delegation import with_delegated_org
+from app.services.litellm_delegation import with_delegated_org, with_feature_tag
 from app.services.redis_client import get_redis_pool
 
 logger = structlog.get_logger()
@@ -351,6 +351,7 @@ async def rewrite_for_retrieval(
         "temperature": 0.0,
     }
     with_delegated_org(payload, zitadel_org_id)
+    with_feature_tag(payload, "portal:query-rewrite")
 
     meta: dict = {}
     started = time.monotonic()
