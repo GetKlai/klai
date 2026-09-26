@@ -16,10 +16,11 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import cross_org_session, get_db
 from app.models.portal import PortalOrg
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.support_cases import PortalSupportCase
@@ -315,7 +316,7 @@ async def schedule_rescore(
     """Fire-and-forget wrapper: delay then rescore telemetry gaps and, unless
     ``reanalyse_support`` is off, reanalyse support cases, each on its own fresh
     DB session. The connector-sync caller turns it off and goes through
-    ``schedule_support_reanalysis`` instead.
+    ``request_support_reanalysis`` instead.
 
     Uses asyncio.create_task for non-blocking execution. All exceptions are caught
     and logged so one failing pass never aborts the other.
@@ -347,49 +348,70 @@ async def schedule_rescore(
 # A connector sync that changed knowledge force-reanalyses up to
 # MAX_SUPPORT_CASES_PER_TRIGGER support cases at ~9 klai-medium calls each. An
 # org's connectors finish one after another in the same nightly window, so each
-# qualifying sync restarts a per-org timer and the org gets one run after the
-# last of them instead of one per sync.
+# qualifying sync restamps portal_orgs.support_reanalysis_requested_at, and the
+# org is reanalysed once its request has been quiet for 15 minutes instead of
+# once per sync. The request lives in Postgres so a portal-api restart cannot
+# drop it; one sequential loop serves all orgs, so two runs never overlap.
 SUPPORT_REANALYSIS_DEBOUNCE_SECONDS = 15 * 60
-# In-process state is enough because portal-api runs as a single uvicorn
-# process in a single container (scripts/uvicorn-launch.sh passes no --workers,
-# deploy/docker-compose.yml sets no replicas). A restart drops a pending timer;
-# the next sync that changes knowledge schedules one again.
-_support_reanalysis_timers: dict[int, asyncio.Task] = {}
-_support_reanalysis_locks: dict[int, asyncio.Lock] = {}
-_support_reanalysis_tasks: set[asyncio.Task] = set()
+SUPPORT_REANALYSIS_POLL_SECONDS = 60
 
 
-def schedule_support_reanalysis(
-    org_id: int,
-    zitadel_org_id: str,
-    db_factory,
-    delay_seconds: float = SUPPORT_REANALYSIS_DEBOUNCE_SECONDS,
-) -> None:
-    """Debounced org-wide support reanalysis after a connector sync changed knowledge.
+async def request_support_reanalysis(db: AsyncSession, org_id: int) -> None:
+    """Record (or restamp, restarting the debounce) the org's pending reanalysis."""
+    await db.execute(
+        text("UPDATE portal_orgs SET support_reanalysis_requested_at = now() WHERE id = :org_id"),
+        {"org_id": org_id},
+    )
+    await db.commit()
 
-    Each call restarts the org's timer, and a run waits for any earlier run of
-    the same org to finish, so two runs never spend on the same cases at once.
+
+async def run_due_support_reanalyses(db_factory=get_db) -> int:
+    """Reanalyse every org whose request is older than the debounce; returns how many ran.
+
+    A request is cleared only if it still holds the timestamp picked up here,
+    so a sync that lands during the run keeps its request for the next pass.
+    It is cleared after a failed run too: retrying a failure every poll would
+    spend on the same cases again, and the next sync that changes knowledge
+    requests a fresh run.
     """
-    pending = _support_reanalysis_timers.pop(org_id, None)
-    if pending is not None:
-        pending.cancel()
-
-    async def _run() -> None:
-        await asyncio.sleep(delay_seconds)
-        # Past the debounce: a later sync now queues a follow-up run instead of
-        # cancelling this one, so the content it brings is still reanalysed.
-        if _support_reanalysis_timers.get(org_id) is task:
-            del _support_reanalysis_timers[org_id]
-        async with _support_reanalysis_locks.setdefault(org_id, asyncio.Lock()):
+    async with cross_org_session() as db:
+        due = (
+            await db.execute(
+                text(
+                    "SELECT id, zitadel_org_id, support_reanalysis_requested_at FROM portal_orgs "
+                    "WHERE support_reanalysis_requested_at <= now() - make_interval(secs => :debounce_seconds)"
+                ),
+                {"debounce_seconds": SUPPORT_REANALYSIS_DEBOUNCE_SECONDS},
+            )
+        ).all()
+    for org in due:
+        try:
             async for db in db_factory():
-                try:
-                    await reanalyse_scoped_support_cases(org_id, zitadel_org_id, None, db)
-                except Exception:
-                    logger.exception("gap_rescorer: unhandled error reanalysing support cases")
+                await reanalyse_scoped_support_cases(org.id, org.zitadel_org_id, None, db)
                 break
+        except Exception:
+            logger.exception("gap_rescorer: unhandled error reanalysing support cases org_id=%s", org.id)
+        finally:
+            async with cross_org_session() as db:
+                await db.execute(
+                    text(
+                        "UPDATE portal_orgs SET support_reanalysis_requested_at = NULL "
+                        "WHERE id = :org_id AND support_reanalysis_requested_at = :requested_at"
+                    ),
+                    {"org_id": org.id, "requested_at": org.support_reanalysis_requested_at},
+                )
+                await db.commit()
+    return len(due)
 
-    task = asyncio.get_running_loop().create_task(_run())
-    _support_reanalysis_timers[org_id] = task
-    # The event loop holds tasks weakly; keep a strong reference until done.
-    _support_reanalysis_tasks.add(task)
-    task.add_done_callback(_support_reanalysis_tasks.discard)
+
+async def support_reanalysis_loop() -> None:
+    """FastAPI-lifespan loop serving connector-sync reanalysis requests."""
+    await asyncio.sleep(60)
+    while True:
+        try:
+            await run_due_support_reanalyses()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("gap_rescorer: support reanalysis loop error")
+        await asyncio.sleep(SUPPORT_REANALYSIS_POLL_SECONDS)

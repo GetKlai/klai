@@ -46,7 +46,7 @@ from app.services.connector_credentials import SENSITIVE_FIELDS, credential_stor
 from app.services.entitlements import get_effective_products
 from app.services.events import emit_event
 from app.services.gap_events import record_gap_event
-from app.services.gap_rescorer import schedule_rescore, schedule_support_reanalysis
+from app.services.gap_rescorer import request_support_reanalysis, schedule_rescore
 from app.services.ingest_gap_evaluation import evaluate_ingest_snapshot
 from app.services.internal_chat_identity import LibreChatIdentityError, has_knowledge_access, resolve_librechat_user
 from app.services.partner_rate_limit import check_rate_limit
@@ -760,11 +760,7 @@ async def receive_sync_status(
                     org_id=connector.org_id,
                 )
             elif body.documents_changed > 0:
-                schedule_support_reanalysis(
-                    org_id=connector.org_id,
-                    zitadel_org_id=org.zitadel_org_id,
-                    db_factory=get_db,
-                )
+                await request_support_reanalysis(db, connector.org_id)
     await _audit_internal_call(request, org_id=connector.org_id)
 
 

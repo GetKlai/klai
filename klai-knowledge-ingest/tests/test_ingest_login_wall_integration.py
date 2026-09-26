@@ -128,7 +128,7 @@ def _patch_chain(*, cluster_simhashes: list[int] | None = None):
 
     pg_store_mock = make_pg_store_mock()
 
-    ingest_document_mock = AsyncMock(return_value=None)
+    ingest_document_mock = AsyncMock(return_value={"status": "ok", "chunks": 1})
 
     # _build_image_store returns None when garage is unconfigured (test default).
     # link_graph helpers return empty.

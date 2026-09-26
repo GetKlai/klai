@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
-async def _receive(monkeypatch, *, documents_changed: int | None) -> tuple[MagicMock, AsyncMock, MagicMock]:
+async def _receive(monkeypatch, *, documents_changed: int | None) -> tuple[MagicMock, AsyncMock, AsyncMock, AsyncMock]:
     from app.api import internal
 
     connector = MagicMock()
@@ -27,12 +27,12 @@ async def _receive(monkeypatch, *, documents_changed: int | None) -> tuple[Magic
     db.commit = AsyncMock()
 
     schedule_rescore = AsyncMock()
-    schedule_support_reanalysis = MagicMock()
+    request_support_reanalysis = AsyncMock()
     monkeypatch.setattr(internal, "_require_internal_token", AsyncMock())
     monkeypatch.setattr(internal, "_audit_internal_call", AsyncMock())
     monkeypatch.setattr(internal, "set_tenant", AsyncMock())
     monkeypatch.setattr(internal, "schedule_rescore", schedule_rescore)
-    monkeypatch.setattr(internal, "schedule_support_reanalysis", schedule_support_reanalysis)
+    monkeypatch.setattr(internal, "request_support_reanalysis", request_support_reanalysis)
 
     fields: dict = {
         "sync_run_id": "sync-run-1",
@@ -48,7 +48,7 @@ async def _receive(monkeypatch, *, documents_changed: int | None) -> tuple[Magic
         request=MagicMock(),
         db=db,
     )
-    return connector, schedule_rescore, schedule_support_reanalysis
+    return connector, schedule_rescore, request_support_reanalysis, db
 
 
 @pytest.mark.asyncio
@@ -61,7 +61,7 @@ async def test_sync_without_changed_documents_rescores_gaps_but_reanalyses_no_su
     reanalysis."""
     from app.api import internal
 
-    connector, schedule_rescore, schedule_support_reanalysis = await _receive(
+    connector, schedule_rescore, request_support_reanalysis, _ = await _receive(
         monkeypatch, documents_changed=documents_changed
     )
 
@@ -75,18 +75,13 @@ async def test_sync_without_changed_documents_rescores_gaps_but_reanalyses_no_su
         delay_seconds=0.0,
         reanalyse_support=False,
     )
-    schedule_support_reanalysis.assert_not_called()
+    request_support_reanalysis.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_sync_with_changed_documents_schedules_support_reanalysis(monkeypatch) -> None:
-    from app.api import internal
 
-    _, schedule_rescore, schedule_support_reanalysis = await _receive(monkeypatch, documents_changed=3)
+    _, schedule_rescore, request_support_reanalysis, db = await _receive(monkeypatch, documents_changed=3)
 
     schedule_rescore.assert_awaited_once()
-    schedule_support_reanalysis.assert_called_once_with(
-        org_id=77,
-        zitadel_org_id="zitadel-org-77",
-        db_factory=internal.get_db,
-    )
+    request_support_reanalysis.assert_awaited_once_with(db, 77)

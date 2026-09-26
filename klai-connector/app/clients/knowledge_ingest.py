@@ -204,8 +204,12 @@ class KnowledgeIngestClient:
         kb_slug: str,
         source_connector_id: str,
         source_ref: str,
-    ) -> None:
-        """Delete one connector artifact by its stable provider reference."""
+    ) -> bool:
+        """Delete one connector artifact by its stable provider reference.
+
+        Returns whether knowledge was removed: knowledge-ingest answers
+        ``artifacts_deleted: 0`` when nothing matched the reference.
+        """
         response = await self._client.delete(
             "/ingest/v1/connector/document",
             params={
@@ -221,6 +225,7 @@ class KnowledgeIngestClient:
         )
         response.raise_for_status()
         logger.info("Deleted stale connector document: %s", source_ref)
+        return response.json()["artifacts_deleted"] > 0
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""

@@ -344,7 +344,7 @@ async def test_cleanup_failure_fails_run_and_retries_from_successful_baseline() 
     adapter = _adapter([ref])
     ingest_client = MagicMock()
     ingest_client.ingest_document = AsyncMock()
-    ingest_client.delete_connector_document = AsyncMock(side_effect=[RuntimeError("downstream delete failed"), None])
+    ingest_client.delete_connector_document = AsyncMock(side_effect=[RuntimeError("downstream delete failed"), True])
     engine = _engine(
         runs=[first, second],
         adapter=adapter,
@@ -420,15 +420,23 @@ async def test_two_unchanged_syncs_reach_dedup_but_create_one_ingest() -> None:
 @pytest.mark.asyncio
 async def test_documents_changed_counts_real_ingests_and_stale_deletes_but_not_skips() -> None:
     """The portal spends LLM calls on support reanalysis only for changed
-    knowledge, so an ingest that knowledge-ingest skipped as unchanged must not
-    count, while a real ingest and a stale-ref delete both do."""
+    knowledge, so an ingest that knowledge-ingest skipped as unchanged and a
+    stale delete that removed nothing must not count, while a real ingest and a
+    stale delete that removed knowledge both do."""
     refs = [_ref("a"), _ref("b")]
     previous = MagicMock()
-    previous.cursor_state = {"synced_refs": [refs[0].source_ref, refs[1].source_ref, f"json-feed:{CONNECTOR_ID}:c"]}
+    previous.cursor_state = {
+        "synced_refs": [
+            refs[0].source_ref,
+            refs[1].source_ref,
+            f"json-feed:{CONNECTOR_ID}:c",
+            f"json-feed:{CONNECTOR_ID}:d",
+        ]
+    }
     current = _sync_run()
     ingest_client = MagicMock()
     ingest_client.ingest_document = AsyncMock(side_effect=[False, True])
-    ingest_client.delete_connector_document = AsyncMock()
+    ingest_client.delete_connector_document = AsyncMock(side_effect=[True, False])
     engine = _engine(runs=[current], adapter=_adapter(refs), ingest_client=ingest_client, previous_run=previous)
 
     await engine.run_sync(CONNECTOR_ID, uuid.uuid4())

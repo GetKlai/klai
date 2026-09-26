@@ -524,56 +524,72 @@ async def test_connector_sync_rescore_can_leave_support_cases_alone() -> None:
     reanalyse.assert_not_awaited()
 
 
+def _fake_cross_org_session(due_rows: list, executed: list):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _session():
+        db = AsyncMock()
+
+        async def _execute(statement, params=None):
+            executed.append((str(statement), params or {}))
+            result = MagicMock()
+            result.all.return_value = due_rows
+            return result
+
+        db.execute = AsyncMock(side_effect=_execute)
+        yield db
+
+    return _session
+
+
 @pytest.mark.asyncio
-async def test_several_syncs_of_one_org_within_the_debounce_window_reanalyse_once() -> None:
-    import asyncio
+async def test_connector_sync_requests_support_reanalysis_durably_restarting_the_debounce() -> None:
+    """The request is a timestamp on the org row, not in-process state, so a
+    restart cannot drop it; each qualifying sync restamps it, which restarts the
+    debounce so several syncs of one night coalesce into one run."""
+    from app.services import gap_rescorer
+
+    db = AsyncMock()
+    await gap_rescorer.request_support_reanalysis(db, 3)
+
+    statement, params = str(db.execute.await_args.args[0]), db.execute.await_args.args[1]
+    assert "UPDATE portal_orgs SET support_reanalysis_requested_at = now()" in statement
+    assert params == {"org_id": 3}
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_due_support_reanalysis_runs_once_and_clears_only_the_request_it_served() -> None:
+    """An org whose request is older than the debounce is reanalysed once. The
+    request is cleared only if it still carries the timestamp that was picked
+    up, so a sync that lands during the run keeps its own request."""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
 
     from app.services import gap_rescorer
 
-    reanalyse = AsyncMock(return_value=(0, 0))
+    picked = datetime(2026, 9, 26, 2, 0, tzinfo=UTC)
+    executed: list = []
+    due = [SimpleNamespace(id=3, zitadel_org_id="zit-3", support_reanalysis_requested_at=picked)]
+    reanalyse = AsyncMock(return_value=(1, 0))
 
     async def factory():
         yield AsyncMock()
 
-    with patch.object(gap_rescorer, "reanalyse_scoped_support_cases", reanalyse):
-        for _ in range(3):
-            gap_rescorer.schedule_support_reanalysis(3, "zit-3", factory, delay_seconds=0.05)
-            await asyncio.sleep(0.01)
-        await asyncio.sleep(0.2)
+    with (
+        patch.object(gap_rescorer, "cross_org_session", _fake_cross_org_session(due, executed)),
+        patch.object(gap_rescorer, "reanalyse_scoped_support_cases", reanalyse),
+    ):
+        ran = await gap_rescorer.run_due_support_reanalyses(factory)
 
+    assert ran == 1
     reanalyse.assert_awaited_once()
     assert reanalyse.await_args.args[:3] == (3, "zit-3", None)
-
-
-@pytest.mark.asyncio
-async def test_support_reanalysis_runs_of_one_org_never_overlap() -> None:
-    """A sync that lands while a reanalysis is already running queues a second
-    run behind it instead of running both at once."""
-    import asyncio
-
-    from app.services import gap_rescorer
-
-    in_flight = 0
-    max_in_flight = 0
-
-    async def slow_reanalyse(*_args, **_kwargs):
-        nonlocal in_flight, max_in_flight
-        in_flight += 1
-        max_in_flight = max(max_in_flight, in_flight)
-        await asyncio.sleep(0.05)
-        in_flight -= 1
-        return 0, 0
-
-    reanalyse = AsyncMock(side_effect=slow_reanalyse)
-
-    async def factory():
-        yield AsyncMock()
-
-    with patch.object(gap_rescorer, "reanalyse_scoped_support_cases", reanalyse):
-        gap_rescorer.schedule_support_reanalysis(4, "zit-4", factory, delay_seconds=0)
-        await asyncio.sleep(0.01)  # the first run is past its debounce and running
-        gap_rescorer.schedule_support_reanalysis(4, "zit-4", factory, delay_seconds=0)
-        await asyncio.sleep(0.3)
-
-    assert reanalyse.await_count == 2
-    assert max_in_flight == 1
+    select_sql, select_params = executed[0]
+    assert "support_reanalysis_requested_at <=" in select_sql
+    assert select_params == {"debounce_seconds": gap_rescorer.SUPPORT_REANALYSIS_DEBOUNCE_SECONDS}
+    clear_sql, clear_params = executed[-1]
+    assert "SET support_reanalysis_requested_at = NULL" in clear_sql
+    assert "support_reanalysis_requested_at = :requested_at" in clear_sql
+    assert clear_params == {"org_id": 3, "requested_at": picked}

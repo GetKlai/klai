@@ -96,11 +96,12 @@ async def test_delete_connector_document_sends_scoped_internal_request():
     await client._client.aclose()
     response = MagicMock()
     response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value={"status": "ok", "artifacts_deleted": 1, "episodes_deleted": 0})
     http_client = MagicMock()
     http_client.delete = AsyncMock(return_value=response)
     client._client = http_client
 
-    await client.delete_connector_document(
+    removed = await client.delete_connector_document(
         org_id="org-1",
         kb_slug="prices",
         source_connector_id="connector-1",
@@ -121,6 +122,27 @@ async def test_delete_connector_document_sends_scoped_internal_request():
         },
     )
     response.raise_for_status.assert_called_once_with()
+    assert removed is True
+
+
+@pytest.mark.asyncio
+async def test_delete_that_removed_no_artifact_reports_no_change() -> None:
+    client = KnowledgeIngestClient("http://knowledge-ingest", "internal-secret")
+    await client._client.aclose()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value={"status": "ok", "artifacts_deleted": 0, "episodes_deleted": 0})
+    client._client = MagicMock()
+    client._client.delete = AsyncMock(return_value=response)
+
+    removed = await client.delete_connector_document(
+        org_id="org-1",
+        kb_slug="prices",
+        source_connector_id="connector-1",
+        source_ref="json-feed:connector-1:group-a",
+    )
+
+    assert removed is False
 
 
 class TestSenderEmailAndMentionedEmails:
