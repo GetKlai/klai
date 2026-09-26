@@ -774,9 +774,9 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
     Why httpx and not crawl4ai/Playwright: the validation only needs HTTP-
     level cookie behaviour, and httpx is faster, simpler, and avoids
     Playwright cookie-injection quirks. The actual crawl that consumes
-    these validated cookies runs through crawl4ai with native
-    ``BrowserConfig.cookies`` — see
-    ``knowledge_ingest.crawl4ai_client._build_browser_config_with_cookies``.
+    these validated cookies runs through crawl4ai's declarative
+    ``add_cookies`` hook — see
+    ``knowledge_ingest.crawl4ai_client._build_cookie_hooks``.
 
     SSRF + identity guards mirror ``/ingest/v1/crawl/preview``:
     - :func:`validate_url_pinned` resolves DNS + rejects private/loopback IPs.

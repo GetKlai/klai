@@ -51,6 +51,19 @@ def _rate_limited_page(url: str) -> dict[str, Any]:
     }
 
 
+def _opaque_failure_page(url: str) -> dict[str, Any]:
+    return {
+        "url": url,
+        "success": False,
+        "status_code": 500,
+        "error_message": "Internal Server Error",
+        "html": "",
+        "markdown": "",
+        "links": {"internal": []},
+        "media": {},
+    }
+
+
 def _ok_page(url: str) -> dict[str, Any]:
     return {
         "url": url,
@@ -122,7 +135,7 @@ async def test_circuit_breaker_slowdown_retries_skipped_urls_at_a_lower_rate(
             # SLOWDOWN on an opaque-cause failure — no genuine 429 was ever
             # observed, only a high failure rate.
             return ChunkedFetchResult(
-                raw_results=[_rate_limited_page(urls[0])],
+                raw_results=[_opaque_failure_page(urls[0])],
                 not_attempted=urls[1:],
                 stopped_early=True,
                 stop_trigger_reason_code=FetchReasonCode.RATE_LIMITED.value,
@@ -175,7 +188,7 @@ async def test_circuit_breaker_slowdown_gives_up_after_max_consecutive_halvings(
     ) -> ChunkedFetchResult:
         calls.append({"urls": list(urls), "rate_limit": rate_limit})
         return ChunkedFetchResult(
-            raw_results=[_rate_limited_page(urls[0])],
+            raw_results=[_opaque_failure_page(urls[0])],
             not_attempted=urls[1:],
             stopped_early=True,
             stop_trigger_reason_code=FetchReasonCode.RATE_LIMITED.value,
@@ -230,7 +243,8 @@ async def test_a_batch_flagged_by_both_real_rate_limit_and_breaker_slowdown_halv
         *, urls: list[str], rate_limit: float | None, **_kwargs: Any
     ) -> ChunkedFetchResult:
         calls.append({"urls": list(urls), "rate_limit": rate_limit})
-        if len(calls) == 1:
+        # The genuine 429 earns one stealth retry first, which sees the same.
+        if len(calls) <= 2:
             # Simulates a chunk that is simultaneously a genuine 429 AND
             # crossed the breaker's slowdown ratio in the same evaluation —
             # ChunkedFetchResult only ever carries ONE stop signal.
@@ -251,10 +265,10 @@ async def test_a_batch_flagged_by_both_real_rate_limit_and_breaker_slowdown_halv
         rate_limit=2.0,
     )
 
-    assert len(calls) == 2
+    assert len(calls) == 3
     # Halved exactly ONCE: 2.0 -> 1.0, not 2.0 -> 0.5 (which would be two
     # halvings collapsed into a single batch transition).
-    assert calls[0]["rate_limit"] == 2.0
-    assert calls[1]["rate_limit"] == pytest.approx(1.0)
+    assert calls[0]["rate_limit"] == calls[1]["rate_limit"] == 2.0
+    assert calls[2]["rate_limit"] == pytest.approx(1.0)
     # Exactly one cooldown sleep for the one halving that happened.
     assert slowdown_sleeps == [settings.crawl_rate_limit_slowdown_cooldown_seconds]

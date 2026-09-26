@@ -116,7 +116,8 @@ async def test_rate_limit_stop_retries_skipped_urls_at_a_lower_rate_on_the_next_
         *, urls: list[str], rate_limit: float | None, **_kwargs: Any
     ) -> ChunkedFetchResult:
         calls.append({"urls": list(urls), "rate_limit": rate_limit})
-        if len(calls) == 1:
+        # The plain batch and the stealth retry it earns are both limited.
+        if len(calls) <= 2:
             return ChunkedFetchResult(
                 raw_results=[_rate_limited_page(urls[0])],
                 not_attempted=urls[1:],
@@ -133,18 +134,22 @@ async def test_rate_limit_stop_retries_skipped_urls_at_a_lower_rate_on_the_next_
         rate_limit=2.0,
     )
 
-    assert len(calls) == 2, "the skipped URLs must be retried in a later batch, not abandoned"
-    assert calls[0]["urls"] == [
-        "https://example.com/a",
-        "https://example.com/b",
-        "https://example.com/c",
-    ]
-    assert calls[0]["rate_limit"] == 2.0
-    # The second batch is exactly the URLs skipped by the first — never
-    # abandoned, and demonstrably paced slower than the original rate.
-    assert calls[1]["urls"] == ["https://example.com/b", "https://example.com/c"]
-    assert calls[1]["rate_limit"] < calls[0]["rate_limit"]
-    assert calls[1]["rate_limit"] == pytest.approx(1.0)
+    assert len(calls) == 3, "the skipped URLs must be retried in a later batch, not abandoned"
+    assert (
+        calls[0]["urls"]
+        == calls[1]["urls"]
+        == [
+            "https://example.com/a",
+            "https://example.com/b",
+            "https://example.com/c",
+        ]
+    )
+    assert calls[0]["rate_limit"] == calls[1]["rate_limit"] == 2.0
+    # The next batch is exactly the URLs skipped by the stealth retry —
+    # never abandoned, and demonstrably paced slower than the original rate.
+    assert calls[2]["urls"] == ["https://example.com/b", "https://example.com/c"]
+    assert calls[2]["rate_limit"] < calls[0]["rate_limit"]
+    assert calls[2]["rate_limit"] == pytest.approx(1.0)
 
     # A short, explicit cooldown happened before resuming — not immediate.
     assert slowdown_sleeps == [settings.crawl_rate_limit_slowdown_cooldown_seconds]
@@ -197,8 +202,9 @@ async def test_rate_limit_stop_gives_up_after_max_consecutive_slowdowns(
         rate_limit=2.0,
     )
 
-    # 1 (initial) + _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS retries, then give up.
-    assert len(calls) == crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS + 1
+    # 1 (initial) + 1 stealth retry + _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS
+    # retries, then give up.
+    assert len(calls) == crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS + 2
     rate_limits = [c["rate_limit"] for c in calls]
     assert rate_limits == sorted(rate_limits, reverse=True), "rate must monotonically decrease"
     assert rate_limits[0] == 2.0
@@ -222,8 +228,8 @@ async def test_blocked_anti_bot_stops_immediately_without_any_slowdown_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """BLOCKED_ANTI_BOT is not a pacing problem — no rate_limit reduction
-    is worth trying, so the crawl must stop after the batch that saw it,
-    exactly like before Deel B."""
+    is worth trying, so once the stealth retry it earns is blocked too, the
+    crawl must stop, exactly like before Deel B."""
     urls = [
         "https://example.com/a",
         "https://example.com/b",
@@ -253,8 +259,9 @@ async def test_blocked_anti_bot_stops_immediately_without_any_slowdown_retry(
         rate_limit=2.0,
     )
 
-    assert len(calls) == 1, "an anti-bot block must not trigger any slowdown retry"
-    assert calls[0]["rate_limit"] == 2.0
+    assert len(calls) == 2, "one stealth retry, then no slowdown retry"
+    assert calls[0]["urls"] == calls[1]["urls"] == urls
+    assert calls[0]["rate_limit"] == calls[1]["rate_limit"] == 2.0
     assert slowdown_sleeps == []
 
     by_url = {o["url"]: o["reason_code"] for o in outcomes}
