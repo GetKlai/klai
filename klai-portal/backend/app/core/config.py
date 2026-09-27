@@ -297,10 +297,15 @@ class Settings(BaseSettings):
     extraction_model: str = "klai-fast"
     synthesis_model: str = "klai-primary"
     feedback_triage_model: str = "klai-fast"
-    # SPEC-CHAT-QUALITY-LOOP-001 REQ-2: klai-medium, not klai-fast — same
-    # reason RAGAS faithfulness moved off klai-fast (Mistral Small truncates
-    # multi-field structured JSON). Tier-named, no role-specific alias.
-    conversation_judge_model: str = "klai-medium"
+    # SPEC-CHAT-QUALITY-LOOP-001 REQ-2: same underlying model as klai-medium
+    # (Mistral Medium 3.5, same reason RAGAS faithfulness moved off klai-fast:
+    # Mistral Small truncates multi-field structured JSON) but its own alias
+    # and budget, klai-judge (mirrors klai-ingest, #1752): the nightly batch
+    # (conversation_judge.py, librechat_quality_judge.py) used to share
+    # klai-medium's daily cap with answer_grounding_model's daytime check on
+    # every widget/internal answer, and could exhaust it before anyone was
+    # awake, failing that check with answer_grounding_call_failed.
+    conversation_judge_model: str = "klai-judge"
     # The statement-level grounding check and its repair. Deliberately not the
     # small model the answer shares its quota with: measured on 2026-09-17 the
     # small model caught 22% of answers stating something the articles do not,

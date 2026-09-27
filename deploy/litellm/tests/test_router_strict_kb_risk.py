@@ -132,6 +132,28 @@ class TestRouterIntegration:
         assert "_klai_router_meta" not in result["metadata"]
 
     @pytest.mark.asyncio
+    async def test_judge_alias_is_never_rerouted(self):
+        """klai-judge carries the nightly/batch quality judging on its own
+        budget; every routing signal the router knows must leave it where it
+        is, same as klai-ingest."""
+        router = _load_router()
+        hook = router.TokenRouter()
+        data = {
+            "model": "klai-judge",
+            "user": "someone",
+            "messages": [
+                {"role": "tool", "content": "result"},
+                {"role": "user", "content": "https://a.example https://b.example https://c.example " * 200},
+            ],
+            "metadata": {"_klai_kb_meta": _kb_meta(multi_question=True)},
+        }
+
+        result = await hook.async_pre_call_hook(MagicMock(), MagicMock(), data, "completion")
+
+        assert result["model"] == "klai-judge"
+        assert "_klai_router_meta" not in result["metadata"]
+
+    @pytest.mark.asyncio
     async def test_strict_risk_routes_to_klai_medium(self):
         router = _load_router()
         hook = router.TokenRouter()

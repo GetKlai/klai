@@ -291,6 +291,10 @@ async def test_finished_conversation_is_judged_and_upserted():
     assert result == {"org_count": 1, "judged_count": 1}
     # Model comes from settings; the user prompt carries transcript + signals.
     assert captured["model"] == settings.conversation_judge_model
+    # Pinned: the nightly batch must call its own alias (klai-judge, #1752's
+    # klai-ingest split applied to the judge batch), never klai-medium's
+    # shared budget again.
+    assert settings.conversation_judge_model == "klai-judge"
     prompt_payload = json.loads(captured["user"])
     assert prompt_payload["signals"] == {
         "explicit_rating": "thumbsUp",

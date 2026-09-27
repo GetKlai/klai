@@ -154,6 +154,51 @@ model_list:
     tpm: 900000
 
 
+  # Judge: Mistral Medium 3.5 — nightly/batch judging only (webchat judge
+  # conversation_judge.py, LibreChat variant librechat_quality_judge.py,
+  # support-case analysis support_case_analysis.py), settings.
+  # conversation_judge_model. Split off klai-medium on 2026-09-27 (mirrors
+  # klai-ingest, #1752): the nightly batch (01:00-06:00 UTC,
+  # conversation_judge_window_start_hour/_end_hour) used to share klai-
+  # medium's $8/day cap with the daytime answer_grounding_model check that
+  # runs on every widget/internal answer, and could spend the whole cap
+  # before anyone was awake, failing that check with
+  # answer_grounding_call_failed. Same deployments/keys/pricing/rpm/tpm as
+  # klai-medium, its own budget only.
+  # Budget: no measured $/day figure for this batch exists in this file or
+  # docs/specs/SPEC-RAG-ANSWER-JUDGES-001/evolutie.md — only its shape
+  # (conversation_judge.py: 50 conversations per tenant per 30-minute pass,
+  # transcripts capped at ~15k tokens). 4 per deployment, half of klai-
+  # medium's cap, so a runaway pass (a retry loop, or an unbounded backlog)
+  # stops well short of a full day's spend without needing that measurement
+  # first; raise it once a real $/day figure is measured.
+  - model_name: klai-judge
+    litellm_params:
+      model: mistral/mistral-medium-3.5
+      api_key: os.environ/MISTRAL_API_KEY_2
+      order: 2
+      input_cost_per_token: 1.5e-06
+      cache_read_input_token_cost: 1.5e-07
+      output_cost_per_token: 7.5e-06
+      max_budget: 4
+      budget_duration: 1d
+    rpm: 1800
+    tpm: 900000
+
+  - model_name: klai-judge
+    litellm_params:
+      model: mistral/mistral-medium-3.5
+      api_key: os.environ/MISTRAL_API_KEY
+      order: 1
+      input_cost_per_token: 1.5e-06
+      cache_read_input_token_cost: 1.5e-07
+      output_cost_per_token: 7.5e-06
+      max_budget: 4
+      budget_duration: 1d
+    rpm: 1800
+    tpm: 900000
+
+
   # Ingest: knowledge-ingest's background LLM work (enrichment, Graphiti
   # extraction, taxonomy classification and labelling, RAG-eval judge) on
   # mistral-vibe-cli-fast with the Klai organisation's Vibe-scoped key, which
@@ -216,8 +261,9 @@ router_settings:
   # on both input and output. Nothing falls back to Medium: that fallback served
   # Small-intended load at ~10x the input price from 2026-09-09. klai-fast also
   # carries user traffic (custom_router sends web-search and long turns there),
-  # so it keeps a fallback. klai-ingest has no entry on purpose: bulk
-  # background work waits for its own key instead of moving to another one.
+  # so it keeps a fallback. klai-ingest and klai-judge have no entry on
+  # purpose: bulk/batch background work waits for its own key instead of
+  # moving to another one.
   fallbacks: [{"klai-primary": ["klai-large"]}, {"klai-fast": ["klai-large"]}]
   optional_pre_call_checks:
     - enforce_model_rate_limits  # Queue requests when model RPM/TPM is hit
