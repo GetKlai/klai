@@ -36,6 +36,12 @@ logger = structlog.get_logger()
 # false-positive pruning.
 STALLED_WORKER_TIMEOUT_SECONDS = 120.0
 
+# The unique index procrastinate's own ``procrastinate_retry_job_v2`` UPDATE
+# can violate: a newer job already sits in ``todo`` with the same
+# ``queueing_lock`` as the zombie being retried. That newer job already
+# covers the work, so the zombie gets finished instead of retried.
+QUEUEING_LOCK_UNIQUE_CONSTRAINT = "procrastinate_jobs_queueing_lock_idx_v1"
+
 
 async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
     """Reset jobs orphaned by dead workers back to ``todo``.
@@ -46,6 +52,9 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
 
     Returns counts for observability/tests.
     """
+    from procrastinate.exceptions import UniqueViolation
+    from procrastinate.jobs import Status
+
     jobs = list(
         await proc_app.job_manager.get_stalled_jobs(
             seconds_since_heartbeat=STALLED_WORKER_TIMEOUT_SECONDS
@@ -62,6 +71,25 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
         try:
             await proc_app.job_manager.retry_job_by_id_async(job_id=job_id, retry_at=retry_at)
             retried += 1
+        except UniqueViolation as exc:
+            if exc.constraint_name != QUEUEING_LOCK_UNIQUE_CONSTRAINT:
+                logger.exception(
+                    "procrastinate_zombie_retry_failed",
+                    job_id=job_id,
+                    queue=job.queue,
+                    task=job.task_name,
+                )
+                continue
+            await proc_app.job_manager.finish_job_by_id_async(
+                job_id=job_id, status=Status.ABORTED, delete_job=False
+            )
+            logger.info(
+                "zombie_superseded_by_queued_job",
+                job_id=job_id,
+                queue=job.queue,
+                task=job.task_name,
+                queueing_lock=exc.queueing_lock,
+            )
         except Exception:
             logger.exception(
                 "procrastinate_zombie_retry_failed",

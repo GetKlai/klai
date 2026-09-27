@@ -64,10 +64,12 @@ def _swap_in_real_procrastinate() -> None:
     sys.modules.pop("procrastinate", None)
     sys.modules.pop("procrastinate.exceptions", None)
     sys.modules.pop("procrastinate.testing", None)
+    sys.modules.pop("procrastinate.jobs", None)
     # Force the real import now; the per-file guards in test_*.py modules
     # will skip on the next pytest pass because the entry is populated.
     import procrastinate
     import procrastinate.exceptions
+    import procrastinate.jobs
     import procrastinate.testing  # noqa: F401
 
 
