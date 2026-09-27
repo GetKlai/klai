@@ -342,6 +342,30 @@
       matchUpdateTypes: ['major'],
       automerge: false,
     },
+    {
+      description:
+        'Majors of the data stores, the CI runner OS and the CUDA base wait on \
+        the Dependency Dashboard instead of opening a PR (decision \
+        2026-09-27). Each is a migration rather than a version bump (a \
+        Postgres major alone needs a dump and restore), the current lines \
+        still get security patches, and an open \
+        PR nobody will merge only trains people to skip Renovate. Tick one \
+        on the dashboard when there is a reason to move.',
+      matchUpdateTypes: ['major'],
+      matchPackageNames: [
+        'mongo',
+        'postgres',
+        'redis',
+        'rabbitmq',
+        'pgvector/pgvector',
+        'getmeili/meilisearch',
+        'qdrant/qdrant',
+        'falkordb/falkordb',
+        'ubuntu',
+        'nvidia/cuda',
+      ],
+      dependencyDashboardApproval: true,
+    },
 
     // ---------------------------------------------------------------------
     // Version ceilings for upgrades that are BLOCKED, not merely unreviewed.
@@ -419,12 +443,16 @@
         'Python base-image minors are a runtime upgrade of every service at \
         once (3.11/3.12 -> 3.13 arrived inside the Docker images group on \
         2026-09-25 and broke two image scans). Their own group, merged by a \
-        person; patches stay in the Docker images group.',
+        person; patches stay in the Docker images group. Parked on the \
+        Dependency Dashboard (decision 2026-09-27): no PR until someone ticks \
+        it there, because the move to 3.13 is a tested upgrade of its own, \
+        not a PR that waits for review.',
       matchDatasources: ['docker'],
       matchPackageNames: ['python'],
       matchUpdateTypes: ['minor', 'major'],
       groupName: 'Python base image',
       automerge: false,
+      dependencyDashboardApproval: true,
     },
     {
       description:
