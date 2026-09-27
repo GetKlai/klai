@@ -7,10 +7,9 @@ model_list:
   # crossed budget" (HTTP 500 at the proxy), which the
   # litellm_budget_exhausted alert pages on. klai-primary then falls back to
   # klai-large; the other aliases have no fallback.
-  # Numbers, per deployment per day: normal Small spend was ~$5-12/day, mostly
-  # klai-fast (background ingest, which moved to klai-ingest on 2026-09-27;
-  # klai-fast's 25 predates that move), so klai-fast 25 and klai-primary 10 (chat,
-  # a few calls per hour). Large is ~$0-2/day and also absorbs klai-primary's
+  # Numbers, per deployment per day: Small was ~$5-12/day while background
+  # ingest ran on klai-fast; ingest moved to klai-ingest on 2026-09-27, so
+  # klai-fast 10 and klai-primary 10 (chat and portal utility calls). Large is ~$0-2/day and also absorbs klai-primary's
   # fallback: 10. Medium should only serve RAGAS faithfulness, answer
   # grounding, judges and support analysis (~$5/day): 8, tight on purpose so
   # a routing mistake that sends bulk traffic to Medium stops within a day.
@@ -39,13 +38,14 @@ model_list:
       output_cost_per_token: 6.0e-07
       max_budget: 10
       budget_duration: 1d
-    # MISTRAL_API_KEY_2 limits from Mistral's x-ratelimit headers on
-    # 2026-09-25: small 1000 RPM / 500k TPM (split between klai-primary and
-    # klai-fast), medium 2000 / 1M, large 30 / 800k. Budgets are 90% of that.
-    # Small is split towards klai-fast (background ingest, measured peaks of
-    # ~237k TPM on 2026-09-26) over klai-primary (chat, a few calls per hour).
-    rpm: 50
-    tpm: 100000
+    # Both organisations' limits from Mistral's x-ratelimit headers
+    # (MISTRAL_API_KEY_2 on 2026-09-25, MISTRAL_API_KEY on 2026-09-27, equal):
+    # small 1000 RPM / 500k TPM, medium 2000 / 1M, large 30 / 800k. rpm/tpm
+    # here are 90% of that. Small is one upstream limit shared by klai-primary
+    # and klai-fast, split evenly now that background ingest runs on
+    # klai-ingest.
+    rpm: 450
+    tpm: 225000
 
   - model_name: klai-primary
     litellm_params:
@@ -60,11 +60,8 @@ model_list:
       output_cost_per_token: 6.0e-07
       max_budget: 10
       budget_duration: 1d
-    # Mistral headers measured in prod on 2026-05-26:
-    # mistral-small-2603 = 100 RPM / 100k TPM. klai-primary and klai-fast
-    # share that same upstream model, so split the budget between aliases.
-    rpm: 45
-    tpm: 45000
+    rpm: 450
+    tpm: 225000
 
 
   # Fast: Mistral Small — bypasses custom_router.py routing
@@ -77,10 +74,10 @@ model_list:
       input_cost_per_token: 1.5e-07
       cache_read_input_token_cost: 1.5e-08
       output_cost_per_token: 6.0e-07
-      max_budget: 25
+      max_budget: 10
       budget_duration: 1d
-    rpm: 400
-    tpm: 350000
+    rpm: 450
+    tpm: 225000
 
   - model_name: klai-fast
     litellm_params:
@@ -90,10 +87,10 @@ model_list:
       input_cost_per_token: 1.5e-07
       cache_read_input_token_cost: 1.5e-08
       output_cost_per_token: 6.0e-07
-      max_budget: 25
+      max_budget: 10
       budget_duration: 1d
-    rpm: 45
-    tpm: 45000
+    rpm: 450
+    tpm: 225000
 
 
   # Large: Mistral Large — agentic / tool use flows
@@ -121,10 +118,8 @@ model_list:
       output_cost_per_token: 1.5e-06
       max_budget: 10
       budget_duration: 1d
-    # Mistral headers measured in prod on 2026-05-26:
-    # mistral-large-2512 = 15 RPM / 400k TPM.
-    rpm: 13
-    tpm: 360000
+    rpm: 27
+    tpm: 720000
 
 
   # Medium: Mistral Medium 3.5 — middle-tier between klai-fast and klai-large.
@@ -155,16 +150,14 @@ model_list:
       output_cost_per_token: 7.5e-06
       max_budget: 8
       budget_duration: 1d
-    # Mistral headers measured in prod on 2026-05-26:
-    # mistral-medium-3.5 = 1000 RPM / 500k TPM.
-    rpm: 900
-    tpm: 450000
+    rpm: 1800
+    tpm: 900000
 
 
   # Ingest: knowledge-ingest's background LLM work (enrichment, Graphiti
   # extraction, taxonomy classification and labelling, RAG-eval judge) on
-  # mistral-vibe-cli-fast with the second Mistral organisation's Vibe-scoped
-  # key. One deployment and deliberately no entry in router fallbacks: when
+  # mistral-vibe-cli-fast with the Klai organisation's Vibe-scoped key, which
+  # draws on that plan's Vibe allowance rather than its API allowance. One deployment and deliberately no entry in router fallbacks: when
   # this key is full (402) or its budget is spent, ingest fails and retries
   # later instead of spilling onto the chat keys. Interactive calls
   # knowledge-ingest makes while a user waits stay on klai-fast.
@@ -180,7 +173,7 @@ model_list:
   - model_name: klai-ingest
     litellm_params:
       model: mistral/mistral-vibe-cli-fast
-      api_key: os.environ/MISTRAL_VIBE_KEY_2
+      api_key: os.environ/MISTRAL_VIBE_KEY
       order: 1
       input_cost_per_token: 1.0e-07
       cache_read_input_token_cost: 1.0e-08
