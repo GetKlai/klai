@@ -1,4 +1,11 @@
-"""Shared client-side rate limiter for every LiteLLM ``klai-fast`` call.
+"""Shared client-side rate limiter for every LiteLLM chat call from knowledge-ingest.
+
+Since 2026-09-27 the background work (enrichment, Graphiti, taxonomy,
+labelling, RAG eval) runs on the ``klai-ingest`` alias, which has its own key
+and a 900 rpm / 450k tpm budget; only the few calls a user waits on stay on
+``klai-fast`` (``settings.interactive_llm_model``). The limiter's name, its
+``LITELLM_KLAI_FAST_*`` settings and the 0.6 rps default date from the 45 rpm
+``klai-fast`` budget described below and still pace all of these calls.
 
 Why this exists
 ---------------
@@ -64,11 +71,11 @@ _shared_limiter: TokenBucketLimiter | None = None
 
 
 def shared_klai_fast_limiter() -> TokenBucketLimiter:
-    """Process-wide limiter for ALL klai-fast LiteLLM calls (lazy singleton).
+    """Process-wide limiter for ALL LiteLLM chat calls from this service (lazy singleton).
 
     Shared across enrichment, Graphiti, taxonomy, selector-AI, labelers and
-    the RAGAS judge so their combined rate stays under the 45 rpm alias
-    budget. Default 0.6 rps = 36 rpm, leaving headroom for retries.
+    the RAGAS judge so their combined rate stays paced. Default 0.6 rps =
+    36 rpm, sized for the former 45 rpm klai-fast budget (see module docstring).
     """
     global _shared_limiter
     if _shared_limiter is None:
@@ -149,8 +156,10 @@ def with_feature_tag(payload: dict, *, tag: str) -> dict:
 def add_no_fallback(payload: dict, *, tag: str) -> dict:
     """Return a chat-completions payload with ``fallbacks: []`` set, tagged with ``tag``.
 
-    Use for every klai-fast call made by background ingest work (graph
-    extraction, enrichment, taxonomy, labeling, selector-AI, RAG eval). Chat
+    Use for every chat call made by this service (graph extraction,
+    enrichment, taxonomy, labeling, selector-AI, RAG eval). klai-ingest has
+    no fallback entry, so there it is a guard against one being added; on
+    the interactive klai-fast calls it keeps them off klai-large. Chat
     traffic (portal-api / LibreChat's klai-primary and klai-fast) must keep
     the global fallback, so this is applied per-request here, not in
     ``deploy/litellm/config.yaml``.

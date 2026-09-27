@@ -1,7 +1,14 @@
 """
 Enforces the "move to the next Mistral Pro organisation only when the
 current one is FULL" rule across every klai-* Mistral alias (klai-primary,
-klai-fast, klai-medium, klai-large).
+klai-fast, klai-medium, klai-large, klai-ingest).
+
+FULL is a property of an account (the deployment's API key), not of an
+`order` number: klai-ingest's only deployment is `order: 1` on a different
+key than the chat aliases' `order: 1`, so a 402 on one must neither move the
+chat aliases off the Klai organisation nor stop ingest when the Klai
+organisation is full. `order` still decides which non-FULL account an alias
+uses first.
 
 Mistral signals FULL with HTTP 402 ("Workspace/organisation monthly
 spending limit reached"). Being busy is not full: a 429 (upstream rate
@@ -43,9 +50,9 @@ test suite built on that patch would never notice this hook going silent):
    unhealthy), this returns an EMPTY list rather than falling through to a
    higher order: litellm's own "no deployment" path (a bounded
    RouterRateLimitError) is the correct outcome here, not a silent
-   FULL-unverified promotion. Also builds self._known_deployment_orders
-   (deployment id -> order) from whatever it sees, since the failure hook
-   below needs it and does not otherwise get `order` on its kwargs.
+   FULL-unverified promotion. Also builds self._known_deployment_accounts
+   (deployment id -> account) from whatever it sees, since the failure hook
+   below needs it and does not otherwise get the deployment's key or order.
    Net effect:
    - Healthy: unaffected -- order 1 was already the only eligible order.
    - Persistent 429 / rpm-budget exhaustion / any non-402 failure on order
@@ -66,11 +73,10 @@ test suite built on that patch would never notice this hook going silent):
    marking acts on -- never an attempt count or a target_order guess. It
    does NOT carry `litellm_params["order"]` (empirically confirmed absent
    here, unlike in `async_filter_deployments`), only `model_info["id"]`, so
-   the failing order is looked up via self._known_deployment_orders built
-   in point 1 -- exactly the fix for "determine the failed order from the
-   deployment that was actually called (model_info id -> order)", not
-   arithmetic on `target_order`. Marks that order FULL only when
-   `exception.status_code == 402`.
+   the failing account is looked up via self._known_deployment_accounts
+   built in point 1 -- determined from the deployment that was actually
+   called (model_info id -> account), not arithmetic on `target_order`.
+   Marks that account FULL only when `exception.status_code == 402`.
    Registration: this fires correctly from a plain
    `litellm.logging_callback_manager.add_litellm_callback(hook)` -- the
    same call config.yaml's `litellm_settings.callbacks` list triggers via
@@ -131,26 +137,28 @@ class KlaiMistralPoolHook(CustomLogger):
 
     def __init__(self) -> None:
         super().__init__()
-        self._full_until: dict[int, float] = {}
-        self._known_orders: dict[str, set[int]] = {}
-        self._known_deployment_orders: dict[str, int] = {}
+        # Keyed by account (the resolved API key the router already holds in
+        # this process); never logged.
+        self._full_until: dict[str, float] = {}
+        self._known_orders: dict[str, dict[int, str]] = {}
+        self._known_deployment_accounts: dict[str, str] = {}
 
     def reset(self) -> None:
         """Test helper: clear all learned/FULL state."""
         self._full_until.clear()
         self._known_orders.clear()
-        self._known_deployment_orders.clear()
+        self._known_deployment_accounts.clear()
 
-    def _is_full(self, order: int) -> bool:
-        full_until = self._full_until.get(order)
+    def _is_full(self, account: str) -> bool:
+        full_until = self._full_until.get(account)
         return full_until is not None and time.monotonic() < full_until
 
-    def _mark_full(self, order: int) -> None:
-        self._full_until[order] = time.monotonic() + BENCH_SECONDS
+    def _mark_full(self, account: str) -> None:
+        self._full_until[account] = time.monotonic() + BENCH_SECONDS
 
-    def _lowest_eligible_order(self, orders: set[int]) -> int | None:
+    def _lowest_eligible_order(self, orders: dict[int, str]) -> int | None:
         for order in sorted(orders):
-            if not self._is_full(order):
+            if not self._is_full(orders[order]):
                 return order
         return None
 
@@ -165,22 +173,23 @@ class KlaiMistralPoolHook(CustomLogger):
         if isinstance(healthy_deployments, dict):
             return healthy_deployments
 
-        present_orders: set[int] = set()
+        present_orders: dict[int, str] = {}
         for deployment in healthy_deployments:
             litellm_params = deployment.get("litellm_params") or {}
             order = litellm_params.get("order")
             if order is None:
                 continue
-            present_orders.add(order)
+            account = str(litellm_params.get("api_key"))
+            present_orders[order] = account
             deployment_id = (deployment.get("model_info") or {}).get("id")
             if deployment_id is not None:
-                self._known_deployment_orders[deployment_id] = order
+                self._known_deployment_accounts[deployment_id] = account
 
-        known = self._known_orders.setdefault(model, set())
+        known = self._known_orders.setdefault(model, {})
         if not present_orders and not known:
             # Not an ordered Mistral alias (e.g. klai-bge-m3): leave untouched.
             return healthy_deployments
-        known |= present_orders
+        known.update(present_orders)
 
         eligible_order = self._lowest_eligible_order(known)
         if eligible_order is None:
@@ -198,10 +207,10 @@ class KlaiMistralPoolHook(CustomLogger):
         if getattr(exception, "status_code", None) != 402:
             return
         deployment_id = ((kwargs.get("litellm_params") or {}).get("model_info") or {}).get("id")
-        order = self._known_deployment_orders.get(deployment_id)
-        if order is None:
+        account = self._known_deployment_accounts.get(deployment_id)
+        if account is None:
             return
-        self._mark_full(order)
+        self._mark_full(account)
 
     async def log_success_fallback_event(self, original_model_group, kwargs, original_exception):
         # LiteLLM 1.96.2 logs a spent deployment budget only at debug level

@@ -93,6 +93,40 @@ class TestChatCompletionsThrottleDriftGuard:
         )
 
 
+class TestBackgroundWorkUsesKlaiIngest:
+    """Background LLM work runs on klai-ingest (its own key, no fallback).
+
+    klai-fast may be named in exactly one place: ``interactive_llm_model``,
+    the model for the few calls a user waits on. Any other ``"klai-fast"``
+    literal is a background caller drifting back onto the chat keys.
+    """
+
+    def test_klai_fast_is_named_only_by_the_interactive_setting(self):
+        package_root = Path(__file__).resolve().parent.parent / "knowledge_ingest"
+        allowed = 'interactive_llm_model: str = "klai-fast"'
+        offenders = [
+            f"{path.relative_to(package_root)}:{lineno}"
+            for path in sorted(package_root.rglob("*.py"))
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if ('"klai-fast"' in line or "'klai-fast'" in line) and line.strip() != allowed
+        ]
+
+        assert not offenders, f"Background LLM callers must use klai-ingest: {offenders}"
+
+    def test_background_model_settings_default_to_klai_ingest(self, monkeypatch):
+        from knowledge_ingest.config import Settings
+
+        monkeypatch.setenv("KNOWLEDGE_INGEST_SECRET", "test-secret")
+        settings = Settings(_env_file=None)
+
+        assert settings.enrichment_model == "klai-ingest"
+        assert settings.graphiti_llm_model == "klai-ingest"
+        assert settings.taxonomy_classification_model == "klai-ingest"
+        assert settings.rag_eval_judge_model == "klai-ingest"
+        assert settings.rag_eval_faithfulness_model == "klai-medium"
+        assert settings.interactive_llm_model == "klai-fast"
+
+
 class TestNoMediumFallbackContract:
     """Regression for the September 2026 klai-medium-escalation incident.
 

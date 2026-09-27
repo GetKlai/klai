@@ -266,7 +266,7 @@ class TestDescriptionGenerationInV2Bootstrap:
             submitted_proposals.append(proposal)
 
         # generate_node_description returns a non-empty description string
-        async def _mock_description(name, parent_name, sample_titles):
+        async def _mock_description(name, parent_name, sample_titles, model=None):
             return f"Description for {name}"
 
         with (
@@ -336,7 +336,7 @@ class TestDescriptionGenerationInV2Bootstrap:
 
         desc_call_count = {"n": 0}
 
-        async def _failing_description(name, parent_name, sample_titles):
+        async def _failing_description(name, parent_name, sample_titles, model=None):
             # First call fails; subsequent calls succeed
             if desc_call_count["n"] == 0:
                 desc_call_count["n"] += 1

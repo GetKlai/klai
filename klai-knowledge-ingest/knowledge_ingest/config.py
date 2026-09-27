@@ -333,17 +333,23 @@ class Settings(BaseSettings):
     litellm_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
     # SPEC-INGEST-LLM-THROTTLE-001 — shared client-side rate limit for every
-    # klai-fast LiteLLM call (enrichment, Graphiti, taxonomy, selector-AI,
-    # labelers, RAGAS judge). See knowledge_ingest/llm_throttle.py. Default
-    # 0.6 rps = 36 rpm, under the 45 rpm klai-fast alias budget in
-    # deploy/litellm/config.yaml, leaving headroom for retries.
+    # LiteLLM chat call this service makes (enrichment, Graphiti, taxonomy,
+    # selector-AI, labelers, RAGAS judge). See knowledge_ingest/llm_throttle.py.
+    # Default 0.6 rps = 36 rpm, sized for the 45 rpm klai-fast budget these
+    # calls shared before they moved to klai-ingest (900 rpm). The env names
+    # keep "klai_fast" so existing overrides stay valid.
     litellm_klai_fast_rps: float = 0.6
     litellm_klai_fast_burst: float = 10.0
+    # Model for the few calls made while a user waits on the response (crawl
+    # preview / auth-probe selector detection, taxonomy bootstrap proposals,
+    # the portal's /taxonomy/classify). They stay on the chat-side alias;
+    # everything else here is background work on klai-ingest.
+    interactive_llm_model: str = "klai-fast"
     enrichment_enabled: bool = True  # global kill switch
     # Seconds to wait after the last Gitea save before ingesting into the knowledge layer.
     # Prevents LLM enrichment calls on every auto-save during active editing.
     ingest_debounce_seconds: int = 180
-    enrichment_model: str = "klai-fast"
+    enrichment_model: str = "klai-ingest"
     enrichment_timeout: float = 15.0
     enrichment_max_concurrent: int = 2
     # Larger docs keep raw chunk vectors; per-chunk LLM fan-out is not viable.
@@ -378,7 +384,7 @@ class Settings(BaseSettings):
     falkordb_port: int = 6379
     graphiti_enabled: bool = True
     graph_ann_enabled: bool = False
-    graphiti_llm_model: str = "klai-fast"
+    graphiti_llm_model: str = "klai-ingest"
     graphiti_max_concurrent: int = 1  # concurrent episodes; increase with paid LLM plan
     graphiti_episode_delay: float = 10.0
     # SPEC-GRAPH-SCALE-001 REQ-1 — pre-flight graph-build cost estimator
@@ -421,7 +427,7 @@ class Settings(BaseSettings):
     portal_url: str = "http://portal-api:8000"
     # Bearer token for outbound calls to portal-api internal endpoints
     portal_internal_token: str = ""
-    taxonomy_classification_model: str = "klai-fast"
+    taxonomy_classification_model: str = "klai-ingest"
     taxonomy_classification_timeout: float = 30.0
     content_label_timeout: float = 15.0
     # Taxonomy clustering thresholds (SPEC-KB-024 R7)
@@ -515,9 +521,9 @@ class Settings(BaseSettings):
     #   Warn-on-empty at startup (fail-open: harness skips retrieval auth when absent
     #   in dev; production must set the secret via SOPS).
     # rag_eval_retrieval_timeout: seconds before a /retrieve call is declared failed (REQ-3).
-    # rag_eval_judge_timeout: seconds before a klai-fast judge call is declared failed.
+    # rag_eval_judge_timeout: seconds before a judge call is declared failed.
     # rag_eval_judge_model: LiteLLM model alias for answer generation + light RAGAS metrics
-    #   (context_precision, context_recall). Mistral Small via LiteLLM proxy.
+    #   (context_precision, context_recall). Nightly background work, so klai-ingest.
     # rag_eval_faithfulness_model: middle-tier LiteLLM alias for the Faithfulness
     #   metric. Mistral Small (klai-fast) hits its 3072-token output ceiling on
     #   RAGAS' multi-statement faithfulness JSON, leaving most rows NaN. Mistral
@@ -537,7 +543,7 @@ class Settings(BaseSettings):
     )
     rag_eval_retrieval_timeout: int = 10
     rag_eval_judge_timeout: int = 30
-    rag_eval_judge_model: str = "klai-fast"
+    rag_eval_judge_model: str = "klai-ingest"
     rag_eval_faithfulness_model: str = "klai-medium"
     rag_eval_embeddings_model: str = "klai-bge-m3"
     rag_eval_suites_dir: str = "knowledge_ingest/eval/suites"

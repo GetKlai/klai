@@ -7,8 +7,9 @@ model_list:
   # crossed budget" (HTTP 500 at the proxy), which the
   # litellm_budget_exhausted alert pages on. klai-primary then falls back to
   # klai-large; the other aliases have no fallback.
-  # Numbers, per deployment per day: normal Small spend is ~$5-12/day, mostly
-  # klai-fast (background ingest), so klai-fast 25 and klai-primary 10 (chat,
+  # Numbers, per deployment per day: normal Small spend was ~$5-12/day, mostly
+  # klai-fast (background ingest, which moved to klai-ingest on 2026-09-27;
+  # klai-fast's 25 predates that move), so klai-fast 25 and klai-primary 10 (chat,
   # a few calls per hour). Large is ~$0-2/day and also absorbs klai-primary's
   # fallback: 10. Medium should only serve RAGAS faithfulness, answer
   # grounding, judges and support analysis (~$5/day): 8, tight on purpose so
@@ -160,6 +161,36 @@ model_list:
     tpm: 450000
 
 
+  # Ingest: knowledge-ingest's background LLM work (enrichment, Graphiti
+  # extraction, taxonomy classification and labelling, RAG-eval judge) on
+  # mistral-vibe-cli-fast with the second Mistral organisation's Vibe-scoped
+  # key. One deployment and deliberately no entry in router fallbacks: when
+  # this key is full (402) or its budget is spent, ingest fails and retries
+  # later instead of spilling onto the chat keys. Interactive calls
+  # knowledge-ingest makes while a user waits stay on klai-fast.
+  # Limits from Mistral's x-ratelimit headers on 2026-09-27: 1000 RPM / 500k
+  # TPM; rpm/tpm here are 90% of that, as for the other aliases. Prices as
+  # Mistral's Vibe client (2.25.8) prices this model: $0.10 in / $0.30 out
+  # per 1M tokens, cache reads at 10% of input like the other entries.
+  # Budget: normal ingest is ~$1-3/day. knowledge-ingest paces itself at
+  # 0.6 rps (36 rpm, llm_throttle), about 52k calls/day flat out; at a
+  # typical ~2.5k input / ~250 output tokens per call a full backlog day
+  # costs ~$17. $20 lets that day finish and stops a runaway (a retry loop
+  # at the 237k TPM peak measured on klai-fast reaches it in ~14h).
+  - model_name: klai-ingest
+    litellm_params:
+      model: mistral/mistral-vibe-cli-fast
+      api_key: os.environ/MISTRAL_VIBE_KEY_2
+      order: 1
+      input_cost_per_token: 1.0e-07
+      cache_read_input_token_cost: 1.0e-08
+      output_cost_per_token: 3.0e-07
+      max_budget: 20
+      budget_duration: 1d
+    rpm: 900
+    tpm: 450000
+
+
   # Embeddings: BGE-M3 via TEI on gpu-01. Distinct model TYPE (not a
   # text-completion tier) — exposes the TEI endpoint already used by
   # knowledge-ingest through the proxy so external consumers (RAGAS
@@ -192,8 +223,8 @@ router_settings:
   # on both input and output. Nothing falls back to Medium: that fallback served
   # Small-intended load at ~10x the input price from 2026-09-09. klai-fast also
   # carries user traffic (custom_router sends web-search and long turns there),
-  # so it keeps a fallback; bulk background callers send `fallbacks: []` per
-  # request and stay on Small.
+  # so it keeps a fallback. klai-ingest has no entry on purpose: bulk
+  # background work waits for its own key instead of moving to another one.
   fallbacks: [{"klai-primary": ["klai-large"]}, {"klai-fast": ["klai-large"]}]
   optional_pre_call_checks:
     - enforce_model_rate_limits  # Queue requests when model RPM/TPM is hit

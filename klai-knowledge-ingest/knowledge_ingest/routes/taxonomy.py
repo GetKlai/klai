@@ -648,6 +648,7 @@ async def taxonomy_classify(request: Request, req: ClassifyRequest) -> ClassifyR
         title="",
         content_preview=req.text,
         taxonomy_nodes=nodes,
+        model=settings.interactive_llm_model,
     )
     node_ids = [nid for nid, _conf in matched_nodes]
     return ClassifyResponse(taxonomy_node_ids=node_ids)

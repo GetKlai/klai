@@ -55,7 +55,7 @@ async def _call_llm(prompt: str, log_event: str) -> str | None:
                 headers={"Authorization": f"Bearer {settings.litellm_api_key}"},
                 json=add_no_fallback(
                     {
-                        "model": "klai-fast",
+                        "model": settings.interactive_llm_model,
                         "messages": [{"role": "user", "content": prompt}],
                         "max_tokens": 64,
                         "temperature": 0,

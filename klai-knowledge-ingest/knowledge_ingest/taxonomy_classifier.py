@@ -1,16 +1,16 @@
 """
 Taxonomy classifier -- multi-label classification + tag suggestion for documents.
 
-Uses klai-fast with structured JSON output. One LLM call per document (not per chunk).
+Uses klai-ingest with structured JSON output. One LLM call per document (not per chunk).
 Returns (matched_nodes, suggested_tags):
   - matched_nodes: list of (node_id, confidence) tuples, sorted by confidence desc
   - suggested_tags: list of free-form tag strings
 Threshold: confidence >= 0.5, max 5 nodes, max 5 tags.
 30-second timeout; falls back to ([], []) on error without failing the ingest.
 
-Rate limiting: acquires from the process-wide shared klai-fast token bucket
+Rate limiting: acquires from the process-wide shared klai-ingest token bucket
 (knowledge_ingest.llm_throttle.shared_klai_fast_limiter) so this shares the
-same 45 rpm alias budget as every other klai-fast caller instead of pacing
+same client-side rate as every other klai-ingest caller instead of pacing
 against its own separate rate.
 """
 
@@ -57,8 +57,13 @@ async def classify_document(
     title: str,
     content_preview: str,
     taxonomy_nodes: list[TaxonomyNode],
+    *,
+    model: str | None = None,
 ) -> tuple[list[tuple[int, float]], list[str]]:
     """Classify a document into matching taxonomy nodes and suggest tags.
+
+    ``model`` defaults to ``settings.taxonomy_classification_model`` (background
+    ingest); a caller answering a waiting user passes the interactive model.
 
     Returns (matched_nodes, suggested_tags):
     - matched_nodes: list of (node_id, confidence) with confidence >= 0.5, max 5
@@ -83,7 +88,7 @@ async def classify_document(
 
     try:
         result = await asyncio.wait_for(
-            _call_litellm(user_message),
+            _call_litellm(user_message, model or settings.taxonomy_classification_model),
             timeout=settings.taxonomy_classification_timeout,
         )
     except (TimeoutError, Exception) as exc:
@@ -124,10 +129,10 @@ async def classify_document(
     return matched_nodes, suggested_tags
 
 
-async def _call_litellm(user_message: str) -> dict:
+async def _call_litellm(user_message: str, model: str) -> dict:
     """Call LiteLLM proxy for taxonomy classification.
 
-    Acquires from the shared klai-fast token bucket before calling out.
+    Acquires from the shared klai-ingest token bucket before calling out.
     """
     await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(
@@ -141,7 +146,7 @@ async def _call_litellm(user_message: str) -> dict:
             },
             json=add_no_fallback(
                 {
-                    "model": settings.taxonomy_classification_model,
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": _SYSTEM_PROMPT},
                         {"role": "user", "content": user_message},

@@ -554,7 +554,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         kf["synthesis_depth"] = req.synthesis_depth
 
     # Blind label generation (SPEC-KB-023 R1) — BEFORE taxonomy to avoid confirmation bias.
-    # Uses klai-fast, 15s timeout, returns [] on failure (non-fatal).
+    # Uses klai-ingest, 15s timeout, returns [] on failure (non-fatal).
     content_label = await generate_content_label(
         title=title,
         content_preview=indexable_content,
@@ -741,7 +741,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # truncated sentence again. Point them at the document's current key.
     #
     # Metadata only: no re-extraction, no LLM calls, nothing drawn from the
-    # shared klai-fast budget. Several versions legitimately end up sharing one
+    # shared klai-ingest budget. Several versions legitimately end up sharing one
     # name; retrieval resolves it against the CURRENT version in Qdrant.
     #
     # closed_rows carries the ACTIVE version only — that is all
