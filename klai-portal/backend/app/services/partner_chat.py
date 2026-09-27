@@ -2972,6 +2972,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             sub_queries=sub_queries,
             language=response_language,
             general_knowledge=decision.get("reason") == "general_knowledge",
+            refused=refused,
         )
         if footer_text and not profile.stream_live:
             content = f"{content.rstrip()}\n\n{footer_text}"
@@ -3395,6 +3396,17 @@ def _schedule_gap_event(
         logger.warning("partner_chat_gap_detection_failed", org_id=org_id, exc_info=True)
 
 
+def _strict_refusal(message: str, language: str | None) -> str:
+    """A Strict refusal without a model call, with the footer that names the mode.
+
+    The fixed reply skips the render step every other internal turn goes through,
+    so the footer is attached here; without it the employee could not see that
+    Strict mode, not a missing answer, is why nothing came back.
+    """
+    footer = render_answer_footer(sources=[], kb_mode="strict", chunks_injected=0, language=language, refused=True)
+    return f"{message}\n\n{footer}"
+
+
 @dataclass
 class KnowledgeTurn:
     """What retrieve_context decided for this turn besides the prompt.
@@ -3659,7 +3671,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
             # Strict with nothing to search refuses without a model call: a
             # prompt that asks the model to refuse let a non-compliant model
             # answer from general knowledge (the hook's strict_no_kb branch).
-            turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
+            turn.refusal = _strict_refusal(_no_citable_sources_message(language, suggest_open_mode=True), language)
             return [], "", [], False
         # The user's own attachment is still readable even with no KB scope to
         # search; answer as a zero-chunks Strict turn instead of refusing.
@@ -3804,7 +3816,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
             "partner_chat_internal_retrieval_failed", org_id=org_id, kb_mode=profile.kb_mode, failure=failure
         )
         if profile.kb_mode == "strict":
-            turn.refusal = strict_kb_unavailable_message(language)
+            turn.refusal = _strict_refusal(strict_kb_unavailable_message(language), language)
             return [], "", [], False
         return [], prompt([], "retrieval_failure", retrieval_failure=failure), [], False
     retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
@@ -3882,7 +3894,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
             # did for zero chunks and for a response without an evidence pack: a
             # prompt that asks the model to refuse let a non-compliant model
             # answer from general knowledge. The gap above is still recorded.
-            turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
+            turn.refusal = _strict_refusal(_no_citable_sources_message(language, suggest_open_mode=True), language)
             return [], "", [], False
         # The user's own attachment is still readable with zero KB evidence;
         # fall through to the zero_chunks prompt below instead of refusing.
@@ -4159,6 +4171,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                         sub_queries=sub_queries,
                         language=response_language,
                         general_knowledge=decision.get("reason") == "general_knowledge",
+                        refused=refused,
                     )
                     if footer_text:
                         message["content"] = f"{rendered_content.rstrip()}\n\n{footer_text}"
