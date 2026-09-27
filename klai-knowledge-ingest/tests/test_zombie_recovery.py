@@ -207,3 +207,28 @@ def test_periodic_recovery_uses_dedicated_queue_and_lock() -> None:
     assert task_config["queue"] == "maintenance"
     assert task_config["queueing_lock"] == "stalled-job-recovery"
     assert hasattr(app, "recover_stalled_jobs_periodic")
+
+
+@pytest.mark.asyncio
+async def test_failed_finish_of_superseded_zombie_does_not_stop_the_pass():
+    """A finish that raises is logged and the remaining zombies are still retried."""
+    superseded = SimpleNamespace(id=500, queue="graphiti-bulk", task_name="ingest_graphiti_episode")
+    other = SimpleNamespace(id=501, queue="enrich-bulk", task_name="enrich_document_bulk")
+    proc_app = _make_proc_app([superseded, other])
+    proc_app.job_manager.retry_job_by_id_async = AsyncMock(
+        side_effect=[
+            UniqueViolation(
+                constraint_name=QUEUEING_LOCK_UNIQUE_CONSTRAINT, queueing_lock="graphiti:a-500"
+            ),
+            None,
+        ]
+    )
+    proc_app.job_manager.finish_job_by_id_async = AsyncMock(side_effect=RuntimeError("db gone"))
+
+    with structlog.testing.capture_logs() as captured:
+        result = await recover_zombie_jobs(proc_app)
+
+    assert result == {"jobs_retried": 1}
+    assert proc_app.job_manager.retry_job_by_id_async.await_count == 2
+    failed = [e for e in captured if e.get("event") == "procrastinate_zombie_finish_failed"]
+    assert [e["job_id"] for e in failed] == [500]

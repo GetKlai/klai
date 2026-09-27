@@ -80,9 +80,19 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
                     task=job.task_name,
                 )
                 continue
-            await proc_app.job_manager.finish_job_by_id_async(
-                job_id=job_id, status=Status.ABORTED, delete_job=False
-            )
+            try:
+                await proc_app.job_manager.finish_job_by_id_async(
+                    job_id=job_id, status=Status.ABORTED, delete_job=False
+                )
+            except Exception:
+                # Keep recovering the other zombies in this pass.
+                logger.exception(
+                    "procrastinate_zombie_finish_failed",
+                    job_id=job_id,
+                    queue=job.queue,
+                    task=job.task_name,
+                )
+                continue
             logger.info(
                 "zombie_superseded_by_queued_job",
                 job_id=job_id,
