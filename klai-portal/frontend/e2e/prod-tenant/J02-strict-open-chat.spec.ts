@@ -103,9 +103,12 @@ test('J02 - Strict/Open mode reaches LiteLLM chat response without stale mode', 
 
     expect(strictPref.kb_narrow).toBe(true)
     expect(strictPref.kb_pref_version).toBeGreaterThan(openPref.kb_pref_version)
-    expect(strictText).toContain('Modus: Strict, alleen kennisbank.')
+    // A Strict refusal carries no footer on the portal-api path (a footer under a
+    // refusal is decoration, docs/architecture/chat-quality-history-and-plan.md,
+    // replay of 2026-09-25). Its Open-mode hint is what proves Strict applied.
     expect(strictText).not.toContain('Modus: Open, kennisbank met fallback.')
     expect(strictText).toMatch(/niet betrouwbaar beantwoorden|cannot answer this reliably/i)
+    expect(strictText).toMatch(/Probeer het in Open-modus|Try Open mode/i)
     expect(hasTcpExplanation(strictText), 'Strict must not answer TCP/IP from general knowledge').toBe(false)
     expect(strictText).not.toContain('**Bronnen**')
   } finally {

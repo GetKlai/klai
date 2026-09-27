@@ -317,9 +317,7 @@ async def test_strict_with_nothing_to_search_refuses_without_retrieval_or_model(
         [{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
     )
 
-    content = result["choices"][0]["message"]["content"]
-    assert content.startswith(no_citable_sources_message("nl", suggest_open_mode=True))
-    assert "- Modus: Strict, alleen kennisbank." in content
+    assert result["choices"][0]["message"]["content"] == no_citable_sources_message("nl", suggest_open_mode=True)
     assert recorder.retrieve_bodies == []
     assert recorder.model_bodies == []
 
@@ -585,7 +583,7 @@ async def test_strict_zero_chunks_converted_pdf_calls_the_model_instead_of_refus
 
 
 @pytest.mark.asyncio
-async def test_strict_zero_chunks_refuses_and_names_the_strict_mode(internal_pipeline):
+async def test_strict_zero_chunks_screenshot_word_without_attachment_still_refuses(internal_pipeline):
     from klai_chat_prompts import no_citable_sources_message
 
     recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(0), "confidence_band": "unknown"}))
@@ -596,9 +594,7 @@ async def test_strict_zero_chunks_refuses_and_names_the_strict_mode(internal_pip
         [{"role": "user", "content": "Wat staat op deze screenshot?"}],
     )
 
-    content = result["choices"][0]["message"]["content"]
-    assert content.startswith(no_citable_sources_message("nl", suggest_open_mode=True))
-    assert "- Modus: Strict, alleen kennisbank." in content
+    assert result["choices"][0]["message"]["content"] == no_citable_sources_message("nl", suggest_open_mode=True)
     assert recorder.model_bodies == []
 
 
