@@ -22,7 +22,7 @@ Er zijn **twee chatpaden** met elk hun eigen beslislogica. Ze delen alleen de zo
 
 **Twee paden is de uitzondering, niet de regel.** Het doel is één pijplijn ([plan §7](chat-quality-history-and-plan.md#7-plan-goedgekeurd-24-september-2026)). Een wijziging aan het chatpad zegt in de PR per beslissing die ze raakt: *gedeeld*, of *bewust apart, omdat …*. Geldige redenen om apart te zijn: de ingang en identiteit (teamkey tegenover anonieme bezoeker), de modi (Strict/Open tegenover support/breed), de afspraakknop tegenover de bronnenvoettekst, en het distilleren van geplakte correspondentie. De rest van de verschillen in de tabel hierboven is toevallig ontstaan en wordt samengevoegd; "het was al zo" is geen reden.
 
-Modelaliassen (`deploy/litellm/config.yaml`): `klai-primary` en `klai-fast` zijn allebei `mistral-small-2603` (`:7,29`), `klai-medium` is `mistral-medium-3.5` (`:70`), `klai-large` is `mistral-large-2512` (`:47`). Bij een quotafout vallen primary en fast terug op medium (`:114`). LiteLLM-timeout 120 s met 1 retry (`:122,125`).
+Modelaliassen (`deploy/litellm/config.yaml`): `klai-primary` en `klai-fast` zijn allebei `mistral-small-2603` (`:7,29`), `klai-medium` is `mistral-medium-3.5` (`:70`), `klai-large` is `mistral-large-2512` (`:47`). `klai-judge` is hetzelfde model als `klai-medium`, op dezelfde deployments/keys maar met een eigen, lagere daily budget, uitsluitend voor de nachtelijke/batch judges (`settings.conversation_judge_model`), zodat die batch niet meer het daggeld van de daytime `answer_grounding_model`-check kan opmaken. Bij een quotafout vallen primary en fast terug op medium (`:114`). LiteLLM-timeout 120 s met 1 retry (`:122,125`).
 
 ---
 
@@ -171,7 +171,7 @@ Ingang: `POST /partner/v1/chat/completions` (`klai-portal/backend/app/api/partne
 
 **Database**
 - `widget_messages.answer_signals` (per assistent-beurt van support-widgets): band, top_score (vóór boosts), gat-type, bronnen, broad_mode, taal, model, duidelijkheid, verdict, grounding, beslissing, aantal onbewezen uitspraken, gerepareerd, geplande vraag, zwakke bronnen. Pad A heeft hier geen tegenhanger.
-- `portal_retrieval_gaps` voor beide paden; `conversation_quality_judgments` (nachtelijke LLM-beoordeling per widgetgesprek, `klai-medium`); `telemetry.query_shadow` (retrieval-api).
+- `portal_retrieval_gaps` voor beide paden; `conversation_quality_judgments` (nachtelijke LLM-beoordeling per widgetgesprek, `klai-judge`); `telemetry.query_shadow` (retrieval-api).
 - `knowledge.rag_eval_results`: de nachtelijke RAGAS-run in knowledge-ingest. Die **genereert zijn eigen antwoord met `klai-fast`** en meet dus geen van beide chatpaden (`klai-knowledge-ingest/knowledge_ingest/eval/judge_client.py:4-20`).
 
 **Operatorscripts** in `klai-portal/backend/scripts/`: `grounding_report.py` (widgetgrounding per dag), `calibrate_confidence_bands.py` (band tegen uitkomst), `simulate_conversations.py` (gesimuleerde bezoeker), `export_librechat_messages.py`. De metingen van het logboek (herspelen met een gesimuleerde bezoeker, blind beoordeeld op de volgende beurt) draaien met gereedschap buiten de repo.
