@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import math
 import re
 import sys
@@ -35,8 +36,14 @@ _ALIAS = "klai-medium"
 _PRIMARY_ALIAS = "klai-primary"
 _KLAI_KEY = "klai-test-key"
 _KLAI2_KEY = "klai2-test-key"
-_KEY_BY_ORDER = {1: _KLAI_KEY, 2: _KLAI2_KEY}
-_TEXT_ALIASES = {"klai-primary", "klai-fast", "klai-large", "klai-medium"}
+_VIBE_KEY = "vibe-test-key"
+_KEY_BY_ENV = {
+    "os.environ/MISTRAL_API_KEY": _KLAI_KEY,
+    "os.environ/MISTRAL_API_KEY_2": _KLAI2_KEY,
+    "os.environ/MISTRAL_VIBE_KEY_2": _VIBE_KEY,
+}
+_INGEST_ALIAS = "klai-ingest"
+_TEXT_ALIASES = {"klai-primary", "klai-fast", "klai-large", "klai-medium", _INGEST_ALIAS}
 
 
 @pytest.fixture(scope="module")
@@ -80,7 +87,7 @@ def _pinned_router(real_litellm: Any, *, rpm_overrides: dict[tuple[str, int], in
     ]
     for deployment in deployments:
         order = deployment["litellm_params"]["order"]
-        deployment["litellm_params"]["api_key"] = _KEY_BY_ORDER[order]
+        deployment["litellm_params"]["api_key"] = _KEY_BY_ENV[deployment["litellm_params"]["api_key"]]
         if rpm_overrides and (deployment["model_name"], order) in rpm_overrides:
             deployment["rpm"] = rpm_overrides[(deployment["model_name"], order)]
             # Router._generate_model_id hashes litellm_params (model, api_key,
@@ -428,7 +435,7 @@ async def test_a_full_klai_account_hands_over_to_klai2(
 
     assert response.choices[0].message.content == "backup response"
     assert calls == [_KLAI_KEY, _KLAI2_KEY]
-    assert hook._is_full(1)
+    assert hook._is_full(_KLAI_KEY)
 
 
 @pytest.mark.asyncio
@@ -453,7 +460,7 @@ async def test_a_full_klai_account_is_skipped_on_the_next_request(
                 router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]),
                 timeout=15,
             )
-            assert hook._is_full(1)
+            assert hook._is_full(_KLAI_KEY)
 
             calls.clear()
             second = await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello again"}])
@@ -492,7 +499,7 @@ async def test_persistent_rate_limit_on_order1_never_reaches_order2(real_litellm
     # many times order 1's retries are exhausted.
     assert _KLAI2_KEY not in calls
     assert calls and all(key == _KLAI_KEY for key in calls)
-    assert not hook._is_full(1)
+    assert not hook._is_full(_KLAI_KEY)
 
 
 @pytest.mark.asyncio
@@ -521,7 +528,7 @@ async def test_persistent_server_error_cooldown_on_order1_never_reaches_order2(r
         router.reset()
 
     assert _KLAI2_KEY not in calls
-    assert not hook._is_full(1)
+    assert not hook._is_full(_KLAI_KEY)
 
 
 @pytest.mark.asyncio
@@ -576,11 +583,11 @@ async def test_full_account_is_re_admitted_after_bench_time(real_litellm) -> Non
                 router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]),
                 timeout=15,
             )
-            assert hook._is_full(1)
+            assert hook._is_full(_KLAI_KEY)
             order1_full = False  # simulate Mark raising the spending limit
 
             # Force the bench time to have already elapsed.
-            hook._full_until[1] = time.monotonic() - 1
+            hook._full_until[_KLAI_KEY] = time.monotonic() - 1
 
             calls.clear()
             second = await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello again"}])
@@ -589,3 +596,135 @@ async def test_full_account_is_re_admitted_after_bench_time(real_litellm) -> Non
 
     assert second.choices[0].message.content == "backup response"
     assert calls == [_KLAI_KEY]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status_code", "message"), [(402, "Workspace monthly spending limit reached"), (429, "rate limited")])
+async def test_ingest_alias_never_leaves_the_vibe_key(real_litellm, status_code: int, message: str) -> None:
+    """klai-ingest has one deployment and no fallback entry: a full (402) or
+    busy (429) Vibe key fails the request, and neither the chat keys nor
+    another alias ever see bulk ingest traffic. No per-request `fallbacks`
+    override is sent, so this holds on the config alone."""
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((_api_key_of(request), json.loads(request.content)["model"]))
+        return _error_response(request, status_code, message)
+
+    router, _hook = _pinned_router(real_litellm)
+    try:
+        with _mock_mistral_http(handler), pytest.raises(Exception):  # noqa: PT011 - 402 and 429 map to different litellm types
+            await asyncio.wait_for(
+                router.acompletion(model=_INGEST_ALIAS, messages=[{"role": "user", "content": "hello"}]),
+                timeout=15,
+            )
+    finally:
+        router.reset()
+
+    assert calls
+    assert set(calls) == {(_VIBE_KEY, "mistral-vibe-cli-fast")}
+
+
+@pytest.mark.asyncio
+async def test_a_full_vibe_key_leaves_the_chat_aliases_on_their_first_account(real_litellm) -> None:
+    """A 402 on klai-ingest's key says nothing about the Klai organisation:
+    klai-primary, whose first account shares klai-ingest's `order: 1`, must
+    stay on that account."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        api_key = _api_key_of(request)
+        calls.append(api_key)
+        if api_key == _VIBE_KEY:
+            return _error_response(request, 402, "Workspace monthly spending limit reached")
+        return _ok_response(request)
+
+    router, hook = _pinned_router(real_litellm)
+    try:
+        with _mock_mistral_http(handler):
+            with pytest.raises(Exception):  # noqa: PT011 - litellm's 402 type
+                await asyncio.wait_for(
+                    router.acompletion(model=_INGEST_ALIAS, messages=[{"role": "user", "content": "hello"}]),
+                    timeout=15,
+                )
+            for _ in range(100):
+                if hook._is_full(_VIBE_KEY):
+                    break
+                await asyncio.sleep(0.02)
+            assert hook._is_full(_VIBE_KEY)
+
+            calls.clear()
+            await router.acompletion(model=_PRIMARY_ALIAS, messages=[{"role": "user", "content": "hello again"}])
+    finally:
+        router.reset()
+
+    assert calls == [_KLAI_KEY]
+
+
+@pytest.mark.asyncio
+async def test_a_full_klai_account_does_not_stop_ingest(real_litellm) -> None:
+    """The reverse: the Klai organisation answering 402 moves the chat aliases
+    to their second account, and klai-ingest keeps using its own key."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        api_key = _api_key_of(request)
+        calls.append(api_key)
+        if api_key == _KLAI_KEY:
+            return _error_response(request, 402, "Workspace monthly spending limit reached")
+        return _ok_response(request)
+
+    router, hook = _pinned_router(real_litellm)
+    try:
+        with _mock_mistral_http(handler):
+            await asyncio.wait_for(
+                router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]),
+                timeout=15,
+            )
+            assert hook._is_full(_KLAI_KEY)
+
+            calls.clear()
+            response = await router.acompletion(model=_INGEST_ALIAS, messages=[{"role": "user", "content": "hello"}])
+    finally:
+        router.reset()
+
+    assert response.choices[0].message.content == "backup response"
+    assert calls == [_VIBE_KEY]
+
+
+@pytest.mark.asyncio
+async def test_a_spent_ingest_budget_fails_without_reaching_another_key(real_litellm) -> None:
+    """klai-ingest's daily budget counts from the prices pinned in config.yaml
+    (LiteLLM's bundled cost map has no mistral-vibe-cli-fast entry) and, once
+    spent, the next ingest request fails before reaching Mistral at all."""
+    config = yaml.safe_load(_CONFIG_PATH.read_text())
+    params = next(entry["litellm_params"] for entry in config["model_list"] if entry["model_name"] == _INGEST_ALIAS)
+    prompt_tokens = math.ceil(params["max_budget"] / params["input_cost_per_token"]) + 1
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        body = _ok_response(request).json()
+        body["usage"] = {"prompt_tokens": prompt_tokens, "completion_tokens": 0, "total_tokens": prompt_tokens}
+        return httpx.Response(status_code=200, request=request, json=body)
+
+    router, _hook = _pinned_router(real_litellm)
+    deployment_id = next(d["model_info"]["id"] for d in router.get_model_list() if d["model_name"] == _INGEST_ALIAS)
+    spend_key = f"deployment_spend:{deployment_id}:{params['budget_duration']}"
+    try:
+        with _mock_mistral_http(handler):
+            await router.acompletion(model=_INGEST_ALIAS, messages=[{"role": "user", "content": "hello"}])
+            for _ in range(100):
+                if await router.router_budget_logger.dual_cache.async_get_cache(spend_key):
+                    break
+                await asyncio.sleep(0.02)
+
+            with pytest.raises(ValueError, match="crossed budget"):
+                await asyncio.wait_for(
+                    router.acompletion(model=_INGEST_ALIAS, messages=[{"role": "user", "content": "hello again"}]),
+                    timeout=15,
+                )
+    finally:
+        router.reset()
+
+    assert calls == [_VIBE_KEY]

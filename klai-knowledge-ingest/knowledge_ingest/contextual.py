@@ -18,7 +18,7 @@ Two responsibilities:
    Per-document, not per-tenant: a Dutch tenant can have English vendor
    docs in their KB.
 
-2. ``generate_document_summary(text, title, language, …)`` — call klai-fast
+2. ``generate_document_summary(text, title, language, …)`` — call klai-ingest
    via the LiteLLM proxy and return a 1-2-sentence summary capped at the
    token budget. Returns an empty string on any failure — callers fall back
    to the legacy full-document prompt path (REQ-2 of SPEC-RAG-CONTEXTUAL-001).
@@ -179,7 +179,7 @@ async def generate_document_summary(
 ) -> str:
     """Return a 1-2-sentence summary of ``text``, or "" on failure.
 
-    Calls ``klai-fast`` via the LiteLLM proxy with a low-temperature prompt
+    Calls ``klai-ingest`` via the LiteLLM proxy with a low-temperature prompt
     in the requested language (auto-detected when ``language`` is None).
 
     Fail-open: any HTTP/transport/parse error logs a warning and returns
@@ -195,7 +195,7 @@ async def generate_document_summary(
 
     prompt = _build_summary_prompt(text, title, language)
     payload = {
-        "model": settings.enrichment_model,  # klai-fast
+        "model": settings.enrichment_model,  # klai-ingest
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": _SUMMARY_MAX_TOKENS,
         "temperature": 0.2,

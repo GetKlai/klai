@@ -36,6 +36,9 @@ class TestTaxonomyClassifyEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["taxonomy_node_ids"] == [5, 7]
+        # The portal waits on this call (transcript import, reanalyse), so it
+        # stays on the interactive alias instead of the bulk klai-ingest one.
+        assert mock_classify.await_args.kwargs["model"] == "klai-fast"
 
     @pytest.mark.asyncio
     async def test_classify_returns_empty_when_no_nodes(self, client):

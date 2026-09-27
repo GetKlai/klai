@@ -9,7 +9,7 @@ to a superseded artifact version, its Qdrant lookup misses, and its citation
 renders as a truncated sentence instead of a link.
 
 The rename is metadata only. It does NOT re-extract, makes no LLM calls, and
-draws nothing from the shared klai-fast rate limit that enrichment and
+draws nothing from the shared klai-ingest rate limit that enrichment and
 taxonomy compete over. Postgres already holds the mapping in
 ``graphiti_episode_ids``, with ``graphiti_episode_id`` as the legacy fallback.
 

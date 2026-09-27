@@ -119,7 +119,7 @@ def graph_episode_skip_reason(document_text: str | None) -> str | None:
 
     Skipping them is cheaper than teaching a prompt to reject them one edge at
     a time, and it is not free to get wrong in either direction: each episode
-    costs roughly 26 LLM calls out of the shared klai-fast budget, and a false
+    costs roughly 26 LLM calls out of the shared klai-ingest budget, and a false
     positive silently removes a real article from the graph.
 
     Callers must apply this themselves — ``routes/ingest.py`` for live ingest

@@ -8,9 +8,9 @@ This is a deliberate separation of concerns (SPEC-KB-023):
 
 The blind label is the raw material for clustering in SPEC-KB-024.
 
-Rate limiting: acquires from the process-wide shared klai-fast token bucket
+Rate limiting: acquires from the process-wide shared klai-ingest token bucket
 (knowledge_ingest.llm_throttle.shared_klai_fast_limiter), the same bucket
-taxonomy_classifier and every other klai-fast caller draws from, so label
+taxonomy_classifier and every other klai-ingest caller draws from, so label
 generation and taxonomy classification never combine to exceed the alias
 budget. Since labeling runs first and classification runs second, the two
 calls are naturally sequential.
@@ -86,7 +86,7 @@ async def generate_content_label(
 async def _call_litellm(user_message: str) -> dict:
     """Call LiteLLM proxy for blind content label generation.
 
-    Acquires from the shared klai-fast token bucket before calling out.
+    Acquires from the shared klai-ingest token bucket before calling out.
     """
     await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(
@@ -100,7 +100,7 @@ async def _call_litellm(user_message: str) -> dict:
             },
             json=add_no_fallback(
                 {
-                    "model": "klai-fast",
+                    "model": settings.enrichment_model,
                     "messages": [
                         {"role": "system", "content": _SYSTEM_PROMPT},
                         {"role": "user", "content": user_message},

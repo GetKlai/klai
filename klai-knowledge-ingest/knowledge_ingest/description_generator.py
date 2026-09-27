@@ -1,5 +1,5 @@
 """
-Generate short descriptions for taxonomy nodes using klai-fast.
+Generate short descriptions for taxonomy nodes using klai-ingest.
 
 Max 200 chars, 5-second timeout, empty string fallback on error.
 """
@@ -32,8 +32,13 @@ async def generate_node_description(
     node_name: str,
     parent_name: str | None,
     sample_titles: list[str],
+    *,
+    model: str | None = None,
 ) -> str:
     """Generate a short description for a taxonomy node.
+
+    ``model`` defaults to ``settings.taxonomy_classification_model`` (background
+    ingest); the synchronous bootstrap path passes the interactive model.
 
     Returns empty string on error or timeout.
     """
@@ -48,7 +53,7 @@ async def generate_node_description(
 
     try:
         result = await asyncio.wait_for(
-            _call_litellm(user_message),
+            _call_litellm(user_message, model or settings.taxonomy_classification_model),
             timeout=5.0,
         )
     except (TimeoutError, Exception) as exc:
@@ -65,7 +70,7 @@ async def generate_node_description(
     return description[:200]
 
 
-async def _call_litellm(user_message: str) -> dict:
+async def _call_litellm(user_message: str, model: str) -> dict:
     """Call LiteLLM proxy for description generation."""
     await shared_klai_fast_limiter().acquire()
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -77,7 +82,7 @@ async def _call_litellm(user_message: str) -> dict:
             },
             json=add_no_fallback(
                 {
-                    "model": settings.taxonomy_classification_model,
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": _SYSTEM_PROMPT},
                         {"role": "user", "content": user_message},

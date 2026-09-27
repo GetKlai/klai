@@ -510,6 +510,9 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
       MISTRAL_API_KEY_2: ${MISTRAL_API_KEY_2}
+      # Required: LiteLLM's mistral provider falls back to MISTRAL_API_KEY when
+      # a deployment's key is empty, which would bill klai-ingest to the chat org.
+      MISTRAL_VIBE_KEY_2: "${MISTRAL_VIBE_KEY_2:?set the Vibe-scoped key used by klai-ingest}"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       SEARXNG_API_BASE: ${SEARXNG_INSTANCE_URL}
       DISABLE_ADMIN_UI: "True"
@@ -2170,9 +2173,8 @@ services:
       # appears. Indexes are created + recall-verified per tenant by
       # `docker exec klai-core-knowledge-ingest-1 python -m scripts.verify_graph_ann`.
       GRAPH_ANN_ENABLED: "true"
-      # Mistral Small is 100 RPM / 100k TPM for our production key. Graphiti
-      # performs several sequential LLM calls per episode, while enrichment and
-      # user-facing traffic share the same klai-fast upstream budget.
+      # Graphiti performs several sequential LLM calls per episode and shares
+      # the klai-ingest alias budget with enrichment and taxonomy work.
       GRAPHITI_LLM_RPS: ${GRAPHITI_LLM_RPS:-0.5}
       GRAPHITI_EPISODE_DELAY: ${GRAPHITI_EPISODE_DELAY:-10.0}
       PORTAL_URL: http://portal-api:8010

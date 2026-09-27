@@ -1454,7 +1454,7 @@ class TestConsolidate:
         ]
 
         # Mock generate_node_description to return predictable strings
-        async def fake_desc(name, parent, titles):
+        async def fake_desc(name, parent, titles, model=None):
             return f"Description for {name}"
 
         mock_client = AsyncMock()
@@ -1522,7 +1522,7 @@ class TestConsolidate:
             }
         )
 
-        async def fake_desc(name, parent, titles):
+        async def fake_desc(name, parent, titles, model=None):
             return ""
 
         mock_client = AsyncMock()
@@ -1569,7 +1569,7 @@ class TestConsolidate:
             {"name": "Group B", "rationale": "next three", "child_cluster_ids": [3, 4, 5]},
         ]
 
-        async def fake_desc(name, parent, titles):
+        async def fake_desc(name, parent, titles, model=None):
             return f"Description for {name}"
 
         mock_client = AsyncMock()
@@ -1622,7 +1622,7 @@ class TestConsolidate:
             {"name": "Group B", "rationale": "rest", "child_cluster_ids": [6, 8, 9, 10, 11]},
         ]
 
-        async def fake_desc(name, parent, titles):
+        async def fake_desc(name, parent, titles, model=None):
             return f"Description for {name}"
 
         mock_client = AsyncMock()
@@ -1679,7 +1679,7 @@ class TestConsolidate:
         ]
         captured_system_prompt = {}
 
-        async def fake_desc(name, parent, titles):
+        async def fake_desc(name, parent, titles, model=None):
             return ""
 
         async def fake_post(url, headers, json):
@@ -1762,7 +1762,7 @@ class TestConsolidate:
             # Return one distinct name per cluster_id present
             return {cid: f"Test Name {cid}" for cid in cluster_doc_lists}
 
-        async def fake_desc(name, parent, titles):
+        async def fake_desc(name, parent, titles, model=None):
             return f"description for {name}"
 
         async def fake_submit(kb_slug, org_id, proposal):
@@ -1843,7 +1843,7 @@ class TestConsolidate:
         async def fake_consolidate_fail(*args, **kwargs):
             raise httpx.ConnectError("simulated LLM failure")
 
-        async def fake_desc(name, parent, titles):
+        async def fake_desc(name, parent, titles, model=None):
             return f"description for {name}"
 
         submitted_proposals = []
@@ -1982,7 +1982,7 @@ class TestChildCentroidsStorage:
             {"name": "Group C", "rationale": "last four", "child_cluster_ids": [8, 9, 10, 11]},
         ]
 
-        async def fake_desc(name, parent, titles):
+        async def fake_desc(name, parent, titles, model=None):
             return f"Desc for {name}"
 
         mock_client = AsyncMock()
@@ -2084,7 +2084,7 @@ class TestChildCentroidsStorage:
                 ),
             ]
 
-        async def fake_desc(name, parent, titles):
+        async def fake_desc(name, parent, titles, model=None):
             return f"d for {name}"
 
         submitted_proposals = []

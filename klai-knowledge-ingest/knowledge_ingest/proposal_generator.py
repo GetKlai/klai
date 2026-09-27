@@ -297,7 +297,7 @@ async def _suggest_cluster_name(
             },
             json=add_no_fallback(
                 {
-                    "model": settings.taxonomy_classification_model,
+                    "model": settings.interactive_llm_model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message},
@@ -400,7 +400,7 @@ async def _suggest_cluster_names_batched(
                 },
                 json=add_no_fallback(
                     {
-                        "model": settings.taxonomy_classification_model,
+                        "model": settings.interactive_llm_model,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_message},
@@ -588,6 +588,7 @@ async def _consolidate_to_parents(
             name,
             None,
             [doc.title for doc in cluster_doc_lists.get(cid, [])[:5]],
+            model=settings.interactive_llm_model,
         )
         for cid, name in base_proposals
     ]
@@ -642,7 +643,7 @@ async def _consolidate_to_parents(
             },
             json=add_no_fallback(
                 {
-                    "model": settings.taxonomy_classification_model,
+                    "model": settings.interactive_llm_model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message},
@@ -759,7 +760,12 @@ async def _consolidate_to_parents(
     # Generate user-facing descriptions per parent in parallel — same path
     # as production new_node proposals (generate_node_description on
     # parent_name + round-robin sample titles).
-    desc_tasks = [generate_node_description(p.name, None, p.sample_titles[:10]) for p in parents]
+    desc_tasks = [
+        generate_node_description(
+            p.name, None, p.sample_titles[:10], model=settings.interactive_llm_model
+        )
+        for p in parents
+    ]
     descriptions = await asyncio.gather(*desc_tasks, return_exceptions=True)
     for p, desc in zip(parents, descriptions, strict=True):
         p.description = desc if isinstance(desc, str) else ""
@@ -1136,6 +1142,7 @@ async def generate_bootstrap_proposals_v2(
                 name,
                 None,
                 [doc.title for doc in cluster_doc_lists.get(cid, [])[:5]],
+                model=settings.interactive_llm_model,
             )
             for cid, name in proposals_to_submit
         ]
@@ -1191,7 +1198,7 @@ async def generate_bootstrap_proposals_v2(
 
 
 async def _suggest_category_name(documents: list[DocumentSummary]) -> str | None:
-    """Use klai-fast to suggest a category name for a cluster of unmatched documents."""
+    """Use klai-ingest to suggest a category name for a cluster of unmatched documents."""
     doc_summaries = "\n".join(
         f"- {doc.title}: {doc.content_preview[:200]}" for doc in documents[:10]
     )

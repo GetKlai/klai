@@ -187,7 +187,7 @@ class TestClassifyDocumentMultiLabel:
         )
         captured_messages = []
 
-        async def _capture_call(user_message: str) -> dict:
+        async def _capture_call(user_message: str, model: str) -> dict:
             captured_messages.append(user_message)
             return {"nodes": [], "tags": [], "reasoning": "test"}
 
@@ -205,7 +205,7 @@ class TestClassifyDocumentMultiLabel:
         nodes = _make_nodes("Billing")
         captured_messages = []
 
-        async def _capture_call(user_message: str) -> dict:
+        async def _capture_call(user_message: str, model: str) -> dict:
             captured_messages.append(user_message)
             return {"nodes": [], "tags": [], "reasoning": "test"}
 

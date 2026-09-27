@@ -32,9 +32,9 @@ def test_retrieval_api_url_default_matches_production() -> None:
 
 
 def test_rag_eval_judge_model_default() -> None:
-    """Light-metrics + answer-generation default to klai-fast (Mistral Small)."""
+    """Light-metrics + answer-generation are nightly background work: klai-ingest."""
     settings = Settings(_env_file=None)
-    assert settings.rag_eval_judge_model == "klai-fast"
+    assert settings.rag_eval_judge_model == "klai-ingest"
 
 
 def test_rag_eval_faithfulness_model_default() -> None:

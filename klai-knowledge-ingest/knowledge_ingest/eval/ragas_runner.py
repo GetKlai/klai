@@ -5,8 +5,8 @@ Per-query flow (REQ-1, REQ-2, REQ-3):
     1. Load suite YAML via suite_loader.
     2. For each query: call /retrieve on klai-retrieval-api.
        On failure: write a NULL-metric row with meta.error and continue.
-    3. Generate model answer via klai-fast.
-    4. Run 4 RAGAS metrics via klai-fast as judge.
+    3. Generate model answer via klai-ingest.
+    4. Run 4 RAGAS metrics via klai-ingest as judge.
     5. Write one row to knowledge.rag_eval_results.
     6. Emit per-query structured log.
 

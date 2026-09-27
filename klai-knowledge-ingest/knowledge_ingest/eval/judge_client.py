@@ -1,11 +1,11 @@
 """LLM judge client for the RAGAS evaluation harness (SPEC-RAG-EVAL-001).
 
 Two responsibilities:
-  1. ``generate_answer``: generate a model answer via klai-fast (LiteLLM proxy)
+  1. ``generate_answer``: generate a model answer via klai-ingest (LiteLLM proxy)
      given a query and retrieved chunks.
   2. ``evaluate_query``: run the four RAGAS metrics with per-metric LLM and
-     embeddings injection — light metrics on klai-fast, faithfulness on
-     klai-medium (Mistral Medium 3.5), answer_relevancy on klai-fast +
+     embeddings injection — light metrics on klai-ingest, faithfulness on
+     klai-medium (Mistral Medium 3.5), answer_relevancy on klai-ingest +
      klai-bge-m3 (BGE-M3 via TEI).
 
 Both functions are fail-open: any HTTP or RAGAS failure logs and returns
@@ -13,11 +13,11 @@ Both functions are fail-open: any HTTP or RAGAS failure logs and returns
 generalisation).
 
 Per-metric model assignment:
-  - context_precision  → klai-fast LLM
-  - context_recall     → klai-fast LLM
+  - context_precision  → klai-ingest LLM
+  - context_recall     → klai-ingest LLM
   - faithfulness       → klai-medium LLM (Mistral Medium 3.5; klai-fast
                           truncates the multi-statement JSON output)
-  - answer_relevancy   → klai-fast LLM + klai-bge-m3 (BGE-M3 via TEI)
+  - answer_relevancy   → klai-ingest LLM + klai-bge-m3 (BGE-M3 via TEI)
 
 RAGAS 0.4.3 ``ragas.metrics.collections`` API:
   - Each metric class is constructed with its dependencies (``llm``, optionally
@@ -75,7 +75,7 @@ def _make_async_openai_client(*, no_fallback: bool = False):
         "api_key": settings.litellm_api_key or "no-key",
     }
     if no_fallback:
-        # klai-fast judge calls (context_precision, context_recall,
+        # klai-ingest judge calls (context_precision, context_recall,
         # answer_relevancy, generate_answer) must not silently escalate to
         # klai-medium -- see llm_throttle.add_no_fallback's docstring.
         kwargs["http_client"] = httpx.AsyncClient(
@@ -120,7 +120,7 @@ def _build_ragas_llm(
     extra: dict[str, int] = {}
     if max_tokens is not None:
         extra["max_tokens"] = max_tokens
-    # Only the default (klai-fast) judge model must be blocked from escalating
+    # Only the default (klai-ingest) judge model must be blocked from escalating
     # to klai-medium -- an explicit ``model`` override (faithfulness) already
     # targets klai-medium on purpose and stays as-is.
     return llm_factory(
@@ -209,7 +209,7 @@ async def generate_answer(
     *,
     _transport: httpx.AsyncBaseTransport | None = None,
 ) -> str | None:
-    """Generate a model answer via klai-fast given a query and retrieved chunks.
+    """Generate a model answer via klai-ingest given a query and retrieved chunks.
 
     Constructs a Dutch RAG prompt, POSTs to LiteLLM /v1/chat/completions,
     and returns the assistant content string. Returns None on any failure.

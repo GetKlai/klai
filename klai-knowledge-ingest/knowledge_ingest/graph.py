@@ -440,12 +440,12 @@ def _get_graphiti() -> Graphiti:
         # instead of being silently swallowed by the openai client for minutes.
         # Token bucket transport: throttles every HTTP call Graphiti makes internally
         # (entity extraction, deduplication, embedding, etc.) via the SHARED
-        # klai-fast budget (knowledge_ingest.llm_throttle), not a Graphiti-only
+        # klai-ingest budget (knowledge_ingest.llm_throttle), not a Graphiti-only
         # rate. This prevents Graphiti's bursts from exceeding the upstream
-        # klai-fast alias budget in combination with every other klai-fast caller.
+        # klai-ingest alias budget in combination with every other klai-ingest caller.
         #
         # NoMediumFallbackTransport: adds fallbacks=[] to every request so a
-        # saturated klai-fast budget makes Graphiti wait (paced by the token
+        # saturated klai-ingest budget makes Graphiti wait (paced by the token
         # bucket above) instead of LiteLLM silently escalating to klai-medium
         # at ~10-12.5x the price. See llm_throttle.add_no_fallback's docstring
         # for why this is fallbacks=[] and not disable_fallbacks.
@@ -548,7 +548,7 @@ async def rename_episodes_to_document_keys(org_id: str, renames: dict[str, list[
     artifact-version name forever and its citations would stay unresolvable.
 
     This is a metadata rename, not a re-extraction: no LLM calls, no entity
-    work, nothing drawn from the shared klai-fast budget. Idempotent, so a
+    work, nothing drawn from the shared klai-ingest budget. Idempotent, so a
     partially completed run can simply be repeated.
 
     Several versions of one document legitimately end up sharing a name. That

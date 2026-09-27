@@ -107,8 +107,8 @@ class TestGenerateContentLabel:
         assert labels == ["valid-keyword"]
 
     @pytest.mark.asyncio
-    async def test_uses_klai_fast_model(self):
-        """Verify the LLM call uses the klai-fast model alias (model policy)."""
+    async def test_uses_klai_ingest_model(self):
+        """Labelling is background ingest work, so it runs on klai-ingest."""
         captured_payloads: list[dict] = []
 
         async def _capture_call(user_message: str) -> dict:
@@ -134,7 +134,7 @@ class TestGenerateContentLabel:
             await generate_content_label("Title", "Content")
 
         assert len(captured_payloads) == 1
-        assert captured_payloads[0]["model"] == "klai-fast"
+        assert captured_payloads[0]["model"] == "klai-ingest"
 
     @pytest.mark.asyncio
     async def test_system_prompt_has_no_taxonomy_reference(self):

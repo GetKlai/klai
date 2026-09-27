@@ -68,7 +68,7 @@ class TestGenerateNodeDescription:
     async def test_includes_parent_name_in_prompt(self):
         captured = []
 
-        async def _capture(msg: str) -> dict:
+        async def _capture(msg: str, model: str) -> dict:
             captured.append(msg)
             return {"description": "test"}
 
