@@ -48,7 +48,7 @@ already use — NOT a direct call to ``api.mistral.ai`` (that bypass is
 exactly what ``tests/test_direct_mistral_throttle_drift.py`` guards
 against for this directory). Calling through the proxy means every request
 is already accounted against the ``klai-fast`` alias's own RPM/TPM budget
-(``rpm: 45`` / ``tpm: 45000`` in ``config.yaml``, enforced by
+(its ``rpm`` / ``tpm`` in ``config.yaml``, enforced by
 ``router_settings.optional_pre_call_checks: enforce_model_rate_limits``) —
 the same shared accounting every other in-process caller uses, so this
 harness cannot silently exceed the alias budget the way an uncoordinated
