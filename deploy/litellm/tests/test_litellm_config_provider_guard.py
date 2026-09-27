@@ -48,7 +48,7 @@ def test_litellm_compose_scopes_primary_and_backup_mistral_keys() -> None:
     assert environment["MISTRAL_API_KEY"] == "${MISTRAL_API_KEY}"
     assert "MISTRAL_API_KEY_BACKUP" not in environment
     assert environment["MISTRAL_API_KEY_2"] == "${MISTRAL_API_KEY_2}"
-    assert environment["MISTRAL_VIBE_KEY_2"].startswith("${MISTRAL_VIBE_KEY_2:?")
+    assert environment["MISTRAL_VIBE_KEY"].startswith("${MISTRAL_VIBE_KEY:?")
 
 
 def test_ingest_alias_is_one_vibe_key_deployment_without_fallback() -> None:
@@ -58,7 +58,7 @@ def test_ingest_alias_is_one_vibe_key_deployment_without_fallback() -> None:
     deployments = [entry["litellm_params"] for entry in config["model_list"] if entry["model_name"] == "klai-ingest"]
     assert len(deployments) == 1
     assert deployments[0]["model"] == "mistral/mistral-vibe-cli-fast"
-    assert deployments[0]["api_key"] == "os.environ/MISTRAL_VIBE_KEY_2"
+    assert deployments[0]["api_key"] == "os.environ/MISTRAL_VIBE_KEY"
     assert deployments[0]["max_budget"] > 0
 
     fallback_aliases = {alias for entry in config["router_settings"]["fallbacks"] for alias in entry}

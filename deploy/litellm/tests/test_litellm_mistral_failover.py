@@ -40,7 +40,7 @@ _VIBE_KEY = "vibe-test-key"
 _KEY_BY_ENV = {
     "os.environ/MISTRAL_API_KEY": _KLAI_KEY,
     "os.environ/MISTRAL_API_KEY_2": _KLAI2_KEY,
-    "os.environ/MISTRAL_VIBE_KEY_2": _VIBE_KEY,
+    "os.environ/MISTRAL_VIBE_KEY": _VIBE_KEY,
 }
 _INGEST_ALIAS = "klai-ingest"
 _TEXT_ALIASES = {"klai-primary", "klai-fast", "klai-large", "klai-medium", _INGEST_ALIAS}
