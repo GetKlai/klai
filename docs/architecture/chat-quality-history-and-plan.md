@@ -268,6 +268,19 @@ verzinsels, en de extra weigeringen vallen samen met antwoorden die het oude pad
 voor elke volgende meting: een beoordelaar krijgt alleen wat de gebruiker leest, en een
 meting van een uur draait buiten de compose-service, want elke deploy naar main maakt die opnieuw aan.
 
+**Tweede replay, 24 gesprekken (27 september 2026).** Zelfde opzet, zelfde tenant, nu met de
+beoordelaar op zichtbare tekst vanaf het begin en in een wegwerpcontainer: 85 beoordeelde paren,
+17 keer nieuw beter, 47 gelijk, 21 keer oud beter (Open 17-32-15, Strict 0-15-6); weigeringen oud
+27 procent, nieuw 20 procent; "verzonnen" oud 11, nieuw 15 van 85, waar de eerste run 13 tegen 2 gaf,
+dus dat oordeel wisselt te veel tussen runs om op te sturen. Over beide runs samen staat het 29 tegen 24
+in ongelijke paren: gelijk spel in Open, en Strict blijft achter (0 keer beter, 7 keer slechter, 23
+gelijk). Van de zes Strict-verliezen zijn er drie een weigering tegen een weigering, twee een
+gedeeltelijk antwoord dat de beoordelaar verzonnen noemde, en één een weigering na de beoordeling
+("deels niet in de artikelen") waar het oude pad antwoordde; in twaalf van de twintig
+bewijsdrempel-gevallen viel elk fragment weg. De maat uit §7.4 (beter, minder verzinsels) is voor een
+klanttenant dus niet gehaald; de eigen tenant en de e2e-tenant draaien wel op de nieuwe route, zodat
+de eerste echte beurten daar gevolgd worden. De vraagstap vuurde in 0 van 88 interne beurten.
+
 ### 7.5 Wat we niet doen
 
 - Het antwoordmodel in dezelfde generatie laten doorvragen.
