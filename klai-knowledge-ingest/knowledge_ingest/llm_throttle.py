@@ -10,9 +10,9 @@ and a 900 rpm / 450k tpm budget; only the few calls a user waits on stay on
 Why this exists
 ---------------
 
-The ``klai-fast`` alias in ``deploy/litellm/config.yaml`` has a 45 rpm / 45k
-tpm budget (half of mistral-small's upstream 100 rpm, shared with
-``klai-primary``). Before 2026-08-14, knowledge-ingest offered LiteLLM far
+Until 2026-09-27 the ``klai-fast`` alias in ``deploy/litellm/config.yaml``
+had a 45 rpm / 45k tpm budget (half of mistral-small's then upstream 100 rpm,
+shared with ``klai-primary``). Before 2026-08-14, knowledge-ingest offered LiteLLM far
 more than that during bulk crawls: the LLM worker-lane ran 4 concurrent
 enrichment jobs firing one unthrottled chat call per chunk, while Graphiti
 paced only its OWN calls (0.5 rps ≈ 30 rpm — already most of the alias
