@@ -100,7 +100,7 @@ async def _call_litellm(user_message: str) -> dict:
             },
             json=add_no_fallback(
                 {
-                    "model": "klai-ingest",
+                    "model": settings.enrichment_model,
                     "messages": [
                         {"role": "system", "content": _SYSTEM_PROMPT},
                         {"role": "user", "content": user_message},

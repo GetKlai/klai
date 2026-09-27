@@ -48,7 +48,7 @@ def test_litellm_compose_scopes_primary_and_backup_mistral_keys() -> None:
     assert environment["MISTRAL_API_KEY"] == "${MISTRAL_API_KEY}"
     assert "MISTRAL_API_KEY_BACKUP" not in environment
     assert environment["MISTRAL_API_KEY_2"] == "${MISTRAL_API_KEY_2}"
-    assert environment["MISTRAL_VIBE_KEY_2"] == "${MISTRAL_VIBE_KEY_2}"
+    assert environment["MISTRAL_VIBE_KEY_2"].startswith("${MISTRAL_VIBE_KEY_2:?")
 
 
 def test_ingest_alias_is_one_vibe_key_deployment_without_fallback() -> None:

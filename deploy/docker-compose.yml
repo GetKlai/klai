@@ -510,7 +510,9 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
       MISTRAL_API_KEY_2: ${MISTRAL_API_KEY_2}
-      MISTRAL_VIBE_KEY_2: ${MISTRAL_VIBE_KEY_2}
+      # Required: LiteLLM's mistral provider falls back to MISTRAL_API_KEY when
+      # a deployment's key is empty, which would bill klai-ingest to the chat org.
+      MISTRAL_VIBE_KEY_2: "${MISTRAL_VIBE_KEY_2:?set the Vibe-scoped key used by klai-ingest}"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       SEARXNG_API_BASE: ${SEARXNG_INSTANCE_URL}
       DISABLE_ADMIN_UI: "True"
