@@ -21,6 +21,12 @@ def test_no_sources_means_no_footer():
     assert render_answer_footer(sources=[], kb_mode="strict", chunks_injected=3) == ""
 
 
+def test_a_refusal_without_sources_still_names_the_mode():
+    footer = render_answer_footer(sources=[], kb_mode="strict", chunks_injected=0, refused=True)
+    assert "**Bronnen**" not in footer
+    assert "- Modus: Strict, alleen kennisbank." in footer
+
+
 def test_footer_lists_sources_and_agent_activity_in_dutch_by_default():
     footer = render_answer_footer(sources=_SOURCES, kb_mode="strict", chunks_injected=4, language=None)
     assert "**Bronnen**" in footer
