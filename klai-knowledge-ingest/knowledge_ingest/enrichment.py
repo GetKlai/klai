@@ -25,6 +25,7 @@ from pydantic import BaseModel, ValidationError
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.context_strategies import STRATEGIES
+from knowledge_ingest.llm_capacity import is_llm_capacity_error
 from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 
 logger = structlog.get_logger()
@@ -183,7 +184,11 @@ async def _call_llm(prompt: str, path: str) -> dict:
         logger.warning("enrichment_llm_timeout", path=path)
         raise EnrichmentError(f"LLM timeout enriching {path}") from exc
     except Exception as exc:
-        logger.warning("enrichment_llm_error", path=path, error=str(exc))
+        # A spent key or budget fails every call until capacity returns; the
+        # job is deferred for that (enrichment_tasks), so it is not a warning.
+        (logger.info if is_llm_capacity_error(exc) else logger.warning)(
+            "enrichment_llm_error", path=path, error=str(exc)
+        )
         raise EnrichmentError(f"LLM error enriching {path}: {exc}") from exc
 
 

@@ -49,6 +49,13 @@ from knowledge_ingest.enrichment_policy import (
     resumable_episode_ids,
 )
 from knowledge_ingest.episode_text import split_episode_text
+from knowledge_ingest.llm_capacity import (
+    DEFERRAL_WINDOW_SECONDS,
+    LLMCapacityUnavailable,
+    deferral_delay_seconds,
+    deferral_window_spent,
+    is_llm_capacity_error,
+)
 
 logger = structlog.get_logger()
 
@@ -297,6 +304,52 @@ async def _resource_fence_blocks(
     return True
 
 
+async def _defer_after_llm_capacity(
+    task: Any,
+    context: Any,
+    exc: LLMCapacityUnavailable,
+    llm_deferred_since: int | None,
+    **task_kwargs: Any,
+) -> None:
+    """Re-queue an enrichment job that found the klai-ingest key or budget spent.
+
+    A fresh job instead of a procrastinate retry, because the deferral window
+    has to survive in the job arguments and the new job keeps the full normal
+    retry budget for the ordinary failures it may meet once capacity is back.
+    The artifact stays pending: the new job is what the stale-pending reaper
+    looks for.
+    """
+    since = llm_deferred_since or int(time.time())
+    if deferral_window_spent(since):
+        logger.error(
+            "enrichment_llm_capacity_deferral_exhausted",
+            artifact_id=task_kwargs["artifact_id"],
+            deferred_since=since,
+            window_hours=DEFERRAL_WINDOW_SECONDS // 3600,
+            error=str(exc),
+        )
+        raise exc
+    from procrastinate.exceptions import AlreadyEnqueued
+
+    delay = deferral_delay_seconds()
+    try:
+        await task.configure(
+            queueing_lock=context.job.queueing_lock,
+            schedule_in={"seconds": delay},
+        ).defer_async(**task_kwargs, llm_deferred_since=since)
+    except AlreadyEnqueued:
+        # A job for this artifact is already waiting and reloads it from
+        # PostgreSQL when it runs, so it covers this one.
+        pass
+    logger.info(
+        "enrichment_deferred_llm_capacity",
+        artifact_id=task_kwargs["artifact_id"],
+        retry_in_seconds=delay,
+        deferred_since=since,
+        reason=str(exc),
+    )
+
+
 class ArtifactIndexStatusUpdateError(RuntimeError):
     """Raised when a direct-upload artifact cannot leave pending state."""
 
@@ -363,27 +416,55 @@ def _register_tasks(procrastinate_app: Any) -> None:
         # Waits 3s, 9s, 27s — user is watching, keep worst-case added latency
         # under a minute while still escaping a per-minute rate-limit window.
         retry=procrastinate.RetryStrategy(max_attempts=4, exponential_wait=3),
+        pass_context=True,
     )
-    async def enrich_document_interactive(artifact_id: str) -> None:
+    async def enrich_document_interactive(
+        context: Any, artifact_id: str, llm_deferred_since: int | None = None
+    ) -> None:
         """Enrich chunks for a single-doc upload (high priority).
 
         SPEC-INGEST-CONTENT-PG-001: takes only ``artifact_id``; all other
         fields are loaded from PostgreSQL at execution time.
         """
-        await _load_and_enrich(artifact_id)
+        try:
+            await _load_and_enrich(artifact_id)
+        except LLMCapacityUnavailable as exc:
+            await _defer_after_llm_capacity(
+                enrich_document_interactive,
+                context,
+                exc,
+                llm_deferred_since,
+                artifact_id=artifact_id,
+            )
 
     @procrastinate_app.task(
         queue=queues.ENRICH_BULK,
         # Waits 4s, 16s, 64s, 256s (~5.7 min total) — nobody is watching bulk
         # jobs, so ride out the whole 429 burst a concurrent crawl produces.
         retry=procrastinate.RetryStrategy(max_attempts=5, exponential_wait=4),
+        pass_context=True,
     )
-    async def enrich_document_bulk(artifact_id: str, resource_key: str | None = None) -> None:
+    async def enrich_document_bulk(
+        context: Any,
+        artifact_id: str,
+        resource_key: str | None = None,
+        llm_deferred_since: int | None = None,
+    ) -> None:
         """Enrich chunks for crawl/import jobs (lower priority).
 
         SPEC-INGEST-CONTENT-PG-001: takes only ``artifact_id``.
         """
-        await _load_and_enrich(artifact_id, resource_key)
+        try:
+            await _load_and_enrich(artifact_id, resource_key)
+        except LLMCapacityUnavailable as exc:
+            await _defer_after_llm_capacity(
+                enrich_document_bulk,
+                context,
+                exc,
+                llm_deferred_since,
+                artifact_id=artifact_id,
+                resource_key=resource_key,
+            )
 
     # Expose task functions via app attributes for use in ingest.py
     procrastinate_app.enrich_document_interactive = enrich_document_interactive  # type: ignore[attr-defined]
@@ -880,8 +961,26 @@ async def _enrich_document(
             qdrant_ms=qdrant_ms,
             total_ms=total_ms,
         )
+        if (
+            extra_payload.get("content_label", []) is None
+            or extra_payload.get("taxonomy_node_ids", []) is None
+        ):
+            # Ingest stored null labels or taxonomy because the LLM had no
+            # capacity. The upsert above rewrote the chunks from that copy,
+            # wiping whatever a backfill filled in meanwhile, so queue one now
+            # that the LLM answers again.
+            from knowledge_ingest.taxonomy_tasks import defer_taxonomy_backfill
 
-    except enrichment.EnrichmentError:
+            try:
+                await defer_taxonomy_backfill(org_id, kb_slug)
+            except Exception:
+                logger.exception("taxonomy_backfill_enqueue_failed", org_id=org_id, kb_slug=kb_slug)
+
+    except enrichment.EnrichmentError as exc:
+        if is_llm_capacity_error(exc):
+            # The task re-queues the job for later (_defer_after_llm_capacity);
+            # the artifact is not failed and this is not an error.
+            raise LLMCapacityUnavailable(str(exc)) from exc
         # Fail-loudly (SPEC-KB-021): LLM enrichment failure must propagate so
         # Procrastinate retries the job.  Raw chunks from Phase 1 stay in Qdrant
         # as a temporary fallback; they will be overwritten on successful retry.

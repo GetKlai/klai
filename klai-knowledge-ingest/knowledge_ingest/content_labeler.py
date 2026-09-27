@@ -25,6 +25,7 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.llm_capacity import LLMCapacityUnavailable, is_llm_capacity_error
 from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 
 logger = structlog.get_logger()
@@ -54,8 +55,12 @@ async def generate_content_label(
 
     Returns [] when:
     - LLM call times out (15s)
-    - LLM call fails for any reason
+    - LLM call fails for any other reason
     Ingest continues normally in both cases (non-fatal).
+
+    Raises LLMCapacityUnavailable when the klai-ingest key or budget is spent,
+    so the caller can leave the document unlabelled for a later run instead
+    of storing [] as if labelling had happened.
     """
     user_message = f"Document title: {title}\nContent preview: {content_preview[:500]}"
 
@@ -65,6 +70,9 @@ async def generate_content_label(
             timeout=settings.content_label_timeout,
         )
     except Exception as exc:
+        if is_llm_capacity_error(exc):
+            logger.info("content_label_deferred_llm_capacity", title=title, error=str(exc))
+            raise LLMCapacityUnavailable(str(exc)) from exc
         logger.warning(
             "content_label_generation_failed",
             title=title,

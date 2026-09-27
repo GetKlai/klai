@@ -38,6 +38,7 @@ from qdrant_client.models import (  # noqa: E402
 )
 
 from knowledge_ingest.config import settings  # noqa: E402
+from knowledge_ingest.llm_capacity import LLMCapacityUnavailable  # noqa: E402
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes  # noqa: E402
 from knowledge_ingest.proposal_generator import (  # noqa: E402
     DocumentSummary,
@@ -644,12 +645,17 @@ async def taxonomy_classify(request: Request, req: ClassifyRequest) -> ClassifyR
     if not nodes:
         return ClassifyResponse(taxonomy_node_ids=[])
 
-    matched_nodes, _tags = await classify_document(
-        title="",
-        content_preview=req.text,
-        taxonomy_nodes=nodes,
-        model=settings.interactive_llm_model,
-    )
+    try:
+        matched_nodes, _tags = await classify_document(
+            title="",
+            content_preview=req.text,
+            taxonomy_nodes=nodes,
+            model=settings.interactive_llm_model,
+        )
+    except LLMCapacityUnavailable:
+        # Unchanged answer for the portal: an LLM that cannot classify has
+        # always returned an empty list here.
+        return ClassifyResponse(taxonomy_node_ids=[])
     node_ids = [nid for nid, _conf in matched_nodes]
     return ClassifyResponse(taxonomy_node_ids=node_ids)
 

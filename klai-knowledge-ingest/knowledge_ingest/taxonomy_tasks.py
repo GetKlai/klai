@@ -12,12 +12,19 @@ Phase 0 (blind labelling) runs unconditionally; phases 1-3 require taxonomy node
 from __future__ import annotations
 
 import asyncio
+import time
 import warnings
 from typing import Any
 
 import structlog
 
 from knowledge_ingest import queues
+from knowledge_ingest.llm_capacity import (
+    DEFERRAL_WINDOW_SECONDS,
+    LLMCapacityUnavailable,
+    deferral_delay_seconds,
+    deferral_window_spent,
+)
 
 logger = structlog.get_logger()
 
@@ -34,12 +41,76 @@ def register_taxonomy_tasks(procrastinate_app: Any) -> None:
         org_id: str,
         kb_slug: str,
         batch_size: int = 100,
+        llm_deferred_since: int | None = None,
     ) -> dict:
-        """Run the 4-phase taxonomy backfill as a background job."""
-        result = await _run_backfill(org_id=org_id, kb_slug=kb_slug, batch_size=batch_size)
-        return result
+        """Run the 4-phase taxonomy backfill as a background job.
+
+        When the LLM has no capacity the run stops at the first document it
+        could not label or classify, leaves that one and the rest unwritten,
+        and queues itself for later (see llm_capacity for the schedule).
+        """
+        try:
+            return await _run_backfill(org_id=org_id, kb_slug=kb_slug, batch_size=batch_size)
+        except LLMCapacityUnavailable as exc:
+            since = llm_deferred_since or int(time.time())
+            if deferral_window_spent(since):
+                logger.error(
+                    "taxonomy_backfill_llm_capacity_deferral_exhausted",
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    deferred_since=since,
+                    window_hours=DEFERRAL_WINDOW_SECONDS // 3600,
+                    error=str(exc),
+                )
+                raise
+            delay = deferral_delay_seconds()
+            await defer_taxonomy_backfill(
+                org_id,
+                kb_slug,
+                batch_size=batch_size,
+                schedule_in_seconds=delay,
+                llm_deferred_since=since,
+            )
+            logger.info(
+                "taxonomy_backfill_deferred_llm_capacity",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                retry_in_seconds=delay,
+                deferred_since=since,
+                reason=str(exc),
+            )
+            return {"deferred_for_llm_capacity": True, "retry_in_seconds": delay}
 
     procrastinate_app.run_taxonomy_backfill = run_taxonomy_backfill  # type: ignore[attr-defined]
+
+
+async def defer_taxonomy_backfill(
+    org_id: str,
+    kb_slug: str,
+    *,
+    batch_size: int = 100,
+    schedule_in_seconds: int | None = None,
+    llm_deferred_since: int | None = None,
+) -> None:
+    """Queue a backfill for the KB unless one is already waiting.
+
+    A waiting backfill selects every chunk without a label or taxonomy when it
+    runs, so it covers the documents this call is about as well.
+    """
+    from procrastinate.exceptions import AlreadyEnqueued
+
+    from knowledge_ingest.enrichment_tasks import get_app
+
+    configure: dict[str, Any] = {"queueing_lock": f"taxonomy-backfill:{org_id}:{kb_slug}"}
+    if schedule_in_seconds is not None:
+        configure["schedule_in"] = {"seconds": schedule_in_seconds}
+    task_kwargs: dict[str, Any] = {"org_id": org_id, "kb_slug": kb_slug, "batch_size": batch_size}
+    if llm_deferred_since is not None:
+        task_kwargs["llm_deferred_since"] = llm_deferred_since
+    try:
+        await get_app().run_taxonomy_backfill.configure(**configure).defer_async(**task_kwargs)
+    except AlreadyEnqueued:
+        logger.info("taxonomy_backfill_already_queued", org_id=org_id, kb_slug=kb_slug)
 
 
 async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
