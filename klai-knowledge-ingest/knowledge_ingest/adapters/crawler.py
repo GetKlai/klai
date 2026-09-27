@@ -1523,11 +1523,12 @@ async def _enqueue_taxonomy_backfill_after_crawl(
 
     from procrastinate.exceptions import AlreadyEnqueued
 
+    from knowledge_ingest.taxonomy_tasks import backfill_job_options
+
     proc_app = get_app()
-    lock = f"taxonomy-backfill:{org_id}:{kb_slug}"
     try:
         backfill_job_id = await proc_app.run_taxonomy_backfill.configure(  # type: ignore[attr-defined]
-            queueing_lock=lock,
+            **backfill_job_options(org_id, kb_slug),
         ).defer_async(
             org_id=org_id,
             kb_slug=kb_slug,

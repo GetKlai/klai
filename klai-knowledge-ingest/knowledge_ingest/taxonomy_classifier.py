@@ -23,6 +23,7 @@ import httpx
 import structlog
 
 from knowledge_ingest.config import settings
+from knowledge_ingest.llm_capacity import LLMCapacityUnavailable, is_llm_capacity_error
 from knowledge_ingest.llm_throttle import add_no_fallback, shared_klai_fast_limiter
 
 logger = structlog.get_logger()
@@ -72,6 +73,10 @@ async def classify_document(
     Returns ([], []) when:
     - taxonomy_nodes is empty (skips LLM call entirely)
     - LLM call fails or times out
+
+    Raises LLMCapacityUnavailable when the key or budget behind ``model`` is
+    spent, so a caller does not store "no match" for a document that was
+    never classified.
     """
     if not taxonomy_nodes:
         return [], []
@@ -92,6 +97,11 @@ async def classify_document(
             timeout=settings.taxonomy_classification_timeout,
         )
     except (TimeoutError, Exception) as exc:
+        if is_llm_capacity_error(exc):
+            logger.info(
+                "taxonomy_classification_deferred_llm_capacity", title=title, error=str(exc)
+            )
+            raise LLMCapacityUnavailable(str(exc)) from exc
         logger.warning(
             "taxonomy_classification_failed",
             title=title,

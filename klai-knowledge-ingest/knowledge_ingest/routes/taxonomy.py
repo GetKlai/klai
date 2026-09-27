@@ -38,12 +38,14 @@ from qdrant_client.models import (  # noqa: E402
 )
 
 from knowledge_ingest.config import settings  # noqa: E402
+from knowledge_ingest.llm_capacity import LLMCapacityUnavailable  # noqa: E402
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes  # noqa: E402
 from knowledge_ingest.proposal_generator import (  # noqa: E402
     DocumentSummary,
     generate_bootstrap_proposals_v2,
 )
 from knowledge_ingest.taxonomy_classifier import classify_document  # noqa: E402
+from knowledge_ingest.taxonomy_tasks import backfill_job_options  # noqa: E402
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -310,7 +312,8 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillE
     from knowledge_ingest.enrichment_tasks import get_app
 
     proc_app = get_app()
-    lock = f"taxonomy-backfill:{req.org_id}:{req.kb_slug}"
+    job_options = backfill_job_options(req.org_id, req.kb_slug)
+    lock = job_options["queueing_lock"]
 
     # Check for an existing queued/running job with the same queueing_lock.
     # Procrastinate prevents duplicate queueing_lock values for todo/doing jobs,
@@ -348,7 +351,7 @@ async def taxonomy_backfill(request: Request, req: BackfillRequest) -> BackfillE
 
     # Enqueue a new backfill job
     job_id = await proc_app.run_taxonomy_backfill.configure(
-        queueing_lock=lock,
+        **job_options,
     ).defer_async(
         org_id=req.org_id,
         kb_slug=req.kb_slug,
@@ -644,12 +647,17 @@ async def taxonomy_classify(request: Request, req: ClassifyRequest) -> ClassifyR
     if not nodes:
         return ClassifyResponse(taxonomy_node_ids=[])
 
-    matched_nodes, _tags = await classify_document(
-        title="",
-        content_preview=req.text,
-        taxonomy_nodes=nodes,
-        model=settings.interactive_llm_model,
-    )
+    try:
+        matched_nodes, _tags = await classify_document(
+            title="",
+            content_preview=req.text,
+            taxonomy_nodes=nodes,
+            model=settings.interactive_llm_model,
+        )
+    except LLMCapacityUnavailable:
+        # Unchanged answer for the portal: an LLM that cannot classify has
+        # always returned an empty list here.
+        return ClassifyResponse(taxonomy_node_ids=[])
     node_ids = [nid for nid, _conf in matched_nodes]
     return ClassifyResponse(taxonomy_node_ids=node_ids)
 

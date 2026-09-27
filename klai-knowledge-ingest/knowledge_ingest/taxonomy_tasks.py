@@ -2,8 +2,11 @@
 Procrastinate task for async taxonomy backfill.
 
 Queue: taxonomy-backfill (separate from enrichment queues; can take minutes for large KBs).
-Deduplication: queueing_lock = 'taxonomy-backfill:{org_id}:{kb_slug}' ensures at most
-one pending/running backfill per KB.
+Deduplication: backfill_job_options() gives every enqueue the same per-KB
+queueing_lock (at most one waiting) and lock (at most one running).
+
+An hourly sweep (sweep_unclassified_kbs) queues a backfill for every KB with
+chunks that ingest stored as null because the LLM had no capacity.
 
 The actual 4-phase logic (label, migrate, classify, tag) lives in _run_backfill().
 Phase 0 (blind labelling) runs unconditionally; phases 1-3 require taxonomy nodes.
@@ -18,28 +21,148 @@ from typing import Any
 import structlog
 
 from knowledge_ingest import queues
+from knowledge_ingest.llm_capacity import LLMCapacityUnavailable
 
 logger = structlog.get_logger()
+
+# Hourly: work classified during an LLM outage is labelled within about an
+# hour of capacity returning, while an outage costs at most one failing LLM
+# call per affected KB per hour (a backfill stops at its first capacity
+# failure). Daily would leave documents without labels or taxonomy for up to
+# a day after recovery; more often buys little, because LiteLLM's pool hook
+# only re-probes a full key every 5 minutes and budgets roll over per day.
+UNCLASSIFIED_SWEEP_CRON = "17 * * * *"
+
+LLM_CAPACITY_BACKFILL_MESSAGE = "LLM capacity unavailable; the automatic sweep will retry"
+
+
+def backfill_job_options(org_id: str, kb_slug: str) -> dict[str, str]:
+    """``queueing_lock`` keeps one backfill waiting per KB; ``lock`` keeps two
+    from running at once for the same KB (the queueing lock only covers todo)."""
+    key = f"taxonomy-backfill:{org_id}:{kb_slug}"
+    return {"queueing_lock": key, "lock": key}
 
 
 def register_taxonomy_tasks(procrastinate_app: Any) -> None:
     """Register taxonomy tasks on the Procrastinate app. Called from enrichment_tasks.init_app()."""
     import procrastinate
 
+    class _RetryOnceUnlessLLMCapacity(procrastinate.BaseRetryStrategy):
+        """``RetryStrategy(max_attempts=1)``, except that a capacity failure is
+        final: an immediate retry would meet the same spent key, and the
+        hourly sweep queues the next attempt."""
+
+        def get_retry_decision(self, *, exception: BaseException, job: Any) -> Any:
+            if job.attempts >= 1 or isinstance(exception, LLMCapacityUnavailable):
+                return None
+            return procrastinate.RetryDecision(retry_in={"seconds": 0})
+
     @procrastinate_app.task(
         queue=queues.TAXONOMY_BACKFILL,
-        retry=procrastinate.RetryStrategy(max_attempts=1),
+        retry=_RetryOnceUnlessLLMCapacity(),
     )
     async def run_taxonomy_backfill(
         org_id: str,
         kb_slug: str,
         batch_size: int = 100,
     ) -> dict:
-        """Run the 4-phase taxonomy backfill as a background job."""
-        result = await _run_backfill(org_id=org_id, kb_slug=kb_slug, batch_size=batch_size)
-        return result
+        """Run the 4-phase taxonomy backfill as a background job.
+
+        When the LLM has no capacity the run stops at the first document it
+        could not label or classify, leaves that one and the rest null, and
+        fails; sweep_unclassified_kbs queues the next attempt.
+        """
+        try:
+            return await _run_backfill(org_id=org_id, kb_slug=kb_slug, batch_size=batch_size)
+        except LLMCapacityUnavailable as exc:
+            logger.info(
+                "taxonomy_backfill_stopped_llm_capacity",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                reason=str(exc),
+            )
+            raise LLMCapacityUnavailable(LLM_CAPACITY_BACKFILL_MESSAGE) from exc
 
     procrastinate_app.run_taxonomy_backfill = run_taxonomy_backfill  # type: ignore[attr-defined]
+
+    @procrastinate_app.periodic(
+        cron=UNCLASSIFIED_SWEEP_CRON,
+        periodic_id="taxonomy-unclassified-sweep",
+    )
+    @procrastinate_app.task(
+        name="knowledge_ingest.taxonomy_tasks.sweep_unclassified_kbs_periodic",
+        queue=queues.MAINTENANCE,
+        retry=procrastinate.RetryStrategy(max_attempts=1),
+        queueing_lock="taxonomy-unclassified-sweep",
+    )
+    async def sweep_unclassified_kbs_periodic(timestamp: int) -> dict:
+        logger.info("taxonomy_unclassified_sweep_started", deferrer_ts=timestamp)
+        kbs = await sweep_unclassified_kbs()
+        return {"queued_kbs": len(kbs)}
+
+    procrastinate_app.sweep_unclassified_kbs_periodic = sweep_unclassified_kbs_periodic  # type: ignore[attr-defined]
+
+
+async def sweep_unclassified_kbs() -> list[tuple[str, str]]:
+    """Queue one backfill for every KB that still has chunks stored as null.
+
+    Null content_label / taxonomy_node_ids is the "not yet classified" state
+    ingest writes when the LLM had no capacity; [] (ran, found nothing) and a
+    missing field (legacy, or no taxonomy on the KB) are not swept. One scroll
+    per KB found: each query excludes the KBs already seen.
+    """
+    from procrastinate.exceptions import AlreadyEnqueued
+    from qdrant_client.models import (
+        FieldCondition,
+        Filter,
+        IsNullCondition,
+        MatchValue,
+        PayloadField,
+    )
+
+    from knowledge_ingest import qdrant_store
+    from knowledge_ingest.enrichment_tasks import get_app
+
+    client = qdrant_store.get_client()
+    unclassified = [
+        IsNullCondition(is_null=PayloadField(key="content_label")),
+        IsNullCondition(is_null=PayloadField(key="taxonomy_node_ids")),
+    ]
+    kbs: list[tuple[str, str]] = []
+    while True:
+        points, _ = await client.scroll(
+            collection_name=qdrant_store.COLLECTION,
+            scroll_filter=Filter(
+                should=unclassified,
+                must_not=[
+                    Filter(
+                        must=[
+                            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                            FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                        ]
+                    )
+                    for org_id, kb_slug in kbs
+                ],
+            ),
+            limit=1,
+            with_payload=["org_id", "kb_slug"],
+            with_vectors=False,
+        )
+        if not points:
+            break
+        payload = points[0].payload or {}
+        kbs.append((payload["org_id"], payload["kb_slug"]))
+
+    backfill = get_app().run_taxonomy_backfill
+    for org_id, kb_slug in kbs:
+        try:
+            await backfill.configure(**backfill_job_options(org_id, kb_slug)).defer_async(
+                org_id=org_id, kb_slug=kb_slug, batch_size=100
+            )
+        except AlreadyEnqueued:
+            pass
+    logger.info("taxonomy_unclassified_sweep", kbs=len(kbs))
+    return kbs
 
 
 async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
@@ -59,6 +182,7 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
         FieldCondition,
         Filter,
         IsEmptyCondition,
+        IsNullCondition,
         MatchValue,
         PayloadField,
     )
@@ -146,6 +270,19 @@ async def _run_backfill(org_id: str, kb_slug: str, batch_size: int) -> dict:
     invalidate_cache(org_id, kb_slug)
     taxonomy_nodes = await fetch_taxonomy_nodes(kb_slug, org_id)
     if not taxonomy_nodes:
+        # Absent means "no taxonomy on this KB". Left null, the sweep would
+        # queue this KB every hour with nothing to classify against.
+        await client.delete_payload(
+            COLLECTION,
+            keys=["taxonomy_node_ids"],
+            points=Filter(
+                must=[
+                    FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+                    FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                    IsNullCondition(is_null=PayloadField(key="taxonomy_node_ids")),
+                ]
+            ),
+        )
         logger.info(
             "taxonomy_backfill_no_nodes",
             kb_slug=kb_slug,

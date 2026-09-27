@@ -184,6 +184,7 @@ async def _run_with_mocks(
     mock_proc_app: _MockProcApp,
     *,
     graphiti_enabled: bool = False,
+    content_label_error: Exception | None = None,
 ) -> tuple[dict, AsyncMock]:
     """Run ``ingest_document`` with all I/O mocked so the test only
     exercises the Phase-1 extra_payload assembly.
@@ -266,6 +267,7 @@ async def _run_with_mocks(
             "knowledge_ingest.routes.ingest.generate_content_label",
             new_callable=AsyncMock,
             return_value=["faq", "billing"],
+            side_effect=content_label_error,
         ),
         patch(
             "knowledge_ingest.enrichment_tasks.get_app",
@@ -621,3 +623,22 @@ async def test_extra_payload_carries_content_label_even_when_empty():
         "content_label key was dropped from extra_payload. "
         "This is the exact regression that commit cbdfdda5 fixed."
     )
+
+
+@pytest.mark.asyncio
+async def test_label_without_llm_capacity_is_stored_as_not_yet_labelled():
+    """A spent klai-ingest key or budget must not look like a labelled document.
+
+    [] means the labeler ran; null means it has not yet, which is what the
+    taxonomy sweep looks for, so it is filled in once capacity returns.
+    """
+    from knowledge_ingest.llm_capacity import LLMCapacityUnavailable
+
+    req = _build_request()
+    _, update_extra_mock = await _run_with_mocks(
+        req, _MockProcApp(), content_label_error=LLMCapacityUnavailable("402")
+    )
+
+    extra_payload = _captured_extra_payload(update_extra_mock)
+    assert "content_label" in extra_payload
+    assert extra_payload["content_label"] is None
