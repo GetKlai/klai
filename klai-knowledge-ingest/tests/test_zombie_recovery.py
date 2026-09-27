@@ -14,8 +14,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import structlog.testing
+from procrastinate.exceptions import UniqueViolation
 
 from knowledge_ingest.zombie_recovery import (
+    QUEUEING_LOCK_UNIQUE_CONSTRAINT,
     STALLED_WORKER_TIMEOUT_SECONDS,
     recover_zombie_jobs,
     register_zombie_recovery_task,
@@ -48,6 +51,7 @@ def _make_proc_app(stalled_jobs: list[SimpleNamespace]) -> MagicMock:
     proc_app.job_manager = MagicMock()
     proc_app.job_manager.get_stalled_jobs = AsyncMock(return_value=stalled_jobs)
     proc_app.job_manager.retry_job_by_id_async = AsyncMock(return_value=None)
+    proc_app.job_manager.finish_job_by_id_async = AsyncMock(return_value=None)
     return proc_app
 
 
@@ -106,6 +110,81 @@ async def test_recovery_continues_when_one_retry_fails():
 
 
 @pytest.mark.asyncio
+async def test_unique_violation_on_queueing_lock_finishes_zombie_and_logs_info():
+    """A newer job already queued under the zombie's lock covers the work:
+    finish the zombie instead of retrying it, and log once at info, not error.
+    """
+    job = SimpleNamespace(id=300, queue="graphiti-bulk", task_name="ingest_graphiti_episode")
+    proc_app = _make_proc_app([job])
+    proc_app.job_manager.retry_job_by_id_async = AsyncMock(
+        side_effect=UniqueViolation(
+            constraint_name=QUEUEING_LOCK_UNIQUE_CONSTRAINT,
+            queueing_lock="graphiti:artifact-300",
+        )
+    )
+
+    with structlog.testing.capture_logs() as captured:
+        result = await recover_zombie_jobs(proc_app)
+
+    assert result == {"jobs_retried": 0}
+    proc_app.job_manager.finish_job_by_id_async.assert_awaited_once()
+    assert proc_app.job_manager.finish_job_by_id_async.await_args.kwargs["job_id"] == 300
+    assert proc_app.job_manager.finish_job_by_id_async.await_args.kwargs["delete_job"] is False
+
+    assert [e for e in captured if e.get("event") == "procrastinate_zombie_retry_failed"] == []
+    info_events = [e for e in captured if e.get("event") == "zombie_superseded_by_queued_job"]
+    assert len(info_events) == 1
+    event = info_events[0]
+    assert event["log_level"] == "info"
+    assert event["job_id"] == 300
+    assert event["queueing_lock"] == "graphiti:artifact-300"
+
+
+@pytest.mark.asyncio
+async def test_second_recovery_pass_does_not_see_superseded_zombie_again():
+    """Once finished, the zombie leaves ``doing`` and get_stalled_jobs stops
+    returning it on the next minute-level pass.
+    """
+    job = SimpleNamespace(id=301, queue="graphiti-bulk", task_name="ingest_graphiti_episode")
+    proc_app = _make_proc_app([job])
+    proc_app.job_manager.get_stalled_jobs = AsyncMock(side_effect=[[job], []])
+    proc_app.job_manager.retry_job_by_id_async = AsyncMock(
+        side_effect=UniqueViolation(
+            constraint_name=QUEUEING_LOCK_UNIQUE_CONSTRAINT,
+            queueing_lock="graphiti:artifact-301",
+        )
+    )
+
+    first = await recover_zombie_jobs(proc_app)
+    second = await recover_zombie_jobs(proc_app)
+
+    assert first == {"jobs_retried": 0}
+    assert second == {"jobs_retried": 0}
+    proc_app.job_manager.finish_job_by_id_async.assert_awaited_once()
+    assert proc_app.job_manager.get_stalled_jobs.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_unique_violation_on_other_constraint_still_logs_error():
+    """A UniqueViolation NOT on the queueing lock is not a superseded zombie:
+    keep today's error-logging behaviour instead of finishing the job.
+    """
+    job = SimpleNamespace(id=302, queue="graphiti-bulk", task_name="ingest_graphiti_episode")
+    proc_app = _make_proc_app([job])
+    proc_app.job_manager.retry_job_by_id_async = AsyncMock(
+        side_effect=UniqueViolation(constraint_name="some_other_constraint", queueing_lock=None)
+    )
+
+    with structlog.testing.capture_logs() as captured:
+        result = await recover_zombie_jobs(proc_app)
+
+    assert result == {"jobs_retried": 0}
+    proc_app.job_manager.finish_job_by_id_async.assert_not_awaited()
+    error_events = [e for e in captured if e.get("event") == "procrastinate_zombie_retry_failed"]
+    assert len(error_events) == 1
+
+
+@pytest.mark.asyncio
 async def test_uses_120_second_stalled_worker_timeout():
     """REQ-2: 120s window prevents pruning the live worker about to start."""
     proc_app = _make_proc_app([])
@@ -128,3 +207,28 @@ def test_periodic_recovery_uses_dedicated_queue_and_lock() -> None:
     assert task_config["queue"] == "maintenance"
     assert task_config["queueing_lock"] == "stalled-job-recovery"
     assert hasattr(app, "recover_stalled_jobs_periodic")
+
+
+@pytest.mark.asyncio
+async def test_failed_finish_of_superseded_zombie_does_not_stop_the_pass():
+    """A finish that raises is logged and the remaining zombies are still retried."""
+    superseded = SimpleNamespace(id=500, queue="graphiti-bulk", task_name="ingest_graphiti_episode")
+    other = SimpleNamespace(id=501, queue="enrich-bulk", task_name="enrich_document_bulk")
+    proc_app = _make_proc_app([superseded, other])
+    proc_app.job_manager.retry_job_by_id_async = AsyncMock(
+        side_effect=[
+            UniqueViolation(
+                constraint_name=QUEUEING_LOCK_UNIQUE_CONSTRAINT, queueing_lock="graphiti:a-500"
+            ),
+            None,
+        ]
+    )
+    proc_app.job_manager.finish_job_by_id_async = AsyncMock(side_effect=RuntimeError("db gone"))
+
+    with structlog.testing.capture_logs() as captured:
+        result = await recover_zombie_jobs(proc_app)
+
+    assert result == {"jobs_retried": 1}
+    assert proc_app.job_manager.retry_job_by_id_async.await_count == 2
+    failed = [e for e in captured if e.get("event") == "procrastinate_zombie_finish_failed"]
+    assert [e["job_id"] for e in failed] == [500]

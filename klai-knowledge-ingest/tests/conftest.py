@@ -56,11 +56,23 @@ class _AlreadyEnqueued(Exception):
     """Stub for procrastinate.exceptions.AlreadyEnqueued."""
 
 
+class _UniqueViolation(Exception):
+    """Stub for procrastinate.exceptions.UniqueViolation."""
+
+    def __init__(
+        self, *args: object, constraint_name: str | None, queueing_lock: str | None
+    ) -> None:
+        super().__init__(*args)
+        self.constraint_name = constraint_name
+        self.queueing_lock = queueing_lock
+
+
 def _install_procrastinate_stub() -> None:
     if "procrastinate" in sys.modules:
         return
     exceptions_mod = types.ModuleType("procrastinate.exceptions")
     exceptions_mod.AlreadyEnqueued = _AlreadyEnqueued  # type: ignore[attr-defined]
+    exceptions_mod.UniqueViolation = _UniqueViolation  # type: ignore[attr-defined]
 
     pkg = types.ModuleType("procrastinate")
     pkg.exceptions = exceptions_mod  # type: ignore[attr-defined]
@@ -87,9 +99,21 @@ def _install_procrastinate_stub() -> None:
     testing_mod.InMemoryConnector = MagicMock(name="InMemoryConnector")  # type: ignore[attr-defined]
     pkg.testing = testing_mod  # type: ignore[attr-defined]
 
+    # ``procrastinate.jobs.Status`` -- zombie_recovery.py finishes a job
+    # superseded by a queueing-lock conflict via ``Status.ABORTED``.
+    import enum
+
+    class _Status(enum.Enum):
+        ABORTED = "aborted"
+
+    jobs_mod = types.ModuleType("procrastinate.jobs")
+    jobs_mod.Status = _Status  # type: ignore[attr-defined]
+    pkg.jobs = jobs_mod  # type: ignore[attr-defined]
+
     sys.modules["procrastinate"] = pkg
     sys.modules["procrastinate.exceptions"] = exceptions_mod
     sys.modules["procrastinate.testing"] = testing_mod
+    sys.modules["procrastinate.jobs"] = jobs_mod
 
 
 _install_procrastinate_stub()
