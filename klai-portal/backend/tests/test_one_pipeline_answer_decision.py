@@ -251,8 +251,7 @@ async def test_strict_turn_without_evidence_gets_the_fixed_refusal_without_a_mod
 
     turn = await _turn(monkeypatch, llm, profile=_internal(), retrieval={**retrieval, "confidence_band": "unknown"})
 
-    assert turn.text.startswith(STRICT_REFUSAL)
-    assert "- Modus: Strict, alleen kennisbank." in turn.text
+    assert turn.text == STRICT_REFUSAL
     assert llm.of("answer") == [] and llm.of("answer_judge") == [] and llm.of("grounding_check") == []
 
 
@@ -273,8 +272,7 @@ async def test_strict_draft_that_the_articles_do_not_carry_gets_the_strict_refus
         stream=stream,
     )
 
-    assert turn.text.startswith(STRICT_REFUSAL)
-    assert "- Modus: Strict, alleen kennisbank." in turn.text
+    assert turn.text == STRICT_REFUSAL
 
 
 # --- Open and general never refuse for a missing source ---------------------------

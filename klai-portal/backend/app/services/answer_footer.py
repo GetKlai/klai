@@ -88,15 +88,11 @@ def render_answer_footer(
     sub_queries: list[str] | None = None,
     language: object = None,
     general_knowledge: bool = False,
-    refused: bool = False,
 ) -> str:
     """Render the "Bronnen"/"Agent activiteit" footer, or "" without sources.
 
     ``general_knowledge`` (an Open answer without a supporting source) renders
     the activity section with its general-knowledge line even without sources.
-    ``refused`` (the canned no-citable-sources refusal) renders it too, so an
-    employee who is refused still sees which mode refused them, as the hook
-    showed on the same turn.
 
     ``sources`` must be the same labelled list the answer's inline citation
     markers were composed against (``_compose_backend_managed_answer``'s
@@ -106,7 +102,7 @@ def render_answer_footer(
     ``_chat_completion_streaming_with_composed_citations``'s docstring on why
     a live turn is not re-rendered).
 
-    Otherwise no sources means no footer at all — an internal turn without anything to
+    No sources means no footer at all — an internal turn without anything to
     disclose gets no "Agent activiteit" section either, unlike the hook (which
     can show KB-scope trace lines without a citable source); portal does not
     carry that richer ``kb_meta`` yet.
@@ -117,7 +113,7 @@ def render_answer_footer(
     ``response_language`` / ``language_decision.language`` so the footer never
     disagrees with the answer it is attached to.
     """
-    if not sources and not general_knowledge and not refused:
+    if not sources and not general_knowledge:
         return ""
     language_code = "nl" if _language_is_dutch(language) else "en"
     sections: list[str] = []
