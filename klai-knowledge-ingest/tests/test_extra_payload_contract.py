@@ -630,22 +630,15 @@ async def test_label_without_llm_capacity_is_stored_as_not_yet_labelled():
     """A spent klai-ingest key or budget must not look like a labelled document.
 
     [] means the labeler ran; null means it has not yet, which is what the
-    taxonomy backfill selects. The backfill is queued for later so the label
-    is filled in once capacity returns.
+    taxonomy sweep looks for, so it is filled in once capacity returns.
     """
     from knowledge_ingest.llm_capacity import LLMCapacityUnavailable
 
     req = _build_request()
-    with patch(
-        "knowledge_ingest.routes.ingest.defer_taxonomy_backfill", new_callable=AsyncMock
-    ) as defer_backfill:
-        _, update_extra_mock = await _run_with_mocks(
-            req, _MockProcApp(), content_label_error=LLMCapacityUnavailable("402")
-        )
+    _, update_extra_mock = await _run_with_mocks(
+        req, _MockProcApp(), content_label_error=LLMCapacityUnavailable("402")
+    )
 
     extra_payload = _captured_extra_payload(update_extra_mock)
     assert "content_label" in extra_payload
     assert extra_payload["content_label"] is None
-    defer_backfill.assert_awaited_once()
-    assert defer_backfill.await_args.args == (req.org_id, req.kb_slug)
-    assert defer_backfill.await_args.kwargs["schedule_in_seconds"] >= 3600

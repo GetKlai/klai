@@ -304,10 +304,19 @@ async def _resource_fence_blocks(
     return True
 
 
+class _EnrichmentDeferred(LLMCapacityUnavailable):
+    """Capacity failure in _enrich_document, carrying what marking the artifact
+    failed needs once the deferral window is spent."""
+
+    def __init__(self, message: str, artifact: dict) -> None:
+        super().__init__(message)
+        self.artifact = artifact
+
+
 async def _defer_after_llm_capacity(
     task: Any,
     context: Any,
-    exc: LLMCapacityUnavailable,
+    exc: _EnrichmentDeferred,
     llm_deferred_since: int | None,
     **task_kwargs: Any,
 ) -> None:
@@ -317,7 +326,8 @@ async def _defer_after_llm_capacity(
     has to survive in the job arguments and the new job keeps the full normal
     retry budget for the ordinary failures it may meet once capacity is back.
     The artifact stays pending: the new job is what the stale-pending reaper
-    looks for.
+    looks for. Once the window is spent the artifact is failed here and the
+    job returns, so procrastinate's retries do not run it again.
     """
     since = llm_deferred_since or int(time.time())
     if deferral_window_spent(since):
@@ -328,7 +338,8 @@ async def _defer_after_llm_capacity(
             window_hours=DEFERRAL_WINDOW_SECONDS // 3600,
             error=str(exc),
         )
-        raise exc
+        await _set_direct_upload_index_status(exc.artifact, "failed")
+        return
     from procrastinate.exceptions import AlreadyEnqueued
 
     delay = deferral_delay_seconds()
@@ -428,7 +439,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         """
         try:
             await _load_and_enrich(artifact_id)
-        except LLMCapacityUnavailable as exc:
+        except _EnrichmentDeferred as exc:
             await _defer_after_llm_capacity(
                 enrich_document_interactive,
                 context,
@@ -456,7 +467,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         """
         try:
             await _load_and_enrich(artifact_id, resource_key)
-        except LLMCapacityUnavailable as exc:
+        except _EnrichmentDeferred as exc:
             await _defer_after_llm_capacity(
                 enrich_document_bulk,
                 context,
@@ -961,26 +972,15 @@ async def _enrich_document(
             qdrant_ms=qdrant_ms,
             total_ms=total_ms,
         )
-        if (
-            extra_payload.get("content_label", []) is None
-            or extra_payload.get("taxonomy_node_ids", []) is None
-        ):
-            # Ingest stored null labels or taxonomy because the LLM had no
-            # capacity. The upsert above rewrote the chunks from that copy,
-            # wiping whatever a backfill filled in meanwhile, so queue one now
-            # that the LLM answers again.
-            from knowledge_ingest.taxonomy_tasks import defer_taxonomy_backfill
-
-            try:
-                await defer_taxonomy_backfill(org_id, kb_slug)
-            except Exception:
-                logger.exception("taxonomy_backfill_enqueue_failed", org_id=org_id, kb_slug=kb_slug)
 
     except enrichment.EnrichmentError as exc:
         if is_llm_capacity_error(exc):
             # The task re-queues the job for later (_defer_after_llm_capacity);
             # the artifact is not failed and this is not an error.
-            raise LLMCapacityUnavailable(str(exc)) from exc
+            raise _EnrichmentDeferred(
+                str(exc),
+                {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
+            ) from exc
         # Fail-loudly (SPEC-KB-021): LLM enrichment failure must propagate so
         # Procrastinate retries the job.  Raw chunks from Phase 1 stay in Qdrant
         # as a temporary fallback; they will be overwritten on successful retry.

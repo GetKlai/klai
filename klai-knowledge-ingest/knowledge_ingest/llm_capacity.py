@@ -21,13 +21,17 @@ and by driving a ``litellm.Router`` configured like klai-ingest:
   ``async_filter_deployments`` returns an empty list, and the router raises
   ``RouterRateLimitError`` (``router_utils/handle_error.py:71-97``,
   ``types/router.py:730-743``): "No deployments available for selected model,
-  Try again in 5 seconds. ... cooldown_list=[]", also HTTP 429.
+  Try again in 5 seconds. ... cooldown_list=[...]", also HTTP 429.
 
-The same RouterRateLimitError message is used when the only deployment is in
-a 60 s cooldown after repeated 5xx answers, which is transient. That case
-names the cooling deployment in ``cooldown_list``, so only an empty
-``cooldown_list`` counts as capacity. An ordinary rate-limit 429 ("Model rate
-limit exceeded", or Mistral's own 429) does not match either message.
+Every "No deployments available" answer counts, whatever its
+``cooldown_list``. That list is router-wide (``handle_error.py:79-92`` reads
+``cooldown_handlers.py:312-335``, which asks for every model id), so a full
+klai-ingest key while some chat deployment cools down still lists that other
+deployment. klai-ingest has exactly one deployment, so the only answer this
+message can also mean is a 60 s cooldown of that deployment after repeated
+5xx; deferring background work for an hour then is an accepted cost. An
+ordinary rate-limit 429 ("Model rate limit exceeded", or Mistral's own 429)
+does not match.
 """
 
 from __future__ import annotations
@@ -46,16 +50,16 @@ import httpx
 DEFERRAL_DELAY_SECONDS = 3600
 DEFERRAL_JITTER_SECONDS = 1800
 
-# Deferral stops three days after the first capacity failure: long enough to
-# cover a weekend before someone raises the Mistral limit, short enough that
-# a limit nobody lifts ends in a failed job and an error log instead of an
-# indefinite queue. A monthly allowance that stays spent longer than this is a
+# Enrichment deferral stops three days after the first capacity failure: long
+# enough to cover a weekend before someone raises the Mistral limit, short
+# enough that a limit nobody lifts ends in a failed artifact and an error log
+# instead of an indefinite queue. A monthly allowance that stays spent longer than this is a
 # decision for a person, not something a queue should wait out.
 DEFERRAL_WINDOW_SECONDS = 3 * 24 * 3600
 
-_BUDGET_CROSSED = "No deployments available - crossed budget"
-_NO_DEPLOYMENT = "No deployments available for selected model"
-_NO_COOLDOWN = "cooldown_list=[]"
+# Prefix of both the crossed-budget and the empty-deployment-list message
+# (types/router.py:509-511).
+_NO_DEPLOYMENTS = "No deployments available"
 
 
 class LLMCapacityUnavailable(Exception):
@@ -79,10 +83,7 @@ def is_llm_capacity_error(exc: BaseException) -> bool:
 def _is_capacity_response(response: httpx.Response) -> bool:
     if response.status_code == 402:
         return True
-    if response.status_code != 429:
-        return False
-    body = response.text
-    return _BUDGET_CROSSED in body or (_NO_DEPLOYMENT in body and _NO_COOLDOWN in body)
+    return response.status_code == 429 and _NO_DEPLOYMENTS in response.text
 
 
 def deferral_window_spent(deferred_since: int) -> bool:

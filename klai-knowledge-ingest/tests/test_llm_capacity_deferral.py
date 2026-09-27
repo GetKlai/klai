@@ -33,10 +33,12 @@ ALL_ACCOUNTS_FULL = (
     "No deployments available for selected model, Try again in 5 seconds. "
     "Passed model=klai-ingest. pre-call-checks=False, cooldown_list=[]",
 )
-COOLING_DOWN = (
+# cooldown_list is router-wide in litellm 1.96.2: a full klai-ingest key while a
+# chat deployment cools down lists that other deployment.
+FULL_WHILE_OTHER_COOLS = (
     429,
     "No deployments available for selected model, Try again in 60 seconds. "
-    "Passed model=klai-ingest. pre-call-checks=False, cooldown_list=['0f3c']",
+    "Passed model=klai-ingest. pre-call-checks=False, cooldown_list=['9a1e-klai-primary']",
 )
 RATE_LIMITED = (
     429,
@@ -70,11 +72,11 @@ async def _litellm_error(answer: tuple[int, str]) -> enrichment.EnrichmentError:
         (KEY_FULL, True),
         (BUDGET_CROSSED, True),
         (ALL_ACCOUNTS_FULL, True),
-        (COOLING_DOWN, False),
+        (FULL_WHILE_OTHER_COOLS, True),
         (RATE_LIMITED, False),
         (UPSTREAM_500, False),
     ],
-    ids=["key-full", "budget", "all-full", "cooldown", "rate-limit", "500"],
+    ids=["key-full", "budget", "all-full", "full-other-cools", "rate-limit", "500"],
 )
 async def test_only_spent_capacity_counts_as_capacity(answer, is_capacity):
     assert llm_capacity.is_llm_capacity_error(await _litellm_error(answer)) is is_capacity
@@ -130,7 +132,11 @@ async def _run_bulk_enrichment(error: Exception, *, llm_deferred_since: int | No
     return task, status, logs, outcome
 
 
-@pytest.mark.parametrize("answer", [KEY_FULL, BUDGET_CROSSED], ids=["key-full", "budget"])
+@pytest.mark.parametrize(
+    "answer",
+    [KEY_FULL, BUDGET_CROSSED, FULL_WHILE_OTHER_COOLS],
+    ids=["key-full", "budget", "full-other-cools"],
+)
 async def test_spent_capacity_defers_the_enrichment_job_instead_of_failing_it(answer):
     before = int(time.time())
     task, status, logs, outcome = await _run_bulk_enrichment(await _litellm_error(answer))
@@ -159,67 +165,84 @@ async def test_other_llm_failure_still_fails_and_retries_the_job():
     task.defer_async.assert_not_awaited()
 
 
-async def test_deferral_stops_after_the_window_with_a_final_error_log():
+async def test_deferral_stops_after_the_window_and_fails_the_artifact_once():
     since = int(time.time()) - llm_capacity.DEFERRAL_WINDOW_SECONDS - 1
-    task, _status, logs, outcome = await _run_bulk_enrichment(
+    task, status, logs, outcome = await _run_bulk_enrichment(
         await _litellm_error(KEY_FULL), llm_deferred_since=since
     )
 
-    assert isinstance(outcome, llm_capacity.LLMCapacityUnavailable)
+    # Returning instead of raising keeps procrastinate's normal retries from
+    # running the exhausted job again.
+    assert outcome is None
     task.defer_async.assert_not_awaited()
+    status.assert_awaited_once()
+    assert status.await_args.args[0]["artifact_id"] == "a1"
+    assert status.await_args.args[1] == "failed"
     final = [e for e in logs if e["event"] == "enrichment_llm_capacity_deferral_exhausted"]
     assert len(final) == 1
     assert final[0]["log_level"] == "error"
-    assert final[0]["artifact_id"] == "a1"
     assert final[0]["deferred_since"] == since
 
 
-async def test_backfill_leaves_unclassified_documents_for_a_later_run():
-    """Null taxonomy (ingest had no capacity) is selected by the backfill; a
-    capacity failure during the backfill leaves it null instead of [] and
-    re-queues the run, and the next run classifies it."""
+async def _qdrant_with_points(*payloads: dict):
     from qdrant_client import AsyncQdrantClient
     from qdrant_client.models import Distance, PointStruct, VectorParams
-
-    from knowledge_ingest import taxonomy_tasks
-    from knowledge_ingest.taxonomy_classifier import TaxonomyNode
 
     client = AsyncQdrantClient(location=":memory:")
     await client.create_collection(
         "klai_knowledge",
         vectors_config={"vector_chunk": VectorParams(size=2, distance=Distance.COSINE)},
     )
-    base = {"org_id": "org-1", "kb_slug": "kb-1", "text": "body"}
     await client.upsert(
         "klai_knowledge",
         points=[
-            PointStruct(
-                id=1,
-                vector={"vector_chunk": [0.1, 0.2]},
-                payload={
-                    **base,
-                    "artifact_id": "a-pending",
-                    "title": "Pending",
-                    "content_label": None,
-                    "taxonomy_node_ids": None,
-                },
-            ),
-            PointStruct(
-                id=2,
-                vector={"vector_chunk": [0.2, 0.1]},
-                payload={
-                    **base,
-                    "artifact_id": "a-done",
-                    "title": "Done",
-                    "content_label": ["billing"],
-                    "taxonomy_node_ids": [7],
-                    "tags": ["billing"],
-                },
-            ),
+            PointStruct(id=i, vector={"vector_chunk": [0.1, 0.2]}, payload={"text": "body", **p})
+            for i, p in enumerate(payloads, start=1)
         ],
     )
+    return client
 
-    app = _FakeApp()
+
+class _RecordingApp:
+    def __init__(self):
+        self.task_kwargs: dict[str, dict] = {}
+
+    def task(self, **kwargs):
+        def _decorator(fn):
+            self.task_kwargs[fn.__name__] = kwargs
+            return _Task(fn)
+
+        return _decorator
+
+    def periodic(self, **kwargs):
+        return lambda task: task
+
+
+async def test_backfill_stops_on_capacity_leaving_documents_unclassified_for_the_sweep():
+    """A backfill that meets a spent key fails without re-queueing itself,
+    leaves null as null (not []), and the next run classifies it."""
+    from knowledge_ingest import taxonomy_tasks
+    from knowledge_ingest.taxonomy_classifier import TaxonomyNode
+
+    base = {"org_id": "org-1", "kb_slug": "kb-1"}
+    client = await _qdrant_with_points(
+        {
+            **base,
+            "artifact_id": "a-pending",
+            "title": "Pending",
+            "content_label": None,
+            "taxonomy_node_ids": None,
+        },
+        {
+            **base,
+            "artifact_id": "a-done",
+            "title": "Done",
+            "content_label": ["billing"],
+            "taxonomy_node_ids": [7],
+            "tags": ["billing"],
+        },
+    )
+    app = _RecordingApp()
     taxonomy_tasks.register_taxonomy_tasks(app)
     classify = AsyncMock(side_effect=llm_capacity.LLMCapacityUnavailable("402"))
 
@@ -235,15 +258,12 @@ async def test_backfill_leaves_unclassified_documents_for_a_later_run():
             AsyncMock(return_value=["invoices"]),
         ),
         patch("knowledge_ingest.taxonomy_classifier.classify_document", classify),
-        patch("knowledge_ingest.enrichment_tasks.get_app", return_value=app),
     ):
-        first = await app.run_taxonomy_backfill(org_id="org-1", kb_slug="kb-1")
+        with pytest.raises(llm_capacity.LLMCapacityUnavailable, match="automatic sweep"):
+            await app.run_taxonomy_backfill(org_id="org-1", kb_slug="kb-1")
         (pending,) = await client.retrieve("klai_knowledge", ids=[1])
         assert pending.payload["taxonomy_node_ids"] is None
-        assert first["deferred_for_llm_capacity"] is True
-        configure = app.run_taxonomy_backfill.configure.call_args.kwargs
-        assert configure["queueing_lock"] == "taxonomy-backfill:org-1:kb-1"
-        assert "llm_deferred_since" in app.run_taxonomy_backfill.defer_async.call_args.kwargs
+        app.run_taxonomy_backfill.defer_async.assert_not_awaited()
 
         classify.side_effect = None
         classify.return_value = ([(7, 0.9)], ["invoices"])
@@ -255,3 +275,50 @@ async def test_backfill_leaves_unclassified_documents_for_a_later_run():
     assert pending.payload["taxonomy_node_ids"] == [7]
     assert done.payload["taxonomy_node_ids"] == [7]
     assert [c.kwargs["title"] for c in classify.await_args_list] == ["Pending"]
+
+
+def test_backfill_is_not_retried_on_capacity_but_is_on_other_errors():
+    """A capacity failure ends the job as failed after one attempt (the portal
+    shows it failed, and a sweep-queued run costs one failing call per KB)."""
+    from knowledge_ingest import taxonomy_tasks
+
+    app = _RecordingApp()
+    taxonomy_tasks.register_taxonomy_tasks(app)
+    retry = app.task_kwargs["run_taxonomy_backfill"]["retry"]
+    first_run = SimpleNamespace(attempts=0)
+    capacity = llm_capacity.LLMCapacityUnavailable("402")
+
+    assert retry.get_retry_decision(exception=capacity, job=first_run) is None
+    assert retry.get_retry_decision(exception=RuntimeError("portal down"), job=first_run)
+    second_run = SimpleNamespace(attempts=1)
+    assert retry.get_retry_decision(exception=RuntimeError("portal down"), job=second_run) is None
+
+
+async def test_sweep_queues_one_locked_backfill_per_kb_with_unclassified_documents():
+    from knowledge_ingest import taxonomy_tasks
+
+    client = await _qdrant_with_points(
+        {"org_id": "org-1", "kb_slug": "kb-1", "content_label": None, "taxonomy_node_ids": []},
+        {"org_id": "org-1", "kb_slug": "kb-1", "content_label": None},
+        {"org_id": "org-1", "kb_slug": "kb-2", "content_label": [], "taxonomy_node_ids": None},
+        {"org_id": "org-2", "kb_slug": "kb-1", "content_label": ["x"], "taxonomy_node_ids": [1]},
+        {"org_id": "org-2", "kb_slug": "kb-3", "content_label": []},
+    )
+    app = _RecordingApp()
+    taxonomy_tasks.register_taxonomy_tasks(app)
+
+    with (
+        patch("knowledge_ingest.qdrant_store.get_client", return_value=client),
+        patch("knowledge_ingest.enrichment_tasks.get_app", return_value=app),
+    ):
+        await app.sweep_unclassified_kbs_periodic(timestamp=0)
+
+    backfill = app.run_taxonomy_backfill
+    queued = sorted(
+        (c.kwargs["org_id"], c.kwargs["kb_slug"]) for c in backfill.defer_async.await_args_list
+    )
+    assert queued == [("org-1", "kb-1"), ("org-1", "kb-2")]
+    for configure_call in backfill.configure.call_args_list:
+        kwargs = configure_call.kwargs
+        assert kwargs["lock"] == kwargs["queueing_lock"]
+        assert kwargs["lock"].startswith("taxonomy-backfill:org-1:kb-")

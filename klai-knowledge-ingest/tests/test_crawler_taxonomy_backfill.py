@@ -52,6 +52,7 @@ async def test_crawl_taxonomy_backfill_enqueues_deduped_job_when_nodes_exist():
     assert result == 123
     run_taxonomy_backfill.configure.assert_called_once_with(
         queueing_lock="taxonomy-backfill:org-1:support",
+        lock="taxonomy-backfill:org-1:support",
     )
     defer_async.assert_awaited_once_with(
         org_id="org-1",

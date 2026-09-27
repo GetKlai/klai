@@ -53,7 +53,7 @@ from knowledge_ingest.enrichment_policy import (
 )
 from knowledge_ingest.graph_refresh import maybe_refresh_stale_graph
 from knowledge_ingest.identity import assert_caller_identity, assert_caller_identity_tenant_only
-from knowledge_ingest.llm_capacity import LLMCapacityUnavailable, deferral_delay_seconds
+from knowledge_ingest.llm_capacity import LLMCapacityUnavailable
 from knowledge_ingest.models import (
     BulkSyncRequest,
     GiteaPushEvent,
@@ -68,7 +68,6 @@ from knowledge_ingest.source_profiles import (
     resolve_source_knowledge_profile,
 )
 from knowledge_ingest.taxonomy_classifier import classify_document
-from knowledge_ingest.taxonomy_tasks import defer_taxonomy_backfill
 
 _SENTINEL = 253402300800  # 9999-12-31
 _background_tasks: set = set()  # Prevents fire-and-forget tasks from being GC'd
@@ -558,9 +557,8 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # Blind label generation (SPEC-KB-023 R1) — BEFORE taxonomy to avoid confirmation bias.
     # Uses klai-ingest, 15s timeout, returns [] on failure (non-fatal).
     # When klai-ingest has no capacity the label and the taxonomy are stored
-    # as null ("not yet classified", which the taxonomy backfill selects) and
-    # a backfill is queued for when capacity is back.
-    llm_capacity_out = False
+    # as null ("not yet classified"); the hourly taxonomy sweep
+    # (taxonomy_tasks.sweep_unclassified_kbs) queues the backfill that fills them.
     content_label: list[str] | None
     try:
         content_label = await generate_content_label(
@@ -569,7 +567,6 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         )
     except LLMCapacityUnavailable:
         content_label = None
-        llm_capacity_out = True
 
     # Taxonomy classification (SPEC-KB-022 R1) — multi-label, one call per document.
     # Fetch taxonomy nodes for this KB; if none exist, skip classification entirely.
@@ -622,15 +619,6 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
                 taxonomy_node_ids = [node_id for node_id, _conf in matched_nodes]
             except LLMCapacityUnavailable:
                 taxonomy_node_ids = None
-                llm_capacity_out = True
-    # Without enrichment_enabled this process has no job queue or worker.
-    if llm_capacity_out and settings.enrichment_enabled:
-        await defer_taxonomy_backfill(
-            req.org_id,
-            req.kb_slug,
-            schedule_in_seconds=deferral_delay_seconds(),
-            llm_deferred_since=int(time.time()),
-        )
 
     # Merge frontmatter tags + LLM-suggested tags (frontmatter has priority, dedup)
     frontmatter_meta = _extract_frontmatter_metadata(indexable_content)
