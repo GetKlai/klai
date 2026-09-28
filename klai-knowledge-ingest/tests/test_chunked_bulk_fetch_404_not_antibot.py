@@ -119,7 +119,7 @@ async def test_four_structural_404s_do_not_stop_the_remaining_real_pages(
     for i in range(1, 5):
         assert (
             reason_by_url[f"https://support.ascendcloud.com/bogus-template-{i}"]
-            == FetchReasonCode.HTTP_4XX.value
+            == FetchReasonCode.GONE.value
         )
     for suffix in ("a", "b", "c"):
         assert (

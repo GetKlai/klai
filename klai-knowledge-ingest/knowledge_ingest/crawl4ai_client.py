@@ -651,7 +651,7 @@ def _classify_fetch_outcome(
     # comment above for the production evidence (91 of 100 historical
     # BLOCKED_ANTI_BOT outcomes carried a contradicting status code).
     # Falls through to the ordinary status-code branches below on a
-    # contradicted guess, which classify e.g. 404/410 as HTTP_4XX, 200 has
+    # contradicted guess, which classify e.g. 404/410 as GONE, 200 has
     # already returned SUCCESS above, and 5xx as HTTP_5XX.
     if "blocked by anti-bot protection" in err_msg and (
         _is_concrete_anti_bot_detection(err_msg)
@@ -675,6 +675,8 @@ def _classify_fetch_outcome(
         return FetchReasonCode.RATE_LIMITED.value
     if status in (401, 403):
         return FetchReasonCode.AUTH_ERROR.value
+    if status in (404, 410):
+        return FetchReasonCode.GONE.value
     if isinstance(status, int) and 400 <= status < 500:
         return FetchReasonCode.HTTP_4XX.value
     if isinstance(status, int) and 500 <= status < 600:
@@ -3204,6 +3206,7 @@ _NON_STOP_CHUNKING_REASON_CODES = frozenset(
         FetchReasonCode.REFUSED.value,
         FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value,
         FetchReasonCode.NOT_FETCHED_CANCELLED.value,
+        FetchReasonCode.GONE.value,
     }
 )
 _overlapping_stop_chunking_reason_codes = (
@@ -3407,7 +3410,9 @@ async def _chunked_bulk_fetch_with_session(
             for page in chunk_pages:
                 page_reason_code = _classify_fetch_outcome(page)
                 chunk_reason_codes.add(page_reason_code)
-                if page_reason_code == FetchReasonCode.SUCCESS.value:
+                # A 404/410 is the site answering normally about a page that
+                # no longer exists, not a sign the host is failing.
+                if page_reason_code in (FetchReasonCode.SUCCESS.value, FetchReasonCode.GONE.value):
                     chunk_any_success = True
                 else:
                     chunk_failed += 1

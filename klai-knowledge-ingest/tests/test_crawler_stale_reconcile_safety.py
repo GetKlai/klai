@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from knowledge_ingest import link_graph
+from knowledge_ingest import crawl4ai_client, link_graph
 from knowledge_ingest.crawl4ai_client import CrawlResult
 from tests.conftest import connection_factory_for
 
@@ -189,3 +189,78 @@ async def test_stale_reconcile_still_runs_when_crawl_is_fully_fetched():
 
     mock_pg.list_stale_connector_artifact_paths.assert_awaited_once()
     mock_pg.soft_delete_stale_connector_artifacts.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "retired"), [(404, True), (410, True), (401, False)])
+async def test_page_that_is_gone_lets_stale_cleanup_retire_it_but_an_auth_error_does_not(
+    status: int, retired: bool
+):
+    """A 404/410 answer means the page no longer exists, so a crawl that is
+    otherwise complete must still run the stale cleanup and retire the
+    stored version. A 401 says nothing about the page being gone: the
+    stored version stays and the cleanup is skipped."""
+    mock_conn = _make_mock_conn()
+    results = [_make_crawl_result(f"https://example.com/{letter}") for letter in ("a", "b", "c")]
+    fetch_outcomes = [{"url": r.url, "reason_code": "success", "status_code": 200} for r in results]
+    removed = "https://example.com/removed"
+    # crawl4ai 0.9.4 reports a full-size error page as success=True.
+    page = {
+        "url": removed,
+        "success": True,
+        "status_code": status,
+        "redirected_status_code": status,
+        "html": "<html><body>" + "Page not available. " * 50 + "</body></html>",
+        "markdown": "Page not available. " * 50,
+        "links": {"internal": []},
+    }
+    error_page_results, error_page_outcomes = crawl4ai_client._combine_bulk_responses(
+        candidates=[removed],
+        raw_results=crawl4ai_client._normalise_results_block({"results": [page]}),
+        transport_error=None,
+        base_domain="example.com",
+    )
+    assert error_page_results == []
+    fetch_outcomes += error_page_outcomes
+
+    async def _fake_ingest(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return {"chunks": 1}
+
+    mock_pg = MagicMock()
+    mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
+    mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
+    mock_pg.upsert_crawled_page = AsyncMock()
+    mock_pg.update_crawled_page_simhash = AsyncMock()
+    mock_pg.upsert_page_links = AsyncMock()
+    mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[removed])
+    mock_pg.soft_delete_stale_connector_artifacts = AsyncMock(return_value=1)
+
+    patches = _patch_common(mock_pg, results, fetch_outcomes, _fake_ingest)
+    for p in patches:
+        p.start()
+    try:
+        from knowledge_ingest.adapters.crawler import run_crawl_job
+
+        await run_crawl_job(
+            connection_factory=connection_factory_for(mock_conn),
+            job_id="job-1",
+            org_id="org-1",
+            kb_slug="docs",
+            start_url="https://example.com/a",
+            max_depth=1,
+            rate_limit=100.0,
+            connector_id="conn-1",
+        )
+    finally:
+        for p in patches:
+            p.stop()
+
+    if retired:
+        current = mock_pg.list_stale_connector_artifact_paths.await_args.kwargs["current_paths"]
+        assert removed not in current
+        stale = mock_pg.soft_delete_stale_connector_artifacts.await_args.kwargs["stale_paths"]
+        assert stale == [removed]
+    else:
+        mock_pg.list_stale_connector_artifact_paths.assert_not_awaited()
+        mock_pg.soft_delete_stale_connector_artifacts.assert_not_awaited()

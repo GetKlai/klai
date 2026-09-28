@@ -282,7 +282,7 @@ class TestClassifyFetchOutcome:
 
     def test_other_4xx_classifies_http_4xx(self) -> None:
         assert (
-            _classify_fetch_outcome({"success": False, "status_code": 404})
+            _classify_fetch_outcome({"success": False, "status_code": 400})
             == FetchReasonCode.HTTP_4XX.value
         )
 
@@ -362,12 +362,12 @@ class TestClassifyFetchOutcome:
             == FetchReasonCode.BLOCKED_ANTI_BOT.value
         )
 
-    def test_404_with_structural_antibot_marker_classifies_http_4xx(self) -> None:
+    def test_404_with_structural_antibot_marker_classifies_gone(self) -> None:
         """2026-08-18 support.ascendcloud.com incident: a 404 (the site
         genuinely doesn't have this page — it was a link built from
         un-rendered template syntax) whose tiny error body trips crawl4ai's
         STRUCTURAL anti-bot heuristic ("minimal_text on small page") must
-        classify honestly as HTTP_4XX, not BLOCKED_ANTI_BOT. A definitive
+        classify honestly as GONE, not BLOCKED_ANTI_BOT. A definitive
         "this page doesn't exist" status code contradicts a heuristic guess
         and must win. Exact production error_message."""
         assert (
@@ -381,10 +381,10 @@ class TestClassifyFetchOutcome:
                     ),
                 }
             )
-            == FetchReasonCode.HTTP_4XX.value
+            == FetchReasonCode.GONE.value
         )
 
-    def test_410_with_structural_antibot_marker_classifies_http_4xx(self) -> None:
+    def test_410_with_structural_antibot_marker_classifies_gone(self) -> None:
         """410 Gone is the same "definitely doesn't exist" signal as 404."""
         assert (
             _classify_fetch_outcome(
@@ -397,7 +397,7 @@ class TestClassifyFetchOutcome:
                     ),
                 }
             )
-            == FetchReasonCode.HTTP_4XX.value
+            == FetchReasonCode.GONE.value
         )
 
     def test_403_with_concrete_antibot_marker_still_classifies_blocked_anti_bot(
@@ -571,10 +571,10 @@ class TestClassifyFetchOutcomeRateLimitAndRefusal:
             == FetchReasonCode.AUTH_ERROR.value
         )
 
-    def test_404_with_no_marker_stays_http_4xx(self) -> None:
+    def test_404_with_no_marker_is_gone(self) -> None:
         assert (
             _classify_fetch_outcome({"success": False, "status_code": 404})
-            == FetchReasonCode.HTTP_4XX.value
+            == FetchReasonCode.GONE.value
         )
 
     def test_concrete_antibot_marker_still_wins_over_new_refused_code(self) -> None:
@@ -631,8 +631,8 @@ class TestClassifyFetchOutcomeStructuralGuessVsStatusCode:
             (500, FetchReasonCode.HTTP_5XX.value),
             # 404/410 — definitively nonexistent, subsumes the narrower
             # 404/410-only branch from fix/crawl-template-urls-and-404-classification.
-            (404, FetchReasonCode.HTTP_4XX.value),
-            (410, FetchReasonCode.HTTP_4XX.value),
+            (404, FetchReasonCode.GONE.value),
+            (410, FetchReasonCode.GONE.value),
         ],
     )
     def test_structural_guess_loses_to_a_contradicting_status_code(
@@ -958,7 +958,7 @@ async def test_crawl_site_returns_one_outcome_per_candidate_on_partial_success(
     by_url = {o["url"]: o for o in outcomes}
     assert by_url["https://example.com"]["reason_code"] == FetchReasonCode.SUCCESS.value
     assert by_url["https://example.com/ok"]["reason_code"] == FetchReasonCode.SUCCESS.value
-    assert by_url["https://example.com/missing"]["reason_code"] == FetchReasonCode.HTTP_4XX.value
+    assert by_url["https://example.com/missing"]["reason_code"] == FetchReasonCode.GONE.value
     assert (
         by_url["https://example.com/server-error"]["reason_code"] == FetchReasonCode.HTTP_5XX.value
     )

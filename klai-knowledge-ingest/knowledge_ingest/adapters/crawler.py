@@ -207,6 +207,9 @@ _FETCH_NON_FAILURE_REASON_CODES: frozenset[str] = frozenset(
         # fetch failure. Must not inflate fetch_failure_dominant, and must
         # not trip failed_partial on a job the operator stopped on purpose.
         FetchReasonCode.NOT_FETCHED_CANCELLED.value,
+        # A 404/410 page no longer exists: a resolved outcome, so it lets the
+        # stale-artifact cleanup run and retire the stored version.
+        FetchReasonCode.GONE.value,
     }
 )
 _uncategorized_fetch_reason_codes = (
