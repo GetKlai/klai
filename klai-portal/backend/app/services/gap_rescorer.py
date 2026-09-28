@@ -346,7 +346,7 @@ async def schedule_rescore(
 
 
 # A connector sync that changed knowledge force-reanalyses up to
-# MAX_SUPPORT_CASES_PER_TRIGGER support cases at ~9 klai-medium calls each. An
+# MAX_SUPPORT_CASES_PER_TRIGGER support cases at ~9 klai-judge calls each. An
 # org's connectors finish one after another in the same nightly window, so each
 # qualifying sync restamps portal_orgs.support_reanalysis_requested_at, and the
 # org is reanalysed once its request has been quiet for 15 minutes instead of

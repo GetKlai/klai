@@ -40,11 +40,13 @@ from app.core.database import cross_org_session, tenant_scoped_session
 from app.core.provisioning_names import provisioning_names_for_slug
 from app.services.conversation_judge import (
     _MAX_JUDGE_ATTEMPTS,
+    JudgePassStopped,
     _call_judge_llm,
     _parse_verdict,
     file_judge_gap,
     transcript_tail,
 )
+from app.services.llm_capacity import is_llm_capacity_error
 
 logger = structlog.get_logger()
 
@@ -333,6 +335,7 @@ async def _judge_org(org_id: int, slug: str) -> int:
     """
     db_name = provisioning_names_for_slug(slug, domain=settings.domain).mongodb_database
     judged = 0
+    out_of_capacity = False
     pending_gaps: list[tuple[str, str, dict]] = []
     async with tenant_scoped_session(org_id) as db:
         excl_result = await db.execute(text(_EXCLUDE_SQL), {"org_id": org_id, "max_attempts": _MAX_JUDGE_ATTEMPTS})
@@ -371,7 +374,10 @@ async def _judge_org(org_id: int, slug: str) -> int:
                     system=LIBRECHAT_JUDGE_SYSTEM_PROMPT,
                     feature_tag="portal:librechat-judge",
                 )
-            except Exception:
+            except Exception as exc:
+                if is_llm_capacity_error(exc):
+                    out_of_capacity = True
+                    break
                 # One flaky LLM call costs this conversation, not the batch;
                 # the attempt is recorded so a permanently failing
                 # conversation stops being retried after _MAX_JUDGE_ATTEMPTS.
@@ -426,6 +432,8 @@ async def _judge_org(org_id: int, slug: str) -> int:
 
     if judged:
         logger.info("librechat_quality_judged", org_id=org_id, judged_count=judged)
+    if out_of_capacity:
+        raise JudgePassStopped(judged)
     return judged
 
 
@@ -446,6 +454,10 @@ async def librechat_judge_run_once() -> dict[str, int]:
         # verdicts; the pass continues and the next cycle retries.
         try:
             judged_total += await _judge_org(org_id, slug)
+        except JudgePassStopped as stop:
+            judged_total += stop.judged
+            logger.info("judge_pass_stopped_llm_capacity", channel="librechat", org_id=org_id)
+            break
         except Exception:
             logger.exception("librechat_judge_org_failed", org_id=org_id)
 

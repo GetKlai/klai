@@ -43,7 +43,8 @@ _KEY_BY_ENV = {
     "os.environ/MISTRAL_VIBE_KEY": _VIBE_KEY,
 }
 _INGEST_ALIAS = "klai-ingest"
-_TEXT_ALIASES = {"klai-primary", "klai-fast", "klai-large", "klai-medium", _INGEST_ALIAS}
+_JUDGE_ALIAS = "klai-judge"
+_TEXT_ALIASES = {"klai-primary", "klai-fast", "klai-large", "klai-medium", _INGEST_ALIAS, _JUDGE_ALIAS}
 
 
 @pytest.fixture(scope="module")
@@ -599,12 +600,19 @@ async def test_full_account_is_re_admitted_after_bench_time(real_litellm) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("alias", "upstream_model"),
+    [(_INGEST_ALIAS, "mistral-vibe-cli-fast"), (_JUDGE_ALIAS, "mistral-vibe-cli-latest")],
+)
 @pytest.mark.parametrize(("status_code", "message"), [(402, "Workspace monthly spending limit reached"), (429, "rate limited")])
-async def test_ingest_alias_never_leaves_the_vibe_key(real_litellm, status_code: int, message: str) -> None:
-    """klai-ingest has one deployment and no fallback entry: a full (402) or
-    busy (429) Vibe key fails the request, and neither the chat keys nor
-    another alias ever see bulk ingest traffic. No per-request `fallbacks`
-    override is sent, so this holds on the config alone."""
+async def test_vibe_aliases_never_leave_the_vibe_key(
+    real_litellm, alias: str, upstream_model: str, status_code: int, message: str
+) -> None:
+    """klai-ingest and klai-judge each have one deployment and no
+    fallback entry: a full (402) or busy (429) Vibe key fails the request, and
+    neither the chat keys nor another alias ever see this background traffic.
+    No per-request `fallbacks` override is sent, so this holds on the config
+    alone."""
     calls: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -615,14 +623,77 @@ async def test_ingest_alias_never_leaves_the_vibe_key(real_litellm, status_code:
     try:
         with _mock_mistral_http(handler), pytest.raises(Exception):  # noqa: PT011 - 402 and 429 map to different litellm types
             await asyncio.wait_for(
-                router.acompletion(model=_INGEST_ALIAS, messages=[{"role": "user", "content": "hello"}]),
+                router.acompletion(model=alias, messages=[{"role": "user", "content": "hello"}]),
                 timeout=15,
             )
     finally:
         router.reset()
 
     assert calls
-    assert set(calls) == {(_VIBE_KEY, "mistral-vibe-cli-fast")}
+    assert set(calls) == {(_VIBE_KEY, upstream_model)}
+
+
+@pytest.mark.asyncio
+async def test_judge_requests_no_reasoning(real_litellm) -> None:
+    """Medium 3.5 is a hybrid reasoning model and Mistral documents no default
+    reasoning_effort, so config.yaml pins "none". LiteLLM 1.96.2 only maps
+    reasoning_effort for "magistral" model names and drop_params would drop
+    it; this checks it still reaches Mistral in the request body."""
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return _ok_response(request)
+
+    router, _hook = _pinned_router(real_litellm)
+    try:
+        with _mock_mistral_http(handler):
+            await router.acompletion(model=_JUDGE_ALIAS, messages=[{"role": "user", "content": "hello"}])
+    finally:
+        router.reset()
+
+    assert len(bodies) == 1
+    assert bodies[0]["model"] == "mistral-vibe-cli-latest"
+    assert bodies[0]["reasoning_effort"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_a_full_vibe_allowance_stops_both_vibe_aliases(real_litellm) -> None:
+    """klai-ingest and klai-judge draw on one Vibe allowance, and FULL is
+    tracked per key: a 402 answered to klai-judge benches the Vibe key,
+    so the next klai-ingest request fails without reaching Mistral at all,
+    and neither alias moves to a chat key."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        return _error_response(request, 402, "Workspace monthly spending limit reached")
+
+    router, hook = _pinned_router(real_litellm)
+    try:
+        with _mock_mistral_http(handler):
+            with pytest.raises(Exception):  # noqa: PT011 - litellm's 402 type
+                await asyncio.wait_for(
+                    router.acompletion(model=_JUDGE_ALIAS, messages=[{"role": "user", "content": "hello"}]),
+                    timeout=15,
+                )
+            for _ in range(100):
+                if hook._is_full(_VIBE_KEY):
+                    break
+                await asyncio.sleep(0.02)
+            assert hook._is_full(_VIBE_KEY)
+            assert set(calls) == {_VIBE_KEY}
+
+            calls.clear()
+            with pytest.raises(Exception):  # noqa: PT011 - litellm's no-deployment type
+                await asyncio.wait_for(
+                    router.acompletion(model=_INGEST_ALIAS, messages=[{"role": "user", "content": "hello again"}]),
+                    timeout=15,
+                )
+    finally:
+        router.reset()
+
+    assert calls == []
 
 
 @pytest.mark.asyncio

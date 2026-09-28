@@ -15,6 +15,8 @@ Never use raw model names. Aliases are tier-/model-named, NEVER role-named (no `
 | `klai-primary` | `mistral-small-2603` | Standard quality, user-facing. Routed via custom_router (may upgrade to klai-large for tool-calls). |
 | `klai-medium` | `mistral-medium-3.5` | Middle tier — used when klai-fast hits its output-token ceiling but klai-large is overkill. |
 | `klai-large` | `mistral-large-2512` | Agentic, tool use, MCP flows. |
+| `klai-ingest` | `mistral-vibe-cli-fast` (Vibe key) | knowledge-ingest background work. One deployment on `MISTRAL_VIBE_KEY`, no fallback. |
+| `klai-judge` | `mistral-vibe-cli-latest` = Medium 3.5 (Vibe key) | portal-api background Medium work (judges, support-case analysis, gap grouping) via `conversation_judge_model`. Same Vibe allowance as `klai-ingest`, no fallback, `reasoning_effort: none` pinned. In-turn Medium calls stay on `klai-medium`. |
 | `klai-bge-m3` | BGE-M3 on TEI/gpu-01 | Embeddings. Distinct model TYPE (not text-completion). |
 
 ## Provider swap

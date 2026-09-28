@@ -53,6 +53,7 @@ from app.core.database import cross_org_session, tenant_scoped_session
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services.gap_events import JUDGE_CALLER_CLIENT_ID, record_gap_event, shows_unmet_need
 from app.services.litellm_delegation import with_feature_tag
+from app.services.llm_capacity import is_llm_capacity_error
 from app.services.widget_outcome import _SUPPORT_REFERRAL_TEXTS
 from app.trace import get_trace_headers
 
@@ -112,6 +113,23 @@ _RETENTION_SAFETY_MARGIN = timedelta(hours=6)
 # column) the conversation is excluded by the same query that already
 # excludes a successfully judged one, and the exclusion is logged once.
 _MAX_JUDGE_ATTEMPTS = 3
+
+
+class JudgePassStopped(Exception):
+    """LiteLLM has no capacity left for the judge alias (see llm_capacity.py).
+
+    klai-judge shares the Vibe allowance with klai-ingest, so a full allowance
+    or a spent daily budget is an expected state: every further call this pass
+    would fail the same way. The pass stops without recording an attempt, so
+    capacity running out never pushes a conversation toward the
+    _MAX_JUDGE_ATTEMPTS exclusion; the next 30-minute pass tries again.
+    ``judged`` carries the verdicts the stopped org pass still committed.
+    """
+
+    def __init__(self, judged: int) -> None:
+        super().__init__(judged)
+        self.judged = judged
+
 
 # Enum sets mirrored from the ck_cqj_* CHECK constraints on
 # conversation_quality_judgments (app/models/conversation_quality.py) — a
@@ -497,6 +515,7 @@ async def _judge_org(org_id: int) -> int:
     so RLS Cat-D enforces the boundary even if the WHERE clause regressed.
     """
     judged = 0
+    out_of_capacity = False
     pending_gaps: list[tuple[int, list[JudgeTurn], dict]] = []
     async with tenant_scoped_session(org_id) as db:
         conv_result = await db.execute(
@@ -578,7 +597,10 @@ async def _judge_org(org_id: int) -> int:
             }
             try:
                 raw = await _call_judge_llm(model=settings.conversation_judge_model, user=user_prompt)
-            except Exception:
+            except Exception as exc:
+                if is_llm_capacity_error(exc):
+                    out_of_capacity = True
+                    break
                 # One tenant's flaky LLM call costs this conversation, not the
                 # batch; the attempt is recorded so a permanently failing
                 # conversation stops being retried after _MAX_JUDGE_ATTEMPTS.
@@ -644,6 +666,8 @@ async def _judge_org(org_id: int) -> int:
 
     if judged:
         logger.info("conversation_quality_judged", org_id=org_id, judged_count=judged)
+    if out_of_capacity:
+        raise JudgePassStopped(judged)
     return judged
 
 
@@ -680,6 +704,10 @@ async def _judge_run_once() -> dict[str, int]:
         # the pass continues and the next cycle retries.
         try:
             judged_total += await _judge_org(org_id)
+        except JudgePassStopped as stop:
+            judged_total += stop.judged
+            logger.info("judge_pass_stopped_llm_capacity", channel="webchat", org_id=org_id)
+            break
         except Exception:
             logger.exception("conversation_judge_org_failed", org_id=org_id)
 

@@ -1,7 +1,7 @@
 """
 Enforces the "move to the next Mistral Pro organisation only when the
 current one is FULL" rule across every klai-* Mistral alias (klai-primary,
-klai-fast, klai-medium, klai-large, klai-ingest).
+klai-fast, klai-medium, klai-large, klai-ingest, klai-judge).
 
 FULL is a property of an account (the deployment's API key), not of an
 `order` number: klai-ingest's only deployment is `order: 1` on a different
