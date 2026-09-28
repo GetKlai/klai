@@ -30,7 +30,7 @@ _apply_graphiti_patch()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):  # noqa: ARG001 — FastAPI lifespan contract requires this param
+async def lifespan(app: FastAPI):
     ensure_single_process_host_pacing()
     logger.info("starting_knowledge_ingest_service")
     await qdrant_store.ensure_collection()
@@ -47,7 +47,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001 — FastAPI lifespan contract 
         # SPEC-INGEST-QUEUE-SEPARATION-001.
         from knowledge_ingest.worker import WorkerLifecycle
 
-        async with WorkerLifecycle.start(postgres_dsn=settings.postgres_dsn):
+        async with WorkerLifecycle.start(postgres_dsn=settings.postgres_dsn) as worker:
+            app.state.worker_lifecycle = worker
             listener_task = asyncio.create_task(org_config.start_listener(pool))
             kb_config_listener_task = asyncio.create_task(kb_config.start_listener(pool))
             logger.info("config_listeners_started")
@@ -82,7 +83,7 @@ app.include_router(kb_sources.router)
 
 @app.get("/health")
 async def health():
-    """Check reachability of Qdrant, TEI, bge-m3-sparse, and FalkorDB."""
+    """Check Qdrant, TEI, bge-m3-sparse, FalkorDB, and the worker lanes."""
     import httpx
     from fastapi.responses import JSONResponse
 
@@ -137,6 +138,13 @@ async def health():
             checks["falkordb"] = "ok"
         except Exception as exc:
             checks["falkordb"] = f"error: {exc}"
+
+    # A lane that exited stays in dead_lanes until its restart backoff ends.
+    worker = getattr(app.state, "worker_lifecycle", None)
+    if worker is not None:
+        checks["procrastinate_workers"] = (
+            f"dead lanes: {', '.join(sorted(worker.dead_lanes))}" if worker.dead_lanes else "ok"
+        )
 
     all_ok = all(v == "ok" for v in checks.values())
     return JSONResponse(

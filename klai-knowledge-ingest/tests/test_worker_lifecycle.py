@@ -66,6 +66,24 @@ def stub_procrastinate(monkeypatch):
 
     proc_app.run_worker_async = _never_complete
 
+    class _Worker:
+        """The lifecycle builds the procrastinate Worker itself; its run()
+        delegates to ``proc_app.run_worker_async`` so a test can swap the body."""
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.worker_id = None
+            self._stop_event = asyncio.Event()
+
+        async def run(self):
+            self.worker_id = 1
+            try:
+                await proc_app.run_worker_async(**self.kwargs)
+            finally:
+                self.worker_id = None
+
+    proc_app._worker = _Worker
+
     # 2) Stub ``init_app`` on the *real* enrichment_tasks module so
     #    ``from knowledge_ingest import enrichment_tasks`` returns the
     #    actual module (with its real symbol table) but the function
@@ -248,3 +266,63 @@ async def test_zombie_recovery_failure_does_not_block_workers(stub_procrastinate
 
     # Workers still started despite the recovery failure.
     assert len(stub_procrastinate["run_worker_calls"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_procrastinate_pool_is_sized_for_all_lanes(stub_procrastinate):
+    """The 4-connection psycopg_pool default starved the side tasks (PoolTimeout)."""
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
+        pass
+
+    connector_kwargs = sys.modules["procrastinate"].PsycopgConnector.call_args.kwargs
+    assert connector_kwargs["min_size"] == WorkerLifecycle.POOL_MIN_SIZE
+    assert connector_kwargs["max_size"] == WorkerLifecycle.POOL_MAX_SIZE
+
+
+@pytest.mark.asyncio
+async def test_requested_shutdown_does_not_restart_lanes(stub_procrastinate):
+    from structlog.testing import capture_logs
+
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    with capture_logs() as logs:
+        async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
+
+    assert len(stub_procrastinate["run_worker_calls"]) == 4
+    assert not [e for e in logs if e["event"] == "procrastinate_worker_lane_died"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_completes_when_worker_cleanup_swallows_the_cancel(
+    stub_procrastinate, monkeypatch
+):
+    """Worker.run() turns a cancel into stop() and awaits its own cleanup; when
+    that cleanup raises (unregister_worker while Postgres is down) the
+    CancelledError is replaced by an ordinary exception. That must end the
+    lane, not restart it, or __aexit__ waits until Docker kills the container."""
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    monkeypatch.setattr(WorkerLifecycle, "LANE_RESTART_MIN_BACKOFF_SECONDS", 0.0)
+    runs = 0
+
+    async def _run_worker(**kwargs):
+        nonlocal runs
+        runs += 1
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise RuntimeError("unregister_worker failed") from None
+
+    stub_procrastinate["proc_app"].run_worker_async = _run_worker
+
+    lifecycle = WorkerLifecycle(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d")
+    await lifecycle.__aenter__()
+    await asyncio.sleep(0)
+    await asyncio.wait_for(lifecycle.__aexit__(None, None, None), timeout=2)
+
+    assert runs == 4

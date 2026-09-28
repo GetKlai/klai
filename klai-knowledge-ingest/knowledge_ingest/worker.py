@@ -11,7 +11,8 @@ async task worker correctly:
 * Open the connection pool.
 * Run zombie recovery (SPEC-PROCRASTINATE-ZOMBIE-001) before starting the
   worker so jobs orphaned by a previous container kill get retried.
-* Start one worker per queue lane, including an unstarvable maintenance lane.
+* Start one worker per queue lane, including an unstarvable maintenance lane,
+  and restart a lane whose worker exits while no shutdown was requested.
 * On shutdown: cancel the worker task and close the connection pool.
 
 Why a class instead of a free async function:
@@ -92,21 +93,58 @@ class WorkerLifecycle:
     # margin for FastAPI and the connector pool.
     SHUTDOWN_GRACEFUL_TIMEOUT_SECONDS: float = 20.0
     STALLED_WORKER_TIMEOUT_SECONDS: float = 120.0
+    # psycopg_pool defaults to min_size=4 with max_size=min_size, so all four
+    # lanes shared 4 connections, and a 30 s PoolTimeout in a side task made
+    # Procrastinate stop the lane (22, 23, 25 Sep 2026). Every query borrows a
+    # connection only for its own duration; the LISTEN connections are
+    # standalone, outside the pool. The peak is 15 job slots (8 + 2 + 4 + 1)
+    # finishing or deferring at the same moment, plus deferrals from the web
+    # routes, plus the per-lane fetch loop and the three side tasks
+    # (heartbeat, deferrer, abort poll) whose queries can coincide with it;
+    # 20 covers the job slots with room for those. core-01 Postgres on
+    # 28 Sep 2026: max_connections 100 (3 superuser-reserved), 61 in use,
+    # so growing this pool by 16 leaves 20 free.
+    POOL_MIN_SIZE: int = 4
+    POOL_MAX_SIZE: int = 20
+    # A lane that exits without a shutdown request is restarted after an
+    # exponential backoff so a database outage cannot turn into a tight
+    # restart loop. A lane that ran longer than the ceiling starts over at
+    # the minimum.
+    LANE_RESTART_MIN_BACKOFF_SECONDS: float = 1.0
+    LANE_RESTART_MAX_BACKOFF_SECONDS: float = 60.0
 
     def __init__(self, *, postgres_dsn: str) -> None:
         self.postgres_dsn = postgres_dsn
         self.proc_app: Any | None = None
         # SPEC-WORKER-LANES-001: one Procrastinate worker per lane.
-        # Both share the same App + connector pool, but subscribe to disjoint
+        # All share the same App + connector pool, but subscribe to disjoint
         # queue sets and have independent concurrency semaphores. This is the
         # only way to give I/O work latency guarantees while LLM work runs at
         # its natural throughput — procrastinate has no per-queue fairness
         # within a single worker.
-        self._io_worker_task: asyncio.Task | None = None
-        self._interactive_worker_task: asyncio.Task | None = None
-        self._llm_worker_task: asyncio.Task | None = None
-        self._maintenance_worker_task: asyncio.Task | None = None
+        self._lane_tasks: dict[str, asyncio.Task] = {}
+        self._lane_workers: dict[str, Any] = {}
+        self._stopping = False
         self._stack = AsyncExitStack()
+
+    @property
+    def dead_lanes(self) -> set[str]:
+        """Lanes without a worker that is registered and not stopping.
+
+        /health returns 503 while this is non-empty. A lane counts as alive
+        only once ``register_worker`` succeeded (``worker_id`` is set) and
+        as dead from the moment procrastinate calls ``stop()``, not after its
+        shutdown has drained the running jobs. ``_stop_event`` is private;
+        tests/test_worker_lane_supervision_contract.py pins it to
+        procrastinate 3.10.
+        """
+        return {
+            lane
+            for lane in self._lane_tasks
+            if (worker := self._lane_workers.get(lane)) is None
+            or worker.worker_id is None
+            or worker._stop_event.is_set()
+        }
 
     @classmethod
     @asynccontextmanager
@@ -127,7 +165,12 @@ class WorkerLifecycle:
         conninfo = _build_libpq_dsn(self.postgres_dsn)
         # kwargs={} works around psycopg-pool 3.x: default kwargs=None
         # leads to **None TypeError when the pool builds connection params.
-        connector = procrastinate.PsycopgConnector(conninfo=conninfo, kwargs={})
+        connector = procrastinate.PsycopgConnector(
+            conninfo=conninfo,
+            kwargs={},
+            min_size=self.POOL_MIN_SIZE,
+            max_size=self.POOL_MAX_SIZE,
+        )
         self.proc_app = enrichment_tasks.init_app(connector)
         logger.info("procrastinate_app_initialised")
 
@@ -161,39 +204,19 @@ class WorkerLifecycle:
             "shutdown_graceful_timeout": self.SHUTDOWN_GRACEFUL_TIMEOUT_SECONDS,
             "stalled_worker_timeout": self.STALLED_WORKER_TIMEOUT_SECONDS,
         }
-
-        self._io_worker_task = asyncio.create_task(
-            self.proc_app.run_worker_async(
-                queues=IO_QUEUES,
-                concurrency=self.IO_CONCURRENCY,
-                **common_worker_options,
-            ),
-            name="procrastinate-worker-io",
-        )
-        self._interactive_worker_task = asyncio.create_task(
-            self.proc_app.run_worker_async(
-                queues=INTERACTIVE_QUEUES,
-                concurrency=self.INTERACTIVE_CONCURRENCY,
-                **common_worker_options,
-            ),
-            name="procrastinate-worker-interactive",
-        )
-        self._llm_worker_task = asyncio.create_task(
-            self.proc_app.run_worker_async(
-                queues=LLM_QUEUES,
-                concurrency=self.LLM_CONCURRENCY,
-                **common_worker_options,
-            ),
-            name="procrastinate-worker-llm",
-        )
-        self._maintenance_worker_task = asyncio.create_task(
-            self.proc_app.run_worker_async(
-                queues=MAINTENANCE_QUEUES,
-                concurrency=self.MAINTENANCE_CONCURRENCY,
-                **common_worker_options,
-            ),
-            name="procrastinate-worker-maintenance",
-        )
+        lanes = {
+            "io": (IO_QUEUES, self.IO_CONCURRENCY),
+            "interactive": (INTERACTIVE_QUEUES, self.INTERACTIVE_CONCURRENCY),
+            "llm": (LLM_QUEUES, self.LLM_CONCURRENCY),
+            "maintenance": (MAINTENANCE_QUEUES, self.MAINTENANCE_CONCURRENCY),
+        }
+        for lane, (queues, concurrency) in lanes.items():
+            self._lane_tasks[lane] = asyncio.create_task(
+                self._supervise_lane(
+                    lane, queues=queues, concurrency=concurrency, **common_worker_options
+                ),
+                name=f"procrastinate-worker-{lane}",
+            )
         logger.info(
             "procrastinate_workers_started",
             io_queues=IO_QUEUES,
@@ -207,18 +230,59 @@ class WorkerLifecycle:
         )
         return self
 
+    async def _supervise_lane(self, lane: str, **worker_options: Any) -> None:
+        """Run one lane's worker and restart it whenever it exits.
+
+        Procrastinate's ``Worker.run()`` returns normally when a side task
+        (deferrer, update_heartbeats, listener) fails, because
+        ``_monitor_side_tasks`` calls ``stop()``; its own
+        "Side task ... failed" log line carries that exception. Only
+        cancellation, which is how ``__aexit__`` asks for shutdown, ends
+        this loop.
+        """
+        assert self.proc_app is not None
+        loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+        assert task is not None
+        backoff = self.LANE_RESTART_MIN_BACKOFF_SECONDS
+        while True:
+            started = loop.time()
+            error: Exception | None = None
+            # Same two calls as App.run_worker_async (procrastinate 3.10), but
+            # keeping the Worker so dead_lanes can read its state.
+            self.proc_app.perform_import_paths()
+            worker = self.proc_app._worker(**worker_options)
+            self._lane_workers[lane] = worker
+            try:
+                await worker.run()
+            except Exception as exc:
+                error = exc
+            # Worker.run() turns a cancel into stop() and then awaits its own
+            # cleanup; if that raises (unregister_worker while Postgres is
+            # down) the CancelledError is replaced by that exception. A lane
+            # restarted here would keep __aexit__ waiting until Docker kills
+            # the container.
+            if self._stopping or task.cancelling():
+                if error is not None:
+                    raise error
+                return
+            if loop.time() - started > self.LANE_RESTART_MAX_BACKOFF_SECONDS:
+                backoff = self.LANE_RESTART_MIN_BACKOFF_SECONDS
+            logger.error(
+                "procrastinate_worker_lane_died",
+                lane=lane,
+                error=repr(error) if error else "worker stopped itself, see side task log",
+                restart_in_seconds=backoff,
+                exc_info=error,
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, self.LANE_RESTART_MAX_BACKOFF_SECONDS)
+            logger.info("procrastinate_worker_lane_restarting", lane=lane)
+
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         # Cancel all lane workers in parallel and wait for them to exit.
-        worker_tasks = [
-            t
-            for t in (
-                self._io_worker_task,
-                self._interactive_worker_task,
-                self._llm_worker_task,
-                self._maintenance_worker_task,
-            )
-            if t is not None
-        ]
+        self._stopping = True
+        worker_tasks = list(self._lane_tasks.values())
         if worker_tasks:
             logger.info("procrastinate_workers_stopping", count=len(worker_tasks))
             for t in worker_tasks:
