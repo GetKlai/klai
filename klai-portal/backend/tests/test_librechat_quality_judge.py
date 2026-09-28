@@ -680,6 +680,53 @@ async def test_a_permanently_failing_conversation_is_retried_at_most_max_attempt
     assert excluded_logs[0].kwargs["attempts"] == _MAX_JUDGE_ATTEMPTS
 
 
+@pytest.mark.asyncio
+async def test_a_spent_llm_budget_stops_the_pass_without_costing_a_conversation_an_attempt():
+    """LiteLLM answers a spent klai-judge budget with a 429 "No deployments
+    available". The pass stops after that one call and no conversation moves
+    toward its _MAX_JUDGE_ATTEMPTS exclusion."""
+    import httpx
+
+    from app.services import librechat_quality_judge as lj
+
+    mongo = _FakeMongo(
+        {
+            "librechat-voys": {
+                "conversations": [_conv("c1", minutes=5), _conv("c2", minutes=6)],
+                "messages": [
+                    _msg("c1", user=True, minutes=0, text="q1"),
+                    _msg("c1", user=False, minutes=1, text="a1"),
+                    _msg("c2", user=True, minutes=2, text="q2"),
+                    _msg("c2", user=False, minutes=3, text="a2"),
+                ],
+            }
+        }
+    )
+    org = _OrgDb(org_id=7)
+    request = httpx.Request("POST", "http://litellm.example.com/v1/chat/completions")
+    response = httpx.Response(
+        429, request=request, json={"error": {"message": "No deployments available - crossed budget"}}
+    )
+    llm = AsyncMock(side_effect=httpx.HTTPStatusError("429", request=request, response=response))
+    info = MagicMock()
+
+    with (
+        patch(f"{_LJ}.pymongo.MongoClient", mongo.client),
+        patch.object(lj, "cross_org_session", _cross_org_returning([(7, "voys", ["librechat_quality_judge"])])),
+        patch.object(lj, "tenant_scoped_session", _tenant_returning(org)),
+        patch.object(lj, "_call_judge_llm", llm),
+        patch.object(lj.logger, "info", info),
+    ):
+        result = await lj.librechat_judge_run_once()
+
+    assert llm.await_count == 1
+    assert result["judged_count"] == 0
+    assert org.attempts == {}
+    assert org.inserts == {}
+    stops = [c for c in info.call_args_list if c.args[0] == "judge_pass_stopped_llm_capacity"]
+    assert len(stops) == 1
+
+
 # ---------------------------------------------------------------------------
 # Structural: UPSERT shape, verbatim SPEC rubric, loop wiring
 # ---------------------------------------------------------------------------

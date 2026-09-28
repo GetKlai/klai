@@ -691,6 +691,56 @@ async def test_a_transient_failure_is_retried_and_then_succeeds():
     assert org.inserts[100]["outcome"] == "resolved"
 
 
+@pytest.mark.asyncio
+async def test_a_full_llm_allowance_stops_the_pass_without_costing_a_conversation_an_attempt():
+    """klai-judge shares the Vibe allowance with klai-ingest. A 402 means no
+    call can succeed this pass: the pass stops, the verdict judged before it
+    is kept, and no conversation moves toward its _MAX_JUDGE_ATTEMPTS
+    exclusion, so the next pass judges them once capacity is back."""
+    import httpx
+
+    from app.services import conversation_judge as cj
+
+    orgs = {
+        1: _OrgDb(
+            org_id=1,
+            outcome={100: "resolved", 101: "resolved"},
+            messages={100: [("user", "q1", None, None)], 101: [("user", "q2", None, None)]},
+        ),
+        2: _OrgDb(org_id=2, outcome={200: "resolved"}, messages={200: [("user", "q3", None, None)]}),
+    }
+
+    @asynccontextmanager
+    async def _tenant(org_id):
+        yield orgs[org_id]
+
+    calls: list[str] = []
+
+    async def _llm(*, model: str, user: str) -> str:
+        calls.append(user)
+        if len(calls) == 1:
+            return _verdict_raw()
+        request = httpx.Request("POST", "http://litellm.example.com/v1/chat/completions")
+        response = httpx.Response(402, request=request, json={"error": {"message": "spending limit reached"}})
+        raise httpx.HTTPStatusError("402", request=request, response=response)
+
+    info = MagicMock()
+    with (
+        patch.object(cj, "tenant_scoped_session", _tenant),
+        patch.object(cj, "cross_org_session", _cross_org_returning([1, 2])),
+        patch.object(cj, "_call_judge_llm", _llm),
+        patch.object(cj.logger, "info", info),
+    ):
+        result = await cj._judge_run_once()
+
+    assert len(calls) == 2, "no further LLM call after the capacity answer, not even for the next org"
+    assert result["judged_count"] == 1
+    assert set(orgs[1].inserts) == {100}
+    assert orgs[1].attempts == {} and orgs[2].attempts == {}
+    stops = [c for c in info.call_args_list if c.args[0] == "judge_pass_stopped_llm_capacity"]
+    assert len(stops) == 1
+
+
 # ---------------------------------------------------------------------------
 # Loop resilience + verbatim SPEC prompt
 # ---------------------------------------------------------------------------
