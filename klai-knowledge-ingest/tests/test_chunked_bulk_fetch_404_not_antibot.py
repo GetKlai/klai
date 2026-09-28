@@ -65,6 +65,43 @@ def _ok_page(url: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+async def test_a_run_of_401_pages_does_not_trip_the_circuit_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A login-walled section answers 401 page after page. That is the site
+    answering normally about access, not a host failing, so the breaker's
+    consecutive-failure trip (5 chunks) must not stop the pages after it."""
+    monkeypatch.setattr(crawl4ai_client, "_pacing_monotonic", lambda: 0.0)
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(crawl4ai_client, "_pacing_sleep", _no_sleep)
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        url = payload["urls"][0]
+        page = _ok_page(url)
+        if "private" in url:
+            page["status_code"] = page["redirected_status_code"] = 401
+        return {"results": [page]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    urls = [f"https://example.com/private-{i}" for i in range(6)] + ["https://example.com/public"]
+    fetch = await _chunked_bulk_fetch(
+        urls=urls,
+        crawler_config={},
+        cookies=None,
+        rate_limit=_ONE_URL_PER_CHUNK_RATE_LIMIT,
+    )
+
+    assert fetch.stopped_early is False
+    assert [p["url"] for p in fetch.raw_results] == urls
+
+
+@pytest.mark.asyncio
 async def test_four_structural_404s_do_not_stop_the_remaining_real_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

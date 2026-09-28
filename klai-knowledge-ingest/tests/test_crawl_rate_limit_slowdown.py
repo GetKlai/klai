@@ -145,14 +145,15 @@ async def test_rate_limit_stop_retries_skipped_urls_at_a_lower_rate_on_the_next_
         ]
     )
     # The stealth retry the 429 earns is already paced slower, and the next
-    # batch is exactly the URLs it skipped — never abandoned, slower again.
+    # batch is exactly the URLs it skipped — never abandoned. The batch slows
+    # down once, not again for the stealth retry's own 429.
     assert calls[0]["rate_limit"] == 2.0
     assert calls[1]["rate_limit"] == pytest.approx(1.0)
     assert calls[2]["urls"] == ["https://example.com/b", "https://example.com/c"]
-    assert calls[2]["rate_limit"] == pytest.approx(0.5)
+    assert calls[2]["rate_limit"] == pytest.approx(1.0)
 
-    # A short, explicit cooldown before each slower retry — not immediate.
-    assert slowdown_sleeps == [settings.crawl_rate_limit_slowdown_cooldown_seconds] * 2
+    # One short, explicit cooldown for the batch — not immediate.
+    assert slowdown_sleeps == [settings.crawl_rate_limit_slowdown_cooldown_seconds]
 
     by_url = {o["url"]: o["reason_code"] for o in outcomes}
     assert by_url["https://example.com/a"] == FetchReasonCode.RATE_LIMITED.value
@@ -202,9 +203,9 @@ async def test_rate_limit_stop_gives_up_after_max_consecutive_slowdowns(
         rate_limit=2.0,
     )
 
-    # 1 (initial) + _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS slowed retries (the
-    # first of them the stealth retry), then give up.
-    assert len(calls) == crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS + 1
+    # 1 (initial) + 1 stealth retry (in the same batch, so the same single
+    # slow-down) + the remaining slowed retries, then give up.
+    assert len(calls) == crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS + 2
     rate_limits = [c["rate_limit"] for c in calls]
     assert rate_limits == sorted(rate_limits, reverse=True), "rate must monotonically decrease"
     assert rate_limits[0] == 2.0
@@ -216,7 +217,7 @@ async def test_rate_limit_stop_gives_up_after_max_consecutive_slowdowns(
     by_url = {o["url"]: o["reason_code"] for o in outcomes}
     # Every URL that was actually the "first in its chunk" got a real,
     # observed RATE_LIMITED outcome.
-    for i in range(crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS):
+    for i in range(crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS + 1):
         assert by_url[urls[i]] == FetchReasonCode.RATE_LIMITED.value
     # The last URL, never even attempted after the budget ran out, is
     # honestly marked as a scheduling stop, not a fetch failure.

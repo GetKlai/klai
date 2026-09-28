@@ -111,6 +111,19 @@ INGEST_FAILURE_TOTAL_REASON = "ingest_failure_total"
 
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
 
+# Brake on the stale cleanup in a crawl that saw 404/410 (``gone``) pages. A
+# page answering 404 is retired, and so is everything only reachable through
+# it, so one wrong 404 (an SPA or CMS serving real content with 404, or a hub
+# page behind a transient CDN error) can retire most of a source in one run.
+# A site that really removed pages loses a small share per crawl, so above
+# 20% of the stored pages the run skips the cleanup and logs the counts; the
+# next clean crawl retires what is truly gone. The floor of 5 keeps a small
+# source (under 25 pages) able to drop a handful of removed pages, where 20%
+# would round down to 1 or 0. Crawls without ``gone`` pages are not braked:
+# their cleanup has worked this way since connector reconciliation began.
+_GONE_RETIRE_MIN_PAGES = 5
+_GONE_RETIRE_MAX_FRACTION = 0.2
+
 # 2026-08-18 stop-the-bleeding fix, corrected same day after production
 # measurement (n=1426, knowledge.crawled_pages) — see the long comment at
 # the short-content-cluster gate in _ingest_crawl_result for the full
@@ -327,6 +340,8 @@ def decide_fetch_failure_terminal_status(
         reason
         for outcome in fetch_outcomes
         if (reason := str(outcome.get("reason_code") or "")) in _FETCH_FAILURE_REASON_CODES
+        # A login wall is reported through the wall accounting instead.
+        and not _is_http_login_wall(outcome)
     )
     failed_count = sum(failure_counts.values())
     if failed_count <= 0:
@@ -458,6 +473,20 @@ def _outcome_is_deliberately_filtered(outcome: dict) -> bool:
     """Return whether a not-fetched outcome records an intentional URL filter."""
     return outcome.get("reason_code") == FetchReasonCode.NOT_FETCHED_EXCLUDED.value and bool(
         outcome.get("filter_reason")
+    )
+
+
+def _is_http_login_wall(outcome: dict) -> bool:
+    """True for a page crawl4ai fetched that itself answered 401/403.
+
+    ``error_type`` tells it apart from a 401/403 raised by the crawl4ai API
+    itself (a failed request, ``httpx.HTTPStatusError``), which is a fetch
+    failure and not a wall on the site. It still blocks the stale cleanup
+    through ``_FETCH_FAILURE_REASON_CODES``: the stored version is kept.
+    """
+    return (
+        outcome.get("reason_code") == FetchReasonCode.AUTH_ERROR.value
+        and outcome.get("error_type") == f"crawl4ai:{FetchReasonCode.AUTH_ERROR.value}"
     )
 
 
@@ -1102,6 +1131,26 @@ async def run_crawl_job(
                 final_rate_limit=crawl_rate_limit_state.current_rate_limit,
             )
 
+        # A page that answered 401/403 is a login wall, but it never reaches
+        # the per-page wall check in _ingest_crawl_result because it is not
+        # ingested. Count it here so the wall accounting, the job summary and
+        # the login-wall alerts see it; the page stays skipped in every mode.
+        http_login_walls = [outcome for outcome in fetch_outcomes if _is_http_login_wall(outcome)]
+        for outcome in http_login_walls:
+            auth_wall_pages.append(str(outcome.get("url") or ""))
+            logger.info(
+                "content_wall_signal_reject",
+                url=outcome.get("url"),
+                org_id=org_id,
+                kb_slug=kb_slug,
+                pattern="http_status",
+                evidence=("http_unauthenticated", f"HTTP {outcome.get('status_code')}"),
+                confidence=0.95,
+            )
+        # Pages that reached the login-wall decision: the fetched results
+        # plus the walls that never became a result.
+        wall_decision_count = len(results) + len(http_login_walls)
+
         crawl_outcome_warning = _build_crawl_outcome_warning(
             fetch_outcomes,
             max_pages=max_pages,
@@ -1234,7 +1283,7 @@ async def run_crawl_job(
         # with the structured reason that REQ-5's UI badge keys on.
         dirty_status, dirty_summary = decide_terminal_status(
             auth_wall_count=len(auth_wall_pages),
-            total_count=len(results),
+            total_count=wall_decision_count,
             has_cookies=bool(cookies),
             has_login_indicator=bool(login_indicator_selector),
             threshold=settings.ingest_authwall_dirty_trip_rate,
@@ -1284,8 +1333,8 @@ async def run_crawl_job(
         # in September 2026, so this is an error line the login-wall alert
         # rules page on, logged before any terminal-status choice so a job that
         # also had fetch or ingest failures still reports it.
-        if auth_wall_pages and (cookies or login_indicator_selector) and results:
-            wall_fraction = len(auth_wall_pages) / len(results)
+        if auth_wall_pages and (cookies or login_indicator_selector):
+            wall_fraction = len(auth_wall_pages) / wall_decision_count
             if wall_fraction >= settings.ingest_authwall_dirty_trip_rate:
                 logger.error(
                     "crawl_job_auth_wall_rate_high",
@@ -1294,7 +1343,7 @@ async def run_crawl_job(
                     org_id=org_id,
                     kb_slug=kb_slug,
                     login_walls_skipped=len(auth_wall_pages),
-                    total_count=len(results),
+                    total_count=wall_decision_count,
                     wall_rate=round(wall_fraction, 3),
                 )
         summary_json: str | None = None
@@ -1404,6 +1453,32 @@ async def run_crawl_job(
                             connector_id=connector_id,
                             current_paths=current_urls,
                         )
+                        gone_count = sum(
+                            1
+                            for outcome in fetch_outcomes
+                            if outcome.get("reason_code") == FetchReasonCode.GONE.value
+                        )
+                        if gone_count and stale_paths:
+                            stored_count = await pg_store.count_active_connector_artifact_paths(
+                                conn, org_id=org_id, kb_slug=kb_slug, connector_id=connector_id
+                            )
+                            retire_limit = max(
+                                _GONE_RETIRE_MIN_PAGES,
+                                int(stored_count * _GONE_RETIRE_MAX_FRACTION),
+                            )
+                            if len(stale_paths) > retire_limit:
+                                logger.warning(
+                                    "crawl_connector_stale_reconcile_skipped",
+                                    job_id=job_id,
+                                    connector_id=connector_id,
+                                    kb_slug=kb_slug,
+                                    reason="gone_bulk_retire_guard",
+                                    stale_count=len(stale_paths),
+                                    stored_count=stored_count,
+                                    gone_count=gone_count,
+                                    retire_limit=retire_limit,
+                                )
+                                stale_paths = []
                         if stale_paths:
                             stale_paths_deleted: list[str] = []
                             for path in stale_paths:

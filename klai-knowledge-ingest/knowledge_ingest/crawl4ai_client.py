@@ -1952,13 +1952,8 @@ async def _crawl_site_in_host_scope(
         # Each batch URL's own answer, matched by URL rather than by its
         # position in the response list: a stealth answer replaces the plain
         # one below, and a redirected answer can name its target as ``url``.
-        pages_by_url = dict(
-            zip(
-                batch,
-                _match_pages_to_candidates(batch, fetch.raw_results, base_domain=base_domain),
-                strict=True,
-            )
-        )
+        pages_by_url = _answers_by_url(batch, fetch, base_domain=base_domain)
+        slowed_down_this_batch = False
 
         # A2: only the subset of `batch` whose OWN chunk failed to
         # transport is worth a stealth retry — everything else already has
@@ -1975,8 +1970,7 @@ async def _crawl_site_in_host_scope(
             blocked = {
                 url: reason
                 for url, page in pages_by_url.items()
-                if page is not None
-                and (reason := _classify_fetch_outcome(page)) in _STEALTH_EARNING_REASON_CODES
+                if (reason := _classify_fetch_outcome(page)) in _STEALTH_EARNING_REASON_CODES
             }
             if blocked:
                 retry_urls += list(blocked) + not_attempted_urls
@@ -1987,6 +1981,7 @@ async def _crawl_site_in_host_scope(
                     # the same URLs waits out the cool-down at a lower rate
                     # first; only a block or refusal goes straight to stealth.
                     consecutive_rate_limit_slowdowns += 1
+                    slowed_down_this_batch = True
                     await slow_down(_rate_limit_cooldown_seconds(pages_by_url.values()))
         if retry_urls and not stealth and not fetch.cancelled:
             # Escalation step 1: retry ONLY the blocked or still-failing
@@ -2010,15 +2005,8 @@ async def _crawl_site_in_host_scope(
             if stealth_fetch.cancelled:
                 fetch.cancelled = True
             fetch.raw_results.extend(stealth_fetch.raw_results)
-            pages_by_url.update(
-                zip(
-                    retry_urls,
-                    _match_pages_to_candidates(
-                        retry_urls, stealth_fetch.raw_results, base_domain=base_domain
-                    ),
-                    strict=True,
-                )
-            )
+            # Only a URL the retry actually answered loses its earlier answer.
+            pages_by_url.update(_answers_by_url(retry_urls, stealth_fetch, base_domain=base_domain))
             for retried_url in retry_urls:
                 fetch.failed.pop(retried_url, None)
             fetch.failed.update(stealth_fetch.failed)
@@ -2064,12 +2052,19 @@ async def _crawl_site_in_host_scope(
         elif not_attempted_urls:
             if stop_trigger_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value:
                 stop_crawl_after_this_batch = True
-            elif consecutive_rate_limit_slowdowns < _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS:
-                consecutive_rate_limit_slowdowns += 1
+            elif (
+                slowed_down_this_batch
+                or consecutive_rate_limit_slowdowns < _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS
+            ):
                 carried_over_urls = not_attempted_urls
                 not_attempted_urls = []
                 fetched_count -= len(carried_over_urls)
-                await slow_down(_rate_limit_cooldown_seconds(pages_by_url.values()))
+                # One slow-down per batch: the stealth retry already ran at
+                # the rate the plain 429 earned, so its own 429 does not
+                # halve again or spend another step of the ladder.
+                if not slowed_down_this_batch:
+                    consecutive_rate_limit_slowdowns += 1
+                    await slow_down(_rate_limit_cooldown_seconds(pages_by_url.values()))
                 logger.warning(
                     "crawl_rate_limit_slowdown_retry",
                     carried_over_urls=len(carried_over_urls),
@@ -2179,7 +2174,7 @@ async def _crawl_site_in_host_scope(
             candidates=ok_urls,
             # Aligned with ok_urls, so an answer matched to its URL above
             # stays on that URL even when it names a redirect target.
-            raw_results=[pages_by_url[u] or {} for u in ok_urls],
+            raw_results=[pages_by_url.get(u) or {} for u in ok_urls],
             transport_error=None,
             base_domain=base_domain,
         )
@@ -2757,6 +2752,21 @@ def _match_pages_to_candidates(
     return matched
 
 
+def _answers_by_url(
+    urls: list[str], fetch: ChunkedFetchResult, *, base_domain: str
+) -> dict[str, dict[str, Any]]:
+    """Each URL's answer in ``fetch``, for the URLs that got one.
+
+    Matches only against the URLs whose chunk was sent and transported: a
+    chunk lost to a transport error or never sent leaves no answers, and
+    counting its URLs would misalign the positional redirect match.
+    """
+    unanswered = set(fetch.failed) | set(fetch.not_attempted)
+    answered = [u for u in urls if u not in unanswered]
+    matched = _match_pages_to_candidates(answered, fetch.raw_results, base_domain=base_domain)
+    return {url: page for url, page in zip(answered, matched, strict=True) if page is not None}
+
+
 def _combine_bulk_responses(
     *,
     candidates: list[str],
@@ -3173,6 +3183,13 @@ def _lower_rate_limit_for_slowdown(current_rate_limit: float | None) -> float:
 # (config.py) for the production evidence and the replacement crawl-wide
 # ratio+floor decision owned by ``host_circuit_breaker.evaluate_chunk``.
 _STOP_CHUNKING_REASON_CODES = frozenset({FetchReasonCode.RATE_LIMITED.value})
+_HOST_ANSWERED_REASON_CODES = frozenset(
+    {
+        FetchReasonCode.SUCCESS.value,
+        FetchReasonCode.GONE.value,
+        FetchReasonCode.AUTH_ERROR.value,
+    }
+)
 # Per-page results that say "the site is blocking a bot", which is what
 # stealth addresses; see the escalation in ``_crawl_site_in_host_scope``.
 _STEALTH_EARNING_REASON_CODES = frozenset(
@@ -3410,9 +3427,10 @@ async def _chunked_bulk_fetch_with_session(
             for page in chunk_pages:
                 page_reason_code = _classify_fetch_outcome(page)
                 chunk_reason_codes.add(page_reason_code)
-                # A 404/410 is the site answering normally about a page that
-                # no longer exists, not a sign the host is failing.
-                if page_reason_code in (FetchReasonCode.SUCCESS.value, FetchReasonCode.GONE.value):
+                # A 404/410 (page gone) or 401/403 (login wall) is the site
+                # answering normally about one page, not a sign the host is
+                # failing; the adapter accounts for login walls separately.
+                if page_reason_code in _HOST_ANSWERED_REASON_CODES:
                     chunk_any_success = True
                 else:
                     chunk_failed += 1
@@ -3527,26 +3545,28 @@ def _normalise_results_block(data: dict[str, Any]) -> list[dict[str, Any]]:
         results = [results]
     if not isinstance(results, list):
         return []
-    return [_fail_http_error_page(r) for r in results if isinstance(r, dict)]
+    return [_with_final_http_status(r) for r in results if isinstance(r, dict)]
 
 
-def _fail_http_error_page(page: dict[str, Any]) -> dict[str, Any]:
-    """Turn a page crawl4ai calls successful but whose final HTTP answer is an
-    error (>= 400) into a failed page, so nothing ingests it or follows its links.
+def _with_final_http_status(page: dict[str, Any]) -> dict[str, Any]:
+    """Judge a page on its final HTTP answer, and fail a page crawl4ai calls
+    successful when that answer is an error (>= 400), so nothing ingests it or
+    follows its links.
 
-    crawl4ai 0.9.4 sets ``success = bool(html)`` and only fails a page through
-    its anti-bot ``is_blocked`` check, which passes a full-size 401 or 404
-    page. Its ``status_code`` is the first hop of a redirect chain and
-    ``redirected_status_code`` the final one, so a followed 301/302 to a real
-    page (the common case) stays a success.
+    crawl4ai 0.9.4 reports the first hop of a redirect chain as
+    ``status_code`` and the final one as ``redirected_status_code``, so a
+    followed 301/302 to a real page stays a success and a redirect to a 404
+    is judged as the 404. It sets ``success = bool(html)`` and only fails a
+    page through its anti-bot ``is_blocked`` check, which passes a full-size
+    401 or 404 page.
     """
-    if not page.get("success"):
-        return page
     final_status = page.get("redirected_status_code")
-    status = final_status if isinstance(final_status, int) else page.get("status_code")
-    if not isinstance(status, int) or status < 400:
-        return page
-    return {**page, "success": False, "status_code": status, "error_message": f"HTTP {status}"}
+    if isinstance(final_status, int):
+        page = {**page, "status_code": final_status}
+    status = page.get("status_code")
+    if page.get("success") and isinstance(status, int) and status >= 400:
+        page = {**page, "success": False, "error_message": f"HTTP {status}"}
+    return page
 
 
 def _build_candidate_set(

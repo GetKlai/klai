@@ -736,6 +736,28 @@ async def list_stale_connector_artifact_paths(
     return [str(row["path"]) for row in rows]
 
 
+async def count_active_connector_artifact_paths(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str, connector_id: str
+) -> int:
+    """Count the active artifact paths a connector has stored in a knowledge base."""
+    count = await conn.fetchval(
+        """
+        SELECT COUNT(DISTINCT path)
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND belief_time_end = $4
+          AND extra IS NOT NULL
+          AND extra::jsonb->>'source_connector_id' = $3
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+        _SENTINEL,
+    )
+    return count or 0
+
+
 async def soft_delete_stale_connector_artifacts(
     conn: asyncpg.Connection,
     org_id: str,
