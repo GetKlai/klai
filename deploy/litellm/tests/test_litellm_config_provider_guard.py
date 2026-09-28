@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-TEXT_ALIASES = {"klai-primary", "klai-fast", "klai-large", "klai-medium", "klai-judge"}
+TEXT_ALIASES = {"klai-primary", "klai-fast", "klai-large", "klai-medium"}
 
 
 def test_litellm_tests_run_when_the_runtime_image_pin_changes() -> None:
@@ -66,33 +66,26 @@ def test_ingest_alias_is_one_vibe_key_deployment_without_fallback() -> None:
     assert "klai-ingest" not in fallback_aliases | fallback_targets
 
 
-def test_judge_alias_shares_medium_pricing_with_its_own_lower_budget() -> None:
-    """klai-judge is klai-medium's nightly/batch traffic split onto its own
-    budget (#1752's klai-ingest split, applied to the judge batch): same
-    deployments/keys/pricing/rpm/tpm as klai-medium, no fallback entry, and a
-    max_budget below klai-medium's so a runaway judge pass cannot spend
-    klai-medium's whole daily cap before the daytime grounding check runs."""
+def test_judge_alias_is_one_vibe_key_deployment_without_reasoning_or_fallback() -> None:
+    """klai-judge is portal-api's background Medium work on the Vibe
+    allowance: the Vibe key only, klai-medium's per-token prices (same model),
+    reasoning_effort pinned to none, and no fallback entry either way."""
     config_path = Path(__file__).resolve().parents[1] / "config.yaml"
     config = yaml.safe_load(config_path.read_text())
 
-    medium = {
-        entry["litellm_params"]["order"]: entry["litellm_params"]
-        for entry in config["model_list"]
-        if entry["model_name"] == "klai-medium"
-    }
-    judge = {
-        entry["litellm_params"]["order"]: entry["litellm_params"]
-        for entry in config["model_list"]
-        if entry["model_name"] == "klai-judge"
-    }
-    assert set(judge) == {1, 2}
-    for order, params in judge.items():
-        counterpart = medium[order]
-        assert params["model"] == counterpart["model"] == "mistral/mistral-medium-3.5"
-        assert params["api_key"] == counterpart["api_key"]
-        assert params["input_cost_per_token"] == counterpart["input_cost_per_token"]
-        assert params["output_cost_per_token"] == counterpart["output_cost_per_token"]
-        assert 0 < params["max_budget"] < counterpart["max_budget"]
+    deployments = [
+        entry["litellm_params"] for entry in config["model_list"] if entry["model_name"] == "klai-judge"
+    ]
+    medium = next(entry["litellm_params"] for entry in config["model_list"] if entry["model_name"] == "klai-medium")
+    assert len(deployments) == 1
+    params = deployments[0]
+    assert params["model"] == "mistral/mistral-vibe-cli-latest"
+    assert params["api_key"] == "os.environ/MISTRAL_VIBE_KEY"
+    assert params["reasoning_effort"] == "none"
+    assert params["allowed_openai_params"] == ["reasoning_effort"]
+    for price in ("input_cost_per_token", "cache_read_input_token_cost", "output_cost_per_token"):
+        assert params[price] == medium[price], price
+    assert params["max_budget"] > 0
 
     fallback_aliases = {alias for entry in config["router_settings"]["fallbacks"] for alias in entry}
     fallback_targets = {alias for entry in config["router_settings"]["fallbacks"] for aliases in entry.values() for alias in aliases}

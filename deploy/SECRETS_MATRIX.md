@@ -88,7 +88,7 @@ details in the private infra repo.
 | `MONGO_ROOT_PASSWORD` | portal-api | MongoDB root password for per-tenant LibreChat database provisioning. |
 | `MONGO_ROOT_USERNAME` | portal-api | MongoDB root username (non-secret but kept here for pairing with the password). |
 | `MISTRAL_API_KEY` | litellm | Mistral key of the Klai organisation (Pro, pay-as-you-go off); first in line for every alias. |
-| `MISTRAL_VIBE_KEY` | litellm | The Klai Mistral organisation's Vibe-scoped key. Serves only the `klai-ingest` alias (knowledge-ingest background work), with no fallback to the other keys. Required. |
+| `MISTRAL_VIBE_KEY` | litellm | The Klai Mistral organisation's Vibe-scoped key. Serves the `klai-ingest` alias (knowledge-ingest background work) and the `klai-judge` alias (portal-api background Medium work: judges, support-case analysis, gap grouping), both on the organisation's Vibe allowance, with no fallback to the other keys. Required. |
 | `PORTAL_API_BFF_SESSION_KEY` | portal-api | Fernet key for BFF session records at rest in Redis (SPEC-AUTH-008). Mapped to `BFF_SESSION_KEY` in-container. |
 | `PORTAL_API_DB_PASSWORD` | portal-api | Portal's PostgreSQL password; interpolated into `DATABASE_URL`. |
 | `PORTAL_API_ENCRYPTION_KEY` | portal-api | KEK for the two-tier connector credential hierarchy (SPEC-KB-020). Mapped to `ENCRYPTION_KEY` in-container. |

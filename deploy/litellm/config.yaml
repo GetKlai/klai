@@ -10,9 +10,11 @@ model_list:
   # Numbers, per deployment per day: Small was ~$5-12/day while background
   # ingest ran on klai-fast; ingest moved to klai-ingest on 2026-09-27, so
   # klai-fast 10 and klai-primary 10 (chat and portal utility calls). Large is ~$0-2/day and also absorbs klai-primary's
-  # fallback: 10. Medium should only serve RAGAS faithfulness, answer
-  # grounding, judges and support analysis (~$5/day): 8, tight on purpose so
-  # a routing mistake that sends bulk traffic to Medium stops within a day.
+  # fallback: 10. Medium should only serve RAGAS faithfulness and the
+  # in-turn answer grounding, paraphrase and Strict-risk calls (portal's
+  # background judges and support analysis run on klai-judge): 8, tight
+  # on purpose so a routing mistake that sends bulk traffic to Medium stops
+  # within a day.
   # Prices are pinned per deployment because LiteLLM's bundled cost map has no
   # entry for mistral-small-2603 or mistral-medium-3.5; without these fields
   # their cost is only known when the startup fetch of the remote cost map
@@ -154,46 +156,55 @@ model_list:
     tpm: 900000
 
 
-  # Judge: Mistral Medium 3.5 — nightly/batch judging only (webchat judge
-  # conversation_judge.py, LibreChat variant librechat_quality_judge.py,
-  # support-case analysis support_case_analysis.py), settings.
-  # conversation_judge_model. Split off klai-medium on 2026-09-27 (mirrors
-  # klai-ingest, #1752): the nightly batch (01:00-06:00 UTC,
-  # conversation_judge_window_start_hour/_end_hour) used to share klai-
-  # medium's $8/day cap with the daytime answer_grounding_model check that
-  # runs on every widget/internal answer, and could spend the whole cap
-  # before anyone was awake, failing that check with
-  # answer_grounding_call_failed. Same deployments/keys/pricing/rpm/tpm as
-  # klai-medium, its own budget only.
-  # Budget: no measured $/day figure for this batch exists in this file or
-  # docs/specs/SPEC-RAG-ANSWER-JUDGES-001/evolutie.md — only its shape
-  # (conversation_judge.py: 50 conversations per tenant per 30-minute pass,
-  # transcripts capped at ~15k tokens). 4 per deployment, half of klai-
-  # medium's cap, so a runaway pass (a retry loop, or an unbounded backlog)
-  # stops well short of a full day's spend without needing that measurement
-  # first; raise it once a real $/day figure is measured.
+  # Judge: Mistral Medium 3.5 — portal-api's background Medium work only (webchat
+  # judge conversation_judge.py, LibreChat variant librechat_quality_judge.py,
+  # support-case analysis support_case_analysis.py, which support gap
+  # grouping, gap fold/regroup and the ingest-gap evaluation reuse), all via
+  # settings.conversation_judge_model. Split off klai-medium on 2026-09-27
+  # (#1762, mirrors klai-ingest, #1752): the nightly batch (01:00-06:00 UTC)
+  # used to share klai-medium's $8/day cap with the daytime
+  # answer_grounding_model check on every widget/internal answer, and could
+  # spend the whole cap before anyone was awake, failing that check with
+  # answer_grounding_call_failed.
+  # Since 2026-09-28 it runs on the Klai organisation's Vibe allowance, like
+  # klai-ingest: this work is background, so it has no reason to spend the
+  # API allowance the chat turns run on. Mistral's registry answers
+  # mistral-vibe-cli-latest with name mistral-medium-latest, aliases
+  # mistral-medium-3.5 and mistral-medium-2604 (queried 2026-09-27), so the
+  # same model as klai-medium. One deployment on the key klai-ingest uses and
+  # no fallback entry: a full Vibe allowance (402) stops both aliases, which
+  # is right because it is one allowance, and neither spills onto the chat
+  # keys. Every Medium call made inside a user's chat turn (answer grounding
+  # and repair, query paraphrase, partner_chat's Strict-risk upgrade) stays
+  # on klai-medium.
+  # Prices as Mistral's Vibe client prices it: $1.50 in / $7.50 out per 1M,
+  # cache reads $0.15. Limits: Medium's Pro limits (2000 RPM / 1M TPM, as
+  # measured for the API keys above; the Vibe key's own headers were only
+  # read for vibe-cli-fast), rpm/tpm at 90% of that.
+  # Reasoning: Medium 3.5 is a hybrid reasoning model and Mistral does not
+  # document a default reasoning_effort (Vibe's client asks for high itself).
+  # reasoning_effort "none" is pinned here so these calls never pay for a
+  # thinking chunk. LiteLLM 1.96.2's mistral transformation only maps
+  # reasoning_effort for model names containing "magistral" and drop_params
+  # drops it otherwise; allowed_openai_params forwards it to Mistral as is.
+  # tests/test_litellm_mistral_failover.py checks the outgoing request body.
+  # Budget: this work was ~$2-3/day after the support-reanalysis fix. The
+  # spike is a knowledge change that force-reanalyses 50 support cases at ~9
+  # calls each (gap_rescorer.py); at an assumed ~5k input / ~500 output
+  # tokens per call that is ~$5. $10 lets a normal day plus one such run
+  # finish and stops a retry loop within the day, and together with
+  # klai-ingest's $20 caps the Vibe allowance at $30/day.
   - model_name: klai-judge
     litellm_params:
-      model: mistral/mistral-medium-3.5
-      api_key: os.environ/MISTRAL_API_KEY_2
-      order: 2
-      input_cost_per_token: 1.5e-06
-      cache_read_input_token_cost: 1.5e-07
-      output_cost_per_token: 7.5e-06
-      max_budget: 4
-      budget_duration: 1d
-    rpm: 1800
-    tpm: 900000
-
-  - model_name: klai-judge
-    litellm_params:
-      model: mistral/mistral-medium-3.5
-      api_key: os.environ/MISTRAL_API_KEY
+      model: mistral/mistral-vibe-cli-latest
+      api_key: os.environ/MISTRAL_VIBE_KEY
       order: 1
+      reasoning_effort: none
+      allowed_openai_params: ["reasoning_effort"]
       input_cost_per_token: 1.5e-06
       cache_read_input_token_cost: 1.5e-07
       output_cost_per_token: 7.5e-06
-      max_budget: 4
+      max_budget: 10
       budget_duration: 1d
     rpm: 1800
     tpm: 900000
