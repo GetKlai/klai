@@ -248,3 +248,89 @@ async def test_zombie_recovery_failure_does_not_block_workers(stub_procrastinate
 
     # Workers still started despite the recovery failure.
     assert len(stub_procrastinate["run_worker_calls"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_procrastinate_pool_is_sized_for_all_lanes(stub_procrastinate):
+    """The 4-connection psycopg_pool default starved the side tasks (PoolTimeout)."""
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
+        pass
+
+    connector_kwargs = sys.modules["procrastinate"].PsycopgConnector.call_args.kwargs
+    assert connector_kwargs["min_size"] == WorkerLifecycle.POOL_MIN_SIZE
+    assert connector_kwargs["max_size"] == WorkerLifecycle.POOL_MAX_SIZE
+
+
+@pytest.mark.asyncio
+async def test_lane_stopped_by_side_task_failure_restarts_and_processes_jobs(
+    stub_procrastinate, monkeypatch
+):
+    """Procrastinate stops a worker when a side task fails (PoolTimeout in the
+    deferrer, 22-25 Sep 2026); the lane must come back instead of staying dead
+    until the next deploy."""
+    from structlog.testing import capture_logs
+
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    monkeypatch.setattr(WorkerLifecycle, "LANE_RESTART_MIN_BACKOFF_SECONDS", 0.0)
+    io_runs = 0
+    job_processed = asyncio.Event()
+
+    async def _run_worker(**kwargs):
+        nonlocal io_runs
+        if tuple(kwargs["queues"]) == tuple(queues.IO_QUEUES):
+            io_runs += 1
+            if io_runs == 1:
+                return  # Worker.run() returns once _monitor_side_tasks calls stop()
+            job_processed.set()
+        await asyncio.Event().wait()
+
+    stub_procrastinate["proc_app"].run_worker_async = _run_worker
+
+    with capture_logs() as logs:
+        async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d") as w:
+            await asyncio.wait_for(job_processed.wait(), timeout=2)
+            assert w.dead_lanes == set()
+
+    assert io_runs == 2
+    died = [e for e in logs if e["event"] == "procrastinate_worker_lane_died"]
+    assert [e["lane"] for e in died] == ["io"]
+    assert died[0]["log_level"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_requested_shutdown_does_not_restart_lanes(stub_procrastinate):
+    from structlog.testing import capture_logs
+
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    with capture_logs() as logs:
+        async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d") as w:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
+
+    assert len(stub_procrastinate["run_worker_calls"]) == 4
+    assert w.dead_lanes == set()
+    assert not [e for e in logs if e["event"] == "procrastinate_worker_lane_died"]
+
+
+@pytest.mark.asyncio
+async def test_lane_is_reported_dead_during_restart_backoff(stub_procrastinate, monkeypatch):
+    from knowledge_ingest.worker import WorkerLifecycle
+
+    monkeypatch.setattr(WorkerLifecycle, "LANE_RESTART_MIN_BACKOFF_SECONDS", 60.0)
+
+    async def _run_worker(**kwargs):
+        if tuple(kwargs["queues"]) == tuple(queues.LLM_QUEUES):
+            raise RuntimeError("simulated connection failure")
+        await asyncio.Event().wait()
+
+    stub_procrastinate["proc_app"].run_worker_async = _run_worker
+
+    async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d") as w:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert w.dead_lanes == {"llm"}
