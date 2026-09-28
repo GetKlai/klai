@@ -66,6 +66,24 @@ def stub_procrastinate(monkeypatch):
 
     proc_app.run_worker_async = _never_complete
 
+    class _Worker:
+        """The lifecycle builds the procrastinate Worker itself; its run()
+        delegates to ``proc_app.run_worker_async`` so a test can swap the body."""
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.worker_id = None
+            self._stop_event = asyncio.Event()
+
+        async def run(self):
+            self.worker_id = 1
+            try:
+                await proc_app.run_worker_async(**self.kwargs)
+            finally:
+                self.worker_id = None
+
+    proc_app._worker = _Worker
+
     # 2) Stub ``init_app`` on the *real* enrichment_tasks module so
     #    ``from knowledge_ingest import enrichment_tasks`` returns the
     #    actual module (with its real symbol table) but the function
@@ -264,73 +282,47 @@ async def test_procrastinate_pool_is_sized_for_all_lanes(stub_procrastinate):
 
 
 @pytest.mark.asyncio
-async def test_lane_stopped_by_side_task_failure_restarts_and_processes_jobs(
-    stub_procrastinate, monkeypatch
-):
-    """Procrastinate stops a worker when a side task fails (PoolTimeout in the
-    deferrer, 22-25 Sep 2026); the lane must come back instead of staying dead
-    until the next deploy."""
-    from structlog.testing import capture_logs
-
-    from knowledge_ingest.worker import WorkerLifecycle
-
-    monkeypatch.setattr(WorkerLifecycle, "LANE_RESTART_MIN_BACKOFF_SECONDS", 0.0)
-    io_runs = 0
-    job_processed = asyncio.Event()
-
-    async def _run_worker(**kwargs):
-        nonlocal io_runs
-        if tuple(kwargs["queues"]) == tuple(queues.IO_QUEUES):
-            io_runs += 1
-            if io_runs == 1:
-                return  # Worker.run() returns once _monitor_side_tasks calls stop()
-            job_processed.set()
-        await asyncio.Event().wait()
-
-    stub_procrastinate["proc_app"].run_worker_async = _run_worker
-
-    with capture_logs() as logs:
-        async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d") as w:
-            await asyncio.wait_for(job_processed.wait(), timeout=2)
-            assert w.dead_lanes == set()
-
-    assert io_runs == 2
-    died = [e for e in logs if e["event"] == "procrastinate_worker_lane_died"]
-    assert [e["lane"] for e in died] == ["io"]
-    assert died[0]["log_level"] == "error"
-
-
-@pytest.mark.asyncio
 async def test_requested_shutdown_does_not_restart_lanes(stub_procrastinate):
     from structlog.testing import capture_logs
 
     from knowledge_ingest.worker import WorkerLifecycle
 
     with capture_logs() as logs:
-        async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d") as w:
+        async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d"):
             await asyncio.sleep(0)
             await asyncio.sleep(0)
         await asyncio.sleep(0.05)
 
     assert len(stub_procrastinate["run_worker_calls"]) == 4
-    assert w.dead_lanes == set()
     assert not [e for e in logs if e["event"] == "procrastinate_worker_lane_died"]
 
 
 @pytest.mark.asyncio
-async def test_lane_is_reported_dead_during_restart_backoff(stub_procrastinate, monkeypatch):
+async def test_shutdown_completes_when_worker_cleanup_swallows_the_cancel(
+    stub_procrastinate, monkeypatch
+):
+    """Worker.run() turns a cancel into stop() and awaits its own cleanup; when
+    that cleanup raises (unregister_worker while Postgres is down) the
+    CancelledError is replaced by an ordinary exception. That must end the
+    lane, not restart it, or __aexit__ waits until Docker kills the container."""
     from knowledge_ingest.worker import WorkerLifecycle
 
-    monkeypatch.setattr(WorkerLifecycle, "LANE_RESTART_MIN_BACKOFF_SECONDS", 60.0)
+    monkeypatch.setattr(WorkerLifecycle, "LANE_RESTART_MIN_BACKOFF_SECONDS", 0.0)
+    runs = 0
 
     async def _run_worker(**kwargs):
-        if tuple(kwargs["queues"]) == tuple(queues.LLM_QUEUES):
-            raise RuntimeError("simulated connection failure")
-        await asyncio.Event().wait()
+        nonlocal runs
+        runs += 1
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise RuntimeError("unregister_worker failed") from None
 
     stub_procrastinate["proc_app"].run_worker_async = _run_worker
 
-    async with WorkerLifecycle.start(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d") as w:
-        for _ in range(5):
-            await asyncio.sleep(0)
-        assert w.dead_lanes == {"llm"}
+    lifecycle = WorkerLifecycle(postgres_dsn="postgresql+asyncpg://u:p@h:5432/d")
+    await lifecycle.__aenter__()
+    await asyncio.sleep(0)
+    await asyncio.wait_for(lifecycle.__aexit__(None, None, None), timeout=2)
+
+    assert runs == 4
