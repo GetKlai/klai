@@ -2290,6 +2290,104 @@ async def test_per_page_anti_bot_block_earns_stealth_for_the_rest_of_the_crawl(
     assert all(stealth_flags[stealth_flags.index(True) :])
 
 
+@pytest.mark.asyncio
+async def test_redirected_blocked_page_stealth_retry_maps_back_to_the_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocked answer that reports the redirect target as its url must
+    earn a stealth retry of the candidate URL the crawl tracks, and the
+    stealth answer must land on that candidate instead of leaving it as
+    unknown_exception."""
+    candidate = "https://example.com/old-page"
+    target = "https://example.com/new-page"
+    other = "https://example.com/other"
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return [candidate, other]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    seen: list[dict[str, Any]] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        seen.append(payload)
+        stealth = payload["browser_config"]["params"].get("enable_stealth") is True
+        results = []
+        for u in payload["urls"]:
+            if u != candidate:
+                results.append(_ok_page(u))
+            elif stealth:
+                results.append(_ok_page(target))
+            else:
+                results.append(_blocked_page(target, status=403, reason="Cloudflare JS challenge"))
+        return {"results": results}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com", max_pages=10
+    )
+
+    stealth_urls = [
+        p["urls"] for p in seen if p["browser_config"]["params"].get("enable_stealth") is True
+    ]
+    assert stealth_urls == [[candidate]]
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert by_url[candidate] == FetchReasonCode.SUCCESS.value
+    assert by_url[other] == FetchReasonCode.SUCCESS.value
+    assert target in {r.url for r in results}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "redirected_status_code", "expected"),
+    [
+        # crawl4ai 0.9.4 sets success=bool(html) and only fails a 401 page
+        # through is_blocked(), which lets a full-size 401 page through.
+        (401, 401, FetchReasonCode.AUTH_ERROR.value),
+        # status_code is the FIRST hop of a redirect chain; the final answer
+        # is redirected_status_code.
+        (302, 401, FetchReasonCode.AUTH_ERROR.value),
+        (302, 200, FetchReasonCode.SUCCESS.value),
+    ],
+)
+async def test_http_error_page_crawl4ai_reports_as_success_is_never_ingested(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    redirected_status_code: int,
+    expected: str,
+) -> None:
+    url = "https://example.com/help/article"
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return [url]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        page = _ok_page(payload["urls"][0])
+        page["status_code"] = status_code
+        page["redirected_status_code"] = redirected_status_code
+        return {"results": [page]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com", max_pages=10
+    )
+
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert by_url[url] == expected
+    ingested = url in {r.url for r in results}
+    assert ingested is (expected == FetchReasonCode.SUCCESS.value)
+
+
 class TestClassifyFetchOutcomeRateLimitedWrapper:
     """2026-08-17 (intermedia.com rate-limit incident): crawl4ai wraps a
     real target-site 429 inside the SAME "Blocked by anti-bot protection"

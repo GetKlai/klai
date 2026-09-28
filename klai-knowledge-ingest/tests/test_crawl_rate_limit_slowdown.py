@@ -144,15 +144,15 @@ async def test_rate_limit_stop_retries_skipped_urls_at_a_lower_rate_on_the_next_
             "https://example.com/c",
         ]
     )
-    assert calls[0]["rate_limit"] == calls[1]["rate_limit"] == 2.0
-    # The next batch is exactly the URLs skipped by the stealth retry —
-    # never abandoned, and demonstrably paced slower than the original rate.
+    # The stealth retry the 429 earns is already paced slower, and the next
+    # batch is exactly the URLs it skipped — never abandoned, slower again.
+    assert calls[0]["rate_limit"] == 2.0
+    assert calls[1]["rate_limit"] == pytest.approx(1.0)
     assert calls[2]["urls"] == ["https://example.com/b", "https://example.com/c"]
-    assert calls[2]["rate_limit"] < calls[0]["rate_limit"]
-    assert calls[2]["rate_limit"] == pytest.approx(1.0)
+    assert calls[2]["rate_limit"] == pytest.approx(0.5)
 
-    # A short, explicit cooldown happened before resuming — not immediate.
-    assert slowdown_sleeps == [settings.crawl_rate_limit_slowdown_cooldown_seconds]
+    # A short, explicit cooldown before each slower retry — not immediate.
+    assert slowdown_sleeps == [settings.crawl_rate_limit_slowdown_cooldown_seconds] * 2
 
     by_url = {o["url"]: o["reason_code"] for o in outcomes}
     assert by_url["https://example.com/a"] == FetchReasonCode.RATE_LIMITED.value
@@ -202,9 +202,9 @@ async def test_rate_limit_stop_gives_up_after_max_consecutive_slowdowns(
         rate_limit=2.0,
     )
 
-    # 1 (initial) + 1 stealth retry + _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS
-    # retries, then give up.
-    assert len(calls) == crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS + 2
+    # 1 (initial) + _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS slowed retries (the
+    # first of them the stealth retry), then give up.
+    assert len(calls) == crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS + 1
     rate_limits = [c["rate_limit"] for c in calls]
     assert rate_limits == sorted(rate_limits, reverse=True), "rate must monotonically decrease"
     assert rate_limits[0] == 2.0
@@ -216,7 +216,7 @@ async def test_rate_limit_stop_gives_up_after_max_consecutive_slowdowns(
     by_url = {o["url"]: o["reason_code"] for o in outcomes}
     # Every URL that was actually the "first in its chunk" got a real,
     # observed RATE_LIMITED outcome.
-    for i in range(crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS + 1):
+    for i in range(crawl4ai_client._MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS):
         assert by_url[urls[i]] == FetchReasonCode.RATE_LIMITED.value
     # The last URL, never even attempted after the budget ran out, is
     # honestly marked as a scheduling stop, not a fetch failure.
@@ -268,3 +268,87 @@ async def test_blocked_anti_bot_stops_immediately_without_any_slowdown_retry(
     assert by_url["https://example.com/a"] == FetchReasonCode.BLOCKED_ANTI_BOT.value
     assert by_url["https://example.com/b"] == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
     assert by_url["https://example.com/c"] == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
+
+
+@pytest.mark.asyncio
+async def test_pages_left_queued_by_a_block_stop_get_the_stop_reason_not_discovery_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """crawl_site has no discovery limit of its own: a URL discovered in the
+    batch that got blocked, and left queued because the block stopped the
+    crawl, was not fetched because of that stop."""
+    _patch_seed_with_links(
+        monkeypatch, ["https://example.com/a", "https://example.com/b", "https://example.com/c"]
+    )
+    _patch_no_real_slowdown_sleep(monkeypatch)
+
+    async def _fake_chunked_bulk_fetch(*, urls: list[str], **_kwargs: Any) -> ChunkedFetchResult:
+        pages = [_blocked_page("https://example.com/b")]
+        if "https://example.com/a" in urls:
+            page = _ok_page("https://example.com/a")
+            page["links"] = {"internal": [{"href": "https://example.com/a/child", "text": ""}]}
+            pages.append(page)
+        return ChunkedFetchResult(
+            raw_results=pages,
+            not_attempted=["https://example.com/c"],
+            stopped_early=True,
+            stop_trigger_reason_code=FetchReasonCode.BLOCKED_ANTI_BOT.value,
+        )
+
+    monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_chunked_bulk_fetch)
+
+    _results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com",
+        max_pages=10,
+        rate_limit=2.0,
+    )
+
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert by_url["https://example.com/a/child"] == (
+        FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value
+    )
+    assert FetchReasonCode.NOT_FETCHED_DISCOVERY_LIMIT.value not in by_url.values()
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_page_cools_down_before_the_stealth_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real 429 means "slow down": the stealth retry it earns must wait out
+    the cool-down (or the site's longer Retry-After) at a lowered rate
+    instead of sending more traffic straight away."""
+    urls = ["https://example.com/a", "https://example.com/b"]
+    _patch_seed_with_links(monkeypatch, urls)
+    events: list[tuple[str, Any]] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        events.append(("sleep", seconds))
+
+    monkeypatch.setattr(crawl4ai_client, "_slowdown_sleep", _record_sleep)
+
+    async def _fake_chunked_bulk_fetch(
+        *, urls: list[str], rate_limit: float | None, **_kwargs: Any
+    ) -> ChunkedFetchResult:
+        events.append(("fetch", rate_limit))
+        if len(events) == 1:
+            page = _rate_limited_page(urls[0])
+            page["response_headers"] = {"Retry-After": "30"}
+            return ChunkedFetchResult(
+                raw_results=[page],
+                not_attempted=urls[1:],
+                stopped_early=True,
+                stop_trigger_reason_code=FetchReasonCode.RATE_LIMITED.value,
+            )
+        return ChunkedFetchResult(raw_results=[_ok_page(u) for u in urls])
+
+    monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_chunked_bulk_fetch)
+
+    _results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com",
+        max_pages=10,
+        rate_limit=2.0,
+    )
+
+    assert events == [("fetch", 2.0), ("sleep", 30.0), ("fetch", 1.0)]
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert [by_url[u] for u in urls] == [FetchReasonCode.SUCCESS.value] * 2
