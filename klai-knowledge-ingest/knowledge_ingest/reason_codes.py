@@ -100,6 +100,10 @@ class FetchReasonCode(StrEnum):
     # operator-facing story and a different terminal status
     # (``crawl_jobs.status = 'cancelled'``, never a failure).
     NOT_FETCHED_CANCELLED = "not_fetched_cancelled"
+    # The page answered 404 or 410: it no longer exists. Not a fetch
+    # failure, so it does not block the stale-artifact cleanup, which then
+    # retires the stored version like any page that is no longer linked.
+    GONE = "gone"
 
 
 class PersistSkipReason(StrEnum):

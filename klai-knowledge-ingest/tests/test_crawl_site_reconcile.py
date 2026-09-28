@@ -282,7 +282,7 @@ class TestClassifyFetchOutcome:
 
     def test_other_4xx_classifies_http_4xx(self) -> None:
         assert (
-            _classify_fetch_outcome({"success": False, "status_code": 404})
+            _classify_fetch_outcome({"success": False, "status_code": 400})
             == FetchReasonCode.HTTP_4XX.value
         )
 
@@ -362,12 +362,12 @@ class TestClassifyFetchOutcome:
             == FetchReasonCode.BLOCKED_ANTI_BOT.value
         )
 
-    def test_404_with_structural_antibot_marker_classifies_http_4xx(self) -> None:
+    def test_404_with_structural_antibot_marker_classifies_gone(self) -> None:
         """2026-08-18 support.ascendcloud.com incident: a 404 (the site
         genuinely doesn't have this page — it was a link built from
         un-rendered template syntax) whose tiny error body trips crawl4ai's
         STRUCTURAL anti-bot heuristic ("minimal_text on small page") must
-        classify honestly as HTTP_4XX, not BLOCKED_ANTI_BOT. A definitive
+        classify honestly as GONE, not BLOCKED_ANTI_BOT. A definitive
         "this page doesn't exist" status code contradicts a heuristic guess
         and must win. Exact production error_message."""
         assert (
@@ -381,10 +381,10 @@ class TestClassifyFetchOutcome:
                     ),
                 }
             )
-            == FetchReasonCode.HTTP_4XX.value
+            == FetchReasonCode.GONE.value
         )
 
-    def test_410_with_structural_antibot_marker_classifies_http_4xx(self) -> None:
+    def test_410_with_structural_antibot_marker_classifies_gone(self) -> None:
         """410 Gone is the same "definitely doesn't exist" signal as 404."""
         assert (
             _classify_fetch_outcome(
@@ -397,7 +397,7 @@ class TestClassifyFetchOutcome:
                     ),
                 }
             )
-            == FetchReasonCode.HTTP_4XX.value
+            == FetchReasonCode.GONE.value
         )
 
     def test_403_with_concrete_antibot_marker_still_classifies_blocked_anti_bot(
@@ -571,10 +571,10 @@ class TestClassifyFetchOutcomeRateLimitAndRefusal:
             == FetchReasonCode.AUTH_ERROR.value
         )
 
-    def test_404_with_no_marker_stays_http_4xx(self) -> None:
+    def test_404_with_no_marker_is_gone(self) -> None:
         assert (
             _classify_fetch_outcome({"success": False, "status_code": 404})
-            == FetchReasonCode.HTTP_4XX.value
+            == FetchReasonCode.GONE.value
         )
 
     def test_concrete_antibot_marker_still_wins_over_new_refused_code(self) -> None:
@@ -631,8 +631,8 @@ class TestClassifyFetchOutcomeStructuralGuessVsStatusCode:
             (500, FetchReasonCode.HTTP_5XX.value),
             # 404/410 — definitively nonexistent, subsumes the narrower
             # 404/410-only branch from fix/crawl-template-urls-and-404-classification.
-            (404, FetchReasonCode.HTTP_4XX.value),
-            (410, FetchReasonCode.HTTP_4XX.value),
+            (404, FetchReasonCode.GONE.value),
+            (410, FetchReasonCode.GONE.value),
         ],
     )
     def test_structural_guess_loses_to_a_contradicting_status_code(
@@ -958,7 +958,7 @@ async def test_crawl_site_returns_one_outcome_per_candidate_on_partial_success(
     by_url = {o["url"]: o for o in outcomes}
     assert by_url["https://example.com"]["reason_code"] == FetchReasonCode.SUCCESS.value
     assert by_url["https://example.com/ok"]["reason_code"] == FetchReasonCode.SUCCESS.value
-    assert by_url["https://example.com/missing"]["reason_code"] == FetchReasonCode.HTTP_4XX.value
+    assert by_url["https://example.com/missing"]["reason_code"] == FetchReasonCode.GONE.value
     assert (
         by_url["https://example.com/server-error"]["reason_code"] == FetchReasonCode.HTTP_5XX.value
     )
@@ -2288,6 +2288,181 @@ async def test_per_page_anti_bot_block_earns_stealth_for_the_rest_of_the_crawl(
     ]
     assert True in stealth_flags
     assert all(stealth_flags[stealth_flags.index(True) :])
+
+
+@pytest.mark.asyncio
+async def test_redirected_blocked_page_stealth_retry_maps_back_to_the_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocked answer that reports the redirect target as its url must
+    earn a stealth retry of the candidate URL the crawl tracks, and the
+    stealth answer must land on that candidate instead of leaving it as
+    unknown_exception."""
+    candidate = "https://example.com/old-page"
+    target = "https://example.com/new-page"
+    other = "https://example.com/other"
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return [candidate, other]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    seen: list[dict[str, Any]] = []
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        seen.append(payload)
+        stealth = payload["browser_config"]["params"].get("enable_stealth") is True
+        results = []
+        for u in payload["urls"]:
+            if u != candidate:
+                results.append(_ok_page(u))
+            elif stealth:
+                results.append(_ok_page(target))
+            else:
+                results.append(_blocked_page(target, status=403, reason="Cloudflare JS challenge"))
+        return {"results": results}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com", max_pages=10
+    )
+
+    stealth_urls = [
+        p["urls"] for p in seen if p["browser_config"]["params"].get("enable_stealth") is True
+    ]
+    assert stealth_urls == [[candidate]]
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert by_url[candidate] == FetchReasonCode.SUCCESS.value
+    assert by_url[other] == FetchReasonCode.SUCCESS.value
+    assert target in {r.url for r in results}
+
+
+@pytest.mark.asyncio
+async def test_redirected_answer_maps_to_its_url_when_another_chunk_failed_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The positional redirect match must line answers up with the URLs that
+    were actually answered, not with the whole batch: a chunk lost to a
+    transport error leaves no answers behind."""
+    batch = [f"https://example.com/page-{c}" for c in "abc"]
+    _patch_seed(monkeypatch, _seed("https://example.com", internal=batch))
+
+    async def _no_sitemap(_base: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _no_sitemap)
+
+    async def _fake_chunked_bulk_fetch(**_kwargs: Any) -> crawl4ai_client.ChunkedFetchResult:
+        lost = httpx.ConnectError("connection refused")
+        return crawl4ai_client.ChunkedFetchResult(
+            raw_results=[_ok_page("https://example.com/page-c-moved")],
+            failed={batch[0]: lost, batch[1]: lost},
+        )
+
+    monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_chunked_bulk_fetch)
+
+    _results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com", max_pages=10
+    )
+
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert by_url[batch[2]] == FetchReasonCode.SUCCESS.value
+
+
+@pytest.mark.asyncio
+async def test_empty_stealth_answer_keeps_the_observed_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/guarded"
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return [url]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        if payload["browser_config"]["params"].get("enable_stealth") is True:
+            return {"results": []}
+        return {"results": [_blocked_page(url, status=403, reason="Cloudflare JS challenge")]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    _results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com", max_pages=10
+    )
+
+    outcome = next(o for o in outcomes if o["url"] == url)
+    assert outcome["reason_code"] == FetchReasonCode.BLOCKED_ANTI_BOT.value
+    assert outcome["observed"] is True
+
+
+def test_failed_redirect_to_a_missing_page_is_gone() -> None:
+    """crawl4ai 0.9.4 reports the first hop as status_code; a failed page
+    that was redirected to a 404 is judged on redirected_status_code."""
+    page = {
+        "url": "https://example.com/old",
+        "success": False,
+        "status_code": 302,
+        "redirected_status_code": 404,
+        "error_message": "",
+        "html": "",
+    }
+    [normalised] = crawl4ai_client._normalise_results_block({"results": [page]})
+    assert _classify_fetch_outcome(normalised) == FetchReasonCode.GONE.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "redirected_status_code", "expected"),
+    [
+        # crawl4ai 0.9.4 sets success=bool(html) and only fails a 401 page
+        # through is_blocked(), which lets a full-size 401 page through.
+        (401, 401, FetchReasonCode.AUTH_ERROR.value),
+        # status_code is the FIRST hop of a redirect chain; the final answer
+        # is redirected_status_code.
+        (302, 401, FetchReasonCode.AUTH_ERROR.value),
+        (302, 200, FetchReasonCode.SUCCESS.value),
+    ],
+)
+async def test_http_error_page_crawl4ai_reports_as_success_is_never_ingested(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    redirected_status_code: int,
+    expected: str,
+) -> None:
+    url = "https://example.com/help/article"
+
+    async def _fake_sitemap(_base: str) -> list[str]:
+        return [url]
+
+    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
+    _patch_seed(monkeypatch, _seed("https://example.com"))
+
+    async def _fake_crawl_sync(
+        _client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        page = _ok_page(payload["urls"][0])
+        page["status_code"] = status_code
+        page["redirected_status_code"] = redirected_status_code
+        return {"results": [page]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url="https://example.com", max_pages=10
+    )
+
+    by_url = {o["url"]: o["reason_code"] for o in outcomes}
+    assert by_url[url] == expected
+    ingested = url in {r.url for r in results}
+    assert ingested is (expected == FetchReasonCode.SUCCESS.value)
 
 
 class TestClassifyFetchOutcomeRateLimitedWrapper:

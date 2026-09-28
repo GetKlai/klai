@@ -67,6 +67,9 @@ class FetchReasonCode(StrEnum):
     # value today, but the parity test requires both copies to carry the
     # same value set regardless of which side currently emits it.
     NOT_FETCHED_CANCELLED = "not_fetched_cancelled"
+    # Mirror of knowledge-ingest's FetchReasonCode (404/410 page); the
+    # connector does not produce it, the parity test requires it.
+    GONE = "gone"
 
 
 class PersistSkipReason(StrEnum):

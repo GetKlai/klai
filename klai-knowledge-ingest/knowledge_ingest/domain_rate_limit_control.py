@@ -103,6 +103,7 @@ _NON_CONGESTION_REASON_CODES = frozenset(
         FetchReasonCode.REFUSED.value,
         FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value,
         FetchReasonCode.NOT_FETCHED_CANCELLED.value,
+        FetchReasonCode.GONE.value,
     }
 )
 _overlapping_congestion_reason_codes = _CONGESTION_REASON_CODES & _NON_CONGESTION_REASON_CODES
