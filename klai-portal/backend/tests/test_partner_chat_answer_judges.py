@@ -558,38 +558,12 @@ async def test_a_dead_end_that_names_the_appointment_is_left_as_written():
 
 
 @pytest.mark.parametrize("stream", [True, False])
-async def test_a_frustrated_turn_is_decided_like_any_other_and_gets_the_button(stream):
-    """Frustration only adds the button. The reply over weak articles that does
-    not answer is still the partial answer without the neighbouring source card."""
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("not_answered"))
-
-    _, signals, extras = await _answer(
-        litellm, stream=stream, sentiment="negative", weak_sources=True, **_with_900_sources()
-    )
-
-    assert signals["decision"] == "partial_answer"
-    assert extras["sources"] == []
-    assert extras["escalation"] == [{"appointment": True}]
-
-
-@pytest.mark.parametrize("stream", [True, False])
-async def test_a_frustrated_turn_that_is_answered_still_gets_the_button(stream):
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("answered"))
-
-    _, signals, extras = await _answer(litellm, stream=stream, sentiment="negative", **_with_900_sources())
-
-    assert signals["decision"] == "answer"
-    assert extras["sources"]
-    assert extras["escalation"] == [{"appointment": True}]
-
-
-@pytest.mark.parametrize("stream", [True, False])
 async def test_the_record_says_what_the_visitor_was_shown(stream):
     """A review of stored answers could not see that the button was under a
     reply, what tone the turn judge heard, or that a planned question was never
     asked: none of it was stored."""
     litellm = _LiteLLM(model_text="Je vindt dit onder Beheer.", answer_judge=_answer_verdict("not_answered"))
-    signals = {"planned_question": True}
+    signals: dict[str, Any] = {"planned_question": True}
 
     await _answer(litellm, stream=stream, sentiment="negative", answer_signals=signals)
 

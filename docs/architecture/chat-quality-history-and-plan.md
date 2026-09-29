@@ -144,11 +144,11 @@ Volgorde: eerst vastleggen en de meetlat, daarna de kleine wijzigingen met de gr
 | 0 | Dit document, chat-system.md gelijk aan de code, logboeken als archief | – | documenten | Ankers nagelezen tegen de code |
 | 1 | De meetlat: per echt gesprek de verwachte reactie, het dragende artikel en de feiten die erin moeten staan; een script dat de keten herspeelt en de uitkomst in code naast de verwachting legt | – | gereedschap | De huidige keten scoort op de meetlat wat de review vond |
 | 2 | Nulmeting en bijdrage per bestaande stap: keten zoals nu, zonder reparatie, zonder antwoordbeoordelaar | – | meting | Twee rondes, zelfde richting |
-| 3 | Controle en reparatie slaan zinnen over die niets over het bedrijf beweren, en draaien niet op een escalatiebeurt | deel van 18 en 6 | S | Verzonnen gevallen in tests; meetlat |
-| 4 | Negatieve toon zonder verzoek om een mens: gewoon antwoorden, knop eronder; vraagstap en regel voor zwakke bronnen lopen door | 2, plus overgeslagen stappen | S | Meetlat op beurten met negatieve toon |
+| 3 | Vervallen na meting: controle en reparatie laten zinnen overslaan die niets over het bedrijf beweren. In de nulmeting haalde het overgrote deel van de reparaties de drempel ook op echte beweringen, dus dit verandert bijna niets | – | – | Zie §8 |
+| 4 | Niet uitgerold na meting: negatieve toon zonder verzoek om een mens gewoon laten antwoorden met de knop eronder | 2, plus overgeslagen stappen | S | Zie §8 |
 | 5 | De zin over de afspraak komt uit code als de knop er hangt en de tekst hem niet noemt | 5 | S | Test; telling op echt verkeer |
 | 6 | "Breder zoeken" alleen aanbieden als het iets kan doen | 1 tot 2 | S | Test |
-| 7 | De maskeerinstructie noemt alleen soorten die in die aanroep gemaskeerd zijn; de excuus-voorbeeldzin uit het profiel | 1 en 3 | S | Test; telling op echt verkeer |
+| 7 | De excuus-voorbeeldzin uit het profiel. De maskeerinstructie (noemt alleen soorten die in die aanroep gemaskeerd zijn) is een wijziging aan de maskering zelf en wacht op een eigen, zwaardere review | 3 en 1 | S | Meetlat; telling op echt verkeer |
 | 8 | De vraagstap telt alleen als het antwoord op een vraag eindigt, en vraagt niet twee keer naar hetzelfde | 1 tot 3 | S | Bestaande poortevaluatie met vaste gevallen |
 | 9 | Reparatie vervangen: één keer opnieuw schrijven, anders de passage tonen | 18 | M | Drie armen op de meetlat |
 | 10 | Het beslismoment "staat het antwoord erin", eerst meekijkend | 12 en 6 | M | Overeenstemming met de verwachtingen van de meetlat |

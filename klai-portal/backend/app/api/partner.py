@@ -2183,12 +2183,8 @@ async def chat_completions(  # noqa: C901
     #     source with its origin, and only refuses when both tiers are empty.
     # Escalation is the backend's call, not the model's: when the visitor asks
     # for a person or is frustrated, the button goes under this answer whatever
-    # retrieval found. Only a request for a person also replaces the reply with
-    # the appointment. A frustrated visitor still asked something, so that turn
-    # runs like any other: in the owner's review of real answers a negative tone
-    # turned a solvable problem with a best source of 0.91 into an apology and
-    # an appointment, and skipped the question step and the weak-source rule.
-    # See escalation_intent.py for why this layer exists.
+    # retrieval found, and the model is told so for this one turn. See
+    # escalation_intent.py for why this layer exists.
     escalation = escalation_service.escalation_intent(_last_user_message(request.messages)) if support_mode else None
     scope = turn_judgement.scope if turn_judgement else None
     sentiment = turn_judgement.sentiment if turn_judgement else None
@@ -2197,15 +2193,9 @@ async def chat_completions(  # noqa: C901
             escalation = escalation_service.HUMAN_REQUEST
         elif sentiment == "negative":
             escalation = escalation_service.FRUSTRATION
-    human_request = escalation == escalation_service.HUMAN_REQUEST
-    if human_request:
-        system_prompt += escalation_service.HUMAN_REQUEST_TURN_ADDENDUM
-    elif escalation:
-        # The phrase detector heard the frustration the judge may have missed.
-        # The tone travels with the turn and puts the button under the reply
-        # (partner_chat); it decides nothing else.
-        sentiment = "negative"
-    force_escalation = human_request
+    if escalation:
+        system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
+    force_escalation = escalation is not None
 
     # SPEC-RAG-ANSWER-TIERS-001 REQ-1. A conversational turn leaves the
     # knowledge pipeline only on a retrieval gap: with usable chunks the
@@ -2221,10 +2211,10 @@ async def chat_completions(  # noqa: C901
     # instruction to ask rather than answer made answers worse in a blind
     # comparison on 50 real Voys first questions (old system better in 19 of
     # 23 turns that received it) and produced a real clarifying question only
-    # 2 times in 150 answers. Not on a broad-mode or conversational turn or a
-    # request for a person, where a question is never the intended reply.
+    # 2 times in 150 answers. Not on a broad-mode, escalation or conversational
+    # turn, where a question is never the intended reply.
     clarity: Literal["clear", "ambiguous"] | None = turn_judgement.clarity if turn_judgement else None
-    if broad_turn or human_request or turn_judge.is_conversational(scope):
+    if broad_turn or escalation or turn_judge.is_conversational(scope):
         clarity = "clear"
 
     if support_mode:
@@ -2310,13 +2300,13 @@ async def chat_completions(  # noqa: C901
     # The one question this turn should ask, decided against what retrieval
     # found (clarify_decision.py), on the widget and the internal chat alike.
     # Not on a broad turn (no articles to reason over), not when the visitor
-    # asked for a person: there the reply is the appointment,
+    # asked for a person or is frustrated: there the reply is the appointment,
     # not on a conversational turn, and not when the latest turn is pasted
     # correspondence, whose question is the distilled email itself.
     if (
         (support_mode or internal)
         and not broad_turn
-        and not human_request
+        and escalation is None
         and not turn_judge.is_conversational(scope)
         and not latest_user_turn_has_correspondence(request.messages)
     ):
@@ -2352,7 +2342,7 @@ async def chat_completions(  # noqa: C901
     # band is stored, never used here. Only the wording differs: the widget
     # offers its appointment button, an internal Open turn may still answer from
     # general knowledge.
-    if (support_mode or internal) and gap == "soft" and not broad_turn and not human_request and not conversational:
+    if (support_mode or internal) and gap == "soft" and not broad_turn and escalation is None and not conversational:
         system_prompt += weak_sources_notice(profile.kb_mode == "strict") if internal else WEAK_SOURCES_ADDENDUM
         answer_signals["weak_sources"] = True
 

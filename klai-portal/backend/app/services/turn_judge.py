@@ -236,7 +236,7 @@ def scope_label(scope: str | None) -> str:
 # offer support -- correct for a question about the organisation, wrong for
 # "do you speak English", and the composer would pass such a self-written
 # refusal straight through because it never looks at the words. Same shape as
-# escalation_intent.HUMAN_REQUEST_TURN_ADDENDUM: one turn, one instruction.
+# escalation_intent.ESCALATION_TURN_ADDENDUM: one turn, one instruction.
 CONVERSATIONAL_TURN_ADDENDUM = (
     "\n\n[This turn] The visitor's message is about this conversation itself, "
     "not about the organisation — which languages you speak, a greeting, a "

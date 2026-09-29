@@ -989,7 +989,7 @@ SUPPORT_BROAD_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\
 # Per-turn instruction appended to the system prompt when decision 1 (should
 # a vague turn be answered or clarified?) says "clarify" — same shape as
 # turn_scope.CONVERSATIONAL_TURN_ADDENDUM and escalation_intent.
-# HUMAN_REQUEST_TURN_ADDENDUM: one short "[This turn]" block, not a whole prompt
+# ESCALATION_TURN_ADDENDUM: one short "[This turn]" block, not a whole prompt
 # rewrite. Two variants because the external help-page visitor and an
 # internal colleague get different vocabulary for the same instruction (never
 # "kennisbank"/"knowledge base" externally; the internal variant may name it).
