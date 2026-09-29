@@ -18,15 +18,16 @@ from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller_at_least, require_platform_unlocked
+from app.models.conversation_tickets import WidgetTicketSettings
 from app.models.knowledge_bases import PortalKnowledgeBase
-from app.models.portal import PortalOrg
+from app.models.portal import PortalOrg, PortalUser
 from app.models.widgets import Widget, WidgetKbAccess, generate_widget_id
 from app.services.events import emit_event
 from app.services.hubspot_custom_channel import (
@@ -38,6 +39,8 @@ from app.services.hubspot_custom_channel import (
     send_test_message,
     set_channel_account_authorized,
 )
+from app.services.hubspot_tickets import HubSpotTicketError, HubSpotTickets
+from app.services.secrets import portal_secrets
 from app.services.widget_auth import generate_session_token
 
 logger = structlog.get_logger()
@@ -764,6 +767,186 @@ async def test_hubspot_integration(
         },
     )
     return _hubspot_status_response(next_state)
+
+
+# ---------------------------------------------------------------------------
+# Tickets in HubSpot — SPEC-KNOWLEDGE-ESCALATION-001 §4.2 (every tenant)
+# ---------------------------------------------------------------------------
+
+
+class TicketTarget(BaseModel):
+    key: str = Field(pattern=r"^[a-z0-9_-]{1,32}$")
+    label: str = Field(min_length=1)
+    pipeline_id: str = Field(min_length=1)
+    stage_id: str = Field(min_length=1)
+
+
+class TicketSettingsRequest(BaseModel):
+    # Omitted or blank keeps the stored key (the admin form's empty password field).
+    service_key: str | None = None
+    # Entered by the admin: account-info would return it but needs the
+    # `oauth` scope, which tenant service keys lack (SPEC §4.1).
+    hubspot_portal_id: int = Field(gt=0)
+    targets: list[TicketTarget] = Field(min_length=1, max_length=5)
+
+    @model_validator(mode="after")
+    def _unique_keys(self) -> TicketSettingsRequest:
+        keys = [target.key for target in self.targets]
+        if len(set(keys)) != len(keys):
+            raise ValueError("target keys must be unique")
+        return self
+
+
+class TicketSettingsResponse(BaseModel):
+    configured: bool
+    hubspot_portal_id: int | None
+    targets: list[TicketTarget]
+
+
+class TicketPipelinesRequest(BaseModel):
+    service_key: str | None = None
+
+
+class TicketStageOut(BaseModel):
+    id: str
+    label: str
+
+
+class TicketPipelineOut(BaseModel):
+    id: str
+    label: str
+    stages: list[TicketStageOut]
+
+
+async def _ticket_settings(widget_id: str, org_id: int, db: AsyncSession) -> WidgetTicketSettings | None:
+    result = await db.execute(
+        select(WidgetTicketSettings).where(
+            WidgetTicketSettings.widget_id == widget_id, WidgetTicketSettings.org_id == org_id
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _ticket_service_key(body_key: str | None, stored: WidgetTicketSettings | None) -> str:
+    if body_key and body_key.strip():
+        return body_key.strip()
+    if stored is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="service_key_required")
+    return portal_secrets.decrypt(stored.service_key_encrypted)
+
+
+def _ticket_http_error(exc: HubSpotTicketError) -> HTTPException:
+    # A key HubSpot refuses is the admin's input problem (422 with the
+    # contract's detail); anything else is HubSpot failing (502).
+    if exc.code in ("invalid_service_key", "missing_scope"):
+        return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.code)
+    return HTTPException(status.HTTP_502_BAD_GATEWAY, detail=exc.reason)
+
+
+def _ticket_settings_response(stored: WidgetTicketSettings | None) -> TicketSettingsResponse:
+    if stored is None:
+        return TicketSettingsResponse(configured=False, hubspot_portal_id=None, targets=[])
+    return TicketSettingsResponse(
+        configured=True,
+        hubspot_portal_id=stored.hubspot_portal_id,
+        targets=[TicketTarget(**target) for target in stored.targets],
+    )
+
+
+@router.get("/{widget_id}/integrations/tickets", response_model=TicketSettingsResponse)
+async def get_ticket_settings(
+    widget_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> TicketSettingsResponse:
+    await _get_widget_or_404(widget_id, perms.org_id, db)
+    return _ticket_settings_response(await _ticket_settings(widget_id, perms.org_id, db))
+
+
+@router.put("/{widget_id}/integrations/tickets", response_model=TicketSettingsResponse)
+async def put_ticket_settings(
+    widget_id: str,
+    body: TicketSettingsRequest,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> TicketSettingsResponse:
+    """Store the service key (encrypted) and targets after HubSpot confirms both.
+
+    Fetching the ticket pipelines is the key check (401/403 surface there)
+    and every target must exist in that answer, so a reviewer never meets a
+    broken target on the knowledge side. Omitting ``service_key`` keeps the
+    stored one.
+    """
+    await _get_widget_or_404(widget_id, perms.org_id, db)
+    stored = await _ticket_settings(widget_id, perms.org_id, db)
+    service_key = _ticket_service_key(body.service_key, stored)
+    try:
+        async with HubSpotTickets(service_key) as hubspot:
+            pipelines = await hubspot.ticket_pipelines()
+    except HubSpotTicketError as exc:
+        raise _ticket_http_error(exc) from exc
+
+    known = {(p["id"], s["id"]) for p in pipelines for s in p["stages"]}
+    if any((target.pipeline_id, target.stage_id) not in known for target in body.targets):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="unknown_pipeline_or_stage")
+
+    caller_id = (
+        await db.execute(
+            select(PortalUser.id).where(PortalUser.zitadel_user_id == perms.user_id, PortalUser.org_id == perms.org_id)
+        )
+    ).scalar_one_or_none()
+    values = {
+        "service_key_encrypted": portal_secrets.encrypt(service_key),
+        "hubspot_portal_id": body.hubspot_portal_id,
+        "targets": [target.model_dump() for target in body.targets],
+        "updated_by_user_id": caller_id,
+    }
+    if stored is None:
+        stored = WidgetTicketSettings(widget_id=widget_id, org_id=perms.org_id, **values)
+        db.add(stored)
+    else:
+        for column, value in values.items():
+            setattr(stored, column, value)
+        stored.updated_at = datetime.now(UTC)
+    await db.commit()
+    return _ticket_settings_response(stored)
+
+
+@router.delete("/{widget_id}/integrations/tickets", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_ticket_settings(
+    widget_id: str,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    await _get_widget_or_404(widget_id, perms.org_id, db)
+    await db.execute(
+        delete(WidgetTicketSettings).where(
+            WidgetTicketSettings.widget_id == widget_id, WidgetTicketSettings.org_id == perms.org_id
+        )
+    )
+    await db.commit()
+
+
+@router.post("/{widget_id}/integrations/tickets/pipelines", response_model=list[TicketPipelineOut])
+async def list_ticket_pipelines(
+    widget_id: str,
+    body: TicketPipelinesRequest,
+    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
+    _platform: UserPermissions = Depends(require_platform_unlocked("widgets")),
+    db: AsyncSession = Depends(get_db),
+) -> list[TicketPipelineOut]:
+    """POST, not GET, because a not-yet-saved key travels in the body."""
+    await _get_widget_or_404(widget_id, perms.org_id, db)
+    service_key = _ticket_service_key(body.service_key, await _ticket_settings(widget_id, perms.org_id, db))
+    try:
+        async with HubSpotTickets(service_key) as hubspot:
+            pipelines = await hubspot.ticket_pipelines()
+    except HubSpotTicketError as exc:
+        raise _ticket_http_error(exc) from exc
+    return [TicketPipelineOut.model_validate(pipeline) for pipeline in pipelines]
 
 
 # ---------------------------------------------------------------------------

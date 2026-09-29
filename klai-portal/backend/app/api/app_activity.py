@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -29,11 +30,15 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_capability
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller, require_platform_unlocked
 from app.core.profiles import PROFILE_RANK, Capability
 from app.models.answer_reviews import AnswerReview
 from app.services.gap_events import REVIEW_CALLER_CLIENT_ID, record_gap_event
+from app.services.hubspot_tickets import HubSpotTicketError, HubSpotTickets
+from app.services.secrets import portal_secrets
+from app.services.ticket_content import ReviewNote, TranscriptTurn, build_ticket_content, ticket_subject
 
 logger = logging.getLogger(__name__)
 
@@ -392,6 +397,88 @@ UPDATE portal_retrieval_gaps
    AND resolved_at IS NULL
 """
 
+# Tickets (SPEC-KNOWLEDGE-ESCALATION-001 §4.3/§4.4). Every statement is
+# scoped by an explicit org_id on top of RLS, like the rest of this file.
+_TICKET_SETTINGS_SQL = """
+SELECT targets, service_key_encrypted, hubspot_portal_id
+  FROM widget_ticket_settings
+ WHERE widget_id = CAST(:widget_id AS uuid)
+   AND org_id = :org_id
+"""
+
+_CONVERSATION_TICKETS_SQL = """
+SELECT t.target_key, t.target_label, t.status, t.ticket_url, t.contact_status, t.error,
+       COALESCE(p.display_name, p.email) AS created_by_name, t.created_at
+  FROM conversation_tickets t
+  LEFT JOIN portal_users p ON p.id = t.created_by_user_id
+ WHERE t.conversation_id = :conversation_id
+   AND t.org_id = :org_id
+ ORDER BY t.created_at
+"""
+
+_TICKET_LABELS_SQL = """
+SELECT conversation_id, target_label
+  FROM conversation_tickets
+ WHERE conversation_id = ANY(:ids)
+   AND org_id = :org_id
+   AND status = 'created'
+ ORDER BY created_at
+"""
+
+_TICKET_REVIEWS_SQL = """
+SELECT r.turn_sequence, r.verdict, r.cause, r.note,
+       COALESCE(p.display_name, p.email) AS reviewer_name, r.reviewed_at
+  FROM answer_reviews r
+  LEFT JOIN portal_users p ON p.id = r.reviewer_user_id
+ WHERE r.conversation_id = :conversation_id
+   AND r.org_id = :org_id
+ ORDER BY r.turn_sequence
+"""
+
+_RETENTION_DAYS_SQL = """
+SELECT widget_messages_retention_days
+  FROM portal_orgs
+ WHERE id = :org_id
+"""
+
+# Claims the (conversation, target) slot before HubSpot is called. A 'failed'
+# row, or a 'pending' row whose request died more than
+# _STALE_PENDING_MINUTES ago, is taken over for the retry; a 'created' row or
+# a fresh 'pending' one (a second click while the first is still running)
+# returns no row. The partial unique index makes this race-free.
+_CLAIM_TICKET_SQL = """
+INSERT INTO conversation_tickets
+       (org_id, conversation_id, target_key, target_label, status, created_by_user_id)
+VALUES (:org_id, :conversation_id, :target_key, :target_label, 'pending', :created_by_user_id)
+ON CONFLICT (conversation_id, target_key) WHERE conversation_id IS NOT NULL
+DO UPDATE SET status = 'pending', error = NULL, target_label = EXCLUDED.target_label,
+              created_by_user_id = EXCLUDED.created_by_user_id, created_at = NOW(), updated_at = NOW()
+ WHERE conversation_tickets.status = 'failed'
+    OR (conversation_tickets.status = 'pending'
+        AND conversation_tickets.updated_at < NOW() - make_interval(mins => :stale_minutes))
+RETURNING id, created_at
+"""
+
+_TICKET_STATUS_SQL = """
+SELECT status FROM conversation_tickets
+ WHERE conversation_id = :conversation_id
+   AND target_key = :target_key
+   AND org_id = :org_id
+"""
+
+_FINISH_TICKET_SQL = """
+UPDATE conversation_tickets
+   SET status = :status, error = :error, hubspot_ticket_id = :hubspot_ticket_id,
+       hubspot_contact_id = :hubspot_contact_id, contact_status = :contact_status,
+       ticket_url = :ticket_url, updated_at = NOW()
+ WHERE id = :ticket_id
+   AND org_id = :org_id
+"""
+
+# A HubSpot create flow is two calls of at most 10 s each; a 'pending' row
+# older than this belongs to a request that died, not one still running.
+_STALE_PENDING_MINUTES = 5
+
 # A knowledge cause is a gap by definition; the other causes are not the
 # knowledge base's fault (SPEC-KNOWLEDGE-ACTIVITY-001 §4.2, Appendix B).
 _GAP_TYPE_FOR_CAUSE = {"knowledge_missing": "hard", "knowledge_wrong": "soft"}
@@ -460,6 +547,8 @@ class ConversationListItemOut(BaseModel):
     review: ReviewSummaryOut
     # Phase 2 fills this; the frontend already renders the slot.
     open_gap_count: int = 0
+    # Labels of the conversation's created tickets (SPEC-KNOWLEDGE-ESCALATION-001).
+    ticket_labels: list[str] = Field(default_factory=list)
 
 
 class ConversationListResponse(BaseModel):
@@ -493,6 +582,42 @@ class MessageOut(BaseModel):
     review: ReviewOut | None = None
 
 
+class TicketTargetOut(BaseModel):
+    key: str
+    label: str
+
+
+class TicketOut(BaseModel):
+    target_key: str
+    target_label: str
+    status: str
+    ticket_url: str | None = None
+    contact_status: str | None = None
+    error: str | None = None
+    created_by_name: str | None = None
+    created_at: datetime
+
+
+class TicketBlockOut(BaseModel):
+    # True only when the widget has ticket settings, the visitor left an
+    # email and the conversation is not a test (SPEC-KNOWLEDGE-ESCALATION-001
+    # §2.2); the email itself never leaves the server on this side.
+    available: bool
+    targets: list[TicketTargetOut] = Field(default_factory=list)
+    tickets: list[TicketOut] = Field(default_factory=list)
+
+
+class TicketPreviewOut(BaseModel):
+    contact: Literal["existing", "not_found"]
+    lifecycle_stage: str | None = None
+    # Admin-or-higher only, like ``visitor`` on the detail.
+    contact_name: str | None = None
+
+
+class TicketRequest(BaseModel):
+    target_key: str
+
+
 class ConversationDetailOut(BaseModel):
     id: int
     widget_id: str
@@ -506,6 +631,7 @@ class ConversationDetailOut(BaseModel):
     visitor: VisitorOut | None = None
     quality: QualityOut | None = None
     messages: list[MessageOut] = Field(default_factory=list)
+    ticket: TicketBlockOut
 
 
 class ReviewRequest(BaseModel):
@@ -656,8 +782,11 @@ def _matches(
     causes: list[str],
     bands: list[str],
     rating: str | None,
+    has_ticket: bool | None,
 ) -> bool:
     item = candidate.item
+    if has_ticket is not None and bool(item.ticket_labels) != has_ticket:
+        return False
     if judge_outcomes and (item.judge is None or item.judge.outcome not in judge_outcomes):
         return False
     if failure_categories and (item.judge is None or item.judge.failure_category not in failure_categories):
@@ -722,6 +851,9 @@ async def _load_candidates(
     review_rows: dict[int, list[Any]] = {}
     for review in (await db.execute(text(_REVIEWS_SQL), {"ids": ids, "org_id": org_id})).all():
         review_rows.setdefault(review.conversation_id, []).append(review)
+    ticket_labels: dict[int, list[str]] = {}
+    for ticket in (await db.execute(text(_TICKET_LABELS_SQL), {"ids": ids, "org_id": org_id})).all():
+        ticket_labels.setdefault(ticket.conversation_id, []).append(ticket.target_label)
 
     candidates: list[_Candidate] = []
     for row in rows:
@@ -754,6 +886,7 @@ async def _load_candidates(
                     ratings=RatingsOut(up=turn.ratings_up if turn else 0, down=turn.ratings_down if turn else 0),
                     review=_review_summary(review_rows.get(row.id, [])),
                     open_gap_count=open_gaps.get(row.id, 0),
+                    ticket_labels=ticket_labels.get(row.id, []),
                 ),
                 refused_turns=turn.refused_turns if turn else 0,
             )
@@ -776,6 +909,7 @@ async def _filtered_conversations(
     causes: list[str],
     bands: list[str],
     rating: str | None,
+    has_ticket: bool | None,
     queue: bool,
 ) -> list[_Candidate]:
     if widget_id is not None:
@@ -806,6 +940,7 @@ async def _filtered_conversations(
             causes=causes,
             bands=bands,
             rating=rating,
+            has_ticket=has_ticket,
         )
     ]
     return kept
@@ -833,6 +968,7 @@ async def list_conversations(
     band: list[str] = Query(default=[]),
     rating: Literal["thumbsUp", "thumbsDown", "none"] | None = Query(default=None),
     queue: bool = Query(default=False),
+    has_ticket: bool | None = Query(default=None),
     sort: Literal["newest", "worst"] = Query(default="newest"),
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
@@ -858,6 +994,7 @@ async def list_conversations(
         causes=cause,
         bands=band,
         rating=rating,
+        has_ticket=has_ticket,
         queue=queue,
     )
     if sort == "worst":
@@ -894,6 +1031,7 @@ async def get_queue_count(
         causes=[],
         bands=[],
         rating=None,
+        has_ticket=None,
         queue=True,
     )
     return QueueCountOut(count=len(items))
@@ -928,6 +1066,7 @@ async def get_conversation(
         result = await db.execute(text(_MESSAGE_REVIEWS_SQL), {"message_ids": message_ids, "org_id": perms.org_id})
         reviews = {review.message_id: review for review in result.all()}
     judged = (await db.execute(text(_JUDGE_DETAIL_SQL), {"conversation_id": conversation_id})).first()
+    ticket = await _ticket_block(db, row, perms.org_id)
 
     detail = ConversationDetailOut(
         id=row.id,
@@ -975,6 +1114,7 @@ async def get_conversation(
             )
             for message in messages
         ],
+        ticket=ticket,
     )
 
     payload = detail.model_dump()
@@ -1272,4 +1412,210 @@ async def get_summary(
             LanguageSummaryOut(language=row.language, reviewed=row.reviewed, correct=row.correct)
             for row in language_rows
         ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tickets in HubSpot — SPEC-KNOWLEDGE-ESCALATION-001 §4.3/§4.4
+# ---------------------------------------------------------------------------
+
+
+def _ticket_available(conversation: Any, ticket_settings: Any | None) -> bool:
+    return ticket_settings is not None and bool((conversation.visitor_email or "").strip()) and not conversation.is_test
+
+
+async def _ticket_settings(db: AsyncSession, conversation: Any, org_id: int) -> Any | None:
+    params = {"widget_id": str(conversation.widget_id), "org_id": org_id}
+    return (await db.execute(text(_TICKET_SETTINGS_SQL), params)).first()
+
+
+async def _ticket_block(db: AsyncSession, conversation: Any, org_id: int) -> TicketBlockOut:
+    ticket_settings = await _ticket_settings(db, conversation, org_id)
+    rows = (
+        await db.execute(text(_CONVERSATION_TICKETS_SQL), {"conversation_id": conversation.id, "org_id": org_id})
+    ).all()
+    return TicketBlockOut(
+        available=_ticket_available(conversation, ticket_settings),
+        targets=[
+            TicketTargetOut(key=target["key"], label=target["label"])
+            for target in (ticket_settings.targets if ticket_settings is not None else [])
+        ],
+        tickets=[TicketOut(**{name: getattr(row, name) for name in TicketOut.model_fields}) for row in rows],
+    )
+
+
+async def _ticket_context(db: AsyncSession, perms: UserPermissions, conversation_id: int) -> tuple[Any, Any]:
+    """The org-scoped conversation plus its widget's ticket settings, or the
+    route's 404 (not the caller's org) / 409 (no ticket possible)."""
+    conversation = (
+        await db.execute(text(_CONVERSATION_SQL), {"conversation_id": conversation_id, "org_id": perms.org_id})
+    ).first()
+    if conversation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="conversation not found")
+    ticket_settings = await _ticket_settings(db, conversation, perms.org_id)
+    if not _ticket_available(conversation, ticket_settings):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="ticket_unavailable")
+    return conversation, ticket_settings
+
+
+async def _ticket_text(db: AsyncSession, conversation: Any, perms: UserPermissions) -> tuple[str, partial[str]]:
+    """Subject and content (SPEC §3) from the transcript and its reviews.
+
+    The content is returned still waiting for ``contact_found``: whether
+    HubSpot knows the visitor is only known after the database work is
+    committed and the search has run.
+    """
+    messages = (await db.execute(text(_MESSAGES_SQL), {"conversation_id": conversation.id})).all()
+    reviews = (
+        await db.execute(text(_TICKET_REVIEWS_SQL), {"conversation_id": conversation.id, "org_id": perms.org_id})
+    ).all()
+    org = (await db.execute(text(_RETENTION_DAYS_SQL), {"org_id": perms.org_id})).first()
+    retention_days = (org.widget_messages_retention_days if org else None) or settings.widget_messages_retention_days
+    # The purge deletes per message by created_at (widget_messages_retention),
+    # so the transcript starts disappearing when its first message expires.
+    first_created = messages[0].created_at if messages else conversation.started_at
+    worst = min(reviews, key=lambda r: _VERDICT_SEVERITY.get(r.verdict, len(_VERDICT_SEVERITY)), default=None)
+    content = partial(
+        build_ticket_content,
+        notes=[
+            ReviewNote(reviewer_name=r.reviewer_name, reviewed_at=r.reviewed_at, note=r.note)
+            for r in reviews
+            if (r.note or "").strip()
+        ],
+        visitor_name=conversation.visitor_name,
+        visitor_email=conversation.visitor_email,
+        started_at=conversation.started_at,
+        widget_name=conversation.widget_name,
+        language=conversation.language_detected,
+        verdict=worst.verdict if worst is not None else None,
+        cause=worst.cause if worst is not None else None,
+        turns=[
+            TranscriptTurn(role=m.role, content=m.content, created_at=m.created_at, sources=m.sources or [])
+            for m in messages
+        ],
+        # The tenant's own portal host, built like `workspace_url` in
+        # app/api/me.py: a link on another host lands outside the tenant.
+        link=f"https://{perms.org_slug}.{settings.domain}/app/knowledge/activity/{conversation.id}",
+        available_until=(first_created + timedelta(days=retention_days)).date(),
+    )
+    first_question = next((m.content for m in messages if m.role == "user"), None)
+    return ticket_subject(first_question), content
+
+
+async def _finish_ticket(db: AsyncSession, ticket_id: int, org_id: int, **values: str | None) -> None:
+    columns = ("status", "error", "hubspot_ticket_id", "hubspot_contact_id", "contact_status", "ticket_url")
+    params = {column: values.get(column) for column in columns}
+    await db.execute(text(_FINISH_TICKET_SQL), {**params, "ticket_id": ticket_id, "org_id": org_id})
+    await db.commit()
+
+
+@router.get("/conversations/{conversation_id}/ticket-preview", response_model=TicketPreviewOut)
+async def get_ticket_preview(
+    conversation_id: int,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> TicketPreviewOut:
+    """Whether the visitor is already a HubSpot contact, looked up by email
+    server-side; the contact's name only for admins, the email never."""
+    conversation, ticket_settings = await _ticket_context(db, perms, conversation_id)
+    service_key = portal_secrets.decrypt(ticket_settings.service_key_encrypted)
+    # End the read transaction so no connection is held while HubSpot answers.
+    await db.commit()
+    try:
+        async with HubSpotTickets(service_key) as hubspot:
+            contact = await hubspot.find_contact(conversation.visitor_email)
+    except HubSpotTicketError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=exc.reason) from exc
+    if contact is None:
+        return TicketPreviewOut(contact="not_found")
+    return TicketPreviewOut(
+        contact="existing",
+        lifecycle_stage=contact.lifecycle_stage,
+        contact_name=contact.name if _may_see_visitor(perms) else None,
+    )
+
+
+@router.post("/conversations/{conversation_id}/tickets", response_model=TicketOut, status_code=status.HTTP_201_CREATED)
+async def create_ticket(
+    conversation_id: int,
+    body: TicketRequest,
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> TicketOut:
+    """Create the HubSpot ticket for one target (SPEC §4.4).
+
+    The ``pending`` row is committed before the first HubSpot call, so no
+    transaction stays open while HubSpot answers and the unique index stops a
+    second click from creating a second ticket. A visitor HubSpot does not
+    know gets a ticket without a contact association: the key cannot create
+    contacts (SPEC §2.6). HubSpot failing leaves the row ``failed`` with the
+    reason, which the next attempt takes over.
+    """
+    conversation, ticket_settings = await _ticket_context(db, perms, conversation_id)
+    target = next((t for t in ticket_settings.targets if t["key"] == body.target_key), None)
+    if target is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="unknown_target")
+    caller: Any = (await db.execute(text(_CALLER_SQL), {"user_id": perms.user_id, "org_id": perms.org_id})).first()
+    subject, content = await _ticket_text(db, conversation, perms)
+
+    slot = {"conversation_id": conversation.id, "target_key": target["key"], "org_id": perms.org_id}
+    claim = {
+        **slot,
+        "target_label": target["label"],
+        "created_by_user_id": caller.id,
+        "stale_minutes": _STALE_PENDING_MINUTES,
+    }
+    claimed = (await db.execute(text(_CLAIM_TICKET_SQL), claim)).first()
+    if claimed is None:
+        existing = (await db.execute(text(_TICKET_STATUS_SQL), slot)).first()
+        created = existing is not None and existing.status == "created"
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="ticket_exists" if created else "ticket_pending")
+    await db.commit()
+
+    service_key = portal_secrets.decrypt(ticket_settings.service_key_encrypted)
+    contact_id: str | None = None
+    contact_status: str | None = None
+    try:
+        async with HubSpotTickets(service_key) as hubspot:
+            contact = await hubspot.find_contact(conversation.visitor_email)
+            contact_id = contact.id if contact is not None else None
+            contact_status = "existing" if contact is not None else "not_found"
+            ticket_id = await hubspot.create_ticket(
+                subject=subject,
+                content=content(contact_found=contact is not None),
+                pipeline_id=target["pipeline_id"],
+                stage_id=target["stage_id"],
+                contact_id=contact_id,
+            )
+    except HubSpotTicketError as exc:
+        await _finish_ticket(
+            db,
+            claimed.id,
+            perms.org_id,
+            status="failed",
+            error=exc.reason,
+            hubspot_contact_id=contact_id,
+            contact_status=contact_status,
+        )
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=exc.reason) from exc
+
+    ticket_url = f"https://app.hubspot.com/contacts/{ticket_settings.hubspot_portal_id}/record/0-5/{ticket_id}"
+    await _finish_ticket(
+        db,
+        claimed.id,
+        perms.org_id,
+        status="created",
+        hubspot_ticket_id=ticket_id,
+        hubspot_contact_id=contact_id,
+        contact_status=contact_status,
+        ticket_url=ticket_url,
+    )
+    return TicketOut(
+        target_key=target["key"],
+        target_label=target["label"],
+        status="created",
+        ticket_url=ticket_url,
+        contact_status=contact_status,
+        created_by_name=caller.display_name,
+        created_at=claimed.created_at,
     )
