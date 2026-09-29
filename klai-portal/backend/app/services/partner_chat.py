@@ -40,6 +40,7 @@ from klai_chat_prompts import (
     SUPPORT_BROAD_CHAT_SYSTEM_PROMPT,
     SUPPORT_CHAT_SYSTEM_PROMPT,
     SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
+    appointment_offer_sentence,
     broad_mode_answer_marker,
     chat_contract_article,
     final_response_language_reminder,
@@ -1895,6 +1896,19 @@ def _appointment_escalation() -> dict[str, bool]:
     return {"appointment": True}
 
 
+def _helpdesk_refusal_offers(citation_chunks: list[dict] | None) -> dict[str, Any]:
+    """What the widget shows under a refusal: the appointment, and a broader search where one can run.
+
+    A broad answer only runs on a turn where retrieval found nothing
+    (_broad_mode_active). Offered over articles that were found, the visitor
+    agrees and gets a second "not found".
+    """
+    offers: dict[str, Any] = {"escalation": _appointment_escalation()}
+    if not citation_chunks:
+        offers["broad_mode"] = "offer"
+    return offers
+
+
 def _appointment_escalation_signal(decision: object) -> dict[str, bool] | None:
     """Read the appointment offer back off a composed decision, or ``None``.
 
@@ -1941,6 +1955,7 @@ def _fill_answer_signals(
     sources: list[dict],
     model: str | None,
     query_text: str,
+    reply: str = "",
 ) -> None:
     """Write this answer's certainty signals into the caller-owned audit sink.
 
@@ -1977,8 +1992,16 @@ def _fill_answer_signals(
                 # Nederlands" is a Dutch turn whatever language it is typed in.
                 "language": identify_text_language(query_text) or UNKNOWN_LANGUAGE,
                 "model": model,
+                # What the visitor was shown, for whoever reviews stored answers:
+                # the button is a frame beside the text, so the text alone
+                # cannot tell whether an offer was there.
+                "appointment": bool(decision.get("escalation")),
             }
         )
+        if decision.get("sentiment"):
+            sink["sentiment"] = decision["sentiment"]
+        if sink.get("planned_question"):
+            sink["question_asked"] = is_clarifying_question(reply)
         # retrieve_context writes the band; a turn that never retrieved has none.
         sink.setdefault("band", "unknown")
     except Exception:
@@ -2204,8 +2227,7 @@ def _compose_backend_managed_answer(
         decision = dict(composed.decision)
         decision[_NO_CITABLE_SOURCES_DECISION_KEY] = True
         if helpdesk:
-            decision["broad_mode"] = "offer"
-            decision["escalation"] = _appointment_escalation()
+            decision.update(_helpdesk_refusal_offers(citation_chunks))
         return (
             _no_citable_sources_message(refusal_language, helpdesk=helpdesk, suggest_open_mode=suggest_open_mode),
             [],
@@ -2238,8 +2260,7 @@ def _compose_backend_managed_answer(
     if not sources:
         decision[_NO_CITABLE_SOURCES_DECISION_KEY] = True
         if helpdesk:
-            decision["broad_mode"] = "offer"
-            decision["escalation"] = _appointment_escalation()
+            decision.update(_helpdesk_refusal_offers(citation_chunks))
         return (
             _no_citable_sources_message(refusal_language, helpdesk=helpdesk, suggest_open_mode=suggest_open_mode),
             [],
@@ -2495,7 +2516,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             return content, sources, decision
         refusal: dict[str, Any] = {"reason": "answer_judge_refusal", _NO_CITABLE_SOURCES_DECISION_KEY: True}
         if helpdesk:
-            refusal.update(broad_mode="offer", escalation=_appointment_escalation())
+            refusal.update(_helpdesk_refusal_offers(citation_chunks))
         message = _no_citable_sources_message(response_language, helpdesk=helpdesk, suggest_open_mode=internal)
         return message, [], refusal
     if outcome == "clarifying_question":
@@ -2544,6 +2565,23 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             timeout_seconds=repair_seconds,
             delegated_org_id=delegated_org_id,
         )
+    # A reply without a source that the judge does not call an answer is the
+    # visitor's dead end, and the button under it is the way out. The profile
+    # and the weak-source rule ask the model to say so; measured on the owner's
+    # review of real answers, 5 of 15 such replies did not. The sentence is
+    # ours, so it is there whenever the button is. Not behind a question: the
+    # visitor is asked something, not sent away. Not under a reply that kept
+    # its source: a judge may add the button to such a reply, never change it.
+    if (
+        helpdesk
+        and not sources
+        and decision.get("escalation")
+        and judgement is not None
+        and judgement.verdict != "answered"
+        and not _text_offers_appointment(content)
+        and not is_clarifying_question(content)
+    ):
+        content = f"{content.rstrip()} {appointment_offer_sentence(response_language)}"
     return content, sources, decision
 
 
@@ -2621,7 +2659,7 @@ async def _repair_unsupported_statements(
         # keep, so the honest refusal is what remains.
         refusal: dict[str, Any] = {"reason": "grounding_nothing_left", _NO_CITABLE_SOURCES_DECISION_KEY: True}
         if helpdesk:
-            refusal.update(broad_mode="offer", escalation=_appointment_escalation())
+            refusal.update(_helpdesk_refusal_offers(citation_chunks))
         message = _no_citable_sources_message(response_language, helpdesk=helpdesk, suggest_open_mode=not helpdesk)
         return message, [], refusal
     decision = {**decision, "reason": "grounding_repaired"}
@@ -2956,6 +2994,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         sources=sources,
         model=model,
         query_text=visitor_query,
+        reply=content,
     )
     # Deliberately kept separate as the last render step
     # (chat-quality-history-and-plan.md §7.2): the widget got its
@@ -4145,6 +4184,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                     sources=sources,
                     model=model,
                     query_text=visitor_query,
+                    reply=rendered_content,
                 )
                 message["content"] = rendered_content
                 message["sources"] = sources

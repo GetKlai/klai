@@ -144,6 +144,7 @@ __all__ = [
     "GroundingCheck",
     "answer_claims_response_format",
     "appointment_offer_marker",
+    "appointment_offer_sentence",
     "broad_mode_answer_marker",
     "chat_contract_article",
     "clarify_question_addendum",
@@ -183,14 +184,14 @@ _ENGLISH_OPEN_MODE_HINT: Final[str] = " Try Open mode for an answer based on gen
 # (docs/research/voys-tone-of-voice.md § 10); the phrasing below follows the
 # measured house style instead — plain, second person, and it names the next
 # step rather than a department.
-_DUTCH_HELPDESK_REFUSAL: Final[str] = (
-    "Dit vind ik niet terug in onze helpartikelen. "
+_DUTCH_HELPDESK_OFFER: Final[str] = (
     "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder."
 )
-_ENGLISH_HELPDESK_REFUSAL: Final[str] = (
-    "I can't find this in our help articles. "
+_ENGLISH_HELPDESK_OFFER: Final[str] = (
     "If you want to be sure, schedule an appointment with someone who can help you personally."
 )
+_DUTCH_HELPDESK_REFUSAL: Final[str] = "Dit vind ik niet terug in onze helpartikelen. " + _DUTCH_HELPDESK_OFFER
+_ENGLISH_HELPDESK_REFUSAL: Final[str] = "I can't find this in our help articles. " + _ENGLISH_HELPDESK_OFFER
 
 # Visible label the widget backend prepends to every consented broad-mode
 # (general-knowledge) answer. Two jobs, one string: the visitor sees on the
@@ -314,6 +315,16 @@ def is_broad_knowledge_answer(content: object) -> bool:
         return False
     stripped = content.lstrip()
     return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
+
+
+def appointment_offer_sentence(language: object) -> str:
+    """The sentence that names the appointment button, in the language of the refusal next to it.
+
+    A model-written "not found" is asked to mention the appointment and often
+    does not; the widget backend adds this sentence when the button is there
+    and the reply does not name it.
+    """
+    return _DUTCH_HELPDESK_OFFER if _language_is_dutch(language) else _ENGLISH_HELPDESK_OFFER
 
 
 def no_citable_sources_message(language: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
@@ -668,13 +679,14 @@ _SUPPORT_BODY: Final[str] = (
     "the gap with general knowledge — an honest 'not there' beats a confident wrong answer. "
     "Then go find the solution: offer to point the visitor to support for a definite answer.\n\n"
     "## Apologies\n"
-    "A short, sincere apology belongs to this voice in exactly two situations: when you had "
-    "it wrong — misunderstood the question, or an answer you gave did not hold — or when the "
-    "visitor has a real grievance: 'Onze excuses, dat had ik verkeerd begrepen'. One apology, never "
-    "as filler, never twice in a reply, never 'helaas' stretched into a paragraph, and none "
-    "at all when the answer simply is not in the help articles, when the visitor asks for a "
-    "person, or when you hand over to an appointment — a limit of this chat is not your "
-    "mistake, so do not open such a reply with 'Onze excuses'.\n\n"
+    "A short, sincere apology belongs to this voice in exactly two situations: when an earlier "
+    "reply of yours in this conversation was wrong — you misunderstood the question, or an "
+    "answer you gave did not hold — or when the visitor has a real grievance. In your own "
+    "words, one apology, never as filler, never twice in a reply, never 'helaas' stretched "
+    "into a paragraph. None at all in your first reply of a conversation (you cannot have had "
+    "anything wrong yet), when the answer simply is not in the help articles, when the "
+    "visitor asks for a person, or when you hand over to an appointment — a limit of this "
+    "chat is not your mistake, so do not open such a reply with an apology.\n\n"
     "## Multi-part questions\n"
     "When the visitor's message contains multiple questions (a numbered list, bulleted "
     "questions, or several question marks), answer PER QUESTION:\n"
@@ -806,13 +818,14 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "the gap with general knowledge — an honest 'not there' beats a confident wrong answer. "
     "Then go find the solution: offer to point the visitor to support for a definite answer.\n\n"
     "## Apologies\n"
-    "A short, sincere apology belongs to this voice in exactly two situations: when you had "
-    "it wrong — misunderstood the question, or an answer you gave did not hold — or when the "
-    "visitor has a real grievance: 'Onze excuses, dat had ik verkeerd begrepen'. One apology, never "
-    "as filler, never twice in a reply, never 'helaas' stretched into a paragraph, and none "
-    "at all when the answer simply is not in the help articles, when the visitor asks for a "
-    "person, or when you hand over to an appointment — a limit of this chat is not your "
-    "mistake, so do not open such a reply with 'Onze excuses'.\n\n"
+    "A short, sincere apology belongs to this voice in exactly two situations: when an earlier "
+    "reply of yours in this conversation was wrong — you misunderstood the question, or an "
+    "answer you gave did not hold — or when the visitor has a real grievance. In your own "
+    "words, one apology, never as filler, never twice in a reply, never 'helaas' stretched "
+    "into a paragraph. None at all in your first reply of a conversation (you cannot have had "
+    "anything wrong yet), when the answer simply is not in the help articles, when the "
+    "visitor asks for a person, or when you hand over to an appointment — a limit of this "
+    "chat is not your mistake, so do not open such a reply with an apology.\n\n"
     "## Multi-part questions\n"
     "When the visitor's message contains multiple questions (a numbered list, bulleted "
     "questions, or several question marks), answer PER QUESTION:\n"

@@ -107,7 +107,7 @@ ESCALATION_TURN_ADDENDUM = {
         "[[APPOINTMENT_OFFER]] on its own final line."
     ),
     FRUSTRATION: (
-        "\n\n[This turn] The visitor is frustrated. Keep any answer short and apologise only if you had it wrong, then say that the "
+        "\n\n[This turn] The visitor is frustrated. Keep any answer short, without an apology, then say that the "
         "visitor can schedule an appointment with a human employee using the button under "
         "this reply. You cannot transfer, connect, call back or schedule anything yourself: "
         "never write a sentence where you or 'we' perform the action — the visitor does it. "

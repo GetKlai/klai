@@ -144,11 +144,11 @@ Volgorde: eerst vastleggen en de meetlat, daarna de kleine wijzigingen met de gr
 | 0 | Dit document, chat-system.md gelijk aan de code, logboeken als archief | – | documenten | Ankers nagelezen tegen de code |
 | 1 | De meetlat: per echt gesprek de verwachte reactie, het dragende artikel en de feiten die erin moeten staan; een script dat de keten herspeelt en de uitkomst in code naast de verwachting legt | – | gereedschap | De huidige keten scoort op de meetlat wat de review vond |
 | 2 | Nulmeting en bijdrage per bestaande stap: keten zoals nu, zonder reparatie, zonder antwoordbeoordelaar | – | meting | Twee rondes, zelfde richting |
-| 3 | Controle en reparatie slaan zinnen over die niets over het bedrijf beweren, en draaien niet op een escalatiebeurt | deel van 18 en 6 | S | Verzonnen gevallen in tests; meetlat |
-| 4 | Negatieve toon zonder verzoek om een mens: gewoon antwoorden, knop eronder; vraagstap en regel voor zwakke bronnen lopen door | 2, plus overgeslagen stappen | S | Meetlat op beurten met negatieve toon |
+| 3 | Vervallen na meting: controle en reparatie laten zinnen overslaan die niets over het bedrijf beweren. In de nulmeting haalde het overgrote deel van de reparaties de drempel ook op echte beweringen, dus dit verandert bijna niets | – | – | Zie §8 |
+| 4 | Niet uitgerold na meting: negatieve toon zonder verzoek om een mens gewoon laten antwoorden met de knop eronder | 2, plus overgeslagen stappen | S | Zie §8 |
 | 5 | De zin over de afspraak komt uit code als de knop er hangt en de tekst hem niet noemt | 5 | S | Test; telling op echt verkeer |
 | 6 | "Breder zoeken" alleen aanbieden als het iets kan doen | 1 tot 2 | S | Test |
-| 7 | De maskeerinstructie noemt alleen soorten die in die aanroep gemaskeerd zijn; de excuus-voorbeeldzin uit het profiel | 1 en 3 | S | Test; telling op echt verkeer |
+| 7 | De excuus-voorbeeldzin uit het profiel. De maskeerinstructie (noemt alleen soorten die in die aanroep gemaskeerd zijn) is een wijziging aan de maskering zelf en wacht op een eigen, zwaardere review | 3 en 1 | S | Meetlat; telling op echt verkeer |
 | 8 | De vraagstap telt alleen als het antwoord op een vraag eindigt, en vraagt niet twee keer naar hetzelfde | 1 tot 3 | S | Bestaande poortevaluatie met vaste gevallen |
 | 9 | Reparatie vervangen: één keer opnieuw schrijven, anders de passage tonen | 18 | M | Drie armen op de meetlat |
 | 10 | Het beslismoment "staat het antwoord erin", eerst meekijkend | 12 en 6 | M | Overeenstemming met de verwachtingen van de meetlat |
@@ -164,7 +164,17 @@ Hier komt per stap van het plan: datum, verwachting vooraf, uitkomst op de meetl
 
 | Stap | Datum | Verwachting | Uitkomst | Besluit |
 |---|---|---|---|---|
-| 0 | 29 sep | Documenten gelijk aan de code | Zie de PR van dit document | Vastgelegd |
+| 0 | 29 sep | Documenten gelijk aan de code | Acht afwijkingen gevonden door een tweede lezer, alle gecorrigeerd (#1775) | Vastgelegd |
+| 1 | 29 sep | Een meetlat die de review weerspiegelt | Eén geval per beoordeeld antwoord, met de verwachte soort reactie en waar bekend het dragende artikel; naspelen door de echte route, score in code. De soort reactie alleen zegt weinig: die klopte bij de meeste gevallen al, ook waar het antwoord fout heette. De inhoud vraagt het oordeel van de eigenaar per geval | In gebruik; privé |
+| 2 | 29 sep | Zien wat elke stap bijdraagt | Nulmeting, twee rondes. De reparatie draait op ruim een derde van de beurten; in meer dan de helft daarvan verliest het antwoord stappen en de mediane lengte halveert ongeveer. Een op de zeven beslissingen verschilt tussen twee rondes op dezelfde vraag | Reparatie is het eerste onderdeel om te vervangen (stap 9) |
+| 3 | 29 sep | Minder reparaties als de controle zinnen overslaat die niets beweren | Negen op de tien reparaties halen de drempel ook op echte beweringen | Vervallen |
+| 4 | 29 sep | Een gefrustreerde bezoeker krijgt een gewoon antwoord met de knop | Op de beurten met een negatieve toon geen winst in de soort reactie, en de uitkomst verschilt tussen runs meer dan het effect | Niet uitgerold; wacht op het oordeel van de eigenaar over die beurten |
+| 5 | 29 sep | Elk "niet gevonden" met knop noemt de afspraak | Van ruim acht op de tien naar ruim negen op de tien; wat overblijft zijn antwoorden die hun bron hielden, en daar verandert een beoordelaar de tekst niet | Uitgerold |
+| 6 | 29 sep | Geen aanbod "breder zoeken" waar het niets kan doen | Van een op de tien beurten naar alleen de beurt waar het zoeken niets vond | Uitgerold |
+| 7 | 29 sep | Geen excuus waar niets misging | Het voorbeeld uit het profiel en de excuusregel uit de frustratie-instructie zijn weg. Eerste antwoorden die met een excuus openen: van enkele per ronde naar nul op de beurten met een negatieve toon, waar ze allemaal vandaan kwamen | Uitgerold |
+| 8 | 29 sep | Hooguit één vraag per gesprek; het record zegt wat de bezoeker zag | Vaste code met tests; het record bewaart de knop, de toon en of een geplande vraag gesteld is | Uitgerold |
+
+Over alle gevallen samen bleef de soort reactie op gevallen die de eigenaar goed noemde gelijk, in beide rondes. De meetruns draaiden op het Vibe-tegoed met hetzelfde model als het antwoordmodel; de controles kregen daar meer tijd dan in productie, omdat die sleutel trager antwoordt.
 
 ## 9. Wat in de logboeken staat en hier is samengevat
 

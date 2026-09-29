@@ -115,6 +115,7 @@ SIGNAL_KEYS = {
     "broad_mode",
     "language",
     "model",
+    "appointment",
 }
 
 

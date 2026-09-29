@@ -201,7 +201,7 @@ _PROFILE_HASHES = {
     # re-baselined 2026-09-25, SUPPORT: the "When the question is unclear" rule
     # is gone; the question is decided per turn from the retrieved articles
     # (SPEC-RAG-ANSWER-JUDGES-001 logbook 2.54).
-    "SUPPORT_CHAT_SYSTEM_PROMPT": "b5ae89b97b7d8aebe5697db6b0054fa353d51a345fc3831bd698e915595ff627",
+    "SUPPORT_CHAT_SYSTEM_PROMPT": "c9027f08951c4c7d6c4e11525d7f15e082a2f2592327ea7294c3b94bce1ea2cb",
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT": "12c767503d2479e3b661fbe04b100dae63fe2b494b3521a0b2b8975a0ac9135d",
 }
 _PROFILE_VALUES = {

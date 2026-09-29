@@ -38,7 +38,7 @@ from app.services.answer_footer import strip_answer_footer_from_text
 # on a laptop, where no portal settings exist (scripts/clarify_gate_eval.py).
 
 Reason = Literal[
-    "soft_gap", "one_document", "variant_named", "asked_last_turn", "no_axis", "model_failed", "question_shape", "asked"
+    "soft_gap", "one_document", "variant_named", "asked_before", "no_axis", "model_failed", "question_shape", "asked"
 ]
 Axis = Literal["device", "direction", "edition", "product"]
 _MAX_OPTIONS = 4
@@ -214,13 +214,18 @@ def _messages(messages: list[dict]) -> list[dict]:
     return turns
 
 
-def _asked_last_turn(messages: list[dict]) -> bool:
-    """The reply to the visitor's previous message ended on a question; an opening greeting is no reply."""
-    earlier = messages[:-1]
-    replies = [index for index, m in enumerate(earlier) if m["role"] == "assistant"]
-    if not replies or not any(m["role"] == "user" for m in earlier[: replies[-1]]):
-        return False
-    return earlier[replies[-1]]["content"].rstrip(" \n*_)\"'").endswith("?")
+def _asked_before(messages: list[dict]) -> bool:
+    """A reply to the visitor already ended on a question; an opening greeting is no reply.
+
+    One question per conversation. A low-quality question suppresses the
+    visitor's engagement with later, better ones (Zou et al. 2023), and the
+    gate has no way to tell that its first question did not land: a visitor
+    who never named a device was asked for it twice in one real conversation.
+    """
+    first_user = next((index for index, m in enumerate(messages) if m["role"] == "user"), len(messages))
+    return any(
+        m["role"] == "assistant" and m["content"].rstrip(" \n*_)\"'").endswith("?") for m in messages[first_user:-1]
+    )
 
 
 def clarify_gate(messages: list[dict], chunks: list[dict], threshold: float) -> ClarifyDecision:
@@ -229,8 +234,8 @@ def clarify_gate(messages: list[dict], chunks: list[dict], threshold: float) -> 
     if not documents:
         return ClarifyDecision("soft_gap")
     conversation = _messages(messages)
-    if _asked_last_turn(conversation):
-        return ClarifyDecision("asked_last_turn", documents=len(documents))
+    if _asked_before(conversation):
+        return ClarifyDecision("asked_before", documents=len(documents))
     if len(documents) < 2:
         return ClarifyDecision("one_document", documents=len(documents))
     said = set().union(*(_stems(m["content"]) for m in conversation if m["role"] == "user"))
