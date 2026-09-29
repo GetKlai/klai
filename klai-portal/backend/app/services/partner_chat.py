@@ -1896,6 +1896,19 @@ def _appointment_escalation() -> dict[str, bool]:
     return {"appointment": True}
 
 
+def _helpdesk_refusal_offers(citation_chunks: list[dict] | None) -> dict[str, Any]:
+    """What the widget shows under a refusal: the appointment, and a broader search where one can run.
+
+    A broad answer only runs on a turn where retrieval found nothing
+    (_broad_mode_active). Offered over articles that were found, the visitor
+    agrees and gets a second "not found".
+    """
+    offers: dict[str, Any] = {"escalation": _appointment_escalation()}
+    if not citation_chunks:
+        offers["broad_mode"] = "offer"
+    return offers
+
+
 def _appointment_escalation_signal(decision: object) -> dict[str, bool] | None:
     """Read the appointment offer back off a composed decision, or ``None``.
 
@@ -2205,8 +2218,7 @@ def _compose_backend_managed_answer(
         decision = dict(composed.decision)
         decision[_NO_CITABLE_SOURCES_DECISION_KEY] = True
         if helpdesk:
-            decision["broad_mode"] = "offer"
-            decision["escalation"] = _appointment_escalation()
+            decision.update(_helpdesk_refusal_offers(citation_chunks))
         return (
             _no_citable_sources_message(refusal_language, helpdesk=helpdesk, suggest_open_mode=suggest_open_mode),
             [],
@@ -2239,8 +2251,7 @@ def _compose_backend_managed_answer(
     if not sources:
         decision[_NO_CITABLE_SOURCES_DECISION_KEY] = True
         if helpdesk:
-            decision["broad_mode"] = "offer"
-            decision["escalation"] = _appointment_escalation()
+            decision.update(_helpdesk_refusal_offers(citation_chunks))
         return (
             _no_citable_sources_message(refusal_language, helpdesk=helpdesk, suggest_open_mode=suggest_open_mode),
             [],
@@ -2496,7 +2507,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             return content, sources, decision
         refusal: dict[str, Any] = {"reason": "answer_judge_refusal", _NO_CITABLE_SOURCES_DECISION_KEY: True}
         if helpdesk:
-            refusal.update(broad_mode="offer", escalation=_appointment_escalation())
+            refusal.update(_helpdesk_refusal_offers(citation_chunks))
         message = _no_citable_sources_message(response_language, helpdesk=helpdesk, suggest_open_mode=internal)
         return message, [], refusal
     if outcome == "clarifying_question":
@@ -2638,7 +2649,7 @@ async def _repair_unsupported_statements(
         # keep, so the honest refusal is what remains.
         refusal: dict[str, Any] = {"reason": "grounding_nothing_left", _NO_CITABLE_SOURCES_DECISION_KEY: True}
         if helpdesk:
-            refusal.update(broad_mode="offer", escalation=_appointment_escalation())
+            refusal.update(_helpdesk_refusal_offers(citation_chunks))
         message = _no_citable_sources_message(response_language, helpdesk=helpdesk, suggest_open_mode=not helpdesk)
         return message, [], refusal
     decision = {**decision, "reason": "grounding_repaired"}

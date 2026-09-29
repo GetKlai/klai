@@ -218,6 +218,17 @@ def test_helpdesk_refusal_offers_an_appointment():
     assert decision["broad_mode"] == "offer"
 
 
+def test_refusal_over_found_articles_does_not_offer_a_broader_search():
+    """A broad answer needs a turn where retrieval found nothing at all. Offered
+    over articles that were found, the visitor agrees, retrieval finds articles
+    again and the reply is a second "not found" (seen in the owner's review)."""
+    _text, _sources, decision = _compose_backend_managed_answer(
+        "Ik weet het ook niet.", [], [_good_chunk()], "wat kost het abonnement?", helpdesk=True, response_language="nl"
+    )
+    assert decision["escalation"] == {"appointment": True}
+    assert "broad_mode" not in decision
+
+
 def test_broad_mode_no_output_still_offers_an_appointment():
     # Consent was already given, so no broad re-offer — but the visitor is
     # looking at the refusal text, which does offer an appointment.
