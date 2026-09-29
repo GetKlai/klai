@@ -165,6 +165,16 @@ Hier komt per stap van het plan: datum, verwachting vooraf, uitkomst op de meetl
 | Stap | Datum | Verwachting | Uitkomst | Besluit |
 |---|---|---|---|---|
 | 0 | 29 sep | Documenten gelijk aan de code | Acht afwijkingen gevonden door een tweede lezer, alle gecorrigeerd (#1775) | Vastgelegd |
+| 1 | 29 sep | Een meetlat die de review weerspiegelt | Eén geval per beoordeeld antwoord, met de verwachte soort reactie en waar bekend het dragende artikel; naspelen door de echte route, score in code. De soort reactie alleen zegt weinig: die klopte bij de meeste gevallen al, ook waar het antwoord fout heette. De inhoud vraagt het oordeel van de eigenaar per geval | In gebruik; privé |
+| 2 | 29 sep | Zien wat elke stap bijdraagt | Nulmeting, twee rondes. De reparatie draait op ruim een derde van de beurten; in meer dan de helft daarvan verliest het antwoord stappen en de mediane lengte halveert ongeveer. Een op de zeven beslissingen verschilt tussen twee rondes op dezelfde vraag | Reparatie is het eerste onderdeel om te vervangen (stap 9) |
+| 3 | 29 sep | Minder reparaties als de controle zinnen overslaat die niets beweren | Negen op de tien reparaties halen de drempel ook op echte beweringen | Vervallen |
+| 4 | 29 sep | Een gefrustreerde bezoeker krijgt een gewoon antwoord met de knop | Op de beurten met een negatieve toon geen winst in de soort reactie, en de uitkomst verschilt tussen runs meer dan het effect | Niet uitgerold; wacht op het oordeel van de eigenaar over die beurten |
+| 5 | 29 sep | Elk "niet gevonden" met knop noemt de afspraak | Van ruim acht op de tien naar ruim negen op de tien; wat overblijft zijn antwoorden die hun bron hielden, en daar verandert een beoordelaar de tekst niet | Uitgerold |
+| 6 | 29 sep | Geen aanbod "breder zoeken" waar het niets kan doen | Van een op de tien beurten naar alleen de beurt waar het zoeken niets vond | Uitgerold |
+| 7 | 29 sep | Geen excuus waar niets misging | Het voorbeeld uit het profiel en de excuusregel uit de frustratie-instructie zijn weg. Eerste antwoorden die met een excuus openen: van enkele per ronde naar nul op de beurten met een negatieve toon, waar ze allemaal vandaan kwamen | Uitgerold |
+| 8 | 29 sep | Hooguit één vraag per gesprek; het record zegt wat de bezoeker zag | Vaste code met tests; het record bewaart de knop, de toon en of een geplande vraag gesteld is | Uitgerold |
+
+Over alle gevallen samen bleef de soort reactie op gevallen die de eigenaar goed noemde gelijk, in beide rondes. De meetruns draaiden op het Vibe-tegoed met hetzelfde model als het antwoordmodel; de controles kregen daar meer tijd dan in productie, omdat die sleutel trager antwoordt.
 
 ## 9. Wat in de logboeken staat en hier is samengevat
 

@@ -2570,7 +2570,8 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     # and the weak-source rule ask the model to say so; measured on the owner's
     # review of real answers, 5 of 15 such replies did not. The sentence is
     # ours, so it is there whenever the button is. Not behind a question: the
-    # visitor is asked something, not sent away.
+    # visitor is asked something, not sent away. Not under a reply that kept
+    # its source: a judge may add the button to such a reply, never change it.
     if (
         helpdesk
         and not sources
