@@ -151,6 +151,52 @@ async def test_widget_classifier_controls_escalation(
     assert judge.await_count == int(support_mode)
 
 
+async def _system_prompt_and_button(monkeypatch, query: str, classification: dict[str, Any]) -> tuple[str, bool]:
+    """One support turn over a weak article: the prompt the answer model got, and whether the button follows."""
+    auth = make_partner_auth(kb_access={10: "read"})
+    auth.key_id = "wgt_classifier"
+    request = partner.ChatCompletionsRequest(messages=[{"role": "user", "content": query}], stream=False)
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=FakeResult())
+    seen: dict[str, Any] = {}
+
+    async def completion(**kwargs):
+        seen.update(kwargs)
+        return {"choices": [{"message": {"role": "assistant", "content": "Artikelantwoord", "sources": []}}]}
+
+    weak_chunk = {**_good_chunk(), "reranker_score": 0.1}
+    monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-alpha"]))
+    monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=True))
+    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([weak_chunk], "prompt", [], False)))
+    monkeypatch.setattr(partner.turn_judge, "judge_turn", AsyncMock(return_value=_turn_judgement(**classification)))
+    monkeypatch.setattr(partner, "chat_completion_non_streaming", completion)
+    monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())
+
+    await partner.chat_completions(request=request, http_request=MagicMock(headers={}, client=None), auth=auth, db=db)
+    return seen["system_prompt"], seen["force_escalation"]
+
+
+@pytest.mark.asyncio
+async def test_frustrated_visitor_keeps_the_answer_turn_and_gets_the_button(monkeypatch):
+    """A visitor whose tone is negative still asked something. The turn runs as
+    any other, weak-source rule included, and the button goes under the reply;
+    the appointment does not replace the answer."""
+    system_prompt, button = await _system_prompt_and_button(
+        monkeypatch, NEGATIVE_QUERY, {"wants_human": False, "sentiment": "negative"}
+    )
+    assert button is True
+    assert partner.WEAK_SOURCES_ADDENDUM in system_prompt
+    assert "[This turn] The visitor" not in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_request_for_a_person_still_replaces_the_answer(monkeypatch):
+    system_prompt, button = await _system_prompt_and_button(monkeypatch, HUMAN_QUERY, {"wants_human": True})
+    assert button is True
+    assert "asked to reach a person" in system_prompt
+    assert partner.WEAK_SOURCES_ADDENDUM not in system_prompt
+
+
 # ─── composer: the backend's own two cases ───────────────────────────────
 
 

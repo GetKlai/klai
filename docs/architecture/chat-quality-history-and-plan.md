@@ -164,7 +164,7 @@ Hier komt per stap van het plan: datum, verwachting vooraf, uitkomst op de meetl
 
 | Stap | Datum | Verwachting | Uitkomst | Besluit |
 |---|---|---|---|---|
-| 0 | 29 sep | Documenten gelijk aan de code | Zie de PR van dit document | Vastgelegd |
+| 0 | 29 sep | Documenten gelijk aan de code | Acht afwijkingen gevonden door een tweede lezer, alle gecorrigeerd (#1775) | Vastgelegd |
 
 ## 9. Wat in de logboeken staat en hier is samengevat
 

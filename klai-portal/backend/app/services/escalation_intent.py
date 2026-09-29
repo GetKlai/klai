@@ -92,26 +92,18 @@ def escalation_intent(text: object) -> str | None:
     return None
 
 
-# Appended to the system prompt for the one turn where an intent fired. It
-# tells the model what the backend already decided, so the reply matches the
-# button the widget is about to render under it. English, like the profile.
-ESCALATION_TURN_ADDENDUM = {
-    HUMAN_REQUEST: (
-        "\n\n[This turn] The visitor just asked to reach a person. Do NOT answer with "
-        "steps or an article, even if one matches. Acknowledge in one plain sentence — no apology, this is not your mistake — then say "
-        "that the visitor can schedule an appointment with a human employee using the button "
-        "under this reply. You cannot transfer, connect, call back or schedule anything "
-        "yourself: never write 'ik verbind je door', 'we plannen een afspraak in' or any "
-        "sentence where you or 'we' perform the action — the visitor does it. Name no phone "
-        "number, e-mail address or URL. End the reply with the exact token "
-        "[[APPOINTMENT_OFFER]] on its own final line."
-    ),
-    FRUSTRATION: (
-        "\n\n[This turn] The visitor is frustrated. Keep any answer short and apologise only if you had it wrong, then say that the "
-        "visitor can schedule an appointment with a human employee using the button under "
-        "this reply. You cannot transfer, connect, call back or schedule anything yourself: "
-        "never write a sentence where you or 'we' perform the action — the visitor does it. "
-        "Name no phone number, e-mail address or URL. End the reply with the exact token "
-        "[[APPOINTMENT_OFFER]] on its own final line."
-    ),
-}
+# Appended to the system prompt for the one turn where the visitor asked for a
+# person. It tells the model what the backend already decided, so the reply
+# matches the button the widget is about to render under it. English, like the
+# profile. A frustrated visitor gets the button without an instruction: that
+# turn is answered like any other (api/partner.py).
+HUMAN_REQUEST_TURN_ADDENDUM = (
+    "\n\n[This turn] The visitor just asked to reach a person. Do NOT answer with "
+    "steps or an article, even if one matches. Acknowledge in one plain sentence — no apology, this is not your mistake — then say "
+    "that the visitor can schedule an appointment with a human employee using the button "
+    "under this reply. You cannot transfer, connect, call back or schedule anything "
+    "yourself: never write 'ik verbind je door', 'we plannen een afspraak in' or any "
+    "sentence where you or 'we' perform the action — the visitor does it. Name no phone "
+    "number, e-mail address or URL. End the reply with the exact token "
+    "[[APPOINTMENT_OFFER]] on its own final line."
+)
