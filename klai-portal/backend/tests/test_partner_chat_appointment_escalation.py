@@ -117,12 +117,12 @@ async def test_widget_classifier_controls_escalation(
 
     async def completion(**kwargs):
         message = {"role": "assistant", "content": "Artikelantwoord", "sources": []}
-        if kwargs["force_escalation"]:
+        if kwargs["force_escalation"] or kwargs["sentiment"] == "negative":
             message["escalation"] = {"appointment": True}
         return {"choices": [{"message": message}]}
 
     async def streaming(**kwargs):
-        if kwargs["force_escalation"]:
+        if kwargs["force_escalation"] or kwargs["sentiment"] == "negative":
             yield b'data: {"choices":[{"delta":{"escalation":{"appointment":true}}}]}\n\n'
         yield b"data: [DONE]\n\n"
 
@@ -173,7 +173,7 @@ async def _system_prompt_and_button(monkeypatch, query: str, classification: dic
     monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())
 
     await partner.chat_completions(request=request, http_request=MagicMock(headers={}, client=None), auth=auth, db=db)
-    return seen["system_prompt"], seen["force_escalation"]
+    return seen["system_prompt"], seen["force_escalation"] or seen["sentiment"] == "negative"
 
 
 @pytest.mark.asyncio

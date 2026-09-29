@@ -1909,6 +1909,19 @@ def _helpdesk_refusal_offers(citation_chunks: list[dict] | None) -> dict[str, An
     return offers
 
 
+def _tone_of_the_turn(sentiment: str | None) -> dict[str, Any]:
+    """The tone for the record, and the button a frustrated visitor gets under whatever the reply is.
+
+    Frustration adds the way to a person and changes nothing else: the reply is
+    decided like any other turn's.
+    """
+    if not sentiment:
+        return {}
+    if sentiment == "negative":
+        return {"sentiment": sentiment, "escalation": _appointment_escalation()}
+    return {"sentiment": sentiment}
+
+
 def _appointment_escalation_signal(decision: object) -> dict[str, bool] | None:
     """Read the appointment offer back off a composed decision, or ``None``.
 
@@ -2967,7 +2980,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             delegated_org_id=delegated_org_id,
         )
         content = without_dashes(content, helpdesk=support_mode)
-        decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
+        decision.update(_tone_of_the_turn(sentiment) if support_mode else {})
     _log_turn_timing(
         turn_timing,
         org_id=org_id,
@@ -4164,7 +4177,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                 )
                 rendered_content = without_dashes(rendered_content, helpdesk=support_mode)
                 answer_judge_ms = _elapsed_ms(judge_started)
-                decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
+                decision.update(_tone_of_the_turn(sentiment) if support_mode else {})
                 # Popped before the log so that event keeps its exact payload;
                 # the marker only travels to the audit sink.
                 refused = bool(decision.pop(_NO_CITABLE_SOURCES_DECISION_KEY, False))

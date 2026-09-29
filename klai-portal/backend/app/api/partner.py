@@ -2200,7 +2200,12 @@ async def chat_completions(  # noqa: C901
     human_request = escalation == escalation_service.HUMAN_REQUEST
     if human_request:
         system_prompt += escalation_service.HUMAN_REQUEST_TURN_ADDENDUM
-    force_escalation = escalation is not None
+    elif escalation:
+        # The phrase detector heard the frustration the judge may have missed.
+        # The tone travels with the turn and puts the button under the reply
+        # (partner_chat); it decides nothing else.
+        sentiment = "negative"
+    force_escalation = human_request
 
     # SPEC-RAG-ANSWER-TIERS-001 REQ-1. A conversational turn leaves the
     # knowledge pipeline only on a retrieval gap: with usable chunks the
