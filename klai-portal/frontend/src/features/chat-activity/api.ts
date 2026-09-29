@@ -236,7 +236,7 @@ export interface TicketOut {
   target_label: string
   status: TicketStatus
   ticket_url: string | null
-  contact_status: 'existing' | 'created' | null
+  contact_status: 'existing' | 'not_found' | null
   error: string | null
   created_by_name: string | null
   created_at: string
@@ -398,14 +398,15 @@ export function useSetConversationTest(conversationId: string | number) {
   })
 }
 
-/** `GET /api/app/activity/conversations/{id}/ticket-preview` (§4.3). Contact
-    name/company are only ever non-null for an admin — the backend nulls them
-    for everyone else, so the panel does not need its own role check. */
+/** `GET /api/app/activity/conversations/{id}/ticket-preview` (§4.3). Klai
+    never creates a HubSpot contact (§2.6), so `not_found` is a terminal
+    state, not a "will be created" one. `contact_name` is only ever non-null
+    for an admin — the backend nulls it for everyone else, so the panel does
+    not need its own role check. */
 export interface TicketPreview {
-  contact: 'existing' | 'new'
+  contact: 'existing' | 'not_found'
   lifecycle_stage: string | null
   contact_name: string | null
-  company_name: string | null
 }
 
 /** Fetched only while the create-ticket panel is open (`enabled`), so opening

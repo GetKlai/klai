@@ -517,6 +517,7 @@ function ticketIntegrationErrorMessage(err: unknown): string {
   if (detail === 'invalid_service_key') return m.admin_widgets_tickets_error_invalid_key()
   if (detail === 'missing_scope') return m.admin_widgets_tickets_error_missing_scope()
   if (detail === 'unknown_pipeline_or_stage') return m.admin_widgets_tickets_error_unknown_pipeline_stage()
+  if (detail === 'service_key_required') return m.admin_widgets_tickets_error_key_required()
   return err instanceof Error ? err.message : m.admin_shared_error_generic()
 }
 
@@ -533,6 +534,7 @@ function TicketsCard({ widget }: Props) {
   const pipelinesMutation = useFetchTicketPipelines(widgetId)
 
   const [serviceKey, setServiceKey] = useState('')
+  const [portalId, setPortalId] = useState('')
   const [targets, setTargets] = useState<TicketTargetRow[]>([])
   const [pipelines, setPipelines] = useState<TicketPipeline[] | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -550,6 +552,7 @@ function TicketsCard({ widget }: Props) {
     if (query.data && !seededRef.current) {
       seededRef.current = true
       setTargets(fromServer(query.data.targets))
+      setPortalId(query.data.hubspot_portal_id ? String(query.data.hubspot_portal_id) : '')
     }
   }, [query.data])
 
@@ -586,11 +589,14 @@ function TicketsCard({ widget }: Props) {
 
   const needsKey = !configured
   const keyOk = !needsKey || serviceKey.trim().length > 0
+  const portalIdValid = /^[1-9]\d*$/.test(portalId.trim())
   const targetsValid =
     targets.length > 0 && targets.every((target) => target.label.trim() && target.pipeline_id && target.stage_id)
 
   const handleSave = () => {
-    const payload: { service_key?: string; targets: TicketTarget[] } = {
+    if (!portalIdValid) return
+    const payload: { service_key?: string; hubspot_portal_id: number; targets: TicketTarget[] } = {
+      hubspot_portal_id: Number(portalId.trim()),
       targets: targets.map(({ key, label, pipeline_id, stage_id }) => ({ key, label, pipeline_id, stage_id })),
     }
     if (serviceKey.trim()) payload.service_key = serviceKey.trim()
@@ -599,6 +605,7 @@ function TicketsCard({ widget }: Props) {
         toast.success(m.admin_shared_success_updated())
         setServiceKey('')
         setTargets(fromServer(data.targets))
+        setPortalId(data.hubspot_portal_id ? String(data.hubspot_portal_id) : '')
       },
       onError: (err) => toast.error(ticketIntegrationErrorMessage(err)),
     })
@@ -609,6 +616,7 @@ function TicketsCard({ widget }: Props) {
       onSuccess: () => {
         toast.success(m.admin_widgets_tickets_delete_success())
         setServiceKey('')
+        setPortalId('')
         setPipelines(null)
         setTargets([])
         setConfirmingDelete(false)
@@ -632,12 +640,20 @@ function TicketsCard({ widget }: Props) {
         <p className="mt-4 text-sm text-gray-500">{m.admin_shared_loading()}</p>
       ) : (
       <div className="mt-4 space-y-4">
-        {query.data.hubspot_portal_id && (
-          <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
-            <span className="text-xs font-medium text-gray-600">{m.admin_widgets_tickets_portal_id_label()}</span>{' '}
-            <span className="font-medium text-gray-800">{query.data.hubspot_portal_id}</span>
-          </div>
-        )}
+        <Field
+          id="widget-tickets-portal-id"
+          label={m.admin_widgets_tickets_portal_id_label()}
+          hint={m.admin_widgets_tickets_portal_id_help()}
+        >
+          <Input
+            type="number"
+            min={1}
+            step={1}
+            value={portalId}
+            onChange={(e) => setPortalId(e.target.value)}
+            className="max-w-xs"
+          />
+        </Field>
 
         <Field
           id="widget-tickets-service-key"
@@ -757,7 +773,7 @@ function TicketsCard({ widget }: Props) {
           <Button
             type="button"
             size="sm"
-            disabled={saveMutation.isPending || !keyOk || !targetsValid}
+            disabled={saveMutation.isPending || !keyOk || !targetsValid || !portalIdValid}
             onClick={handleSave}
           >
             {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

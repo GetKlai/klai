@@ -14,6 +14,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}))
+
 vi.mock('@tanstack/react-router', async () => {
   const actual = await vi.importActual<typeof import('@tanstack/react-router')>(
     '@tanstack/react-router',
@@ -64,6 +68,8 @@ vi.mock('@/components/layout/RoleGuard', () => ({
   RoleGuard: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
 
+import { toast } from 'sonner'
+import { ApiError } from '@/lib/apiFetch'
 import { ActivityDetailPage } from '../activity/$conversationId'
 
 const ASSISTANT_MESSAGE_ID = 102
@@ -192,7 +198,7 @@ describe('conversation detail ticket flow', () => {
   it('saves the review, then opens the panel and fetches the preview', async () => {
     mockApi({
       detail: baseDetail(),
-      preview: { contact: 'existing', lifecycle_stage: 'customer', contact_name: null, company_name: null },
+      preview: { contact: 'existing', lifecycle_stage: 'customer', contact_name: null },
     })
     renderPage()
 
@@ -240,14 +246,14 @@ describe('conversation detail ticket flow', () => {
           ],
         },
       }),
-      preview: { contact: 'new', lifecycle_stage: null, contact_name: null, company_name: null },
+      preview: { contact: 'not_found', lifecycle_stage: null, contact_name: null },
       createTicketResult: () =>
         Promise.resolve({
           target_key: 'sales',
           target_label: 'Sales',
           status: 'created',
           ticket_url: 'https://app-eu1.hubspot.com/contacts/1/record/0-5/10',
-          contact_status: 'created',
+          contact_status: 'not_found',
           error: null,
           created_by_name: 'Ada L',
           created_at: '2026-09-15T10:00:00Z',
@@ -265,7 +271,14 @@ describe('conversation detail ticket flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /^(klopt|correct)$/i }))
     fireEvent.click(screen.getByRole('button', { name: /maak ticket|create ticket/i }))
 
-    await waitFor(() => expect(screen.getByText(/nieuw contact|new contact/i)).toBeTruthy())
+    // not_found is a terminal state (Klai never creates a HubSpot contact,
+    // SPEC §2.6) — the panel must say so, not imply a contact will follow.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/niet in hubspot gevonden|not found in hubspot/i),
+      ).toBeTruthy(),
+    )
+    expect(screen.queryByText(/nieuw contact|new contact/i)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Finance' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Sales' }))
@@ -316,5 +329,39 @@ describe('conversation detail ticket flow', () => {
 
     await waitFor(() => expect(ticketPostBody()).toEqual({ target_key: 'sales' }))
     expect(attempt).toBe(1)
+  })
+
+  it('shows the ticket_pending message when a retry races an in-flight create', async () => {
+    mockApi({
+      detail: baseDetail({
+        ticket: {
+          available: true,
+          targets: [{ key: 'sales', label: 'Sales' }],
+          tickets: [
+            {
+              target_key: 'sales',
+              target_label: 'Sales',
+              status: 'failed',
+              ticket_url: null,
+              contact_status: null,
+              error: 'HubSpot antwoordde niet.',
+              created_by_name: null,
+              created_at: '2026-09-15T09:00:00Z',
+            },
+          ],
+        },
+      }),
+      createTicketResult: () => Promise.reject(new ApiError(409, 'ticket_pending')),
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText(/HubSpot antwoordde niet\./)).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /opnieuw proberen|try again/i }))
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/wordt al een ticket|already being created/i),
+      ),
+    )
   })
 })

@@ -23,6 +23,7 @@ vi.mock('@/lib/auth', () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }))
 
+import { toast } from 'sonner'
 import { ApiError as ApiErrorCtor } from '@/lib/apiFetch'
 import { IntegrationsTab } from '../IntegrationsTab'
 import type { WidgetDetailResponse } from '../../../-types'
@@ -159,7 +160,7 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
     })
   })
 
-  it('saves {service_key, targets} for a not-yet-configured widget', async () => {
+  it('saves {service_key, hubspot_portal_id, targets} for a not-yet-configured widget', async () => {
     mockApi({ tickets: { configured: false, hubspot_portal_id: null, targets: [] } })
     renderTab(makeWidget())
 
@@ -177,17 +178,43 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
     fireEvent.change(screen.getByLabelText(/^pipeline$/i), { target: { value: 'pl-1' } })
     fireEvent.change(screen.getByLabelText(/^stage$|^fase$/i), { target: { value: 'st-1' } })
     fireEvent.change(screen.getByLabelText(/servicekey|service key/i), { target: { value: 'shhh-secret' } })
+    fireEvent.change(screen.getByLabelText(/hubspot.account.id/i), { target: { value: '999' } })
 
     clickTicketsSave()
 
     await waitFor(() => expect(saveRequestBody()).toBeDefined())
     expect(saveRequestBody()).toEqual({
       service_key: 'shhh-secret',
+      hubspot_portal_id: 999,
       targets: [{ key: 'sales', label: 'Sales', pipeline_id: 'pl-1', stage_id: 'st-1' }],
     })
   })
 
-  it('omits service_key when the field is left empty on an already configured widget', async () => {
+  it('disables Save without a HubSpot account ID', async () => {
+    mockApi({ tickets: { configured: false, hubspot_portal_id: null, targets: [] } })
+    renderTab(makeWidget())
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /doel toevoegen|add target/i })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /doel toevoegen|add target/i }))
+    fireEvent.change(screen.getByLabelText(/label, (bv\.|e\.g\.) sales/i), { target: { value: 'Sales' } })
+    fireEvent.click(screen.getByRole('button', { name: /pipelines ophalen|fetch pipelines/i }))
+    await waitFor(() =>
+      expect((screen.getByLabelText(/^pipeline$/i) as unknown as HTMLSelectElement).options.length).toBeGreaterThan(0),
+    )
+    fireEvent.change(screen.getByLabelText(/^pipeline$/i), { target: { value: 'pl-1' } })
+    fireEvent.change(screen.getByLabelText(/^stage$|^fase$/i), { target: { value: 'st-1' } })
+    fireEvent.change(screen.getByLabelText(/servicekey|service key/i), { target: { value: 'shhh-secret' } })
+
+    expect(
+      within(ticketsCard())
+        .getByRole('button', { name: /save changes|wijzigingen opslaan/i })
+        .hasAttribute('disabled'),
+    ).toBe(true)
+  })
+
+  it('omits service_key when the field is left empty on an already configured widget, and prefills the account ID', async () => {
     mockApi({
       tickets: {
         configured: true,
@@ -198,10 +225,12 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
     renderTab(makeWidget())
 
     await waitFor(() => expect(screen.getByDisplayValue('Sales')).toBeTruthy())
+    expect(screen.getByDisplayValue('12345')).toBeTruthy()
     clickTicketsSave()
 
     await waitFor(() => expect(saveRequestBody()).toBeDefined())
     expect(saveRequestBody()).toEqual({
+      hubspot_portal_id: 12345,
       targets: [{ key: 'sales', label: 'Sales', pipeline_id: 'pl-1', stage_id: 'st-1' }],
     })
   })
@@ -222,6 +251,34 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
 
     await waitFor(() =>
       expect(screen.getByText(/ongeldig|invalid/i)).toBeTruthy(),
+    )
+  })
+
+  it('maps a 422 service_key_required response from Fetch pipelines to a readable message', async () => {
+    mockApi({ tickets: { configured: false, hubspot_portal_id: null, targets: [] } })
+    apiFetchMock.mockImplementation((path: unknown, init?: RequestInit) => {
+      const url = String(path)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/integrations/hubspot')) return Promise.reject(new ApiErrorCtor(404, 'not_found'))
+      if (url.endsWith('/integrations/tickets') && method === 'GET') {
+        return Promise.resolve({ configured: false, hubspot_portal_id: null, targets: [] })
+      }
+      if (url.endsWith('/integrations/tickets/pipelines') && method === 'POST') {
+        return Promise.reject(new ApiErrorCtor(422, 'service_key_required'))
+      }
+      return Promise.reject(new Error(`Unexpected apiFetch: ${method} ${url}`))
+    })
+    renderTab(makeWidget())
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /pipelines ophalen|fetch pipelines/i })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /pipelines ophalen|fetch pipelines/i }))
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/vul de servicekey in|fill in the service key/i),
+      ),
     )
   })
 })

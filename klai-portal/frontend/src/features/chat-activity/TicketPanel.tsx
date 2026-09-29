@@ -60,11 +60,13 @@ function TargetToggle({
 }
 
 /** Backend `detail` -> the message shown to the reviewer. A 502's detail is
-    already the human-readable HubSpot failure reason (§4.4 step 6); only the
-    409 `ticket_exists` code needs mapping. */
+    already the human-readable HubSpot failure reason (§4.4 step 6); the 409
+    and 422 codes below need mapping to something a reviewer can act on. */
 function ticketErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.detail === 'ticket_exists') return m.activity_ticket_error_exists()
+    if (err.detail === 'ticket_pending') return m.activity_ticket_error_pending()
+    if (err.detail === 'unknown_target') return m.activity_ticket_error_unknown_target()
     if (err.detail) return err.detail
   }
   return m.activity_ticket_create_failed()
@@ -84,8 +86,8 @@ function ContactLine({ preview }: { preview: ReturnType<typeof useTicketPreview>
   }
   const data = preview.data
   if (!data) return null
-  if (data.contact === 'new') {
-    return <p className="text-xs text-gray-700">{m.activity_ticket_contact_new()}</p>
+  if (data.contact === 'not_found') {
+    return <p className="text-xs text-gray-700">{m.activity_ticket_contact_not_found()}</p>
   }
   const stageLabel = data.lifecycle_stage
     ? (LIFECYCLE_LABEL[data.lifecycle_stage] ?? (() => data.lifecycle_stage as string))()
@@ -95,7 +97,6 @@ function ContactLine({ preview }: { preview: ReturnType<typeof useTicketPreview>
       {m.activity_ticket_contact_existing()}
       {stageLabel ? ` · ${stageLabel}` : ''}
       {data.contact_name ? ` · ${data.contact_name}` : ''}
-      {data.company_name ? ` · ${data.company_name}` : ''}
     </p>
   )
 }

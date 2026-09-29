@@ -180,7 +180,7 @@ export function useTicketIntegration(widgetId: string) {
 export function useSaveTicketIntegration(widgetId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (data: { service_key?: string; targets: TicketTarget[] }) =>
+    mutationFn: async (data: { service_key?: string; hubspot_portal_id: number; targets: TicketTarget[] }) =>
       apiFetch<TicketIntegrationSettings>(`/api/admin/widgets/${widgetId}/integrations/tickets`, {
         method: 'PUT',
         body: JSON.stringify(data),
