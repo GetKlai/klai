@@ -45,7 +45,7 @@ TICKET_CONTENT_MAX_CHARS = 65_536
 # A reviewer waits on these calls in the browser; 10 s per request keeps the
 # two-call create flow (search + create) under half a minute.
 _TIMEOUT_SECONDS = 10.0
-_CONTACT_PROPERTIES = ("firstname", "lastname", "email", "lifecyclestage")
+_CONTACT_PROPERTIES = ("firstname", "lastname", "email", "lifecyclestage", "hs_additional_emails")
 
 
 class HubSpotTicketError(Exception):
@@ -145,11 +145,21 @@ class HubSpotTickets:
             "limit": 10,
         }
         results = _results(await self._json("POST", path, json=body), path)
-        if not results:
-            return None
-        primary = next(
-            (r for r in results if str((r.get("properties") or {}).get("email") or "").lower() == email), results[0]
+
+        def emails(result: dict[str, Any]) -> tuple[str, set[str]]:
+            props = result.get("properties") or {}
+            # HubSpot stores additional emails as one semicolon-separated string.
+            extra = str(props.get("hs_additional_emails") or "").lower().split(";")
+            return str(props.get("email") or "").lower(), {e.strip() for e in extra}
+
+        # CONTAINS_TOKEN tokenises, so a hit is not proof the contact carries this
+        # exact address; an unverified hit would file the transcript under
+        # another customer, so it counts as not found.
+        primary = next((r for r in results if emails(r)[0] == email), None) or next(
+            (r for r in results if email in emails(r)[1]), None
         )
+        if primary is None:
+            return None
         props = primary.get("properties") or {}
         name = " ".join(part for part in (props.get("firstname"), props.get("lastname")) if part) or None
         return Contact(id=str(primary["id"]), name=name, lifecycle_stage=props.get("lifecyclestage") or None)

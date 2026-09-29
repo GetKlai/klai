@@ -70,7 +70,51 @@ async def test_find_contact_searches_both_emails_and_prefers_the_primary_match()
             ]
         },
     ]
-    assert set(body["properties"]) == {"firstname", "lastname", "email", "lifecyclestage"}
+    assert set(body["properties"]) == {"firstname", "lastname", "email", "lifecyclestage", "hs_additional_emails"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_find_contact_attaches_only_a_contact_that_really_carries_the_email() -> None:
+    """A search hit whose primary and additional emails both differ from the
+    visitor's must not become the ticket's contact: that would file one
+    visitor's transcript under another customer."""
+    respx.post(f"{API}/crm/v3/objects/contacts/search").mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": "31",
+                            "properties": {"email": "sam.jansen@example.com", "hs_additional_emails": "sj@example.com"},
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": "32",
+                            "properties": {
+                                "email": "office@example.com",
+                                "hs_additional_emails": "noa@example.com;sam@example.com",
+                            },
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+    async with HubSpotTickets(KEY) as hs:
+        unrelated = await hs.find_contact("sam@example.com")
+        secondary = await hs.find_contact("sam@example.com")
+
+    assert unrelated is None
+    assert secondary is not None
+    assert secondary.id == "32"
 
 
 @pytest.mark.asyncio
