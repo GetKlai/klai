@@ -117,7 +117,7 @@ Eén stroom voor beide chats. Alleen de uiteinden verschillen.
 
 **Wat vervalt als de meting het toelaat:** de antwoordbeoordelaar, de controle per zin als redacteur, en het herschrijven. De controle per zin blijft meekijken om te meten.
 
-**Wat we niet weten** [aanname, te meten in stap 2 van het plan]: hoe goed ons model het beslismoment kan; hoeveel de controle in code vangt; hoeveel ons model nog verzint met alleen de juiste passage.
+**Wat we niet wisten en nu deels gemeten is** (§8, stap 10 en 11): ons model kan het beslismoment niet als harde poort dragen, en de controle in code vangt een smal deel. Nog niet gemeten [aanname]: hoeveel ons model nog verzint met alleen de juiste passage.
 
 ## 6. Werkafspraken
 
@@ -173,6 +173,10 @@ Hier komt per stap van het plan: datum, verwachting vooraf, uitkomst op de meetl
 | 6 | 29 sep | Geen aanbod "breder zoeken" waar het niets kan doen | Van een op de tien beurten naar alleen de beurt waar het zoeken niets vond | Uitgerold |
 | 7 | 29 sep | Geen excuus waar niets misging | Het voorbeeld uit het profiel en de excuusregel uit de frustratie-instructie zijn weg. Eerste antwoorden die met een excuus openen: van enkele per ronde naar nul op de beurten met een negatieve toon, waar ze allemaal vandaan kwamen | Uitgerold |
 | 8 | 29 sep | Hooguit één vraag per gesprek; het record zegt wat de bezoeker zag | Vaste code met tests; het record bewaart de knop, de toon en of een geplande vraag gesteld is | Uitgerold |
+| 10 | 29 sep | Ons kleine model kan zien of de gevonden passages de vraag beantwoorden | Eerste proef, één ronde, één gesloten vraag per geval, zonder productcode. Waar de eigenaar "terecht niet gevonden" zei, zeiden het kleine en het middelgrote model dat bijna altijd ook. Van de verkeerd gelezen vragen herkende het kleine model ruim de helft en het middelgrote driekwart als "staat niet in deze passages". Maar van de antwoorden die de eigenaar goed noemde, keurde het kleine model een derde af en het middelgrote een kwart; op eerste beurten een kwart en een achtste. De twee modellen waren het in zeven op de tien gevallen eens | Niet bouwen als poort. Wel bruikbaar als signaal naast de score: het ziet verkeerd gelezen vragen die de score mist. Eerst de gevallen lezen waar proef en oordeel van de eigenaar botsen |
+| 11 | 29 sep | Controle in code op harde feiten kan de controle per zin vervangen | Gemeten op de nagespeelde antwoorden: een vijfde van de zinnen die de controle afkeurt bevat een hard feit (getal, link, naam van een menu of knop); de rest is een bewering in gewone woorden die code niet kan toetsen. Van de harde feiten in antwoorden staat een derde niet letterlijk in de gevonden passages, waarbij andere schrijfwijzen meetellen | De controle in code dekt een smal deel en kan de controle per zin niet vervangen. Bruikbaar als extra, goedkope toets op verzonnen getallen en namen |
+
+Wat dit voor het ontwerp van §5 betekent: twee aannames zijn gemeten en houden niet zoals ze er stonden. Het beslismoment (stap 3 van het ontwerp) kan met ons model geen harde poort zijn, en de controle in code (stap 5 van het ontwerp) vangt maar een deel. Het ontwerp blijft de richting, maar de vervanging van de reparatie (stap 9) kan niet op deze twee leunen en hangt af van het oordeel van de eigenaar over concept tegenover gerepareerd antwoord.
 
 Over alle gevallen samen bleef de soort reactie op gevallen die de eigenaar goed noemde gelijk, in beide rondes. De meetruns draaiden op het Vibe-tegoed met hetzelfde model als het antwoordmodel; de controles kregen daar meer tijd dan in productie, omdat die sleutel trager antwoordt.
 
