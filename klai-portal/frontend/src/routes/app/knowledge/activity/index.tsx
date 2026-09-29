@@ -136,6 +136,7 @@ export function ActivityPage() {
     band: search.band,
     rating: search.rating,
     sort: search.sort,
+    hasTicket: search.has_ticket,
     cursor: search.cursor,
   })
   const queueCount = useActivityQueueCount()
@@ -345,6 +346,21 @@ export function ActivityPage() {
               className="w-48"
             />
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="activity-has-ticket">{m.activity_filter_has_ticket()}</Label>
+            <Select
+              id="activity-has-ticket"
+              value={search.has_ticket === undefined ? '' : String(search.has_ticket)}
+              onChange={(e) =>
+                setFilters({ has_ticket: e.target.value === '' ? undefined : e.target.value === 'true' })
+              }
+              className="w-auto"
+            >
+              <option value="">{m.activity_filter_all()}</option>
+              <option value="true">{m.activity_filter_has_ticket_yes()}</option>
+              <option value="false">{m.activity_filter_has_ticket_no()}</option>
+            </Select>
+          </div>
         </FilterGroup>
 
         <div className="flex flex-wrap items-end gap-4">
@@ -434,6 +450,15 @@ export function ActivityPage() {
                       <DataTableCell title={item.first_user_query ?? undefined}>
                         {/* Clamp a child block, not the cell: -webkit-box on a td breaks table layout. */}
                         <div className="line-clamp-3">{item.first_user_query ?? '—'}</div>
+                        {item.ticket_labels.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {item.ticket_labels.map((label) => (
+                              <Badge key={label} variant="secondary">
+                                {m.activity_ticket_badge({ label })}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
                       </DataTableCell>
                       <DataTableCell className="text-gray-600">{item.language ?? '—'}</DataTableCell>
                       <DataTableCell>

@@ -98,6 +98,34 @@ export interface HubSpotIntegrationStatus {
   last_error: string | null
 }
 
+// SPEC-KNOWLEDGE-ESCALATION-001 §4.2: ticket-creation targets configured on
+// the widget's Integrations tab. Unlike the app-side TicketTarget
+// (@/features/chat-activity), this one carries the HubSpot pipeline/stage the
+// admin picked — only the label ever reaches the reviewer.
+export interface TicketTarget {
+  key: string
+  label: string
+  pipeline_id: string
+  stage_id: string
+}
+
+export interface TicketIntegrationSettings {
+  configured: boolean
+  hubspot_portal_id: number | null
+  targets: TicketTarget[]
+}
+
+export interface TicketPipelineStage {
+  id: string
+  label: string
+}
+
+export interface TicketPipeline {
+  id: string
+  label: string
+  stages: TicketPipelineStage[]
+}
+
 export interface KbAccess {
   kb_id: number
   kb_name: string

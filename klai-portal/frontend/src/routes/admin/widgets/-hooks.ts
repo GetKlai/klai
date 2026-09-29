@@ -12,6 +12,9 @@ import type {
   StatsPeriod,
   HubSpotIntegrationStatus,
   WidgetPreviewSessionResponse,
+  TicketIntegrationSettings,
+  TicketTarget,
+  TicketPipeline,
 } from './-types'
 
 export function useWidgets() {
@@ -159,6 +162,55 @@ export function useHubSpotIntegrationAction(
       })
       void queryClient.invalidateQueries({ queryKey: ['admin-widget', widgetId] })
     },
+  })
+}
+
+// SPEC-KNOWLEDGE-ESCALATION-001 §4.2: the widget's ticket-creation settings,
+// same gates as the HubSpot connect routes above.
+export function useTicketIntegration(widgetId: string) {
+  const auth = useAuth()
+  return useQuery({
+    queryKey: ['admin-widget-ticket-integration', widgetId],
+    queryFn: async () =>
+      apiFetch<TicketIntegrationSettings>(`/api/admin/widgets/${widgetId}/integrations/tickets`),
+    enabled: auth.isAuthenticated && !!widgetId,
+  })
+}
+
+export function useSaveTicketIntegration(widgetId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (data: { service_key?: string; targets: TicketTarget[] }) =>
+      apiFetch<TicketIntegrationSettings>(`/api/admin/widgets/${widgetId}/integrations/tickets`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-widget-ticket-integration', widgetId] })
+    },
+  })
+}
+
+export function useDeleteTicketIntegration(widgetId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async () =>
+      apiFetch<void>(`/api/admin/widgets/${widgetId}/integrations/tickets`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-widget-ticket-integration', widgetId] })
+    },
+  })
+}
+
+// POST, not GET: the service key travels in the body (§4.2). Omitting it
+// uses the widget's already-saved key.
+export function useFetchTicketPipelines(widgetId: string) {
+  return useMutation({
+    mutationFn: async (serviceKey: string | undefined) =>
+      apiFetch<TicketPipeline[]>(`/api/admin/widgets/${widgetId}/integrations/tickets/pipelines`, {
+        method: 'POST',
+        body: JSON.stringify(serviceKey ? { service_key: serviceKey } : {}),
+      }),
   })
 }
 
