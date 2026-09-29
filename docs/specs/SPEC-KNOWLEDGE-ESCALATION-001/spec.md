@@ -1,6 +1,6 @@
 ---
 id: SPEC-KNOWLEDGE-ESCALATION-001
-version: "0.1.0"
+version: "0.2.0"
 status: in aanbouw
 created: 2026-09-29
 updated: 2026-09-29
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.2.0 | 2026-09-29 | Teruggebracht tot de scopes op de bestaande servicekey van Voys. 0.1.0 vroeg er twee bij (contacten aanmaken, bedrijven lezen) zonder dat tegen die key te leggen. Nu: geen contact aanmaken (onbekende bezoeker = ticket zonder koppeling, gegevens bovenaan de inhoud) en geen bedrijf. |
 | 0.1.0 | 2026-09-29 | Eerste versie na drie feedbackrondes met Mark: één knop "Maak ticket" in de beoordeling, geen knop zonder e-mailadres, de notitie uit de beoordeling gaat mee in plaats van een eigen tekstveld. Gebouwd in twee lanes (backend, frontend) tegen het contract in §4. |
 
 # 1. Aanleiding
@@ -43,20 +44,25 @@ informatie om zonder Klai verder te kunnen.
    hard "Sales" en "Finance": dat zijn Voys-teams, dit is een platformfunctie.
    De configuratie staat op het Integraties-tabblad van de widget, naast de
    afspraak-URL, omdat de admin daar het kanaal beheert.
-5. **Eigen servicekey, los van de lees-connector.** Scopes:
-   `crm.objects.tickets.read`, `crm.objects.tickets.write`,
-   `crm.objects.contacts.read`, `crm.objects.contacts.write`,
-   `crm.objects.companies.read`. De gap-detectie houdt een key die alleen kan
-   lezen.
-6. **Contact vinden op e-mailadres, anders aanmaken.** Bedrijven maken we niet
-   aan; HubSpot koppelt een nieuw contact zelf aan een bedrijf op domein als die
-   accountinstelling aanstaat.
+5. **Geen scopes buiten de bestaande servicekey.** De key die Voys voor de
+   gap-detectie aanmaakte heeft `conversations.read`,
+   `crm.objects.contacts.read`, `crm.objects.tickets.read`,
+   `crm.objects.tickets.write`, `crm.schemas.tickets.read`,
+   `crm.schemas.tickets.write` en `sales-email-read`. Deze functie gebruikt
+   alleen scopes uit die lijst, zodat dezelfde key volstaat. Vraagt een
+   HubSpot-endpoint iets anders, dan vervalt dat onderdeel en wordt er geen
+   scope bijgevraagd.
+6. **Contact vinden op e-mailadres, niet aanmaken.** Bestaat het contact, dan
+   wordt het ticket eraan gekoppeld. Bestaat het niet, dan komt het ticket
+   zonder contactkoppeling in de pipeline en staan naam en e-mailadres bovenaan
+   de inhoud; het team maakt het contact zelf aan als dat nodig is. Bedrijven
+   lezen of koppelen we niet (daarvoor is `crm.objects.companies.read` nodig).
 7. **Levenscyclusfase tonen zoals HubSpot hem geeft.** Of Voys "klant" in
    HubSpot bijhoudt is niet bevestigd; het paneel toont de fase als die er is
    en anders alleen "bestaand contact".
 8. **Privacy volgt SPEC-KNOWLEDGE-ACTIVITY-001 §3.** Een kb_manager mag het
-   ticket aanmaken en ziet "bestaand contact" of "nieuw contact" plus de
-   levenscyclusfase; naam van het contact en bedrijfsnaam alleen voor admins.
+   ticket aanmaken en ziet "bestaand contact" of "niet in HubSpot" plus de
+   levenscyclusfase; de naam van het contact alleen voor admins.
    Het e-mailadres gaat server-side naar HubSpot en komt nooit in een
    kenniskant-respons.
 9. **Buiten scope:** de judge laat geen escalatie voorstellen, geen automatische
@@ -87,8 +93,8 @@ Bekijk in Klai (beschikbaar tot <datum>): <portal-url>/app/knowledge/activity/<i
 ```
 
 Niet in het ticket: judge-oordeel, zekerheidsband, `answer_signals`. Het ticket
-wordt gekoppeld aan het contact en, als dat er een heeft, aan het eerste
-gekoppelde bedrijf.
+wordt gekoppeld aan het contact als dat in HubSpot bestaat; anders begint de
+inhoud met de regel "Niet gevonden in HubSpot: <naam> · <e-mailadres>".
 
 # 4. Contract
 
@@ -117,7 +123,7 @@ gekoppelde bedrijf.
 | `target_key`, `target_label` | text (label is een snapshot) |
 | `status` | text CHECK `pending`/`created`/`failed` |
 | `hubspot_ticket_id`, `hubspot_contact_id` | text, nullable |
-| `contact_status` | text CHECK `existing`/`created`, nullable |
+| `contact_status` | text CHECK `existing`/`not_found`, nullable |
 | `ticket_url` | text, nullable |
 | `error` | text, nullable (korte, voor mensen leesbare reden) |
 | `created_by_user_id` | int, FK portal_users SET NULL |
@@ -151,8 +157,8 @@ UNIQUE (`conversation_id`, `target_key`) WHERE `conversation_id IS NOT NULL`.
   `available` = widget heeft ticketinstellingen én `visitor_email` is niet leeg
   én het gesprek is geen test. `tickets` staat er altijd (historie).
 - `GET /api/app/activity/conversations/{id}/ticket-preview` →
-  `{contact: "existing"|"new", lifecycle_stage: string|null, contact_name: string|null, company_name: string|null}`.
-  `contact_name` en `company_name` alleen voor admins, anders null. 409
+  `{contact: "existing"|"not_found", lifecycle_stage: string|null, contact_name: string|null}`.
+  `contact_name` alleen voor admins, anders null. 409
   `detail: "ticket_unavailable"` als `available` false is. HubSpot-fout → 502.
 - `POST /api/app/activity/conversations/{id}/tickets` body `{target_key}` →
   201 `TicketOut`. Bestaat er al een `created`-rij voor dit doel → 409 met
@@ -173,12 +179,11 @@ UNIQUE (`conversation_id`, `target_key`) WHERE `conversation_id IS NOT NULL`.
    committen. Geen HubSpot-call binnen een databasetransactie.
 3. Contact zoeken: e-mail in kleine letters, filtergroepen `email EQ` óf
    `hs_additional_emails CONTAINS_TOKEN`; hoofdadres wint. Geen treffer →
-   contact aanmaken (naam gesplitst op de eerste spatie); HubSpot 409
-   `CONTACT_EXISTS` → het bestaande id uit de fout gebruiken.
-4. Eerste gekoppelde bedrijf van het contact ophalen.
-5. Ticket aanmaken met `subject`, `content`, `hs_pipeline`,
-   `hs_pipeline_stage` en associaties naar contact en bedrijf.
-6. Rij bijwerken naar `created` met ids en `ticket_url`
+   `contact_status = not_found`, geen contact aanmaken.
+4. Ticket aanmaken met `subject`, `content`, `hs_pipeline`,
+   `hs_pipeline_stage` en, als het contact bestaat, een associatie naar dat
+   contact.
+5. Rij bijwerken naar `created` met ids en `ticket_url`
    (`https://<ui_domain>/contacts/<portal_id>/record/0-5/<ticket_id>`), of naar
    `failed` met de reden.
 
