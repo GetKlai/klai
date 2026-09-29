@@ -1955,6 +1955,7 @@ def _fill_answer_signals(
     sources: list[dict],
     model: str | None,
     query_text: str,
+    reply: str = "",
 ) -> None:
     """Write this answer's certainty signals into the caller-owned audit sink.
 
@@ -1991,8 +1992,16 @@ def _fill_answer_signals(
                 # Nederlands" is a Dutch turn whatever language it is typed in.
                 "language": identify_text_language(query_text) or UNKNOWN_LANGUAGE,
                 "model": model,
+                # What the visitor was shown, for whoever reviews stored answers:
+                # the button is a frame beside the text, so the text alone
+                # cannot tell whether an offer was there.
+                "appointment": bool(decision.get("escalation")),
             }
         )
+        if decision.get("sentiment"):
+            sink["sentiment"] = decision["sentiment"]
+        if sink.get("planned_question"):
+            sink["question_asked"] = is_clarifying_question(reply)
         # retrieve_context writes the band; a turn that never retrieved has none.
         sink.setdefault("band", "unknown")
     except Exception:
@@ -2984,6 +2993,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         sources=sources,
         model=model,
         query_text=visitor_query,
+        reply=content,
     )
     # Deliberately kept separate as the last render step
     # (chat-quality-history-and-plan.md §7.2): the widget got its
@@ -4173,6 +4183,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                     sources=sources,
                     model=model,
                     query_text=visitor_query,
+                    reply=rendered_content,
                 )
                 message["content"] = rendered_content
                 message["sources"] = sources

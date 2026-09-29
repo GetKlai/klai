@@ -557,6 +557,21 @@ async def test_a_dead_end_that_names_the_appointment_is_left_as_written():
     assert text == written
 
 
+@pytest.mark.parametrize("stream", [True, False])
+async def test_the_record_says_what_the_visitor_was_shown(stream):
+    """A review of stored answers could not see that the button was under a
+    reply, what tone the turn judge heard, or that a planned question was never
+    asked: none of it was stored."""
+    litellm = _LiteLLM(model_text="Je vindt dit onder Beheer.", answer_judge=_answer_verdict("not_answered"))
+    signals = {"planned_question": True}
+
+    await _answer(litellm, stream=stream, sentiment="negative", answer_signals=signals)
+
+    assert signals["appointment"] is True
+    assert signals["sentiment"] == "negative"
+    assert signals["question_asked"] is False
+
+
 async def test_an_uncited_reply_that_answers_keeps_no_button():
     """The button means "this went nowhere"; on an answer it would read as one."""
     litellm = _LiteLLM(model_text="Graag gedaan!", answer_judge=_answer_verdict("answered"))

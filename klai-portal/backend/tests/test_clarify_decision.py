@@ -83,7 +83,21 @@ def test_no_second_question_right_after_one():
         {"role": "user", "content": "I can't call"},
     ]
 
-    assert clarify_gate(messages, [IPHONE, ANDROID], THRESHOLD).reason == "asked_last_turn"
+    assert clarify_gate(messages, [IPHONE, ANDROID], THRESHOLD).reason == "asked_before"
+
+
+def test_one_question_per_conversation():
+    """A visitor who did not name a device was asked for it, got an answer, and
+    was asked for it again two turns later (seen in the owner's review)."""
+    messages = [
+        {"role": "user", "content": "I can't call"},
+        {"role": "assistant", "content": "Do you use an Android phone or an iPhone?"},
+        {"role": "user", "content": "Calling is not available"},
+        {"role": "assistant", "content": "Select the number and choose call."},
+        {"role": "user", "content": "I can't call"},
+    ]
+
+    assert clarify_gate(messages, [IPHONE, ANDROID], THRESHOLD).reason == "asked_before"
 
 
 def test_a_greeting_that_ends_on_a_question_is_no_earlier_question():
