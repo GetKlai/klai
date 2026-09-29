@@ -6,7 +6,7 @@ created: 2026-09-29
 updated: 2026-09-29
 author: Claude (Opus 5.5), commissioned by Mark Vletter
 priority: high
-tenant_scope: platform-wide — elke tenant met de `knowledge_activity`-unlock en een geconfigureerde widget; Voys is de eerste
+tenant_scope: platform-wide — elke tenant met de `knowledge_activity`-unlock en een geconfigureerde widget
 related:
   - SPEC-KNOWLEDGE-ACTIVITY-001 (de beoordelingsroute waar deze knop in komt)
   - docs/architecture/support-gap-detection.md (servicekey-onderzoek, lees-connector `hubspot_support`)
@@ -18,7 +18,7 @@ related:
 | Versie | Datum | Wijziging |
 |---|---|---|
 | 0.3.0 | 2026-09-29 | Scope per endpoint nagekeken in de HubSpot-docs (29 sep): Tickets-API accepteert `crm.objects.tickets.write`, Contacts-API `crm.objects.contacts.read`, Pipelines-API één van 94 scopes waaronder `crm.objects.contacts.read`. Account-info vraagt `oauth`, dat niet op de key staat, dus dat endpoint vervalt: de admin vult het HubSpot-account-ID zelf in en de key wordt gecontroleerd door de pipelines op te halen. |
-| 0.2.0 | 2026-09-29 | Teruggebracht tot de scopes op de bestaande servicekey van Voys. 0.1.0 vroeg er twee bij (contacten aanmaken, bedrijven lezen) zonder dat tegen die key te leggen. Nu: geen contact aanmaken (onbekende bezoeker = ticket zonder koppeling, gegevens bovenaan de inhoud) en geen bedrijf. |
+| 0.2.0 | 2026-09-29 | Teruggebracht tot de scopes op de bestaande servicekey. 0.1.0 vroeg er twee bij (contacten aanmaken, bedrijven lezen) zonder dat tegen die key te leggen. Nu: geen contact aanmaken (onbekende bezoeker = ticket zonder koppeling, gegevens bovenaan de inhoud) en geen bedrijf. |
 | 0.1.0 | 2026-09-29 | Eerste versie na drie feedbackrondes met Mark: één knop "Maak ticket" in de beoordeling, geen knop zonder e-mailadres, de notitie uit de beoordeling gaat mee in plaats van een eigen tekstveld. Gebouwd in twee lanes (backend, frontend) tegen het contract in §4. |
 
 # 1. Aanleiding
