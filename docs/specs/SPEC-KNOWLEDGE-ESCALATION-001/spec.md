@@ -1,6 +1,6 @@
 ---
 id: SPEC-KNOWLEDGE-ESCALATION-001
-version: "0.2.0"
+version: "0.3.0"
 status: in aanbouw
 created: 2026-09-29
 updated: 2026-09-29
@@ -17,6 +17,7 @@ related:
 
 | Versie | Datum | Wijziging |
 |---|---|---|
+| 0.3.0 | 2026-09-29 | Scope per endpoint nagekeken in de HubSpot-docs (29 sep): Tickets-API accepteert `crm.objects.tickets.write`, Contacts-API `crm.objects.contacts.read`, Pipelines-API één van 94 scopes waaronder `crm.objects.contacts.read`. Account-info vraagt `oauth`, dat niet op de key staat, dus dat endpoint vervalt: de admin vult het HubSpot-account-ID zelf in en de key wordt gecontroleerd door de pipelines op te halen. |
 | 0.2.0 | 2026-09-29 | Teruggebracht tot de scopes op de bestaande servicekey van Voys. 0.1.0 vroeg er twee bij (contacten aanmaken, bedrijven lezen) zonder dat tegen die key te leggen. Nu: geen contact aanmaken (onbekende bezoeker = ticket zonder koppeling, gegevens bovenaan de inhoud) en geen bedrijf. |
 | 0.1.0 | 2026-09-29 | Eerste versie na drie feedbackrondes met Mark: één knop "Maak ticket" in de beoordeling, geen knop zonder e-mailadres, de notitie uit de beoordeling gaat mee in plaats van een eigen tekstveld. Gebouwd in twee lanes (backend, frontend) tegen het contract in §4. |
 
@@ -107,8 +108,7 @@ inhoud met de regel "Niet gevonden in HubSpot: <naam> · <e-mailadres>".
 | `widget_id` | uuid pk, FK widgets ON DELETE CASCADE |
 | `org_id` | int, FK portal_orgs ON DELETE CASCADE |
 | `service_key_encrypted` | bytea (`portal_secrets.encrypt`) |
-| `hubspot_portal_id` | bigint (uit account-info bij opslaan) |
-| `hubspot_ui_domain` | text (uit account-info, bv. `app-eu1.hubspot.com`) |
+| `hubspot_portal_id` | bigint (door de admin ingevuld; account-info vraagt de scope `oauth`) |
 | `targets` | jsonb: `[{"key","label","pipeline_id","stage_id"}]`, 1–5 items, `key` uniek slug `^[a-z0-9_-]{1,32}$` |
 | `updated_at` | timestamptz |
 | `updated_by_user_id` | int, FK portal_users SET NULL |
@@ -137,10 +137,10 @@ UNIQUE (`conversation_id`, `target_key`) WHERE `conversation_id IS NOT NULL`.
   `{configured: bool, hubspot_portal_id: int|null, targets: Target[]}`.
   Geeft de key nooit terug.
 - `PUT /api/admin/widgets/{widget_id}/integrations/tickets` body
-  `{service_key?: string, targets: Target[]}` → zelfde vorm als GET.
+  `{service_key?: string, hubspot_portal_id: int, targets: Target[]}` → zelfde vorm als GET.
   `service_key` weglaten = bestaande key houden (422 als er nog geen is).
-  De server verifieert de key (account-info) en dat elke pipeline en stage
-  bestaat. HubSpot 401 → 422 `detail: "invalid_service_key"`, 403 → 422
+  De server verifieert de key door `GET /crm/v3/pipelines/tickets` op te
+  halen en controleert dat elke pipeline en stage bestaat. HubSpot 401 → 422 `detail: "invalid_service_key"`, 403 → 422
   `detail: "missing_scope"`, onbekende pipeline/stage → 422
   `detail: "unknown_pipeline_or_stage"`.
 - `DELETE /api/admin/widgets/{widget_id}/integrations/tickets` → 204.
@@ -184,7 +184,7 @@ UNIQUE (`conversation_id`, `target_key`) WHERE `conversation_id IS NOT NULL`.
    `hs_pipeline_stage` en, als het contact bestaat, een associatie naar dat
    contact.
 5. Rij bijwerken naar `created` met ids en `ticket_url`
-   (`https://<ui_domain>/contacts/<portal_id>/record/0-5/<ticket_id>`), of naar
+   (`https://app.hubspot.com/contacts/<portal_id>/record/0-5/<ticket_id>`), of naar
    `failed` met de reden.
 
 # 5. Interface
@@ -200,7 +200,7 @@ Beoordelingsformulier, alleen als `ticket.available`:
   HubSpot ↗", of bij `failed` de reden en "Opnieuw proberen".
 - Gesprekkenlijst: badge per ticketlabel, filter "met ticket / zonder ticket".
 - Admin, Integraties-tab van de widget: kaart "Tickets in HubSpot" met
-  servicekey (wachtwoordveld, leeg = behouden), "Pipelines ophalen", per doel
+  servicekey (wachtwoordveld, leeg = behouden), HubSpot-account-ID, "Pipelines ophalen", per doel
   label + pipeline + stage, doel toevoegen/verwijderen, opslaan, koppeling
   verwijderen.
 
