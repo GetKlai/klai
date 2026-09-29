@@ -519,7 +519,7 @@ async def test_uncited_draft_without_claims_is_shown_as_before_the_judges(clarit
 
     text, signals, _ = await _answer(litellm, stream=True, clarity=clarity)
 
-    assert text == "Dat kan ik niet vinden."
+    assert text.startswith("Dat kan ik niet vinden.")
     assert signals["decision"] == "answer"
 
 
@@ -539,8 +539,22 @@ async def test_an_uncited_dead_end_carries_the_appointment_button():
 
     text, _, extras = await _answer(litellm, stream=True)
 
-    assert text == "Dat staat niet in onze helpartikelen. Laat het gerust weten als je vastloopt."
+    # The button alone is not the offer: in the owner's review of real answers a
+    # third of these replies never mentioned the appointment, and read as a wall.
+    assert text == (
+        "Dat staat niet in onze helpartikelen. Laat het gerust weten als je vastloopt. "
+        "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder."
+    )
     assert extras["escalation"] == [{"appointment": True}]
+
+
+async def test_a_dead_end_that_names_the_appointment_is_left_as_written():
+    written = "Dat staat niet in onze helpartikelen. Plan gerust een afspraak met een collega."
+    litellm = _LiteLLM(model_text=written, answer_judge=_answer_verdict("not_answered"))
+
+    text, _, _ = await _answer(litellm, stream=True)
+
+    assert text == written
 
 
 async def test_an_uncited_reply_that_answers_keeps_no_button():

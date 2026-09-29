@@ -40,6 +40,7 @@ from klai_chat_prompts import (
     SUPPORT_BROAD_CHAT_SYSTEM_PROMPT,
     SUPPORT_CHAT_SYSTEM_PROMPT,
     SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
+    appointment_offer_sentence,
     broad_mode_answer_marker,
     chat_contract_article,
     final_response_language_reminder,
@@ -2544,6 +2545,22 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             timeout_seconds=repair_seconds,
             delegated_org_id=delegated_org_id,
         )
+    # A reply without a source that the judge does not call an answer is the
+    # visitor's dead end, and the button under it is the way out. The profile
+    # and the weak-source rule ask the model to say so; measured on the owner's
+    # review of real answers, 5 of 15 such replies did not. The sentence is
+    # ours, so it is there whenever the button is. Not behind a question: the
+    # visitor is asked something, not sent away.
+    if (
+        helpdesk
+        and not sources
+        and decision.get("escalation")
+        and judgement is not None
+        and judgement.verdict != "answered"
+        and not _text_offers_appointment(content)
+        and not is_clarifying_question(content)
+    ):
+        content = f"{content.rstrip()} {appointment_offer_sentence(response_language)}"
     return content, sources, decision
 
 
