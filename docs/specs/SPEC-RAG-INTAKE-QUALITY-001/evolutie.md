@@ -1,5 +1,7 @@
 # Intakekwaliteit — meetlog
 
+**Archief sinds 29 september 2026.** Wordt niet meer aangevuld. De samenvatting en het plan staan in [docs/architecture/chat-quality-history-and-plan.md](../../architecture/chat-quality-history-and-plan.md).
+
 ## 1. Meetgrens (19 september 2026)
 
 Onderzocht: echte interne chat- en widgetvragen, opgeslagen bronartikelen en

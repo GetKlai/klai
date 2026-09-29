@@ -1,296 +1,178 @@
-# Chatkwaliteit: wat we onderzochten, wat we veranderden, en het plan
+# De chat van Klai: evolutie, onderzoek, ontwerp en plan
 
-**Stand: 24 september 2026.** Samengesteld uit de SPEC-mappen en hun evolutielogboeken, de SPEC's die op 18 augustus uit de repo zijn verwijderd (te lezen met `git show 8f29b6fc9^:<pad>`), de git-geschiedenis van het chatpad, extern onderzoek en de metingen van 24 september. Hoe de chat **nu** werkt staat in [chat-system.md](chat-system.md); dit document gaat over hoe we daar kwamen, wat we zeker weten, en wat we willen verbeteren.
+**Stand: 29 september 2026.** Dit is het ene document over de kwaliteit van de chat. Het vervangt de versie van 24 september en vat de logboeken samen die eronder lagen. Hoe de code vandaag loopt staat in [chat-system.md](chat-system.md); dit document zegt waarom, wat we willen, en in welke volgorde.
 
-Elke conclusie staat naast de manier waarop ze gemeten is, omdat een conclusie zonder meetmethode de afgelopen weken meer dan eens langer bleef hangen dan ze verdiende.
+Elke bewering draagt een label:
 
-**Afkortingen.** AJ = `docs/specs/SPEC-RAG-ANSWER-JUDGES-001/evolutie.md` (§2.x = meting x), AJ-spec = de `spec.md` in die map. IQ = `docs/specs/SPEC-RAG-INTAKE-QUALITY-001/evolutie.md`. CF, TIERS, EPI, CORR, SRC, RRR = de `spec.md` van SPEC-RAG-CLARIFY-FLOW-001, -ANSWER-TIERS-001, -ANSWER-EPISTEMICS-001, -CORRESPONDENCE-DISTILL-001, -SOURCE-SELECTION-001 en -RETRIEVAL-RUNTIME-RELIABILITY-001. Pad A = interne chat, pad B = widget. "Beoordelaar LLM" betekent een taalmodel als rechter, niet tegen menselijke oordelen geijkt tenzij vermeld.
+- **[gemeten]** door ons, op onze eigen keten, met de sectie van het logboek erbij.
+- **[onderzoek]** extern, bron geopend op 29 september 2026; "(samenvatting)" waar alleen de samenvatting is gelezen.
+- **[praktijk]** wat leveranciers of praktijkmensen doen, zonder meting.
+- **[aanname]** nog niet gemeten, door ons te toetsen.
 
----
-
-## 0. Kort
-
-**Wat we zeker weten**
-1. Een opdracht in de prompt stuurt het antwoordmodel nauwelijks; een aparte stap of een controle in code wel. Dat kwam zes keer terug (§3, les 3).
-2. Een aparte stap die vóór het schrijven uit de gevonden artikelen één vraag kiest, wint op de beurt ná die vraag, in twee rondes dezelfde kant op (AJ 2.47). Live op de widget sinds 24 september.
-3. Bij alleen zwakke bronnen eerlijk "staat er niet" zeggen in plaats van een antwoord uit een naburig artikel te bouwen, wint duidelijk (34-17 en 40-14; AJ 2.48). Live op de widget sinds 24 september.
-4. Twee herformuleringen van de eerste vraag, elk apart gezocht, winnen eind-tot-eind (63 om 43, twee rondes, beoordelaar mét de passages; AJ 2.33).
-5. Controleren en repareren per zin haalt antwoorden met verzonnen details van 49% naar 11% (AJ 2.5); promptaanpassingen deden niets.
-6. Ongeveer een derde van de antwoorden bevat een uitspraak die de artikelen niet dragen, en dat hangt niet af van hoe goed het zoeken was: 72/67/67% onderbouwd in de band high/medium/low (#1634).
-
-**Wat zwakker is dan het klonk**
-1. "Doorvragen maakt antwoorden slechter." Gemeten op de eerste beurt, met een model dat in één generatie moest antwoorden én vragen en dat bijna nooit deed (2 vervolgvragen op 150, AJ-spec 0.5.0). Het logboek erkent in 2.44 dat die meting weinig zegt over wat een goede vraag oplevert.
-2. "Een rijkere eerste vraag wint 29 om 7." Negen vragen; de rijkere vraag was wat de bezoeker later zelf zei, en dat antwoord verzon vier keer zo vaak. Richting echt, omvang niet (AJ 2.25).
-3. De RAGAS-winst van mei (+61% precisie, +154% recall): gemeten tegen een trefwoordenlijst, later "directional, not evidential" genoemd, nooit hermeten.
-4. "De zekerheidsband zegt hoe betrouwbaar het antwoord is." Het is de hoogste score, met drempels uit twee scores van één incident; hij voorspelt niet of een beantwoord concept klopt.
-5. "De interne chat repareert nu wat de artikelen niet dragen." Dat hij draait is bewezen; dat de interne antwoorden daardoor beter zijn, is nooit gemeten.
-
-**De grootste open plek.** Alles wat sinds 17 september op de widget gemeten en verbeterd is (AJ 2.41 tot en met 2.48), zit niet in de interne chat. Die heeft ongeveer tien keer zoveel echte vragen, geen eigen meetset, en in de Open-modus geen enkele controle op verzonnen uitspraken.
+Afkortingen: AJ = `docs/specs/SPEC-RAG-ANSWER-JUDGES-001/evolutie.md`, IQ = `docs/specs/SPEC-RAG-INTAKE-QUALITY-001/evolutie.md`. Beide zijn archief: ze worden niet meer aangevuld, nieuwe uitkomsten komen in §8 van dit document.
 
 ---
 
-## 1. Chronologisch: wat we onderzochten en veranderden
+## 1. Waar het om gaat
 
-Kolommen: vraag · methode (n; echt of synthetisch; eerste beurt of heel gesprek; beoordelaar) · resultaat · codewijziging · stand nu · betrouwbaarheid · bron.
+Er zijn twee chats op dezelfde kennis. De interne chat laat medewerkers de kennisbank bevragen. De publieke chat is een supportchat op de helppagina van een klant. Het antwoordmodel is klein (`mistral-small-2603`) en gaat vaker de fout in dan een groot model. De opgave is een betrouwbaar systeem om dat model heen: code doet wat code betrouwbaar kan, het model doet waar het goed in is, namelijk begrijpen wat iemand bedoelt en een antwoord schrijven dat een mens kan lezen.
 
-### Maart tot juli: zoekkwaliteit, weigeren bij lage zekerheid, taal
+## 2. De evolutie
 
-| Datum | Vraag | Methode | Resultaat | Code | Stand | Betrouwbaarheid | Bron |
-|---|---|---|---|---|---|---|---|
-| 30 mrt | Beter zoeken door weging op inhoudstype, leeftijd en volgorde? | Gepland 150 vragen RAGAS; opgeleverd met 5 placeholders | Nooit gemeten; 5 maanden schaduw: 24% van de volgordes veranderde, zonder koppeling aan kwaliteit | 4723739eb, 38dc732e8 | verwijderd 20 aug (#1122) | Geplande A/B nooit gedraaid | `8f29b6fc9^:.moai/specs/SPEC-EVIDENCE-001/spec.md` |
-| 5 mei | Maakt contextual retrieval + parent-child + herschrijven + taxonomie het zoeken beter? | RAGAS, 30 handgeschreven vragen, één kennisbank, LLM-rechter | precisie 0,23 → 0,37, recall 0,25 → 0,64 | #329, #334, #338, #340 | live | Referentie bleek een trefwoordenlijst; herschrijven en taxonomie zitten in de hook die de eval overslaat; hermeting nooit bevestigd | `retrieval-improvements-roadmap.md:56-63`; `knowledge-rag-improvement-plan.md:233-240` |
-| 6 mei | Antwoordt de chat in de taal van de vraag? | Deterministische check, 65 vragen, 6 talen | Doel ≥ 95%; het gemeten percentage staat nergens | #454 | live | Daarna vier reparaties na losse incidenten, nooit hermeten | `8f29b6fc9^:.moai/specs/SPEC-RAG-MULTILINGUAL-CHAT-001/spec.md` |
-| 7-8 mei | Waarom verzon de chat integratieroutes; weigert hij na de fix? | Eén incident, 3 handgekozen vragen live | Top-score 0,18 → 0,99 op de incidentvraag; band zoals bedoeld | Zekerheidsband, top_k 20, anti-hallucinatietekst (#516-#518) | live; de band stuurt sindsdien weigeren en doorvragen op pad A | n=3; de geplande nametingen zijn nooit gerapporteerd | `docs/knowledge-retrieval-low-confidence-abstain-2026-05-08.md:134-149,202-208` |
-| 6 jun | Letterlijke woorden overleven het herschrijven niet | – | – | Letterlijke vraag als eigen zoekleg (#797) | live | Geen meting | d96b790d9 |
-| 11 jun | Zijn de RAGAS-cijfers van mei betrouwbaar? | Audit van de eval | Nee | Referentieantwoord verplicht | code live, hermeting open | – | `knowledge-rag-improvement-plan.md:233-240` |
-| jul-20 aug | Kennisbank overslaan als die niet nodig is? | 30 dagen schaduw op echt verkeer | 3 op ~4.500 verzoeken | Verwijderd (#1122) | verwijderd | Echte data, eerlijk afgesloten | `knowledge-rag-improvement-plan.md:197-201` |
-
-### Augustus: geplakte correspondentie en bronselectie (pad A)
-
-| Datum | Vraag | Methode | Resultaat | Code | Stand | Betrouwbaarheid | Bron |
-|---|---|---|---|---|---|---|---|
-| 18 aug | Per deelvraag zoeken en bij risico naar een groter model | Geen meting | – | #1060 (fan-out, `klai-medium` bij risico) | live | Effect van de modelupgrade nooit gemeten | edaafcd6f |
-| 17-18 aug | Waarom weigert de chat bij een geplakte klantmail terwijl het antwoord er is? | 3 zoekopdrachten, één incident | Hele mail als zoekvraag: niet in top-10; korte zoekvraag: plek 1, score 0,97 | Distillatie in de herschrijfaanroep; geplakte tekst als claims (#1059) | live | Diagnose sterk, één incident | CORR:29-43 |
-| 18 aug | Maakt het model die schone zoekvraag betrouwbaar? | 2 live pogingen, daarna 3 synthetische canaries × 3 | Eerst mis; na promptcorrecties en regex-opschoning 9/9 top-5 | Code-opschoning | live | Alleen zoekniveau; de spec noemt het mechanisme "niet afdoende bewezen" | CORR:22-27 |
-| 19 aug | Waarom nog een fout antwoord toen de distillatie werkte? | Eén productietrace | Goede chunks vielen weg op de bronnaam; band `high` door één chunk terwijl 6 van 7 ≤ 0,28 scoorden | Bronselectie gewijzigd (112457eba) | live | n=1; de geplande voor-en-na-meting is niet terug te vinden | SRC:56-80, 127-137 |
-| 19-20 aug | Moet `high` twee sterke chunks vereisen? | Schaduwveld | Geen gedragseffect | Verwijderd (#1118, #1122) | verwijderd | Nooit tegen uitkomsten gemeten | SRC:370-377 |
-| 19 aug | Het model nam de hypothese van de afzender over | Eén incident | Drie defecten in één alinea | Vier-sectiecontract, alleen meten | contract live, handhaving nooit gebouwd | De meting die handhaving moest onderbouwen is niet terug te vinden | EPI:51-61, 274-287 |
-| 19 aug | Herschrijven valt terug bij 429 | Code en lokale harness | – | Herschrijven via de proxy met fallback (cbb3f57c1) | live | Nooit een foutpercentage vastgelegd; op 24 sep: 8 van 107 aanroepen mislukt sinds 10 sep | RRR:20-36 |
-
-### September: de widget (pad B) en de interne reparatie
-
-| Datum | Vraag | Methode | Resultaat | Code | Stand | Betrouwbaarheid | Bron |
-|---|---|---|---|---|---|---|---|
-| 11 sep | Nachtelijke LLM-beoordeling per gesprek | Gebouwd | Later: 172 webchatgesprekken, 35 opgelost, 66 vroeg afgebroken, `retrieval_miss` 25 | d76a4737a | widget aan, LibreChat uit | Menselijke steekproef en vergelijking met `klai-large` nooit uitgevoerd | SPEC-CHAT-QUALITY-LOOP-001; AJ-spec:72 |
-| 15-17 sep | Rekenen widget en zoekdienst met dezelfde band? | Code lezen | Nee: dezelfde drempels 0,60/0,30, maar de widget rekende op de score vóór de boosts; sinds de fix neemt hij de band van de zoekdienst over | #1465 | live | Gelijkgetrokken; de drempels zelf zijn niet tegen uitkomsten getoetst | SPEC-KNOWLEDGE-ACTIVITY-001:134-146; eee4ecfa9 |
-| 15 sep | Waarom weigert de widget "Can I also talk english?" | 540 echte widgetbeurten | 13,5% eindigde op de vaste weigering | Derde klasse "over dit gesprek" (#1443) | vervangen 17 sep | Echte beurten, één week | TIERS:50-55; PR #1443 |
-| 17 sep | Nulmeting doorvragen op de widget | 80 synthetische vragen, 1 sample | 0 van 80 wedervragen; vage vragen 43% geweigerd | Doorvraagflow aan: widget #1474, intern #1475 | widget dezelfde middag vervangen (#1480); intern nog aan | Synthetisch; het effect op de widget is nooit gemeten (drie uur live); intern vuurde het in een maand 3 keer buiten testverkeer | CF:67-78; logs 24 sep |
-| 17 sep | Welke antwoordvorm houdt een klein model vol? | `klai-fast`, 6 concepten × 3 rondes | Ja/nee "verzonnen?": altijd "nee"; keuzelijst 17/18 goed | Vraag- en antwoordbeoordelaar (#1480) | live | Synthetisch, klein | AJ 2.2 |
-| 17 sep | Oud tegen nieuw, en helpt de doorvraagopdracht? | 50 echte eerste vragen × 3, blind, **zonder artikelen** | 69/65/16; waar de doorvraagopdracht meeging oud beter 19 van 23; 2 echte vervolgvragen op 150 | Opdracht verwijderd (#1486) | verwijderd | **Alleen beurt één**; model moest antwoorden én vragen; mat een antwoord met een aanhangsel | AJ 2.4; AJ-spec 0.5.0 |
-| 17-18 sep | Wat helpt tegen verzonnen details? | 54 antwoorden zin voor zin | Lichte controle vangt 22%, zware 96% (precisie 77%); promptvarianten gelijk of slechter; controle + reparatie 49% → 11% | Controle per zin met reparatie (#1495) | live | n=54; wie nalas staat er niet bij | AJ 2.5 |
-| 18 sep | Werkt het zoeken bij vervolgbeurten? | 90 echte vervolgbeurten, zoekniveau | Juiste artikel in top-8: 41%; letterlijke zoekregel 3 winst, 0 verlies | #1487, #1488 | live | Zoekniveau | AJ 2.6 |
-| 18 sep | Helpt een rijkere eerste vraag? | 68 eerste vragen; 9 magere × 2, LLM paarsgewijs | 17/68 te mager; verrijkt wint 29 om 7; "≤ 6 woorden" 89% raak | Niets | – | n=9; de verrijking kwam van de bezoeker zelf; dat antwoord verzon 12/18 tegen 3/18; loste 6/18 op tegen 0/18 | AJ 2.7, 2.25 |
-| 18 sep | Kort antwoord plus één vervolgvraag | 16 korte vragen × 2, blind | 15/12/5; verzonnen 4 → 9; 7 van 32 eindigden op een vraag | Niet samengevoegd | nooit live | n=16, beurt één, weer één generatie | AJ 2.10 |
-| 18 sep | Heeft de interne chat hetzelfde probleem? | 80 interne en 80 widgetantwoorden, zware controle | Intern 85% ≥ 1 onbewezen uitspraak, widget 75% | Reparatie intern (#1526, #1530) | live | Dat reparatie intern betere antwoorden geeft is nooit blind gemeten | AJ 2.14, 2.22 |
-| 18-19 sep | Hele gesprekken met een gesimuleerde bezoeker | 12 gesprekken, max 4 beurten | "Doel bereikt" 75% → na correcties van de scoorder 33% | #1519, #1541 | gereedschap | Scoorder was eerst hetzelfde model als de controle; n=12 | AJ 2.19, 2.24, 2.35 |
-| 18 sep | Doorvragen op een taxonomie-aspect | 12 magere vragen | 7/12 → 7/12 | Niet gebouwd | afgevallen | n=12, zoekniveau | AJ 2.20 |
-| 18-19 sep | Twee herformuleringen van de eerste vraag | 54 echte vragen; eind-tot-eind 2 rondes, `klai-large` **mét passages** | Zoekniveau 35% → 59%; eind-tot-eind 63 om 43; "lost op" 15 → 27; verzonnen 30 → 23; +2,3 s | #1548 | live; browser pas vanaf 22 sep (#1593) | De sterkste meting van het logboek; wel beurt één | AJ 2.27, 2.33 |
-| 18 sep | Vorige antwoord als extra zoekleg bij vervolgbeurten | 70 vervolgbeurten | Zoekniveau 39% → 64%; eind-tot-eind 65/61, rondes tegengesteld; verzonnen 29 → 42 | Niet live | afgevallen | Zoekwinst is geen antwoordwinst | AJ 2.28, 2.32 |
-| 18-19 sep | Waar ontbreekt het antwoord echt? | 54 kennisvragen | 6/54 niet in de kennisbank; 7/54 wel, maar niet vanuit de eerste vraag te vinden | Onderwerpen naar de redactie | niet opgepakt | LLM-oordeel over passages | AJ 2.29, 2.31, 2.36 |
-| 19-22 sep | Intake: vraagvectoren, linktekst, vierde bron, prijsregels groeperen | 12-16 echte vragen × 3 × 2 | Telkens ruis of meer verzinsels | Niet uitgerold | afgevallen | Kleine n | IQ |
-| 20 sep | Verdwenen decimale prijzen | 18 bedragen, deterministisch | 0/18 → 18/18 behouden | #1581 | live | Deterministisch, sterk | IQ |
-| 22 sep | Wat zeggen menselijke oordelen over doorvragen? | 17 door de eigenaar beoordeelde gesprekken | 9 van 38 antwoorden bevatten een vraag; waar het systeem vroeg: goed of perfect | Meetset gebouwd | – | Eerste menselijke referentie | AJ 2.44 |
-| 22 sep | Doorvragen als instructie in de prompt | 17 gesprekken; gesimuleerde bezoeker, `klai-large` beoordeelt de **volgende beurt**, 2 rondes | 20-10 en 16-16: ruis; vroeg niet vaker | Niet live | afgevallen | Eerste meting die beoordeelt wat de vraag oplevert | AJ 2.46 |
-| 23-24 sep | Aparte stap kiest de ene vraag uit de gevonden artikelen | Idem, drie versies | Versie 3: 17-14 en 24-9; "begrijpt het probleem" 37 tegen 21, "juiste vervolgstap" 32 tegen 17 van 68; onnodige vraag 5/16 tegen 1/16 | `answer_plan` (#1620) | live | n=17, LLM-bezoeker en -rechter; nog niet op echt verkeer nagemeten | AJ 2.47 |
-| 24 sep | Geen antwoord uit een zwakke bron | 27 echte beurten × 2; omslagen met de hand nagelezen | 34-17 en 40-14; "juiste vervolgstap" 74 tegen 30 van 108; "niet gevonden" 16 → 29 van 54 | #1635 | live | Rechter kreeg de nieuwe uitkomst als verwachting mee; daarom handmatig nagelezen, 1 echt verlies | AJ 2.48 |
-
-### 24 september: deze sessie
-
-| Vraag | Methode | Resultaat | Code | Stand |
-|---|---|---|---|---|
-| Herkent pad A twee vragen achter één vraagteken? | 18 achtergehouden berichten, deterministisch | 16 → 18 goed | Vraagtekens plus met en/and/or verbonden vragen (#1626) | live; effect op antwoorden niet gemeten |
-| Meerdere vragen en moeilijkheid laten bepalen door de herschrijfaanroep | 292 live `klai-fast`-aanroepen, 73 berichten | Meerdere vragen 36/42 tegen regel 40/42, +250 ms; moeilijkheid 25/31 tegen tokenregel 15/31 | Niet gebouwd | afgevallen; geen bewijs dat `klai-large` op moeilijke vragen beter antwoordt |
-| LiteLLM's ingebouwde complexity router | 19 Nederlandse eval-vragen en hun Engelse vertaling | Alles `SIMPLE` | Niet gebouwd | afgevallen |
-| Encodermodel Laya zero-shot | 19 routeringsvragen, 24 berichten | Onder de meerderheidsbasis; gelijk aan de oude vraagtekenregel | Niet gebouwd | afgevallen |
-| Voorspelt de zekerheidsband de kwaliteit? | 254 preview-beurten op één helpdeskwidget | Onderbouwd 72/67/67%; weigering of buiten onderwerp 60% bij low, 9% bij high | Kalibratiescript, drempels gehouden (#1634) | live als gereedschap |
-| Hoe vaak draaien verduidelijken en herschrijven op pad A? | Productielogs, 30 dagen | Verduidelijken 3 keer buiten testverkeer (323 keer bij één testaccount); herschrijven 8 van 107 keer mislukt | – | – |
-
----
-
-## 2. Per thema
-
-**Vervolgvragen.** *Zeker:* een opdracht aan het antwoordmodel werkt niet (2 op 150, 7 op 32, 4 op 12); een aparte stap die de vraag uit de gevonden artikelen kiest wel (AJ 2.47). *Zwak:* "doorvragen schaadt" rust op eerste-beurtmetingen van die opdracht. *Nooit getest:* de vraagstap op echt verkeer; verduidelijken op pad A (ging in een maand 3 keer af); echte in plaats van gesimuleerde bezoekers.
-
-**Zekerheidsband en weigeren.** *Zeker:* de band is de hoogste score na herrangschikken; hij scheidt de kwaliteit van beantwoorde concepten niet (72/67/67%) maar wel weigeringen en buiten-onderwerp (60% tegen 9%). De regel "alle bronnen < 0,4, zeg eerlijk dat het er niet staat" wint op echte beurten (AJ 2.48). *Zwak:* de drempels 0,60/0,30 zelf. *Nooit getest:* nieuwe grenzen op score (de widget slaat de beslissende score nog niet op); de band als poort op pad A tegen antwoordkwaliteit.
-
-**Meerdere vragen.** *Zeker:* de nieuwe regel haalt 18/18; de herschrijfaanroep doet het slechter. *Nooit getest:* het effect op antwoorden; de widget kent geen splitsing per vraag.
-
-**Zoeken en de eerste vraag.** *Zeker:* twee herformuleringen winnen (63-43); zoekwinst is geen antwoordwinst (drie keer). *Zwak:* de RAGAS-winst van mei. *Nooit getest:* herschrijven en taxonomie op pad A eind-tot-eind; herformuleringen op pad A.
-
-**Verzonnen details.** *Zeker:* controle per zin plus reparatie werkt (49% → 11%), prompts niet; repareren bij één melding maakt het slechter. *Zwak:* dat de reparatie intern even goed werkt. *Nooit getest:* de reparatie op pad A tegen een menselijke referentie; controle in Open.
-
-**Modelkeuze.** *Zeker:* de ingebouwde router en Laya zijn onbruikbaar voor Nederlandse supportvragen. *Nooit getest:* of `klai-medium`/`klai-large` betere antwoorden geven op dezelfde vragen. De upgrade naar `klai-medium` draait sinds augustus zonder meting, en de routerbeslissing staat niet in de logs.
-
-**Taal.** *Zeker:* de taal wordt per beurt uit het hele gesprek afgeleid en wisselt alleen op een duidelijk signaal. *Zwak:* dat het betrouwbaar klopt; een percentage is nooit vastgelegd. *Nooit getest:* antwoordkwaliteit in het Engels.
-
-**Widget tegenover interne chat.** *Zeker:* beide hebben het probleem van onbewezen uitspraken, intern iets meer (85% tegen 75%). Alles van AJ 2.41-2.48 zit alleen in de widget (AJ 2.49). *Nooit getest:* elke verbetering van de widget op pad A.
-
----
-
-## 3. Lessen over meten die steeds terugkomen
-
-1. **Alleen de eerste beurt gemeten, conclusie over gesprekken getrokken.** Een vraag is pas iets waard in de beurt erna. Pas AJ 2.46 en 2.47 beoordelen de volgende beurt.
-2. **De LLM-rechter verkiest het volledige antwoord**, ook als het verzint (29 om 7 terwijl het vier keer zo vaak verzon; zonder artikelen ziet hij verzinsels niet). Hij kiest iets vaker het eerst getoonde antwoord (76 tegen 58). Geen rechter is tegen een menselijke set geijkt; die set bestaat sinds 22 september (17 gesprekken).
-3. **Een opdracht aan het antwoordmodel verandert zelden zijn gedrag.** Doorvragen, strenger tegen verzinsels, commerciële vragen weren, de hypothese van de afzender vermijden, distilleren: steeds weinig effect. Een aparte stap of code-controle werkte wel.
-4. **Kleine n en één ronde.** Het logboek noemt minder dan ongeveer tien beurten verschil ruis en eist twee rondes; veel conclusies staan op minder. Voor een voorkeur van 65/35 zijn ongeveer 85 niet-gelijke paren nodig (§4.3).
-5. **Zoekwinst is geen antwoordwinst.** Drie keer meer gevonden zonder beter antwoord.
-6. **De meting nam een andere route dan de gebruiker.** De herformuleringen waren drie dagen "live" zonder dat de browser ze kreeg; de interne eval gaat buiten de LiteLLM-hook om.
-7. **Het meetinstrument beloonde zichzelf.** Scoorder en controle op hetzelfde model; een doorverwijzing telde als succes.
-8. **Drempels zonder herkomst.** 0,60/0,30 uit twee scores van één incident.
-9. **Schaduwexperimenten zonder uitkomstmeting.** Evidence tier, de "corroborated band" en de retrieval gate: maanden gelogd, nooit aan antwoordkwaliteit gekoppeld.
-10. **Kleine synthetische sets waar echte data was.** De interne chat heeft tien keer zoveel echte vragen en is nooit als meetset gebruikt.
-
----
-
-## 4. Wat extern onderzoek zegt
-
-Onderzoek van 24 september, bronnen 2024-2026. Dit bevestigt de lijn die het logboek sinds 22 september volgt.
-
-### 4.1 Wanneer antwoorden, wanneer vragen, wanneer eerlijk "niet gevonden"
-- **De beste voorspeller is niet de zoekscore, maar de vraag "staat het antwoord in wat we gevonden hebben?"** Een aparte check daarop, gecombineerd in een simpel model, verhoogde het aandeel juiste antwoorden onder de beantwoorde vragen met 2 tot 10 procentpunt ([Sufficient Context, Joren e.a.](https://arxiv.org/abs/2411.06037)). Dat past bij de 72/67/67% van Klai.
-- **Of extra werk nodig is, zie je pas ná het zoeken.** In een productiesysteem van 20.000 vragen konden classificatoren dat vooraf niet voorspellen ([Coverage Illusion](https://arxiv.org/abs/2605.27220)).
-- **Een vraag helpt alleen als de kennis er is maar de vraag onduidelijk.** Staat het antwoord niet in de kennisbank, dan lost doorvragen niets op ([Clarify When Necessary, NAACL 2025](https://aclanthology.org/2025.findings-naacl.306/)). Dan hoort er een eerlijk "staat er niet" met een route naar een mens, zoals Intercom Fin doet ([Intercom](https://www.intercom.com/help/en/articles/11813803-understanding-when-fin-ai-agent-may-not-provide-an-answer)).
-- **Modellen vragen uit zichzelf bijna nooit, en opgehaalde context maakt het nog zeldzamer** ([Knowing but Not Showing](https://arxiv.org/abs/2605.25284); [CLAMBER, ACL 2024](https://aclanthology.org/2024.acl-long.578/)). Een aparte beslisstap op zoeksignalen wint van een gepromptte beslissing ([ASK, ACL 2025 Industry](https://aclanthology.org/2025.acl-industry.63.pdf)).
-- **Een vraag moet specifiek zijn en uit de artikelen komen**; slechte vragen verlagen de tevredenheid ([Zou e.a. 2023](https://www.sciencedirect.com/science/article/abs/pii/S0306457322002771); [Siro e.a., EACL 2024](https://aclanthology.org/2024.findings-eacl.84/)).
-- **Na het antwoord op een vraag: samenvoegen en opnieuw zoeken.** Over meerdere beurten verspreide informatie gaf gemiddeld 39% slechtere prestaties dan één volledige vraag ([Laban e.a. 2025](https://arxiv.org/abs/2505.06120)); de winst van ASK komt uit opnieuw zoeken met het antwoord van de gebruiker.
-- **Zekerheid uit het antwoordmodel zelf** (entropie, meerdere steekproeven) werkt slecht in RAG ([Soudani e.a., ACL Findings 2025](https://aclanthology.org/2025.findings-acl.852/)).
-
-### 4.2 Minder verzonnen uitspraken
-- **Letterlijker overnemen en eerst de bronzinnen kiezen** vermindert verzinsels ([CopyPasteLLM](https://arxiv.org/abs/2510.00508); [Attribute First, then Generate, ACL 2024](https://arxiv.org/abs/2403.17104)). Promptinstructies helpen weinig ([Trust-Align, ICLR 2025](https://arxiv.org/abs/2409.11242)).
-- **Meer context is niet beter**: relevant ogende maar foute passages trekken het model mee ([Long-Context LLMs Meet RAG](https://arxiv.org/abs/2410.05983)).
-- **Langere antwoorden gaan samen met meer verzinsels** (samenhang op de [Vectara-leaderboard](https://github.com/vectara/hallucination-leaderboard)); bij Klai stegen verzinsels van 4 naar 9 toen er een vervolgvraag bij het antwoord moest (AJ 2.10).
-- **Controle per uitspraak is de standaard** ([FActScore](https://arxiv.org/abs/2305.14251), [MiniCheck](https://arxiv.org/abs/2404.10774)), wat Klai al doet.
-
-### 4.3 Meten
-- **Een oordeel over één beurt bevoordeelt het volledige antwoord boven een goede vraag** ([Zhang, Knox en Choi, ICLR 2025](https://arxiv.org/abs/2410.13788)).
-- **Gesimuleerde bezoekers zijn bruikbaar maar te coöperatief**; uitkomsten verschillen tot 9 punt per simulatormodel, en met ongeduldige of kortaffe bezoekers zakken systemen fors ([Lost in Simulation](https://arxiv.org/abs/2601.17087); [Non-Collaborative User Simulators](https://arxiv.org/abs/2509.23124)).
-- **LLM-rechters hebben bekende vertekeningen** (volgorde, voorkeur voor de eigen modelfamilie) ([CALM](https://llm-judge-bias.github.io/); [Panickssery e.a., NeurIPS 2024](https://arxiv.org/abs/2404.13076)). Beoordelen in beide volgordes en ijken tegen een menselijke set is de gangbare remedie.
-- **Steekproef**: voor een voorkeur van 70/30 zijn ongeveer 47 niet-gelijke paren nodig, voor 65/35 ongeveer 85, voor 60/40 ongeveer 194 (tekentoets, α 0,05, power 80%).
-
-### 4.4 Modelkeuze
-- **Groter is niet vanzelf trouwer aan de bron** ([FaithEval, ICLR 2025](https://arxiv.org/abs/2410.03727)). Op de Vectara-leaderboard (samenvatten, geen vraag-antwoord) verzint `mistral-3-large-2512`, ons `klai-large`, in 14,5% van de gevallen, tegen 4,5% voor de oudere `mistral-large-2411`. Modelkeuze moet dus op onze eigen vragen met vaste passages gemeten worden.
-
----
-
-## 5. Bevindingen waar nog niets mee gedaan is
-
-| Bevinding | Omvang | Bron |
+| Periode | Wat er veranderde | Hoe het gemeten was |
 |---|---|---|
-| Een derde van de antwoorden bevat een onbewezen uitspraak | 47 van 150; zin voor zin 49% vóór reparatie | AJ 2.4, 2.5 |
-| Een kwart van de eerste vragen is te mager | 17 van 68 | AJ 2.7 |
-| Onderwerpen ontbreken aantoonbaar in de kennisbank | 6 van 54 kennisvragen; 7 alleen met later gegeven details te vinden | AJ 2.31, 2.36 |
-| De late grounding-controle logt wat hij vond, maar niemand leest het | 9 van 54 eerste beurten afgekapt bij 4 s | AJ 2.37, 2.39 |
-| De meetpunten onder Platform → Status hebben geen lezer | acht meetpunten, geen alarm of vaste controle | AJ 2.40 |
-| Herschrijven mislukt op pad A | 8 van 107 aanroepen sinds 10 sep | logs 24 sep |
-| De nachtelijke beoordeling noemt `retrieval_miss` de grootste faalcategorie | 25 van 172 gesprekken; 66 vroeg afgebroken | AJ-spec:72 |
-| De RAGAS-hermeting na de referentiefix | sinds 11 juni open | `knowledge-rag-improvement-plan.md:233-240` |
-| De vraagbeoordelaar noemt één op zeven widgetbeurten onduidelijk, maar dat bepaalt alleen nog of een bronloze wedervraag zonder knoppen wordt getoond | ~1 op 7 | AJ 2.44 |
+| Maart tot juli | Zoekkwaliteit, en een zekerheidsband die op de interne chat weigeren en doorvragen stuurt | De drempels 0,60 en 0,30 komen uit twee scores van één incident; de geplande nametingen zijn niet gedraaid |
+| Augustus | Geplakte klantmails distilleren, bronselectie, zwaarder model bij risico | Telkens één incident; het effect van het zwaardere model is nooit gemeten |
+| 15 tot 17 sep | De widget weigerde 13,5% van de beurten; een vraagbeoordelaar en een antwoordbeoordelaar kwamen erbij | De eerste versie maakte van 7 op 18 goede antwoorden een weigering en is dezelfde dag bijgesteld (AJ 2.4) |
+| 18 sep | Controle per zin met reparatie; twee herformuleringen van de eerste vraag | Herformuleringen: 63 om 43 over twee rondes, de sterkste meting die we hebben (AJ 2.33). Reparatie: 25 antwoorden (AJ 2.8) |
+| 19 tot 22 sep | Zes proeven aan de intake-kant | Alle zes afgevallen: meer gevonden, geen beter antwoord (IQ) |
+| 22 tot 24 sep | Een vraagstap in drie versies; de regel voor zwakke bronnen | 17 gesprekken met een gesimuleerde bezoeker. Later bleek dat de vraagstap in 0 van 488 herspeelde vragen iets deed (AJ 2.53, 2.54) |
+| 24 tot 25 sep | Eén pijplijn voor widget, partner en interne chat; maskering van persoonsgegevens op widgetaanroepen; een vaste vraagstap | De widget is na het samenvoegen niet opnieuw gemeten; de maskering is niet gemeten |
+| 28 tot 29 sep | Review door de eigenaar van 109 echte antwoorden uit 58 gesprekken | Aandeel goede antwoorden 54% naar 37% |
 
----
+**Wat de review liet zien** [gemeten, 109 antwoorden, door één mens beoordeeld]. De grootste foutsoorten over de hele periode: antwoord beschadigd door de reparatie (18), een duidelijke vraag verkeerd gelezen (12), een kale of nutteloze reactie (14), geweigerd terwijl het antwoord er was (6). Bij een sterke beste bron (score 0,4 of hoger) zakte het aandeel goede antwoorden van 18 op 33 naar 8 op 26; bij een zwakke beste bron van 14 op 26 naar 8 op 17. Het verlies zit dus vooral waar de zoekscore hoog is. De beschadiging door reparatie is niet nieuw: ze kwam vóór 24 september even vaak voor. Bij deze aantallen is 54% naar 37% een richting (p ongeveer 0,09); de foutsoorten zelf zijn per antwoord gelezen.
 
-## 6. Correcties aan de documentatie in deze wijziging
+**Het patroon.**
 
-Gevonden door de code naast de documenten te leggen (volledige lijst met ankers in [chat-system.md](chat-system.md) en hieronder):
+1. Er kwam steeds een stap bij en er ging bijna niets weg. Een supportbeurt ging van ongeveer drie aanroepen van een taalmodel naar maximaal acht.
+2. Elke stap was een reactie op het laatst gevonden probleem, niet op een ontwerp vooraf.
+3. De metingen waren klein, vaak op nagespeelde beurten, en met een taalmodel als rechter.
+4. De poort uit de spec (eerste vragen herspelen vóór livegang) is bij de laatste wijzigingen niet gedraaid.
+5. De documenten liepen achter op de code.
 
-| Document | Stond er | Klopt nu | Gedaan |
-|---|---|---|---|
-| SPEC-RAG-CLARIFY-FLOW-001 kop | Doorvraagflow live op de widget, interne chat "volgende" | Omgekeerd: intern draait hij, de widget gebruikt sinds #1480 de beoordelaars en sinds #1620 het antwoordplan | kop gecorrigeerd |
-| `knowledge-rag-improvement-plan.md` B2 | `klai-medium` is nooit een routeringsdoel | De router kiest `klai-medium` sinds 18 aug; de ingebouwde complexity router is op 24 sep gemeten en afgewezen | gecorrigeerd |
-| SPEC-RAG-ANSWER-JUDGES-001 spec | Open-antwoorden worden "alleen gemeten"; doorvragen "gemeten schadelijk" | Open wordt niet gemeten; alleen de opdracht aan het antwoordmodel was schadelijk, een aparte vraagstap wint (2.47) | gecorrigeerd |
-| AJ §5 | Doorvragen vóór het antwoord en keuzes uit artikelen: "niet meer proberen" | Achterhaald door 2.47 | gecorrigeerd |
-| SPEC-KNOWLEDGE-ACTIVITY-001 | De widget leest de band niet en bewaart hem niet | Hij wordt bewaard in `answer_signals`, en stuurt nog steeds niets | gecorrigeerd |
-| `knowledge-retrieval-flow.md` | Zeven uitspraken over het chatpad kloppen niet meer (widget via de hook, top_k 5, guardrails via LLM, timeout 3 s, e.a.) | Zie chat-system.md | waarschuwing bovenaan met de lijst |
-| `regular-chat-knowledge-retrieval-citations.md` | Strict vervangt tekst zonder bron altijd door een weigering; regelnummers voorbij het einde van het bestand | De claims-check laat tekst zonder beweringen door | waarschuwing bovenaan |
-| Codecommentaar (`deploy/litellm/config.yaml`, `docker-compose.yml`, docstring `klai_knowledge.py`) | PII-handhaving "INERT, default OFF"; hook "skips silently" | Standaard aan; hook weigert | **niet** in deze wijziging (zou een deploy starten), zie plan 4.2 |
+Dit patroon is bekend. Meer aanroepen van een taalmodel helpen bij makkelijke vragen en schaden bij moeilijke, waardoor het totaal eerst stijgt en dan daalt [onderzoek (samenvatting): Chen e.a. 2024, https://arxiv.org/abs/2403.02419]. Een toename van AI-gebruik in ontwikkelteams gaat samen met 7,2% lagere stabiliteit van opleveringen, en de remedie die het rapport noemt is kleine wijzigingen en stevige tests [onderzoek: DORA 2024].
 
----
+## 3. Wat het onderzoek zegt
 
-## 7. Plan (goedgekeurd 24 september 2026)
+### 3.1 Beslissen: antwoorden, vragen, eerlijk stoppen of een mens
 
-### 7.1 Uitgangspunt: één chatpijplijn
+- **De zoekscore is geen bewijs dat het antwoord er staat.** Een passage die relevant lijkt maar het antwoord niet bevat, is erger dan geen passage: een klein model (27B) gaf met voldoende context 25% verzonnen antwoorden en met onvoldoende context 35% [onderzoek: Sufficient Context, ICLR 2025, tabel 4, https://arxiv.org/abs/2411.06037].
+- **Een aparte toets "is dit genoeg om de vraag te beantwoorden" kan dat zien.** Een groot model haalde 93% overeenstemming met mensen, een afgesteld model van 24B 88%, op 115 voorbeelden [onderzoek: zelfde bron, tabel 1]. Voor een niet-afgesteld model van onze klasse is dit [aanname].
+- **Weigeren op instructie werkt niet betrouwbaar.** Modellen van 7B weigerden in 6 tot 31% van de gevallen waar het antwoord ontbrak [onderzoek: RGB, AAAI 2024, https://arxiv.org/abs/2309.01431]; in een Nederlandstalige proef haalden kleine modellen 2 tot 20% van de terechte weigeringen [onderzoek: bLLeQA, 2026, https://aclanthology.org/2026.knowfm-1.4/]. De beslissing om niet te antwoorden hoort dus buiten het antwoordmodel te vallen.
+- **Modellen zien vaagheid slecht aan de vraag zelf**, ook met voorbeelden of stap-voor-stap redeneren [onderzoek: CLAMBER, ACL 2024, https://aclanthology.org/2024.acl-long.578/]. Of doorvragen nodig is, valt beter af te leiden uit de samenhang van de gevonden artikelen [onderzoek: Arabzadeh e.a. 2022, https://arxiv.org/abs/2208.04882].
+- **Een vraag is pas iets waard in de beurt erna**; bij twijfel antwoorden [onderzoek: Zhang, Knox en Choi, ICLR 2025, https://arxiv.org/abs/2410.13788].
+- **Informatie die over beurten verspreid raakt kost gemiddeld 39% prestatie** [onderzoek: Laban e.a. 2025, https://arxiv.org/abs/2505.06120]. Na het antwoord op een vraag wordt alles samengevoegd tot één zoekvraag en opnieuw gezocht.
+- **Frustratie: eerst helpen, de mens erbij aanbieden.** "Escalating too early reduces Fin's effectiveness" [praktijk: Intercom, https://www.intercom.com/help/en/articles/12396892]. Een verzoek om een mens gaat direct door. Een gecontroleerde meting hiervan is niet gevonden.
 
-De interne chat en de widget hebben elk hun eigen beslislogica, en die twee paden zijn de plek waar verbeteringen en kennis steeds uit elkaar lopen. Het doel is **één pijplijn**, met een tweede pad alleen waar de gebruiker of de modus dat echt vereist. Een verbouwing mag als die code weghaalt; complexiteit toevoegen om twee paden tegelijk te bedienen mag niet.
+### 3.2 Schrijven en nakijken
 
-**Toets bij elke stap.** Elke wijziging aan het chatpad zegt in de PR, per beslissing die ze raakt: *gedeeld*, of *bewust apart, omdat …*. "Het was al zo" is geen reden. De geldige redenen staan in §7.2; een nieuwe reden komt daar eerst bij, met akkoord.
+- **Ook met de juiste context verzint een klein model.** Een model van onze klasse: ongeveer 5% bij samenvatten en ongeveer 10% bij vraag en antwoord [onderzoek: Vectara-ranglijst september 2026; FaithJudge, EMNLP Industry 2025, https://arxiv.org/abs/2505.04847]. De nieuwere modellen van dezelfde maker scoren op die ranglijst duidelijk slechter dan de oudere; ons eigen model staat er niet op. Dit moeten we zelf meten.
+- **Weinig en juiste passages.** De kwaliteit stijgt en daalt dan weer met meer passages; lijkende maar foute passages schaden het meest [onderzoek: Jin e.a., ICLR 2025, https://arxiv.org/abs/2410.05983].
+- **Achteraf herschrijven is de zwakste reparatie.** In een vergelijking op 916 antwoorden hield herschrijven 80% van de tekst maar haalde het de minste fouten weg; schrappen hield 64% over. Van de 176 goede antwoorden in die groep werd 83,5% toch aangepast [onderzoek, nog niet door vakgenoten beoordeeld: https://arxiv.org/abs/2608.29307]. Modellen verbeteren zichzelf niet betrouwbaar zonder feedback van buiten [onderzoek: Huang e.a., ICLR 2024, https://arxiv.org/abs/2310.01798].
+- **Een controle hoort alleen controleerbare uitspraken te lezen**, niet een excuus of een "dit vind ik niet terug" [onderzoek: Claimify, ACL 2025, https://arxiv.org/abs/2502.10855].
+- **Beoordelende modellen zijn geen waarheid.** Een model als detector haalde op antwoordniveau een precisie van 47% [onderzoek: RAGTruth, ACL 2024, https://arxiv.org/abs/2401.00396]. Bij ons was één afkeuring in ongeveer de helft van de gevallen terecht [gemeten, AJ 2.52].
+- **Controle in code** op getallen, namen en letterlijke citaten vangt verzonnen waarden; ze ziet geen geparafraseerde onjuistheid, weggevallen voorwaarde of verkeerde volgorde. Een meting van de dekking is niet gevonden [aanname].
+- **Temperatuur nul maakt een antwoord herhaalbaar, niet juister** [onderzoek: Renze 2024, https://arxiv.org/abs/2402.05201].
 
-### 7.2 Wat echt verschilt en wat toevallig dubbel is
+### 3.3 Begrijpen en zoeken
 
-**Echt verschillend** (blijft configuratie of een laatste stap, geen aparte beslislogica):
+- **Eén mechanisme voor elke beurt**: de laatste beurt wordt een zelfstandige zoekvraag; bij de eerste beurt verandert er dan niets [onderzoek (samenvatting): MTRAG 2025, https://arxiv.org/abs/2501.03468].
+- **Zoekmodellen zien richting en ontkenning slecht.** Eenvoudige zoekmodellen scoren onder toeval op een vraag en haar omgekeerde; het beste herrangschikmodel haalt 51% [onderzoek: NevIR, EACL 2024, https://arxiv.org/abs/2305.07614]. Importeren tegen exporteren en inkomend tegen uitgaand horen daarom als kenmerk bij het artikel te staan.
+- **Een gesloten keuze in een afgedwongen formaat** lost vormfouten op bij kleine modellen en past bij classificatie [onderzoek: Geng e.a. 2025, https://arxiv.org/abs/2501.10868; Tam e.a. 2024, https://arxiv.org/abs/2408.02442]. Wij vonden hetzelfde: een keuzelijst was 17 op 18 goed, een ja/nee-veld 0 op 18 [gemeten, AJ 2.2].
 
-| Verschil | Waarom |
+### 3.4 Meten
+
+- **Foutenanalyse op echte gesprekken is het belangrijkste werk**: 30 om te beginnen, 100 voor een volledig beeld, daarna 10 tot 20 per week [praktijk: Husain en Shankar, https://hamel.dev/blog/posts/evals-faq/].
+- **Eén deskundige die oordeelt** is beter dan een groep [praktijk: zelfde bron].
+- **Gesimuleerde bezoekers zijn te meegaand** en maken uitkomsten te gunstig [onderzoek (samenvatting): https://arxiv.org/abs/2609.00608]. Bij ons telde de scoorder eerst een doorverwijzing als succes [gemeten, AJ 2.24].
+- **Beoordeel de eerste beurt niet als maat voor een gesprek** [gemeten, AJ 2.44; onderzoek: Zhang, Knox en Choi].
+
+### 3.5 Niet gevonden
+
+Een meting van wat controle in code vangt; een vergelijking tussen opnieuw schrijven en terugvallen op de letterlijke passage; een meting van "antwoord plus aanbod" tegenover "direct doorverwijzen"; een Nederlandse meting op korte supportteksten; praktijk voor Nederlandse en Belgische inhoud in één kennisbank.
+
+## 4. Onderzoek naast onze praktijk
+
+| Principe | Wat wij doen | Verschil |
+|---|---|---|
+| Niet schrijven als het antwoord er niet staat, beslist buiten het antwoordmodel | Beslissen op de zoekscore (alles onder 0,4), en het model daarna vragen "niet gevonden" te zeggen | De score meet gelijkenis; boven 0,4 wordt altijd geschreven |
+| Weinig en juiste passages | Acht fragmenten, drie bronnen | Geen selectie op "beantwoordt dit de vraag" |
+| Schrijven door het model, dicht op de bron | Vrij schrijven, daarna controle per zin | Geen verschil in wie schrijft; wel in wat er daarna gebeurt |
+| Niet achteraf herschrijven | Een derde aanroep herschrijft bij twee of meer afkeuringen | Grootste foutsoort in de review |
+| Alleen controleerbare uitspraken nakijken | De controle keurt ook eigen "niet gevonden"-zinnen af | Leidt tot weigeringen en rompen |
+| Eén vraag, zelden, uit wat de artikelen onderscheidt | Een vraag als artikeltitels op elkaar lijken | Vroeg naar het apparaat bij een vraag over belrechten |
+| Bij frustratie eerst helpen | Negatieve toon vervangt het antwoord door een afspraakaanbod en slaat de vraagstap en de regel voor zwakke bronnen over | Een oplosbaar probleem krijgt geen antwoord |
+| Richting en apparaat als kenmerk | Geen kenmerken per artikel | Verkeerd gelezen vragen bij hoge score |
+| Meten op echte gesprekken met menselijk oordeel | Meestal een model als rechter op nagespeelde beurten | Een daling bleef een week onopgemerkt |
+| Interne chat: dezelfde zorgvuldigheid | Open-modus wordt niet gecontroleerd; twee routes naast elkaar | De nieuwe route haalde de maat voor de klanttenant niet |
+
+## 5. Het ontwerp
+
+Eén stroom voor beide chats. Alleen de uiteinden verschillen.
+
+1. **Begrijpen.** Het model vult gesloten velden in: soort beurt (kennisvraag, verzoek om een mens, praatje, onderwerp dat niet behandeld wordt), de zelfstandige zoekvraag, en wat de bezoeker al noemde (apparaat, richting). Code beslist de route.
+2. **Zoeken.** Zoals nu, met twee herformuleringen op de eerste beurt. Dit is het enige onderdeel met een sterke eigen meting.
+3. **Eén beslismoment.** Een aparte stap kiest uit de gevonden passages: deze beantwoordt de vraag, geen enkele doet dat, of het hangt af van één feit dat de bezoeker kent. Bij "geen enkele" wordt het antwoordmodel niet aangeroepen; code geeft de vaste eerlijke tekst met de vervolgstap.
+4. **Schrijven.** Het model schrijft het antwoord, kort en in gewone taal, uit alleen de gekozen passages.
+5. **Nakijken in code.** Getallen, bedragen, namen van menu's en knoppen, links en het aantal stappen moeten in de bron voorkomen. Bij een afwijking wordt één keer opnieuw geschreven; lukt dat niet, dan wordt de passage zelf getoond met een korte inleiding.
+6. **Toon.** Bij een negatieve toon blijft het antwoord staan en komt de knop eronder. Een verzoek om een mens gaat direct door.
+
+| Punt in de stroom | Publieke chat | Interne chat |
+|---|---|---|
+| "Staat er niet" | Afspraakknop | Zeggen dat het niet in de kennisbank staat; in Open mag algemene kennis, duidelijk gelabeld |
+| Weg naar een mens | Afspraakknop | Bestaat niet |
+| Bronnen | Bronkaart | Volledige bronnenlijst |
+| Toegang | Publieke kennis | De kennisbanken van de medewerker |
+| Invoer | Korte vragen | Lange vragen en geplakte klantmails, eerst gedistilleerd |
+
+**Wat vervalt als de meting het toelaat:** de antwoordbeoordelaar, de controle per zin als redacteur, en het herschrijven. De controle per zin blijft meekijken om te meten.
+
+**Wat we niet weten** [aanname, te meten in stap 2 van het plan]: hoe goed ons model het beslismoment kan; hoeveel de controle in code vangt; hoeveel ons model nog verzint met alleen de juiste passage.
+
+## 6. Werkafspraken
+
+| Afspraak | Waarom |
 |---|---|
-| Ingang en identiteit: LibreChat met teamkey en gebruiker, tegenover een anonieme bezoeker met widgettoken | Andere gebruikers en andere autorisatie |
-| Modi: Strict en Open (intern), support en brede modus met toestemming (widget) | Andere afspraak over wat buiten de kennisbank mag |
-| Afspraakknop en escalatie op de widget; bronnenvoettekst en "Agent activiteit" intern | Een bezoeker kan naar een mens, een medewerker heeft de bronnen nodig |
-| Geplakte correspondentie herkennen en distilleren | Alleen medewerkers plakken klantmails; blijft een stap die alleen bij detectie afgaat |
-| Antwoordlengte | Komt uit de vragen (volledige procedures voor medewerkers), niet uit aparte code |
+| Elke bewering in een voorstel draagt een label uit de kop van dit document | Dan is zichtbaar waar een ontwerp op rust |
+| Wie een voorstel doet, zegt wat hem van mening zou doen veranderen; een positie verandert op nieuw bewijs | Taalmodellen schuiven mee met tegenspraak: 58% in één meting [onderzoek: SycEval, https://arxiv.org/abs/2502.08177] |
+| Eén meetlat: echte gesprekken met per gesprek de verwachting en het bewijs, vastgesteld door de eigenaar | Zonder vaste meetlat stuurt het laatste incident |
+| Geen wijziging aan het chatpad zonder de meetlat; de uitkomst staat in de PR | De poort op papier is vijf keer overgeslagen |
+| Eén wijziging, één verwachting, vooraf opgeschreven met het criterium om te stoppen | Anders is een daling niet toe te wijzen |
+| Elke stap verdient zijn plek: wat op de meetlat niets bijdraagt, gaat eruit | Het systeem groeide alleen |
+| Een tweede lezer met schone blik beoordeelt alleen juistheid | De maker keurt zijn eigen werk te makkelijk goed |
+| Elke week tien tot twintig echte gesprekken lezen; elke nieuwe fout wordt een vast geval in de meetlat | Zo valt een daling binnen een week op |
+| Meetruns draaien op het Vibe-tegoed (`klai-judge`, `klai-ingest`), nooit op de sleutels van echte bezoekers | Een eerdere meting putte het gedeelde tegoed uit en gaf een bezoeker een foutmelding |
+| Echte gesprekken en de meetlat staan buiten deze repository; tests gebruiken verzonnen gevallen | De repository is publiek |
+| Dit document en chat-system.md worden in dezelfde PR bijgewerkt als de code | De documenten liepen achter |
 
-**Toevallig dubbel** (wordt één implementatie):
+## 7. Plan
 
-| Beslissing | Nu |
-|---|---|
-| Een zoekvraag maken | Drie manieren: herschrijven (intern, elke beurt), parafraseren (widget, eerste vraag), coreferentie (zoekdienst, widget-vervolgvragen) |
-| Doorvragen | Intern een instructie bij een lage band; widget een aparte stap die de vraag uit de artikelen kiest |
-| Zwakke bronnen | Beide paden berekenen het, alleen de widget handelt ernaar |
-| Beslissen wat de gebruiker krijgt | Twee beslisfuncties (`klai_kb_answer_policy` en `decide_answer`) |
-| Controle en reparatie van onbewezen uitspraken | Prompt en drempel gedeeld, twee aanroepplekken met eigen regels; Open intern ongecontroleerd |
-| Vastleggen per beurt | Widget in `answer_signals`, intern alleen logregels |
-| Modelkeuze | Eén router, gebouwd op interne signalen, die op de widget half werkt |
+Volgorde: eerst vastleggen en de meetlat, daarna de kleine wijzigingen met de grootste impact, daarna de kern. De impact is het aantal antwoorden uit de review dat de wijziging raakt (van 109). Elke stap gaat pas live als de meetlat geen achteruitgang laat zien op gevallen die eerst goed gingen.
 
-### 7.3 Stappen
+| # | Stap | Raakt | Omvang | Validatie |
+|---|---|---|---|---|
+| 0 | Dit document, chat-system.md gelijk aan de code, logboeken als archief | – | documenten | Ankers nagelezen tegen de code |
+| 1 | De meetlat: per echt gesprek de verwachte reactie, het dragende artikel en de feiten die erin moeten staan; een script dat de keten herspeelt en de uitkomst in code naast de verwachting legt | – | gereedschap | De huidige keten scoort op de meetlat wat de review vond |
+| 2 | Nulmeting en bijdrage per bestaande stap: keten zoals nu, zonder reparatie, zonder antwoordbeoordelaar | – | meting | Twee rondes, zelfde richting |
+| 3 | Controle en reparatie slaan zinnen over die niets over het bedrijf beweren, en draaien niet op een escalatiebeurt | deel van 18 en 6 | S | Verzonnen gevallen in tests; meetlat |
+| 4 | Negatieve toon zonder verzoek om een mens: gewoon antwoorden, knop eronder; vraagstap en regel voor zwakke bronnen lopen door | 2, plus overgeslagen stappen | S | Meetlat op beurten met negatieve toon |
+| 5 | De zin over de afspraak komt uit code als de knop er hangt en de tekst hem niet noemt | 5 | S | Test; telling op echt verkeer |
+| 6 | "Breder zoeken" alleen aanbieden als het iets kan doen | 1 tot 2 | S | Test |
+| 7 | De maskeerinstructie noemt alleen soorten die in die aanroep gemaskeerd zijn; de excuus-voorbeeldzin uit het profiel | 1 en 3 | S | Test; telling op echt verkeer |
+| 8 | De vraagstap telt alleen als het antwoord op een vraag eindigt, en vraagt niet twee keer naar hetzelfde | 1 tot 3 | S | Bestaande poortevaluatie met vaste gevallen |
+| 9 | Reparatie vervangen: één keer opnieuw schrijven, anders de passage tonen | 18 | M | Drie armen op de meetlat |
+| 10 | Het beslismoment "staat het antwoord erin", eerst meekijkend | 12 en 6 | M | Overeenstemming met de verwachtingen van de meetlat |
+| 11 | Schrijven uit alleen de gekozen passages; controle op harde feiten in code | 18 en 12 | M | Meetlat |
+| 12 | Kenmerken per artikel (apparaat, richting, land) als filter; lijst voor de redactie | 12 | L | Zoekmeting en meetlat |
+| 13 | Dezelfde stroom op de interne chat, met een eigen meetlat uit echte interne vragen; daarna de oude route uit | – | L | Meetlat intern |
 
-**Stap 0: kan de interne chat door de widgetpijplijn?** (onderzoek, geen code) Portal-api biedt al een OpenAI-compatibele endpoint. Uitzoeken, in de code en niet op aanname, of LibreChat daar via een intern profiel doorheen kan: streaming, tool-aanroepen en MCP, bijlagen, titels, kennisbankkeuze en Strict/Open per gebruiker, authenticatie, en wat de LiteLLM-hook nu doet dat de widgetpijplijn niet kan. Uitkomst: welke doelarchitectuur, wat de hook overhoudt (verwachting: modelroutering en PII-maskering), en wat verdwijnt.
+Wat eerder is afgewezen en hier niet terugkomt: doorvragen als opdracht aan het antwoordmodel, een ruimer budget voor de controle, het samenvoegen van de twee controles achteraf, de zekerheidsband als reden om te weigeren, meer passages of een vierde bron. Stap 10 is een stap vóór het schrijven en geen samenvoeging van controles; stap 11 is een smallere invoer en een controle in code, geen andere prompt.
 
-**Stap 1: klein onderhoud** (los van de rest, ongeveer een dag). De modelkeuze zichtbaar in de logs; uitzoeken waarom 8 van 107 herschrijfaanroepen mislukken en de oorzaak oplossen; misleidend codecommentaar corrigeren.
+## 8. Uitkomsten per stap
 
-**Stap 2: de pijplijnen samenvoegen**, in de vorm die stap 0 aanwijst. De interne verschillen uit §7.2 worden configuratie van de ene pijplijn; de dubbele beslislogica verdwijnt uit de hook. Per beslissing uit de tabel "toevallig dubbel" één implementatie. Kan de interne chat niet door dezelfde endpoint, dan wordt de beslislogica één gedeelde module die beide ingangen aanroepen, zonder extra lagen.
+Hier komt per stap van het plan: datum, verwachting vooraf, uitkomst op de meetlat, besluit, PR.
 
-**Stap 3: één manier om een zoekvraag te maken**, gekozen op meting uit de drie bestaande.
+| Stap | Datum | Verwachting | Uitkomst | Besluit |
+|---|---|---|---|---|
+| 0 | 29 sep | Documenten gelijk aan de code | Zie de PR van dit document | Vastgelegd |
 
-**Stap 4: modelkeuze meten**: small, medium en large op dezelfde vragen met dezelfde passages. Daarna beslissen of de router blijft zoals hij is.
+## 9. Wat in de logboeken staat en hier is samengevat
 
-**Later, alleen als de meting erom vraagt:** het oordeel "staat het antwoord in de passages?" in het antwoordplan; kortere antwoorden door eerst de bronzinnen te kiezen; banddrempels bijstellen.
+De volledige metingen tot en met 25 september staan in AJ (2.1 tot en met 2.55) en IQ (§1 tot en met §19). De lessen die daaruit blijven gelden:
 
-### 7.4 Valideren, bij elke stap
-
-- De bestaande gates van elke geraakte dienst, groen.
-- Oud tegen nieuw op dezelfde echte historische vragen, van de widget én uit LibreChat: blind in beide volgordes, twee rondes, en beoordeeld op de beurt ná een vraag als de wijziging vragen stelt. Voor de interne chat met een gesimuleerde medewerker die het ticket kent, niet met een bezoeker.
-- De padtoets uit §7.1 in de PR.
-- Na livegang de productiesignalen van de geraakte stap.
-- Eén review per PR (verificatie tegen de spec plus Sol).
-
-Tijd noemen we alleen waar een vergelijkbare wijziging een houvast geeft; de rest schatten we na stap 0.
-
-**Replay interne chat, oud tegen nieuw (25 september 2026).** Twaalf echte gesprekken van één tenant,
-vier beurten elk, een gesimuleerde medewerker met het doel uit het echte gesprek, beide paden op
-dezelfde vragen, `klai-large` als beoordelaar in beide volgordes (`scripts/replay_internal_chat.py`,
-gedraaid in een wegwerpcontainer via `deploy/scripts/portal-api-oneoff.sh`). De eerste beoordeling
-zag 6 keer nieuw beter, 22 gelijk en 14 keer oud beter, maar kreeg versieringen te zien in plaats van
-antwoorden: het oude pad plakt onder elk antwoord een verborgen bronnenblok in base64 en een langere
-voettekst die ook onder een weigering staat, en in vier Strict-beurten waar beide kanten met dezelfde
-zin weigerden koos de beoordelaar vier keer oud. Op de zichtbare tekst, met beide voetteksten en het
-verborgen blok eraf en met de opdracht een niet aan eigen materiaal gebonden procedure als verzonnen
-te tellen, wordt het 12 keer nieuw beter, 27 gelijk en 3 keer oud beter (Open 12-19-2, Strict 0-8-1);
-verzonnen inhoud oud 13 van 42, nieuw 2 van 42; weigeringen oud 14 procent, nieuw 26 procent; eerste
-woord nieuw 2,2 s tegen 2,5 s mediaan. Vijftien ongelijke paren is minder dan de 47 die §4.3 vraagt,
-dus dit is een richting, geen bewijs; wel is het de richting die de plan-eis stelt (beter, minder
-verzinsels, en de extra weigeringen vallen samen met antwoorden die het oude pad verzon). Twee lessen
-voor elke volgende meting: een beoordelaar krijgt alleen wat de gebruiker leest, en een
-meting van een uur draait buiten de compose-service, want elke deploy naar main maakt die opnieuw aan.
-
-**Tweede replay, 24 gesprekken (27 september 2026).** Zelfde opzet, zelfde tenant, nu met de
-beoordelaar op zichtbare tekst vanaf het begin en in een wegwerpcontainer: 85 beoordeelde paren,
-17 keer nieuw beter, 47 gelijk, 21 keer oud beter (Open 17-32-15, Strict 0-15-6); weigeringen oud
-27 procent, nieuw 20 procent; "verzonnen" oud 11, nieuw 15 van 85, waar de eerste run 13 tegen 2 gaf,
-dus dat oordeel wisselt te veel tussen runs om op te sturen. Over beide runs samen staat het 29 tegen 24
-in ongelijke paren: gelijk spel in Open, en Strict blijft achter (0 keer beter, 7 keer slechter, 23
-gelijk). Van de zes Strict-verliezen zijn er drie een weigering tegen een weigering, twee een
-gedeeltelijk antwoord dat de beoordelaar verzonnen noemde, en één een weigering na de beoordeling
-("deels niet in de artikelen") waar het oude pad antwoordde; in twaalf van de twintig
-bewijsdrempel-gevallen viel elk fragment weg. De maat uit §7.4 (beter, minder verzinsels) is voor een
-klanttenant dus niet gehaald; de eigen tenant en de e2e-tenant draaien wel op de nieuwe route, zodat
-de eerste echte beurten daar gevolgd worden. De vraagstap vuurde in 0 van 88 interne beurten.
-
-### 7.5 Wat we niet doen
-
-- Het antwoordmodel in dezelfde generatie laten doorvragen.
-- Een LLM alleen laten beslissen of een vraag te vaag is.
-- De zekerheidsband als weigertrigger gebruiken.
-- Doorvragen beoordelen op de eerste beurt, of beslissen op 12 tot 30 paren.
-- Meer passages of bronnen toevoegen om gaten te dichten.
-- Aannemen dat het grotere model trouwer is.
-- Een laag of raamwerk bouwen alleen om twee paden tegelijk te bedienen.
-
-### 7.6 Waar dit plan leeft
-
-De uitkomsten per stap gaan in het logboek van SPEC-RAG-ANSWER-JUDGES-001; de padtoets en de lijst echte verschillen staan ook in [chat-system.md](chat-system.md), zodat ze gelezen worden vóór een wijziging.
+1. Een opdracht aan het antwoordmodel verandert zelden zijn gedrag; een aparte stap of een regel in code wel (AJ 2.4, 2.5, 2.12, 2.46).
+2. Meer gevonden is niet hetzelfde als beter beantwoord (AJ 2.32; IQ §11, §14, §19).
+3. Eén ronde is geen meting; een verschil dat tussen rondes omslaat is ruis (AJ 2.32, §6).
+4. De meting moet de route nemen die de gebruiker neemt: de herformuleringen waren drie dagen "live" zonder dat de browser ze kreeg (AJ 2.41).
+5. Een beoordelaar krijgt alleen wat de gebruiker leest (replay interne chat, 25 september).
+6. De kennisbank is voor ongeveer één op de negen kennisvragen de grens: het antwoord staat er niet (AJ 2.31, 2.36).

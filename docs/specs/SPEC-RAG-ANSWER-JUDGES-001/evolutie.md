@@ -2,7 +2,7 @@
 
 Doel van dit bestand: wat er gemeten is, wat daaruit volgde, en wat er live staat. Zo hoeft niemand een meting of een onderzoek over te doen. De spec ernaast (`spec.md`) beschrijft het ontwerp; dit bestand beschrijft de weg ernaartoe.
 
-Bijgewerkt: 2026-09-19, na 2.38.
+**Archief sinds 29 september 2026.** Dit logboek loopt tot en met 2.55 (25 september) en wordt niet meer aangevuld. De samenvatting, het ontwerp, het plan en alle nieuwe uitkomsten staan in [docs/architecture/chat-quality-history-and-plan.md](../../architecture/chat-quality-history-and-plan.md). Drie dingen hieronder zijn door echt verkeer achterhaald: 2.51 (reparatie laat wel beschadigde antwoorden achter), §1 en §3 (lopen tot 19 september) en "afgehandeld en live: de vraagstap (2.47)" in §5 (vervangen door de vaste vraagstap van 2.55).
 
 ---
 

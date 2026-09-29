@@ -1,7 +1,7 @@
 ---
 id: SPEC-RAG-CLARIFY-FLOW-001
 version: "0.3.0"
-status: "Stand 2026-09-24. Pad B: op 17 sep live gezet (#1474) en dezelfde dag vervangen door de vraag- en antwoordbeoordelaar van SPEC-RAG-ANSWER-JUDGES-001 (#1480); sinds #1620 kiest de widget een vraag met answer_plan. CLARIFY_TURN_ADDENDUM wordt op de widget niet gebruikt. Pad A: de verduidelijkingsbeslissing (REQ-5) en de claims-check (REQ-4) draaien. Zie docs/architecture/chat-system.md."
+status: "Stand 2026-09-24. Pad B: op 17 sep live gezet (#1474) en dezelfde dag vervangen door de vraag- en antwoordbeoordelaar van SPEC-RAG-ANSWER-JUDGES-001 (#1480); sinds #1680 beslist vaste code (clarify_gate) of de widget een vraag stelt; answer_plan (#1620) is daarmee vervangen. CLARIFY_TURN_ADDENDUM wordt op de widget niet gebruikt. Pad A: de verduidelijkingsbeslissing (REQ-5) en de claims-check (REQ-4) draaien. Zie docs/architecture/chat-system.md."
 created: 2026-09-17
 author: Claude (Opus 5), in opdracht van Mark Vletter
 priority: high
