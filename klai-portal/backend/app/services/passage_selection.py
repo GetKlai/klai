@@ -141,3 +141,29 @@ async def select_passages(
             chosen=len(selection.chosen(chunks)),
         )
     return selection
+
+
+def writer_brief(selection: PassageSelection, chunks: list[dict]) -> str:
+    """Tell the writer what the chosen passages were chosen for.
+
+    Handed only the passage, the writer still built a complete-looking
+    procedure around it. The sentences the selection pointed at are the answer;
+    naming them, and the need they answer, keeps the reply on them.
+    """
+    quotes = [
+        " ".join(item.quote.split())
+        for item in selection.evidence
+        if 0 < item.passage <= len(chunks) and item.quote.strip()
+    ]
+    if not quotes:
+        return ""
+    listed = "\n".join(f"- {quote}" for quote in dict.fromkeys(quotes))
+    return (
+        "\n\n[This turn] What the visitor needs: "
+        + " ".join(selection.need.split())
+        + "\nThe help articles above answer it in these sentences:\n"
+        + listed
+        + "\nBuild the reply on these sentences and the steps that stand with them in the article. If they cover "
+        "only part of what the visitor needs, give that part and say in one sentence what the help articles do not "
+        "cover. Do not add a step, menu, cause or example that is not in the article."
+    )

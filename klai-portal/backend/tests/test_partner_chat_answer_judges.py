@@ -1163,6 +1163,9 @@ async def test_the_writer_reads_only_the_passages_that_answer(monkeypatch):
     prompt = _system_prompt_sent(litellm)
     assert "storneer je binnen acht weken" in prompt
     assert CHUNK_900["text"] not in prompt
+    # And it is told which sentence answers: with only the passage in hand the
+    # writer still built a complete-looking procedure around it.
+    assert "- Een incasso storneer je binnen acht weken via je eigen bank." in prompt
 
 
 async def test_a_verdict_whose_quoted_sentence_is_not_in_the_passage_counts_as_not_found(monkeypatch):

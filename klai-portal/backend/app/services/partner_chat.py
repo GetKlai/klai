@@ -105,7 +105,7 @@ from app.services.llm_safety_adapter import (
     check_widget_or_partner_input,
     safe_refusal_text,
 )
-from app.services.passage_selection import PassageSelection, select_passages
+from app.services.passage_selection import PassageSelection, select_passages, writer_brief
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
 from app.services.query_rewrite import rewrite_for_retrieval
@@ -3936,7 +3936,9 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     # each need their own passages. "Not in the passages" narrows nothing
     # here: the caller answers that turn without a model, unless the visitor
     # asked for a person or the turn is conversational.
+    selection_chunks: list[dict] = []
     if support_mode and not internal and chunks and not broad_mode and not turn.multi_question:
+        selection_chunks = chunks
         turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
         turn.not_in_passages = bool(turn.selection and turn.selection.not_in_passages(chunks))
         chosen = turn.selection.chosen(chunks) if turn.selection else []
@@ -3960,6 +3962,9 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         sub_query_results=sub_query_results,
         unchecked_questions=unchecked_questions or None,
     )
+
+    if turn.passages_chosen and turn.selection is not None and not broad:
+        system_prompt += writer_brief(turn.selection, selection_chunks)
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
 
