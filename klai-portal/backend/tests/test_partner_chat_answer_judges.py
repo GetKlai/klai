@@ -1306,3 +1306,12 @@ async def test_without_a_selection_a_reply_with_nothing_supported_is_not_shown()
     assert text == REFUSAL_NL
     assert extras["sources"] == []
     assert signals["refused"] is True
+
+
+async def test_a_turn_the_turn_judge_calls_conversational_still_gets_the_refusal(monkeypatch):
+    litellm, text, _ = await _selected_turn(
+        monkeypatch, _selection("not_in_passages"), turn=_turn_verdict(scope="conversation")
+    )
+
+    assert text == REFUSAL_NL
+    assert litellm.answer_requests == []

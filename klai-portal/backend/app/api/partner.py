@@ -2310,15 +2310,14 @@ async def chat_completions(  # noqa: C901
     # handed passages on the same subject writes a procedure out of them. A
     # frustrated visitor gets this reply too: it carries the appointment, and
     # sending that turn to the writer with every passage produced an invented
-    # cause. Not when the visitor asked for a person (that turn is about the
-    # appointment itself), and not on a conversational turn.
+    # cause. Not when the visitor asked for a person: that turn is about the
+    # appointment itself. The turn judge's "conversational" does not exempt a
+    # turn: the selection step read the same conversation and calls a
+    # thank-you or a remark an answer that needs no passage, and the smaller
+    # judge labelled "how do I put this on my laptop" conversational, which
+    # sent it to the writer with passages that did not answer it.
     selection = knowledge_turn.selection
-    if (
-        support_mode
-        and knowledge_turn.not_in_passages
-        and escalation != escalation_service.HUMAN_REQUEST
-        and not turn_judge.is_conversational(scope)
-    ):
+    if support_mode and knowledge_turn.not_in_passages and escalation != escalation_service.HUMAN_REQUEST:
         language = resolve_conversation_language(request.messages).language
         logger.info(
             "partner_chat_not_in_passages",
