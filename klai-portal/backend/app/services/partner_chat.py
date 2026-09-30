@@ -2548,9 +2548,15 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     if outcome == "partial_answer" and helpdesk:
         decision["escalation"] = _appointment_escalation()
         sources = _partial_answer_sources(sources, weak_sources=weak_sources)
-    # Only a reply the user actually reads gets repaired: a refusal and a
-    # clarifying question state nothing about the organisation.
-    if outcome in ("answer", "partial_answer") and grounding is not None and grounding.worth_repairing:
+    # Internal chat only, and only a reply the user actually reads: a refusal
+    # and a clarifying question state nothing about the organisation. On the
+    # help widget nothing changes a reply after it is written: what the writer
+    # may read is decided before (passage_selection.py), and the check's
+    # verdict is kept for measuring. Editing a flagged reply there was the
+    # largest cause of a bad answer in the owner's review, and turning it into
+    # a refusal on one "contradicted" threw away a correct procedure whose
+    # warning the check misread.
+    if internal and outcome in ("answer", "partial_answer") and grounding is not None and grounding.worth_repairing:
         content, sources, decision = await _repair_unsupported_statements(
             content,
             sources,
@@ -2560,8 +2566,6 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             settings=settings,
             org_id=org_id,
             answer_signals=answer_signals,
-            response_language=response_language,
-            helpdesk=helpdesk,
             timeout_seconds=repair_seconds,
             delegated_org_id=delegated_org_id,
         )
@@ -2605,39 +2609,15 @@ async def _repair_unsupported_statements(
     settings: Settings,
     org_id: int | str | None,
     answer_signals: dict[str, Any] | None,
-    response_language: str | None,
-    helpdesk: bool,
     timeout_seconds: float,
     delegated_org_id: str | None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """Act on a reply the check flagged: the widget keeps it whole, the internal chat edits it.
+    """Internal chat: remove the statements the articles do not support, keep the rest.
 
-    Internal: remove the statements the articles do not support, keep the rest.
     Measured on 150 real answers, editing took answers with an unsupported
     statement from 49% to 11% and cost no good answer. A failed repair keeps
     the composed answer.
-
-    Help widget: no editing. On the owner's review of 109 real widget answers
-    the edit was the largest single cause of a bad answer: replayed, it ran on
-    47 of 109 turns, cut steps out of more than half of those and left
-    headings without a body. The reply now goes out as written with the
-    appointment under it. It becomes the refusal only when no statement is
-    supported (11 of those 47) or one contradicts an article (1 of 47).
     """
-    if helpdesk:
-        if answer_signals is not None:
-            answer_signals["repaired"] = False
-        unsupported = grounding.unsupported
-        if len(unsupported) == len(grounding.statements) or any(item.support == "contradicted" for item in unsupported):
-            refusal = {
-                "reason": "grounding_nothing_left",
-                _NO_CITABLE_SOURCES_DECISION_KEY: True,
-                **_helpdesk_refusal_offers(citation_chunks),
-            }
-            return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
-        if not _text_offers_appointment(content) and not is_clarifying_question(content):
-            content = f"{content.rstrip()}\n\n{appointment_offer_sentence(response_language)}"
-        return content, sources, {**decision, "reason": "grounding_flagged", "escalation": _appointment_escalation()}
     repaired = await repair_answer(
         draft=content,
         unsupported=grounding.unsupported,
@@ -3463,6 +3443,10 @@ class KnowledgeTurn:
     # Help widget only: what the selection step made of the retrieved passages
     # (app.services.passage_selection). None when it did not run or failed.
     selection: PassageSelection | None = None
+    # No retrieved passage answers the question; the caller replies without a model.
+    not_in_passages: bool = False
+    # The writer's passages are the selection's, not everything retrieval found.
+    passages_chosen: bool = False
     # An Open turn's grounding check, which runs after the reply; the per-turn
     # record waits for it before it is written.
     grounding_check: asyncio.Task[None] | None = None
@@ -3945,8 +3929,10 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     # asked for a person or the turn is conversational.
     if support_mode and not internal and chunks and not broad_mode and not turn.multi_question:
         turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
+        turn.not_in_passages = bool(turn.selection and turn.selection.not_in_passages(chunks))
         chosen = turn.selection.chosen(chunks) if turn.selection else []
-        if turn.selection and turn.selection.verdict != "not_in_passages" and chosen:
+        if chosen and not turn.not_in_passages:
+            turn.passages_chosen = True
             chunks = chosen
             trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
 

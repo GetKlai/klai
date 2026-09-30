@@ -85,8 +85,14 @@ def _grounding(*unsupported: str, supported: tuple[str, ...] = (), contradicted:
     }
 
 
-def _selection(verdict: str, *passages: int, missing_fact: str = "") -> dict:
-    return {"verdict": verdict, "passages": list(passages), "missing_fact": missing_fact}
+def _selection(verdict: str, *evidence: tuple[int, str], question: str = "") -> dict:
+    """The selection step's reply: the verdict, and per passage the sentence it points at."""
+    return {
+        "need": "",
+        "evidence": [{"passage": number, "quote": quote} for number, quote in evidence],
+        "verdict": verdict,
+        "question": question,
+    }
 
 
 def _turn_verdict(**overrides: Any) -> dict:
@@ -344,12 +350,14 @@ async def test_the_decision_record_keeps_which_statement_the_check_flagged():
     assert signals["unsupported_statements"] == ["De incasso kun je altijd kosteloos terugdraaien."]
 
 
+@pytest.mark.parametrize("contradicted", [False, True])
 @pytest.mark.parametrize("stream", [True, False])
-async def test_a_flagged_widget_answer_goes_out_whole_with_the_appointment_under_it(stream):
-    """The owner's review of real widget answers named the edit of flagged
-    answers as the largest cause of a bad one: steps cut out, headings left
-    without a body. The reply stays as written; the visitor is told how to make
-    sure, and no repair model is called."""
+async def test_nothing_changes_a_widget_answer_after_it_is_written(stream, contradicted):
+    """What the writer may read is decided before it writes (passage_selection.py).
+    Afterwards the check only measures: editing a flagged reply was the largest
+    cause of a bad answer in the owner's review, and a refusal on one
+    "contradicted" threw away a correct procedure whose warning the check
+    misread. The verdict is kept in the record."""
     draft = ANSWER_900 + " Storneren kan binnen acht weken. Het bedrag staat binnen 3 werkdagen terug."
     litellm = _LiteLLM(
         model_text=draft,
@@ -357,16 +365,15 @@ async def test_a_flagged_widget_answer_goes_out_whole_with_the_appointment_under
             "Storneren kan binnen acht weken.",
             "Het bedrag staat binnen 3 werkdagen terug.",
             supported=(ANSWER_900,),
+            contradicted=contradicted,
         ),
     )
 
     text, signals, extras = await _answer(litellm, stream=stream, **_with_900_sources())
 
-    assert text == f"{draft}\n\n{OFFER_NL}"
+    assert text == draft
     assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
-    assert extras["escalation"] == [{"appointment": True}]
     assert signals["unsupported"] == 2
-    assert signals["repaired"] is False
     assert litellm.repair_requests == []
     # The check reads every article the model received, whole: support that sits
     # deep in a long article must not read as "not in the articles".
@@ -374,20 +381,6 @@ async def test_a_flagged_widget_answer_goes_out_whole_with_the_appointment_under
     assert CHUNK_900["text"] in check_input
     assert LONG_CHUNK["text"] in check_input
     assert LONG_CHUNK["text"][-40:] in check_input
-
-
-async def test_a_widget_answer_that_contradicts_an_article_becomes_the_refusal():
-    litellm = _LiteLLM(
-        model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
-        grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
-    )
-
-    text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
-
-    assert text == REFUSAL_NL
-    assert extras["sources"] == []
-    assert signals["refused"] is True
-    assert litellm.repair_requests == []
 
 
 async def test_a_single_flag_leaves_the_answer_alone():
@@ -410,32 +403,11 @@ async def test_a_single_flag_leaves_the_answer_alone():
     assert litellm.repair_requests == []
 
 
-async def test_a_reply_that_is_entirely_unsupported_falls_back_to_the_refusal():
-    draft = (
-        "Je betaalt je factuur via automatische incasso. Bel 020-7001234 om te storneren. "
-        "Het bedrag staat binnen 3 werkdagen terug."
-    )
-    litellm = _LiteLLM(
-        model_text=draft,
-        grounding=_grounding(
-            "Bel 020-7001234 om te storneren.",
-            "Het bedrag staat binnen 3 werkdagen terug.",
-        ),
-    )
-
-    text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
-
-    assert litellm.repair_requests == []
-    assert text == REFUSAL_NL
-    assert extras["sources"] == []
-    assert signals["refused"] is True
-
-
 async def test_an_internal_strict_turn_keeps_the_unrepaired_answer_when_nothing_survives_repair():
     """The LiteLLM hook keeps the unrepaired answer on this outcome instead of
     emptying it into a refusal (kb_answer_repair_kept: "emptying an employee's
     answer is a bigger change than the measurement supports"). Internal chat
-    must make the same call, unlike the widget above."""
+    makes the same call."""
     draft = (
         "Je betaalt je factuur via automatische incasso. Bel 020-7001234 om te storneren. "
         "Het bedrag staat binnen 3 werkdagen terug."
@@ -1184,21 +1156,44 @@ async def test_passages_on_the_subject_that_do_not_answer_get_the_refusal_and_no
 
 
 async def test_the_writer_reads_only_the_passages_that_answer(monkeypatch):
-    litellm, _, _ = await _selected_turn(monkeypatch, _selection("answers", 2))
+    litellm, _, _ = await _selected_turn(
+        monkeypatch, _selection("answers", (2, "Een incasso storneer je binnen acht weken via je eigen bank."))
+    )
 
     prompt = _system_prompt_sent(litellm)
     assert "storneer je binnen acht weken" in prompt
     assert CHUNK_900["text"] not in prompt
 
 
-async def test_an_answer_that_differs_per_variant_hands_the_turn_one_question(monkeypatch):
-    litellm, _, _ = await _selected_turn(
-        monkeypatch, _selection("depends", 1, 2, missing_fact="zakelijke of particuliere rekening")
+async def test_a_verdict_whose_quoted_sentence_is_not_in_the_passage_counts_as_not_found(monkeypatch):
+    """Two one-line passages that only say the product exists were called an
+    answer, and the writer invented the installation steps. The verdict has to
+    point at the sentence; code looks it up."""
+    litellm, text, _ = await _selected_turn(
+        monkeypatch, _selection("answers", (1, "Open het portaal en kies Terugboeken onder Facturen."))
     )
 
-    prompt = _system_prompt_sent(litellm)
-    assert "do not answer yet" in prompt
-    assert "zakelijke of particuliere rekening" in prompt
+    assert text == REFUSAL_NL
+    assert litellm.answer_requests == []
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_steps_that_differ_per_variant_get_the_one_question_as_the_reply(monkeypatch, stream):
+    question = "Gaat het om een zakelijke of een particuliere rekening?"
+    litellm, text, extras = await _selected_turn(
+        monkeypatch,
+        _selection(
+            "depends",
+            (1, "Je betaalt je factuur via automatische incasso."),
+            (2, "Een incasso storneer je binnen acht weken via je eigen bank."),
+            question=question,
+        ),
+        stream=stream,
+    )
+
+    assert text == question
+    assert extras["escalation"] == []
+    assert litellm.answer_requests == []
 
 
 async def test_a_visitor_who_asks_for_a_person_is_not_told_the_articles_lack_an_answer(monkeypatch):

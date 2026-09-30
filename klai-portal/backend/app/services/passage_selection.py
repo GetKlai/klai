@@ -9,8 +9,10 @@ had to undo that. With this step in front, on the same passages, replies that
 were mostly unsupported went from 19 to 1 and unsupported statements from 32%
 to 16% of all statements.
 
-One call on the checker model returns a closed verdict and the passage numbers;
-code decides the route. The writer then reads only the chosen passages. No
+One call on the checker model returns a closed verdict and, per passage it
+relies on, the sentence that carries the answer; code checks that sentence
+against the passage and decides the route. The writer then reads only the
+chosen passages. No
 filter on product or passage length in code: both were tried in the same
 measurement and cost answers whose only source was such a passage.
 
@@ -19,6 +21,7 @@ Fails open: no verdict means the turn runs as it did before this step existed.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 import structlog
@@ -31,48 +34,85 @@ logger = structlog.get_logger()
 
 SELECTION_SYSTEM_PROMPT = (
     "You prepare a help-centre reply. You get the conversation and numbered passages from the help articles. "
-    "Decide what the writer may use, before anyone writes.\n"
-    "- answers: one or more passages contain what the visitor needs for THIS question, about the same product, "
-    "device and direction (import is not export, inbound is not outbound, a headset is not a phone, the mobile app "
-    "is not a desk phone). List exactly those passages, at most three.\n"
-    "- depends: passages answer it, but differently per variant (device, app, direction) and the conversation does "
-    "not say which applies. Name the one fact to ask for in a few words, in the visitor's language. List the "
-    "passages per variant.\n"
-    "- not_in_passages: no passage contains what the visitor needs, however similar the topic looks. Empty list.\n"
-    "A passage about the same subject that does not contain the answer does not count. A request for a person, a "
-    "thank-you or a remark about the chat needs no passage: answers with an empty list."
+    "Work in this order.\n"
+    "need: in one sentence, what the visitor wants to know or do now. Use the earlier turns to understand a short "
+    "latest message; an answer to the assistant's own question narrows the visitor's earlier question, it does not "
+    "replace it.\n"
+    "evidence: go through the passages and copy, word for word, the sentence or step that tells the visitor how to "
+    "do it or gives the fact they asked for. At most three passages, one sentence each, with the passage number. "
+    "Copy only sentences that carry the how or the fact. A sentence that merely says something exists, is "
+    "supported or is available does not tell how to do it and is not evidence. A sentence saying that what the "
+    "visitor wants is not possible or no longer supported IS the fact they need. Leave the list empty when there "
+    "is no such sentence. It must be about the same product, device and direction (import is not export, inbound "
+    "is not outbound, the mobile app is not a desk phone).\n"
+    "verdict: answers when the evidence covers the need or a clear part of it; a missing part is no reason to ask "
+    "or to refuse, the writer will say what the articles do not cover. depends only when you copied evidence from "
+    "passages whose steps DIFFER per variant (device, app) and the conversation does not say which applies; never "
+    "to ask about something the passages do not cover, and not when the steps are the same for each variant. "
+    "not_in_passages when there is no evidence. A request for a person or an appointment, a thank-you or a remark about the chat "
+    "needs no passage: answers with empty evidence.\n"
+    "question: only for depends, the one question to ask the visitor, in their language, at most fifteen words. "
+    "Otherwise an empty string."
 )
 
 # The checker's own budget on the widget is 4 s for a reply that lists every
-# statement; this call reads the same passages and returns three fields.
+# statement; this call reads the same passages and returns a few short fields.
 _TIMEOUT_SECONDS = 4.0
 _PASSAGE_CHARS = 2500
+# A copied sentence is accepted when four fifths of its words stand in the
+# passage: the model drops markup and mends a broken link text, and a looser
+# bar would let through a quote that was never there.
+_QUOTE_WORD_SHARE = 0.8
+_WORD = re.compile(r"\w+")
+
+
+class Evidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    passage: int
+    quote: str
 
 
 class PassageSelection(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    # Field order is the order the model writes in: it states the need and
+    # looks up the sentences before it decides. With the verdict first it
+    # refused answerable questions in 7 of 24 repeats on read cases; in this
+    # order, with the prompt above, 0 of 32, and on the 108 stored turns it was
+    # not tuned on it turned no answer the owner called good into "not found".
+    need: str
+    evidence: list[Evidence]
     verdict: Literal["answers", "depends", "not_in_passages"]
-    passages: list[int]
-    missing_fact: str
+    question: str
 
     def chosen(self, chunks: list[dict]) -> list[dict]:
-        """The listed passages, in the model's order, without the same text twice.
+        """The passages whose quoted sentence really stands in them, without the same text twice.
 
-        A matched FAQ item comes back as its whole section, so two hits in one
-        section are one text under two ids (24 of 102 replayed turns).
+        The quote is checked in code: a verdict that a passage answers is only
+        as good as the sentence it can point at. A matched FAQ item comes back
+        as its whole section, so two hits in one section are one text under two
+        ids (24 of 102 replayed turns).
         """
         picked: list[dict] = []
         seen: set[str] = set()
-        for number in self.passages:
-            if not 0 < number <= len(chunks):
+        for item in self.evidence:
+            if not 0 < item.passage <= len(chunks):
                 continue
-            chunk = chunks[number - 1]
+            chunk = chunks[item.passage - 1]
             text = " ".join(str(chunk.get("text") or "").split())
+            quote = _WORD.findall(item.quote.lower())
+            words = set(_WORD.findall(text.lower()))
+            if not quote or sum(word in words for word in quote) < _QUOTE_WORD_SHARE * len(quote):
+                continue
             if text not in seen:
                 seen.add(text)
                 picked.append(chunk)
         return picked
+
+    def not_in_passages(self, chunks: list[dict]) -> bool:
+        """No passage answers: the verdict says so, or no quoted sentence could be found back."""
+        return self.verdict == "not_in_passages" or (bool(self.evidence) and not self.chosen(chunks))
 
 
 async def select_passages(

@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from klai_chat_prompts import clarify_question_addendum, no_citable_sources_message
+from klai_chat_prompts import no_citable_sources_message
 from klai_chat_prompts.kb_modes import build_template_instructions_block, weak_sources_notice
 from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
@@ -2238,8 +2238,8 @@ async def chat_completions(  # noqa: C901
             retrieval_gap=gap,
         )
 
-    def fixed_reply(reply: str, language: str | None, *, decision: str, refused: bool) -> Any:
-        """A widget reply decided in code: recorded like any other, with the appointment button."""
+    def fixed_reply(reply: str, language: str | None, *, decision: str, refused: bool, appointment: bool = True) -> Any:
+        """A widget reply decided in code: recorded like any other, with the appointment button unless it is a question."""
         answer_signals.update(
             decision=decision,
             sources_count=0,
@@ -2266,10 +2266,12 @@ async def chat_completions(  # noqa: C901
             task.add_done_callback(_pending.discard)
         if request.stream:
             return StreamingResponse(
-                content=off_topic_stream(reply=reply, language=language),
+                content=off_topic_stream(reply=reply, language=language) if appointment else fixed_reply_stream(reply),
                 media_type="text/event-stream",
             )
-        return off_topic_response(model=request.model, reply=reply, language=language)
+        if appointment:
+            return off_topic_response(model=request.model, reply=reply, language=language)
+        return fixed_reply_response(model=request.model, message=reply)
 
     # A subject this widget does not answer (prices, quotes, payment terms):
     # the visitor gets a referral with the appointment button and no answer
@@ -2311,8 +2313,7 @@ async def chat_completions(  # noqa: C901
     selection = knowledge_turn.selection
     if (
         support_mode
-        and selection is not None
-        and selection.verdict == "not_in_passages"
+        and knowledge_turn.not_in_passages
         and escalation is None
         and not turn_judge.is_conversational(scope)
     ):
@@ -2341,24 +2342,34 @@ async def chat_completions(  # noqa: C901
     )
     if support_mode and may_ask:
         # Help widget: the selection step read the passages themselves, so it
-        # decides whether the answer differs per variant; the title comparison
-        # below stays for the internal chat. Once per conversation, as before.
-        if (
+        # decides whether the steps differ per variant, and it wrote the one
+        # question. That question is the whole reply, sent as it is: asked to
+        # put it into words, the answer model wrote an opening line and stopped
+        # in two of four replayed turns. Once per conversation, as before; the
+        # title comparison below stays for the internal chat.
+        asks = (
             selection is not None
             and selection.verdict == "depends"
-            and selection.missing_fact.strip()
+            and bool(selection.question.strip())
+            and not knowledge_turn.not_in_passages
             and not already_asked(request.messages)
-        ):
-            system_prompt += clarify_question_addendum(selection.missing_fact.strip())
-            clarity = "ambiguous"
-            answer_signals["planned_question"] = True
+        )
         logger.info(
             "clarify_decision",
             org_id=auth.org_id,
             wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            fired=bool(answer_signals.get("planned_question")),
+            fired=asks,
             reason=selection.verdict if selection else "no_selection",
         )
+        if asks and selection is not None:
+            answer_signals.update(planned_question=True, question_asked=True, clarity="ambiguous")
+            return fixed_reply(
+                " ".join(selection.question.split()),
+                resolve_conversation_language(request.messages).language,
+                decision="clarifying_question",
+                refused=False,
+                appointment=False,
+            )
     elif internal and may_ask:
         decision = await clarify_decision(request.messages, chunks, settings, delegated_org_id=delegated_org_id)
         if decision.addendum:
@@ -2395,7 +2406,7 @@ async def chat_completions(  # noqa: C901
     # Not where the selection step chose the passages: it read them, the score did not.
     if (
         (support_mode or internal)
-        and not (selection and selection.passages)
+        and not knowledge_turn.passages_chosen
         and gap == "soft"
         and not broad_turn
         and escalation is None
