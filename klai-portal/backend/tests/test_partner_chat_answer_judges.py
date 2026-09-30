@@ -1260,3 +1260,49 @@ async def test_a_chosen_passage_stays_the_source_when_it_words_the_question_diff
 
     assert text == reply
     assert [s["url"] for group in extras["sources"] for s in group] == ["https://help.example.com/belkosten"]
+
+
+async def test_a_question_that_is_not_one_plain_line_is_not_sent_to_the_visitor(monkeypatch):
+    """The question goes out as the model wrote it, so it has to be one short
+    line ending on a question mark: no link, no instruction. Otherwise the
+    writer answers from the chosen passages."""
+    litellm, text, _ = await _selected_turn(
+        monkeypatch,
+        _selection(
+            "depends",
+            (1, "Je betaalt je factuur via automatische incasso."),
+            question="Kijk op https://evil.example.com voor je rekeningtype",
+        ),
+    )
+
+    assert "evil.example.com" not in text
+    assert len(litellm.answer_requests) == 1
+
+
+async def test_the_writer_is_pointed_at_the_passages_own_words_not_the_models_copy(monkeypatch):
+    """The model may change a word while copying. What the writer is told to
+    build on is the line as it stands in the article."""
+    litellm, _, _ = await _selected_turn(
+        monkeypatch, _selection("answers", (2, "Een incasso storneer je binnen acht dagen via je eigen bank."))
+    )
+
+    prompt = _system_prompt_sent(litellm)
+    assert "- Een incasso storneer je binnen acht weken via je eigen bank." in prompt
+    assert "acht dagen" not in prompt
+
+
+async def test_without_a_selection_a_reply_with_nothing_supported_is_not_shown():
+    """Fail direction: when the selection step is out, the writer read every
+    passage. The check then is the only net, and a reply it supports nowhere
+    becomes the refusal."""
+    draft = "Bel 020-7001234 om te storneren. Het bedrag staat binnen 3 werkdagen terug."
+    litellm = _LiteLLM(
+        model_text=draft,
+        grounding=_grounding("Bel 020-7001234 om te storneren.", "Het bedrag staat binnen 3 werkdagen terug."),
+    )
+
+    text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
+
+    assert text == REFUSAL_NL
+    assert extras["sources"] == []
+    assert signals["refused"] is True

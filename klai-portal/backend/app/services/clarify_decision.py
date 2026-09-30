@@ -37,7 +37,8 @@ class ClarifyQuestion(BaseModel):
     question: str
 
 
-def _plain_question(question: str) -> bool:
+def plain_question(question: str) -> bool:
+    """One short line that ends on a question mark and carries no link, list or instruction."""
     asked = " ".join(question.split())
     return (
         "\n" not in question.strip()
@@ -67,7 +68,7 @@ async def write_question(
     )
     if result is None:
         return dataclasses.replace(gate, reason="model_failed")
-    if not _plain_question(result.question):
+    if not plain_question(result.question):
         return dataclasses.replace(gate, reason="question_shape")
     return dataclasses.replace(gate, question=" ".join(result.question.split()))
 

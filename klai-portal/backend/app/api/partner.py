@@ -46,7 +46,7 @@ from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
 from app.services.chat_attachments import process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
-from app.services.clarify_decision import WEAK_SOURCES_ADDENDUM, clarify_decision
+from app.services.clarify_decision import WEAK_SOURCES_ADDENDUM, clarify_decision, plain_question
 from app.services.clarify_gate import already_asked
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
@@ -65,6 +65,7 @@ from app.services.partner_chat import (
     off_topic_stream,
     openai_chat_completion_non_streaming,
     openai_chat_completion_streaming,
+    output_safety_violation,
     retrieve_context,
     safety_refusal_response,
     safety_refusal_stream,
@@ -2246,6 +2247,7 @@ async def chat_completions(  # noqa: C901
             refused=refused,
             broad_mode=False,
             model=request.model,
+            appointment=appointment,
         )
         if language is not None:
             answer_signals["language"] = language
@@ -2266,12 +2268,10 @@ async def chat_completions(  # noqa: C901
             task.add_done_callback(_pending.discard)
         if request.stream:
             return StreamingResponse(
-                content=off_topic_stream(reply=reply, language=language) if appointment else fixed_reply_stream(reply),
+                content=off_topic_stream(reply=reply, language=language, appointment=appointment),
                 media_type="text/event-stream",
             )
-        if appointment:
-            return off_topic_response(model=request.model, reply=reply, language=language)
-        return fixed_reply_response(model=request.model, message=reply)
+        return off_topic_response(model=request.model, reply=reply, language=language, appointment=appointment)
 
     # A subject this widget does not answer (prices, quotes, payment terms):
     # the visitor gets a referral with the appointment button and no answer
@@ -2349,11 +2349,17 @@ async def chat_completions(  # noqa: C901
         # put it into words, the answer model wrote an opening line and stopped
         # in two of four replayed turns. Once per conversation, as before; the
         # title comparison below stays for the internal chat.
+        # The question is model-written and goes out as it is, so it passes
+        # the checks a written reply passes: one plain line ending on a
+        # question mark (which is also how "already asked" recognises it next
+        # turn), and the output safety check. It needs passages to have been
+        # chosen: a question about variants nobody found is a guess.
         asks = (
             selection is not None
             and selection.verdict == "depends"
-            and bool(selection.question.strip())
-            and not knowledge_turn.not_in_passages
+            and knowledge_turn.passages_chosen
+            and plain_question(selection.question)
+            and output_safety_violation(selection.question) is None
             and not already_asked(request.messages)
         )
         logger.info(

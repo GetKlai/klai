@@ -64,6 +64,11 @@ _PASSAGE_CHARS = 2500
 # bar would let through a quote that was never there.
 _QUOTE_WORD_SHARE = 0.8
 _WORD = re.compile(r"\w+")
+# A passage line belongs to the quote when most of its words are in it; the
+# model often strings the items of a step list into one sentence.
+_LINE_END = re.compile(r"\n|(?<=[.!?])\s+")
+_LINE_WORD_SHARE = 0.6
+_MAX_LINES_PER_QUOTE = 6
 
 
 class Evidence(BaseModel):
@@ -86,33 +91,50 @@ class PassageSelection(BaseModel):
     verdict: Literal["answers", "depends", "not_in_passages"]
     question: str
 
-    def chosen(self, chunks: list[dict]) -> list[dict]:
-        """The passages whose quoted sentence really stands in them, without the same text twice.
+    def found(self, chunks: list[dict]) -> list[tuple[dict, str]]:
+        """Per quoted sentence that really stands in its passage: the passage, and the passage's own words for it.
 
         The quote is checked in code: a verdict that a passage answers is only
-        as good as the sentence it can point at. A matched FAQ item comes back
-        as its whole section, so two hits in one section are one text under two
-        ids (24 of 102 replayed turns).
+        as good as the sentence it can point at. What travels on is never the
+        model's copy but the lines of the passage it matches, so a word the
+        model changed while copying cannot reach the writer.
         """
-        picked: list[dict] = []
-        seen: set[str] = set()
+        pairs: list[tuple[dict, str]] = []
         for item in self.evidence:
             if not 0 < item.passage <= len(chunks):
                 continue
             chunk = chunks[item.passage - 1]
-            text = " ".join(str(chunk.get("text") or "").split())
+            text = str(chunk.get("text") or "")
             quote = _WORD.findall(item.quote.lower())
-            words = set(_WORD.findall(text.lower()))
-            if not quote or sum(word in words for word in quote) < _QUOTE_WORD_SHARE * len(quote):
+            if not quote or sum(word in set(_WORD.findall(text.lower())) for word in quote) < _QUOTE_WORD_SHARE * len(
+                quote
+            ):
                 continue
-            if text not in seen:
-                seen.add(text)
-                picked.append(chunk)
-        return picked
+            wanted = set(quote)
+            lines = [" ".join(line.split()) for line in _LINE_END.split(text)]
+            own = [
+                line
+                for line in lines
+                if (words := _WORD.findall(line.lower()))
+                and sum(word in wanted for word in words) >= _LINE_WORD_SHARE * len(words)
+            ]
+            pairs.append((chunk, " ".join(own[:_MAX_LINES_PER_QUOTE])))
+        return pairs
+
+    def chosen(self, chunks: list[dict]) -> list[dict]:
+        """The passages with a quoted sentence found back in them, without the same text twice.
+
+        A matched FAQ item comes back as its whole section, so two hits in one
+        section are one text under two ids (24 of 102 replayed turns).
+        """
+        picked: dict[str, dict] = {}
+        for chunk, _ in self.found(chunks):
+            picked.setdefault(" ".join(str(chunk.get("text") or "").split()), chunk)
+        return list(picked.values())
 
     def not_in_passages(self, chunks: list[dict]) -> bool:
         """No passage answers: the verdict says so, or no quoted sentence could be found back."""
-        return self.verdict == "not_in_passages" or (bool(self.evidence) and not self.chosen(chunks))
+        return self.verdict == "not_in_passages" or (bool(self.evidence) and not self.found(chunks))
 
 
 async def select_passages(
@@ -147,23 +169,19 @@ def writer_brief(selection: PassageSelection, chunks: list[dict]) -> str:
     """Tell the writer what the chosen passages were chosen for.
 
     Handed only the passage, the writer still built a complete-looking
-    procedure around it. The sentences the selection pointed at are the answer;
+    procedure around it. The lines the selection pointed at are the answer;
     naming them, and the need they answer, keeps the reply on them.
     """
-    quotes = [
-        " ".join(item.quote.split())
-        for item in selection.evidence
-        if 0 < item.passage <= len(chunks) and item.quote.strip()
-    ]
-    if not quotes:
+    lines = list(dict.fromkeys(own for _, own in selection.found(chunks) if own))
+    if not lines:
         return ""
-    listed = "\n".join(f"- {quote}" for quote in dict.fromkeys(quotes))
+    listed = "\n".join(f"- {line}" for line in lines)
     return (
         "\n\n[This turn] What the visitor needs: "
         + " ".join(selection.need.split())
-        + "\nThe help articles above answer it in these sentences:\n"
+        + "\nThe help articles above answer it in these lines:\n"
         + listed
-        + "\nBuild the reply on these sentences and the steps that stand with them in the article. If they cover "
+        + "\nBuild the reply on these lines and the steps that stand with them in the article. If they cover "
         "only part of what the visitor needs, give that part and say in one sentence what the help articles do not "
         "cover. Do not add a step, menu, cause or example that is not in the article."
     )

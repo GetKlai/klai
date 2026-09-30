@@ -204,7 +204,7 @@ def without_dashes(text: str, *, helpdesk: bool) -> str:
     return _PUNCTUATION_DASH.sub(", ", text) if helpdesk else text
 
 
-def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
+def off_topic_response(*, model: str, reply: str, language: str | None, appointment: bool = True) -> dict:
     """The referral for a subject this widget does not answer.
 
     No answer model writes here: the visitor gets the referral that names their
@@ -213,12 +213,9 @@ def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
     same rule in the widget's base prompt was measured on 2026-09-17 and landed
     it right 8 times out of 15.
     """
-    message = {
-        "role": "assistant",
-        "content": reply,
-        "sources": [],
-        "escalation": _appointment_escalation(),
-    }
+    message: dict[str, Any] = {"role": "assistant", "content": reply, "sources": []}
+    if appointment:
+        message["escalation"] = _appointment_escalation()
     if language is not None:
         message["language"] = language
     return {
@@ -229,11 +226,12 @@ def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
     }
 
 
-async def off_topic_stream(*, reply: str, language: str | None) -> AsyncGenerator[bytes]:
+async def off_topic_stream(*, reply: str, language: str | None, appointment: bool = True) -> AsyncGenerator[bytes]:
     """The same reply as :func:`off_topic_response`, in the widget's frames."""
     if language is not None:
         yield _sse_language_delta(language)
-    yield _sse_escalation_delta(_appointment_escalation())
+    if appointment:
+        yield _sse_escalation_delta(_appointment_escalation())
     yield _sse_content_delta(reply)
     yield b"data: [DONE]\n\n"
 
@@ -2562,6 +2560,23 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     # largest cause of a bad answer in the owner's review, and turning it into
     # a refusal on one "contradicted" threw away a correct procedure whose
     # warning the check misread.
+    if (
+        helpdesk
+        and outcome in ("answer", "partial_answer")
+        and grounding is not None
+        and len(grounding.statements) >= 2
+        and len(grounding.unsupported) == len(grounding.statements)
+        and not (citation_chunks and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks))
+    ):
+        # The selection step did not choose this turn's passages (it failed,
+        # or was skipped), so the writer read everything retrieval found. A
+        # reply in which the check then supports nothing is not shown.
+        refusal = {
+            "reason": "grounding_nothing_left",
+            _NO_CITABLE_SOURCES_DECISION_KEY: True,
+            **_helpdesk_refusal_offers(citation_chunks),
+        }
+        return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
     if internal and outcome in ("answer", "partial_answer") and grounding is not None and grounding.worth_repairing:
         content, sources, decision = await _repair_unsupported_statements(
             content,
@@ -3931,13 +3946,19 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         # fall through to the zero_chunks prompt below instead of refusing.
 
     # Help widget: the writer reads only the passages that answer the question
-    # (passage_selection.py has the numbers). Not on a consented broad turn,
-    # which reads no articles, and not on a multi-part message, whose parts
+    # (passage_selection.py has the numbers). Not on a turn that is answered
+    # broadly, which reads no articles, and not on a multi-part message, whose parts
     # each need their own passages. "Not in the passages" narrows nothing
     # here: the caller answers that turn without a model, unless the visitor
     # asked for a person or the turn is conversational.
     selection_chunks: list[dict] = []
-    if support_mode and not internal and chunks and not broad_mode and not turn.multi_question:
+    if (
+        support_mode
+        and not internal
+        and chunks
+        and not turn.multi_question
+        and not _broad_mode_active(chunks, support_mode=support_mode, broad_consent=broad_mode)
+    ):
         selection_chunks = chunks
         turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
         turn.not_in_passages = bool(turn.selection and turn.selection.not_in_passages(chunks))
