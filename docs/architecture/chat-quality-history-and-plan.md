@@ -109,6 +109,17 @@ De les: het systeem laat het model schrijven zodra er iets gevonden is, ook als 
 
 Een meting van wat controle in code vangt; een vergelijking tussen opnieuw schrijven en terugvallen op de letterlijke passage; een meting van "antwoord plus aanbod" tegenover "direct doorverwijzen"; een Nederlandse meting op korte supportteksten; praktijk voor Nederlandse en Belgische inhoud in één kennisbank.
 
+### 3.6 Hoe open-source systemen het in code doen
+
+Op 30 september is de broncode gelezen van twaalf systemen met een chat over eigen documenten (Onyx, RAGFlow, Dify, Kotaemon, R2R, Haystack, LlamaIndex, de LangGraph-voorbeelden voor Corrective en Self-RAG, Open WebUI, Chatwoot Captain, Khoj, AnythingLLM) [onderzoek: broncode].
+
+- Geen enkel systeem herschrijft een antwoord zin voor zin na een controle. Wat ze wel doen: opnieuw zoeken, opnieuw schrijven, het antwoord als onvolledig labelen of het niet tonen.
+- Het gangbare patroon is een oordeel per passage vóór het schrijven, en alleen wat daar doorheen komt gaat naar de schrijver (Onyx, LangGraph, Kotaemon, Haystack, LlamaIndex). De meeste toetsen daarbij op onderwerp, niet op "beantwoordt dit de vraag". Onyx benoemt als enige "lijkt op het onderwerp maar gaat over iets anders" als aparte klasse; RAGFlow vraagt of de hele set volstaat en welke passages nuttig zijn.
+- Weigeren in code gebeurt alleen bij nul passages (RAGFlow, AnythingLLM, LlamaIndex). Met passages in handen laat iedereen "staat er niet" aan de opdracht van de schrijver over.
+- Vrijwel elk systeem faalt open: geeft het oordeel niets of een fout, dan gaat de ongefilterde lijst door.
+- Wat gevonden is wordt verbreed naar de sectie of het document eromheen (Onyx, Dify, RAGFlow, LlamaIndex), en dubbele tekst wordt samengevoegd.
+- Een vervolgvraag wordt herschreven tot een zelfstandige vraag met de eerdere beurten erbij; alleen Onyx en R2R zoeken daarnaast ook met de oorspronkelijke zin.
+
 ## 4. Onderzoek naast onze praktijk
 
 | Principe | Wat wij doen | Verschil |
@@ -181,11 +192,11 @@ Een nieuw cijfer voor "goed" is er niet [aanname zolang de eigenaar niet opnieuw
 
 ### Volgorde vanaf nu
 
-1. De gevallen lezen waar een lijkend artikel wint, en vastleggen welk kenmerk het verschil maakt (richting, apparaat, product). Pas daarna een voorstel; dit is stap E, naar voren gehaald.
-2. Het randgeval uit de review van de laatste wijziging: een antwoord waarvan alleen de zin over de afspraak onderbouwd is, hoort de weigering te worden.
-3. De gemengde vraag (uitleg plus kosten): het deel over uitleg beantwoorden, het deel over kosten doorverwijzen (stap D).
-4. De vervolgbeurt waarin de zoekvraag het onderwerp echt mist, zodra stap 1 er is; eerder haalt het alleen lijkende artikelen binnen.
-5. Vragen met meerdere delen (stap B), de brontekst (stap C) en de interne chat (stap G) blijven staan zoals in §7.
+1. De keuzestap van begin tot eind meten op de hele meetlat, twee rondes, en de antwoorden lezen. Klopt het beeld van de proef, dan uitrollen.
+2. Daarna het zoeken, want dat is dan het knelpunt: elke beurt waar de keuzestap "staat er niet in" zegt terwijl de kennisbank het antwoord heeft. Met de keuzestap erachter is breder zoeken veilig; de extra zoekgang voor vervolgbeurten (stap A) en het verbreden naar de hele sectie komen dan terug op tafel.
+3. Wat er na het schrijven nog nodig is opnieuw bepalen: de lichte antwoordbeoordelaar en de regel na de controle per zin zijn gebouwd voor een schrijver die alles te lezen kreeg.
+4. De regels in de eigen instructies van de widget die om vaste stappen vragen: besluit van de eigenaar.
+5. Vragen met meerdere delen (stap B; de keuzestap slaat ze nu over), de brontekst (stap C) en de interne chat (stap G).
 
 ## 6. Werkafspraken
 
@@ -259,6 +270,7 @@ Hier komt per stap van het plan: datum, verwachting vooraf, uitkomst op de meetl
 | – | 30 sep | Waar gaat het op het pad voor het eerst mis | Zie §2, "Wat de sporen lieten zien" | Plan herzien, stappen A tot en met G |
 | A | 30 sep | Een vervolgbeurt vindt het juiste artikel als de zoekvraag het onderwerp van het gesprek meeneemt | Eerst alleen het zoeken, op alle vervolgbeurten uit de review. De herschrijving van de interne chat in plaats van de huidige zoekvraag: evenveel gewonnen als verloren. Het onderwerp als extra zoekgang ernaast (de eerdere woorden van de bezoeker voor de laatste zin, plus die herschrijving): volgens een beoordelend model vaker een passage die de vraag beantwoordt, ruim boven de ruis van een herhaalde meting. Daarna gebouwd en van begin tot eind nagespeeld, twee rondes met en twee zonder: de soort reactie verschilt niet meer dan de rondes onderling, het aantal beurten met zwakke bronnen halveert bijna, en een beurt duurt een halve tot een hele seconde langer. Bij het lezen van de antwoorden waar het zoeken won, was het antwoord één keer beter en meerdere keren slechter: de extra zoekgang haalt hoog scorende passages binnen over hetzelfde onderwerp maar een andere vraag (inkomend waar uitgaand gevraagd is, de app waar het om een bureautelefoon gaat), en het model schrijft daar dan een stellig antwoord uit waar eerst eerlijk "niet gevonden" stond | Niet uitgerold. De bottleneck op vervolgbeurten is niet dat er te weinig gevonden wordt, maar dat niets op het pad ziet dat een hoog scorende passage een andere vraag beantwoordt. Dat is stap E, en die schuift naar voren |
 | F | 30 sep | Zonder de reparatie houdt een afgekeurd antwoord zijn stappen | De reparatie op de helpwidget is vervangen door een vaste regel in code: het antwoord gaat uit zoals geschreven met de afspraak eronder, en wordt alleen de weigering als geen enkele uitspraak onderbouwd is of één een artikel tegenspreekt. Nagespeeld op alle beurten waar de reparatie eerder draaide: evenveel weigeringen als met reparatie, in ruim twee derde het volledige concept met de zin over de afspraak, de mediane lengte een zesde hoger, en een beurt gemiddeld een seconde sneller omdat een modelaanroep vervalt. Gelezen: waar de reparatie een procedure tot losse koppen had teruggebracht, staat de procedure er weer. Wat blijft: een onbewezen zin wordt niet meer weggehaald, en een gat in de brontekst ("Ga naar.") is nu zichtbaar in het antwoord | Uitgerold op de widget; de interne chat houdt de reparatie tot stap G |
+| Kiezen vóór schrijven | 30 sep | Als een stap vóór het schrijven kiest welke passages de vraag beantwoorden, verzint het model niet meer | Eerst gemeten waar het verzinnen ontstaat: in bijna de helft van de beurten waarin het model schreef, bevatte geen enkele passage het antwoord, en in de meerderheid daarvan was de score hoog genoeg om geen waarschuwing te geven. Daarna dezelfde beurten met dezelfde passages nagespeeld in vier varianten. Alleen opschonen in code (dubbel, losse feitzinnen, ander product) hielp niet en kostte antwoorden waarvan zo'n passage de enige bron was. Kiezen plus een opdracht zonder de regel voor de slotzin: antwoorden die grotendeels onbewezen waren gingen van een vijfde naar bijna nul, en het aandeel afgekeurde zinnen halveerde. De prijs: de keuzestap zegt in ruim vier op de tien beurten "staat er niet in"; bij de gelezen gevallen klopte dat, en het legt bloot hoe vaak het zoeken het juiste artikel niet aanlevert | Gebouwd (keuzestap, vaste tekst bij "staat er niet in", één vraag bij "hangt af van", profiel zonder slotzin). Nog niet uitgerold: de meting van begin tot eind wacht op het dagtegoed van het meetmodel |
 
 Wat dit voor het ontwerp van §5 betekent: twee aannames zijn gemeten en houden niet zoals ze er stonden. Het beslismoment (stap 3 van het ontwerp) kan met ons model geen harde poort zijn, en de controle in code (stap 5 van het ontwerp) vangt maar een deel. Het ontwerp blijft de richting, maar de vervanging van de reparatie (stap 9) kan niet op deze twee leunen en hangt af van het oordeel van de eigenaar over concept tegenover gerepareerd antwoord.
 

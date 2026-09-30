@@ -105,6 +105,7 @@ from app.services.llm_safety_adapter import (
     check_widget_or_partner_input,
     safe_refusal_text,
 )
+from app.services.passage_selection import PassageSelection, select_passages
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
 from app.services.query_rewrite import rewrite_for_retrieval
@@ -3459,6 +3460,9 @@ class KnowledgeTurn:
     # The mode the answer is decided under (answer_judge.decide_answer): the
     # profile's, or "general" for an internal turn that searched nothing.
     answer_mode: KbMode = "strict"
+    # Help widget only: what the selection step made of the retrieved passages
+    # (app.services.passage_selection). None when it did not run or failed.
+    selection: PassageSelection | None = None
     # An Open turn's grounding check, which runs after the reply; the per-turn
     # record waits for it before it is written.
     grounding_check: asyncio.Task[None] | None = None
@@ -3932,6 +3936,19 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
             return [], "", [], False
         # The user's own attachment is still readable with zero KB evidence;
         # fall through to the zero_chunks prompt below instead of refusing.
+
+    # Help widget: the writer reads only the passages that answer the question
+    # (passage_selection.py has the numbers). Not on a consented broad turn,
+    # which reads no articles, and not on a multi-part message, whose parts
+    # each need their own passages. "Not in the passages" narrows nothing
+    # here: the caller answers that turn without a model, unless the visitor
+    # asked for a person or the turn is conversational.
+    if support_mode and not internal and chunks and not broad_mode and not turn.multi_question:
+        turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
+        chosen = turn.selection.chosen(chunks) if turn.selection else []
+        if turn.selection and turn.selection.verdict != "not_in_passages" and chosen:
+            chunks = chosen
+            trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
 
     # Consented general-knowledge fallback: decided here, on the same
     # post-safety-filter chunks the gap event sees, and surfaced to the caller

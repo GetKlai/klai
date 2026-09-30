@@ -101,10 +101,10 @@ def test_support_prompt_procedures_keep_source_labels():
     assert "one action per line" in text
     assert "exactly as they appear in the help article" in text
     # Style rules measured from the real help articles (REQ-8): a warning
-    # belongs before the steps, a procedure closes with its result, and an
-    # unnamed element is described rather than given an invented name.
+    # belongs before the steps and an unnamed element is described rather than
+    # given an invented name. A procedure holds only the article's own steps.
     assert "Let op:" in text
-    assert "Je hebt nu" in text
+    assert "never complete a procedure with steps of your own" in text
     assert "kruisje" in text
 
 

@@ -19,7 +19,6 @@ import pytest
 import respx
 from helpers import FakeKB, FakeResult, make_partner_auth
 from klai_chat_prompts import appointment_offer_sentence, no_citable_sources_message
-from structlog.testing import capture_logs
 
 from app.services import partner_chat, turn_judge
 from app.services.chat_profile import ChatProfile
@@ -86,6 +85,10 @@ def _grounding(*unsupported: str, supported: tuple[str, ...] = (), contradicted:
     }
 
 
+def _selection(verdict: str, *passages: int, missing_fact: str = "") -> dict:
+    return {"verdict": verdict, "passages": list(passages), "missing_fact": missing_fact}
+
+
 def _turn_verdict(**overrides: Any) -> dict:
     return {
         "topic": "handled",
@@ -111,8 +114,12 @@ class _LiteLLM:
         repaired: str = "",
         referral: str = "",
         question: str = "",
+        selection: Any = None,
     ):
         self.model_text = model_text
+        # The selection step (passage_selection.py). By default it lists no
+        # passage, which narrows nothing: the turn runs on everything retrieved.
+        self.selection = selection or _selection("answers")
         self.referral = referral
         self.question = question
         self.answer_judge = answer_judge if answer_judge is not None else _answer_verdict()
@@ -154,6 +161,10 @@ class _LiteLLM:
             return _json_reply({"question": self.question})
         if schema == "off_topic_referral":
             return _json_reply({"subject": self.referral})
+        if schema == "passage_selection":
+            if isinstance(self.selection, Exception):
+                raise self.selection
+            return _json_reply(self.selection)
         if schema == "query_paraphrase":
             # Retrieval input only (query_paraphrase.py); the judges under test
             # never see it, and it is not the answer request.
@@ -857,88 +868,6 @@ async def test_route_ambiguous_turn_gets_no_ask_instruction_and_a_question_draft
     assert text == CLARIFYING_QUESTION
 
 
-def _variant_items(score: float) -> list[dict]:
-    """Two troubleshooters that differ only in the platform, both with a section on not being able to call."""
-    return [
-        {
-            "chunk_id": f"v{i}",
-            "evidence_id": f"evv{i}",
-            "title": f"Alpha phone app for {platform} troubleshooter",
-            "heading_path": "Troubleshooter > I can't call",
-            "text": f"On {platform}, allow the microphone and restart the Alpha phone app.",
-            "source_url": f"https://help.example.com/{platform.lower()}",
-            "reranker_score": score - i / 10,
-        }
-        for i, platform in enumerate(("iPhone", "Android"))
-    ]
-
-
-VARIANT_QUESTION = "Do you call with the iPhone app or the Android app?"
-
-
-@pytest.mark.parametrize("stream", [True, False])
-async def test_strong_articles_on_one_topic_in_two_variants_hand_the_turn_one_question(monkeypatch, stream):
-    """ "ik kan niet bellen met mijn apparaat" got an iPhone answer for a visitor
-    who never named a device (logbook 2.44). When strong articles cover the same
-    topic per platform, the turn is handed the question that picks the platform."""
-    litellm, _, _ = await _route_turn(
-        monkeypatch,
-        turn=_turn_verdict(),
-        question="I can't call",
-        stream=stream,
-        band="high",
-        items=_variant_items(0.9),
-        question_written=VARIANT_QUESTION,
-    )
-
-    assert VARIANT_QUESTION in _system_prompt_sent(litellm)
-    writer_calls = [body for body in litellm.requests if _call_kind(body) == "clarify_question"]
-    assert [body.get("metadata") for body in writer_calls] == [_delegated_with_tag("clarify_question")]
-    assert "iPhone; Android" in writer_calls[0]["messages"][1]["content"]
-
-
-async def test_weak_articles_get_the_weak_source_rule_even_when_they_differ_in_a_variant(monkeypatch):
-    """A planned question used to switch the weak-source rule off, and weak
-    articles are where most needless questions were asked (logbook 2.54)."""
-    litellm, _, _ = await _route_turn(
-        monkeypatch,
-        turn=_turn_verdict(),
-        question="I can't call",
-        band="low",
-        items=_variant_items(0.3),
-        question_written=VARIANT_QUESTION,
-    )
-
-    prompt = _system_prompt_sent(litellm)
-    assert "Retrieval found nothing that clearly matches" in prompt
-    assert VARIANT_QUESTION not in prompt
-    assert not [body for body in litellm.requests if _call_kind(body) == "clarify_question"]
-
-
-async def test_the_decision_is_logged_without_any_text_of_the_turn(monkeypatch):
-    with capture_logs() as logs:
-        await _route_turn(
-            monkeypatch,
-            turn=_turn_verdict(),
-            question="I can't call since this morning",
-            band="high",
-            items=_variant_items(0.9),
-            question_written=VARIANT_QUESTION,
-        )
-
-    (decision,) = [entry for entry in logs if entry["event"] == "clarify_decision"]
-    assert {key: decision[key] for key in ("fired", "reason", "axis", "documents", "options")} == {
-        "fired": True,
-        "reason": "asked",
-        "axis": "device",
-        "documents": 2,
-        "options": 2,
-    }
-    rendered = repr(logs)
-    for text in (VARIANT_QUESTION, "since this morning", "iPhone", "Android", "troubleshooter"):
-        assert text not in rendered
-
-
 @pytest.mark.parametrize(
     ("band", "told"),
     [("low", True), ("high", False)],
@@ -1165,7 +1094,7 @@ _TAG_FOR_KIND = {
     "query_paraphrase": "portal:query-paraphrase",
     "answer_judge": "portal:answer-judge",
     "off_topic_referral": "portal:off-topic-referral",
-    "clarify_question": "portal:clarify-question",
+    "passage_selection": "portal:passage-selection",
     "grounding_check": "portal:answer-grounding",
     "repair": "portal:answer-grounding",
     "answer": "portal:partner-chat-answer",
@@ -1202,6 +1131,7 @@ async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(mo
     assert {kind for kind, _ in calls} == {
         "turn_judge",
         "query_paraphrase",
+        "passage_selection",
         "answer",
         "answer_judge",
         "grounding_check",
@@ -1213,5 +1143,76 @@ async def test_the_off_topic_referral_call_names_the_tenant(monkeypatch):
     litellm, _, _ = await _off_topic_turn(monkeypatch, topic="not_handled", referral="je factuur")
 
     calls = _metadata_per_call(litellm)
-    assert {kind for kind, _ in calls} == {"turn_judge", "query_paraphrase", "off_topic_referral"}
+    assert {kind for kind, _ in calls} == {"turn_judge", "query_paraphrase", "passage_selection", "off_topic_referral"}
     assert calls == [(kind, _delegated_with_tag(kind)) for kind, _ in calls]
+
+
+# ─── The selection step: which passages answer, decided before writing ───
+
+
+def _two_articles() -> list[dict]:
+    return [
+        {**CHUNK_900, "reranker_score": 0.95},
+        {
+            "chunk_id": "c2",
+            "evidence_id": "ev2",
+            "title": "Incasso storneren",
+            "text": "Een incasso storneer je binnen acht weken via je eigen bank.",
+            "source_url": "https://help.example.com/storneren",
+            "reranker_score": 0.6,
+        },
+    ]
+
+
+def _selected_turn(monkeypatch, selection: Any, *, stream: bool = False, turn: dict | None = None):
+    turn = turn or _turn_verdict()
+    litellm = _LiteLLM(model_text=ANSWER_900, selection=selection, turn=turn)
+    return _route_turn(monkeypatch, turn=turn, stream=stream, band="high", items=_two_articles(), litellm=litellm)
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_passages_on_the_subject_that_do_not_answer_get_the_refusal_and_no_written_reply(monkeypatch, stream):
+    """The top article scores 0.95 because it shares the subject, and says
+    nothing about the question. A model handed such passages writes a procedure
+    out of them, so none is called: the visitor gets the honest "not found"
+    with the appointment."""
+    litellm, text, extras = await _selected_turn(monkeypatch, _selection("not_in_passages"), stream=stream)
+
+    assert text == REFUSAL_NL
+    assert extras["escalation"] == [{"appointment": True}]
+    assert litellm.answer_requests == []
+
+
+async def test_the_writer_reads_only_the_passages_that_answer(monkeypatch):
+    litellm, _, _ = await _selected_turn(monkeypatch, _selection("answers", 2))
+
+    prompt = _system_prompt_sent(litellm)
+    assert "storneer je binnen acht weken" in prompt
+    assert CHUNK_900["text"] not in prompt
+
+
+async def test_an_answer_that_differs_per_variant_hands_the_turn_one_question(monkeypatch):
+    litellm, _, _ = await _selected_turn(
+        monkeypatch, _selection("depends", 1, 2, missing_fact="zakelijke of particuliere rekening")
+    )
+
+    prompt = _system_prompt_sent(litellm)
+    assert "do not answer yet" in prompt
+    assert "zakelijke of particuliere rekening" in prompt
+
+
+async def test_a_visitor_who_asks_for_a_person_is_not_told_the_articles_lack_an_answer(monkeypatch):
+    litellm, text, _ = await _selected_turn(
+        monkeypatch, _selection("not_in_passages"), turn=_turn_verdict(wants_human=True)
+    )
+
+    assert text != REFUSAL_NL
+    assert len(litellm.answer_requests) == 1
+
+
+async def test_a_failed_selection_leaves_the_turn_as_it_was(monkeypatch):
+    litellm, _, _ = await _selected_turn(monkeypatch, httpx.ConnectError("boom"))
+
+    prompt = _system_prompt_sent(litellm)
+    assert CHUNK_900["text"] in prompt
+    assert "storneer je binnen acht weken" in prompt

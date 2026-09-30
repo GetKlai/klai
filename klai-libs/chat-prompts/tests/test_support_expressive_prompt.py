@@ -201,7 +201,11 @@ _PROFILE_HASHES = {
     # re-baselined 2026-09-25, SUPPORT: the "When the question is unclear" rule
     # is gone; the question is decided per turn from the retrieved articles
     # (SPEC-RAG-ANSWER-JUDGES-001 logbook 2.54).
-    "SUPPORT_CHAT_SYSTEM_PROMPT": "c9027f08951c4c7d6c4e11525d7f15e082a2f2592327ea7294c3b94bce1ea2cb",
+    # re-baselined 2026-09-30, SUPPORT: the closing line "Je hebt nu ..." is
+    # gone and "only the steps the article gives" took its place; the prescribed
+    # closer was a statement no article carries, and the rule to write a whole
+    # procedure drew invented steps (docs/architecture/chat-quality-history-and-plan.md §8).
+    "SUPPORT_CHAT_SYSTEM_PROMPT": "2562abfe9087a0340b27990c3baa3ed63c49eaf0f76c1870a3aa9dd5a700aa93",
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT": "12c767503d2479e3b661fbe04b100dae63fe2b494b3521a0b2b8975a0ac9135d",
 }
 _PROFILE_VALUES = {
