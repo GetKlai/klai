@@ -42,6 +42,32 @@ Er zijn twee chats op dezelfde kennis. De interne chat laat medewerkers de kenni
 
 Dit patroon is bekend. Meer aanroepen van een taalmodel helpen bij makkelijke vragen en schaden bij moeilijke, waardoor het totaal eerst stijgt en dan daalt [onderzoek (samenvatting): Chen e.a. 2024, https://arxiv.org/abs/2403.02419]. Een toename van AI-gebruik in ontwikkelteams gaat samen met 7,2% lagere stabiliteit van opleveringen, en de remedie die het rapport noemt is kleine wijzigingen en stevige tests [onderzoek: DORA 2024].
 
+### Wat de sporen lieten zien (30 september)
+
+Tot 30 september keken we per onderdeel of het deed wat het moest doen, en telden we uitkomsten. Op die dag zijn alle gevallen uit de review opnieuw nagespeeld met het hele pad vastgelegd (vraag, vraagbeoordelaar, herformuleringen, gevonden passages, de letterlijke opdracht aan het model, het concept, beide controles, de reparatie, de eindtekst), en zijn de fout beoordeelde gevallen één voor één gelezen. Per geval is de eerste plek op het pad vastgelegd waar het misging [gemeten, één lezer, één naspeelronde].
+
+| Aandeel van de fout beoordeelde gevallen | Eerste plek waar het misgaat |
+|---|---|
+| ruim een derde | Vervolgbeurt: de zoekvraag is alleen de laatste zin en mist het onderwerp van het gesprek |
+| bijna een vijfde | Eerste beurt: de vraag heeft meerdere delen of varianten en geen stap merkt dat |
+| een zesde | Zoeken: een artikel dat op de vraag lijkt maar iets anders behandelt, wint met een hoge score |
+| een zevende | Kennisbank: het antwoord staat er niet in |
+| enkele gevallen | Onderwerpstap: een technische vraag wordt afgewezen als commercieel |
+| enkele gevallen | Brontekst of zoekscore: een gat in de passage, of het juiste artikel scoort te laag |
+| één geval | Schrijven: goede passages, het model vult toch zelf aan |
+
+In bijna alle gevallen ligt de eerste oorzaak vóór het schrijven. Wat er daarna gebeurt, over alle nagespeelde beurten:
+
+- In zes op de tien beurten heeft minstens één passage een gat waar een linktekst hoort ("Ga naar ." zonder menunaam). Het model vult dat zelf in. Dit verlies bij het inlezen is op 19 september gevonden (IQ §3) en toen niet hersteld, omdat een beoordelend model geen voorkeur zag.
+- In een derde van de beurten staat een passage uit de documentatie van een ander product in de top; in een achtste is dat de hoogst scorende.
+- De opdracht "zeg dat het er niet staat" bij zwakke bronnen wordt in vier op de tien gevallen genegeerd: het model schrijft toch een antwoord.
+- De lichte antwoordbeoordelaar zegt in zes op de tien gevallen "alles staat in de artikelen" waar de controle per zin twee of meer beweringen afkeurt.
+- De controle per zin vangt verzonnen zinnen, maar ziet een antwoord dat netjes uit het verkeerde artikel komt niet, en keurt ook zinnen af die het profiel zelf voorschrijft (de slotzin "Je hebt nu ...").
+- Een kwart van de lijstregels in antwoorden staat in geen enkele gevonden passage. Het profiel vraagt om een nette, complete procedure met een slotzin, terwijl het model losse fragmenten uit meerdere artikelen krijgt.
+- Het linkfilter haalt ook het adres weg als dat adres het antwoord is.
+
+De les: het systeem laat het model schrijven zodra er iets gevonden is, ook als wat gevonden is niet bij de vraag past, en alles daarna probeert dat te herstellen. De reparatie is het laatste station van een fout die eerder ontstond. De volgorde van aanpakken is daarom het pad zelf, van voor naar achter (§7).
+
 ## 3. Wat het onderzoek zegt
 
 ### 3.1 Beslissen: antwoorden, vragen, eerlijk stoppen of een mens
@@ -98,7 +124,7 @@ Een meting van wat controle in code vangt; een vergelijking tussen opnieuw schri
 
 ## 5. Het ontwerp
 
-Eén stroom voor beide chats. Alleen de uiteinden verschillen.
+Eén stroom voor beide chats. Alleen de uiteinden verschillen. Sinds het lezen van de sporen (§2) ligt het zwaartepunt op stap 1 en 2 van dit ontwerp: wat het model te lezen krijgt bepaalt de uitkomst, meer dan wat er na het schrijven gebeurt.
 
 1. **Begrijpen.** Het model vult gesloten velden in: soort beurt (kennisvraag, verzoek om een mens, praatje, onderwerp dat niet behandeld wordt), de zelfstandige zoekvraag, en wat de bezoeker al noemde (apparaat, richting). Code beslist de route.
 2. **Zoeken.** Zoals nu, met twee herformuleringen op de eerste beurt. Dit is het enige onderdeel met een sterke eigen meting.
@@ -129,6 +155,8 @@ Eén stroom voor beide chats. Alleen de uiteinden verschillen.
 | Geen wijziging aan het chatpad zonder de meetlat; de uitkomst staat in de PR | De poort op papier is vijf keer overgeslagen |
 | Eén wijziging, één verwachting, vooraf opgeschreven met het criterium om te stoppen | Anders is een daling niet toe te wijzen |
 | Elke stap verdient zijn plek: wat op de meetlat niets bijdraagt, gaat eruit | Het systeem groeide alleen |
+| Eerst lezen, dan tellen, dan voorstellen: voor elke conclusie worden minstens tien echte gevallen van begin tot eind gevolgd, en wordt per geval de eerste plek op het pad vastgelegd waar het misgaat | Tellen per onderdeel liet de oorzaak vóór het schrijven een week onzichtbaar |
+| Een wijziging wordt beoordeeld op het hele pad: wat ze vooraan verandert en wat ze achteraan overbodig maakt | Anders wordt het een patch aan het laatste station |
 | Een tweede lezer met schone blik beoordeelt alleen juistheid | De maker keurt zijn eigen werk te makkelijk goed |
 | Elke week tien tot twintig echte gesprekken lezen; elke nieuwe fout wordt een vast geval in de meetlat | Zo valt een daling binnen een week op |
 | Meetruns draaien op het Vibe-tegoed (`klai-judge`, `klai-ingest`), nooit op de sleutels van echte bezoekers | Een eerdere meting putte het gedeelde tegoed uit en gaf een bezoeker een foutmelding |
@@ -150,13 +178,20 @@ Volgorde: eerst vastleggen en de meetlat, daarna de kleine wijzigingen met de gr
 | 6 | "Breder zoeken" alleen aanbieden als het iets kan doen | 1 tot 2 | S | Test |
 | 7 | De excuus-voorbeeldzin uit het profiel. De maskeerinstructie (noemt alleen soorten die in die aanroep gemaskeerd zijn) is een wijziging aan de maskering zelf en wacht op een eigen, zwaardere review | 3 en 1 | S | Meetlat; telling op echt verkeer |
 | 8 | De vraagstap telt alleen als het antwoord op een vraag eindigt, en vraagt niet twee keer naar hetzelfde | 1 tot 3 | S | Bestaande poortevaluatie met vaste gevallen |
-| 9 | Reparatie vervangen: één keer opnieuw schrijven, anders de passage tonen | 18 | M | Drie armen op de meetlat |
-| 10 | Het beslismoment "staat het antwoord erin", eerst meekijkend | 12 en 6 | M | Overeenstemming met de verwachtingen van de meetlat |
-| 11 | Schrijven uit alleen de gekozen passages; controle op harde feiten in code | 18 en 12 | M | Meetlat |
-| 12 | Kenmerken per artikel (apparaat, richting, land) als filter; lijst voor de redactie | 12 | L | Zoekmeting en meetlat |
-| 13 | Dezelfde stroom op de interne chat, met een eigen meetlat uit echte interne vragen; daarna de oude route uit | – | L | Meetlat intern |
+**Herzien op 30 september, na het lezen van de sporen.** De stappen 9 tot en met 13 zoals ze hier stonden (reparatie vervangen, een beslismoment als poort, controle op harde feiten, kenmerken per artikel, de interne chat) zijn vervangen door de stappen hieronder, in de volgorde van het pad. De twee metingen die al gedaan waren voor het beslismoment en de controle in code staan in §8.
 
-Wat eerder is afgewezen en hier niet terugkomt: doorvragen als opdracht aan het antwoordmodel, een ruimer budget voor de controle, het samenvoegen van de twee controles achteraf, de zekerheidsband als reden om te weigeren, meer passages of een vierde bron. Stap 10 is een stap vóór het schrijven en geen samenvoeging van controles; stap 11 is een smallere invoer en een controle in code, geen andere prompt.
+| # | Stap op het pad | Wat verandert | Omvang | Validatie |
+|---|---|---|---|---|
+| A | Begrijpen, vervolgbeurt | De zoekvraag van een vervolgbeurt neemt het onderwerp van het gesprek mee. Eén manier om een zoekvraag te maken voor widget en interne chat | M | Sporen van de vervolgbeurten opnieuw lezen; aandeel beurten waar het bekende artikel gevonden wordt |
+| B | Begrijpen, meerdere delen en varianten | Een vraag met meerdere delen wordt per deel gezocht en per deel beantwoord of eerlijk overgeslagen; bepalen varianten de uitkomst, dan één vraag | M | Sporen van die gevallen lezen; aandeel lijstregels dat in geen passage staat |
+| C | Brontekst | Linkteksten blijven behouden bij het inlezen, zodat "Ga naar ." weer een menunaam heeft; besluit van de eigenaar over de documentatie van het andere product in dezelfde kennisbank | M, plus opnieuw inlezen | Aandeel passages met een gat; aandeel lijstregels dat in geen passage staat |
+| D | Onderwerpstap | Een technische vraag krijgt niet de tekst over prijzen en offertes | S | De afgewezen technische gevallen uit de meetlat |
+| E | Zoeken | Kenmerken per artikel (richting, apparaat) zodat importeren niet wint van exporteren | L | Zoekmeting op de verkeerd gelezen gevallen |
+| F | Schrijven en controleren | Pas na A tot en met C opnieuw meten wat er nog misgaat. Dan beslissen over de regels in het profiel die om een complete procedure vragen, de lichte antwoordbeoordelaar, en de reparatie | – | Hele meetlat opnieuw, sporen lezen |
+| G | Interne chat | Dezelfde stappen, met een eigen meetlat uit echte interne vragen; daarna de oude route uit | L | Meetlat intern |
+
+
+Wat eerder is afgewezen en hier niet terugkomt: doorvragen als opdracht aan het antwoordmodel, een ruimer budget voor de controle, het samenvoegen van de twee controles achteraf, de zekerheidsband als reden om te weigeren, meer passages of een vierde bron. Twee stappen raken aan eerder werk en zeggen daarom wat er nu anders is. Stap A: op 18 september is de herschrijving van vervolgvragen juist beperkt tot verwijswoorden, omdat ze in een vijfde van de gevallen het gesprek voortzette in plaats van een zoekvraag te maken (AJ 2.6); de sporen laten zien dat die beperking het onderwerp kost, en de interne route heeft intussen een herschrijving met een rem op het verliezen van het onderwerp. Stap C: het behouden van linkteksten is op 19 september gemeten en niet uitgerold omdat een beoordelend model geen voorkeur had (IQ §11); nu is er een maat in code die het gevolg van de gaten direct telt.
 
 ## 8. Uitkomsten per stap
 
@@ -175,6 +210,9 @@ Hier komt per stap van het plan: datum, verwachting vooraf, uitkomst op de meetl
 | 8 | 29 sep | Hooguit één vraag per gesprek; het record zegt wat de bezoeker zag | Vaste code met tests; het record bewaart de knop, de toon en of een geplande vraag gesteld is | Uitgerold |
 | 10 | 29 sep | Ons kleine model kan zien of de gevonden passages de vraag beantwoorden | Eerste proef, één ronde, één gesloten vraag per geval, zonder productcode. Waar de eigenaar "terecht niet gevonden" zei, zeiden het kleine en het middelgrote model dat bijna altijd ook. Van de verkeerd gelezen vragen herkende het kleine model ruim de helft en het middelgrote driekwart als "staat niet in deze passages". Maar van de antwoorden die de eigenaar goed noemde, keurde het kleine model een derde af en het middelgrote een kwart; op eerste beurten een kwart en een achtste. De twee modellen waren het in zeven op de tien gevallen eens | Niet bouwen als poort. Wel bruikbaar als signaal naast de score: het ziet verkeerd gelezen vragen die de score mist. Eerst de gevallen lezen waar proef en oordeel van de eigenaar botsen |
 | 11 | 29 sep | Controle in code op harde feiten kan de controle per zin vervangen | Gemeten op de nagespeelde antwoorden: een vijfde van de zinnen die de controle afkeurt bevat een hard feit (getal, link, naam van een menu of knop); de rest is een bewering in gewone woorden die code niet kan toetsen. Van de harde feiten in antwoorden staat een derde niet letterlijk in de gevonden passages, waarbij andere schrijfwijzen meetellen | De controle in code dekt een smal deel en kan de controle per zin niet vervangen. Bruikbaar als extra, goedkope toets op verzonnen getallen en namen |
+| – | 30 sep | Een blinde beoordelaar kan zeggen of het concept of de gerepareerde versie beter is | Twee rondes, beide volgordes, met de passages ernaast: de beoordelaar koos vrijwel altijd het concept. Maar in een kwart van de gevallen haalde de reparatie getallen of namen weg die niet in de passages stonden, en koos hij toch het concept | De beoordelaar verkiest het rijkere antwoord; bruikbaar als aanwijzing, niet als oordeel |
+| – | 30 sep | De lijsten in antwoorden komen uit de artikelen | Per lijstregel teruggezocht in de passages van dezelfde beurt: vier op de tien staan er vrijwel letterlijk in, een derde deels, een kwart nergens | De oorzaak ligt vóór het schrijven; aanleiding voor het lezen van de sporen |
+| – | 30 sep | Waar gaat het op het pad voor het eerst mis | Zie §2, "Wat de sporen lieten zien" | Plan herzien, stappen A tot en met G |
 
 Wat dit voor het ontwerp van §5 betekent: twee aannames zijn gemeten en houden niet zoals ze er stonden. Het beslismoment (stap 3 van het ontwerp) kan met ons model geen harde poort zijn, en de controle in code (stap 5 van het ontwerp) vangt maar een deel. Het ontwerp blijft de richting, maar de vervanging van de reparatie (stap 9) kan niet op deze twee leunen en hangt af van het oordeel van de eigenaar over concept tegenover gerepareerd antwoord.
 
