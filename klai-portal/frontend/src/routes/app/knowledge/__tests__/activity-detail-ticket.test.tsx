@@ -198,7 +198,7 @@ describe('conversation detail ticket flow', () => {
   it('saves the review, then opens the panel and fetches the preview', async () => {
     mockApi({
       detail: baseDetail(),
-      preview: { contact: 'existing', lifecycle_stage: 'customer', contact_name: null },
+      preview: { contact: 'existing', lifecycle_stage: 'customer', contact_name: null, company_name: null },
     })
     renderPage()
 
@@ -239,6 +239,7 @@ describe('conversation detail ticket flow', () => {
               status: 'created',
               ticket_url: 'https://app-eu1.hubspot.com/contacts/1/record/0-5/9',
               contact_status: 'existing',
+              company_status: 'linked',
               error: null,
               created_by_name: 'Ada L',
               created_at: '2026-09-15T09:00:00Z',
@@ -246,14 +247,15 @@ describe('conversation detail ticket flow', () => {
           ],
         },
       }),
-      preview: { contact: 'not_found', lifecycle_stage: null, contact_name: null },
+      preview: { contact: 'new', lifecycle_stage: null, contact_name: null, company_name: null },
       createTicketResult: () =>
         Promise.resolve({
           target_key: 'sales',
           target_label: 'Sales',
           status: 'created',
           ticket_url: 'https://app-eu1.hubspot.com/contacts/1/record/0-5/10',
-          contact_status: 'not_found',
+          contact_status: 'created',
+          company_status: 'none',
           error: null,
           created_by_name: 'Ada L',
           created_at: '2026-09-15T10:00:00Z',
@@ -271,20 +273,96 @@ describe('conversation detail ticket flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /^(klopt|correct)$/i }))
     fireEvent.click(screen.getByRole('button', { name: /maak ticket|create ticket/i }))
 
-    // not_found is a terminal state (Klai never creates a HubSpot contact,
-    // SPEC §2.6) — the panel must say so, not imply a contact will follow.
+    // SPEC v0.4.0 §2.6: an unknown visitor becomes a contact when the ticket
+    // is created, and the panel says so before the reviewer confirms.
     await waitFor(() =>
       expect(
-        screen.getByText(/niet in hubspot gevonden|not found in hubspot/i),
+        screen.getByText(
+          /nieuw contact, wordt aangemaakt met naam en e-mailadres|new contact, will be created with name and e-mail/i,
+        ),
       ).toBeTruthy(),
     )
-    expect(screen.queryByText(/nieuw contact|new contact/i)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Finance' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Sales' }))
     fireEvent.click(screen.getByRole('button', { name: /^ticket aanmaken$|^confirm ticket$/i }))
 
     await waitFor(() => expect(ticketPostBody()).toEqual({ target_key: 'sales' }))
+  })
+
+  it('names the contact and its company in the contact line when the preview carries them', async () => {
+    // The backend fills both names only for an admin (SPEC §2.8); the panel
+    // shows whatever it is given.
+    mockApi({
+      detail: baseDetail(),
+      preview: {
+        contact: 'existing',
+        lifecycle_stage: 'customer',
+        contact_name: 'Noor Verbeek',
+        company_name: 'Fictief BV',
+      },
+    })
+    renderPage()
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /maak ticket|create ticket/i })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /^(klopt|correct)$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /maak ticket|create ticket/i }))
+
+    await waitFor(() => expect(screen.getByText(/Noor Verbeek · Fictief BV/)).toBeTruthy())
+  })
+
+  it('says per created ticket which HubSpot step was skipped and which scope is missing', async () => {
+    mockApi({
+      detail: baseDetail({
+        ticket: {
+          available: true,
+          targets: [
+            { key: 'sales', label: 'Sales' },
+            { key: 'finance', label: 'Finance' },
+          ],
+          tickets: [
+            {
+              target_key: 'sales',
+              target_label: 'Sales',
+              status: 'created',
+              ticket_url: 'https://app-eu1.hubspot.com/contacts/1/record/0-5/12',
+              contact_status: 'create_forbidden',
+              company_status: 'none',
+              error: null,
+              created_by_name: 'Ada L',
+              created_at: '2026-09-15T09:00:00Z',
+            },
+            {
+              target_key: 'finance',
+              target_label: 'Finance',
+              status: 'created',
+              ticket_url: 'https://app-eu1.hubspot.com/contacts/1/record/0-5/13',
+              contact_status: 'existing',
+              company_status: 'forbidden',
+              error: null,
+              created_by_name: 'Ada L',
+              created_at: '2026-09-15T09:00:00Z',
+            },
+          ],
+        },
+      }),
+    })
+    renderPage()
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          /contact niet aangemaakt: de servicekey mist crm\.objects\.contacts\.write|contact not created: the service key lacks crm\.objects\.contacts\.write/i,
+        ),
+      ).toBeTruthy(),
+    )
+    expect(
+      screen.getByText(
+        /niet aan het bedrijf gekoppeld: de servicekey mist crm\.objects\.companies\.read|not linked to the company: the service key lacks crm\.objects\.companies\.read/i,
+      ),
+    ).toBeTruthy()
   })
 
   it('shows the failure reason and re-posts the same target on retry', async () => {
@@ -301,6 +379,7 @@ describe('conversation detail ticket flow', () => {
               status: 'failed',
               ticket_url: null,
               contact_status: null,
+              company_status: null,
               error: 'HubSpot antwoordde niet.',
               created_by_name: null,
               created_at: '2026-09-15T09:00:00Z',
@@ -316,6 +395,7 @@ describe('conversation detail ticket flow', () => {
           status: 'created',
           ticket_url: 'https://app-eu1.hubspot.com/contacts/1/record/0-5/11',
           contact_status: 'existing',
+          company_status: 'none',
           error: null,
           created_by_name: 'Ada L',
           created_at: '2026-09-15T10:00:00Z',
@@ -344,6 +424,7 @@ describe('conversation detail ticket flow', () => {
               status: 'failed',
               ticket_url: null,
               contact_status: null,
+              company_status: null,
               error: 'HubSpot antwoordde niet.',
               created_by_name: null,
               created_at: '2026-09-15T09:00:00Z',

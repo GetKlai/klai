@@ -99,9 +99,9 @@ def build_ticket_content(
     visitor = " · ".join(p for p in (visitor_name, visitor_email) if p)
     head: list[str] = []
     if not contact_found:
-        # No contact is created (SPEC §2.6, the key has no contacts.write), so
-        # the ticket carries no association and the team needs the visitor's
-        # details on the very first line to find or create the contact.
+        # HubSpot refused to create the contact (SPEC §2.6, a key without
+        # crm.objects.contacts.write), so the ticket carries no contact and
+        # the team needs the visitor's details on the very first line.
         head += [f"Niet gevonden in HubSpot: {visitor}", ""]
     if notes:
         head.append("Notities van de beoordelaar")

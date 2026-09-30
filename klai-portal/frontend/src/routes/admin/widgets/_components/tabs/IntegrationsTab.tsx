@@ -35,6 +35,7 @@ import { ApiError } from '@/lib/apiFetch'
 import { FetchError } from '@/lib/fetch-errors'
 import type {
   HubSpotWidgetIntegration,
+  TicketIntegrationSettings,
   TicketPipeline,
   TicketTarget,
   WidgetConfig,
@@ -518,6 +519,8 @@ function ticketIntegrationErrorMessage(err: unknown): string {
   if (detail === 'missing_scope') return m.admin_widgets_tickets_error_missing_scope()
   if (detail === 'unknown_pipeline_or_stage') return m.admin_widgets_tickets_error_unknown_pipeline_stage()
   if (detail === 'service_key_required') return m.admin_widgets_tickets_error_key_required()
+  if (detail === 'portal_id_required') return m.admin_widgets_tickets_error_portal_id_required()
+  if (detail === 'account_mismatch') return m.admin_widgets_tickets_error_account_mismatch()
   return err instanceof Error ? err.message : m.admin_shared_error_generic()
 }
 
@@ -535,6 +538,10 @@ function TicketsCard({ widget }: Props) {
 
   const [serviceKey, setServiceKey] = useState('')
   const [portalId, setPortalId] = useState('')
+  // Where the shown account ID came from. An ID fetched from HubSpot is not
+  // sent back, so swapping the key for one on another account refetches it
+  // instead of tripping account_mismatch; typing in the field makes it manual.
+  const [portalIdSource, setPortalIdSource] = useState<TicketIntegrationSettings['portal_id_source']>(null)
   const [targets, setTargets] = useState<TicketTargetRow[]>([])
   const [pipelines, setPipelines] = useState<TicketPipeline[] | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -553,6 +560,7 @@ function TicketsCard({ widget }: Props) {
       seededRef.current = true
       setTargets(fromServer(query.data.targets))
       setPortalId(query.data.hubspot_portal_id ? String(query.data.hubspot_portal_id) : '')
+      setPortalIdSource(query.data.portal_id_source)
     }
   }, [query.data])
 
@@ -589,23 +597,25 @@ function TicketsCard({ widget }: Props) {
 
   const needsKey = !configured
   const keyOk = !needsKey || serviceKey.trim().length > 0
-  const portalIdValid = /^[1-9]\d*$/.test(portalId.trim())
+  // Optional (SPEC §4.2): the server fetches it when the key may.
+  const portalIdValid = portalId.trim() === '' || /^[1-9]\d*$/.test(portalId.trim())
   const targetsValid =
     targets.length > 0 && targets.every((target) => target.label.trim() && target.pipeline_id && target.stage_id)
 
   const handleSave = () => {
     if (!portalIdValid) return
-    const payload: { service_key?: string; hubspot_portal_id: number; targets: TicketTarget[] } = {
-      hubspot_portal_id: Number(portalId.trim()),
+    const payload: { service_key?: string; hubspot_portal_id?: number; targets: TicketTarget[] } = {
       targets: targets.map(({ key, label, pipeline_id, stage_id }) => ({ key, label, pipeline_id, stage_id })),
     }
     if (serviceKey.trim()) payload.service_key = serviceKey.trim()
+    if (portalId.trim() && portalIdSource !== 'hubspot') payload.hubspot_portal_id = Number(portalId.trim())
     saveMutation.mutate(payload, {
       onSuccess: (data) => {
         toast.success(m.admin_shared_success_updated())
         setServiceKey('')
         setTargets(fromServer(data.targets))
         setPortalId(data.hubspot_portal_id ? String(data.hubspot_portal_id) : '')
+        setPortalIdSource(data.portal_id_source)
       },
       onError: (err) => toast.error(ticketIntegrationErrorMessage(err)),
     })
@@ -617,6 +627,7 @@ function TicketsCard({ widget }: Props) {
         toast.success(m.admin_widgets_tickets_delete_success())
         setServiceKey('')
         setPortalId('')
+        setPortalIdSource(null)
         setPipelines(null)
         setTargets([])
         setConfirmingDelete(false)
@@ -643,14 +654,21 @@ function TicketsCard({ widget }: Props) {
         <Field
           id="widget-tickets-portal-id"
           label={m.admin_widgets_tickets_portal_id_label()}
-          hint={m.admin_widgets_tickets_portal_id_help()}
+          hint={
+            portalIdSource === 'hubspot'
+              ? m.admin_widgets_tickets_portal_id_from_hubspot()
+              : m.admin_widgets_tickets_portal_id_help()
+          }
         >
           <Input
             type="number"
             min={1}
             step={1}
             value={portalId}
-            onChange={(e) => setPortalId(e.target.value)}
+            onChange={(e) => {
+              setPortalId(e.target.value)
+              setPortalIdSource('manual')
+            }}
             className="max-w-xs"
           />
         </Field>

@@ -400,14 +400,14 @@ UPDATE portal_retrieval_gaps
 # Tickets (SPEC-KNOWLEDGE-ESCALATION-001 §4.3/§4.4). Every statement is
 # scoped by an explicit org_id on top of RLS, like the rest of this file.
 _TICKET_SETTINGS_SQL = """
-SELECT targets, service_key_encrypted, hubspot_portal_id
+SELECT targets, service_key_encrypted, hubspot_portal_id, hubspot_ui_domain
   FROM widget_ticket_settings
  WHERE widget_id = CAST(:widget_id AS uuid)
    AND org_id = :org_id
 """
 
 _CONVERSATION_TICKETS_SQL = """
-SELECT t.target_key, t.target_label, t.status, t.ticket_url, t.contact_status, t.error,
+SELECT t.target_key, t.target_label, t.status, t.ticket_url, t.contact_status, t.company_status, t.error,
        COALESCE(p.display_name, p.email) AS created_by_name, t.created_at
   FROM conversation_tickets t
   LEFT JOIN portal_users p ON p.id = t.created_by_user_id
@@ -470,13 +470,14 @@ _FINISH_TICKET_SQL = """
 UPDATE conversation_tickets
    SET status = :status, error = :error, hubspot_ticket_id = :hubspot_ticket_id,
        hubspot_contact_id = :hubspot_contact_id, contact_status = :contact_status,
-       ticket_url = :ticket_url, updated_at = NOW()
+       company_status = :company_status, ticket_url = :ticket_url, updated_at = NOW()
  WHERE id = :ticket_id
    AND org_id = :org_id
 """
 
-# A HubSpot create flow is two calls of at most 10 s each; a 'pending' row
-# older than this belongs to a request that died, not one still running.
+# A HubSpot create flow is at most five calls of at most 10 s each; a
+# 'pending' row older than this belongs to a request that died, not one
+# still running.
 _STALE_PENDING_MINUTES = 5
 
 # A knowledge cause is a gap by definition; the other causes are not the
@@ -592,7 +593,8 @@ class TicketOut(BaseModel):
     target_label: str
     status: str
     ticket_url: str | None = None
-    contact_status: str | None = None
+    contact_status: Literal["existing", "created", "create_forbidden"] | None = None
+    company_status: Literal["linked", "none", "forbidden"] | None = None
     error: str | None = None
     created_by_name: str | None = None
     created_at: datetime
@@ -608,10 +610,13 @@ class TicketBlockOut(BaseModel):
 
 
 class TicketPreviewOut(BaseModel):
-    contact: Literal["existing", "not_found"]
+    # "new": no contact carries the email; creating the ticket creates one.
+    contact: Literal["existing", "new"]
     lifecycle_stage: str | None = None
-    # Admin-or-higher only, like ``visitor`` on the detail.
+    # Admin-or-higher only, like ``visitor`` on the detail. company_name is
+    # also null when the contact has no company or the key may not read it.
     contact_name: str | None = None
+    company_name: str | None = None
 
 
 class TicketRequest(BaseModel):
@@ -1461,9 +1466,9 @@ async def _ticket_context(db: AsyncSession, perms: UserPermissions, conversation
 async def _ticket_text(db: AsyncSession, conversation: Any, perms: UserPermissions) -> tuple[str, partial[str]]:
     """Subject and content (SPEC §3) from the transcript and its reviews.
 
-    The content is returned still waiting for ``contact_found``: whether
-    HubSpot knows the visitor is only known after the database work is
-    committed and the search has run.
+    The content is returned still waiting for ``contact_found``: whether the
+    ticket gets a contact is only known after the database work is committed
+    and the HubSpot contact calls have run.
     """
     messages = (await db.execute(text(_MESSAGES_SQL), {"conversation_id": conversation.id})).all()
     reviews = (
@@ -1503,7 +1508,15 @@ async def _ticket_text(db: AsyncSession, conversation: Any, perms: UserPermissio
 
 
 async def _finish_ticket(db: AsyncSession, ticket_id: int, org_id: int, **values: str | None) -> None:
-    columns = ("status", "error", "hubspot_ticket_id", "hubspot_contact_id", "contact_status", "ticket_url")
+    columns = (
+        "status",
+        "error",
+        "hubspot_ticket_id",
+        "hubspot_contact_id",
+        "contact_status",
+        "company_status",
+        "ticket_url",
+    )
     params = {column: values.get(column) for column in columns}
     await db.execute(text(_FINISH_TICKET_SQL), {**params, "ticket_id": ticket_id, "org_id": org_id})
     await db.commit()
@@ -1516,22 +1529,37 @@ async def get_ticket_preview(
     db: AsyncSession = Depends(get_db),
 ) -> TicketPreviewOut:
     """Whether the visitor is already a HubSpot contact, looked up by email
-    server-side; the contact's name only for admins, the email never."""
+    server-side; contact and company name only for admins, the email never.
+    The preview never creates anything: "new" says the create will."""
     conversation, ticket_settings = await _ticket_context(db, perms, conversation_id)
     service_key = portal_secrets.decrypt(ticket_settings.service_key_encrypted)
     # End the read transaction so no connection is held while HubSpot answers.
     await db.commit()
+    admin = _may_see_visitor(perms)
+    company_name: str | None = None
     try:
         async with HubSpotTickets(service_key) as hubspot:
             contact = await hubspot.find_contact(conversation.visitor_email)
+            # Only an admin sees the name, so only an admin's preview asks for it.
+            if contact is not None and admin:
+                try:
+                    company_id = await hubspot.primary_company_id(contact.id)
+                    if company_id is not None:
+                        company_name = await hubspot.company_name(company_id)
+                except HubSpotTicketError as exc:
+                    # A key without crm.objects.companies.read: no name, and the
+                    # ticket history will say so once the ticket is created.
+                    if exc.code != "missing_scope":
+                        raise
     except HubSpotTicketError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=exc.reason) from exc
     if contact is None:
-        return TicketPreviewOut(contact="not_found")
+        return TicketPreviewOut(contact="new")
     return TicketPreviewOut(
         contact="existing",
         lifecycle_stage=contact.lifecycle_stage,
-        contact_name=contact.name if _may_see_visitor(perms) else None,
+        contact_name=contact.name if admin else None,
+        company_name=company_name,
     )
 
 
@@ -1547,9 +1575,11 @@ async def create_ticket(
     The ``pending`` row is committed before the first HubSpot call, so no
     transaction stays open while HubSpot answers and the unique index stops a
     second click from creating a second ticket. A visitor HubSpot does not
-    know gets a ticket without a contact association: the key cannot create
-    contacts (SPEC §2.6). HubSpot failing leaves the row ``failed`` with the
-    reason, which the next attempt takes over.
+    know becomes a contact; an existing contact brings its company. Each of
+    those steps a key may lack the scope for (HubSpot 403) is skipped for this
+    ticket and recorded in ``contact_status`` / ``company_status``, so the
+    ticket itself always goes in (SPEC §2.5). Any other HubSpot failure leaves
+    the row ``failed`` with the reason, which the next attempt takes over.
     """
     conversation, ticket_settings = await _ticket_context(db, perms, conversation_id)
     target = next((t for t in ticket_settings.targets if t["key"] == body.target_key), None)
@@ -1575,18 +1605,50 @@ async def create_ticket(
     service_key = portal_secrets.decrypt(ticket_settings.service_key_encrypted)
     contact_id: str | None = None
     contact_status: str | None = None
+    company_status: str | None = None
     try:
         async with HubSpotTickets(service_key) as hubspot:
             contact = await hubspot.find_contact(conversation.visitor_email)
-            contact_id = contact.id if contact is not None else None
-            contact_status = "existing" if contact is not None else "not_found"
-            ticket_id = await hubspot.create_ticket(
-                subject=subject,
-                content=content(contact_found=contact is not None),
-                pipeline_id=target["pipeline_id"],
-                stage_id=target["stage_id"],
-                contact_id=contact_id,
-            )
+            if contact is not None:
+                contact_id, contact_status = contact.id, "existing"
+            else:
+                try:
+                    contact_id, created = await hubspot.create_contact(
+                        conversation.visitor_email, conversation.visitor_name
+                    )
+                    contact_status = "created" if created else "existing"
+                except HubSpotTicketError as exc:
+                    if exc.code != "missing_scope":
+                        raise
+                    contact_status = "create_forbidden"
+            # A contact created a moment ago has no company yet (SPEC §4.4 step 5).
+            company_id: str | None = None
+            company_status = "none"
+            if contact_status == "existing" and contact_id is not None:
+                try:
+                    company_id = await hubspot.primary_company_id(contact_id)
+                    company_status = "linked" if company_id is not None else "none"
+                except HubSpotTicketError as exc:
+                    if exc.code != "missing_scope":
+                        raise
+                    company_status = "forbidden"
+            ticket = {
+                "subject": subject,
+                "content": content(contact_found=contact_id is not None),
+                "pipeline_id": target["pipeline_id"],
+                "stage_id": target["stage_id"],
+                "contact_id": contact_id,
+            }
+            try:
+                ticket_id = await hubspot.create_ticket(**ticket, company_id=company_id)
+            except HubSpotTicketError as exc:
+                # HubSpot may refuse the company association to a key without
+                # crm.objects.companies.read; one retry without it (SPEC §4.4
+                # step 6), any other refusal fails the ticket.
+                if exc.code != "missing_scope" or company_id is None:
+                    raise
+                ticket_id = await hubspot.create_ticket(**ticket, company_id=None)
+                company_status = "forbidden"
     except HubSpotTicketError as exc:
         await _finish_ticket(
             db,
@@ -1596,10 +1658,12 @@ async def create_ticket(
             error=exc.reason,
             hubspot_contact_id=contact_id,
             contact_status=contact_status,
+            company_status=company_status,
         )
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=exc.reason) from exc
 
-    ticket_url = f"https://app.hubspot.com/contacts/{ticket_settings.hubspot_portal_id}/record/0-5/{ticket_id}"
+    ui_domain = ticket_settings.hubspot_ui_domain or "app.hubspot.com"
+    ticket_url = f"https://{ui_domain}/contacts/{ticket_settings.hubspot_portal_id}/record/0-5/{ticket_id}"
     await _finish_ticket(
         db,
         claimed.id,
@@ -1608,6 +1672,7 @@ async def create_ticket(
         hubspot_ticket_id=ticket_id,
         hubspot_contact_id=contact_id,
         contact_status=contact_status,
+        company_status=company_status,
         ticket_url=ticket_url,
     )
     return TicketOut(
@@ -1616,6 +1681,7 @@ async def create_ticket(
         status="created",
         ticket_url=ticket_url,
         contact_status=contact_status,
+        company_status=company_status,
         created_by_name=caller.display_name,
         created_at=claimed.created_at,
     )

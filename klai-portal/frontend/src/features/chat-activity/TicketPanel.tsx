@@ -6,7 +6,7 @@
 // even when creating a new one is unavailable — e.g. a test-marked
 // conversation keeps its ticket history after being marked).
 import { useState } from 'react'
-import { Check, ExternalLink, Loader2 } from 'lucide-react'
+import { AlertTriangle, Check, ExternalLink, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/apiFetch'
@@ -86,8 +86,8 @@ function ContactLine({ preview }: { preview: ReturnType<typeof useTicketPreview>
   }
   const data = preview.data
   if (!data) return null
-  if (data.contact === 'not_found') {
-    return <p className="text-xs text-gray-700">{m.activity_ticket_contact_not_found()}</p>
+  if (data.contact === 'new') {
+    return <p className="text-xs text-gray-700">{m.activity_ticket_contact_new()}</p>
   }
   const stageLabel = data.lifecycle_stage
     ? (LIFECYCLE_LABEL[data.lifecycle_stage] ?? (() => data.lifecycle_stage as string))()
@@ -97,6 +97,7 @@ function ContactLine({ preview }: { preview: ReturnType<typeof useTicketPreview>
       {m.activity_ticket_contact_existing()}
       {stageLabel ? ` · ${stageLabel}` : ''}
       {data.contact_name ? ` · ${data.contact_name}` : ''}
+      {data.company_name ? ` · ${data.company_name}` : ''}
     </p>
   )
 }
@@ -183,28 +184,42 @@ function TicketRow({ ticket, onRetry, pending }: { ticket: TicketOut; onRetry: (
     )
   }
   const safeUrl = ticket.ticket_url && _isSafeHttpUrl(ticket.ticket_url) ? ticket.ticket_url : null
+  // SPEC §5: a step HubSpot refused for a missing scope is named per ticket,
+  // so an admin sees which scope to add instead of a silently thinner ticket.
+  const skipped = [
+    ticket.contact_status === 'create_forbidden' ? m.activity_ticket_contact_create_forbidden() : null,
+    ticket.company_status === 'forbidden' ? m.activity_ticket_company_forbidden() : null,
+  ].filter((line) => line !== null)
   return (
-    <p className="flex flex-wrap items-center gap-1.5 text-xs text-gray-700">
-      <Check className="h-3.5 w-3.5 text-[var(--color-success-text)]" aria-hidden="true" />
-      <span>
-        {m.activity_ticket_created({
-          label: ticket.target_label,
-          date: new Date(ticket.created_at).toLocaleDateString(),
-          name: ticket.created_by_name ?? '',
-        })}
-      </span>
-      {safeUrl && (
-        <a
-          href={safeUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-gray-900 underline underline-offset-2"
-        >
-          {m.activity_ticket_open_hubspot()}
-          <ExternalLink className="h-3 w-3" />
-        </a>
-      )}
-    </p>
+    <div className="space-y-0.5">
+      <p className="flex flex-wrap items-center gap-1.5 text-xs text-gray-700">
+        <Check className="h-3.5 w-3.5 text-[var(--color-success-text)]" aria-hidden="true" />
+        <span>
+          {m.activity_ticket_created({
+            label: ticket.target_label,
+            date: new Date(ticket.created_at).toLocaleDateString(),
+            name: ticket.created_by_name ?? '',
+          })}
+        </span>
+        {safeUrl && (
+          <a
+            href={safeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-gray-900 underline underline-offset-2"
+          >
+            {m.activity_ticket_open_hubspot()}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+      </p>
+      {skipped.map((line) => (
+        <p key={line} className="flex items-center gap-1.5 pl-5 text-xs text-[var(--color-warning-text)]">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {line}
+        </p>
+      ))}
+    </div>
   )
 }
 

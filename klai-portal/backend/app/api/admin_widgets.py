@@ -39,7 +39,7 @@ from app.services.hubspot_custom_channel import (
     send_test_message,
     set_channel_account_authorized,
 )
-from app.services.hubspot_tickets import HubSpotTicketError, HubSpotTickets
+from app.services.hubspot_tickets import Account, HubSpotTicketError, HubSpotTickets
 from app.services.secrets import portal_secrets
 from app.services.widget_auth import generate_session_token
 
@@ -784,9 +784,9 @@ class TicketTarget(BaseModel):
 class TicketSettingsRequest(BaseModel):
     # Omitted or blank keeps the stored key (the admin form's empty password field).
     service_key: str | None = None
-    # Entered by the admin: account-info would return it but needs the
-    # `oauth` scope, which tenant service keys lack (SPEC §4.1).
-    hubspot_portal_id: int = Field(gt=0)
+    # Only needed when the key may not call account-info (SPEC §4.2); when it
+    # may, a value here must match the key's own account.
+    hubspot_portal_id: int | None = Field(default=None, gt=0)
     targets: list[TicketTarget] = Field(min_length=1, max_length=5)
 
     @model_validator(mode="after")
@@ -800,6 +800,7 @@ class TicketSettingsRequest(BaseModel):
 class TicketSettingsResponse(BaseModel):
     configured: bool
     hubspot_portal_id: int | None
+    portal_id_source: Literal["hubspot", "manual"] | None
     targets: list[TicketTarget]
 
 
@@ -845,10 +846,13 @@ def _ticket_http_error(exc: HubSpotTicketError) -> HTTPException:
 
 def _ticket_settings_response(stored: WidgetTicketSettings | None) -> TicketSettingsResponse:
     if stored is None:
-        return TicketSettingsResponse(configured=False, hubspot_portal_id=None, targets=[])
+        return TicketSettingsResponse(configured=False, hubspot_portal_id=None, portal_id_source=None, targets=[])
     return TicketSettingsResponse(
         configured=True,
         hubspot_portal_id=stored.hubspot_portal_id,
+        # Derived, not stored: the PUT writes a ui domain exactly when the
+        # portal id came from account-info, whose uiDomain is required.
+        portal_id_source="hubspot" if stored.hubspot_ui_domain else "manual",
         targets=[TicketTarget(**target) for target in stored.targets],
     )
 
@@ -874,6 +878,8 @@ async def put_ticket_settings(
 ) -> TicketSettingsResponse:
     """Store the service key (encrypted) and targets after HubSpot confirms both.
 
+    Account-info comes first: when the key may call it, the portal id and ui
+    domain come from HubSpot; a 403 means the admin's portal id is required.
     Fetching the ticket pipelines is the key check (401/403 surface there)
     and every target must exist in that answer, so a reviewer never meets a
     broken target on the knowledge side. Omitting ``service_key`` keeps the
@@ -882,11 +888,29 @@ async def put_ticket_settings(
     await _get_widget_or_404(widget_id, perms.org_id, db)
     stored = await _ticket_settings(widget_id, perms.org_id, db)
     service_key = _ticket_service_key(body.service_key, stored)
+    # End the read transaction so no connection is held while HubSpot answers.
+    await db.commit()
+    account: Account | None = None
     try:
         async with HubSpotTickets(service_key) as hubspot:
+            try:
+                account = await hubspot.account_details()
+            except HubSpotTicketError as exc:
+                # 403 = no `oauth` scope on the key; 401 and the rest stop here.
+                if exc.code != "missing_scope":
+                    raise
             pipelines = await hubspot.ticket_pipelines()
     except HubSpotTicketError as exc:
         raise _ticket_http_error(exc) from exc
+
+    if account is not None:
+        if body.hubspot_portal_id is not None and body.hubspot_portal_id != account.portal_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="account_mismatch")
+        portal_id, ui_domain = account.portal_id, account.ui_domain
+    elif body.hubspot_portal_id is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="portal_id_required")
+    else:
+        portal_id, ui_domain = body.hubspot_portal_id, None
 
     known = {(p["id"], s["id"]) for p in pipelines for s in p["stages"]}
     if any((target.pipeline_id, target.stage_id) not in known for target in body.targets):
@@ -899,7 +923,8 @@ async def put_ticket_settings(
     ).scalar_one_or_none()
     values = {
         "service_key_encrypted": portal_secrets.encrypt(service_key),
-        "hubspot_portal_id": body.hubspot_portal_id,
+        "hubspot_portal_id": portal_id,
+        "hubspot_ui_domain": ui_domain,
         "targets": [target.model_dump() for target in body.targets],
         "updated_by_user_id": caller_id,
     }
@@ -941,6 +966,7 @@ async def list_ticket_pipelines(
     """POST, not GET, because a not-yet-saved key travels in the body."""
     await _get_widget_or_404(widget_id, perms.org_id, db)
     service_key = _ticket_service_key(body.service_key, await _ticket_settings(widget_id, perms.org_id, db))
+    await db.commit()
     try:
         async with HubSpotTickets(service_key) as hubspot:
             pipelines = await hubspot.ticket_pipelines()

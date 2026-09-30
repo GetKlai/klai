@@ -61,7 +61,7 @@ def test_content_carries_note_visitor_every_turn_sources_and_link() -> None:
 
 
 def test_unknown_contact_puts_the_visitor_on_the_first_line() -> None:
-    """SPEC §3 v0.2.0: no contact is created, so the ticket itself must say
+    """SPEC §3: when no contact could be created, the ticket itself must say
     who the visitor is before anything else."""
     content = _build(_turns(2), contact_found=False)
     assert content.splitlines()[0] == "Niet gevonden in HubSpot: Sam Jansen · sam@example.com"

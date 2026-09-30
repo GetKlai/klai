@@ -60,7 +60,7 @@ informatie om zonder Klai verder te kunnen.
    `crm.objects.owners.read` gebruikt of zal gebruiken.
 6. **Contact vinden op e-mailadres, anders aanmaken.** Geen treffer → contact
    aanmaken met e-mailadres en naam (gesplitst op de eerste spatie); HubSpot
-   409 `CONTACT_EXISTS` → het bestaande id uit de fout. Mag de key dat niet
+   409 CONFLICT ("Contact already exists. Existing ID: <n>") → dat id. Mag de key dat niet
    (403), dan komt het ticket zonder contact en begint de inhoud met "Niet
    gevonden in HubSpot: <naam> · <e-mailadres>". Voor een bestaand contact
    wordt het eerste gekoppelde bedrijf opgezocht en aan het ticket gekoppeld;

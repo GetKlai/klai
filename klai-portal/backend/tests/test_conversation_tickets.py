@@ -46,11 +46,12 @@ def _conversation(*, email: str | None = VISITOR_EMAIL, is_test: bool = False) -
     )
 
 
-def _settings() -> SimpleNamespace:
+def _settings(*, ui_domain: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         targets=TARGETS,
         service_key_encrypted=portal_secrets.encrypt(KEY),
         hubspot_portal_id=12345,
+        hubspot_ui_domain=ui_domain,
     )
 
 
@@ -149,6 +150,7 @@ class TicketSession:
             error=None,
             ticket_url=None,
             contact_status=None,
+            company_status=None,
             created_at=T0,
         )
         return _Rows([SimpleNamespace(id=row["id"], created_at=T0)])
@@ -157,20 +159,39 @@ class TicketSession:
         self.commits += 1
 
 
-def _mock_hubspot(*, contact: bool = True) -> dict[str, respx.Route]:
-    """Only the two calls the tenant key's scopes allow: contact search and
-    ticket create. respx fails any other request (contact create, companies,
-    account-info) as unmocked."""
+def _mock_hubspot(*, contact: bool = True, company: str | None = None) -> dict[str, respx.Route]:
+    """Every HubSpot call of the full flow (SPEC §4.4), with the answers a key
+    carrying all scopes would get. A test narrows one route to a 403 to play a
+    key that lacks that scope."""
     props = {"email": VISITOR_EMAIL, "firstname": "Sam", "lastname": "Jansen", "lifecyclestage": "customer"}
     results = [{"id": "22", "properties": props}] if contact else []
+    companies = (
+        [{"toObjectId": int(company), "associationTypes": [{"category": "HUBSPOT_DEFINED", "typeId": 1}]}]
+        if company
+        else []
+    )
     return {
         "search": respx.post(f"{API}/crm/v3/objects/contacts/search").mock(
             return_value=httpx.Response(200, json={"total": len(results), "results": results})
+        ),
+        "contact_create": respx.post(f"{API}/crm/v3/objects/contacts").mock(
+            return_value=httpx.Response(201, json={"id": "41"})
+        ),
+        "companies": respx.get(url__regex=rf"{API}/crm/v4/objects/contacts/\d+/associations/companies").mock(
+            return_value=httpx.Response(200, json={"results": companies})
+        ),
+        "company": respx.get(url__regex=rf"{API}/crm/v3/objects/companies/\d+").mock(
+            return_value=httpx.Response(200, json={"id": company, "properties": {"name": "Fictief BV"}})
         ),
         "ticket": respx.post(f"{API}/crm/v3/objects/tickets").mock(
             return_value=httpx.Response(201, json={"id": "9001"})
         ),
     }
+
+
+def _associations(route: respx.Route) -> list[tuple[str, int]]:
+    body = json.loads(route.calls.last.request.content)
+    return [(a["to"]["id"], a["types"][0]["associationTypeId"]) for a in body.get("associations", [])]
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +245,7 @@ async def test_post_ticket_for_an_existing_contact_links_the_contact() -> None:
         "status": "created",
         "ticket_url": ticket_url,
         "contact_status": "existing",
+        "company_status": "none",
         "error": None,
         "created_by_name": CALLER_DISPLAY_NAME,
         "created_at": "2026-09-14T09:12:00Z",
@@ -231,7 +253,8 @@ async def test_post_ticket_for_an_existing_contact_links_the_contact() -> None:
     assert db.tickets["sales"]["status"] == "created"
     assert db.tickets["sales"]["hubspot_ticket_id"] == "9001"
     body = json.loads(routes["ticket"].calls.last.request.content)
-    assert [a["to"]["id"] for a in body["associations"]] == ["22"]
+    assert _associations(routes["ticket"]) == [("22", 16)]
+    assert not routes["contact_create"].called
     assert body["properties"]["subject"] == "Webchat: Wat kost een extra nummer?"
     content = body["properties"]["content"]
     assert not content.startswith("Niet gevonden in HubSpot")
@@ -245,21 +268,104 @@ async def test_post_ticket_for_an_existing_contact_links_the_contact() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_post_ticket_without_a_matching_contact_has_no_association() -> None:
-    """SPEC v0.2.0: the key cannot create contacts, so the ticket goes in
-    unassociated and names the visitor on its first line."""
+async def test_post_ticket_for_an_unknown_visitor_creates_and_links_the_contact() -> None:
     routes = _mock_hubspot(contact=False)
     db = TicketSession(conversation=_conversation(), settings=_settings())
 
     response = await _call(db, _perms("kb_manager"), "post", f"{BASE}/tickets", json={"target_key": "sales"})
 
     assert response.status_code == 201, response.text
-    assert response.json()["contact_status"] == "not_found"
+    assert (response.json()["contact_status"], response.json()["company_status"]) == ("created", "none")
+    assert db.tickets["sales"]["hubspot_contact_id"] == "41"
+    assert json.loads(routes["contact_create"].calls.last.request.content)["properties"] == {
+        "email": VISITOR_EMAIL,
+        "firstname": "Sam",
+        "lastname": "Jansen",
+    }
+    # A contact created a moment ago has no company yet (SPEC §4.4 step 5).
+    assert not routes["companies"].called
+    assert _associations(routes["ticket"]) == [("41", 16)]
+    content = json.loads(routes["ticket"].calls.last.request.content)["properties"]["content"]
+    assert not content.startswith("Niet gevonden in HubSpot")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_post_ticket_when_the_key_may_not_create_contacts_files_it_unlinked() -> None:
+    """Without crm.objects.contacts.write the ticket still goes in, without a
+    contact, naming the visitor on its first line, and the row says why."""
+    routes = _mock_hubspot(contact=False)
+    routes["contact_create"].mock(return_value=httpx.Response(403, json={"category": "MISSING_SCOPES"}))
+    db = TicketSession(conversation=_conversation(), settings=_settings())
+
+    response = await _call(db, _perms("kb_manager"), "post", f"{BASE}/tickets", json={"target_key": "sales"})
+
+    assert response.status_code == 201, response.text
+    assert response.json()["contact_status"] == "create_forbidden"
+    assert response.json()["status"] == "created"
+    assert db.tickets["sales"]["contact_status"] == "create_forbidden"
     assert db.tickets["sales"]["hubspot_contact_id"] is None
     body = json.loads(routes["ticket"].calls.last.request.content)
     assert "associations" not in body
     first_line = body["properties"]["content"].splitlines()[0]
     assert first_line == f"Niet gevonden in HubSpot: Sam Jansen · {VISITOR_EMAIL}"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_post_ticket_contact_exists_conflict_uses_the_existing_contact() -> None:
+    """The search index lags behind HubSpot's store, so create can answer 409
+    for a contact the search missed; that contact is the ticket's contact."""
+    routes = _mock_hubspot(contact=False, company="77")
+    routes["contact_create"].mock(
+        return_value=httpx.Response(
+            409, json={"status": "error", "message": "Contact already exists. Existing ID: 58", "category": "CONFLICT"}
+        )
+    )
+    db = TicketSession(conversation=_conversation(), settings=_settings())
+
+    response = await _call(db, _perms("kb_manager"), "post", f"{BASE}/tickets", json={"target_key": "sales"})
+
+    assert response.status_code == 201, response.text
+    assert (response.json()["contact_status"], response.json()["company_status"]) == ("existing", "linked")
+    assert db.tickets["sales"]["hubspot_contact_id"] == "58"
+    assert _associations(routes["ticket"]) == [("58", 16), ("77", 26)]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_post_ticket_for_an_existing_contact_with_a_company_links_both() -> None:
+    routes = _mock_hubspot(company="77")
+    db = TicketSession(conversation=_conversation(), settings=_settings(ui_domain="app-eu1.hubspot.com"))
+
+    response = await _call(db, _perms("kb_manager"), "post", f"{BASE}/tickets", json={"target_key": "sales"})
+
+    assert response.status_code == 201, response.text
+    assert (response.json()["contact_status"], response.json()["company_status"]) == ("existing", "linked")
+    assert response.json()["ticket_url"] == "https://app-eu1.hubspot.com/contacts/12345/record/0-5/9001"
+    assert db.tickets["sales"]["company_status"] == "linked"
+    assert _associations(routes["ticket"]) == [("22", 16), ("77", 26)]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_post_ticket_refused_with_the_company_is_retried_once_without_it() -> None:
+    """HubSpot may refuse the company association for a key without
+    crm.objects.companies.read; the ticket then goes in with the contact only
+    and the row records that the company link was forbidden."""
+    routes = _mock_hubspot(company="77")
+    routes["ticket"].mock(
+        side_effect=[httpx.Response(403, json={"category": "MISSING_SCOPES"}), httpx.Response(201, json={"id": "9003"})]
+    )
+    db = TicketSession(conversation=_conversation(), settings=_settings())
+
+    response = await _call(db, _perms("kb_manager"), "post", f"{BASE}/tickets", json={"target_key": "sales"})
+
+    assert response.status_code == 201, response.text
+    assert response.json()["company_status"] == "forbidden"
+    assert db.tickets["sales"]["hubspot_ticket_id"] == "9003"
+    assert routes["ticket"].call_count == 2
+    assert _associations(routes["ticket"]) == [("22", 16)]
 
 
 @pytest.mark.asyncio
@@ -331,9 +437,9 @@ async def test_conversation_of_another_org_is_404(method: str, path: str) -> Non
 
 @pytest.mark.asyncio
 @respx.mock
-@pytest.mark.parametrize(("role", "shows_name"), [("kb_manager", False), ("admin", True)])
-async def test_preview_shows_the_contact_name_only_to_admins(role: str, shows_name: bool) -> None:
-    _mock_hubspot()
+@pytest.mark.parametrize(("role", "shows_names"), [("kb_manager", False), ("admin", True)])
+async def test_preview_shows_contact_and_company_name_only_to_admins(role: str, shows_names: bool) -> None:
+    _mock_hubspot(company="77")
     db = TicketSession(conversation=_conversation(), settings=_settings())
 
     response = await _call(db, _perms(role), "get", f"{BASE}/ticket-preview")
@@ -342,9 +448,37 @@ async def test_preview_shows_the_contact_name_only_to_admins(role: str, shows_na
     assert response.json() == {
         "contact": "existing",
         "lifecycle_stage": "customer",
-        "contact_name": "Sam Jansen" if shows_name else None,
+        "contact_name": "Sam Jansen" if shows_names else None,
+        "company_name": "Fictief BV" if shows_names else None,
     }
     assert VISITOR_EMAIL not in response.text
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_preview_for_an_unknown_visitor_says_new_and_creates_nothing() -> None:
+    routes = _mock_hubspot(contact=False)
+    db = TicketSession(conversation=_conversation(), settings=_settings())
+
+    response = await _call(db, _perms("admin"), "get", f"{BASE}/ticket-preview")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"contact": "new", "lifecycle_stage": None, "contact_name": None, "company_name": None}
+    assert not routes["contact_create"].called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_preview_company_name_is_null_when_the_key_may_not_read_companies() -> None:
+    routes = _mock_hubspot(company="77")
+    routes["company"].mock(return_value=httpx.Response(403, json={}))
+    db = TicketSession(conversation=_conversation(), settings=_settings())
+
+    response = await _call(db, _perms("admin"), "get", f"{BASE}/ticket-preview")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["company_name"] is None
+    assert response.json()["contact_name"] == "Sam Jansen"
 
 
 # ---------------------------------------------------------------------------

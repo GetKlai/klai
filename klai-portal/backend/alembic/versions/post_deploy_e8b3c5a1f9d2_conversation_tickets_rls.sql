@@ -23,9 +23,13 @@ CREATE TABLE IF NOT EXISTS widget_ticket_settings (
     -- AES-256-GCM ciphertext from portal_secrets.encrypt; the plaintext key
     -- is never stored and never returned by any route.
     service_key_encrypted BYTEA NOT NULL,
-    -- Entered by the admin: GET /account-info/v3/details would return it but
-    -- accepts only the `oauth` scope, which tenant service keys lack.
+    -- From GET /account-info/v3/details when the key has the `oauth` scope,
+    -- otherwise entered by the admin.
     hubspot_portal_id BIGINT NOT NULL CHECK (hubspot_portal_id > 0),
+    -- uiDomain from account-info (e.g. app-eu1.hubspot.com). NULL means the
+    -- portal id was entered by hand, which is also how the admin API reports
+    -- portal_id_source; ticket links then use app.hubspot.com.
+    hubspot_ui_domain TEXT,
     -- [{"key","label","pipeline_id","stage_id"}], 1-5 items with a unique
     -- slug key; validated by the admin route before it is written.
     targets JSONB NOT NULL,
@@ -46,10 +50,13 @@ CREATE TABLE IF NOT EXISTS conversation_tickets (
     status TEXT NOT NULL CHECK (status IN ('pending', 'created', 'failed')),
     hubspot_ticket_id TEXT,
     hubspot_contact_id TEXT,
-    -- 'not_found': no contact matched the visitor's email and none was
-    -- created (the key has no contacts.write scope), so the ticket has no
-    -- contact association.
-    contact_status TEXT CHECK (contact_status IN ('existing', 'not_found')),
+    -- 'create_forbidden': no contact matched the visitor's email and HubSpot
+    -- refused to create one (403, the key lacks crm.objects.contacts.write),
+    -- so the ticket has no contact association.
+    contact_status TEXT CHECK (contact_status IN ('existing', 'created', 'create_forbidden')),
+    -- 'forbidden': the key lacks crm.objects.companies.read, so the ticket
+    -- went in without the contact's company. 'none': the contact has none.
+    company_status TEXT CHECK (company_status IN ('linked', 'none', 'forbidden')),
     ticket_url TEXT,
     -- Short human-readable reason of the last failed attempt.
     error TEXT,

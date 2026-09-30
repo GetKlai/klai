@@ -112,6 +112,8 @@ export interface TicketTarget {
 export interface TicketIntegrationSettings {
   configured: boolean
   hubspot_portal_id: number | null
+  /** `hubspot`: read from account-info with the key; `manual`: typed by an admin. */
+  portal_id_source: 'hubspot' | 'manual' | null
   targets: TicketTarget[]
 }
 

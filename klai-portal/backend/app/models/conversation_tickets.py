@@ -38,8 +38,11 @@ class WidgetTicketSettings(Base):
     )
     org_id: Mapped[int] = mapped_column(Integer, ForeignKey("portal_orgs.id", ondelete="CASCADE"), nullable=False)
     service_key_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    # Entered by the admin; account-info would need the `oauth` scope.
+    # From account-info when the key may call it, else entered by the admin.
     hubspot_portal_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # From account-info (e.g. app-eu1.hubspot.com); NULL means the portal id
+    # was entered by hand and links use app.hubspot.com.
+    hubspot_ui_domain: Mapped[str | None] = mapped_column(Text, nullable=True)
     # [{"key", "label", "pipeline_id", "stage_id"}], 1-5 items, validated by
     # the admin route's pydantic model before it is stored.
     targets: Mapped[list] = mapped_column(JSONB, nullable=False)
@@ -54,8 +57,12 @@ class ConversationTicket(Base):
     __table_args__ = (
         CheckConstraint("status IN ('pending','created','failed')", name="ck_conversation_tickets_status"),
         CheckConstraint(
-            "contact_status IS NULL OR contact_status IN ('existing','not_found')",
+            "contact_status IS NULL OR contact_status IN ('existing','created','create_forbidden')",
             name="ck_conversation_tickets_contact_status",
+        ),
+        CheckConstraint(
+            "company_status IS NULL OR company_status IN ('linked','none','forbidden')",
+            name="ck_conversation_tickets_company_status",
         ),
         # Partial unique: purged rows (conversation_id NULL) must not collide.
         Index(
@@ -80,6 +87,7 @@ class ConversationTicket(Base):
     hubspot_ticket_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     hubspot_contact_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     contact_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    company_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     ticket_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[int | None] = mapped_column(

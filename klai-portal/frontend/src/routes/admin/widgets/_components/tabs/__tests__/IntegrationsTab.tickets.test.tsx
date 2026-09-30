@@ -138,7 +138,7 @@ beforeEach(() => {
 
 describe('IntegrationsTab - Tickets in HubSpot card', () => {
   it('fetching pipelines populates the pipeline and stage selects', async () => {
-    mockApi({ tickets: { configured: false, hubspot_portal_id: null, targets: [] } })
+    mockApi({ tickets: { configured: false, hubspot_portal_id: null, portal_id_source: null, targets: [] } })
     renderTab(makeWidget())
 
     await waitFor(() =>
@@ -161,7 +161,7 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
   })
 
   it('saves {service_key, hubspot_portal_id, targets} for a not-yet-configured widget', async () => {
-    mockApi({ tickets: { configured: false, hubspot_portal_id: null, targets: [] } })
+    mockApi({ tickets: { configured: false, hubspot_portal_id: null, portal_id_source: null, targets: [] } })
     renderTab(makeWidget())
 
     await waitFor(() =>
@@ -190,8 +190,8 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
     })
   })
 
-  it('disables Save without a HubSpot account ID', async () => {
-    mockApi({ tickets: { configured: false, hubspot_portal_id: null, targets: [] } })
+  it('saves without a HubSpot account ID, which the server then fetches itself', async () => {
+    mockApi({ tickets: { configured: false, hubspot_portal_id: null, portal_id_source: null, targets: [] } })
     renderTab(makeWidget())
 
     await waitFor(() =>
@@ -206,12 +206,79 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
     fireEvent.change(screen.getByLabelText(/^pipeline$/i), { target: { value: 'pl-1' } })
     fireEvent.change(screen.getByLabelText(/^stage$|^fase$/i), { target: { value: 'st-1' } })
     fireEvent.change(screen.getByLabelText(/servicekey|service key/i), { target: { value: 'shhh-secret' } })
-
     expect(
-      within(ticketsCard())
-        .getByRole('button', { name: /save changes|wijzigingen opslaan/i })
-        .hasAttribute('disabled'),
-    ).toBe(true)
+      screen.getByText(
+        /alleen nodig als de servicekey het accountnummer niet zelf mag ophalen|only needed when the service key may not fetch the account number itself/i,
+      ),
+    ).toBeTruthy()
+
+    clickTicketsSave()
+
+    await waitFor(() => expect(saveRequestBody()).toBeDefined())
+    expect(saveRequestBody()).toEqual({
+      service_key: 'shhh-secret',
+      targets: [{ key: 'sales', label: 'Sales', pipeline_id: 'pl-1', stage_id: 'st-1' }],
+    })
+  })
+
+  it('labels an account ID fetched from HubSpot and does not send it back', async () => {
+    // A key swap to another account must not trip account_mismatch on an id
+    // the admin never typed.
+    mockApi({
+      tickets: {
+        configured: true,
+        hubspot_portal_id: 4455,
+        portal_id_source: 'hubspot',
+        targets: [{ key: 'sales', label: 'Sales', pipeline_id: 'pl-1', stage_id: 'st-1' }],
+      },
+    })
+    renderTab(makeWidget())
+
+    await waitFor(() => expect(screen.getByDisplayValue('4455')).toBeTruthy())
+    expect(screen.getByText(/opgehaald uit hubspot|fetched from hubspot/i)).toBeTruthy()
+    clickTicketsSave()
+
+    await waitFor(() => expect(saveRequestBody()).toBeDefined())
+    expect(saveRequestBody()).toEqual({
+      targets: [{ key: 'sales', label: 'Sales', pipeline_id: 'pl-1', stage_id: 'st-1' }],
+    })
+  })
+
+  it.each([
+    ['portal_id_required', /vul het hubspot-account-id in|fill in the hubspot account id/i],
+    ['account_mismatch', /hoort niet bij deze servicekey|does not belong to this service key/i],
+  ])('maps a 422 %s response to a readable message', async (detail, message) => {
+    mockApi({
+      tickets: {
+        configured: true,
+        hubspot_portal_id: 12345,
+        portal_id_source: 'manual',
+        targets: [{ key: 'sales', label: 'Sales', pipeline_id: 'pl-1', stage_id: 'st-1' }],
+      },
+      saveResult: () => Promise.reject(new ApiErrorCtor(422, detail)),
+    })
+    renderTab(makeWidget())
+
+    await waitFor(() => expect(screen.getByDisplayValue('Sales')).toBeTruthy())
+    clickTicketsSave()
+
+    await waitFor(() => expect(within(ticketsCard()).getByText(message)).toBeTruthy())
+  })
+
+  it('lists every scope the full flow uses in the key help', async () => {
+    mockApi({ tickets: { configured: false, hubspot_portal_id: null, portal_id_source: null, targets: [] } })
+    renderTab(makeWidget())
+
+    await waitFor(() => expect(screen.getByLabelText(/servicekey|service key/i)).toBeTruthy())
+    const help = within(ticketsCard()).getByText(/crm\.objects\.tickets\.write/).textContent ?? ''
+    for (const scope of [
+      'crm.objects.contacts.read',
+      'crm.objects.contacts.write',
+      'crm.objects.companies.read',
+      'oauth',
+    ]) {
+      expect(help).toContain(scope)
+    }
   })
 
   it('omits service_key when the field is left empty on an already configured widget, and prefills the account ID', async () => {
@@ -219,6 +286,7 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
       tickets: {
         configured: true,
         hubspot_portal_id: 12345,
+        portal_id_source: 'manual',
         targets: [{ key: 'sales', label: 'Sales', pipeline_id: 'pl-1', stage_id: 'st-1' }],
       },
     })
@@ -240,6 +308,7 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
       tickets: {
         configured: true,
         hubspot_portal_id: 12345,
+        portal_id_source: 'manual',
         targets: [{ key: 'sales', label: 'Sales', pipeline_id: 'pl-1', stage_id: 'st-1' }],
       },
       saveResult: () => Promise.reject(new ApiErrorCtor(422, 'invalid_service_key')),
@@ -255,13 +324,13 @@ describe('IntegrationsTab - Tickets in HubSpot card', () => {
   })
 
   it('maps a 422 service_key_required response from Fetch pipelines to a readable message', async () => {
-    mockApi({ tickets: { configured: false, hubspot_portal_id: null, targets: [] } })
+    mockApi({ tickets: { configured: false, hubspot_portal_id: null, portal_id_source: null, targets: [] } })
     apiFetchMock.mockImplementation((path: unknown, init?: RequestInit) => {
       const url = String(path)
       const method = init?.method ?? 'GET'
       if (url.endsWith('/integrations/hubspot')) return Promise.reject(new ApiErrorCtor(404, 'not_found'))
       if (url.endsWith('/integrations/tickets') && method === 'GET') {
-        return Promise.resolve({ configured: false, hubspot_portal_id: null, targets: [] })
+        return Promise.resolve({ configured: false, hubspot_portal_id: null, portal_id_source: null, targets: [] })
       }
       if (url.endsWith('/integrations/tickets/pipelines') && method === 'POST') {
         return Promise.reject(new ApiErrorCtor(422, 'service_key_required'))
