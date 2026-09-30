@@ -49,8 +49,11 @@ LABEL org.opencontainers.image.source="https://github.com/GetKlai/klai"
 # /repo/klai-portal/backend/.venv/bin/python3.13) stay valid.
 WORKDIR /repo/klai-portal/backend
 
-# Apply security patches to base image OS packages
-RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+# Apply security patches to base image OS packages. The layer is cached in CI,
+# so the upgrade only reruns when this date changes: bump it when the image
+# scan reports an OS package with a fixed version (openssl, 2026-09-30).
+ARG OS_PATCH_DATE=2026-09-30
+RUN echo "OS patches as of ${OS_PATCH_DATE}" && apt-get update && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Venv (contains the editable klai-connector-credentials pointer) + the
