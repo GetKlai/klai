@@ -191,9 +191,13 @@ model_list:
   # Budget: this work was ~$2-3/day after the support-reanalysis fix. The
   # spike is a knowledge change that force-reanalyses 50 support cases at ~9
   # calls each (gap_rescorer.py); at an assumed ~5k input / ~500 output
-  # tokens per call that is ~$5. $10 lets a normal day plus one such run
-  # finish and stops a retry loop within the day, and together with
-  # klai-ingest's $20 caps the Vibe allowance at $30/day.
+  # tokens per call that is ~$5. $10 covered a normal day plus one such run.
+  # Raised to $30 on 2026-09-30: replaying the reviewed widget conversations
+  # end to end (the chat-quality measurements) runs on this alias too, one
+  # replay of the whole set costs about $3, and a day of measuring spent the
+  # $10 by mid-afternoon, which also stopped the background judges. Still
+  # stops a retry loop within the day; with klai-ingest's $20 the Vibe
+  # allowance is capped at $50/day.
   - model_name: klai-judge
     litellm_params:
       model: mistral/mistral-vibe-cli-latest
@@ -204,7 +208,7 @@ model_list:
       input_cost_per_token: 1.5e-06
       cache_read_input_token_cost: 1.5e-07
       output_cost_per_token: 7.5e-06
-      max_budget: 10
+      max_budget: 30
       budget_duration: 1d
     rpm: 1800
     tpm: 900000
