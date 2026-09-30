@@ -1,9 +1,9 @@
 """The first support-mode question goes to retrieval with two paraphrases; nothing else does.
 
 SPEC-RAG-ANSWER-JUDGES-001, logbook 2.33. The paraphrases are retrieval input
-only: the visitor's own words stay the primary query, a follow-up turn keeps
-using its history instead, and a failed paraphrase call leaves the request
-exactly as it was.
+only: the visitor's own words stay the primary query, a follow-up turn is
+searched with its conversation instead, and a failed paraphrase call leaves the
+request exactly as it was.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import partner_chat, query_paraphrase
+from app.services import partner_chat, query_paraphrase, query_rewrite
 
 _QUESTION = "Goedemorgen, mijn vaste lijn en mobiele lijn gaan gelijk over tot voicemail."
 _VARIANTS = [
@@ -93,22 +93,48 @@ async def test_the_widget_welcome_line_does_not_make_the_first_question_a_follow
     assert captured["body"]["query_variants"] == _VARIANTS
 
 
-@pytest.mark.asyncio
-async def test_a_follow_up_keeps_its_history_and_gets_no_paraphrases(monkeypatch):
+_FOLLOW_UP = [
+    _WELCOME,
+    {"role": "user", "content": _QUESTION},
+    {"role": "assistant", "content": "Op welk toestel gebeurt dat?"},
+    {"role": "user", "content": "op de bureautelefoon"},
+]
+
+
+async def _retrieve_follow_up(monkeypatch, rewritten: str) -> tuple[dict[str, Any], AsyncMock]:
     captured: dict[str, Any] = {}
     _capture_retrieve(monkeypatch, captured)
-    messages = [
-        _WELCOME,
-        {"role": "user", "content": _QUESTION},
-        {"role": "assistant", "content": "Ga naar Belplan."},
-        {"role": "user", "content": "en per collega?"},
-    ]
-    with patch.object(query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=_VARIANTS)) as para:
-        await _retrieve(messages, _settings())
+    rewrite = query_rewrite.RewriteResult(query=rewritten, coreference_resolved=True, taxonomy_node_ids=[])
+    with (
+        patch.object(query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=_VARIANTS)) as para,
+        patch.object(query_rewrite, "rewrite_for_retrieval", AsyncMock(return_value=rewrite)),
+    ):
+        await _retrieve(_FOLLOW_UP, _settings())
+    return captured["body"], para
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_is_also_searched_with_the_conversation_it_belongs_to(monkeypatch):
+    """A visitor who answers our question with a few words still means the
+    problem from their first message. Those words alone find the wrong article,
+    so the turn is also searched with the earlier question in front of it and
+    with the stand-alone rewrite; the visitor's own message stays primary."""
+    body, para = await _retrieve_follow_up(monkeypatch, "bureautelefoon gaat gelijk over tot voicemail")
 
     para.assert_not_awaited()
-    assert captured["body"]["query_variants"] is None
-    assert len(captured["body"]["conversation_history"]) == 3
+    assert body["query"] == "op de bureautelefoon"
+    assert body["query_variants"] == [
+        f"{_QUESTION} op de bureautelefoon",
+        "bureautelefoon gaat gelijk over tot voicemail",
+    ]
+    assert len(body["conversation_history"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_whose_rewrite_changed_nothing_is_not_searched_twice(monkeypatch):
+    body, _ = await _retrieve_follow_up(monkeypatch, "Op de bureautelefoon")
+
+    assert body["query_variants"] == [f"{_QUESTION} op de bureautelefoon"]
 
 
 @pytest.mark.asyncio

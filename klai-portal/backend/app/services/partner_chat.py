@@ -107,7 +107,7 @@ from app.services.llm_safety_adapter import (
 )
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
-from app.services.query_rewrite import rewrite_for_retrieval
+from app.services.query_rewrite import follow_up_variants, rewrite_for_retrieval
 from app.services.user_provided_content import has_user_provided_content
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
@@ -3754,17 +3754,22 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         if rewrite.taxonomy_node_ids:
             retrieve_body["taxonomy_node_ids"] = rewrite.taxonomy_node_ids
     else:
-        # A first question travels with two paraphrases; a follow-up has its
-        # history to search on instead (query_paraphrase.py has the numbers).
-        # A fanned-out message gets none: retrieval-api would run the
-        # paraphrases of the whole message inside every sub-question's pass.
-        query_variants = (
-            []
-            if sub_queries
-            else await first_question_variants(
+        # A first question travels with two paraphrases, a follow-up with the
+        # conversation it belongs to (query_paraphrase.py and
+        # query_rewrite.follow_up_variants have the numbers). A fanned-out
+        # message gets neither: retrieval-api would run the variants of the
+        # whole message inside every sub-question's pass.
+        query_variants: list[str] = []
+        if support_mode and not sub_queries:
+            query_variants = await first_question_variants(
                 messages, query, settings, support_mode=support_mode, delegated_org_id=zitadel_org_id
+            ) or await follow_up_variants(
+                query,
+                conversation_history,
+                zitadel_org_id=zitadel_org_id,
+                pasted_correspondence=latest_correspondence,
+                settings=settings,
             )
-        )
         retrieve_body = {
             # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
             # REQ-2.5) using the same helper as conversation_history entries. An
