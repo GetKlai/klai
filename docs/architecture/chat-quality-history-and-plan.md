@@ -116,7 +116,7 @@ Een meting van wat controle in code vangt; een vergelijking tussen opnieuw schri
 | Niet schrijven als het antwoord er niet staat, beslist buiten het antwoordmodel | Beslissen op de zoekscore (alles onder 0,4), en het model daarna vragen "niet gevonden" te zeggen | De score meet gelijkenis; boven 0,4 wordt altijd geschreven |
 | Weinig en juiste passages | Acht fragmenten, drie bronnen | Geen selectie op "beantwoordt dit de vraag" |
 | Schrijven door het model, dicht op de bron | Vrij schrijven, daarna controle per zin | Geen verschil in wie schrijft; wel in wat er daarna gebeurt |
-| Niet achteraf herschrijven | Een derde aanroep herschrijft bij twee of meer afkeuringen | Grootste foutsoort in de review |
+| Niet achteraf herschrijven | Tot 30 september herschreef een derde aanroep bij twee of meer afkeuringen. Sindsdien blijft het antwoord op de widget heel | Was de grootste foutsoort in de review; opgelost op de widget, intern nog niet |
 | Alleen controleerbare uitspraken nakijken | De controle keurt ook eigen "niet gevonden"-zinnen af | Leidt tot weigeringen en rompen |
 | Eén vraag, zelden, uit wat de artikelen onderscheidt | Een vraag als artikeltitels op elkaar lijken | Vroeg naar het apparaat bij een vraag over belrechten |
 | Bij frustratie eerst helpen | Negatieve toon vervangt het antwoord door een afspraakaanbod en slaat de vraagstap en de regel voor zwakke bronnen over | Een oplosbaar probleem krijgt geen antwoord |
@@ -146,6 +146,46 @@ Eén stroom voor beide chats. Alleen de uiteinden verschillen. Sinds het lezen v
 **Wat vervalt als de meting het toelaat:** de antwoordbeoordelaar, de controle per zin als redacteur, en het herschrijven. De controle per zin blijft meekijken om te meten.
 
 **Wat we niet wisten en nu deels gemeten is** (§8, stap 10 en 11): ons model kan het beslismoment niet als harde poort dragen, en de controle in code vangt een smal deel. Nog niet gemeten [aanname]: hoeveel ons model nog verzint met alleen de juiste passage.
+
+### Hoe het pad nu werkt op de helpwidget (stand 30 september)
+
+Dit is wat er nu live staat, per stap, met wat de stap doorgeeft aan de volgende. Gewijzigd sinds de review staat erbij.
+
+| Stap | Wat ze doet | Wie beslist | Geeft door |
+|---|---|---|---|
+| Vraagbeoordelaar | Leest de laatste beurt: duidelijk of niet, toon, wil een mens, onderwerp dat niet behandeld wordt | klein model, gesloten velden | route en toon |
+| Zoekvraag | Eerste beurt: de woorden van de bezoeker plus twee herformuleringen als extra zoekgang. Vervolgbeurt: de laatste zin, waarin het zoeken zelf de verwijswoorden invult | middelgroot model (herformuleren), klein model (verwijswoorden) | een of drie zoekvragen |
+| Zoeken | Acht passages, met een score per passage | zoekmachine en herrangschikker | passages en hoogste score |
+| Gat-bepaling | Niets gevonden, of alles onder de drempel | code | "zwakke bronnen" of niet |
+| Doorverwijzen | Onderwerp dat de eigenaar niet laat behandelen: vaste verwijzing met knop, geen antwoordmodel | code, op het oordeel van de vraagbeoordelaar | einde beurt |
+| Vraagstap | Eén vraag als de gevonden artikelen per variant verschillen. **Gewijzigd:** hooguit één vraag per gesprek | code; klein model schrijft de zin | einde beurt, of door |
+| Schrijven | Het antwoord, uit de passages, in de toon van het profiel. **Gewijzigd:** geen voorbeeldzin met excuus meer | antwoordmodel | concept |
+| Bronnen | Kiest welke artikelen als bron onder het antwoord komen | code | concept met bronnen |
+| Twee controles | Lichte beoordelaar (beantwoord of niet) en controle per zin tegen de artikelen | klein en middelgroot model | oordeel en afgekeurde zinnen |
+| Beslissing | Antwoord, deelantwoord of weigering | code | reactie |
+| Na de controle | **Gewijzigd:** het antwoord wordt niet meer herschreven. Twee of meer afgekeurde zinnen: antwoord blijft heel, knop en zin over de afspraak eronder. Niets onderbouwd of een tegenspraak: de vaste weigering | code | reactie |
+| Afspraak | **Gewijzigd:** hangt de knop er en noemt de tekst hem niet, dan zet code de zin erbij. "Breder zoeken" alleen nog als er niets gevonden is | code | wat de bezoeker ziet |
+| Record | **Gewijzigd:** bewaart ook de knop, de toon en of een geplande vraag gesteld is | code | meetgegevens |
+
+Drie dingen die het lezen van de sporen over dit pad leerde en die nog gelden:
+
+- De score zegt dat een passage op de vraag lijkt, niet dat ze de vraag beantwoordt. Geen stap op het pad ziet het verschil tussen "zelfde onderwerp" en "zelfde vraag" (inkomend tegenover uitgaand, app tegenover bureautelefoon).
+- De controle per zin vangt verzonnen zinnen, maar keurt een antwoord dat netjes uit het verkeerde artikel komt goed.
+- Meer vinden maakt het antwoord niet beter zolang dat eerste punt niet is opgelost (stap A in §8).
+
+### Waar we staan
+
+Van de foutsoorten uit de review is de grootste (een antwoord dat door de reparatie verminkt werd) bij de bron weggenomen, en zijn vier kleinere opgelost: de afspraak die niet genoemd werd, het aanbod "breder zoeken" waar het niets kon doen, het excuus waar niets misging, en de tweede vraag in hetzelfde gesprek. Niet opgelost: het lijkende artikel dat wint, de vraag met meerdere delen, de vervolgbeurt die het onderwerp echt mist, de gemengde vraag die in zijn geheel wordt doorverwezen, de gaten in de brontekst, en wat niet in de kennisbank staat.
+
+Een nieuw cijfer voor "goed" is er niet [aanname zolang de eigenaar niet opnieuw beoordeelt]: de soort reactie klopte al in de meeste gevallen, en of de inhoud goed is kan alleen de eigenaar zeggen. De nagespeelde antwoorden met en zonder reparatie liggen klaar om te beoordelen.
+
+### Volgorde vanaf nu
+
+1. De gevallen lezen waar een lijkend artikel wint, en vastleggen welk kenmerk het verschil maakt (richting, apparaat, product). Pas daarna een voorstel; dit is stap E, naar voren gehaald.
+2. Het randgeval uit de review van de laatste wijziging: een antwoord waarvan alleen de zin over de afspraak onderbouwd is, hoort de weigering te worden.
+3. De gemengde vraag (uitleg plus kosten): het deel over uitleg beantwoorden, het deel over kosten doorverwijzen (stap D).
+4. De vervolgbeurt waarin de zoekvraag het onderwerp echt mist, zodra stap 1 er is; eerder haalt het alleen lijkende artikelen binnen.
+5. Vragen met meerdere delen (stap B), de brontekst (stap C) en de interne chat (stap G) blijven staan zoals in §7.
 
 ## 6. Werkafspraken
 
