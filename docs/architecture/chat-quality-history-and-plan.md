@@ -42,6 +42,18 @@ Er zijn twee chats op dezelfde kennis. De interne chat laat medewerkers de kenni
 
 Dit patroon is bekend. Meer aanroepen van een taalmodel helpen bij makkelijke vragen en schaden bij moeilijke, waardoor het totaal eerst stijgt en dan daalt [onderzoek (samenvatting): Chen e.a. 2024, https://arxiv.org/abs/2403.02419]. Een toename van AI-gebruik in ontwikkelteams gaat samen met 7,2% lagere stabiliteit van opleveringen, en de remedie die het rapport noemt is kleine wijzigingen en stevige tests [onderzoek: DORA 2024].
 
+### Hoe de reparatie ontstond, en waarom ze niet kon werken
+
+De reparatie is nooit ontworpen; ze is het eind van een reeks stappen die elk het gevolg van de vorige probeerden op te vangen.
+
+1. Het model kreeg acht passages en schreef een antwoord. Of die passages de vraag beantwoordden, stelde niemand vast.
+2. Antwoorden bevatten verzonnen stappen en menunamen. Daarop kwam de controle per zin (18 september), die elke zin naast de artikelen legt.
+3. De controle vond de verzonnen zinnen. De vraag was toen wat ermee te doen: weigeren kostte goede antwoorden (7 van 18 in de eerste versie), dus kwam er een derde aanroep die de afgekeurde zinnen weghaalt en de rest laat staan.
+4. Die reparatie is gemeten op de vraag of er minder onbewezen zinnen overbleven, op 25 antwoorden. Of het antwoord daarna nog te volgen was, is niet gemeten.
+5. In de review bleek ze de grootste oorzaak van een slecht antwoord: stappen weg, koppen zonder inhoud.
+
+Waarom ze niet kon werken: de controle keurt twee soorten zinnen af die niets met elkaar te maken hebben. De ene soort is onschuldig (de slotzin die het profiel zelf voorschreef, "Ga naar je belplan", een herhaling van wat de bezoeker zei). De andere soort is een verzonnen stap in een antwoord dat in zijn geheel verzonnen is, omdat het antwoord niet in de passages stond. Knippen beschadigt in het eerste geval een goed antwoord en laat in het tweede geval een romp over van een antwoord dat er nooit had moeten zijn. Geen regel achteraf kan dat goedmaken, want de fout is gemaakt vóór het schrijven [gemeten, §8].
+
 ### Wat de sporen lieten zien (30 september)
 
 Tot 30 september keken we per onderdeel of het deed wat het moest doen, en telden we uitkomsten. Op die dag zijn alle gevallen uit de review opnieuw nagespeeld met het hele pad vastgelegd (vraag, vraagbeoordelaar, herformuleringen, gevonden passages, de letterlijke opdracht aan het model, het concept, beide controles, de reparatie, de eindtekst), en zijn de fout beoordeelde gevallen één voor één gelezen. Per geval is de eerste plek op het pad vastgelegd waar het misging [gemeten, één lezer, één naspeelronde].
@@ -137,14 +149,33 @@ Op 30 september is de broncode gelezen van twaalf systemen met een chat over eig
 
 ## 5. Het ontwerp
 
-Eén stroom voor beide chats. Alleen de uiteinden verschillen. Sinds het lezen van de sporen (§2) ligt het zwaartepunt op stap 1 en 2 van dit ontwerp: wat het model te lezen krijgt bepaalt de uitkomst, meer dan wat er na het schrijven gebeurt.
+### Het leidende inzicht
 
-1. **Begrijpen.** Het model vult gesloten velden in: soort beurt (kennisvraag, verzoek om een mens, praatje, onderwerp dat niet behandeld wordt), de zelfstandige zoekvraag, en wat de bezoeker al noemde (apparaat, richting). Code beslist de route.
-2. **Zoeken.** Zoals nu, met twee herformuleringen op de eerste beurt. Dit is het enige onderdeel met een sterke eigen meting.
-3. **Eén beslismoment.** Een aparte stap kiest uit de gevonden passages: deze beantwoordt de vraag, geen enkele doet dat, of het hangt af van één feit dat de bezoeker kent. Bij "geen enkele" wordt het antwoordmodel niet aangeroepen; code geeft de vaste eerlijke tekst met de vervolgstap.
-4. **Schrijven.** Het model schrijft het antwoord, kort en in gewone taal, uit alleen de gekozen passages.
-5. **Nakijken in code.** Getallen, bedragen, namen van menu's en knoppen, links en het aantal stappen moeten in de bron voorkomen. Bij een afwijking wordt één keer opnieuw geschreven; lukt dat niet, dan wordt de passage zelf getoond met een korte inleiding.
-6. **Toon.** Bij een negatieve toon blijft het antwoord staan en komt de knop eronder. Een verzoek om een mens gaat direct door.
+Een klein model dat passages krijgt over het onderwerp van de vraag, schrijft een antwoord, ook als het antwoord er niet in staat. Het leent de vorm uit wat het leest (een menupad, een stappenlijst) en vult de inhoud zelf in. Een instructie "zeg dat het er niet staat" houdt dat niet tegen: bij zwakke bronnen werd ze in vier op de tien gevallen genegeerd.
+
+De zoekscore kan dit niet voorkomen, want ze meet of een passage op de zoekvraag lijkt, niet of ze de vraag beantwoordt. In bijna de helft van de nagespeelde beurten waarin het model schreef, bevatte geen enkele passage het antwoord; in de meerderheid daarvan was de score hoog [gemeten, §8].
+
+Daaruit volgt de regel waar het ontwerp op rust:
+
+> **Beslis vóór het schrijven wat de schrijver mag lezen, en of er geschreven wordt. Na het schrijven wordt alleen nog gemeten, niet meer gerepareerd.**
+
+Dit is ook wat het onderzoek zegt (§3.1: een model verzint vooral bij onvoldoende context; §3.2: eerst kiezen, dan schrijven) en wat de open-source systemen in hun code doen (§3.6). Wat wij daaraan toevoegen is dat het oordeel niet op onderwerp toetst maar op "beantwoordt dit deze vraag, voor hetzelfde product, apparaat en dezelfde richting", en dat "staat er niet in" in code wordt afgehandeld in plaats van aan de schrijver te worden gevraagd.
+
+### De stroom
+
+Eén stroom voor beide chats; alleen de uiteinden verschillen.
+
+| # | Stap | Wie | Wat het oplevert |
+|---|---|---|---|
+| 1 | **Begrijpen.** Soort beurt (kennisvraag, verzoek om een mens, praatje, onderwerp dat niet behandeld wordt) en toon | klein model, vaste velden; code kiest de route | route |
+| 2 | **Zoeken.** Breed: de woorden van de bezoeker plus extra zoekvragen. Liever te veel vinden dan te weinig, want stap 3 kiest | zoekmachine | passages |
+| 3 | **Kiezen.** Eén oordeel uit drie over de gevonden passages: deze beantwoorden de vraag, het hangt af van één feit, of geen enkele doet het | middelgroot model, vaste velden; code kiest de route | de gekozen passages, of een route zonder schrijver |
+| 4a | **Schrijven**, uit alleen de gekozen passages, kort, met alleen de stappen die het artikel geeft | antwoordmodel | het antwoord |
+| 4b | **Eén vraag**, als het antwoord per variant verschilt; hooguit één keer per gesprek | antwoordmodel, met het ontbrekende feit uit stap 3 | de vraag |
+| 4c | **Eerlijk "niet gevonden"** met de weg naar een mens | code, vaste tekst | de reactie |
+| 5 | **Meten.** De controle per zin kijkt mee en legt vast; ze verandert het antwoord niet | middelgroot model | meetgegevens |
+
+Valt stap 3 uit, dan loopt de beurt zonder keuze door, zoals elk open-source systeem dat ook doet: een storing mag geen weigering worden.
 
 | Punt in de stroom | Publieke chat | Interne chat |
 |---|---|---|
@@ -154,11 +185,23 @@ Eén stroom voor beide chats. Alleen de uiteinden verschillen. Sinds het lezen v
 | Toegang | Publieke kennis | De kennisbanken van de medewerker |
 | Invoer | Korte vragen | Lange vragen en geplakte klantmails, eerst gedistilleerd |
 
-**Wat vervalt als de meting het toelaat:** de antwoordbeoordelaar, de controle per zin als redacteur, en het herschrijven. De controle per zin blijft meekijken om te meten.
+### Wat dit overbodig maakt
 
-**Wat we niet wisten en nu deels gemeten is** (§8, stap 10 en 11): ons model kan het beslismoment niet als harde poort dragen, en de controle in code vangt een smal deel. Nog niet gemeten [aanname]: hoeveel ons model nog verzint met alleen de juiste passage.
+Deze onderdelen bestaan omdat de schrijver alles te lezen kreeg. Ze gaan eruit zodra de meting van begin tot eind het beeld van de proef bevestigt, elk met een eigen regel in §8:
 
-### Hoe het pad nu werkt op de helpwidget (stand 30 september)
+- de regel voor zwakke bronnen op basis van de score (stap 3 leest de passages zelf);
+- de vraagstap die artikeltitels vergelijkt (stap 3 ziet of het antwoord per variant verschilt);
+- het herschrijven na de controle (op de widget al weg; de regel die ervoor in de plaats kwam gaat ook weg);
+- de lichte antwoordbeoordelaar, als stap 3 en de controle samen hetzelfde zeggen.
+
+### Wat het ontwerp niet oplost
+
+- **Het zoeken.** Stap 3 maakt zichtbaar hoe vaak het juiste artikel niet bij de passages zit terwijl de kennisbank het heeft. Dat wordt het volgende knelpunt, en stap 3 maakt breder zoeken veilig: een extra zoekgang haalt lijkende artikelen binnen, en die worden nu weggekozen in plaats van uitgeschreven.
+- **De brontekst.** Een gat waar een linktekst hoort blijft een gat.
+- **Wat niet in de kennisbank staat.** Dat blijft "niet gevonden", en wordt een lijst voor de eigenaar.
+- **Een keuzestap die ernaast zit.** Het oordelende model keurde in een eerdere proef een kwart van de goede antwoorden af op alleen het oordeel "staat er niet in" [gemeten, §8 stap 10]. In de proef met kiezen waren de gelezen afwijzingen terecht, maar dit is het risico dat de meting van begin tot eind moet wegen.
+
+### Hoe het pad vandaag live werkt op de helpwidget (stand 30 september, vóór de keuzestap)
 
 Dit is wat er nu live staat, per stap, met wat de stap doorgeeft aan de volgende. Gewijzigd sinds de review staat erbij.
 
