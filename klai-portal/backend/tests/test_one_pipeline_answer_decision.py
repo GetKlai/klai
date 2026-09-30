@@ -508,7 +508,7 @@ async def test_every_litellm_call_of_an_internal_and_a_widget_turn_carries_the_o
     kinds = {_LiteLLM._kind(body) for body in internal.calls}
     assert kinds >= {"rewrite", "clarify_question", "answer", "answer_judge", "grounding_check", "repair"}
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in internal.calls)
-    assert {"clarify_question", "answer", "answer_judge", "grounding_check"} <= {
+    assert {"passage_selection", "answer", "answer_judge", "grounding_check"} <= {
         _LiteLLM._kind(b) for b in widget.calls
     }
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in widget.calls)

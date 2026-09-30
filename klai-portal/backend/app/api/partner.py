@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from klai_chat_prompts import no_citable_sources_message
 from klai_chat_prompts.kb_modes import build_template_instructions_block, weak_sources_notice
 from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
@@ -45,7 +46,8 @@ from app.services import escalation_intent as escalation_service
 from app.services import turn_judge
 from app.services.chat_attachments import process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
-from app.services.clarify_decision import WEAK_SOURCES_ADDENDUM, clarify_decision
+from app.services.clarify_decision import WEAK_SOURCES_ADDENDUM, clarify_decision, plain_question
+from app.services.clarify_gate import already_asked
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
@@ -63,6 +65,7 @@ from app.services.partner_chat import (
     off_topic_stream,
     openai_chat_completion_non_streaming,
     openai_chat_completion_streaming,
+    output_safety_violation,
     retrieve_context,
     safety_refusal_response,
     safety_refusal_stream,
@@ -2236,42 +2239,15 @@ async def chat_completions(  # noqa: C901
             retrieval_gap=gap,
         )
 
-    # A subject this widget does not answer (prices, quotes, payment terms):
-    # the visitor gets a referral with the appointment button and no answer
-    # model sees the articles, so a price cannot slip in from one. The referral
-    # names the visitor's subject in a sentence of ours, or falls back to the
-    # tenant's own (off_topic_referral.py); that call waits up to 2.5 s, on these
-    # turns only. A request for a person lands here too: the human-request turn
-    # would generate with the articles in the prompt, and the phrase detector
-    # also fires on "kan iemand mij vertellen wat X kost".
-    if (
-        support_mode
-        and off_topic_subjects
-        and off_topic_reply
-        and turn_judgement
-        and turn_judgement.topic == "not_handled"
-    ):
-        # A failing judge falls through to the normal answer on purpose: that is
-        # what the visitor got before this setting existed, and refusing every
-        # turn because one call timed out would be worse than answering one
-        # price question. Same fail direction as every other check here.
+    def fixed_reply(reply: str, language: str | None, *, decision: str, refused: bool, appointment: bool = True) -> Any:
+        """A widget reply decided in code: recorded like any other, with the appointment button unless it is a question."""
         answer_signals.update(
-            decision="off_topic",
+            decision=decision,
             sources_count=0,
-            refused=False,
+            refused=refused,
             broad_mode=False,
             model=request.model,
-        )
-        language = resolve_conversation_language(request.messages).language
-        referral = await off_topic_referral(
-            _last_user_message(request.messages) or "", language, settings, delegated_org_id=auth.zitadel_org_id
-        )
-        reply = referral or off_topic_reply
-        logger.info(
-            "partner_chat_off_topic",
-            org_id=auth.org_id,
-            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            referral=referral is not None,
+            appointment=appointment,
         )
         if language is not None:
             answer_signals["language"] = language
@@ -2292,10 +2268,66 @@ async def chat_completions(  # noqa: C901
             task.add_done_callback(_pending.discard)
         if request.stream:
             return StreamingResponse(
-                content=off_topic_stream(reply=reply, language=language),
+                content=off_topic_stream(reply=reply, language=language, appointment=appointment),
                 media_type="text/event-stream",
             )
-        return off_topic_response(model=request.model, reply=reply, language=language)
+        return off_topic_response(model=request.model, reply=reply, language=language, appointment=appointment)
+
+    # A subject this widget does not answer (prices, quotes, payment terms):
+    # the visitor gets a referral with the appointment button and no answer
+    # model sees the articles, so a price cannot slip in from one. The referral
+    # names the visitor's subject in a sentence of ours, or falls back to the
+    # tenant's own (off_topic_referral.py); that call waits up to 2.5 s, on these
+    # turns only. A request for a person lands here too: the human-request turn
+    # would generate with the articles in the prompt, and the phrase detector
+    # also fires on "kan iemand mij vertellen wat X kost".
+    if (
+        support_mode
+        and off_topic_subjects
+        and off_topic_reply
+        and turn_judgement
+        and turn_judgement.topic == "not_handled"
+    ):
+        # A failing judge falls through to the normal answer on purpose: that is
+        # what the visitor got before this setting existed, and refusing every
+        # turn because one call timed out would be worse than answering one
+        # price question. Same fail direction as every other check here.
+        language = resolve_conversation_language(request.messages).language
+        referral = await off_topic_referral(
+            _last_user_message(request.messages) or "", language, settings, delegated_org_id=auth.zitadel_org_id
+        )
+        logger.info(
+            "partner_chat_off_topic",
+            org_id=auth.org_id,
+            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+            referral=referral is not None,
+        )
+        return fixed_reply(referral or off_topic_reply, language, decision="off_topic", refused=False)
+
+    # Retrieval found passages, and none of them answers this question
+    # (passage_selection.py): the visitor gets the honest "not found" with the
+    # appointment button and no answer model writes, because a model that is
+    # handed passages on the same subject writes a procedure out of them. A
+    # frustrated visitor gets this reply too: it carries the appointment, and
+    # sending that turn to the writer with every passage produced an invented
+    # cause. Not when the visitor asked for a person: that turn is about the
+    # appointment itself. The turn judge's "conversational" does not exempt a
+    # turn: the selection step read the same conversation and calls a
+    # thank-you or a remark an answer that needs no passage, and the smaller
+    # judge labelled "how do I put this on my laptop" conversational, which
+    # sent it to the writer with passages that did not answer it.
+    selection = knowledge_turn.selection
+    if support_mode and knowledge_turn.not_in_passages and escalation != escalation_service.HUMAN_REQUEST:
+        language = resolve_conversation_language(request.messages).language
+        logger.info(
+            "partner_chat_not_in_passages",
+            org_id=auth.org_id,
+            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+            passages=len(chunks),
+        )
+        return fixed_reply(
+            no_citable_sources_message(language, helpdesk=True), language, decision="refusal", refused=True
+        )
 
     # The one question this turn should ask, decided against what retrieval
     # found (clarify_decision.py), on the widget and the internal chat alike.
@@ -2303,13 +2335,49 @@ async def chat_completions(  # noqa: C901
     # asked for a person or is frustrated: there the reply is the appointment,
     # not on a conversational turn, and not when the latest turn is pasted
     # correspondence, whose question is the distilled email itself.
-    if (
-        (support_mode or internal)
-        and not broad_turn
+    may_ask = (
+        not broad_turn
         and escalation is None
         and not turn_judge.is_conversational(scope)
         and not latest_user_turn_has_correspondence(request.messages)
-    ):
+    )
+    if support_mode and may_ask:
+        # Help widget: the selection step read the passages themselves, so it
+        # decides whether the steps differ per variant, and it wrote the one
+        # question. That question is the whole reply, sent as it is: asked to
+        # put it into words, the answer model wrote an opening line and stopped
+        # in two of four replayed turns. Once per conversation, as before; the
+        # title comparison below stays for the internal chat.
+        # The question is model-written and goes out as it is, so it passes
+        # the checks a written reply passes: one plain line ending on a
+        # question mark (which is also how "already asked" recognises it next
+        # turn), and the output safety check. It needs passages to have been
+        # chosen: a question about variants nobody found is a guess.
+        asks = (
+            selection is not None
+            and selection.verdict == "depends"
+            and knowledge_turn.passages_chosen
+            and plain_question(selection.question)
+            and output_safety_violation(selection.question) is None
+            and not already_asked(request.messages)
+        )
+        logger.info(
+            "clarify_decision",
+            org_id=auth.org_id,
+            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+            fired=asks,
+            reason=selection.verdict if selection else "no_selection",
+        )
+        if asks and selection is not None:
+            answer_signals.update(planned_question=True, question_asked=True, clarity="ambiguous")
+            return fixed_reply(
+                " ".join(selection.question.split()),
+                resolve_conversation_language(request.messages).language,
+                decision="clarifying_question",
+                refused=False,
+                appointment=False,
+            )
+    elif internal and may_ask:
         decision = await clarify_decision(request.messages, chunks, settings, delegated_org_id=delegated_org_id)
         if decision.addendum:
             system_prompt += decision.addendum
@@ -2342,7 +2410,15 @@ async def chat_completions(  # noqa: C901
     # band is stored, never used here. Only the wording differs: the widget
     # offers its appointment button, an internal Open turn may still answer from
     # general knowledge.
-    if (support_mode or internal) and gap == "soft" and not broad_turn and escalation is None and not conversational:
+    # Not where the selection step chose the passages: it read them, the score did not.
+    if (
+        (support_mode or internal)
+        and not knowledge_turn.passages_chosen
+        and gap == "soft"
+        and not broad_turn
+        and escalation is None
+        and not conversational
+    ):
         system_prompt += weak_sources_notice(profile.kb_mode == "strict") if internal else WEAK_SOURCES_ADDENDUM
         answer_signals["weak_sources"] = True
 

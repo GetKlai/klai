@@ -105,6 +105,7 @@ from app.services.llm_safety_adapter import (
     check_widget_or_partner_input,
     safe_refusal_text,
 )
+from app.services.passage_selection import PassageSelection, select_passages, writer_brief
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
 from app.services.query_rewrite import rewrite_for_retrieval
@@ -203,7 +204,7 @@ def without_dashes(text: str, *, helpdesk: bool) -> str:
     return _PUNCTUATION_DASH.sub(", ", text) if helpdesk else text
 
 
-def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
+def off_topic_response(*, model: str, reply: str, language: str | None, appointment: bool = True) -> dict:
     """The referral for a subject this widget does not answer.
 
     No answer model writes here: the visitor gets the referral that names their
@@ -212,12 +213,9 @@ def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
     same rule in the widget's base prompt was measured on 2026-09-17 and landed
     it right 8 times out of 15.
     """
-    message = {
-        "role": "assistant",
-        "content": reply,
-        "sources": [],
-        "escalation": _appointment_escalation(),
-    }
+    message: dict[str, Any] = {"role": "assistant", "content": reply, "sources": []}
+    if appointment:
+        message["escalation"] = _appointment_escalation()
     if language is not None:
         message["language"] = language
     return {
@@ -228,11 +226,12 @@ def off_topic_response(*, model: str, reply: str, language: str | None) -> dict:
     }
 
 
-async def off_topic_stream(*, reply: str, language: str | None) -> AsyncGenerator[bytes]:
+async def off_topic_stream(*, reply: str, language: str | None, appointment: bool = True) -> AsyncGenerator[bytes]:
     """The same reply as :func:`off_topic_response`, in the widget's frames."""
     if language is not None:
         yield _sse_language_delta(language)
-    yield _sse_escalation_delta(_appointment_escalation())
+    if appointment:
+        yield _sse_escalation_delta(_appointment_escalation())
     yield _sse_content_delta(reply)
     yield b"data: [DONE]\n\n"
 
@@ -2217,10 +2216,16 @@ def _compose_backend_managed_answer(
             decision["escalation"] = _appointment_escalation()
         return f"{marker}\n\n{_answer_without_retrieved_sources(text, citation_chunks)}", [], decision
 
+    # A source below the score bar must share a word with the question to be
+    # cited. The selection step read the passage and pointed at the sentence
+    # that answers, so for its passages that word check is skipped: it dropped
+    # "gespreksgegevens exporteren" for a visitor who wrote "belgegevens
+    # downloaden", and the reply without a source became a refusal.
+    chosen_by_selection = bool(citation_chunks) and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks)
     composed = compose_answer_with_trusted_sources(
         text,
         trusted_sources or [],
-        query_text=user_query,
+        query_text=None if chosen_by_selection else user_query,
         evidence_chunks=citation_chunks or [],
     )
     if not composed.content:
@@ -2547,9 +2552,32 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     if outcome == "partial_answer" and helpdesk:
         decision["escalation"] = _appointment_escalation()
         sources = _partial_answer_sources(sources, weak_sources=weak_sources)
-    # Only a reply the user actually reads gets repaired: a refusal and a
-    # clarifying question state nothing about the organisation.
-    if outcome in ("answer", "partial_answer") and grounding is not None and grounding.worth_repairing:
+    # Internal chat only, and only a reply the user actually reads: a refusal
+    # and a clarifying question state nothing about the organisation. On the
+    # help widget nothing changes a reply after it is written: what the writer
+    # may read is decided before (passage_selection.py), and the check's
+    # verdict is kept for measuring. Editing a flagged reply there was the
+    # largest cause of a bad answer in the owner's review, and turning it into
+    # a refusal on one "contradicted" threw away a correct procedure whose
+    # warning the check misread.
+    if (
+        helpdesk
+        and outcome in ("answer", "partial_answer")
+        and grounding is not None
+        and len(grounding.statements) >= 2
+        and len(grounding.unsupported) == len(grounding.statements)
+        and not (citation_chunks and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks))
+    ):
+        # The selection step did not choose this turn's passages (it failed,
+        # or was skipped), so the writer read everything retrieval found. A
+        # reply in which the check then supports nothing is not shown.
+        refusal = {
+            "reason": "grounding_nothing_left",
+            _NO_CITABLE_SOURCES_DECISION_KEY: True,
+            **_helpdesk_refusal_offers(citation_chunks),
+        }
+        return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
+    if internal and outcome in ("answer", "partial_answer") and grounding is not None and grounding.worth_repairing:
         content, sources, decision = await _repair_unsupported_statements(
             content,
             sources,
@@ -2559,8 +2587,6 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             settings=settings,
             org_id=org_id,
             answer_signals=answer_signals,
-            response_language=response_language,
-            helpdesk=helpdesk,
             timeout_seconds=repair_seconds,
             delegated_org_id=delegated_org_id,
         )
@@ -2604,39 +2630,15 @@ async def _repair_unsupported_statements(
     settings: Settings,
     org_id: int | str | None,
     answer_signals: dict[str, Any] | None,
-    response_language: str | None,
-    helpdesk: bool,
     timeout_seconds: float,
     delegated_org_id: str | None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """Act on a reply the check flagged: the widget keeps it whole, the internal chat edits it.
+    """Internal chat: remove the statements the articles do not support, keep the rest.
 
-    Internal: remove the statements the articles do not support, keep the rest.
     Measured on 150 real answers, editing took answers with an unsupported
     statement from 49% to 11% and cost no good answer. A failed repair keeps
     the composed answer.
-
-    Help widget: no editing. On the owner's review of 109 real widget answers
-    the edit was the largest single cause of a bad answer: replayed, it ran on
-    47 of 109 turns, cut steps out of more than half of those and left
-    headings without a body. The reply now goes out as written with the
-    appointment under it. It becomes the refusal only when no statement is
-    supported (11 of those 47) or one contradicts an article (1 of 47).
     """
-    if helpdesk:
-        if answer_signals is not None:
-            answer_signals["repaired"] = False
-        unsupported = grounding.unsupported
-        if len(unsupported) == len(grounding.statements) or any(item.support == "contradicted" for item in unsupported):
-            refusal = {
-                "reason": "grounding_nothing_left",
-                _NO_CITABLE_SOURCES_DECISION_KEY: True,
-                **_helpdesk_refusal_offers(citation_chunks),
-            }
-            return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
-        if not _text_offers_appointment(content) and not is_clarifying_question(content):
-            content = f"{content.rstrip()}\n\n{appointment_offer_sentence(response_language)}"
-        return content, sources, {**decision, "reason": "grounding_flagged", "escalation": _appointment_escalation()}
     repaired = await repair_answer(
         draft=content,
         unsupported=grounding.unsupported,
@@ -3441,6 +3443,9 @@ def _schedule_gap_event(
         logger.warning("partner_chat_gap_detection_failed", org_id=org_id, exc_info=True)
 
 
+_CHOSEN_PASSAGE_KEY = "chosen_by_selection"
+
+
 @dataclass
 class KnowledgeTurn:
     """What retrieve_context decided for this turn besides the prompt.
@@ -3459,6 +3464,13 @@ class KnowledgeTurn:
     # The mode the answer is decided under (answer_judge.decide_answer): the
     # profile's, or "general" for an internal turn that searched nothing.
     answer_mode: KbMode = "strict"
+    # Help widget only: what the selection step made of the retrieved passages
+    # (app.services.passage_selection). None when it did not run or failed.
+    selection: PassageSelection | None = None
+    # No retrieved passage answers the question; the caller replies without a model.
+    not_in_passages: bool = False
+    # The writer's passages are the selection's, not everything retrieval found.
+    passages_chosen: bool = False
     # An Open turn's grounding check, which runs after the reply; the per-turn
     # record waits for it before it is written.
     grounding_check: asyncio.Task[None] | None = None
@@ -3933,6 +3945,29 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         # The user's own attachment is still readable with zero KB evidence;
         # fall through to the zero_chunks prompt below instead of refusing.
 
+    # Help widget: the writer reads only the passages that answer the question
+    # (passage_selection.py has the numbers). Not on a turn that is answered
+    # broadly, which reads no articles, and not on a multi-part message, whose parts
+    # each need their own passages. "Not in the passages" narrows nothing
+    # here: the caller answers that turn without a model, unless the visitor
+    # asked for a person or the turn is conversational.
+    selection_chunks: list[dict] = []
+    if (
+        support_mode
+        and not internal
+        and chunks
+        and not turn.multi_question
+        and not _broad_mode_active(chunks, support_mode=support_mode, broad_consent=broad_mode)
+    ):
+        selection_chunks = chunks
+        turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
+        turn.not_in_passages = bool(turn.selection and turn.selection.not_in_passages(chunks))
+        chosen = turn.selection.chosen(chunks) if turn.selection else []
+        if chosen and not turn.not_in_passages:
+            turn.passages_chosen = True
+            chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
+            trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
+
     # Consented general-knowledge fallback: decided here, on the same
     # post-safety-filter chunks the gap event sees, and surfaced to the caller
     # as the fourth tuple element so the prompt swap and the answer label can
@@ -3948,6 +3983,9 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         sub_query_results=sub_query_results,
         unchecked_questions=unchecked_questions or None,
     )
+
+    if turn.passages_chosen and turn.selection is not None and not broad:
+        system_prompt += writer_brief(turn.selection, selection_chunks)
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
 

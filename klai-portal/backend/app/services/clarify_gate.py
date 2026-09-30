@@ -228,6 +228,11 @@ def _asked_before(messages: list[dict]) -> bool:
     )
 
 
+def already_asked(messages: list[dict]) -> bool:
+    """Whether this conversation already had its one question (see ``_asked_before``)."""
+    return _asked_before(_messages(messages))
+
+
 def clarify_gate(messages: list[dict], chunks: list[dict], threshold: float) -> ClarifyDecision:
     """Whether the retrieved articles call for one question, and its options. Never calls a model."""
     documents = _strong_documents(chunks, threshold)
