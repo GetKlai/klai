@@ -83,7 +83,9 @@ class FakeSession:
         review_gap_id: int | None = None,
         open_gaps: list[Any] | None = None,
         nearest_kb_slug: str | None = None,
+        conversation_tickets: list[Any] | None = None,
     ) -> None:
+        self.conversation_tickets = conversation_tickets or []
         self.question = question
         self.nearest_kb_slug = nearest_kb_slug
         self.review_gap_id = review_gap_id
@@ -184,6 +186,12 @@ class FakeSession:
             return _Rows([SimpleNamespace(gap_id=self.review_gap_id)])
         if "FROM portal_retrieval_gaps" in sql:
             return _Rows(self.open_gaps)
+        # SPEC-KNOWLEDGE-ESCALATION-001: no widget has ticket settings here;
+        # tests/test_conversation_tickets.py covers the configured paths.
+        if "FROM widget_ticket_settings" in sql:
+            return _Rows([])
+        if "FROM conversation_tickets" in sql:
+            return _Rows(self.conversation_tickets)
         return None
 
     async def commit(self) -> None:
@@ -415,6 +423,7 @@ async def test_list_returns_the_contract_shape() -> None:
             "ratings": {"up": 0, "down": 1},
             "review": {"status": "unreviewed", "worst_verdict": None, "causes": [], "reviews": []},
             "open_gap_count": 0,
+            "ticket_labels": [],
         }
     ]
 
@@ -1035,6 +1044,26 @@ async def test_list_counts_open_gaps_per_conversation() -> None:
     assert response.status_code == 200
     assert response.json()["items"][0]["open_gap_count"] == 2
     assert db.params_for("SELECT conversation_id, COUNT(*) AS open_gaps")[0]["org_id"] == 101
+
+
+@pytest.mark.asyncio
+async def test_list_carries_created_ticket_labels_and_filters_on_has_ticket() -> None:
+    """SPEC-KNOWLEDGE-ESCALATION-001 §4.3: labels of created tickets per item,
+    and ``has_ticket`` keeps only the conversations with (or without) one."""
+    db = FakeSession(
+        conversations=[_conv(255), _conv(256, started_at=T0 - dt.timedelta(minutes=1))],
+        conversation_tickets=[SimpleNamespace(conversation_id=255, target_label="Sales")],
+    )
+
+    everything = await _call(db, _perms("kb_manager"), "get", "/api/app/activity/conversations")
+    with_ticket = await _call(db, _perms("kb_manager"), "get", "/api/app/activity/conversations?has_ticket=true")
+    without = await _call(db, _perms("kb_manager"), "get", "/api/app/activity/conversations?has_ticket=false")
+
+    assert [(i["id"], i["ticket_labels"]) for i in everything.json()["items"]] == [(255, ["Sales"]), (256, [])]
+    assert [i["id"] for i in with_ticket.json()["items"]] == [255]
+    assert [i["id"] for i in without.json()["items"]] == [256]
+    ticket_sql = db.sql_containing("FROM conversation_tickets")
+    assert "status = 'created'" in ticket_sql[0] and "org_id = :org_id" in ticket_sql[0]
 
 
 @pytest.mark.asyncio

@@ -51,6 +51,8 @@ export interface ConversationListItem {
     reviews: ConversationReview[]
   }
   open_gap_count: number
+  /** Labels of every `created` ticket for this conversation (SPEC-KNOWLEDGE-ESCALATION-001 §4.3). */
+  ticket_labels: string[]
 }
 
 export interface ConversationListResponse {
@@ -75,6 +77,8 @@ export interface ActivityConversationQuery {
   band?: ConversationBand | ConversationBand[]
   rating?: ConversationRating
   sort?: 'newest' | 'worst'
+  /** SPEC-KNOWLEDGE-ESCALATION-001 §4.3: true/false filters, undefined = all. */
+  hasTicket?: boolean
   cursor?: string | null
   limit?: number
 }
@@ -100,6 +104,7 @@ export function activityConversationsPath(query: ActivityConversationQuery): str
   append('cause', query.cause)
   append('band', query.band)
   if (query.rating) params.set('rating', query.rating)
+  if (query.hasTicket !== undefined) params.set('has_ticket', String(query.hasTicket))
   if (query.cursor) params.set('cursor', query.cursor)
   return `/api/app/activity/conversations?${params.toString()}`
 }
@@ -216,6 +221,40 @@ export interface ConversationDetailMessage extends ConversationMessage {
   review: ConversationReview | null
 }
 
+/** SPEC-KNOWLEDGE-ESCALATION-001 §4.3: one HubSpot ticket-creation target, as
+    the knowledge side sees it (no pipeline/stage ids — those are admin-only). */
+export interface TicketTarget {
+  key: string
+  label: string
+}
+
+export type TicketStatus = 'pending' | 'created' | 'failed'
+
+/** One row of `conversation_tickets`, as returned by the app API. */
+export interface TicketOut {
+  target_key: string
+  target_label: string
+  status: TicketStatus
+  ticket_url: string | null
+  /** `create_forbidden` / `company_status: 'forbidden'`: HubSpot refused that
+      step (403, the service key lacks the scope) and the ticket went in
+      without it (SPEC §2.5). */
+  contact_status: 'existing' | 'created' | 'create_forbidden' | null
+  company_status: 'linked' | 'none' | 'forbidden' | null
+  error: string | null
+  created_by_name: string | null
+  created_at: string
+}
+
+/** Ticket block of the conversation detail (§4.3): `available` gates the
+    whole "Maak ticket" flow, `tickets` is the conversation's ticket history
+    and stays populated even when `available` is false. */
+export interface ConversationTicketInfo {
+  available: boolean
+  targets: TicketTarget[]
+  tickets: TicketOut[]
+}
+
 /** `GET /api/app/activity/conversations/{id}`. */
 export interface ConversationDetail {
   id: number
@@ -231,6 +270,7 @@ export interface ConversationDetail {
   visitor?: { name: string | null; email: string | null } | null
   quality: ConversationQuality | null
   messages: ConversationDetailMessage[]
+  ticket: ConversationTicketInfo
 }
 
 export function useActivityConversation(conversationId: string | number) {
@@ -359,5 +399,51 @@ export function useSetConversationTest(conversationId: string | number) {
         body: JSON.stringify({ is_test: isTest }),
       }),
     onSuccess: () => invalidateActivityViews(queryClient),
+  })
+}
+
+/** `GET /api/app/activity/conversations/{id}/ticket-preview` (§4.3). `new`
+    means creating the ticket creates the contact (§2.6). `contact_name` and
+    `company_name` are only ever non-null for an admin — the backend nulls
+    them for everyone else, so the panel does not need its own role check. */
+export interface TicketPreview {
+  contact: 'existing' | 'new'
+  lifecycle_stage: string | null
+  contact_name: string | null
+  company_name: string | null
+}
+
+/** Fetched only while the create-ticket panel is open (`enabled`), so opening
+    it is what triggers the HubSpot contact lookup, not loading the detail. */
+export function useTicketPreview(conversationId: string | number, enabled: boolean) {
+  const access = useActivityAccess()
+  return useQuery<TicketPreview, Error>({
+    queryKey: ['activity', 'conversation', String(conversationId), 'ticket-preview'],
+    queryFn: () =>
+      apiFetch<TicketPreview>(`/api/app/activity/conversations/${conversationId}/ticket-preview`),
+    enabled: access && enabled,
+    retry: false,
+  })
+}
+
+/**
+ * `POST /api/app/activity/conversations/{id}/tickets`. Invalidates the
+ * conversation detail (so the new/failed ticket row and the preview refetch)
+ * and the list (so its ticket badge and `has_ticket` filter stay current).
+ */
+export function useCreateTicket(conversationId: string | number) {
+  const queryClient = useQueryClient()
+  return useMutation<TicketOut, Error, { target_key: string }>({
+    mutationFn: (input) =>
+      apiFetch<TicketOut>(`/api/app/activity/conversations/${conversationId}/tickets`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['activity', 'conversation', String(conversationId)],
+      })
+      void queryClient.invalidateQueries({ queryKey: ['activity', 'conversations'] })
+    },
   })
 }

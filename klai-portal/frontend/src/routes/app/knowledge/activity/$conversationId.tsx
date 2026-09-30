@@ -21,7 +21,7 @@ import { RoleGuard } from '@/components/layout/RoleGuard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { fetchMe } from '@/lib/api-me'
 import { appNavActivityIsVisible } from '@/routes/app/-app-tools'
-import { ConversationTranscript, QualityPanel } from '@/features/chat-activity'
+import { ConversationTranscript, QualityPanel, TicketHistory } from '@/features/chat-activity'
 import { useActivityConversation, useSetConversationTest } from '@/features/chat-activity/api'
 import { AnswerSignals } from '@/features/chat-activity/AnswerSignals'
 import { ReviewForm } from '@/features/chat-activity/ReviewForm'
@@ -229,8 +229,14 @@ export function ActivityDetailPage() {
                     messageId={activeMessage.id}
                     review={activeMessage.review ?? null}
                     quality={detail.quality}
+                    ticket={detail.ticket}
+                    conversationId={conversationId}
                   />
                 )}
+                {/* Ticket history stays visible even for a test conversation
+                    (ticket.available false) — marking a conversation as a
+                    test after it already has a ticket must not hide that. */}
+                <TicketHistory tickets={detail.ticket.tickets} conversationId={conversationId} />
               </>
             )}
           </div>

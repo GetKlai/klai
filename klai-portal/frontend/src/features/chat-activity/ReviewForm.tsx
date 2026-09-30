@@ -16,7 +16,9 @@ import {
   type ConversationReview,
   type ConversationReviewCause,
   type ConversationReviewVerdict,
+  type ConversationTicketInfo,
 } from './api'
+import { TicketCreatePanel } from './TicketPanel'
 import type { ConversationQuality } from './types'
 import * as m from '@/paraglide/messages'
 
@@ -95,16 +97,24 @@ export function ReviewForm({
   messageId,
   review,
   quality,
+  ticket,
+  conversationId,
 }: {
   messageId: number
   review: ConversationReview | null
   quality?: ConversationQuality | null
+  /** SPEC-KNOWLEDGE-ESCALATION-001 §5: gates the "Maak ticket" button. The
+      conversation's ticket history renders separately (TicketHistory, on the
+      detail page) since it must stay visible even when this form does not. */
+  ticket: ConversationTicketInfo
+  conversationId: string | number
 }) {
   const suggestion = suggestedReview(review ? null : quality)
   // Several review forms render on one page, so their group labels need unique ids.
   const fieldId = useId()
   const upsert = useUpsertReview(messageId)
   const remove = useDeleteReview(messageId)
+  const [showTicketPanel, setShowTicketPanel] = useState(false)
 
   const seed = () => ({
     verdict: review?.verdict ?? suggestion?.verdict ?? null,
@@ -144,14 +154,20 @@ export function ReviewForm({
     patch({ verdict: VERDICTS[index].value })
   }
 
-  const save = () => {
+  // `onSaved` lets the "Maak ticket" button chain into opening the ticket
+  // panel only once the save it triggers actually succeeds (SPEC §5: "Klik =
+  // beoordeling opslaan, dan paneel open").
+  const save = (onSaved?: () => void) => {
     if (form.verdict === null) return
     const cause = needsCause(form.verdict) ? form.cause : 'none'
     if (cause === null) return
     upsert.mutate(
       { verdict: form.verdict, cause, note: form.note.trim() || null },
       {
-        onSuccess: () => toast.success(m.activity_review_saved()),
+        onSuccess: () => {
+          toast.success(m.activity_review_saved())
+          onSaved?.()
+        },
         onError: () => toast.error(m.activity_review_failed()),
       },
     )
@@ -238,6 +254,17 @@ export function ReviewForm({
           {upsert.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {m.activity_review_save()}
         </Button>
+        {ticket.available && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={!valid || upsert.isPending}
+            onClick={() => save(() => setShowTicketPanel(true))}
+          >
+            {m.activity_ticket_button()}
+          </Button>
+        )}
         {review && (
           <InlineDeleteConfirm
             isConfirming={confirmingDelete}
@@ -265,6 +292,14 @@ export function ReviewForm({
           </span>
         )}
       </div>
+
+      {ticket.available && showTicketPanel && (
+        <TicketCreatePanel
+          conversationId={conversationId}
+          ticket={ticket}
+          onClose={() => setShowTicketPanel(false)}
+        />
+      )}
     </form>
   )
 }
