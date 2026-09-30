@@ -18,7 +18,7 @@ import httpx
 import pytest
 import respx
 from helpers import FakeKB, FakeResult, make_partner_auth
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import appointment_offer_sentence, no_citable_sources_message
 from structlog.testing import capture_logs
 
 from app.services import partner_chat, turn_judge
@@ -28,6 +28,7 @@ LITELLM = "http://litellm:4000"
 RETRIEVAL = "http://retrieval-api:8040"
 CLARIFYING_QUESTION = "Gaat het om je factuur of om je abonnement?"
 REFUSAL_NL = no_citable_sources_message("nl", helpdesk=True)
+OFFER_NL = appointment_offer_sentence("nl")
 VISITOR = [{"role": "user", "content": "Ik heb een vraag over mijn rekening, hoe zit dat?"}]
 
 # Conversation #900, turn 1: the article shares "factuur" and "incasso" with the
@@ -333,31 +334,49 @@ async def test_the_decision_record_keeps_which_statement_the_check_flagged():
 
 
 @pytest.mark.parametrize("stream", [True, False])
-async def test_an_answer_with_an_unsupported_statement_is_repaired_not_refused(stream):
-    """Measured on 150 real answers: editing took answers with an unsupported
-    statement from 49% to 11% and cost no good answer, where refusing them cost
-    seven answers out of eighteen in an earlier round."""
+async def test_a_flagged_widget_answer_goes_out_whole_with_the_appointment_under_it(stream):
+    """The owner's review of real widget answers named the edit of flagged
+    answers as the largest cause of a bad one: steps cut out, headings left
+    without a body. The reply stays as written; the visitor is told how to make
+    sure, and no repair model is called."""
+    draft = ANSWER_900 + " Storneren kan binnen acht weken. Het bedrag staat binnen 3 werkdagen terug."
     litellm = _LiteLLM(
-        model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
-        grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
-        repaired=ANSWER_900,
+        model_text=draft,
+        grounding=_grounding(
+            "Storneren kan binnen acht weken.",
+            "Het bedrag staat binnen 3 werkdagen terug.",
+            supported=(ANSWER_900,),
+        ),
     )
 
     text, signals, extras = await _answer(litellm, stream=stream, **_with_900_sources())
 
-    # The supported sentence survives whole; only the flagged one is gone.
-    assert text == ANSWER_900
-    assert "020-7001234" not in text
+    assert text == f"{draft}\n\n{OFFER_NL}"
     assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
     assert extras["escalation"] == [{"appointment": True}]
-    assert signals["unsupported"] == 1
-    assert signals["repaired"] is True
+    assert signals["unsupported"] == 2
+    assert signals["repaired"] is False
+    assert litellm.repair_requests == []
     # The check reads every article the model received, whole: support that sits
     # deep in a long article must not read as "not in the articles".
     check_input = litellm.grounding_requests[0]["messages"][1]["content"]
     assert CHUNK_900["text"] in check_input
     assert LONG_CHUNK["text"] in check_input
     assert LONG_CHUNK["text"][-40:] in check_input
+
+
+async def test_a_widget_answer_that_contradicts_an_article_becomes_the_refusal():
+    litellm = _LiteLLM(
+        model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
+        grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
+    )
+
+    text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
+
+    assert text == REFUSAL_NL
+    assert extras["sources"] == []
+    assert signals["refused"] is True
+    assert litellm.repair_requests == []
 
 
 async def test_a_single_flag_leaves_the_answer_alone():
@@ -391,12 +410,11 @@ async def test_a_reply_that_is_entirely_unsupported_falls_back_to_the_refusal():
             "Bel 020-7001234 om te storneren.",
             "Het bedrag staat binnen 3 werkdagen terug.",
         ),
-        repaired="NOTHING_LEFT",
     )
 
     text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
 
-    assert len(litellm.repair_requests) == 1
+    assert litellm.repair_requests == []
     assert text == REFUSAL_NL
     assert extras["sources"] == []
     assert signals["refused"] is True
@@ -437,17 +455,21 @@ async def test_an_internal_strict_turn_keeps_the_unrepaired_answer_when_nothing_
     assert signals["repaired"] is False
 
 
+_INTERNAL_STRICT: dict[str, Any] = {"profile": ChatProfile(surface="internal", kb_mode="strict"), "support_mode": False}
+
+
 @pytest.mark.parametrize("stream", [True, False])
 async def test_a_repair_cannot_smuggle_a_link_past_the_stripper(stream):
     """The repair model returns free text, so it passes the same guards the
-    composer's output passed. A prompt that forbids URLs is not a guarantee."""
+    composer's output passed. A prompt that forbids URLs is not a guarantee.
+    Internal chat: the widget no longer edits a reply."""
     litellm = _LiteLLM(
         model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
         grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
         repaired=ANSWER_900 + " Zie https://evil.example.com/phish en [1].",
     )
 
-    text, _, _ = await _answer(litellm, stream=stream, **_with_900_sources())
+    text, _, _ = await _answer(litellm, stream=stream, **_INTERNAL_STRICT, **_with_900_sources())
 
     assert "evil.example.com" not in text
     assert "[1]" not in text
@@ -460,7 +482,7 @@ async def test_an_empty_repair_keeps_the_answer_the_visitor_would_have_had():
         repaired="   ",
     )
 
-    text, _, extras = await _answer(litellm, stream=True, **_with_900_sources())
+    text, _, extras = await _answer(litellm, stream=True, **_INTERNAL_STRICT, **_with_900_sources())
 
     assert text.startswith(ANSWER_900)
     assert extras["sources"]
@@ -1172,7 +1194,6 @@ async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(mo
     litellm = _LiteLLM(
         model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
         grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
-        repaired=ANSWER_900,
     )
 
     await _route_turn(monkeypatch, turn=_turn_verdict(), stream=stream, band="high", litellm=litellm)
@@ -1184,7 +1205,6 @@ async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(mo
         "answer",
         "answer_judge",
         "grounding_check",
-        "repair",
     }
     assert calls == [(kind, _delegated_with_tag(kind)) for kind, _ in calls]
 

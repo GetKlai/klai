@@ -2561,7 +2561,6 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             answer_signals=answer_signals,
             response_language=response_language,
             helpdesk=helpdesk,
-            internal=internal,
             timeout_seconds=repair_seconds,
             delegated_org_id=delegated_org_id,
         )
@@ -2607,18 +2606,37 @@ async def _repair_unsupported_statements(
     answer_signals: dict[str, Any] | None,
     response_language: str | None,
     helpdesk: bool,
-    internal: bool,
     timeout_seconds: float,
     delegated_org_id: str | None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """Remove the statements the articles do not support, keep the rest.
+    """Act on a reply the check flagged: the widget keeps it whole, the internal chat edits it.
 
-    Measured on 150 real answers: editing the reply this way took answers with
-    an unsupported statement from 49% to 11% (serious ones from 29% to 1%) and
-    cost no good answer, where deleting the flagged sentences in code cost one
-    and damaged two. A failed repair keeps the composed answer, which is what
-    the visitor got before this check existed.
+    Internal: remove the statements the articles do not support, keep the rest.
+    Measured on 150 real answers, editing took answers with an unsupported
+    statement from 49% to 11% and cost no good answer. A failed repair keeps
+    the composed answer.
+
+    Help widget: no editing. On the owner's review of 109 real widget answers
+    the edit was the largest single cause of a bad answer: replayed, it ran on
+    47 of 109 turns, cut steps out of more than half of those and left
+    headings without a body. The reply now goes out as written with the
+    appointment under it. It becomes the refusal only when no statement is
+    supported (11 of those 47) or one contradicts an article (1 of 47).
     """
+    if helpdesk:
+        if answer_signals is not None:
+            answer_signals["repaired"] = False
+        unsupported = grounding.unsupported
+        if len(unsupported) == len(grounding.statements) or any(item.support == "contradicted" for item in unsupported):
+            refusal = {
+                "reason": "grounding_nothing_left",
+                _NO_CITABLE_SOURCES_DECISION_KEY: True,
+                **_helpdesk_refusal_offers(citation_chunks),
+            }
+            return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
+        if not _text_offers_appointment(content) and not is_clarifying_question(content):
+            content = f"{content.rstrip()}\n\n{appointment_offer_sentence(response_language)}"
+        return content, sources, {**decision, "reason": "grounding_flagged", "escalation": _appointment_escalation()}
     repaired = await repair_answer(
         draft=content,
         unsupported=grounding.unsupported,
@@ -2648,24 +2666,13 @@ async def _repair_unsupported_statements(
     if repaired is None or repaired == content:
         return content, sources, decision
     if repaired == NOTHING_LEFT:
-        if internal:
-            # The LiteLLM hook makes the same call on this outcome
-            # (deploy/litellm/klai_answer_grounding.py's kb_answer_repair_kept):
-            # emptying an employee's answer is a bigger change than the
-            # measurement supports, so the unrepaired answer goes out as it was.
-            logger.info("partner_chat_answer_repair_kept", org_id=org_id, unsupported=len(grounding.unsupported))
-            return content, sources, decision
-        # Every statement was unsupported: there is no sourced answer left to
-        # keep, so the honest refusal is what remains.
-        refusal: dict[str, Any] = {"reason": "grounding_nothing_left", _NO_CITABLE_SOURCES_DECISION_KEY: True}
-        if helpdesk:
-            refusal.update(_helpdesk_refusal_offers(citation_chunks))
-        message = _no_citable_sources_message(response_language, helpdesk=helpdesk, suggest_open_mode=not helpdesk)
-        return message, [], refusal
-    decision = {**decision, "reason": "grounding_repaired"}
-    if helpdesk:
-        decision["escalation"] = _appointment_escalation()
-    return repaired, sources, decision
+        # The LiteLLM hook makes the same call on this outcome
+        # (deploy/litellm/klai_answer_grounding.py's kb_answer_repair_kept):
+        # emptying an employee's answer is a bigger change than the
+        # measurement supports, so the unrepaired answer goes out as it was.
+        logger.info("partner_chat_answer_repair_kept", org_id=org_id, unsupported=len(grounding.unsupported))
+        return content, sources, decision
+    return repaired, sources, {**decision, "reason": "grounding_repaired"}
 
 
 def _log_turn_timing(

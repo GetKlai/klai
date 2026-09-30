@@ -16,7 +16,7 @@ Er zijn **twee chatpaden** met elk hun eigen beslislogica. Ze delen alleen de zo
 | Waar de beslissingen vallen | LiteLLM-callbacks vóór en na het model | portal-api, rond één modelaanroep |
 | Vraag verduidelijken | instructie aan het antwoordmodel, bij band `low` zonder direct bewijs | vaste regel over de gevonden artikelen (`clarify_gate`) beslist of er één vraag komt; een klein model schrijft alleen die vraag |
 | Zwakke zoekresultaten | band stuurt verduidelijken, Strict-weigering en modelkeuze | band wordt alleen opgeslagen; de regel "alle bronnen < 0,4" stuurt |
-| Onbewezen uitspraken | alleen in Strict gecontroleerd en gerepareerd; Open niet | gecontroleerd per uitspraak, gerepareerd of geweigerd |
+| Onbewezen uitspraken | alleen in Strict gecontroleerd en gerepareerd; Open niet | gecontroleerd per uitspraak; widget laat het antwoord heel of weigert, intern repareert |
 | Mens aanbieden | bestaat niet | afspraakknop bij weigering, deelantwoord, escalatie |
 | Wat er per beurt bewaard wordt | alleen logregels (30 dagen) | `widget_messages.answer_signals` in de database |
 
@@ -116,7 +116,7 @@ LibreChat geeft het model ook de MCP-tool `klai-knowledge` (`deploy/librechat/li
 | B16 | Uitvoerveiligheid (`output_safety_violation`, `services/partner_chat.py:168`, aangeroepen `:2899`, `:4072`) | tekst | nee | weigering | `partner_chat_output_blocked` |
 | B17 | **Antwoordbeoordelaar en controle per zin parallel** (support en intern Strict; `_judge_composed_answer`, `services/partner_chat.py:2328`, `:2447-2460`) | concept + artikelen + gesprek | beoordelaar `klai-fast` 2,5 s; controle `klai-medium` 4 s, intern 12 s (`services/answer_grounding.py:60-67`) | met bron tonen, zonder bron weigeren | `partner_chat_answer_judge`, `answer_grounding_late` |
 | B18 | **`decide_answer`** (`services/answer_judge.py:112`): met bron altijd tonen, niet volledig beantwoord → `partial_answer` met afspraakknop; bij escalatie met bron altijd `answer`; zonder bron en niet-onderbouwd → weigering; zonder bron, vraag onduidelijk en concept eindigt op `?` → verduidelijkingsvraag zonder knoppen; anders tonen | B6, B12, B17 | nee | – | `answer_signals.decision` |
-| B19 | **Reparatie** bij ≥ 2 niet-onderbouwde uitspraken of 1 tegenspraak (`_repair_unsupported_statements`, `services/partner_chat.py:2560`, aangeroepen `:2532`). Draait op elk antwoord dat getoond wordt, ook op een door het model geschreven "niet gevonden" en op een escalatiebeurt. Blijft er niets over: op de widget een weigering met knop, intern blijft het antwoord staan (#1715). Er is geen toets op wat er overblijft. Een geslaagde reparatie krijgt op de widget ook de knop (`:2627-2629`) | controle | `klai-medium`, 3 s, intern 8 s | antwoord ongewijzigd | `partner_chat_answer_repair`, `answer_signals.repaired` |
+| B19 | **Na de controle per zin** bij ≥ 2 niet-onderbouwde uitspraken of 1 tegenspraak (`_repair_unsupported_statements` in `services/partner_chat.py`). Op de helpwidget wordt het antwoord sinds 30 september niet meer bewerkt: het gaat uit zoals geschreven, met de knop en de zin over de afspraak eronder. Alleen als geen enkele uitspraak onderbouwd is of één een artikel tegenspreekt, wordt het de weigering met knop. De interne chat houdt de reparatie door het model; blijft daar niets over, dan blijft het antwoord staan (#1715) | controle | widget: geen model; intern `klai-medium`, 8 s | antwoord ongewijzigd | `answer_signals.repaired` (widget altijd false), `partner_chat_answer_repair` (intern) |
 | B20 | Opslag van de assistent-beurt met `answer_signals` (`api/partner.py:2486-2506`, `services/widget_audit.py:261-279`). Sinds 29 september ook of de knop getoond is (`appointment`) en de toon die de vraagbeoordelaar hoorde (`sentiment`), via `_fill_answer_signals` | – | nee | – | `widget_messages.answer_signals` |
 
 `CLARIFY_TURN_ADDENDUM["external"]` in `klai-libs/chat-prompts` wordt nergens in klai-portal gebruikt.
@@ -137,7 +137,7 @@ LibreChat geeft het model ook de MCP-tool `klai-knowledge` (`deploy/librechat/li
 
 **Pad A** (in volgorde): herschrijven (`klai-fast`, 1,5 s, A11) → coreferentie in `/retrieve` alleen als A11 om infrastructuurredenen oversloeg (`klai-fast`, 3 s) → generatie (primary, via de router naar large, medium of fast) → claims-check (`klai-fast`, 4 s, alleen Strict bij dreigende weigering) → grounding-check (`klai-medium`, 12 s, alleen Strict) → reparatie (`klai-medium`, 8 s, alleen boven de drempel). **Open-modus: alleen herschrijven en generatie.**
 
-**Pad B, support** (in volgorde): parafrasen (`klai-medium`, 2,5 s, alleen de eerste vraag) ∥ vraagbeoordelaar (`klai-fast`, 2 s) ∥ retrieval met coreferentie op vervolgvragen (`klai-fast`, 3 s) → doorverwijzing buiten onderwerp (`klai-fast`, 2,5 s, dan stopt de beurt) → de vraag schrijven, alleen als de vaste vraagstap vuurt (`klai-fast`, 2 s) → generatie (primary, router kan fast of large maken) → antwoordbeoordelaar (`klai-fast`, 2,5 s) ∥ grounding-check (`klai-medium`, 4 s) → reparatie (`klai-medium`, 3 s, boven de drempel). **Zonder support: alleen coreferentie en generatie.**
+**Pad B, support** (in volgorde): parafrasen (`klai-medium`, 2,5 s, alleen de eerste vraag) ∥ vraagbeoordelaar (`klai-fast`, 2 s) ∥ retrieval met coreferentie op vervolgvragen (`klai-fast`, 3 s) → doorverwijzing buiten onderwerp (`klai-fast`, 2,5 s, dan stopt de beurt) → de vraag schrijven, alleen als de vaste vraagstap vuurt (`klai-fast`, 2 s) → generatie (primary, router kan fast of large maken) → antwoordbeoordelaar (`klai-fast`, 2,5 s) ∥ grounding-check (`klai-medium`, 4 s); boven de drempel volgt geen modelaanroep meer (B19). **Zonder support: alleen coreferentie en generatie.**
 
 ---
 
@@ -145,7 +145,7 @@ LibreChat geeft het model ook de MCP-tool `klai-knowledge` (`deploy/librechat/li
 
 **Antwoorden, weigeren, verduidelijken of een mens aanbieden**
 - *Pad A.* Weigeren gebeurt vóór het model (instellingen onbereikbaar, veiligheid, en in Strict: geen kennisbank, retrieval faalt, nul chunks, lage zekerheid bij geplakte mail) of erna (Strict zonder ondersteunde bron, tenzij de claims-check niets bedenkelijks ziet). Verduidelijken is een instructie aan het antwoordmodel bij A20; of het model daarna echt een vraag stelt, wordt niet vastgelegd. Een mens aanbieden bestaat niet.
-- *Pad B.* Verduidelijken via de vaste vraagstap (B12, vóór het schrijven) of als een bronloos concept toevallig op een vraagteken eindigt terwijl de vraag onduidelijk heette (B18). Weigeren bij geen bron plus onbewezen uitspraken, of als de reparatie niets overlaat. Bij zwakke bronnen eerlijk "staat er niet" (B13). Afspraakknop bij weigering, deelantwoord, escalatie en buiten het onderwerp.
+- *Pad B.* Verduidelijken via de vaste vraagstap (B12, vóór het schrijven) of als een bronloos concept toevallig op een vraagteken eindigt terwijl de vraag onduidelijk heette (B18). Weigeren bij geen bron plus onbewezen uitspraken, of als geen enkele uitspraak onderbouwd is of één een artikel tegenspreekt. Bij zwakke bronnen eerlijk "staat er niet" (B13). Afspraakknop bij weigering, deelantwoord, escalatie en buiten het onderwerp.
 
 **Wordt de zekerheidsband gebruikt?**
 - *Pad A: ja*, voor verduidelijken (A20), de Strict-weigering bij geplakte mail (A21), de upgrade naar `klai-medium` (A24) en een lagere bronlat (A27). De gebruiker ziet de band in de voettekst (A31).
@@ -157,7 +157,7 @@ LibreChat geeft het model ook de MCP-tool `klai-knowledge` (`deploy/librechat/li
 
 **Modelkeuze**: de router van A24, ook op pad B. Geen van de regels is tegen antwoordkwaliteit gemeten.
 
-**Onbewezen uitspraken**: pad A Strict controleert en repareert en weigert nooit op dit signaal; pad A Open doet niets; pad B support controleert, repareert, en weigert als er niets overblijft.
+**Onbewezen uitspraken**: pad A Strict controleert en repareert en weigert nooit op dit signaal; pad A Open doet niets; pad B support controleert, laat het antwoord heel met de afspraak eronder, en weigert als niets onderbouwd is of iets een artikel tegenspreekt.
 
 **Wat de eerste vraag extra krijgt**: pad A niets (herschrijven draait altijd); pad B twee parafrasen, vervolgvragen krijgen coreferentie.
 
