@@ -122,6 +122,7 @@ function detail(overrides: Record<string, unknown> = {}) {
         review: null,
       },
     ],
+    ticket: { available: false, targets: [], tickets: [] },
     ...overrides,
   }
 }

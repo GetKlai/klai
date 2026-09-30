@@ -290,6 +290,11 @@ escalates to the support partner (the Nerds), today through their booking
 module and later through their API (§4). Nobody is waiting on a per-tenant
 HubSpot channel, because no other tenant is meant to have one.
 
+This is about the live visitor handoff into Klai's own HubSpot inbox only.
+Tickets that a colleague files from a reviewed conversation into the tenant's
+own HubSpot account, with the tenant's own service key, are a separate route
+(SPEC-KNOWLEDGE-ESCALATION-001) and do not conflict with this gate.
+
 The Integrations tab therefore shows the HubSpot card only when the backend's
 own status endpoint answers. For every other tenant that card is not missing
 functionality: the booking URL beside it IS the escalation route, and it is the

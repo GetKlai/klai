@@ -56,6 +56,7 @@ RLS_DML_TABLES: frozenset[str] = frozenset(
     {
         "answer_reviews",  # SPEC-KNOWLEDGE-ACTIVITY-001 Cat-D
         "conversation_quality_judgments",  # SPEC-CHAT-QUALITY-LOOP-001 Cat-D
+        "conversation_tickets",  # SPEC-KNOWLEDGE-ESCALATION-001 Cat-D
         "internal_chat_turns",  # one-chat-pipeline slice 5 Cat-D
         "partner_api_key_kb_access",
         "partner_api_keys",
@@ -85,6 +86,7 @@ RLS_DML_TABLES: frozenset[str] = frozenset(
         "widget_conversations",  # SPEC-WIDGET-ACTIVITY-001 Cat-D
         "widget_kb_access",
         "widget_messages",  # SPEC-WIDGET-ACTIVITY-001 Cat-D
+        "widget_ticket_settings",  # SPEC-KNOWLEDGE-ESCALATION-001 Cat-D
         "widgets",
     }
 )

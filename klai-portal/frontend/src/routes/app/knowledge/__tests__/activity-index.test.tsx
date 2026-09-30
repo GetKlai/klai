@@ -143,6 +143,7 @@ function item(overrides: Record<string, unknown> = {}) {
     ratings: { up: 1, down: 0 },
     review: { status: 'unreviewed', worst_verdict: null, causes: [], reviews: [] },
     open_gap_count: 0,
+    ticket_labels: [],
     ...overrides,
   }
 }

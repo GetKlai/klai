@@ -13,6 +13,8 @@ export type ActivitySearch = {
   band: ConversationBand[]
   rating?: 'thumbsUp' | 'thumbsDown' | 'none'
   sort: 'newest' | 'worst'
+  /** SPEC-KNOWLEDGE-ESCALATION-001 §4.3: undefined = all, else with/without a ticket. */
+  has_ticket?: boolean
   cursor?: string
 }
 
@@ -36,6 +38,9 @@ const ofSetMulti = <T extends string>(allowed: readonly T[], value: unknown): T[
 
 const text = (value: unknown): string | undefined =>
   typeof value === 'string' && value ? value : undefined
+
+const bool = (value: unknown): boolean | undefined =>
+  value === 'true' ? true : value === 'false' ? false : undefined
 
 /**
  * Serialises the list's filters into one flat string. main.tsx installs a
@@ -73,6 +78,7 @@ export function parseActivitySearch(search: Record<string, unknown>): ActivitySe
     band: ofSetMulti(BANDS, search.band),
     rating: ofSet(RATINGS, search.rating),
     sort: ofSet(['newest', 'worst'] as const, search.sort) ?? 'newest',
+    has_ticket: bool(search.has_ticket),
     cursor: text(search.cursor),
   }
 }
