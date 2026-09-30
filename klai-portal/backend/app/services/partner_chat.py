@@ -2218,10 +2218,16 @@ def _compose_backend_managed_answer(
             decision["escalation"] = _appointment_escalation()
         return f"{marker}\n\n{_answer_without_retrieved_sources(text, citation_chunks)}", [], decision
 
+    # A source below the score bar must share a word with the question to be
+    # cited. The selection step read the passage and pointed at the sentence
+    # that answers, so for its passages that word check is skipped: it dropped
+    # "gespreksgegevens exporteren" for a visitor who wrote "belgegevens
+    # downloaden", and the reply without a source became a refusal.
+    chosen_by_selection = bool(citation_chunks) and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks)
     composed = compose_answer_with_trusted_sources(
         text,
         trusted_sources or [],
-        query_text=user_query,
+        query_text=None if chosen_by_selection else user_query,
         evidence_chunks=citation_chunks or [],
     )
     if not composed.content:
@@ -3422,6 +3428,9 @@ def _schedule_gap_event(
         logger.warning("partner_chat_gap_detection_failed", org_id=org_id, exc_info=True)
 
 
+_CHOSEN_PASSAGE_KEY = "chosen_by_selection"
+
+
 @dataclass
 class KnowledgeTurn:
     """What retrieve_context decided for this turn besides the prompt.
@@ -3933,7 +3942,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         chosen = turn.selection.chosen(chunks) if turn.selection else []
         if chosen and not turn.not_in_passages:
             turn.passages_chosen = True
-            chunks = chosen
+            chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
             trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
 
     # Consented general-knowledge fallback: decided here, on the same

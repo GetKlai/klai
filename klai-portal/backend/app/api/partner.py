@@ -2307,14 +2307,16 @@ async def chat_completions(  # noqa: C901
     # Retrieval found passages, and none of them answers this question
     # (passage_selection.py): the visitor gets the honest "not found" with the
     # appointment button and no answer model writes, because a model that is
-    # handed passages on the same subject writes a procedure out of them. Not
-    # when the visitor asked for a person or is frustrated (that turn is the
-    # appointment), and not on a conversational turn, which needs no passage.
+    # handed passages on the same subject writes a procedure out of them. A
+    # frustrated visitor gets this reply too: it carries the appointment, and
+    # sending that turn to the writer with every passage produced an invented
+    # cause. Not when the visitor asked for a person (that turn is about the
+    # appointment itself), and not on a conversational turn.
     selection = knowledge_turn.selection
     if (
         support_mode
         and knowledge_turn.not_in_passages
-        and escalation is None
+        and escalation != escalation_service.HUMAN_REQUEST
         and not turn_judge.is_conversational(scope)
     ):
         language = resolve_conversation_language(request.messages).language

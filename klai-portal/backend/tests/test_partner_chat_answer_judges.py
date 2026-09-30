@@ -1211,3 +1211,49 @@ async def test_a_failed_selection_leaves_the_turn_as_it_was(monkeypatch):
     prompt = _system_prompt_sent(litellm)
     assert CHUNK_900["text"] in prompt
     assert "storneer je binnen acht weken" in prompt
+
+
+async def test_a_frustrated_visitor_whose_passages_do_not_answer_gets_the_refusal_too(monkeypatch):
+    """Frustration used to send the turn to the writer with every passage in
+    the prompt, and the writer invented a cause. The honest "not found" already
+    carries the appointment, which is what a frustrated visitor is offered."""
+    litellm, text, extras = await _selected_turn(
+        monkeypatch, _selection("not_in_passages"), turn=_turn_verdict(sentiment="negative")
+    )
+
+    assert text == REFUSAL_NL
+    assert extras["escalation"] == [{"appointment": True}]
+    assert litellm.answer_requests == []
+
+
+async def test_a_chosen_passage_stays_the_source_when_it_words_the_question_differently(monkeypatch):
+    """The visitor says "belgegevens downloaden", the article "gespreksgegevens
+    exporteren". A word-overlap check between question and source dropped the
+    source, and the reply without a source became a refusal. The selection
+    step already established that the passage answers the question."""
+    article = {
+        "chunk_id": "c7",
+        "evidence_id": "ev7",
+        "title": "Belkosten",
+        "text": "Exporteer je gespreksgegevens met de knop Exporteren. Kies een periode van hooguit dertig dagen.",
+        "source_url": "https://help.example.com/belkosten",
+        "reranker_score": 0.03,
+    }
+    reply = "Kies een periode van hooguit dertig dagen en klik op Exporteren."
+    litellm = _LiteLLM(
+        model_text=reply,
+        selection=_selection("answers", (1, "Kies een periode van hooguit dertig dagen.")),
+        turn=_turn_verdict(),
+    )
+
+    _, text, extras = await _route_turn(
+        monkeypatch,
+        turn=_turn_verdict(),
+        question="Mijn lijst met belgegevens downloaden blijft leeg",
+        band="low",
+        items=[article],
+        litellm=litellm,
+    )
+
+    assert text == reply
+    assert [s["url"] for group in extras["sources"] for s in group] == ["https://help.example.com/belkosten"]
