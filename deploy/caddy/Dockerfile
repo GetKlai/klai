@@ -11,7 +11,7 @@
 # Bumping this file is NOT a pin flip: this is a custom xcaddy build with
 # the hetzner-DNS and ratelimit plugins, so the change only reaches
 # production once CI rebuilds and republishes ghcr.io/getklai/caddy-hetzner.
-FROM caddy:2.11.4-builder-alpine AS builder
+FROM caddy:2.11.6-builder-alpine AS builder
 
 # The two --replace lines pin transitive dependencies, not plugins. Caddy
 # 2.11.4's own graph selects versions that Trivy flags with a fix available:
@@ -42,7 +42,7 @@ RUN xcaddy build \
     --replace golang.org/x/net=golang.org/x/net@v0.58.0 \
     --replace google.golang.org/grpc=google.golang.org/grpc@v1.82.1
 
-FROM caddy:2.11.4-alpine
+FROM caddy:2.11.6-alpine
 
 # Apply Alpine package security updates that landed AFTER the
 # `caddy:2.11.4-alpine` image was published. These packages are exposed
