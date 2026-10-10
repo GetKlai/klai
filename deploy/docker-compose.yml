@@ -227,7 +227,7 @@ services:
   # ─── PostgreSQL ───────────────────────────────────────────────────────────
   postgres:
     logging: *log-rotation
-    image: pgvector/pgvector:0.8.6-pg18
+    image: pgvector/pgvector:0.8.7-pg18
     restart: unless-stopped
     volumes:
       - postgres-data:/var/lib/postgresql
@@ -247,7 +247,7 @@ services:
   # ─── Redis ────────────────────────────────────────────────────────────────
   redis:
     logging: *log-rotation
-    image: redis:8.10.0-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     volumes:
       - redis-data:/data
@@ -284,7 +284,7 @@ services:
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
     logging: *log-rotation
-    image: getmeili/meilisearch:v1.54.0
+    image: getmeili/meilisearch:v1.54.3
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
@@ -310,7 +310,7 @@ services:
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
     logging: *log-rotation
-    image: ghcr.io/zitadel/zitadel:v4.17.0
+    image: ghcr.io/zitadel/zitadel:v4.19.4
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -756,7 +756,7 @@ services:
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
     logging: *log-rotation
-    image: ollama/ollama:0.32.9
+    image: ollama/ollama:0.40.2
     restart: unless-stopped
     volumes:
       - /opt/klai/ollama/models:/root/.ollama
@@ -993,7 +993,7 @@ services:
   # validator-env-parity).
   vaultwarden:
     logging: *log-rotation
-    image: vaultwarden/server:1.37.3
+    image: vaultwarden/server:1.37.4
     restart: unless-stopped
     environment:
       DOMAIN: "https://vault.getklai.com"
@@ -1291,7 +1291,7 @@ services:
 
   victoriametrics:
     logging: *log-rotation
-    image: victoriametrics/victoria-metrics:v1.149.0
+    image: victoriametrics/victoria-metrics:v1.153.0
     restart: unless-stopped
     volumes:
       - victoriametrics-data:/storage
@@ -1403,7 +1403,7 @@ services:
 
   cadvisor:
     logging: *log-rotation
-    image: ghcr.io/google/cadvisor:v0.60.5
+    image: ghcr.io/google/cadvisor:v0.60.6
     restart: unless-stopped
     privileged: false
     cap_add:
@@ -1430,7 +1430,7 @@ services:
 
   alloy:
     logging: *log-rotation
-    image: grafana/alloy:v1.19.2
+    image: grafana/alloy:v1.20.1
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -1461,7 +1461,7 @@ services:
 
   grafana:
     logging: *log-rotation
-    image: grafana/grafana:13.1.3
+    image: grafana/grafana:13.2.3
     restart: unless-stopped
     volumes:
       - grafana-data:/var/lib/grafana
@@ -1544,7 +1544,7 @@ services:
 
   docling-serve:
     logging: *log-rotation
-    image: ghcr.io/docling-project/docling-serve:v1.30.0
+    image: ghcr.io/docling-project/docling-serve:v1.36.0
     restart: unless-stopped
     environment:
       # Portal-api may need to retry /v1/result after a transient
@@ -1855,7 +1855,7 @@ services:
   # channel names even on a different DB index. Vexa offers no channel prefix.
   vexa12-redis:
     logging: *log-rotation
-    image: redis:8.10.0-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}", "--appendfsync", "everysec"]
     deploy:
@@ -2076,7 +2076,7 @@ services:
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
     logging: *log-rotation
-    image: qdrant/qdrant:v1.19.1
+    image: qdrant/qdrant:v1.19.2
     restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
@@ -2392,7 +2392,7 @@ services:
 
   firecrawl-api:
     logging: *log-rotation
-    image: ghcr.io/firecrawl/firecrawl:2.11.325
+    image: ghcr.io/firecrawl/firecrawl:2.11.504
     restart: unless-stopped
     environment:
       PORT: "3002"
@@ -2455,7 +2455,7 @@ services:
   # both were delivered to /opt/klai/.env BEFORE this service landed.
   calnode:
     logging: *log-rotation
-    image: ghcr.io/calnode/calnode:0.9.0
+    image: ghcr.io/calnode/calnode:0.10.1
     restart: unless-stopped
     environment:
       BASE_URL: https://cal.${DOMAIN}
@@ -2527,7 +2527,7 @@ services:
 
   crm-redis:
     logging: *log-rotation
-    image: redis:7.4.8-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
     command: ["redis-server", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
     networks:
@@ -2609,7 +2609,7 @@ services:
   # health check.
   fider:
     logging: *log-rotation
-    image: getfider/fider:v0.37.0
+    image: getfider/fider:v0.38.1
     restart: unless-stopped
     environment:
       BASE_URL: https://feedback.${DOMAIN}
