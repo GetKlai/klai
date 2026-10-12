@@ -1446,3 +1446,24 @@ async def test_a_failed_case_leaves_the_turn_as_it_was(monkeypatch):
 
     assert _retrieve_body(litellm)["query_variants"] is None
     assert text == ANSWER_900
+
+
+def test_a_stored_case_counts_only_when_it_belongs_to_this_conversation_s_last_answer():
+    """One session token serves every conversation the widget starts in it, so
+    the stored case travels with the text of the turn it was stored with."""
+    stored_case = _case("knowledge", "zoekvraag", problem="Een ander probleem.")
+
+    assert case_file.stored_case_for(_FOLLOW_UP, (stored_case, "Een antwoord uit gesprek A.")) is None
+    assert case_file.stored_case_for(_FOLLOW_UP, (stored_case, _FOLLOW_UP[1]["content"])) == stored_case
+    assert case_file.stored_case_for(_FOLLOW_UP, None) is None
+
+
+async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(monkeypatch):
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("contact"))
+    messages = [*_FOLLOW_UP[:2], {"role": "user", "content": "ik wil jullie mailen"}]
+    litellm, text, _ = await _route_turn(
+        monkeypatch, turn=_turn_verdict(), band="high", items=_two_articles(), litellm=litellm, messages=messages
+    )
+
+    assert text == contact_reply("nl")
+    assert litellm.retrieve_requests == []

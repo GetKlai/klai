@@ -2696,6 +2696,7 @@ def _log_turn_timing(
     timings = {
         "retrieval_ms": turn_timing.get("retrieval_ms"),
         "turn_judge_ms": turn_timing.get("turn_judge_ms"),
+        "case_ms": turn_timing.get("case_ms"),
         "generation_ms": generation_ms,
         "checks_ms": answer_judge_ms,
         "total_ms": _elapsed_ms(turn_timing["started_at"]),
@@ -2705,6 +2706,7 @@ def _log_turn_timing(
         org_id=org_id,
         retrieval_ms=timings["retrieval_ms"],
         turn_judge_ms=timings["turn_judge_ms"],
+        case_ms=timings["case_ms"],
         generation_ms=generation_ms,
         answer_judge_ms=answer_judge_ms,
         total_ms=timings["total_ms"],

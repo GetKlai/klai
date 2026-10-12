@@ -29,10 +29,13 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+import structlog
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.core.config import Settings
 from app.services.turn_judge import conversation_excerpt, structured_judge_call
+
+logger = structlog.get_logger()
 
 CASE_SYSTEM_PROMPT = (
     "You keep the case file of a conversation between a visitor and a company's help chat. You get the "
@@ -47,9 +50,10 @@ CASE_SYSTEM_PROMPT = (
     "variant: direction or situation that decides the answer (inbound or outbound, import or export, "
     "temporary or permanent), as far as said; otherwise empty.\n"
     "tried: what the visitor says they already did or checked, as short items; keep earlier items.\n"
-    "wants: knowledge (how something works or how to fix it), human (asks for a person), contact (asks "
-    "how to reach the company: call, mail, ticket), appointment (asks to schedule), chat (greeting, thanks, "
-    "remark about the chat), other.\n"
+    "wants: what the LATEST message asks for, never carried over from the previous case: knowledge (how "
+    "something works or how to fix it), human (asks for a person), contact (asks how to reach the company: "
+    "call, mail, ticket), appointment (asks to schedule), chat (greeting, thanks, remark about the chat), "
+    "other.\n"
     "sentiment: the visitor's tone in the latest message.\n"
     "queries: two search queries for the help articles, in the language of the help articles ("
     "Dutch), each at most twelve words, each naming the product and the problem of the case. The first "
@@ -90,6 +94,26 @@ class Case(BaseModel):
         return variants[:2]
 
 
+def last_assistant_message(messages: list[dict]) -> str:
+    """The text of the conversation's latest assistant turn, "" when there is none."""
+    for message in reversed(messages):
+        if message.get("role") == "assistant" and isinstance(message.get("content"), str):
+            return message["content"]
+    return ""
+
+
+def stored_case_for(messages: list[dict], stored: tuple[dict, str] | None) -> dict | None:
+    """The stored case, when the turn it was stored with is this conversation's last answer.
+
+    One session token serves every conversation the widget starts in it, so a
+    case read by session may belong to another conversation of the same
+    visitor; the text of its turn tells the two apart.
+    """
+    if stored is None or stored[1] != last_assistant_message(messages):
+        return None
+    return stored[0]
+
+
 def is_follow_up(messages: list[dict]) -> bool:
     """A turn after the visitor's first: the earlier turns carry the topic the latest message leans on."""
     return sum(message.get("role") == "user" for message in messages) > 1
@@ -102,7 +126,13 @@ async def update_case(
     *,
     delegated_org_id: str | None = None,
 ) -> Case | None:
-    previous_text = Case.model_validate(previous).model_dump_json() if previous else "(none)"
+    previous_text = "(none)"
+    if previous:
+        try:
+            previous_text = Case.model_validate(previous).model_dump_json()
+        except ValidationError:
+            # A case stored under an older shape of this model: start afresh.
+            logger.warning("case_previous_invalid", keys=sorted(previous)[:12])
     return await structured_judge_call(
         name="case_update",
         system_prompt=CASE_SYSTEM_PROMPT,

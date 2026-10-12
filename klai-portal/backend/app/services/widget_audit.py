@@ -330,11 +330,16 @@ async def record_internal_turn(*, org_id: int, answer_signals: dict[str, Any]) -
         logger.exception("internal_chat_turn_record_failed", org_id=org_id)
 
 
-async def last_case(*, widget_id: str, session_key: str) -> dict | None:
-    """The case (app.services.case_file) stored with this conversation's latest assistant turn.
+async def last_case(*, widget_id: str, session_key: str) -> tuple[dict, str] | None:
+    """The case (app.services.case_file) stored with this session's latest assistant turn, and that turn's text.
 
     Same identification and tenant scoping as :func:`find_conversation_id`.
-    ``None`` when the conversation, the turn or the case does not exist yet.
+    ``None`` when the session or the turn does not exist yet, and when the
+    latest turn stored no case: an older case is not reused, because the turn
+    between may have changed the subject. The text rides along because one
+    session token serves every conversation the widget starts in it, so the
+    caller checks that the stored turn is the last assistant message of the
+    conversation it is answering.
     """
     async with cross_org_session() as lookup_db:
         row = (
@@ -350,18 +355,19 @@ async def last_case(*, widget_id: str, session_key: str) -> dict | None:
             await db.execute(
                 text(
                     """
-                    SELECT m.answer_signals -> 'case'
+                    SELECT m.answer_signals -> 'case', m.content
                       FROM widget_messages m
                       JOIN widget_conversations c ON c.id = m.conversation_id
                      WHERE c.widget_id = CAST(:widget_id AS uuid)
                        AND c.session_key = :session_key
                        AND m.role = 'assistant'
-                       AND m.answer_signals ? 'case'
-                     ORDER BY m.created_at DESC
+                     ORDER BY m.sequence DESC
                      LIMIT 1
                     """
                 ),
                 {"widget_id": widget_id, "session_key": session_key},
             )
-        ).scalar()
-    return stored if isinstance(stored, dict) else None
+        ).first()
+    if stored is None or not isinstance(stored[0], dict):
+        return None
+    return stored[0], str(stored[1] or "")

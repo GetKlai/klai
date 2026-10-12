@@ -2078,6 +2078,51 @@ async def chat_completions(  # noqa: C901
     # Every model call of the turn runs on LiteLLM's master key, so the org
     # travels with it for LiteLLM to apply the tenant's PII policy.
     delegated_org_id = auth.zitadel_org_id
+
+    def fixed_reply(reply: str, language: str | None, *, decision: str, refused: bool, appointment: bool = True) -> Any:
+        """A widget reply decided in code: recorded like any other, with the appointment button unless it is a question."""
+        answer_signals.update(
+            decision=decision,
+            sources_count=0,
+            refused=refused,
+            broad_mode=False,
+            model=request.model,
+            appointment=appointment,
+        )
+        if language is not None:
+            answer_signals["language"] = language
+        if audit_ready:
+            task = asyncio.create_task(
+                record_widget_turn(
+                    widget_id=audit_widget_id,  # type: ignore[arg-type]
+                    session_key=audit_session_key,  # type: ignore[arg-type]
+                    role="assistant",
+                    content=reply,
+                    loaded_origin=http_request.headers.get("origin") or None,
+                    is_preview=getattr(auth, "is_preview", False),
+                    turn_id=request.widget_turn_id,
+                    answer_signals=answer_signals or None,
+                )
+            )
+            _pending.add(task)
+            task.add_done_callback(_pending.discard)
+        if request.stream:
+            return StreamingResponse(
+                content=off_topic_stream(reply=reply, language=language, appointment=appointment),
+                media_type="text/event-stream",
+            )
+        return off_topic_response(model=request.model, reply=reply, language=language, appointment=appointment)
+
+    def _contact_request_reply(found_case: case_file.Case) -> Any:
+        language = resolve_conversation_language(request.messages).language
+        logger.info(
+            "partner_chat_contact_request",
+            org_id=auth.org_id,
+            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+            wants=found_case.wants,
+        )
+        return fixed_reply(contact_reply(language), language, decision="human_request", refused=False)
+
     try:
         # ``broad`` (4th element) is retrieve_context's per-turn decision:
         # support mode + visitor consent + a real retrieval attempt that
@@ -2091,11 +2136,16 @@ async def chat_completions(  # noqa: C901
         previous_case: dict | None = None
         case: case_file.Case | None = None
         case_ms = 0
-        if support_mode and audit_ready:
+        # Only on a follow-up, and only when the stored turn is this
+        # conversation's last answer: one session token serves every
+        # conversation the widget starts in it.
+        if support_mode and audit_ready and case_file.is_follow_up(request.messages):
             try:
-                previous_case = await last_case(widget_id=audit_widget_id, session_key=audit_session_key)  # type: ignore[arg-type]
+                stored = await last_case(widget_id=audit_widget_id, session_key=audit_session_key)  # type: ignore[arg-type]
             except Exception:
+                stored = None
                 logger.warning("partner_chat_previous_case_unavailable", org_id=auth.org_id, exc_info=True)
+            previous_case = case_file.stored_case_for(request.messages, stored)
 
         def retrieval(follow_up_variants: list[str]):
             return retrieve_context(
@@ -2149,6 +2199,14 @@ async def chat_completions(  # noqa: C901
                 # comes first; a first question has its paraphrases and needs
                 # no wait (case_file.py has the numbers).
                 case, case_ms = await _timed(case_update)
+                if case is not None:
+                    answer_signals["case"] = case.model_dump()
+                if case is not None and case.wants in case_file.CONTACT_WANTS:
+                    # The route for a person, contact or an appointment needs
+                    # no articles: decided here, before the search (plan §5,
+                    # step 2). A first turn runs the case beside the search and
+                    # takes this route below.
+                    return _contact_request_reply(case)
                 follow_up_variants = case.search_variants(_last_user_message(request.messages) or "") if case else []
                 (retrieval_result, retrieval_ms), (turn_judgement, turn_judge_ms) = await asyncio_gather(
                     _timed(retrieval(follow_up_variants)), _timed(judge)
@@ -2284,40 +2342,6 @@ async def chat_completions(  # noqa: C901
             retrieval_gap=gap,
         )
 
-    def fixed_reply(reply: str, language: str | None, *, decision: str, refused: bool, appointment: bool = True) -> Any:
-        """A widget reply decided in code: recorded like any other, with the appointment button unless it is a question."""
-        answer_signals.update(
-            decision=decision,
-            sources_count=0,
-            refused=refused,
-            broad_mode=False,
-            model=request.model,
-            appointment=appointment,
-        )
-        if language is not None:
-            answer_signals["language"] = language
-        if audit_ready:
-            task = asyncio.create_task(
-                record_widget_turn(
-                    widget_id=audit_widget_id,  # type: ignore[arg-type]
-                    session_key=audit_session_key,  # type: ignore[arg-type]
-                    role="assistant",
-                    content=reply,
-                    loaded_origin=http_request.headers.get("origin") or None,
-                    is_preview=getattr(auth, "is_preview", False),
-                    turn_id=request.widget_turn_id,
-                    answer_signals=answer_signals or None,
-                )
-            )
-            _pending.add(task)
-            task.add_done_callback(_pending.discard)
-        if request.stream:
-            return StreamingResponse(
-                content=off_topic_stream(reply=reply, language=language, appointment=appointment),
-                media_type="text/event-stream",
-            )
-        return off_topic_response(model=request.model, reply=reply, language=language, appointment=appointment)
-
     # A subject this widget does not answer (prices, quotes, payment terms):
     # the visitor gets a referral with the appointment button and no answer
     # model sees the articles, so a price cannot slip in from one. The referral
@@ -2349,15 +2373,8 @@ async def chat_completions(  # noqa: C901
         )
         return fixed_reply(referral or off_topic_reply, language, decision="off_topic", refused=False)
 
-    if support_mode and wants_contact:
-        language = resolve_conversation_language(request.messages).language
-        logger.info(
-            "partner_chat_contact_request",
-            org_id=auth.org_id,
-            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            wants=case.wants if case else None,
-        )
-        return fixed_reply(contact_reply(language), language, decision="human_request", refused=False)
+    if support_mode and wants_contact and case is not None:
+        return _contact_request_reply(case)
 
     # Retrieval found passages, and none of them answers this question
     # (passage_selection.py): the visitor gets the honest "not found" with the
