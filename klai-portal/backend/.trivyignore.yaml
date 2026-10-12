@@ -36,3 +36,26 @@ vulnerabilities:
     expired_at: 2026-11-01
     purls:
       - "pkg:pypi/setuptools@70.3.0"
+
+  - id: CVE-2026-97687
+    statement: |
+      urllib3 2.7.0 lives in the python:3.13-slim base-image site-packages
+      (pip's own dependency), NOT in portal-api's uv.lock, which pins
+      urllib3 2.8.0 in the application venv (bumped 2026-09-30 for the same
+      advisories). The container never invokes pip after the image is built;
+      the application's HTTP clients import the venv's copy.
+
+      Re-evaluate when the python:3.13-slim base image ships urllib3 >= 2.8.0.
+    expired_at: 2027-04-12
+    purls:
+      - "pkg:pypi/urllib3@2.7.0"
+
+  - id: CVE-2026-97689
+    statement: |
+      Same base-image copy of urllib3 2.7.0 as CVE-2026-97687 above; the
+      application venv has 2.8.0 and pip is never run in the container.
+
+      Re-evaluate when the python:3.13-slim base image ships urllib3 >= 2.8.0.
+    expired_at: 2027-04-12
+    purls:
+      - "pkg:pypi/urllib3@2.7.0"
