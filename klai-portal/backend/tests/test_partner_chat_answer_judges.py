@@ -18,9 +18,9 @@ import httpx
 import pytest
 import respx
 from helpers import FakeKB, FakeResult, make_partner_auth
-from klai_chat_prompts import appointment_offer_sentence, no_citable_sources_message
+from klai_chat_prompts import appointment_offer_sentence, contact_reply, no_citable_sources_message
 
-from app.services import partner_chat, turn_judge
+from app.services import case_file, partner_chat, query_paraphrase, turn_judge
 from app.services.chat_profile import ChatProfile
 
 LITELLM = "http://litellm:4000"
@@ -95,6 +95,18 @@ def _selection(verdict: str, *evidence: tuple[int, str], question: str = "") -> 
     }
 
 
+def _case(wants: str = "knowledge", *queries: str, problem: str = "") -> dict:
+    return {
+        "problem": problem,
+        "product": "",
+        "variant": "",
+        "tried": [],
+        "wants": wants,
+        "sentiment": "neutral",
+        "queries": list(queries),
+    }
+
+
 def _turn_verdict(**overrides: Any) -> dict:
     return {
         "topic": "handled",
@@ -121,8 +133,14 @@ class _LiteLLM:
         referral: str = "",
         question: str = "",
         selection: Any = None,
+        case: Any = None,
     ):
         self.model_text = model_text
+        # The case step (case_file.py): by default a knowledge question with no
+        # search queries, which changes nothing about the turn.
+        self.case = case or _case()
+        self.case_requests: list[dict] = []
+        self.retrieve_requests: list[dict] = []
         # The selection step (passage_selection.py). By default it lists no
         # passage, which narrows nothing: the turn runs on everything retrieved.
         self.selection = selection or _selection("answers")
@@ -153,6 +171,21 @@ class _LiteLLM:
         body = json.loads(request.content)
         self.requests.append(body)
         schema = (body.get("response_format") or {}).get("json_schema", {}).get("name")
+        structured = self._structured(schema, body)
+        if structured is not None:
+            return structured
+        if "You edit a reply" in (body.get("messages") or [{}])[0].get("content", ""):
+            self.repair_requests.append(body)
+            return httpx.Response(200, json={"choices": [{"message": {"content": self.repaired}}]})
+        self.answer_requests.append(body)
+        if body.get("stream"):
+            frame = json.dumps({"choices": [{"index": 0, "delta": {"content": self.model_text}}]})
+            return httpx.Response(200, content=f"data: {frame}\n\ndata: [DONE]\n\n".encode())
+        message = {"role": "assistant", "content": self.model_text}
+        return httpx.Response(200, json={"choices": [{"index": 0, "message": message, "finish_reason": "stop"}]})
+
+    def _structured(self, schema: str | None, body: dict) -> httpx.Response | None:
+        """The judges, told apart by the schema name each one sends; None for the answer and repair calls."""
         if schema == "answer_judge":
             self.judge_requests.append(body)
             if isinstance(self.answer_judge, Exception):
@@ -167,6 +200,11 @@ class _LiteLLM:
             return _json_reply({"question": self.question})
         if schema == "off_topic_referral":
             return _json_reply({"subject": self.referral})
+        if schema == "case_update":
+            self.case_requests.append(body)
+            if isinstance(self.case, Exception):
+                raise self.case
+            return _json_reply(self.case)
         if schema == "passage_selection":
             if isinstance(self.selection, Exception):
                 raise self.selection
@@ -180,15 +218,7 @@ class _LiteLLM:
             if isinstance(self.grounding, Exception):
                 raise self.grounding
             return _json_reply(self.grounding)
-        if "You edit a reply" in (body.get("messages") or [{}])[0].get("content", ""):
-            self.repair_requests.append(body)
-            return httpx.Response(200, json={"choices": [{"message": {"content": self.repaired}}]})
-        self.answer_requests.append(body)
-        if body.get("stream"):
-            frame = json.dumps({"choices": [{"index": 0, "delta": {"content": self.model_text}}]})
-            return httpx.Response(200, content=f"data: {frame}\n\ndata: [DONE]\n\n".encode())
-        message = {"role": "assistant", "content": self.model_text}
-        return httpx.Response(200, json={"choices": [{"index": 0, "message": message, "finish_reason": "stop"}]})
+        return None
 
 
 def _frames(chunks: list[bytes]) -> list[dict]:
@@ -771,6 +801,8 @@ async def _route_turn(
     question_written: str = "",
     items: list[dict] | None = None,
     litellm: _LiteLLM | None = None,
+    messages: list[dict] | None = None,
+    previous_case: dict | None = None,
 ):
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
@@ -788,7 +820,7 @@ async def _route_turn(
     db.execute = AsyncMock(return_value=FakeResult(rows=[FakeKB(id=10, name="KB", slug="kb-a", org_id=42)]))
     auth = make_partner_auth(kb_access={10: "read"})
     auth.key_id = "wgt_901"
-    request = ChatCompletionsRequest(messages=[{"role": "user", "content": question}], stream=stream)
+    request = ChatCompletionsRequest(messages=messages or [{"role": "user", "content": question}], stream=stream)
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
     litellm = litellm or _LiteLLM(
@@ -805,11 +837,13 @@ async def _route_turn(
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
         patch("app.api.partner.asyncio"),
         patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+        patch("app.api.partner.last_case", new=AsyncMock(return_value=previous_case)),
         patch("app.services.partner_chat._schedule_gap_event"),
     ):
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
-        router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply(band, items))
+        retrieve_route = router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply(band, items))
         response = await chat_completions(request=request, http_request=http_request, auth=auth, db=db)
+        litellm.retrieve_requests = [json.loads(call.request.content) for call in retrieve_route.calls]
         if stream:
             frames = _frames([chunk async for chunk in response.body_iterator])
             text = "".join(_delta(frames, "content"))
@@ -1067,6 +1101,7 @@ _TAG_FOR_KIND = {
     "answer_judge": "portal:answer-judge",
     "off_topic_referral": "portal:off-topic-referral",
     "passage_selection": "portal:passage-selection",
+    "case_update": "portal:case-update",
     "grounding_check": "portal:answer-grounding",
     "repair": "portal:answer-grounding",
     "answer": "portal:partner-chat-answer",
@@ -1104,6 +1139,7 @@ async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(mo
         "turn_judge",
         "query_paraphrase",
         "passage_selection",
+        "case_update",
         "answer",
         "answer_judge",
         "grounding_check",
@@ -1115,7 +1151,13 @@ async def test_the_off_topic_referral_call_names_the_tenant(monkeypatch):
     litellm, _, _ = await _off_topic_turn(monkeypatch, topic="not_handled", referral="je factuur")
 
     calls = _metadata_per_call(litellm)
-    assert {kind for kind, _ in calls} == {"turn_judge", "query_paraphrase", "passage_selection", "off_topic_referral"}
+    assert {kind for kind, _ in calls} == {
+        "turn_judge",
+        "query_paraphrase",
+        "passage_selection",
+        "case_update",
+        "off_topic_referral",
+    }
     assert calls == [(kind, _delegated_with_tag(kind)) for kind, _ in calls]
 
 
@@ -1315,3 +1357,113 @@ async def test_a_turn_the_turn_judge_calls_conversational_still_gets_the_refusal
 
     assert text == REFUSAL_NL
     assert litellm.answer_requests == []
+
+
+# ─── The case: what the visitor needs now, kept across turns ─────────────
+
+
+_FOLLOW_UP = [
+    {"role": "user", "content": "Ik bel via de app en de klant ziet een anonieme beller. Hoe los ik dit op?"},
+    {"role": "assistant", "content": "Gebruik je de Android-app of de iPhone-app?"},
+    {"role": "user", "content": "Android"},
+]
+
+
+async def _follow_up_turn(monkeypatch, case: Any, **overrides):
+    litellm = _LiteLLM(model_text=ANSWER_900, case=case, turn=_turn_verdict())
+    return await _route_turn(
+        monkeypatch,
+        turn=_turn_verdict(),
+        band="high",
+        items=_two_articles(),
+        litellm=litellm,
+        messages=_FOLLOW_UP,
+        **overrides,
+    )
+
+
+def _retrieve_body(litellm: _LiteLLM) -> dict:
+    (body,) = litellm.retrieve_requests
+    return body
+
+
+async def test_a_follow_up_is_searched_with_the_case_s_queries_beside_the_visitor_s_words(monkeypatch):
+    """ "Android" alone finds the Android article and nothing about the anonymous
+    caller. The case carries the problem; its two queries run as extra passes
+    and the visitor's own word stays the primary query."""
+    litellm, _, _ = await _follow_up_turn(
+        monkeypatch,
+        _case("knowledge", "Android-app anonieme beller nummerweergave", "Android-app uitgaand nummer tonen"),
+    )
+
+    body = _retrieve_body(litellm)
+    assert body["query"] == "Android"
+    assert body["query_variants"] == ["Android-app anonieme beller nummerweergave", "Android-app uitgaand nummer tonen"]
+
+
+async def test_the_next_turn_s_case_starts_from_the_stored_one():
+    stored = _case("knowledge", "Android-app anonieme beller", problem="De klant ziet een anonieme beller.")
+    seen: dict[str, Any] = {}
+
+    async def fake_call(**kwargs):
+        seen.update(kwargs)
+        return None
+
+    with patch.object(case_file, "structured_judge_call", fake_call):
+        await case_file.update_case(_FOLLOW_UP, stored, _settings())
+
+    content = seen["user_content"]
+    assert "De klant ziet een anonieme beller." in content
+    assert content.index("Case after the previous turn") < content.index("Conversation:")
+
+
+async def test_a_visitor_who_wants_contact_is_not_told_the_articles_lack_an_answer(monkeypatch):
+    """ "ik wil jullie mailen" got the not-found text: neither the phrase detector
+    nor the turn judge called it a request for a person. The case does."""
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("contact"), selection=_selection("not_in_passages"))
+    messages = [*_FOLLOW_UP[:2], {"role": "user", "content": "ik wil jullie mailen"}]
+    litellm, text, extras = await _route_turn(
+        monkeypatch, turn=_turn_verdict(), band="high", items=_two_articles(), litellm=litellm, messages=messages
+    )
+
+    assert text == contact_reply("nl")
+    assert extras["escalation"] == [{"appointment": True}]
+    assert litellm.answer_requests == []
+
+
+async def test_a_first_question_keeps_its_paraphrases_whatever_the_case_suggests(monkeypatch):
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("knowledge", "zoekvraag uit de zaak"), turn=_turn_verdict())
+    with patch.object(
+        query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=["parafrase een", "parafrase twee"])
+    ):
+        litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(), band="high", litellm=litellm)
+
+    assert _retrieve_body(litellm)["query_variants"] == ["parafrase een", "parafrase twee"]
+
+
+async def test_a_failed_case_leaves_the_turn_as_it_was(monkeypatch):
+    litellm, text, _ = await _follow_up_turn(monkeypatch, httpx.ConnectError("boom"))
+
+    assert _retrieve_body(litellm)["query_variants"] is None
+    assert text == ANSWER_900
+
+
+def test_a_stored_case_counts_only_when_it_belongs_to_this_conversation_s_last_answer():
+    """One session token serves every conversation the widget starts in it, so
+    the stored case travels with the text of the turn it was stored with."""
+    stored_case = _case("knowledge", "zoekvraag", problem="Een ander probleem.")
+
+    assert case_file.stored_case_for(_FOLLOW_UP, (stored_case, "Een antwoord uit gesprek A.")) is None
+    assert case_file.stored_case_for(_FOLLOW_UP, (stored_case, _FOLLOW_UP[1]["content"])) == stored_case
+    assert case_file.stored_case_for(_FOLLOW_UP, None) is None
+
+
+async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(monkeypatch):
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("contact"))
+    messages = [*_FOLLOW_UP[:2], {"role": "user", "content": "ik wil jullie mailen"}]
+    litellm, text, _ = await _route_turn(
+        monkeypatch, turn=_turn_verdict(), band="high", items=_two_articles(), litellm=litellm, messages=messages
+    )
+
+    assert text == contact_reply("nl")
+    assert litellm.retrieve_requests == []

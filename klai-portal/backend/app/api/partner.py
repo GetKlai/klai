@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import contact_reply, no_citable_sources_message
 from klai_chat_prompts.kb_modes import build_template_instructions_block, weak_sources_notice
 from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
@@ -42,8 +42,8 @@ from app.core.permissions import assert_platform_unlocked
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
+from app.services import case_file, turn_judge
 from app.services import escalation_intent as escalation_service
-from app.services import turn_judge
 from app.services.chat_attachments import process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
 from app.services.clarify_decision import WEAK_SOURCES_ADDENDUM, clarify_decision, plain_question
@@ -91,6 +91,7 @@ from app.services.retrieval_log import find_correlated_log, write_retrieval_log
 from app.services.web_search import build_web_results_block, search_web, web_results_as_chunks
 from app.services.widget_audit import (
     hash_audit_value,
+    last_case,
     record_internal_turn,
     record_widget_turn,
     session_key_from_token,
@@ -2077,6 +2078,51 @@ async def chat_completions(  # noqa: C901
     # Every model call of the turn runs on LiteLLM's master key, so the org
     # travels with it for LiteLLM to apply the tenant's PII policy.
     delegated_org_id = auth.zitadel_org_id
+
+    def fixed_reply(reply: str, language: str | None, *, decision: str, refused: bool, appointment: bool = True) -> Any:
+        """A widget reply decided in code: recorded like any other, with the appointment button unless it is a question."""
+        answer_signals.update(
+            decision=decision,
+            sources_count=0,
+            refused=refused,
+            broad_mode=False,
+            model=request.model,
+            appointment=appointment,
+        )
+        if language is not None:
+            answer_signals["language"] = language
+        if audit_ready:
+            task = asyncio.create_task(
+                record_widget_turn(
+                    widget_id=audit_widget_id,  # type: ignore[arg-type]
+                    session_key=audit_session_key,  # type: ignore[arg-type]
+                    role="assistant",
+                    content=reply,
+                    loaded_origin=http_request.headers.get("origin") or None,
+                    is_preview=getattr(auth, "is_preview", False),
+                    turn_id=request.widget_turn_id,
+                    answer_signals=answer_signals or None,
+                )
+            )
+            _pending.add(task)
+            task.add_done_callback(_pending.discard)
+        if request.stream:
+            return StreamingResponse(
+                content=off_topic_stream(reply=reply, language=language, appointment=appointment),
+                media_type="text/event-stream",
+            )
+        return off_topic_response(model=request.model, reply=reply, language=language, appointment=appointment)
+
+    def _contact_request_reply(found_case: case_file.Case) -> Any:
+        language = resolve_conversation_language(request.messages).language
+        logger.info(
+            "partner_chat_contact_request",
+            org_id=auth.org_id,
+            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
+            wants=found_case.wants,
+        )
+        return fixed_reply(contact_reply(language), language, decision="human_request", refused=False)
+
     try:
         # ``broad`` (4th element) is retrieve_context's per-turn decision:
         # support mode + visitor consent + a real retrieval attempt that
@@ -2084,61 +2130,106 @@ async def chat_completions(  # noqa: C901
         # answer can neither cite weak chunks nor show a misleading
         # "passages gevonden" activity. The retrieval log still records the
         # real (weak) chunks: retrieval genuinely ran.
-        retrieval = retrieve_context(
-            answer_signals=answer_signals,
-            org_id=auth.org_id,
-            zitadel_org_id=auth.zitadel_org_id,
-            kb_slugs=kb_slugs,
-            messages=request.messages,
-            settings=settings,
-            partner_user_id=partner_user_id,
-            widget_system_prompt=widget_system_prompt,
-            page_context=page_context,
-            backend_managed_citations=True,
-            support_mode=support_mode,
-            broad_mode=bool(request.broad_mode),
-            tone_register=tone_register,
-            pasted_correspondence=pasted_correspondence,
-            is_preview=getattr(auth, "is_preview", False),
-            audit_widget_id=audit_widget_id,
-            audit_session_key=audit_session_key,
-            audit_write=user_turn_write,
-            retrieval_query=knowledge.query if knowledge is not None else None,
-            top_k=INTERNAL_RETRIEVE_TOP_K
-            if profile.surface == "internal"
-            else knowledge.top_k
-            if knowledge is not None and knowledge.top_k is not None
-            else 8,
-            retrieval_enabled=retrieval_enabled,
-            profile=profile,
-            templates_block=templates_block,
-            telemetry_level=telemetry_level,
-            web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
-            knowledge_turn=knowledge_turn,
-        )
+        # Help widget: the case stored with the previous assistant turn
+        # (case_file.py). A read that fails costs this turn its case and
+        # nothing else.
+        previous_case: dict | None = None
+        case: case_file.Case | None = None
+        case_ms = 0
+        # Only on a follow-up, and only when the stored turn is this
+        # conversation's last answer: one session token serves every
+        # conversation the widget starts in it.
+        if support_mode and audit_ready and case_file.is_follow_up(request.messages):
+            try:
+                stored = await last_case(widget_id=audit_widget_id, session_key=audit_session_key)  # type: ignore[arg-type]
+            except Exception:
+                stored = None
+                logger.warning("partner_chat_previous_case_unavailable", org_id=auth.org_id, exc_info=True)
+            previous_case = case_file.stored_case_for(request.messages, stored)
+
+        def retrieval(follow_up_variants: list[str]):
+            return retrieve_context(
+                follow_up_variants=follow_up_variants,
+                answer_signals=answer_signals,
+                org_id=auth.org_id,
+                zitadel_org_id=auth.zitadel_org_id,
+                kb_slugs=kb_slugs,
+                messages=request.messages,
+                settings=settings,
+                partner_user_id=partner_user_id,
+                widget_system_prompt=widget_system_prompt,
+                page_context=page_context,
+                backend_managed_citations=True,
+                support_mode=support_mode,
+                broad_mode=bool(request.broad_mode),
+                tone_register=tone_register,
+                pasted_correspondence=pasted_correspondence,
+                is_preview=getattr(auth, "is_preview", False),
+                audit_widget_id=audit_widget_id,
+                audit_session_key=audit_session_key,
+                audit_write=user_turn_write,
+                retrieval_query=knowledge.query if knowledge is not None else None,
+                top_k=INTERNAL_RETRIEVE_TOP_K
+                if profile.surface == "internal"
+                else knowledge.top_k
+                if knowledge is not None and knowledge.top_k is not None
+                else 8,
+                retrieval_enabled=retrieval_enabled,
+                profile=profile,
+                templates_block=templates_block,
+                telemetry_level=telemetry_level,
+                web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
+                knowledge_turn=knowledge_turn,
+            )
+
         # SPEC-RAG-ANSWER-JUDGES-001 REQ-1. The question judge runs on every
         # support-mode turn beside retrieval, so it costs no wall-clock of its
         # own; each side is timed separately for partner_chat_turn_timing.
         turn_judgement: turn_judge.TurnJudgement | None = None
         turn_timing: dict[str, float] | None = None
         if support_mode:
-            (retrieval_result, retrieval_ms), (turn_judgement, turn_judge_ms) = await asyncio_gather(
-                _timed(retrieval),
-                _timed(
-                    turn_judge.judge_turn(
-                        request.messages,
-                        settings,
-                        off_topic_subjects=off_topic_subjects,
-                        delegated_org_id=auth.zitadel_org_id,
-                    )
-                ),
+            judge = turn_judge.judge_turn(
+                request.messages, settings, off_topic_subjects=off_topic_subjects, delegated_org_id=auth.zitadel_org_id
             )
-            turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "turn_judge_ms": turn_judge_ms}
+            case_update = case_file.update_case(
+                request.messages, previous_case, settings, delegated_org_id=auth.zitadel_org_id
+            )
+            if case_file.is_follow_up(request.messages):
+                # The case's queries go into this turn's search, so the case
+                # comes first; a first question has its paraphrases and needs
+                # no wait (case_file.py has the numbers).
+                case, case_ms = await _timed(case_update)
+                if case is not None:
+                    answer_signals["case"] = case.model_dump()
+                if case is not None and case.wants in case_file.CONTACT_WANTS:
+                    # The route for a person, contact or an appointment needs
+                    # no articles: decided here, before the search (plan §5,
+                    # step 2). A first turn runs the case beside the search and
+                    # takes this route below.
+                    return _contact_request_reply(case)
+                follow_up_variants = case.search_variants(_last_user_message(request.messages) or "") if case else []
+                (retrieval_result, retrieval_ms), (turn_judgement, turn_judge_ms) = await asyncio_gather(
+                    _timed(retrieval(follow_up_variants)), _timed(judge)
+                )
+            else:
+                (
+                    (retrieval_result, retrieval_ms),
+                    (turn_judgement, turn_judge_ms),
+                    (case, case_ms),
+                ) = await asyncio_gather(_timed(retrieval([])), _timed(judge), _timed(case_update))
+            if case is not None:
+                answer_signals["case"] = case.model_dump()
+            turn_timing = {
+                "started_at": turn_started,
+                "retrieval_ms": retrieval_ms,
+                "turn_judge_ms": turn_judge_ms,
+                "case_ms": case_ms,
+            }
         elif internal:
-            retrieval_result, retrieval_ms = await _timed(retrieval)
+            retrieval_result, retrieval_ms = await _timed(retrieval([]))
             turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms}
         else:
-            retrieval_result = await retrieval
+            retrieval_result = await retrieval([])
         chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
         # The weak-source rule reads this on every judged surface (below).
         gap = classify_gap(chunks) if support_mode or internal else None
@@ -2196,6 +2287,18 @@ async def chat_completions(  # noqa: C901
             escalation = escalation_service.HUMAN_REQUEST
         elif sentiment == "negative":
             escalation = escalation_service.FRUSTRATION
+    # The case reads the whole conversation and names what the visitor wants
+    # now; "ik wil jullie mailen" and "graag contact met een medewerker" got
+    # the not-found text in the first week of real traffic because neither
+    # the phrase detector nor the turn judge called them a request for a
+    # person. Such a turn is answered in code: handed to the writer with the
+    # human-request instruction, it still answered "can I create an e-mail
+    # ticket" with another product's ticket button.
+    if case is not None and case.wants in case_file.CONTACT_WANTS:
+        escalation = escalation_service.HUMAN_REQUEST
+        wants_contact = True
+    else:
+        wants_contact = False
     if escalation:
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
     force_escalation = escalation is not None
@@ -2239,40 +2342,6 @@ async def chat_completions(  # noqa: C901
             retrieval_gap=gap,
         )
 
-    def fixed_reply(reply: str, language: str | None, *, decision: str, refused: bool, appointment: bool = True) -> Any:
-        """A widget reply decided in code: recorded like any other, with the appointment button unless it is a question."""
-        answer_signals.update(
-            decision=decision,
-            sources_count=0,
-            refused=refused,
-            broad_mode=False,
-            model=request.model,
-            appointment=appointment,
-        )
-        if language is not None:
-            answer_signals["language"] = language
-        if audit_ready:
-            task = asyncio.create_task(
-                record_widget_turn(
-                    widget_id=audit_widget_id,  # type: ignore[arg-type]
-                    session_key=audit_session_key,  # type: ignore[arg-type]
-                    role="assistant",
-                    content=reply,
-                    loaded_origin=http_request.headers.get("origin") or None,
-                    is_preview=getattr(auth, "is_preview", False),
-                    turn_id=request.widget_turn_id,
-                    answer_signals=answer_signals or None,
-                )
-            )
-            _pending.add(task)
-            task.add_done_callback(_pending.discard)
-        if request.stream:
-            return StreamingResponse(
-                content=off_topic_stream(reply=reply, language=language, appointment=appointment),
-                media_type="text/event-stream",
-            )
-        return off_topic_response(model=request.model, reply=reply, language=language, appointment=appointment)
-
     # A subject this widget does not answer (prices, quotes, payment terms):
     # the visitor gets a referral with the appointment button and no answer
     # model sees the articles, so a price cannot slip in from one. The referral
@@ -2303,6 +2372,9 @@ async def chat_completions(  # noqa: C901
             referral=referral is not None,
         )
         return fixed_reply(referral or off_topic_reply, language, decision="off_topic", refused=False)
+
+    if support_mode and wants_contact and case is not None:
+        return _contact_request_reply(case)
 
     # Retrieval found passages, and none of them answers this question
     # (passage_selection.py): the visitor gets the honest "not found" with the

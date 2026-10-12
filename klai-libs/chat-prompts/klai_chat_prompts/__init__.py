@@ -145,6 +145,7 @@ __all__ = [
     "answer_claims_response_format",
     "appointment_offer_marker",
     "appointment_offer_sentence",
+    "contact_reply",
     "broad_mode_answer_marker",
     "chat_contract_article",
     "clarify_question_addendum",
@@ -189,6 +190,16 @@ _DUTCH_HELPDESK_OFFER: Final[str] = (
 )
 _ENGLISH_HELPDESK_OFFER: Final[str] = (
     "If you want to be sure, schedule an appointment with someone who can help you personally."
+)
+# A visitor who asks for a person, for contact or for an appointment gets this
+# and nothing else: no article, no steps. The widget renders the button.
+_DUTCH_CONTACT_REPLY: Final[str] = (
+    "Je kunt een afspraak maken met een medewerker, die helpt je persoonlijk verder. Gebruik daarvoor de knop "
+    "onder dit bericht."
+)
+_ENGLISH_CONTACT_REPLY: Final[str] = (
+    "You can schedule an appointment with someone who will help you personally. Use the button under this "
+    "message."
 )
 _DUTCH_HELPDESK_REFUSAL: Final[str] = "Dit vind ik niet terug in onze helpartikelen. " + _DUTCH_HELPDESK_OFFER
 _ENGLISH_HELPDESK_REFUSAL: Final[str] = "I can't find this in our help articles. " + _ENGLISH_HELPDESK_OFFER
@@ -315,6 +326,16 @@ def is_broad_knowledge_answer(content: object) -> bool:
         return False
     stripped = content.lstrip()
     return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
+
+
+def contact_reply(language: object) -> str:
+    """The whole reply to a visitor who asks for a person, for contact or for an appointment.
+
+    Written by the model, this reply came out as "Laat het gerust weten als je
+    vastloopt" or as a ticket button of another product (first week of real
+    traffic after the selection step); the model has nothing to add here.
+    """
+    return _DUTCH_CONTACT_REPLY if _language_is_dutch(language) else _ENGLISH_CONTACT_REPLY
 
 
 def appointment_offer_sentence(language: object) -> str:

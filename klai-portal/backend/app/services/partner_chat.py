@@ -2696,6 +2696,7 @@ def _log_turn_timing(
     timings = {
         "retrieval_ms": turn_timing.get("retrieval_ms"),
         "turn_judge_ms": turn_timing.get("turn_judge_ms"),
+        "case_ms": turn_timing.get("case_ms"),
         "generation_ms": generation_ms,
         "checks_ms": answer_judge_ms,
         "total_ms": _elapsed_ms(turn_timing["started_at"]),
@@ -2705,6 +2706,7 @@ def _log_turn_timing(
         org_id=org_id,
         retrieval_ms=timings["retrieval_ms"],
         turn_judge_ms=timings["turn_judge_ms"],
+        case_ms=timings["case_ms"],
         generation_ms=generation_ms,
         answer_judge_ms=answer_judge_ms,
         total_ms=timings["total_ms"],
@@ -3609,6 +3611,9 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     web_search_available: bool = False,
     # Caller-owned sink for what this turn decided besides the prompt.
     knowledge_turn: KnowledgeTurn | None = None,
+    # Help widget, follow-up turns: the case's search queries (case_file.py),
+    # run as extra retrieval passes beside the visitor's own words.
+    follow_up_variants: list[str] | None = None,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
@@ -3773,16 +3778,18 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         if rewrite.taxonomy_node_ids:
             retrieve_body["taxonomy_node_ids"] = rewrite.taxonomy_node_ids
     else:
-        # A first question travels with two paraphrases; a follow-up has its
-        # history to search on instead (query_paraphrase.py has the numbers).
-        # A fanned-out message gets none: retrieval-api would run the
-        # paraphrases of the whole message inside every sub-question's pass.
+        # A first question travels with two paraphrases, a follow-up with the
+        # two queries of the conversation's case (query_paraphrase.py and
+        # case_file.py have the numbers). A fanned-out message gets none:
+        # retrieval-api would run the variants of the whole message inside
+        # every sub-question's pass.
         query_variants = (
             []
             if sub_queries
             else await first_question_variants(
                 messages, query, settings, support_mode=support_mode, delegated_org_id=zitadel_org_id
             )
+            or list(follow_up_variants or [])
         )
         retrieve_body = {
             # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
