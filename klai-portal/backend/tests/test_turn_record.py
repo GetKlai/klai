@@ -114,10 +114,13 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
         question="",
     )
     signals: dict[str, Any] = {}
+    follow_up = [
+        {"role": "user", "content": "Hoe wijzig ik mijn belplan?"},
+        {"role": "assistant", "content": "Ga naar Belplan."},
+        {"role": "user", "content": _QUESTION},
+    ]
     with patch.object(partner_chat, "select_passages", AsyncMock(return_value=selection)):
-        await _retrieve(
-            [{"role": "user", "content": _QUESTION}], _settings(), answer_signals=signals, follow_up_variants=_VARIANTS
-        )
+        await _retrieve(follow_up, _settings(), answer_signals=signals, follow_up_variants=_VARIANTS)
 
     assert signals["search"]["query"] == _QUESTION
     assert signals["search"]["variants"] == _VARIANTS

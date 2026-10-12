@@ -92,6 +92,7 @@ from app.services.web_search import build_web_results_block, search_web, web_res
 from app.services.widget_audit import (
     hash_audit_value,
     last_case,
+    patch_answer_signals,
     record_internal_turn,
     record_widget_turn,
     session_key_from_token,
@@ -601,17 +602,29 @@ async def _audit_streaming_wrapper(
 
 
 def _write_widget_record(turn: KnowledgeTurn | None, **fields: Any) -> None:
-    """One record per widget turn, written once the turn's own statement check is done.
+    """One record per widget turn, written at once; its signals completed when the later check is done.
 
     The check on a reply written from chosen passages runs after the reply
-    went out (``turn.grounding_check``, partner_chat.py); the record waits for
-    it rather than being written without its outcome.
+    went out (``turn.grounding_check``, partner_chat.py). The row is written
+    first so the transcript keeps its order under a quick follow-up and the
+    feedback endpoint finds the turn; the signals it was written with are
+    then replaced by the completed ones (``patch_answer_signals``).
     """
 
     async def write() -> None:
-        if turn is not None and turn.grounding_check is not None:
-            await turn.grounding_check
         await record_widget_turn(**fields)
+        if turn is None or turn.grounding_check is None or fields.get("answer_signals") is None:
+            return
+        try:
+            await turn.grounding_check
+        except Exception:
+            logger.warning("widget_later_check_failed", exc_info=True)
+        await patch_answer_signals(
+            widget_id=fields["widget_id"],
+            session_key=fields["session_key"],
+            turn_id=fields.get("turn_id"),
+            answer_signals=fields["answer_signals"],
+        )
 
     task = asyncio.create_task(write())
     _pending.add(task)

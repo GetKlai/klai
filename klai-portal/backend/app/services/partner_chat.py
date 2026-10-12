@@ -2526,13 +2526,16 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         messages=messages, draft=safe_text, articles=articles, settings=settings, delegated_org_id=delegated_org_id
     )
     chosen = bool(citation_chunks) and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks or [])
-    if helpdesk and chosen and knowledge_turn is not None and answer_signals is not None:
-        # The writer read only passages the selection step chose, and after
-        # writing nothing changes a widget reply (below), so the statement
-        # check is measurement and runs after the reply went out. On the
-        # critical path it cost 1.6 s median of a 6.2 s written turn in the
-        # first week of real traffic; the light judge, which decides the
-        # appointment button, costs 0.4 s.
+    deferred = helpdesk and chosen and bool(sources) and knowledge_turn is not None and answer_signals is not None
+    if deferred and knowledge_turn is not None and answer_signals is not None:
+        # The writer read only passages the selection step chose and cited
+        # one, and after writing nothing changes such a widget reply (below),
+        # so the statement check is measurement and runs after the reply went
+        # out. On the critical path it cost 1.6 s median of a 6.2 s written
+        # turn in the first week of real traffic; the light judge, which
+        # decides the appointment button, costs 0.4 s. An uncited reply keeps
+        # the check on the path: without a source its statements decide
+        # between showing and refusing (decide_answer).
         judgement, grounding = await light_judge, None
         knowledge_turn.grounding_check = _check_answer_later(
             question=_visitor_question(messages),
@@ -2586,7 +2589,8 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     )
     if answer_signals is not None:
         answer_signals.update(verdicts, decision=outcome)
-        _grounding_signals(answer_signals, grounding, keep_statements=helpdesk)
+        if not deferred:
+            _grounding_signals(answer_signals, grounding, keep_statements=helpdesk)
         if judgement is None:
             answer_signals.setdefault("judge_failed", []).append("answer")
 
@@ -4050,11 +4054,14 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         and chunks
         and not turn.multi_question
         and not turn.user_provided_content
+        and not turn.pasted_correspondence
         and not _broad_mode_active(chunks, support_mode=support_mode, broad_consent=broad_mode)
     ):
         selection_chunks = chunks
         turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
-        if answer_signals is not None:
+        if answer_signals is not None and not internal:
+            # Quotes and the question are text; the internal record keeps
+            # signals only (widget_audit.record_internal_turn).
             answer_signals["selection"] = (
                 {
                     "verdict": turn.selection.verdict,

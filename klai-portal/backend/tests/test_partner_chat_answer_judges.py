@@ -250,6 +250,10 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str,
                 "escalation": [message["escalation"]] if "escalation" in message else [],
                 "sources": message.get("sources") or [],
             }
+        turn = kwargs.get("knowledge_turn")
+        if turn is not None and turn.grounding_check is not None:
+            # The check after the reply (step M) calls LiteLLM too: drained here, inside the mock.
+            await turn.grounding_check
     return text, signals, extras
 
 
@@ -859,6 +863,47 @@ async def test_a_thank_you_with_weak_articles_is_not_told_to_say_nothing_was_fou
     litellm, _, _ = await _route_turn(monkeypatch, case=_case("chat"), band="low")
 
     assert "Retrieval found nothing that clearly matches" not in _system_prompt_sent(litellm)
+
+
+# ─── The statement check after the reply (step M) ───────────────────────
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_a_cited_reply_from_chosen_passages_is_checked_after_it_went_out(stream):
+    """The writer read only passages the selection chose and cited one: nothing
+    changes such a reply after writing, so the statement check is measurement
+    and runs after the reply, with the light judge alone on the path."""
+    from app.services.partner_chat import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
+
+    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("answered"))
+    turn = KnowledgeTurn()
+    chosen = {**_with_900_sources(), "citation_chunks": [{**CHUNK_900, _CHOSEN_PASSAGE_KEY: True}]}
+
+    text, signals, _ = await _answer(litellm, stream=stream, knowledge_turn=turn, **chosen)
+
+    assert text.startswith(ANSWER_900) and signals["decision"] == "answer"
+    assert turn.grounding_check is not None, "the check runs after the reply"
+    assert "judge_failed" not in signals
+    await turn.grounding_check
+    assert len(litellm.grounding_requests) == 1
+    assert signals["grounding"] == "all_in_articles" and signals["unsupported"] == 0
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_an_uncited_reply_from_chosen_passages_keeps_the_check_on_the_path(stream):
+    """Without a source the statements decide between showing and refusing, so the check waits."""
+    from app.services.partner_chat import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
+
+    litellm = _LiteLLM(model_text="Dat regel je onder Beheer.", answer_judge=_answer_verdict("not_answered"))
+    turn = KnowledgeTurn()
+    uncited = {**_with_900_sources(), "citation_chunks": [{**CHUNK_900, _CHOSEN_PASSAGE_KEY: True}]}
+
+    _, signals, extras = await _answer(litellm, stream=stream, knowledge_turn=turn, **uncited)
+
+    assert not extras.get("sources") or extras["sources"] == [[]]
+    assert turn.grounding_check is None
+    assert len(litellm.grounding_requests) == 1
+    assert "unsupported" in signals
 
 
 # ─── Subjects this widget does not answer ───────────────────────────────

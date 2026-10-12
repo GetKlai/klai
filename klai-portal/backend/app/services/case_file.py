@@ -142,7 +142,9 @@ async def update_case(
     previous_text = "(none)"
     if previous:
         try:
-            previous_text = Case.model_validate(previous).model_dump_json()
+            # Stored before out_of_scope existed (12 October): the subject of
+            # the latest message is judged afresh anyway.
+            previous_text = Case.model_validate({"out_of_scope": False, **previous}).model_dump_json()
         except ValidationError:
             # A case stored under an older shape of this model: start afresh.
             logger.warning("case_previous_invalid", keys=sorted(previous)[:12])

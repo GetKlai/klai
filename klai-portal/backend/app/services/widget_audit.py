@@ -116,6 +116,75 @@ async def find_conversation_id(*, widget_id: str, session_key: str) -> tuple[int
     return None if conv is None else (int(conv.id), bool(conv.is_test))
 
 
+async def _org_of_widget(widget_id: str) -> int | None:
+    """REQ-14: the tenant comes from the widgets row, never from the caller.
+
+    A bare SELECT in cross_org_session; the per-tenant write that follows opens
+    tenant_scoped_session(org_id), which sets the RLS GUC.
+    """
+    try:
+        async with cross_org_session() as lookup_db:
+            row = (
+                await lookup_db.execute(
+                    text("SELECT org_id FROM widgets WHERE id = CAST(:widget_id AS uuid)"),
+                    {"widget_id": widget_id},
+                )
+            ).first()
+    except Exception:
+        logger.exception("widget_audit_org_lookup_failed", widget_id=widget_id)
+        return None
+    if row is None:
+        logger.warning("widget_audit_widget_not_found", widget_id=widget_id)
+        return None
+    return int(row[0])
+
+
+async def patch_answer_signals(
+    *, widget_id: str, session_key: str, turn_id: str | None, answer_signals: dict[str, Any]
+) -> None:
+    """Replace the signals of an assistant turn that was recorded before its statement check finished.
+
+    The check on a widget reply written from chosen passages runs after the
+    reply went out (partner_chat._check_answer_later). The row itself is
+    written at once, so the transcript keeps its order and feedback finds the
+    turn; only its signals are completed here. Addressed by ``turn_id`` when
+    the widget sent one, otherwise the conversation's latest assistant turn.
+    """
+    org_id = await _org_of_widget(widget_id)
+    if org_id is None:
+        return
+    target = (
+        "m.turn_id = :turn_id"
+        if turn_id
+        else "m.id = (SELECT id FROM widget_messages WHERE conversation_id = m.conversation_id AND role = 'assistant' ORDER BY sequence DESC LIMIT 1)"
+    )
+    try:
+        async with tenant_scoped_session(org_id) as db:
+            await db.execute(
+                text(
+                    f"""
+                    UPDATE widget_messages m
+                       SET answer_signals = CAST(:answer_signals AS jsonb)
+                      FROM widget_conversations c
+                     WHERE c.id = m.conversation_id
+                       AND c.widget_id = CAST(:widget_id AS uuid)
+                       AND c.session_key = :session_key
+                       AND m.role = 'assistant'
+                       AND {target}
+                    """  # noqa: S608 - the two targets are fixed strings, the values are bound
+                ),
+                {
+                    "answer_signals": json.dumps(answer_signals),
+                    "widget_id": widget_id,
+                    "session_key": session_key,
+                    "turn_id": turn_id,
+                },
+            )
+            await db.commit()
+    except Exception:
+        logger.exception("widget_audit_signals_patch_failed", widget_id=widget_id)
+
+
 async def record_widget_turn(
     *,
     widget_id: str,  # UUID-as-string from widgets.id
@@ -172,25 +241,9 @@ async def record_widget_turn(
     if not content.strip():
         return
 
-    # REQ-14: derive org_id from widgets table (single source of truth).
-    # Uses cross_org_session for the bare SELECT; the per-tenant INSERT
-    # path below then opens tenant_scoped_session(org_id) which sets the
-    # proper RLS GUC.
-    try:
-        async with cross_org_session() as lookup_db:
-            row = (
-                await lookup_db.execute(
-                    text("SELECT org_id FROM widgets WHERE id = CAST(:widget_id AS uuid)"),
-                    {"widget_id": widget_id},
-                )
-            ).first()
-    except Exception:
-        logger.exception("widget_audit_org_lookup_failed", widget_id=widget_id)
+    org_id = await _org_of_widget(widget_id)
+    if org_id is None:
         return
-    if row is None:
-        logger.warning("widget_audit_widget_not_found", widget_id=widget_id)
-        return
-    org_id = int(row[0])
 
     truncated_query = content[:240] if role == "user" else None
     # Browser-supplied, so clamp to the column widths here as well as in the

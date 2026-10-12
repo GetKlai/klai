@@ -1,0 +1,61 @@
+"""A widget reply written from chosen passages is recorded at once; its signals are completed after the later check.
+
+Step M (plan §8): the statement check on such a reply runs after the reply
+went out. The row is written first, so a quick follow-up keeps the transcript
+order and the feedback endpoint finds the turn, and the signals are replaced
+once the check is done.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.api import partner
+from app.services.partner_chat import KnowledgeTurn
+
+
+@pytest.mark.asyncio
+async def test_the_record_is_written_before_the_later_check_and_its_signals_after(monkeypatch):
+    signals: dict[str, Any] = {"decision": "answer"}
+    order: list[str] = []
+
+    async def record(**fields: Any) -> None:
+        order.append(f"record:{'grounding' in fields['answer_signals']}")
+
+    async def patch(**fields: Any) -> None:
+        order.append(f"patch:{fields['answer_signals'].get('grounding')}:{fields['turn_id']}")
+
+    async def later_check() -> None:
+        await asyncio.sleep(0.01)
+        signals["grounding"] = "all_in_articles"
+
+    monkeypatch.setattr(partner, "record_widget_turn", record)
+    monkeypatch.setattr(partner, "patch_answer_signals", patch)
+    turn = KnowledgeTurn()
+    turn.grounding_check = asyncio.create_task(later_check())
+
+    partner._write_widget_record(
+        turn, widget_id="w1", session_key="s1", role="assistant", content="x", turn_id="t1", answer_signals=signals
+    )
+    await asyncio.gather(*partner._pending)
+
+    assert order == ["record:False", "patch:all_in_articles:t1"]
+
+
+@pytest.mark.asyncio
+async def test_without_a_later_check_the_record_is_written_once_and_never_patched(monkeypatch):
+    record, patch = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(partner, "record_widget_turn", record)
+    monkeypatch.setattr(partner, "patch_answer_signals", patch)
+
+    partner._write_widget_record(
+        KnowledgeTurn(), widget_id="w1", session_key="s1", role="assistant", content="x", answer_signals={}
+    )
+    await asyncio.gather(*partner._pending)
+
+    record.assert_awaited_once()
+    patch.assert_not_awaited()
