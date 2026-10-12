@@ -976,10 +976,11 @@ async def test_the_referral_names_what_the_visitor_asked_about(monkeypatch, stre
     assert extras["escalation"] == [{"appointment": True}]
 
 
-async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_referral_not_an_answer(monkeypatch):
+async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_contact_reply_not_an_answer(monkeypatch):
     """A request for a technical call got the sentence about prices and quotes.
-    It gets a referral naming the request, and still no answer model: the
-    human-request turn would generate with the articles in the prompt."""
+    The visitor asked how to reach a person, so the contact route wins from
+    the referral; still no answer model, which would generate with the
+    articles in the prompt."""
     litellm, text, extras = await _off_topic_turn(
         monkeypatch,
         topic="not_handled",
@@ -988,7 +989,7 @@ async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_referral_n
         question="Kunnen we een call inplannen met jullie techniek over een CRM-koppeling?",
     )
 
-    assert text == _referral("een call over een CRM koppeling")
+    assert text == contact_reply("nl")
     assert litellm.answer_requests == []
     assert extras["escalation"] == [{"appointment": True}]
 

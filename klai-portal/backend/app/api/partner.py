@@ -2233,17 +2233,14 @@ async def chat_completions(  # noqa: C901
                 case, case_ms = await _timed(case_update)
                 if case is not None:
                     answer_signals["case"] = case.model_dump()
-                if (
-                    case is not None
-                    and case.wants in case_file.CONTACT_WANTS
-                    and not (case.out_of_scope and off_topic_reply)
-                ):
+                if case is not None and case.wants in case_file.CONTACT_WANTS:
                     # The route for a person, contact or an appointment needs
                     # no articles: decided here, before the search (plan §5,
                     # step 2). A first turn runs the case beside the search and
-                    # takes this route below. A person asked for about a
-                    # subject this widget does not answer gets the referral,
-                    # which names the subject and carries the same button.
+                    # takes this route below. It wins from the referral for a
+                    # subject this widget does not answer: "kan ik jullie ook
+                    # gewoon bellen" read as such a subject on the meetlat, and
+                    # the visitor asked how to reach a person, not about it.
                     return _contact_request_reply(case)
                 follow_up_variants = case.search_variants(_last_user_message(request.messages) or "") if case else []
                 retrieval_result, retrieval_ms = await _timed(retrieval(follow_up_variants))
@@ -2367,7 +2364,14 @@ async def chat_completions(  # noqa: C901
     # turns only. A request for a person lands here too: the human-request turn
     # would generate with the articles in the prompt, and the phrase detector
     # also fires on "kan iemand mij vertellen wat X kost".
-    if support_mode and off_topic_subjects and off_topic_reply and case is not None and case.out_of_scope:
+    if (
+        support_mode
+        and off_topic_subjects
+        and off_topic_reply
+        and case is not None
+        and case.out_of_scope
+        and not wants_contact
+    ):
         # A failed case falls through to the normal answer on purpose: that is
         # what the visitor got before this setting existed, and refusing every
         # turn because one call timed out would be worse than answering one
