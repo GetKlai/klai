@@ -1522,3 +1522,31 @@ async def test_a_phone_number_that_is_not_in_the_passage_takes_its_sentence_with
     assert "+31507009999" in text
     assert "303 4020" not in text
     assert "Lukt dat niet" not in text
+
+
+def test_the_contact_gate_reads_dotted_numbers_keeps_the_next_sentence_and_drops_an_orphan_marker():
+    text = (
+        "1. Bel 03.303.40.20. gebruik daarna de handleiding.\n"
+        "2. Vul het formaat +31 (0)50 700 9999 in.\n"
+        "Tussen 01-09-2026 - 30-09-2026 geldt de actie."
+    )
+    passage = [{"text": "Gebruik het formaat 050 700 9999 zonder spaties."}]
+
+    gated = partner_chat.without_unsourced_contact_details(text, passage)
+
+    assert "303" not in gated
+    assert "gebruik daarna de handleiding." in gated
+    assert "+31 (0)50 700 9999" in gated
+    assert "01-09-2026 - 30-09-2026" in gated
+    assert "\n1.\n" not in f"\n{gated}\n"
+
+
+async def test_the_judges_cannot_hand_the_visitor_the_ungated_draft(monkeypatch):
+    """The judges may return the draft instead of the composed text; that text
+    passes the same gate."""
+    reply = "Bel ons op 03 303 4020. Dan kijken we mee."
+    litellm = _LiteLLM(model_text=reply, answer_judge=_answer_verdict("answered"), grounding=httpx.ConnectError("x"))
+
+    text, _, _ = await _answer(litellm, stream=False)
+
+    assert "303 4020" not in text

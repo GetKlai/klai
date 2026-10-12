@@ -201,16 +201,26 @@ def safety_refusal_response(*, model: str, query: str = "") -> dict:
 _PUNCTUATION_DASH = re.compile(r"\s*\u2014\s*|\s+\u2013\s+")
 
 
-# A phone number: nine or more digits with optional spaces, dashes or brackets,
-# starting with a country code or a zero. "0031" or "085" alone is a number type
-# in these articles and does not match.
-_PHONE_RE = re.compile(r"(?<![\w@.])(?:\+\d{1,3}|0)[\d\s()\-]{7,}\d(?![\w@])")
+# A phone number: nine or more digits with optional spaces, dots, slashes,
+# dashes or brackets, starting with a country code or a zero. "0031" or "085"
+# alone is a number type in these articles and does not match; a date range
+# ("01-09-2026 - 30-09-2026") is excluded by its year.
+_PHONE_RE = re.compile(r"(?<![\w@.])(?:\+\d{1,3}|0)[\d\s()./\-]{7,}\d(?![\w@])")
+_DATE_RE = re.compile(r"\d{2}-\d{2}-\d{4}")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z*\d])")
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_ORPHAN_MARKER_RE = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s*$")
+# The last nine digits identify a number whether it is written with a country
+# code, a zero or a bracketed zero.
+_NUMBER_TAIL = 9
 
 
 def _contact_details(text: str) -> set[str]:
-    numbers = {re.sub(r"\D", "", m) for m in _PHONE_RE.findall(text) if len(re.sub(r"\D", "", m)) >= 9}
+    numbers = {
+        re.sub(r"\D", "", m)[-_NUMBER_TAIL:]
+        for m in _PHONE_RE.findall(text)
+        if len(re.sub(r"\D", "", m)) >= _NUMBER_TAIL and not _DATE_RE.search(m)
+    }
     return numbers | {m.lower() for m in _EMAIL_RE.findall(text)}
 
 
@@ -230,9 +240,13 @@ def without_unsourced_contact_details(text: str, chunks: list[dict] | None) -> s
             known |= _contact_details(chunk["text"])
     kept_lines: list[str] = []
     for line in text.split("\n"):
+        if not line.strip():
+            kept_lines.append(line)
+            continue
         sentences = [s for s in _SENTENCE_RE.split(line) if (_contact_details(s) - known) == set()]
-        if sentences or not line.strip():
-            kept_lines.append(" ".join(sentences) if line.strip() else line)
+        if not sentences or all(_ORPHAN_MARKER_RE.match(s) for s in sentences):
+            continue
+        kept_lines.append(" ".join(sentences))
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
 
 
@@ -2456,6 +2470,10 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     answer_mode = knowledge_turn.answer_mode if knowledge_turn is not None else profile.kb_mode
     draft_text, model_offered_appointment = strip_appointment_offer_marker(draft)
     safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
+    if helpdesk:
+        # The judges may hand this text to the visitor instead of the composed
+        # one; it passes the same provenance gate.
+        safe_text = without_unsourced_contact_details(safe_text, citation_chunks)
     if not safe_text:
         return content, sources, decision
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]

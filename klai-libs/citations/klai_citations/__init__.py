@@ -65,7 +65,8 @@ class EvidenceChunk:
 _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+", re.IGNORECASE)
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)")
 _MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\([^)]*\)")
-_MARKDOWN_LINK_WITH_TARGET_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)]*)\)")
+_MARKDOWN_LINK_WITH_TARGET_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)\s]*)[^)]*\)")
+_URL_TRAIL = "`'\".,;:*]!"
 _MARKDOWN_HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$")
 _ORDERED_LIST_ITEM_RE = re.compile(r"^\s*(\d+)[.)]\s+")
 _ORDERED_LIST_LINE_RE = re.compile(r"^(\s*)(\d+)([.)])(\s+.+)$")
@@ -622,7 +623,11 @@ def strip_model_citation_artifacts(
     }
     normalised_source_titles = {_normalise_title_text(title) for title in (source_titles or set()) if title.strip()}
     image_placeholders: dict[str, str] = {}
-    normalised_allowed_urls = {n for n in (normalise_source_url(url) for url in (allowed_urls or set())) if n}
+    allowed_url_keys = {k for k in (source_url_key(url) for url in (allowed_urls or set())) if k}
+
+    def _allowed(url: str) -> bool:
+        key = source_url_key(url)
+        return bool(key) and key in allowed_url_keys
 
     def _keep(markdown: str) -> str:
         placeholder = f"__KLAI_ALLOWED_URL_{len(image_placeholders)}__"
@@ -630,17 +635,20 @@ def strip_model_citation_artifacts(
         return placeholder
 
     def _replace_link(match: re.Match[str]) -> str:
-        target = normalise_source_url(match.group(2))
-        return _keep(match.group(0)) if target and target in normalised_allowed_urls else match.group(1)
+        if _allowed(match.group(2)) and "__KLAI_ALLOWED_IMAGE_" not in match.group(1):
+            return _keep(match.group(0))
+        return match.group(1)
 
     def _replace_raw_url(match: re.Match[str]) -> str:
-        # The URL pattern runs to the next space, so a closing backtick, quote
-        # or full stop rides along; it belongs to the sentence, not the address.
-        core = match.group(0).rstrip("`'\".,;:")
-        target = normalise_source_url(core)
-        if target and target in normalised_allowed_urls:
+        # The URL pattern runs to the next space, so a closing backtick, quote,
+        # bold marker or full stop rides along; it belongs to the sentence.
+        core = match.group(0).rstrip(_URL_TRAIL)
+        if _allowed(core):
             return _keep(core) + match.group(0)[len(core) :]
         return ""
+
+    def _carries_allowed_url(line: str) -> bool:
+        return any(_allowed(url.rstrip(_URL_TRAIL)) for url in _RAW_URL_RE.findall(line))
 
     def _replace_image(match: re.Match[str]) -> str:
         url = normalise_source_url(match.group(2))
@@ -663,7 +671,9 @@ def strip_model_citation_artifacts(
             if not line.strip():
                 skipping_footer_section = False
             continue
-        if _looks_like_source_list_line(line) or _looks_like_model_source_title_line(line, normalised_source_titles):
+        if (
+            _looks_like_source_list_line(line) or _looks_like_model_source_title_line(line, normalised_source_titles)
+        ) and not _carries_allowed_url(line):
             continue
         kept_lines.append(line)
 
@@ -693,9 +703,7 @@ def urls_in_passages(chunks: list[dict[str, Any]]) -> set[str]:
     for chunk in chunks:
         text = chunk.get("text")
         if isinstance(text, str):
-            found.update(
-                n for n in (normalise_source_url(url.rstrip("`'\".,;:")) for url in _RAW_URL_RE.findall(text)) if n
-            )
+            found.update(url.rstrip(_URL_TRAIL) for url in _RAW_URL_RE.findall(text))
     return found
 
 

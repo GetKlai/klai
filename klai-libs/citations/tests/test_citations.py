@@ -1650,3 +1650,20 @@ def test_an_allowed_url_survives_the_artifact_stripper_and_others_do_not():
     assert "[docs](https://api.example.com/clicktodial/)" in cleaned
     assert "evil.example.com" not in cleaned
     assert "hier" in cleaned
+
+
+def test_an_allowed_url_survives_in_a_numbered_step_in_bold_and_with_a_link_title():
+    from klai_citations import strip_model_citation_artifacts
+
+    allowed = {"https://api.example.com/clicktodial/"}
+    text = (
+        "1. Gebruik https://api.example.com/clicktodial/ om te bellen.\n"
+        "Adres: **https://api.example.com/clicktodial**.\n"
+        '[de API](https://api.example.com/clicktodial/ "Documentatie") helpt.'
+    )
+
+    cleaned = strip_model_citation_artifacts(text, allowed_urls=allowed)
+
+    assert "1. Gebruik https://api.example.com/clicktodial/ om te bellen." in cleaned
+    assert "**https://api.example.com/clicktodial**." in cleaned
+    assert '[de API](https://api.example.com/clicktodial/ "Documentatie")' in cleaned
