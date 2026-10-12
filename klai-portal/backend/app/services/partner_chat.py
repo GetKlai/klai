@@ -3976,6 +3976,24 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         chunks = safe_chunks
         trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
     _record_retrieval_band(answer_signals, result, blocked_chunk_count=blocked_chunk_count)
+    if answer_signals is not None and support_mode and not internal:
+        # The trace of this turn's search, kept with the turn so a wrong reply
+        # can be laid at the step where it went wrong without replaying it;
+        # until now that trace existed only in a private replay (plan §5, step 7).
+        answer_signals["search"] = {
+            "query": retrieve_body["query"][:300],
+            "variants": [variant[:300] for variant in (retrieve_body.get("query_variants") or [])],
+            "found": [
+                {
+                    "title": str(chunk.get("title") or "")[:120],
+                    "url": chunk.get("source_url"),
+                    "score": round(float(chunk["reranker_score"]), 3)
+                    if chunk.get("reranker_score") is not None
+                    else None,
+                }
+                for chunk in chunks
+            ],
+        }
     # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001: a low or unknown band without direct
     # evidence for the question. Only the Strict-risk model choice reads it;
     # what the answer may say on weak evidence follows the article scores
@@ -4033,6 +4051,18 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     ):
         selection_chunks = chunks
         turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
+        if answer_signals is not None:
+            answer_signals["selection"] = (
+                {
+                    "verdict": turn.selection.verdict,
+                    "evidence": [
+                        {"passage": item.passage, "quote": item.quote[:200]} for item in turn.selection.evidence
+                    ],
+                    "question": turn.selection.question[:200],
+                }
+                if turn.selection
+                else None
+            )
         turn.not_in_passages = bool(turn.selection and turn.selection.not_in_passages(chunks))
         chosen = turn.selection.chosen(chunks) if turn.selection else []
         if chosen and not turn.not_in_passages:
