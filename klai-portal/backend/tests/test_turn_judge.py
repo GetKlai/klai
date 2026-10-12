@@ -2,8 +2,8 @@
 
 SPEC: every LiteLLM call is attributable to the feature that made it
 (LiteLLM_SpendLogs.request_tags, from metadata.tags). The tag is derived from
-the caller's own ``name`` (turn_judge -> "portal:turn-judge",
-query_paraphrase -> "portal:query-paraphrase") rather than a second parameter
+the caller's own ``name`` (case_update -> "portal:case-update",
+passage_selection -> "portal:passage-selection") rather than a second parameter
 every caller must remember to pass.
 """
 
@@ -56,12 +56,12 @@ async def _call(name: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_turn_judge_name_maps_to_its_own_tag():
-    body = await _call("turn_judge")
-    assert body["metadata"]["tags"] == ["portal:turn-judge"]
+async def test_case_update_name_maps_to_its_own_tag():
+    body = await _call("case_update")
+    assert body["metadata"]["tags"] == ["portal:case-update"]
 
 
 @pytest.mark.asyncio
-async def test_query_paraphrase_name_maps_to_its_own_tag():
-    body = await _call("query_paraphrase")
-    assert body["metadata"]["tags"] == ["portal:query-paraphrase"]
+async def test_passage_selection_name_maps_to_its_own_tag():
+    body = await _call("passage_selection")
+    assert body["metadata"]["tags"] == ["portal:passage-selection"]

@@ -1,9 +1,8 @@
-"""The first support-mode question goes to retrieval with two paraphrases; nothing else does.
+"""What one widget turn sends to retrieval, and what its record keeps.
 
-SPEC-RAG-ANSWER-JUDGES-001, logbook 2.33. The paraphrases are retrieval input
-only: the visitor's own words stay the primary query, a follow-up turn keeps
-using its history instead, and a failed paraphrase call leaves the request
-exactly as it was.
+A first question searches on the visitor's own words alone; a follow-up adds
+the two queries of the conversation's case (case_file.py). The record of the
+turn says what was searched, what came back and what the selection made of it.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import partner_chat, query_paraphrase
+from app.services import partner_chat
 
 _QUESTION = "Goedemorgen, mijn vaste lijn en mobiele lijn gaan gelijk over tot voicemail."
 _VARIANTS = [
@@ -67,76 +66,23 @@ async def _retrieve(messages: list[dict], settings: MagicMock, **overrides: Any)
 
 
 @pytest.mark.asyncio
-async def test_the_first_question_travels_with_two_paraphrases(monkeypatch):
+async def test_a_first_question_searches_on_its_own_words_and_a_follow_up_adds_the_cases_queries(monkeypatch):
     captured: dict[str, Any] = {}
     _capture_retrieve(monkeypatch, captured)
-    with patch.object(query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=_VARIANTS)) as para:
-        await _retrieve([{"role": "user", "content": _QUESTION}], _settings())
+    await _retrieve([_WELCOME, {"role": "user", "content": _QUESTION}], _settings())
+    assert captured["body"]["query"] == _QUESTION
+    assert captured["body"]["query_variants"] is None
 
-    para.assert_awaited_once()
-    assert captured["body"]["query"] == _QUESTION, "the visitor's own words stay the primary query"
-    assert captured["body"]["query_variants"] == _VARIANTS
-
-
-@pytest.mark.asyncio
-async def test_the_widget_welcome_line_does_not_make_the_first_question_a_follow_up(monkeypatch):
-    """The browser widget seeds every conversation with its welcome line as an
-    assistant message and sends it back with the first question. That line is
-    not an answer: the visitor's first question still gets its paraphrases."""
-    captured: dict[str, Any] = {}
-    _capture_retrieve(monkeypatch, captured)
-    messages = [_WELCOME, {"role": "user", "content": _QUESTION}]
-    with patch.object(query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=_VARIANTS)) as para:
-        await _retrieve(messages, _settings())
-
-    para.assert_awaited_once()
-    assert captured["body"]["query_variants"] == _VARIANTS
-
-
-@pytest.mark.asyncio
-async def test_a_follow_up_keeps_its_history_and_gets_no_paraphrases(monkeypatch):
-    captured: dict[str, Any] = {}
-    _capture_retrieve(monkeypatch, captured)
-    messages = [
+    follow_up = [
         _WELCOME,
         {"role": "user", "content": _QUESTION},
         {"role": "assistant", "content": "Ga naar Belplan."},
         {"role": "user", "content": "en per collega?"},
     ]
-    with patch.object(query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=_VARIANTS)) as para:
-        await _retrieve(messages, _settings())
-
-    para.assert_not_awaited()
-    assert captured["body"]["query_variants"] is None
+    await _retrieve(follow_up, _settings(), follow_up_variants=_VARIANTS)
+    assert captured["body"]["query"] == "en per collega?"
+    assert captured["body"]["query_variants"] == _VARIANTS, "the visitor's own words stay the primary query"
     assert len(captured["body"]["conversation_history"]) == 3
-
-
-@pytest.mark.asyncio
-async def test_a_failed_paraphrase_call_leaves_the_request_as_it_was(monkeypatch):
-    """The paraphrase step is retrieval input only; when the model is down the
-    first question is searched exactly as before."""
-    captured: dict[str, Any] = {}
-    _capture_retrieve(monkeypatch, captured)
-    with patch.object(query_paraphrase, "structured_judge_call", AsyncMock(return_value=None)):
-        await _retrieve([{"role": "user", "content": _QUESTION}], _settings())
-
-    assert captured["body"]["query_variants"] is None
-    assert captured["body"]["query"] == _QUESTION
-
-
-@pytest.mark.asyncio
-async def test_a_paraphrase_equal_to_the_question_is_dropped():
-    settings = MagicMock()
-    settings.retrieval_paraphrase_model = "klai-medium"
-    reply = query_paraphrase.QueryParaphrases(
-        variants=[_QUESTION.upper(), "Vaste en mobiele lijn tegelijk naar voicemail", "  "]
-    )
-    with patch.object(query_paraphrase, "structured_judge_call", AsyncMock(return_value=reply)) as call:
-        variants = await query_paraphrase.paraphrase_first_question(_QUESTION, settings)
-
-    assert variants == ["Vaste en mobiele lijn tegelijk naar voicemail"]
-    assert call.await_args is not None
-    assert call.await_args.kwargs["model"] == "klai-medium", "not the answer model's quota"
 
 
 @pytest.mark.asyncio
@@ -168,11 +114,10 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
         question="",
     )
     signals: dict[str, Any] = {}
-    with (
-        patch.object(query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=_VARIANTS)),
-        patch.object(partner_chat, "select_passages", AsyncMock(return_value=selection)),
-    ):
-        await _retrieve([{"role": "user", "content": _QUESTION}], _settings(), answer_signals=signals)
+    with patch.object(partner_chat, "select_passages", AsyncMock(return_value=selection)):
+        await _retrieve(
+            [{"role": "user", "content": _QUESTION}], _settings(), answer_signals=signals, follow_up_variants=_VARIANTS
+        )
 
     assert signals["search"]["query"] == _QUESTION
     assert signals["search"]["variants"] == _VARIANTS

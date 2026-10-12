@@ -113,15 +113,6 @@ class _LiteLLM:
             "grounding_check": self.grounding,
             "repair": self.repaired,
             "rewrite": "",
-            "turn_judge": {
-                "topic": "handled",
-                "scope": "organisation",
-                "wants_human": False,
-                "sentiment": "neutral",
-                "clarity": "clear",
-                "missing": "",
-            },
-            "query_paraphrase": {"variants": []},
         }
         if kind in replies:
             return _reply(replies[kind])

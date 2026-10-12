@@ -55,6 +55,9 @@ CASE_SYSTEM_PROMPT = (
     "call, mail, ticket), appointment (asks to schedule or book), chat (greeting, thanks, remark about the "
     "chat), other. A visitor who gives their own number or details, or who says yes to something the "
     "assistant offered, is not asking for contact: that stays the earlier want.\n"
+    "out_of_scope: true only when the LATEST message asks about one of the subjects this help chat does not "
+    "answer, listed at the end; judge what the visitor wants, not which words they use. false otherwise, and "
+    "always false when that list is empty.\n"
     "sentiment: the visitor's tone in the latest message.\n"
     "queries: two search queries for the help articles, in the language of the help articles ("
     "Dutch), each at most twelve words, each naming the product and the problem of the case. The first "
@@ -70,6 +73,7 @@ _TIMEOUT_SECONDS = 3.0
 _MAX_QUERY_CHARS = 500
 # Visitor wants that are a route, not a knowledge question.
 CONTACT_WANTS = frozenset({"human", "contact", "appointment"})
+_NO_SUBJECTS = "(none: every subject is handled)"
 
 
 class Case(BaseModel):
@@ -80,8 +84,14 @@ class Case(BaseModel):
     variant: str
     tried: list[str]
     wants: Literal["knowledge", "human", "contact", "appointment", "chat", "other"]
+    out_of_scope: bool
     sentiment: Literal["negative", "neutral", "positive"]
     queries: list[str]
+
+    @property
+    def scope(self) -> Literal["conversation", "organisation"]:
+        """A greeting, a thank-you or a remark about the chat is answered without articles."""
+        return "conversation" if self.wants == "chat" else "organisation"
 
     def search_variants(self, query: str) -> list[str]:
         """The case's queries as extra retrieval passes beside the visitor's own words."""
@@ -125,8 +135,10 @@ async def update_case(
     previous: dict | None,
     settings: Settings,
     *,
+    off_topic_subjects: str = "",
     delegated_org_id: str | None = None,
 ) -> Case | None:
+    subjects = " ".join(off_topic_subjects.split()) or _NO_SUBJECTS
     previous_text = "(none)"
     if previous:
         try:
@@ -136,7 +148,7 @@ async def update_case(
             logger.warning("case_previous_invalid", keys=sorted(previous)[:12])
     return await structured_judge_call(
         name="case_update",
-        system_prompt=CASE_SYSTEM_PROMPT,
+        system_prompt=f"{CASE_SYSTEM_PROMPT}\n\nSubjects this help chat does not answer:\n{subjects}",
         user_content=f"Case after the previous turn:\n{previous_text}\n\nConversation:\n{conversation_excerpt(messages)}",
         schema=Case,
         timeout_seconds=_TIMEOUT_SECONDS,
