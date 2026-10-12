@@ -1467,3 +1467,58 @@ async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(m
 
     assert text == contact_reply("nl")
     assert litellm.retrieve_requests == []
+
+
+# ─── The provenance gate: addresses and numbers only from the passages ───
+
+
+def _article_with(text: str) -> dict:
+    return {
+        "chunk_id": "c3",
+        "evidence_id": "ev3",
+        "title": "Klik-en-bel koppeling",
+        "text": text,
+        "source_url": "https://help.example.com/klik-en-bel",
+        "reranker_score": 0.9,
+    }
+
+
+async def _gated_turn(monkeypatch, reply: str, article_text: str):
+    article = _article_with(article_text)
+    litellm = _LiteLLM(model_text=reply, selection=_selection("answers", (1, article_text[:60])), turn=_turn_verdict())
+    return await _route_turn(
+        monkeypatch,
+        turn=_turn_verdict(),
+        question="Wat is het adres van de koppeling?",
+        band="high",
+        items=[article],
+        litellm=litellm,
+    )
+
+
+async def test_an_address_that_stands_in_the_passage_reaches_the_visitor_and_an_invented_one_does_not(monkeypatch):
+    """A visitor asked twice for the API address and got an empty line: the
+    reply stripper removed every URL, the one from the article included."""
+    _, text, _ = await _gated_turn(
+        monkeypatch,
+        "Het adres is https://api.example.com/clicktodial/ en de uitleg staat op https://evil.example.com/phish.",
+        "Stuur de aanvraag naar https://api.example.com/clicktodial/ met je token.",
+    )
+
+    assert "https://api.example.com/clicktodial/" in text
+    assert "evil.example.com" not in text
+
+
+async def test_a_phone_number_that_is_not_in_the_passage_takes_its_sentence_with_it(monkeypatch):
+    """The widget gave a Belgian number from another article three times and
+    an invented head-office number once; the check flagged the sentence and
+    nothing acted."""
+    _, text, _ = await _gated_turn(
+        monkeypatch,
+        "Vul het formaat +31507009999 in. Lukt dat niet, bel dan 03 303 4020.",
+        "Gebruik het formaat +31507009999, zonder spaties.",
+    )
+
+    assert "+31507009999" in text
+    assert "303 4020" not in text
+    assert "Lukt dat niet" not in text

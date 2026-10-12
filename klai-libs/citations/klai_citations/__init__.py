@@ -65,6 +65,7 @@ class EvidenceChunk:
 _RAW_URL_RE = re.compile(r"https?://[^\s<>)]+", re.IGNORECASE)
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((\S+?)(?:\s+['\"][^'\"]*['\"])?\)")
 _MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\([^)]*\)")
+_MARKDOWN_LINK_WITH_TARGET_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)]*)\)")
 _MARKDOWN_HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$")
 _ORDERED_LIST_ITEM_RE = re.compile(r"^\s*(\d+)[.)]\s+")
 _ORDERED_LIST_LINE_RE = re.compile(r"^(\s*)(\d+)([.)])(\s+.+)$")
@@ -600,8 +601,16 @@ def strip_model_citation_artifacts(
     allowed_image_urls: set[str] | None = None,
     source_titles: set[str] | None = None,
     evidence_ids: set[str] | None = None,
+    allowed_urls: set[str] | None = None,
 ) -> str:
     """Remove model-authored citations/source lists before composing our own.
+
+    ``allowed_urls`` are the addresses that stand in the passages the model
+    read; a link or raw URL to one of them stays, every other URL goes. An
+    address the article gives as the answer (an API endpoint, a web phone
+    address) used to be stripped with the invented ones, leaving an empty
+    code block for a visitor who asked for it twice (real traffic, October
+    2026).
 
     ``evidence_ids`` gates internal evidence-label stripping: only labels whose
     every E-number is in this set (the ids actually injected into the prompt)
@@ -613,6 +622,25 @@ def strip_model_citation_artifacts(
     }
     normalised_source_titles = {_normalise_title_text(title) for title in (source_titles or set()) if title.strip()}
     image_placeholders: dict[str, str] = {}
+    normalised_allowed_urls = {n for n in (normalise_source_url(url) for url in (allowed_urls or set())) if n}
+
+    def _keep(markdown: str) -> str:
+        placeholder = f"__KLAI_ALLOWED_URL_{len(image_placeholders)}__"
+        image_placeholders[placeholder] = markdown
+        return placeholder
+
+    def _replace_link(match: re.Match[str]) -> str:
+        target = normalise_source_url(match.group(2))
+        return _keep(match.group(0)) if target and target in normalised_allowed_urls else match.group(1)
+
+    def _replace_raw_url(match: re.Match[str]) -> str:
+        # The URL pattern runs to the next space, so a closing backtick, quote
+        # or full stop rides along; it belongs to the sentence, not the address.
+        core = match.group(0).rstrip("`'\".,;:")
+        target = normalise_source_url(core)
+        if target and target in normalised_allowed_urls:
+            return _keep(core) + match.group(0)[len(core) :]
+        return ""
 
     def _replace_image(match: re.Match[str]) -> str:
         url = normalise_source_url(match.group(2))
@@ -642,11 +670,11 @@ def strip_model_citation_artifacts(
     cleaned = "\n".join(kept_lines)
     cleaned = _MALFORMED_NUMBER_URL_RE.sub("", cleaned)
     cleaned = _NUMERIC_MARKDOWN_CITATION_RE.sub("", cleaned)
-    cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
+    cleaned = _MARKDOWN_LINK_WITH_TARGET_RE.sub(_replace_link, cleaned)
     cleaned = _BARE_BRACKET_CITATION_RE.sub("", cleaned)
     cleaned = _PAREN_CITATION_RE.sub("", cleaned)
     cleaned = strip_injected_evidence_labels(cleaned, evidence_ids=evidence_ids)
-    cleaned = _RAW_URL_RE.sub("", cleaned)
+    cleaned = _RAW_URL_RE.sub(_replace_raw_url, cleaned)
     # Trailing whitespace only — `\s+\n` would also swallow blank lines and
     # collapse paragraph/form layout into one wall of text (Voys feedback #4/#21).
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
@@ -657,6 +685,18 @@ def strip_model_citation_artifacts(
     for placeholder, image_markdown in image_placeholders.items():
         cleaned = cleaned.replace(placeholder, image_markdown)
     return cleaned.strip()
+
+
+def urls_in_passages(chunks: list[dict[str, Any]]) -> set[str]:
+    """The addresses that stand in the text of ``chunks``: what a reply may repeat."""
+    found: set[str] = set()
+    for chunk in chunks:
+        text = chunk.get("text")
+        if isinstance(text, str):
+            found.update(
+                n for n in (normalise_source_url(url.rstrip("`'\".,;:")) for url in _RAW_URL_RE.findall(text)) if n
+            )
+    return found
 
 
 def strip_injected_evidence_labels(text: str, *, evidence_ids: set[str] | None = None) -> str:
@@ -1409,6 +1449,7 @@ def compose_answer_with_trusted_sources(
     rescue_mode: str | None = None,
     rescue_answer_score_threshold: float | None = None,
     rescue_retrieval_ratio: float | None = None,
+    allowed_urls: set[str] | None = None,
 ) -> ComposedCitations:
     """Clean model text and attach already-selected document sources.
 
@@ -1428,6 +1469,7 @@ def compose_answer_with_trusted_sources(
         allowed_image_urls=allowed_image_urls,
         source_titles=_source_title_set(candidate_sources),
         evidence_ids=evidence_label_ids(evidence_chunks),
+        allowed_urls=allowed_urls,
     )
     selected, decision = _select_supported_sources_with_decision(
         cleaned,
@@ -1535,4 +1577,5 @@ __all__ = [
     "strip_injected_evidence_labels",
     "strip_model_citation_artifacts",
     "trusted_sources_from_evidence_pack",
+    "urls_in_passages",
 ]

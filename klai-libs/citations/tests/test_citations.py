@@ -1630,3 +1630,23 @@ def test_fully_bold_numbered_title_line_still_stripped() -> None:
     assert "Klai Handleiding" not in cleaned
     assert "Voys Freedom Portal" not in cleaned
     assert "Zie de documentatie." in cleaned
+
+
+def test_an_allowed_url_survives_the_artifact_stripper_and_others_do_not():
+    from klai_citations import strip_model_citation_artifacts, urls_in_passages
+
+    passages = [{"text": "Stuur de aanvraag naar `https://api.example.com/clicktodial/`. Gebruik je token."}]
+    allowed = urls_in_passages(passages)
+    text = (
+        "Het adres is https://api.example.com/clicktodial/ ([docs](https://api.example.com/clicktodial/)), "
+        "niet https://evil.example.com/phish of [hier](https://evil.example.com/x). "
+        "In code: `https://api.example.com/clicktodial/`."
+    )
+
+    cleaned = strip_model_citation_artifacts(text, allowed_urls=allowed)
+
+    assert cleaned.count("https://api.example.com/clicktodial/") == 3
+    assert "`https://api.example.com/clicktodial/`." in cleaned
+    assert "[docs](https://api.example.com/clicktodial/)" in cleaned
+    assert "evil.example.com" not in cleaned
+    assert "hier" in cleaned

@@ -90,9 +90,7 @@ class TestRewritePreservesSubject:
 
     def test_raw_query_with_no_salient_tokens_passes(self):
         # Entirely stopwords/deictic tokens — nothing to protect.
-        assert (
-            rewrite_preserves_subject("Wat weet je daarover?", "Iets heel anders.") is True
-        )
+        assert rewrite_preserves_subject("Wat weet je daarover?", "Iets heel anders.") is True
 
     def test_brand_bridging_rewrite_that_keeps_original_brand_passes(self):
         """Brand-bridging rewrites add related terms but must keep the
