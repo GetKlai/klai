@@ -137,3 +137,72 @@ async def test_a_paraphrase_equal_to_the_question_is_dropped():
     assert variants == ["Vaste en mobiele lijn tegelijk naar voicemail"]
     assert call.await_args is not None
     assert call.await_args.kwargs["model"] == "klai-medium", "not the answer model's quota"
+
+
+@pytest.mark.asyncio
+async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
+    """A wrong reply used to be unreadable without a private replay: the record
+    now says what was searched, what came back and what the selection made of it."""
+    captured: dict[str, Any] = {}
+    _capture_retrieve(monkeypatch, captured)
+    chunk = {
+        "chunk_id": "c1",
+        "evidence_id": "ev1",
+        "title": "Belplan",
+        "text": "Klik op Belplan wijzigen.",
+        "source_url": "https://help.example.com/belplan",
+        "reranker_score": 0.9,
+    }
+    monkeypatch.setattr(
+        "app.services.partner_chat.httpx.AsyncClient",
+        lambda timeout: _ClientWith(
+            {"chunks": [], "evidence_pack": {"items": [chunk], "sources": []}, "confidence_band": "high"}
+        ),
+    )
+    from app.services.passage_selection import Evidence, PassageSelection
+
+    selection = PassageSelection(
+        need="belplan wijzigen",
+        evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")],
+        verdict="answers",
+        question="",
+    )
+    signals: dict[str, Any] = {}
+    with (
+        patch.object(query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=_VARIANTS)),
+        patch.object(partner_chat, "select_passages", AsyncMock(return_value=selection)),
+    ):
+        await _retrieve([{"role": "user", "content": _QUESTION}], _settings(), answer_signals=signals)
+
+    assert signals["search"]["query"] == _QUESTION
+    assert signals["search"]["variants"] == _VARIANTS
+    assert signals["search"]["found"] == [{"title": "Belplan", "url": "https://help.example.com/belplan", "score": 0.9}]
+    assert signals["selection"] == {
+        "verdict": "answers",
+        "evidence": [{"passage": 1, "quote": "Klik op Belplan wijzigen."}],
+        "question": "",
+    }
+
+
+class _ClientWith:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return None
+
+    async def post(self, url, json=None, headers=None):
+        class _Resp:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self._payload
+
+        return _Resp(self.payload)
