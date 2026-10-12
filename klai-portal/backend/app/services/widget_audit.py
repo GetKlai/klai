@@ -328,3 +328,40 @@ async def record_internal_turn(*, org_id: int, answer_signals: dict[str, Any]) -
             await db.commit()
     except Exception:
         logger.exception("internal_chat_turn_record_failed", org_id=org_id)
+
+
+async def last_case(*, widget_id: str, session_key: str) -> dict | None:
+    """The case (app.services.case_file) stored with this conversation's latest assistant turn.
+
+    Same identification and tenant scoping as :func:`find_conversation_id`.
+    ``None`` when the conversation, the turn or the case does not exist yet.
+    """
+    async with cross_org_session() as lookup_db:
+        row = (
+            await lookup_db.execute(
+                text("SELECT org_id FROM widgets WHERE id = CAST(:widget_id AS uuid)"),
+                {"widget_id": widget_id},
+            )
+        ).first()
+    if row is None:
+        return None
+    async with tenant_scoped_session(int(row[0])) as db:
+        stored = (
+            await db.execute(
+                text(
+                    """
+                    SELECT m.answer_signals -> 'case'
+                      FROM widget_messages m
+                      JOIN widget_conversations c ON c.id = m.conversation_id
+                     WHERE c.widget_id = CAST(:widget_id AS uuid)
+                       AND c.session_key = :session_key
+                       AND m.role = 'assistant'
+                       AND m.answer_signals ? 'case'
+                     ORDER BY m.created_at DESC
+                     LIMIT 1
+                    """
+                ),
+                {"widget_id": widget_id, "session_key": session_key},
+            )
+        ).scalar()
+    return stored if isinstance(stored, dict) else None
