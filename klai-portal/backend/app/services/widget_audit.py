@@ -139,46 +139,28 @@ async def _org_of_widget(widget_id: str) -> int | None:
     return int(row[0])
 
 
-async def patch_answer_signals(
-    *, widget_id: str, session_key: str, turn_id: str | None, answer_signals: dict[str, Any]
-) -> None:
+async def patch_answer_signals(*, widget_id: str, message_id: int, answer_signals: dict[str, Any]) -> None:
     """Replace the signals of an assistant turn that was recorded before its statement check finished.
 
     The check on a widget reply written from chosen passages runs after the
     reply went out (partner_chat._check_answer_later). The row itself is
     written at once, so the transcript keeps its order and feedback finds the
-    turn; only its signals are completed here. Addressed by ``turn_id`` when
-    the widget sent one, otherwise the conversation's latest assistant turn.
+    turn; only its signals are completed here, on the row the insert returned.
     """
     org_id = await _org_of_widget(widget_id)
     if org_id is None:
         return
-    target = (
-        "m.turn_id = :turn_id"
-        if turn_id
-        else "m.id = (SELECT id FROM widget_messages WHERE conversation_id = m.conversation_id AND role = 'assistant' ORDER BY sequence DESC LIMIT 1)"
-    )
     try:
         async with tenant_scoped_session(org_id) as db:
             await db.execute(
                 text(
-                    f"""
-                    UPDATE widget_messages m
+                    """
+                    UPDATE widget_messages
                        SET answer_signals = CAST(:answer_signals AS jsonb)
-                      FROM widget_conversations c
-                     WHERE c.id = m.conversation_id
-                       AND c.widget_id = CAST(:widget_id AS uuid)
-                       AND c.session_key = :session_key
-                       AND m.role = 'assistant'
-                       AND {target}
-                    """  # noqa: S608 - the two targets are fixed strings, the values are bound
+                     WHERE id = :message_id AND org_id = :org_id AND role = 'assistant'
+                    """
                 ),
-                {
-                    "answer_signals": json.dumps(answer_signals),
-                    "widget_id": widget_id,
-                    "session_key": session_key,
-                    "turn_id": turn_id,
-                },
+                {"answer_signals": json.dumps(answer_signals), "message_id": message_id, "org_id": org_id},
             )
             await db.commit()
     except Exception:
@@ -222,9 +204,9 @@ async def record_widget_turn(
     # NULL and touches nothing.
     visitor_name: str | None = None,
     visitor_email: str | None = None,
-) -> None:
+) -> int | None:
     """Append one turn to a widget conversation, creating the
-    conversation row on first call.
+    conversation row on first call; returns the new row's id, None when nothing was written.
 
     REQ-14 (Finding B-7, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): ``org_id`` is
     derived server-side from the widgets row — never taken from the caller.
@@ -239,11 +221,11 @@ async def record_widget_turn(
     # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-14 (Finding B-7)
     """
     if not content.strip():
-        return
+        return None
 
     org_id = await _org_of_widget(widget_id)
     if org_id is None:
-        return
+        return None
 
     truncated_query = content[:240] if role == "user" else None
     # Browser-supplied, so clamp to the column widths here as well as in the
@@ -308,7 +290,7 @@ async def record_widget_turn(
             conv_id, prior_count = row
             sequence = prior_count
 
-            await db.execute(
+            inserted = await db.execute(
                 text(
                     """
                     INSERT INTO widget_messages
@@ -318,6 +300,7 @@ async def record_widget_turn(
                         (:conversation_id, :org_id, :role, :content,
                          CAST(:sources AS jsonb), :sequence, :turn_id,
                          CAST(:answer_signals AS jsonb))
+                    RETURNING id
                     """
                 ),
                 {
@@ -335,6 +318,7 @@ async def record_widget_turn(
                     ),
                 },
             )
+            message_id = inserted.scalar_one()
             await db.execute(
                 text(
                     """
@@ -347,6 +331,7 @@ async def record_widget_turn(
                 {"conv_id": conv_id},
             )
             await db.commit()
+            return int(message_id)
     except Exception:
         # Audit must never break the user's chat experience.
         logger.exception(
@@ -354,6 +339,7 @@ async def record_widget_turn(
             widget_id=widget_id,
             role=role,
         )
+    return None
 
 
 async def record_internal_turn(*, org_id: int, answer_signals: dict[str, Any]) -> None:

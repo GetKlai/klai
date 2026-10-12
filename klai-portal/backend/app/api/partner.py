@@ -11,6 +11,7 @@ import json
 import re
 import time
 import uuid
+from asyncio import gather as asyncio_gather
 from collections.abc import AsyncGenerator, Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -611,18 +612,15 @@ def _write_widget_record(turn: KnowledgeTurn | None, **fields: Any) -> None:
     """
 
     async def write() -> None:
-        await record_widget_turn(**fields)
-        if turn is None or turn.grounding_check is None or fields.get("answer_signals") is None:
+        message_id = await record_widget_turn(**fields)
+        if message_id is None or turn is None or turn.grounding_check is None or fields.get("answer_signals") is None:
             return
         try:
             await turn.grounding_check
         except Exception:
             logger.warning("widget_later_check_failed", exc_info=True)
         await patch_answer_signals(
-            widget_id=fields["widget_id"],
-            session_key=fields["session_key"],
-            turn_id=fields.get("turn_id"),
-            answer_signals=fields["answer_signals"],
+            widget_id=fields["widget_id"], message_id=message_id, answer_signals=fields["answer_signals"]
         )
 
     task = asyncio.create_task(write())
@@ -2044,7 +2042,7 @@ async def chat_completions(  # noqa: C901
     # The user turn is written before retrieval so the gap task can wait for
     # the conversation row instead of racing it (first-turn gaps used to lose
     # their provenance). Still fire-and-forget: the chat never waits on it.
-    user_turn_write: asyncio.Task[None] | None = None
+    user_turn_write: asyncio.Task[int | None] | None = None
     if is_widget_chat and audit_widget_id is not None:
         last_user_msg = next(
             (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
@@ -2212,7 +2210,7 @@ async def chat_completions(  # noqa: C901
 
         # The case is the one reading of the turn (case_file.py): what the
         # visitor wants, their tone, whether the subject is one this widget
-        # answers, and the queries for this turn's search. It replaced the
+        # answers, and the queries for a follow-up's search. It replaced the
         # question judge that used to run beside it (plan §8, step M).
         turn_timing: dict[str, float] | None = None
         if support_mode:
@@ -2223,28 +2221,38 @@ async def chat_completions(  # noqa: C901
                 off_topic_subjects=off_topic_subjects,
                 delegated_org_id=auth.zitadel_org_id,
             )
-            # The case's queries go into this turn's search, so the case comes
-            # first, on every turn (case_file.py has the numbers). On a first
-            # turn that costs its wait, which used to run beside the search:
-            # searching a first question on the visitor's words alone lost two
-            # of the six clarifying questions of the meetlat, because only one
-            # variant's article came back (plan §8, step M).
-            case, case_ms = await _timed(case_update)
+            if case_file.is_follow_up(request.messages):
+                # The case's queries go into a follow-up's search, so the case
+                # comes first. A first question keeps its two paraphrases and
+                # runs the case beside the search: the case's queries narrow
+                # (product, problem, variant) where the paraphrases widen, and
+                # on the meetlat that widening brought both variants' sections
+                # in, so the selection step could ask which one applies; with
+                # the case's queries alone two of the six expected clarifying
+                # questions were answered instead (plan §8, step M).
+                case, case_ms = await _timed(case_update)
+                if case is not None:
+                    answer_signals["case"] = case.model_dump()
+                if (
+                    case is not None
+                    and case.wants in case_file.CONTACT_WANTS
+                    and not (case.out_of_scope and off_topic_reply)
+                ):
+                    # The route for a person, contact or an appointment needs
+                    # no articles: decided here, before the search (plan §5,
+                    # step 2). A first turn runs the case beside the search and
+                    # takes this route below. A person asked for about a
+                    # subject this widget does not answer gets the referral,
+                    # which names the subject and carries the same button.
+                    return _contact_request_reply(case)
+                follow_up_variants = case.search_variants(_last_user_message(request.messages) or "") if case else []
+                retrieval_result, retrieval_ms = await _timed(retrieval(follow_up_variants))
+            else:
+                (retrieval_result, retrieval_ms), (case, case_ms) = await asyncio_gather(
+                    _timed(retrieval([])), _timed(case_update)
+                )
             if case is not None:
                 answer_signals["case"] = case.model_dump()
-            if (
-                case is not None
-                and case.wants in case_file.CONTACT_WANTS
-                and not (case.out_of_scope and off_topic_reply)
-            ):
-                # The route for a person, contact or an appointment needs no
-                # articles: decided here, before the search (plan §5, step 2).
-                # A person asked for about a subject this widget does not
-                # answer gets the referral below, which names the subject and
-                # carries the same button.
-                return _contact_request_reply(case)
-            case_variants = case.search_variants(_last_user_message(request.messages) or "") if case else []
-            retrieval_result, retrieval_ms = await _timed(retrieval(case_variants))
             turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "case_ms": case_ms}
         elif internal:
             retrieval_result, retrieval_ms = await _timed(retrieval([]))

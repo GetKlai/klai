@@ -109,6 +109,7 @@ from app.services.llm_safety_adapter import (
 )
 from app.services.passage_selection import PassageSelection, select_passages, writer_brief
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
+from app.services.query_paraphrase import first_question_variants
 from app.services.query_rewrite import rewrite_for_retrieval
 from app.services.user_provided_content import has_user_provided_content
 from app.services.widget_audit import find_conversation_id
@@ -3852,14 +3853,19 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         if rewrite.taxonomy_node_ids:
             retrieve_body["taxonomy_node_ids"] = rewrite.taxonomy_node_ids
     else:
-        # Every widget turn travels with the two queries of the conversation's
-        # case (case_file.py has the numbers). The two paraphrases a first
-        # question used to get from their own model call are gone: on 58 first
-        # turns they found the known article in 19 of 21 against 18 of 21 with
-        # the case's queries, and answered 41 against 40 (plan §8, step M). A
-        # fanned-out message gets none: retrieval-api would run the variants of
-        # the whole message inside every sub-question's pass.
-        query_variants = [] if sub_queries else list(follow_up_variants or [])
+        # A first question travels with two paraphrases, a follow-up with the
+        # two queries of the conversation's case (query_paraphrase.py and
+        # case_file.py have the numbers). A fanned-out message gets none:
+        # retrieval-api would run the variants of the whole message inside
+        # every sub-question's pass.
+        query_variants = (
+            []
+            if sub_queries
+            else await first_question_variants(
+                messages, query, settings, support_mode=support_mode, delegated_org_id=zitadel_org_id
+            )
+            or list(follow_up_variants or [])
+        )
         retrieve_body = {
             # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
             # REQ-2.5) using the same helper as conversation_history entries. An

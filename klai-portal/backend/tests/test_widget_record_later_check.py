@@ -23,11 +23,12 @@ async def test_the_record_is_written_before_the_later_check_and_its_signals_afte
     signals: dict[str, Any] = {"decision": "answer"}
     order: list[str] = []
 
-    async def record(**fields: Any) -> None:
+    async def record(**fields: Any) -> int:
         order.append(f"record:{'grounding' in fields['answer_signals']}")
+        return 77
 
     async def patch(**fields: Any) -> None:
-        order.append(f"patch:{fields['answer_signals'].get('grounding')}:{fields['turn_id']}")
+        order.append(f"patch:{fields['answer_signals'].get('grounding')}:{fields['message_id']}")
 
     async def later_check() -> None:
         await asyncio.sleep(0.01)
@@ -44,7 +45,7 @@ async def test_the_record_is_written_before_the_later_check_and_its_signals_afte
     )
     await asyncio.gather(*(partner._pending - before))
 
-    assert order == ["record:False", "patch:all_in_articles:t1"]
+    assert order == ["record:False", "patch:all_in_articles:77"]
 
 
 @pytest.mark.asyncio

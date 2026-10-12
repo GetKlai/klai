@@ -20,7 +20,7 @@ import respx
 from helpers import FakeKB, FakeResult, make_partner_auth
 from klai_chat_prompts import appointment_offer_sentence, contact_reply, no_citable_sources_message
 
-from app.services import case_file, partner_chat, turn_judge
+from app.services import case_file, partner_chat, query_paraphrase, turn_judge
 from app.services.chat_profile import ChatProfile
 
 LITELLM = "http://litellm:4000"
@@ -192,6 +192,10 @@ class _LiteLLM:
             if isinstance(self.selection, Exception):
                 raise self.selection
             return _json_reply(self.selection)
+        if schema == "query_paraphrase":
+            # Retrieval input only (query_paraphrase.py); the judges under test
+            # never see it, and it is not the answer request.
+            return _json_reply({"variants": []})
         if schema == "grounding_check":
             self.grounding_requests.append(body)
             if isinstance(self.grounding, Exception):
@@ -1046,20 +1050,21 @@ async def test_the_judge_is_told_which_subjects_are_not_answered(monkeypatch):
     assert "prijzen, tarieven, offertes" in case_request["messages"][0]["content"]
 
 
-async def test_the_case_runs_before_retrieval_on_a_first_turn():
-    """The search carries the case's queries, so the case is complete when the search starts."""
+async def test_the_case_runs_concurrently_with_retrieval_on_a_first_turn():
+    """Each side waits for the other to have started; run one after the other, this times out."""
     from app.api.partner import ChatCompletionsRequest, chat_completions
 
-    order: list[str] = []
+    retrieval_started, case_started = asyncio.Event(), asyncio.Event()
 
-    async def retrieve(**kwargs):
-        order.append(f"retrieve:{kwargs['follow_up_variants']}")
+    async def retrieve(**_kwargs):
+        retrieval_started.set()
+        await asyncio.wait_for(case_started.wait(), 1)
         return [CHUNK_900], "SUPPORT PROFILE", [], False
 
     async def update_case(_messages, _previous, _settings, **_kwargs):
-        await asyncio.sleep(0)
-        order.append("case")
-        return case_file.Case.model_validate(_case("knowledge", "zoekvraag uit de zaak"))
+        case_started.set()
+        await asyncio.wait_for(retrieval_started.wait(), 1)
+        return case_file.Case.model_validate(_case())
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeResult(rows=[FakeKB(id=10, name="KB", slug="kb-a", org_id=42)]))
@@ -1078,7 +1083,6 @@ async def test_the_case_runs_before_retrieval_on_a_first_turn():
     ):
         await chat_completions(request=request, http_request=MagicMock(headers={}, client=None), auth=auth, db=db)
 
-    assert order == ["case", "retrieve:['zoekvraag uit de zaak']"]
     timing = chat.call_args.kwargs["turn_timing"]
     assert {"retrieval_ms", "case_ms", "started_at"} <= timing.keys()
 
@@ -1095,6 +1099,7 @@ DELEGATED = {"_klai_delegated_org_id": "zit-org-42"}
 # Every kind's own LiteLLM spend tag (SPEC: every call is attributable to the
 # feature that made it -- LiteLLM_SpendLogs.request_tags, from metadata.tags).
 _TAG_FOR_KIND = {
+    "query_paraphrase": "portal:query-paraphrase",
     "answer_judge": "portal:answer-judge",
     "off_topic_referral": "portal:off-topic-referral",
     "passage_selection": "portal:passage-selection",
@@ -1133,6 +1138,7 @@ async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(mo
 
     calls = _metadata_per_call(litellm)
     assert {kind for kind, _ in calls} == {
+        "query_paraphrase",
         "passage_selection",
         "case_update",
         "answer",
@@ -1147,6 +1153,7 @@ async def test_the_off_topic_referral_call_names_the_tenant(monkeypatch):
 
     calls = _metadata_per_call(litellm)
     assert {kind for kind, _ in calls} == {
+        "query_paraphrase",
         "passage_selection",
         "case_update",
         "off_topic_referral",
@@ -1418,12 +1425,14 @@ async def test_a_visitor_who_wants_contact_is_not_told_the_articles_lack_an_answ
     assert litellm.answer_requests == []
 
 
-async def test_a_first_question_searches_with_the_cases_queries_beside_its_own_words(monkeypatch):
+async def test_a_first_question_keeps_its_paraphrases_whatever_the_case_suggests(monkeypatch):
     litellm = _LiteLLM(model_text=ANSWER_900, case=_case("knowledge", "zoekvraag uit de zaak"))
-    litellm, _, _ = await _route_turn(monkeypatch, band="high", litellm=litellm)
+    with patch.object(
+        query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=["parafrase een", "parafrase twee"])
+    ):
+        litellm, _, _ = await _route_turn(monkeypatch, band="high", litellm=litellm)
 
-    assert _retrieve_body(litellm)["query"] == QUESTION_900
-    assert _retrieve_body(litellm)["query_variants"] == ["zoekvraag uit de zaak"]
+    assert _retrieve_body(litellm)["query_variants"] == ["parafrase een", "parafrase twee"]
 
 
 async def test_a_failed_case_leaves_the_turn_as_it_was(monkeypatch):

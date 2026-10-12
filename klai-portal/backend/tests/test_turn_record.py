@@ -1,14 +1,9 @@
-"""What one widget turn sends to retrieval, and what its record keeps.
-
-A first question searches on the visitor's own words alone; a follow-up adds
-the two queries of the conversation's case (case_file.py). The record of the
-turn says what was searched, what came back and what the selection made of it.
-"""
+"""What a follow-up widget turn sends to retrieval: the two queries of the conversation's case (case_file.py)."""
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -66,13 +61,9 @@ async def _retrieve(messages: list[dict], settings: MagicMock, **overrides: Any)
 
 
 @pytest.mark.asyncio
-async def test_a_first_question_searches_on_its_own_words_and_a_follow_up_adds_the_cases_queries(monkeypatch):
+async def test_a_follow_up_adds_the_cases_queries_beside_its_own_words(monkeypatch):
     captured: dict[str, Any] = {}
     _capture_retrieve(monkeypatch, captured)
-    await _retrieve([_WELCOME, {"role": "user", "content": _QUESTION}], _settings())
-    assert captured["body"]["query"] == _QUESTION
-    assert captured["body"]["query_variants"] is None
-
     follow_up = [
         _WELCOME,
         {"role": "user", "content": _QUESTION},
@@ -83,53 +74,6 @@ async def test_a_first_question_searches_on_its_own_words_and_a_follow_up_adds_t
     assert captured["body"]["query"] == "en per collega?"
     assert captured["body"]["query_variants"] == _VARIANTS, "the visitor's own words stay the primary query"
     assert len(captured["body"]["conversation_history"]) == 3
-
-
-@pytest.mark.asyncio
-async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
-    """A wrong reply used to be unreadable without a private replay: the record
-    now says what was searched, what came back and what the selection made of it."""
-    captured: dict[str, Any] = {}
-    _capture_retrieve(monkeypatch, captured)
-    chunk = {
-        "chunk_id": "c1",
-        "evidence_id": "ev1",
-        "title": "Belplan",
-        "text": "Klik op Belplan wijzigen.",
-        "source_url": "https://help.example.com/belplan",
-        "reranker_score": 0.9,
-    }
-    monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
-        lambda timeout: _ClientWith(
-            {"chunks": [], "evidence_pack": {"items": [chunk], "sources": []}, "confidence_band": "high"}
-        ),
-    )
-    from app.services.passage_selection import Evidence, PassageSelection
-
-    selection = PassageSelection(
-        need="belplan wijzigen",
-        evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")],
-        verdict="answers",
-        question="",
-    )
-    signals: dict[str, Any] = {}
-    follow_up = [
-        {"role": "user", "content": "Hoe wijzig ik mijn belplan?"},
-        {"role": "assistant", "content": "Ga naar Belplan."},
-        {"role": "user", "content": _QUESTION},
-    ]
-    with patch.object(partner_chat, "select_passages", AsyncMock(return_value=selection)):
-        await _retrieve(follow_up, _settings(), answer_signals=signals, follow_up_variants=_VARIANTS)
-
-    assert signals["search"]["query"] == _QUESTION
-    assert signals["search"]["variants"] == _VARIANTS
-    assert signals["search"]["found"] == [{"title": "Belplan", "url": "https://help.example.com/belplan", "score": 0.9}]
-    assert signals["selection"] == {
-        "verdict": "answers",
-        "evidence": [{"passage": 1, "quote": "Klik op Belplan wijzigen."}],
-        "question": "",
-    }
 
 
 class _ClientWith:
