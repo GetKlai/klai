@@ -32,12 +32,12 @@ from klai_chat_prompts.language import resolve_conversation_language
 
 from app.api import partner
 from app.services import partner_chat
+from app.services.case_file import Case
 from app.services.escalation_intent import escalation_intent
 from app.services.partner_chat import (
     _chat_completion_streaming_with_composed_citations,
     _compose_backend_managed_answer,
 )
-from app.services.turn_judge import TurnJudgement
 
 MARKER = appointment_offer_marker()
 HUMAN_QUERY = "Kan er iemand van jullie hier eens naar kijken?"
@@ -46,16 +46,20 @@ NEUTRAL_QUERY = "Hoe voeg ik een extra gebruiker toe?"
 NEUTRAL = {"wants_human": False, "sentiment": "neutral"}
 
 
-def _turn_judgement(**fields: Any) -> TurnJudgement:
-    base = {
-        "topic": "handled",
-        "scope": "organisation",
-        "wants_human": False,
-        "sentiment": "neutral",
-        "clarity": "clear",
-        "missing": "",
-    }
-    return TurnJudgement.model_validate({**base, **fields})
+def _case(*, wants_human: bool = False, sentiment: str = "neutral") -> Case:
+    """The case as the route reads it: a request for a person is a want, the tone a field."""
+    return Case.model_validate(
+        {
+            "problem": "",
+            "product": "",
+            "variant": "",
+            "tried": [],
+            "wants": "human" if wants_human else "knowledge",
+            "out_of_scope": False,
+            "sentiment": sentiment,
+            "queries": [],
+        }
+    )
 
 
 def _good_chunk() -> dict[str, Any]:
@@ -129,8 +133,8 @@ async def test_widget_classifier_controls_escalation(
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-alpha"]))
     monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=support_mode))
     monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
-    judge = AsyncMock(return_value=_turn_judgement(**classification))
-    monkeypatch.setattr(partner.turn_judge, "judge_turn", judge)
+    judge = AsyncMock(return_value=_case(**classification))
+    monkeypatch.setattr(partner.case_file, "update_case", judge)
     monkeypatch.setattr(partner, "chat_completion_non_streaming", completion)
     monkeypatch.setattr(partner, "chat_completion_streaming", streaming)
     monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())

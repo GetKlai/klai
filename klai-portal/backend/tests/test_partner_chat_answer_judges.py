@@ -95,27 +95,16 @@ def _selection(verdict: str, *evidence: tuple[int, str], question: str = "") -> 
     }
 
 
-def _case(wants: str = "knowledge", *queries: str, problem: str = "") -> dict:
+def _case(wants: str = "knowledge", *queries: str, problem: str = "", out_of_scope: bool = False) -> dict:
     return {
         "problem": problem,
         "product": "",
         "variant": "",
         "tried": [],
         "wants": wants,
+        "out_of_scope": out_of_scope,
         "sentiment": "neutral",
         "queries": list(queries),
-    }
-
-
-def _turn_verdict(**overrides: Any) -> dict:
-    return {
-        "topic": "handled",
-        "scope": "organisation",
-        "wants_human": False,
-        "sentiment": "neutral",
-        "clarity": "clear",
-        "missing": "",
-        **overrides,
     }
 
 
@@ -127,7 +116,6 @@ class _LiteLLM:
         *,
         model_text: str,
         answer_judge: Any = None,
-        turn: dict | None = None,
         grounding: Any = None,
         repaired: str = "",
         referral: str = "",
@@ -147,7 +135,6 @@ class _LiteLLM:
         self.referral = referral
         self.question = question
         self.answer_judge = answer_judge if answer_judge is not None else _answer_verdict()
-        self.turn = turn or _turn_verdict()
         # The statement-level check decides grounding, so by default it mirrors
         # the light judge's label: a test that says claims=True gets one
         # unsupported statement, anything else a fully supported draft.
@@ -162,7 +149,6 @@ class _LiteLLM:
         self.repaired = repaired
         self.answer_requests: list[dict] = []
         self.judge_requests: list[dict] = []
-        self.turn_requests: list[dict] = []
         self.grounding_requests: list[dict] = []
         self.repair_requests: list[dict] = []
         self.requests: list[dict] = []
@@ -193,9 +179,6 @@ class _LiteLLM:
             if isinstance(self.answer_judge, httpx.Response):
                 return self.answer_judge
             return _json_reply(self.answer_judge)
-        if schema == "turn_judge":
-            self.turn_requests.append(body)
-            return _json_reply(self.turn)
         if schema == "clarify_question":
             return _json_reply({"question": self.question})
         if schema == "off_topic_referral":
@@ -271,6 +254,10 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str,
                 "escalation": [message["escalation"]] if "escalation" in message else [],
                 "sources": message.get("sources") or [],
             }
+        turn = kwargs.get("knowledge_turn")
+        if turn is not None and turn.grounding_check is not None:
+            # The check after the reply (step M) calls LiteLLM too: drained here, inside the mock.
+            await turn.grounding_check
     return text, signals, extras
 
 
@@ -729,8 +716,8 @@ async def test_safety_blocked_turn_is_never_judged(monkeypatch):
 # ─── The question judge ─────────────────────────────────────────────────
 
 
-async def test_turn_judge_is_structured_and_failure_safe(monkeypatch) -> None:
-    valid = _turn_verdict(clarity="ambiguous")
+async def test_the_case_call_is_structured_and_failure_safe(monkeypatch) -> None:
+    valid = _case("knowledge", "webphone geluid", problem="geen geluid in de webphone")
     provider_results = iter([json.dumps(valid), "invalid", RuntimeError("offline"), "slow"])
     original_client = httpx.AsyncClient
 
@@ -742,7 +729,7 @@ async def test_turn_judge_is_structured_and_failure_safe(monkeypatch) -> None:
         if isinstance(provider_result, Exception):
             raise provider_result
         if provider_result == "slow":
-            await asyncio.sleep(3)
+            await asyncio.sleep(4)
         return httpx.Response(200, json={"choices": [{"message": {"content": provider_result}}]})
 
     monkeypatch.setattr(
@@ -753,11 +740,11 @@ async def test_turn_judge_is_structured_and_failure_safe(monkeypatch) -> None:
     )
     messages = [{"role": "user", "content": "Het werkt niet"}]
 
-    judgement = await turn_judge.judge_turn(messages, settings)
-    assert judgement is not None
-    assert judgement.model_dump() == valid
+    case = await case_file.update_case(messages, None, settings)
+    assert case is not None
+    assert case.model_dump() == valid
     for _ in range(3):
-        assert await turn_judge.judge_turn(messages, settings) is None
+        assert await case_file.update_case(messages, None, settings) is None
 
 
 def test_turn_judge_reads_recent_turns_and_marks_the_latest_visitor_message():
@@ -793,7 +780,7 @@ def _retrieval_reply(band: str = "low", items: list[dict] | None = None) -> http
 async def _route_turn(
     monkeypatch,
     *,
-    turn: dict,
+    case: dict | None = None,
     question: str = QUESTION_900,
     stream: bool = False,
     band: str = "low",
@@ -825,7 +812,7 @@ async def _route_turn(
 
     litellm = litellm or _LiteLLM(
         model_text=CLARIFYING_QUESTION,
-        turn=turn,
+        case=case,
         answer_judge=_answer_verdict("not_answered"),
         referral=referral,
         question=question_written,
@@ -867,44 +854,60 @@ def _system_prompt_sent(litellm: _LiteLLM) -> str:
 async def test_route_ambiguous_turn_gets_no_ask_instruction_and_a_question_draft_is_shown(monkeypatch, stream):
     # Blind comparison on 50 real Voys first questions: the ask-instead-of-answer
     # instruction made answers worse in 19 of 23 turns, so it is gone.
-    litellm, text, _ = await _route_turn(monkeypatch, turn=_turn_verdict(clarity="ambiguous"), stream=stream)
+    litellm, text, _ = await _route_turn(monkeypatch, stream=stream)
 
     assert "can mean different things" not in _system_prompt_sent(litellm)
-    assert len(litellm.turn_requests) == 1
+    assert len(litellm.case_requests) == 1
     assert text == CLARIFYING_QUESTION
-
-
-@pytest.mark.parametrize(
-    ("band", "told"),
-    [("low", True), ("high", False)],
-)
-async def test_a_turn_whose_articles_all_score_below_the_bar_may_not_build_an_answer_from_them(monkeypatch, band, told):
-    """Answers the owner called wrong sat on a best source around 0.37, and a
-    question about outbound calling permissions was answered from the
-    click-to-call article. With every article below the gap threshold the turn
-    is told to answer only from one that really covers the question."""
-    litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(), band=band)
-
-    assert ("Retrieval found nothing that clearly matches" in _system_prompt_sent(litellm)) is told
 
 
 async def test_a_thank_you_with_weak_articles_is_not_told_to_say_nothing_was_found(monkeypatch):
     """A greeting or a thank-you often retrieves only weak articles; it still gets
     the short conversational reply, not "not in the help articles" and a button."""
-    litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(scope="conversation"), band="low")
+    litellm, _, _ = await _route_turn(monkeypatch, case=_case("chat"), band="low")
 
     assert "Retrieval found nothing that clearly matches" not in _system_prompt_sent(litellm)
 
 
-@pytest.mark.parametrize("stream", [True, False])
-async def test_an_unanswered_reply_over_weak_articles_shows_no_source_card(monkeypatch, stream):
-    """Measured on 27 real weak-source turns: 26 of 29 "not in the help articles"
-    replies still carried the neighbouring article as a source card, which
-    contradicts the text. The honest reply keeps its button, not the card."""
-    _, _, extras = await _route_turn(monkeypatch, turn=_turn_verdict(), band="low", stream=stream)
+# ─── The statement check after the reply (step M) ───────────────────────
 
-    assert extras["sources"] == []
-    assert extras["escalation"] == [{"appointment": True}]
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_a_cited_reply_from_chosen_passages_is_checked_after_it_went_out(stream):
+    """The writer read only passages the selection chose and cited one: nothing
+    changes such a reply after writing, so the statement check is measurement
+    and runs after the reply, with the light judge alone on the path."""
+    from app.services.partner_chat import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
+
+    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("answered"))
+    turn = KnowledgeTurn()
+    chosen = {**_with_900_sources(), "citation_chunks": [{**CHUNK_900, _CHOSEN_PASSAGE_KEY: True}]}
+
+    text, signals, _ = await _answer(litellm, stream=stream, knowledge_turn=turn, **chosen)
+
+    assert text.startswith(ANSWER_900) and signals["decision"] == "answer"
+    assert turn.grounding_check is not None, "the check runs after the reply"
+    assert "judge_failed" not in signals
+    await turn.grounding_check
+    assert len(litellm.grounding_requests) == 1
+    assert signals["grounding"] == "all_in_articles" and signals["unsupported"] == 0
+
+
+@pytest.mark.parametrize("stream", [True, False])
+async def test_an_uncited_reply_from_chosen_passages_keeps_the_check_on_the_path(stream):
+    """Without a source the statements decide between showing and refusing, so the check waits."""
+    from app.services.partner_chat import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
+
+    litellm = _LiteLLM(model_text="Dat regel je onder Beheer.", answer_judge=_answer_verdict("not_answered"))
+    turn = KnowledgeTurn()
+    uncited = {**_with_900_sources(), "citation_chunks": [{**CHUNK_900, _CHOSEN_PASSAGE_KEY: True}]}
+
+    _, signals, extras = await _answer(litellm, stream=stream, knowledge_turn=turn, **uncited)
+
+    assert not extras.get("sources") or extras["sources"] == [[]]
+    assert turn.grounding_check is None
+    assert len(litellm.grounding_requests) == 1
+    assert "unsupported" in signals
 
 
 # ─── Subjects this widget does not answer ───────────────────────────────
@@ -932,7 +935,7 @@ async def _off_topic_turn(
     )
     return await _route_turn(
         monkeypatch,
-        turn=_turn_verdict(topic=topic, wants_human=wants_human),
+        case=_case("human" if wants_human else "knowledge", out_of_scope=topic == "not_handled"),
         question=question,
         stream=stream,
         referral=referral,
@@ -973,10 +976,11 @@ async def test_the_referral_names_what_the_visitor_asked_about(monkeypatch, stre
     assert extras["escalation"] == [{"appointment": True}]
 
 
-async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_referral_not_an_answer(monkeypatch):
+async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_contact_reply_not_an_answer(monkeypatch):
     """A request for a technical call got the sentence about prices and quotes.
-    It gets a referral naming the request, and still no answer model: the
-    human-request turn would generate with the articles in the prompt."""
+    The visitor asked how to reach a person, so the contact route wins from
+    the referral; still no answer model, which would generate with the
+    articles in the prompt."""
     litellm, text, extras = await _off_topic_turn(
         monkeypatch,
         topic="not_handled",
@@ -985,7 +989,7 @@ async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_referral_n
         question="Kunnen we een call inplannen met jullie techniek over een CRM-koppeling?",
     )
 
-    assert text == _referral("een call over een CRM koppeling")
+    assert text == contact_reply("nl")
     assert litellm.answer_requests == []
     assert extras["escalation"] == [{"appointment": True}]
 
@@ -1043,25 +1047,25 @@ async def test_without_a_configured_reply_nothing_changes(monkeypatch):
 async def test_the_judge_is_told_which_subjects_are_not_answered(monkeypatch):
     litellm, _, _ = await _off_topic_turn(monkeypatch, topic="handled")
 
-    (judge_request,) = litellm.turn_requests
-    assert "prijzen, tarieven, offertes" in judge_request["messages"][0]["content"]
+    (case_request,) = litellm.case_requests
+    assert "prijzen, tarieven, offertes" in case_request["messages"][0]["content"]
 
 
-async def test_turn_judge_runs_concurrently_with_retrieval():
+async def test_the_case_runs_concurrently_with_retrieval_on_a_first_turn():
     """Each side waits for the other to have started; run one after the other, this times out."""
     from app.api.partner import ChatCompletionsRequest, chat_completions
 
-    retrieval_started, judge_started = asyncio.Event(), asyncio.Event()
+    retrieval_started, case_started = asyncio.Event(), asyncio.Event()
 
     async def retrieve(**_kwargs):
         retrieval_started.set()
-        await asyncio.wait_for(judge_started.wait(), 1)
+        await asyncio.wait_for(case_started.wait(), 1)
         return [CHUNK_900], "SUPPORT PROFILE", [], False
 
-    async def judge(_messages, _settings, **_kwargs):
-        judge_started.set()
+    async def update_case(_messages, _previous, _settings, **_kwargs):
+        case_started.set()
         await asyncio.wait_for(retrieval_started.wait(), 1)
-        return turn_judge.TurnJudgement.model_validate(_turn_verdict())
+        return case_file.Case.model_validate(_case())
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeResult(rows=[FakeKB(id=10, name="KB", slug="kb-a", org_id=42)]))
@@ -1070,7 +1074,7 @@ async def test_turn_judge_runs_concurrently_with_retrieval():
     request = ChatCompletionsRequest(messages=[{"role": "user", "content": QUESTION_900}], stream=False)
     with (
         patch("app.api.partner.retrieve_context", new=retrieve),
-        patch("app.api.partner.turn_judge.judge_turn", new=judge),
+        patch("app.api.partner.case_file.update_case", new=update_case),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
@@ -1081,7 +1085,7 @@ async def test_turn_judge_runs_concurrently_with_retrieval():
         await chat_completions(request=request, http_request=MagicMock(headers={}, client=None), auth=auth, db=db)
 
     timing = chat.call_args.kwargs["turn_timing"]
-    assert {"retrieval_ms", "turn_judge_ms", "started_at"} <= timing.keys()
+    assert {"retrieval_ms", "case_ms", "started_at"} <= timing.keys()
 
 
 # ─── Every LiteLLM call of a widget turn names the tenant for PII masking ─
@@ -1096,7 +1100,6 @@ DELEGATED = {"_klai_delegated_org_id": "zit-org-42"}
 # Every kind's own LiteLLM spend tag (SPEC: every call is attributable to the
 # feature that made it -- LiteLLM_SpendLogs.request_tags, from metadata.tags).
 _TAG_FOR_KIND = {
-    "turn_judge": "portal:turn-judge",
     "query_paraphrase": "portal:query-paraphrase",
     "answer_judge": "portal:answer-judge",
     "off_topic_referral": "portal:off-topic-referral",
@@ -1132,11 +1135,10 @@ async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(mo
         grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
     )
 
-    await _route_turn(monkeypatch, turn=_turn_verdict(), stream=stream, band="high", litellm=litellm)
+    await _route_turn(monkeypatch, stream=stream, band="high", litellm=litellm)
 
     calls = _metadata_per_call(litellm)
     assert {kind for kind, _ in calls} == {
-        "turn_judge",
         "query_paraphrase",
         "passage_selection",
         "case_update",
@@ -1152,7 +1154,6 @@ async def test_the_off_topic_referral_call_names_the_tenant(monkeypatch):
 
     calls = _metadata_per_call(litellm)
     assert {kind for kind, _ in calls} == {
-        "turn_judge",
         "query_paraphrase",
         "passage_selection",
         "case_update",
@@ -1178,10 +1179,9 @@ def _two_articles() -> list[dict]:
     ]
 
 
-def _selected_turn(monkeypatch, selection: Any, *, stream: bool = False, turn: dict | None = None):
-    turn = turn or _turn_verdict()
-    litellm = _LiteLLM(model_text=ANSWER_900, selection=selection, turn=turn)
-    return _route_turn(monkeypatch, turn=turn, stream=stream, band="high", items=_two_articles(), litellm=litellm)
+def _selected_turn(monkeypatch, selection: Any, *, stream: bool = False, case: dict | None = None):
+    litellm = _LiteLLM(model_text=ANSWER_900, selection=selection, case=case)
+    return _route_turn(monkeypatch, stream=stream, band="high", items=_two_articles(), litellm=litellm)
 
 
 @pytest.mark.parametrize("stream", [True, False])
@@ -1242,12 +1242,12 @@ async def test_steps_that_differ_per_variant_get_the_one_question_as_the_reply(m
 
 
 async def test_a_visitor_who_asks_for_a_person_is_not_told_the_articles_lack_an_answer(monkeypatch):
-    litellm, text, _ = await _selected_turn(
-        monkeypatch, _selection("not_in_passages"), turn=_turn_verdict(wants_human=True)
-    )
+    """A first turn: the case runs beside the search, and its want decides the route after it."""
+    litellm, text, extras = await _selected_turn(monkeypatch, _selection("not_in_passages"), case=_case("human"))
 
-    assert text != REFUSAL_NL
-    assert len(litellm.answer_requests) == 1
+    assert text == contact_reply("nl")
+    assert extras["escalation"] == [{"appointment": True}]
+    assert litellm.answer_requests == []
 
 
 async def test_a_failed_selection_leaves_the_turn_as_it_was(monkeypatch):
@@ -1263,7 +1263,7 @@ async def test_a_frustrated_visitor_whose_passages_do_not_answer_gets_the_refusa
     the prompt, and the writer invented a cause. The honest "not found" already
     carries the appointment, which is what a frustrated visitor is offered."""
     litellm, text, extras = await _selected_turn(
-        monkeypatch, _selection("not_in_passages"), turn=_turn_verdict(sentiment="negative")
+        monkeypatch, _selection("not_in_passages"), case={**_case(), "sentiment": "negative"}
     )
 
     assert text == REFUSAL_NL
@@ -1288,12 +1288,10 @@ async def test_a_chosen_passage_stays_the_source_when_it_words_the_question_diff
     litellm = _LiteLLM(
         model_text=reply,
         selection=_selection("answers", (1, "Kies een periode van hooguit dertig dagen.")),
-        turn=_turn_verdict(),
     )
 
     _, text, extras = await _route_turn(
         monkeypatch,
-        turn=_turn_verdict(),
         question="Mijn lijst met belgegevens downloaden blijft leeg",
         band="low",
         items=[article],
@@ -1351,9 +1349,7 @@ async def test_without_a_selection_a_reply_with_nothing_supported_is_not_shown()
 
 
 async def test_a_turn_the_turn_judge_calls_conversational_still_gets_the_refusal(monkeypatch):
-    litellm, text, _ = await _selected_turn(
-        monkeypatch, _selection("not_in_passages"), turn=_turn_verdict(scope="conversation")
-    )
+    litellm, text, _ = await _selected_turn(monkeypatch, _selection("not_in_passages"), case=_case("chat"))
 
     assert text == REFUSAL_NL
     assert litellm.answer_requests == []
@@ -1370,10 +1366,9 @@ _FOLLOW_UP = [
 
 
 async def _follow_up_turn(monkeypatch, case: Any, **overrides):
-    litellm = _LiteLLM(model_text=ANSWER_900, case=case, turn=_turn_verdict())
+    litellm = _LiteLLM(model_text=ANSWER_900, case=case)
     return await _route_turn(
         monkeypatch,
-        turn=_turn_verdict(),
         band="high",
         items=_two_articles(),
         litellm=litellm,
@@ -1423,7 +1418,7 @@ async def test_a_visitor_who_wants_contact_is_not_told_the_articles_lack_an_answ
     litellm = _LiteLLM(model_text=ANSWER_900, case=_case("contact"), selection=_selection("not_in_passages"))
     messages = [*_FOLLOW_UP[:2], {"role": "user", "content": "ik wil jullie mailen"}]
     litellm, text, extras = await _route_turn(
-        monkeypatch, turn=_turn_verdict(), band="high", items=_two_articles(), litellm=litellm, messages=messages
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages
     )
 
     assert text == contact_reply("nl")
@@ -1432,11 +1427,11 @@ async def test_a_visitor_who_wants_contact_is_not_told_the_articles_lack_an_answ
 
 
 async def test_a_first_question_keeps_its_paraphrases_whatever_the_case_suggests(monkeypatch):
-    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("knowledge", "zoekvraag uit de zaak"), turn=_turn_verdict())
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("knowledge", "zoekvraag uit de zaak"))
     with patch.object(
         query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=["parafrase een", "parafrase twee"])
     ):
-        litellm, _, _ = await _route_turn(monkeypatch, turn=_turn_verdict(), band="high", litellm=litellm)
+        litellm, _, _ = await _route_turn(monkeypatch, band="high", litellm=litellm)
 
     assert _retrieve_body(litellm)["query_variants"] == ["parafrase een", "parafrase twee"]
 
@@ -1462,7 +1457,7 @@ async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(m
     litellm = _LiteLLM(model_text=ANSWER_900, case=_case("contact"))
     messages = [*_FOLLOW_UP[:2], {"role": "user", "content": "ik wil jullie mailen"}]
     litellm, text, _ = await _route_turn(
-        monkeypatch, turn=_turn_verdict(), band="high", items=_two_articles(), litellm=litellm, messages=messages
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages
     )
 
     assert text == contact_reply("nl")
@@ -1485,10 +1480,9 @@ def _article_with(text: str) -> dict:
 
 async def _gated_turn(monkeypatch, reply: str, article_text: str):
     article = _article_with(article_text)
-    litellm = _LiteLLM(model_text=reply, selection=_selection("answers", (1, article_text[:60])), turn=_turn_verdict())
+    litellm = _LiteLLM(model_text=reply, selection=_selection("answers", (1, article_text[:60])))
     return await _route_turn(
         monkeypatch,
-        turn=_turn_verdict(),
         question="Wat is het adres van de koppeling?",
         band="high",
         items=[article],

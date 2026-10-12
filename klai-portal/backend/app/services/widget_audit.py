@@ -116,6 +116,57 @@ async def find_conversation_id(*, widget_id: str, session_key: str) -> tuple[int
     return None if conv is None else (int(conv.id), bool(conv.is_test))
 
 
+async def _org_of_widget(widget_id: str) -> int | None:
+    """REQ-14: the tenant comes from the widgets row, never from the caller.
+
+    A bare SELECT in cross_org_session; the per-tenant write that follows opens
+    tenant_scoped_session(org_id), which sets the RLS GUC.
+    """
+    try:
+        async with cross_org_session() as lookup_db:
+            row = (
+                await lookup_db.execute(
+                    text("SELECT org_id FROM widgets WHERE id = CAST(:widget_id AS uuid)"),
+                    {"widget_id": widget_id},
+                )
+            ).first()
+    except Exception:
+        logger.exception("widget_audit_org_lookup_failed", widget_id=widget_id)
+        return None
+    if row is None:
+        logger.warning("widget_audit_widget_not_found", widget_id=widget_id)
+        return None
+    return int(row[0])
+
+
+async def patch_answer_signals(*, widget_id: str, message_id: int, answer_signals: dict[str, Any]) -> None:
+    """Replace the signals of an assistant turn that was recorded before its statement check finished.
+
+    The check on a widget reply written from chosen passages runs after the
+    reply went out (partner_chat._check_answer_later). The row itself is
+    written at once, so the transcript keeps its order and feedback finds the
+    turn; only its signals are completed here, on the row the insert returned.
+    """
+    org_id = await _org_of_widget(widget_id)
+    if org_id is None:
+        return
+    try:
+        async with tenant_scoped_session(org_id) as db:
+            await db.execute(
+                text(
+                    """
+                    UPDATE widget_messages
+                       SET answer_signals = CAST(:answer_signals AS jsonb)
+                     WHERE id = :message_id AND org_id = :org_id AND role = 'assistant'
+                    """
+                ),
+                {"answer_signals": json.dumps(answer_signals), "message_id": message_id, "org_id": org_id},
+            )
+            await db.commit()
+    except Exception:
+        logger.exception("widget_audit_signals_patch_failed", widget_id=widget_id)
+
+
 async def record_widget_turn(
     *,
     widget_id: str,  # UUID-as-string from widgets.id
@@ -153,9 +204,9 @@ async def record_widget_turn(
     # NULL and touches nothing.
     visitor_name: str | None = None,
     visitor_email: str | None = None,
-) -> None:
+) -> int | None:
     """Append one turn to a widget conversation, creating the
-    conversation row on first call.
+    conversation row on first call; returns the new row's id, None when nothing was written.
 
     REQ-14 (Finding B-7, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): ``org_id`` is
     derived server-side from the widgets row — never taken from the caller.
@@ -170,27 +221,11 @@ async def record_widget_turn(
     # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-14 (Finding B-7)
     """
     if not content.strip():
-        return
+        return None
 
-    # REQ-14: derive org_id from widgets table (single source of truth).
-    # Uses cross_org_session for the bare SELECT; the per-tenant INSERT
-    # path below then opens tenant_scoped_session(org_id) which sets the
-    # proper RLS GUC.
-    try:
-        async with cross_org_session() as lookup_db:
-            row = (
-                await lookup_db.execute(
-                    text("SELECT org_id FROM widgets WHERE id = CAST(:widget_id AS uuid)"),
-                    {"widget_id": widget_id},
-                )
-            ).first()
-    except Exception:
-        logger.exception("widget_audit_org_lookup_failed", widget_id=widget_id)
-        return
-    if row is None:
-        logger.warning("widget_audit_widget_not_found", widget_id=widget_id)
-        return
-    org_id = int(row[0])
+    org_id = await _org_of_widget(widget_id)
+    if org_id is None:
+        return None
 
     truncated_query = content[:240] if role == "user" else None
     # Browser-supplied, so clamp to the column widths here as well as in the
@@ -255,7 +290,7 @@ async def record_widget_turn(
             conv_id, prior_count = row
             sequence = prior_count
 
-            await db.execute(
+            inserted = await db.execute(
                 text(
                     """
                     INSERT INTO widget_messages
@@ -265,6 +300,7 @@ async def record_widget_turn(
                         (:conversation_id, :org_id, :role, :content,
                          CAST(:sources AS jsonb), :sequence, :turn_id,
                          CAST(:answer_signals AS jsonb))
+                    RETURNING id
                     """
                 ),
                 {
@@ -282,6 +318,7 @@ async def record_widget_turn(
                     ),
                 },
             )
+            message_id = inserted.scalar_one()
             await db.execute(
                 text(
                     """
@@ -294,6 +331,7 @@ async def record_widget_turn(
                 {"conv_id": conv_id},
             )
             await db.commit()
+            return int(message_id)
     except Exception:
         # Audit must never break the user's chat experience.
         logger.exception(
@@ -301,6 +339,7 @@ async def record_widget_turn(
             widget_id=widget_id,
             role=role,
         )
+    return None
 
 
 async def record_internal_turn(*, org_id: int, answer_signals: dict[str, Any]) -> None:

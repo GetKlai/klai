@@ -24,11 +24,11 @@ from klai_chat_prompts import (
     no_citable_sources_message,
 )
 
+from app.services.case_file import Case
 from app.services.partner_chat import (
     _build_system_prompt,
     _compose_backend_managed_answer,
 )
-from app.services.turn_judge import TurnJudgement
 
 # Signature phrases that exist in exactly one of the profiles, so a
 # prompt built with the wrong base is caught immediately.
@@ -397,16 +397,23 @@ async def _run_with_scope(*, chunks, scope_result):
         stream=False,
     )
 
-    judgement = TurnJudgement(
-        topic="handled", scope=scope_result, wants_human=False, sentiment="neutral", clarity="clear", missing=""
+    case = Case(
+        problem="",
+        product="",
+        variant="",
+        tried=[],
+        wants="chat" if scope_result == "conversation" else "knowledge",
+        out_of_scope=False,
+        sentiment="neutral",
+        queries=[],
     )
-    classifier = AsyncMock(return_value=judgement)
+    classifier = AsyncMock(return_value=case)
     with (
         patch("app.api.partner.retrieve_context", return_value=(chunks, "SUPPORT PROFILE", [], False)),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value=None)),
-        patch("app.api.partner.turn_judge.judge_turn", new=classifier),
+        patch("app.api.partner.case_file.update_case", new=classifier),
         patch(
             "app.api.partner.chat_completion_non_streaming",
             new=AsyncMock(return_value={"choices": []}),

@@ -46,7 +46,7 @@ from app.services import case_file, turn_judge
 from app.services import escalation_intent as escalation_service
 from app.services.chat_attachments import process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
-from app.services.clarify_decision import WEAK_SOURCES_ADDENDUM, clarify_decision, plain_question
+from app.services.clarify_decision import clarify_decision, plain_question
 from app.services.clarify_gate import already_asked
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
@@ -92,6 +92,7 @@ from app.services.web_search import build_web_results_block, search_web, web_res
 from app.services.widget_audit import (
     hash_audit_value,
     last_case,
+    patch_answer_signals,
     record_internal_turn,
     record_widget_turn,
     session_key_from_token,
@@ -561,6 +562,7 @@ async def _audit_streaming_wrapper(
     # (SPEC-KNOWLEDGE-ACTIVITY-001 §4.1). Read back once the stream ends and
     # sent to the audit row only: nothing in it is ever re-emitted as a frame.
     answer_signals: dict[str, Any] | None = None,
+    turn: KnowledgeTurn | None = None,
 ) -> AsyncGenerator[bytes]:
     """Tee the SSE stream, capture composed text + sources, log the
     assistant turn once the generator completes.
@@ -585,21 +587,45 @@ async def _audit_streaming_wrapper(
     finally:
         final_text = "".join(composed_text).strip()
         if final_text:
-            task = asyncio.create_task(
-                record_widget_turn(
-                    widget_id=widget_id,
-                    session_key=session_key,
-                    role="assistant",
-                    content=final_text,
-                    sources=composed_sources or None,
-                    loaded_origin=loaded_origin,
-                    is_preview=is_preview,
-                    turn_id=turn_id,
-                    answer_signals=answer_signals or None,
-                )
+            _write_widget_record(
+                turn,
+                widget_id=widget_id,
+                session_key=session_key,
+                role="assistant",
+                content=final_text,
+                sources=composed_sources or None,
+                loaded_origin=loaded_origin,
+                is_preview=is_preview,
+                turn_id=turn_id,
+                answer_signals=answer_signals or None,
             )
-            _pending.add(task)
-            task.add_done_callback(_pending.discard)
+
+
+def _write_widget_record(turn: KnowledgeTurn | None, **fields: Any) -> None:
+    """One record per widget turn, written at once; its signals completed when the later check is done.
+
+    The check on a reply written from chosen passages runs after the reply
+    went out (``turn.grounding_check``, partner_chat.py). The row is written
+    first so the transcript keeps its order under a quick follow-up and the
+    feedback endpoint finds the turn; the signals it was written with are
+    then replaced by the completed ones (``patch_answer_signals``).
+    """
+
+    async def write() -> None:
+        message_id = await record_widget_turn(**fields)
+        if message_id is None or turn is None or turn.grounding_check is None or fields.get("answer_signals") is None:
+            return
+        try:
+            await turn.grounding_check
+        except Exception:
+            logger.warning("widget_later_check_failed", exc_info=True)
+        await patch_answer_signals(
+            widget_id=fields["widget_id"], message_id=message_id, answer_signals=fields["answer_signals"]
+        )
+
+    task = asyncio.create_task(write())
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
 
 
 def _write_internal_record(org_id: int, answer_signals: dict[str, Any], turn: KnowledgeTurn) -> None:
@@ -2016,7 +2042,7 @@ async def chat_completions(  # noqa: C901
     # The user turn is written before retrieval so the gap task can wait for
     # the conversation row instead of racing it (first-turn gaps used to lose
     # their provenance). Still fire-and-forget: the chat never waits on it.
-    user_turn_write: asyncio.Task[None] | None = None
+    user_turn_write: asyncio.Task[int | None] | None = None
     if is_widget_chat and audit_widget_id is not None:
         last_user_msg = next(
             (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
@@ -2182,22 +2208,28 @@ async def chat_completions(  # noqa: C901
                 knowledge_turn=knowledge_turn,
             )
 
-        # SPEC-RAG-ANSWER-JUDGES-001 REQ-1. The question judge runs on every
-        # support-mode turn beside retrieval, so it costs no wall-clock of its
-        # own; each side is timed separately for partner_chat_turn_timing.
-        turn_judgement: turn_judge.TurnJudgement | None = None
+        # The case is the one reading of the turn (case_file.py): what the
+        # visitor wants, their tone, whether the subject is one this widget
+        # answers, and the queries for a follow-up's search. It replaced the
+        # question judge that used to run beside it (plan §8, step M).
         turn_timing: dict[str, float] | None = None
         if support_mode:
-            judge = turn_judge.judge_turn(
-                request.messages, settings, off_topic_subjects=off_topic_subjects, delegated_org_id=auth.zitadel_org_id
-            )
             case_update = case_file.update_case(
-                request.messages, previous_case, settings, delegated_org_id=auth.zitadel_org_id
+                request.messages,
+                previous_case,
+                settings,
+                off_topic_subjects=off_topic_subjects,
+                delegated_org_id=auth.zitadel_org_id,
             )
             if case_file.is_follow_up(request.messages):
-                # The case's queries go into this turn's search, so the case
-                # comes first; a first question has its paraphrases and needs
-                # no wait (case_file.py has the numbers).
+                # The case's queries go into a follow-up's search, so the case
+                # comes first. A first question keeps its two paraphrases and
+                # runs the case beside the search: the case's queries narrow
+                # (product, problem, variant) where the paraphrases widen, and
+                # on the meetlat that widening brought both variants' sections
+                # in, so the selection step could ask which one applies; with
+                # the case's queries alone two of the six expected clarifying
+                # questions were answered instead (plan §8, step M).
                 case, case_ms = await _timed(case_update)
                 if case is not None:
                     answer_signals["case"] = case.model_dump()
@@ -2205,26 +2237,20 @@ async def chat_completions(  # noqa: C901
                     # The route for a person, contact or an appointment needs
                     # no articles: decided here, before the search (plan §5,
                     # step 2). A first turn runs the case beside the search and
-                    # takes this route below.
+                    # takes this route below. It wins from the referral for a
+                    # subject this widget does not answer: "kan ik jullie ook
+                    # gewoon bellen" read as such a subject on the meetlat, and
+                    # the visitor asked how to reach a person, not about it.
                     return _contact_request_reply(case)
                 follow_up_variants = case.search_variants(_last_user_message(request.messages) or "") if case else []
-                (retrieval_result, retrieval_ms), (turn_judgement, turn_judge_ms) = await asyncio_gather(
-                    _timed(retrieval(follow_up_variants)), _timed(judge)
-                )
+                retrieval_result, retrieval_ms = await _timed(retrieval(follow_up_variants))
             else:
-                (
-                    (retrieval_result, retrieval_ms),
-                    (turn_judgement, turn_judge_ms),
-                    (case, case_ms),
-                ) = await asyncio_gather(_timed(retrieval([])), _timed(judge), _timed(case_update))
+                (retrieval_result, retrieval_ms), (case, case_ms) = await asyncio_gather(
+                    _timed(retrieval([])), _timed(case_update)
+                )
             if case is not None:
                 answer_signals["case"] = case.model_dump()
-            turn_timing = {
-                "started_at": turn_started,
-                "retrieval_ms": retrieval_ms,
-                "turn_judge_ms": turn_judge_ms,
-                "case_ms": case_ms,
-            }
+            turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "case_ms": case_ms}
         elif internal:
             retrieval_result, retrieval_ms = await _timed(retrieval([]))
             turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms}
@@ -2280,13 +2306,8 @@ async def chat_completions(  # noqa: C901
     # retrieval found, and the model is told so for this one turn. See
     # escalation_intent.py for why this layer exists.
     escalation = escalation_service.escalation_intent(_last_user_message(request.messages)) if support_mode else None
-    scope = turn_judgement.scope if turn_judgement else None
-    sentiment = turn_judgement.sentiment if turn_judgement else None
-    if escalation is None and turn_judgement:
-        if turn_judgement.wants_human:
-            escalation = escalation_service.HUMAN_REQUEST
-        elif sentiment == "negative":
-            escalation = escalation_service.FRUSTRATION
+    scope = case.scope if case else None
+    sentiment = case.sentiment if case else None
     # The case reads the whole conversation and names what the visitor wants
     # now; "ik wil jullie mailen" and "graag contact met een medewerker" got
     # the not-found text in the first week of real traffic because neither
@@ -2299,6 +2320,8 @@ async def chat_completions(  # noqa: C901
         wants_contact = True
     else:
         wants_contact = False
+        if escalation is None and sentiment == "negative":
+            escalation = escalation_service.FRUSTRATION
     if escalation:
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
     force_escalation = escalation is not None
@@ -2312,33 +2335,24 @@ async def chat_completions(  # noqa: C901
     if conversational:
         system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
 
-    # SPEC-RAG-ANSWER-JUDGES-001 REQ-3. Clarity is measured and labels a draft
-    # that ends on a question, but no longer steers the generation. An
-    # instruction to ask rather than answer made answers worse in a blind
-    # comparison on 50 real Voys first questions (old system better in 19 of
-    # 23 turns that received it) and produced a real clarifying question only
-    # 2 times in 150 answers. Not on a broad-mode, escalation or conversational
-    # turn, where a question is never the intended reply.
-    clarity: Literal["clear", "ambiguous"] | None = turn_judgement.clarity if turn_judgement else None
-    if broad_turn or escalation or turn_judge.is_conversational(scope):
-        clarity = "clear"
+    # Clarity is the internal clarify step's label on a draft that ends on a
+    # question (below). On the widget the selection step asks its one question
+    # before anything is written, so no model judges clarity there any more.
+    clarity: Literal["clear", "ambiguous"] | None = None
 
     if support_mode:
-        # REQ-4. Every judged turn logs its outcome, failures as their own word:
-        # a share you cannot see is a boundary that drifts unnoticed.
-        if turn_judgement is None:
-            answer_signals["judge_failed"] = ["turn"]
-        else:
-            answer_signals["clarity"] = turn_judgement.clarity
+        # Every turn logs its reading, a failure as its own word: a share you
+        # cannot see is a boundary that drifts unnoticed.
+        if case is None:
+            answer_signals["judge_failed"] = ["case"]
         logger.info(
             "partner_chat_turn_judge",
             org_id=auth.org_id,
             wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
             turn_scope=turn_judge.scope_label(scope),
-            wants_human=turn_judgement.wants_human if turn_judgement else None,
+            wants_human=wants_contact,
             sentiment=sentiment,
-            clarity=turn_judgement.clarity if turn_judgement else None,
-            topic=turn_judgement.topic if turn_judgement else None,
+            topic=("not_handled" if case.out_of_scope else "handled") if case else None,
             retrieval_gap=gap,
         )
 
@@ -2354,10 +2368,11 @@ async def chat_completions(  # noqa: C901
         support_mode
         and off_topic_subjects
         and off_topic_reply
-        and turn_judgement
-        and turn_judgement.topic == "not_handled"
+        and case is not None
+        and case.out_of_scope
+        and not wants_contact
     ):
-        # A failing judge falls through to the normal answer on purpose: that is
+        # A failed case falls through to the normal answer on purpose: that is
         # what the visitor got before this setting existed, and refusing every
         # turn because one call timed out would be worse than answering one
         # price question. Same fail direction as every other check here.
@@ -2484,14 +2499,14 @@ async def chat_completions(  # noqa: C901
     # general knowledge.
     # Not where the selection step chose the passages: it read them, the score did not.
     if (
-        (support_mode or internal)
+        internal
         and not knowledge_turn.passages_chosen
         and gap == "soft"
         and not broad_turn
         and escalation is None
         and not conversational
     ):
-        system_prompt += weak_sources_notice(profile.kb_mode == "strict") if internal else WEAK_SOURCES_ADDENDUM
+        system_prompt += weak_sources_notice(profile.kb_mode == "strict")
         answer_signals["weak_sources"] = True
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
@@ -2559,7 +2574,6 @@ async def chat_completions(  # noqa: C901
             broad_mode=broad_turn,
             force_escalation=force_escalation,
             clarity=clarity,
-            weak_sources=bool(answer_signals.get("weak_sources")),
             conversational=conversational,
             sentiment=sentiment,
             answer_signals=turn_signals,
@@ -2579,6 +2593,7 @@ async def chat_completions(  # noqa: C901
         if audit_ready:
             streaming_gen = _audit_streaming_wrapper(
                 streaming_gen,
+                turn=knowledge_turn,
                 widget_id=audit_widget_id,  # type: ignore[arg-type]
                 session_key=audit_session_key,  # type: ignore[arg-type]
                 loaded_origin=http_request.headers.get("origin") or None,
@@ -2613,7 +2628,6 @@ async def chat_completions(  # noqa: C901
         broad_mode=broad_turn,
         force_escalation=force_escalation,
         clarity=clarity,
-        weak_sources=bool(answer_signals.get("weak_sources")),
         conversational=conversational,
         sentiment=sentiment,
         answer_signals=turn_signals,
@@ -2636,21 +2650,18 @@ async def chat_completions(  # noqa: C901
     if audit_ready:
         assistant_text, assistant_sources = _extract_assistant_text_and_sources(result)
         if assistant_text:
-            task = asyncio.create_task(
-                record_widget_turn(
-                    widget_id=audit_widget_id,  # type: ignore[arg-type]
-                    session_key=audit_session_key,  # type: ignore[arg-type]
-                    role="assistant",
-                    content=assistant_text,
-                    sources=assistant_sources,
-                    loaded_origin=http_request.headers.get("origin") or None,
-                    is_preview=getattr(auth, "is_preview", False),
-                    turn_id=request.widget_turn_id,
-                    answer_signals=answer_signals or None,
-                )
+            _write_widget_record(
+                knowledge_turn,
+                widget_id=audit_widget_id,  # type: ignore[arg-type]
+                session_key=audit_session_key,  # type: ignore[arg-type]
+                role="assistant",
+                content=assistant_text,
+                sources=assistant_sources,
+                loaded_origin=http_request.headers.get("origin") or None,
+                is_preview=getattr(auth, "is_preview", False),
+                turn_id=request.widget_turn_id,
+                answer_signals=answer_signals or None,
             )
-            _pending.add(task)
-            task.add_done_callback(_pending.discard)
     return result
 
 

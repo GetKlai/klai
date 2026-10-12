@@ -2337,17 +2337,6 @@ def _compose_backend_managed_answer(
     return composed.content, sources, decision
 
 
-def _partial_answer_sources(sources: list[dict], *, weak_sources: bool) -> list[dict]:
-    """The sources a reply the judge does not call an answer keeps.
-
-    On a turn whose every article was weak (partner.py, the weak-sources rule)
-    such a reply is the honest "not in the help articles", and a source card
-    under it points at the neighbouring article the reply just declined to use.
-    Measured on 27 real weak-source turns, 26 of 29 such replies carried one.
-    """
-    return [] if weak_sources else sources
-
-
 # Background work that outlives the reply: an Open turn's grounding check.
 # Held here so the event loop keeps a strong reference until it finishes.
 _pending_turn_tasks: set[asyncio.Task] = set()
@@ -2374,7 +2363,7 @@ def _grounding_signals(sink: dict[str, Any] | None, grounding: GroundingCheck | 
         sink["unsupported_statements"] = [item.statement[:300] for item in grounding.unsupported[:5]]
 
 
-def _check_open_answer_later(
+def _check_answer_later(
     *,
     question: str,
     draft: str,
@@ -2383,13 +2372,15 @@ def _check_open_answer_later(
     org_id: int | str | None,
     delegated_org_id: str | None,
     answer_signals: dict[str, Any],
+    keep_statements: bool = False,
 ) -> asyncio.Task[None]:
-    """Check an Open answer after it went out, and only record what the check found.
+    """Check an answer after it went out, and only record what the check found.
 
     Product decision (2026-09-24): Open is checked, but not repaired until the
     check has been measured on Open answers, which may use general knowledge
-    by design and so carry statements no article supports. An Open turn streams
-    live, so nobody waits for this; the per-turn record does.
+    by design and so carry statements no article supports. A widget reply
+    written from chosen passages is checked the same way (plan §8, step M).
+    Nobody waits for this; the per-turn record does.
     """
 
     async def check() -> None:
@@ -2402,7 +2393,7 @@ def _check_open_answer_later(
             timeout_seconds=grounding_budget("internal")[0],
             delegated_org_id=delegated_org_id,
         )
-        _grounding_signals(answer_signals, grounding, keep_statements=False)
+        _grounding_signals(answer_signals, grounding, keep_statements=keep_statements)
         if grounding is not None:
             answer_signals["grounding"] = _grounding_label(grounding)
 
@@ -2428,7 +2419,6 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     force_escalation: bool,
     conversational: bool,
     clarity: Literal["clear", "ambiguous"] | None,
-    weak_sources: bool = False,
     profile: ChatProfile = ChatProfile(surface="widget"),
     knowledge_turn: KnowledgeTurn | None = None,
     delegated_org_id: str | None = None,
@@ -2492,7 +2482,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         if answer_signals is not None:
             answer_signals["decision"] = outcome
         if answer_mode == "open" and articles and knowledge_turn is not None and answer_signals is not None:
-            knowledge_turn.grounding_check = _check_open_answer_later(
+            knowledge_turn.grounding_check = _check_answer_later(
                 question=_visitor_question(messages),
                 draft=safe_text,
                 articles=articles,
@@ -2532,23 +2522,47 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     if helpdesk and (contract := chat_contract_article(appointment_offered=True)) is not None:
         articles = [*articles, contract]
     check_seconds, repair_seconds = grounding_budget(profile.surface)
-    # Both checks read the same draft and run together, so the heavier one costs
-    # its own 2.1 s median once and nothing on top of the light judge's 0.4 s.
     checks_started = time.perf_counter()
-    judgement, grounding = await asyncio.gather(
-        judge_answer(
-            messages=messages, draft=safe_text, articles=articles, settings=settings, delegated_org_id=delegated_org_id
-        ),
-        check_grounding(
+    light_judge = judge_answer(
+        messages=messages, draft=safe_text, articles=articles, settings=settings, delegated_org_id=delegated_org_id
+    )
+    chosen = bool(citation_chunks) and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks or [])
+    deferred = helpdesk and chosen and bool(sources) and knowledge_turn is not None and answer_signals is not None
+    if deferred and knowledge_turn is not None and answer_signals is not None:
+        # The writer read only passages the selection step chose and cited
+        # one, and after writing nothing changes such a widget reply (below),
+        # so the statement check is measurement and runs after the reply went
+        # out. On the critical path it cost 1.6 s median of a 6.2 s written
+        # turn in the first week of real traffic; the light judge, which
+        # decides the appointment button, costs 0.4 s. An uncited reply keeps
+        # the check on the path: without a source its statements decide
+        # between showing and refusing (decide_answer).
+        judgement, grounding = await light_judge, None
+        knowledge_turn.grounding_check = _check_answer_later(
             question=_visitor_question(messages),
             draft=safe_text,
             articles=articles,
             settings=settings,
             org_id=org_id,
-            timeout_seconds=check_seconds,
             delegated_org_id=delegated_org_id,
-        ),
-    )
+            answer_signals=answer_signals,
+            keep_statements=True,
+        )
+    else:
+        # Both checks read the same draft and run together, so the heavier one
+        # costs its own 2.1 s median once and nothing on top of the light judge.
+        judgement, grounding = await asyncio.gather(
+            light_judge,
+            check_grounding(
+                question=_visitor_question(messages),
+                draft=safe_text,
+                articles=articles,
+                settings=settings,
+                org_id=org_id,
+                timeout_seconds=check_seconds,
+                delegated_org_id=delegated_org_id,
+            ),
+        )
     checks_ms = _elapsed_ms(checks_started)
     if judgement is not None and grounding is not None:
         # The statement-level check decides grounding: measured against 54
@@ -2576,7 +2590,8 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     )
     if answer_signals is not None:
         answer_signals.update(verdicts, decision=outcome)
-        _grounding_signals(answer_signals, grounding, keep_statements=helpdesk)
+        if not deferred:
+            _grounding_signals(answer_signals, grounding, keep_statements=helpdesk)
         if judgement is None:
             answer_signals.setdefault("judge_failed", []).append("answer")
 
@@ -2616,7 +2631,6 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             decision["escalation"] = _appointment_escalation()
     if outcome == "partial_answer" and helpdesk:
         decision["escalation"] = _appointment_escalation()
-        sources = _partial_answer_sources(sources, weak_sources=weak_sources)
     # Internal chat only, and only a reply the user actually reads: a refusal
     # and a clarifying question state nothing about the organisation. On the
     # help widget nothing changes a reply after it is written: what the writer
@@ -2753,14 +2767,13 @@ def _log_turn_timing(
     """REQ-4: one line per judged turn with where its wall-clock went, also kept in the record.
 
     ``turn_timing`` comes from the route: ``started_at`` (perf_counter at the
-    start of the request), ``retrieval_ms`` and ``turn_judge_ms``, which ran
+    start of the request), ``retrieval_ms`` and ``case_ms``, which ran
     concurrently, so their sum is not a duration.
     """
     if turn_timing is None:
         return
     timings = {
         "retrieval_ms": turn_timing.get("retrieval_ms"),
-        "turn_judge_ms": turn_timing.get("turn_judge_ms"),
         "case_ms": turn_timing.get("case_ms"),
         "generation_ms": generation_ms,
         "checks_ms": answer_judge_ms,
@@ -2770,7 +2783,6 @@ def _log_turn_timing(
         "partner_chat_turn_timing",
         org_id=org_id,
         retrieval_ms=timings["retrieval_ms"],
-        turn_judge_ms=timings["turn_judge_ms"],
         case_ms=timings["case_ms"],
         generation_ms=generation_ms,
         answer_judge_ms=answer_judge_ms,
@@ -2832,7 +2844,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     conversational: bool = False,
     force_escalation: bool = False,
     clarity: Literal["clear", "ambiguous"] | None = None,
-    weak_sources: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -3038,7 +3049,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             force_escalation=force_escalation,
             conversational=conversational,
             clarity=clarity,
-            weak_sources=weak_sources,
             profile=profile,
             knowledge_turn=knowledge_turn,
             delegated_org_id=delegated_org_id,
@@ -4035,23 +4045,29 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         # The user's own attachment is still readable with zero KB evidence;
         # fall through to the zero_chunks prompt below instead of refusing.
 
-    # Help widget: the writer reads only the passages that answer the question
-    # (passage_selection.py has the numbers). Not on a turn that is answered
-    # broadly, which reads no articles, and not on a multi-part message, whose parts
-    # each need their own passages. "Not in the passages" narrows nothing
-    # here: the caller answers that turn without a model, unless the visitor
-    # asked for a person or the turn is conversational.
+    # Help widget and internal Strict: the writer reads only the passages that
+    # answer the question (passage_selection.py has the numbers). Not on a
+    # turn that is answered broadly, which reads no articles, not on a
+    # multi-part message, whose parts each need their own passages, and not on
+    # an internal Open turn, which may answer from general knowledge. "Not in
+    # the passages" narrows nothing here: the widget's caller answers that
+    # turn without a model unless the visitor asked for a person, and a Strict
+    # internal turn refuses below as it does with zero passages.
     selection_chunks: list[dict] = []
+    selection_surface = (support_mode and not internal) or (internal and profile.kb_mode == "strict")
     if (
-        support_mode
-        and not internal
+        selection_surface
         and chunks
         and not turn.multi_question
+        and not turn.user_provided_content
+        and not turn.pasted_correspondence
         and not _broad_mode_active(chunks, support_mode=support_mode, broad_consent=broad_mode)
     ):
         selection_chunks = chunks
         turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
-        if answer_signals is not None:
+        if answer_signals is not None and not internal:
+            # Quotes and the question are text; the internal record keeps
+            # signals only (widget_audit.record_internal_turn).
             answer_signals["selection"] = (
                 {
                     "verdict": turn.selection.verdict,
@@ -4069,6 +4085,12 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
             turn.passages_chosen = True
             chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
             trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
+        if internal and turn.not_in_passages:
+            # Strict promised knowledge-base-only answers, and nothing found
+            # answers this question: the same fixed refusal as with zero
+            # passages, decided before any model writes.
+            turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
+            return [], "", [], False
 
     # Consented general-knowledge fallback: decided here, on the same
     # post-safety-filter chunks the gap event sees, and surfaced to the caller
@@ -4129,7 +4151,6 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     conversational: bool = False,
     force_escalation: bool = False,
     clarity: Literal["clear", "ambiguous"] | None = None,
-    weak_sources: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -4305,7 +4326,6 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                     force_escalation=force_escalation,
                     conversational=conversational,
                     clarity=clarity,
-                    weak_sources=weak_sources,
                     profile=profile,
                     knowledge_turn=knowledge_turn,
                     delegated_org_id=delegated_org_id,
@@ -4434,7 +4454,6 @@ async def chat_completion_streaming(
     conversational: bool = False,
     force_escalation: bool = False,
     clarity: Literal["clear", "ambiguous"] | None = None,
-    weak_sources: bool = False,
     sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -4500,7 +4519,6 @@ async def chat_completion_streaming(
             conversational=conversational,
             force_escalation=force_escalation,
             clarity=clarity,
-            weak_sources=weak_sources,
             sentiment=sentiment,
             answer_signals=answer_signals,
             signal_chunks=signal_chunks,

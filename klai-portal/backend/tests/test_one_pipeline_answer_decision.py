@@ -33,6 +33,7 @@ LITELLM = "http://litellm.example.com"
 RETRIEVAL = "http://retrieval.example.com"
 INTERNAL_KEY = {"chat": True, "internal_chat": True}
 STRICT_REFUSAL = no_citable_sources_message("nl", suggest_open_mode=True)
+NOT_IN_PASSAGES = {"need": "verlof aanvragen", "evidence": [], "verdict": "not_in_passages", "question": ""}
 
 ARTICLE = "Je vraagt verlof aan in het HR-portaal onder Verlof. Je leidinggevende keurt de aanvraag binnen twee werkdagen goed."
 ANSWER = "Je vraagt verlof aan in het HR-portaal onder Verlof. Je leidinggevende keurt de aanvraag goed."
@@ -83,12 +84,16 @@ class _LiteLLM:
         judge: dict | None = None,
         grounding: dict | None = None,
         repaired: str = "",
+        selection: dict | None = None,
     ) -> None:
         self.answer = answer
         self.question = question
         self.judge = judge or {"grounding": "all_in_articles", "verdict": "answered"}
         self.grounding = grounding or _supported(answer)
         self.repaired = repaired
+        # The selection step (passage_selection.py); without a reply it fails
+        # open and the turn runs on everything retrieved.
+        self.selection = selection
         self.calls: list[dict] = []
 
     def of(self, kind: str) -> list[dict]:
@@ -113,16 +118,9 @@ class _LiteLLM:
             "grounding_check": self.grounding,
             "repair": self.repaired,
             "rewrite": "",
-            "turn_judge": {
-                "topic": "handled",
-                "scope": "organisation",
-                "wants_human": False,
-                "sentiment": "neutral",
-                "clarity": "clear",
-                "missing": "",
-            },
-            "query_paraphrase": {"variants": []},
         }
+        if self.selection is not None:
+            replies["passage_selection"] = self.selection
         if kind in replies:
             return _reply(replies[kind])
         if body.get("stream"):
@@ -273,6 +271,43 @@ async def test_strict_draft_that_the_articles_do_not_carry_gets_the_strict_refus
     )
 
     assert turn.text == STRICT_REFUSAL
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.asyncio
+async def test_strict_turn_whose_passages_do_not_answer_gets_the_strict_refusal_before_any_model(monkeypatch, stream):
+    """Step N: the selection step reads the passages for an internal Strict
+    turn as it does on the widget; "not in the passages" is the fixed refusal,
+    and no writer, judge or check runs."""
+    llm = _LiteLLM(UNRELATED, selection=NOT_IN_PASSAGES)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=stream,
+    )
+
+    assert turn.text == STRICT_REFUSAL
+    assert len(llm.of("passage_selection")) == 1
+    assert llm.of("answer") == [] and llm.of("answer_judge") == [] and llm.of("grounding_check") == []
+    assert "selection" not in turn.records[0], "the internal record keeps signals, never text"
+
+
+@pytest.mark.asyncio
+async def test_open_turn_runs_no_selection_step(monkeypatch):
+    llm = _LiteLLM(selection=NOT_IN_PASSAGES)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+    )
+
+    assert turn.text != STRICT_REFUSAL
+    assert llm.of("passage_selection") == []
 
 
 # --- Open and general never refuse for a missing source ---------------------------
@@ -548,9 +583,10 @@ async def test_a_turn_that_only_calls_a_tool_sends_no_refusal_after_the_call(mon
 
 @pytest.mark.asyncio
 async def test_strict_answer_about_pasted_mail_is_not_repaired_against_the_articles(monkeypatch):
+    """The reply rests on the pasted mail, so the selection step does not run on it either."""
     from tests.test_pasted_correspondence import _ENGLISH_HEADER_PASTE
 
-    llm = _LiteLLM(grounding=_unsupported(ANSWER), repaired="")
+    llm = _LiteLLM(grounding=_unsupported(ANSWER), repaired="", selection=NOT_IN_PASSAGES)
 
     await _turn(
         monkeypatch,
@@ -560,7 +596,7 @@ async def test_strict_answer_about_pasted_mail_is_not_repaired_against_the_artic
         question=_ENGLISH_HEADER_PASTE,
     )
 
-    assert llm.of("grounding_check") == [] and llm.of("repair") == []
+    assert llm.of("grounding_check") == [] and llm.of("repair") == [] and llm.of("passage_selection") == []
 
 
 @pytest.mark.asyncio

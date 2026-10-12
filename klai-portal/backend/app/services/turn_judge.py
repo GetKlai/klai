@@ -1,16 +1,12 @@
-"""The question judge: one call that reads the turn before the answer is written.
+"""Shared pieces of the model calls that read a turn before anything is written.
 
-SPEC-RAG-ANSWER-JUDGES-001 REQ-1. It replaces two earlier classifiers on the
-widget path, the escalation classification (wants a person? tone?) and the turn
-scope (about this conversation, this organisation, or the world?), and adds the
-one question neither asked: is the visitor's question clear enough to answer?
-Before this module that last decision followed the retrieval band and a count
-of words shared with an article. Measured on 2026-09-17, all 13 reviewed widget
-turns since that rule shipped were answered, including all 4 with band ``low``:
-"die", "heb", "kan", "geen" and "steeds" counted as direct evidence.
-
-It reads the last few turns, not only the latest message, because "and on my
-iPhone?" is clear or not depending on what came before.
+``structured_judge_call`` is the one strict-json_schema call the case
+(case_file.py) and the selection step (passage_selection.py) are made with;
+``conversation_excerpt`` is the window of the conversation they read. The
+question judge that lived here, one call for scope, tone, wants-a-person and
+clarity, was replaced by the case on 2026-10-12 (plan §8, step M): on 215
+stored turns the two agreed on the conversational class in every turn, on
+tone in 197, and on the off-topic subject in 108 of 109.
 
 Scope, the measured reason it is an enum and not a boolean: the first version
 of the scope classifier asked one boolean and told the model that "yes, this
@@ -18,96 +14,30 @@ needs grounding" was always the safe choice. On klai-fast it then answered
 exactly that for EVERY message, including "dankjewel". Probed against the
 running service on 2026-09-15, naming the three classes and making the model
 pick one scored 11/11 on the same set, where the boolean scored 0 on the six
-conversational cases. Clarity is an enum for the same reason.
+conversational cases.
 
-Cost: the call runs concurrently with retrieval (the ``asyncio.gather`` in
-``app/api/partner.py``), so it adds no wall-clock beyond retrieval's own 1.0 to
-1.4 s, and the scope call that used to run sequentially after a retrieval gap
-is gone.
-
-Fail direction: any failure (timeout, upstream error, bad JSON) returns
-``None``, which the route reads as "scope unknown, treat as a knowledge
-question; clarity clear; no escalation from the model". The regex in
-``escalation_intent`` still fires. That is exactly the behaviour before this
-module whenever its classifiers timed out, so a broken judge can never open the
-grounding firewall.
-
-Caller-supplied ``system`` messages never reach the judge: only ``user`` and
+Caller-supplied ``system`` messages never reach a judge: only ``user`` and
 ``assistant`` turns are rendered, the same filter the answer model gets.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
 
 import httpx
 import structlog
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 from app.core.config import Settings
 from app.services.litellm_delegation import with_delegated_org, with_feature_tag
 
 logger = structlog.get_logger()
 
-_TURN_JUDGE_TIMEOUT_SECONDS = 2.0
 # Six turns is three exchanges, the same window retrieval-api uses for
 # coreference. Clipped per turn so one pasted log cannot fill the prefill that
 # the 2 s budget is spent on; the latest visitor message is rarely that long.
 _EXCERPT_TURNS = 6
 _EXCERPT_TURN_CHARS = 800
-
-_SYSTEM_PROMPT = (
-    "You read a conversation between a visitor and a company's help chat and judge the visitor's "
-    "LATEST message, using the earlier turns only to understand it. Return only the required schema.\n\n"
-    "scope — exactly one category:\n"
-    "conversation — a correct answer is only about this chat: which languages you can reply in, that "
-    "you are an AI, a greeting, a thank-you, an apology, or a remark about the conversation itself. "
-    "Nothing in the answer could be checked against the outside world.\n"
-    "organisation — the answer would state something about this company: its products, prices, "
-    "procedures, settings, availability or outages.\n"
-    "world — the answer would state a general fact that is true regardless of which company is asked.\n"
-    "Repeating, rephrasing or translating an earlier answer is never conversation: the claims inside it "
-    "are still claims. When a message mixes categories, pick the one the visitor most needs answered.\n\n"
-    "wants_human — true only when the visitor asks to involve a human. Distinguish a request from "
-    "negation and from quoted or reported speech.\n\n"
-    "sentiment — the visitor's own tone in the latest message.\n\n"
-    "clarity — exactly one category:\n"
-    "clear — a correct answer can be given from what the visitor has said so far, including earlier turns.\n"
-    "ambiguous — a correct answer depends on information the visitor has not given: which product, app, "
-    "device or subscription they mean, or which of several different procedures applies. A short message "
-    "is not ambiguous by itself; a greeting, a thank-you or a request for a person is clear.\n\n"
-    "missing — when ambiguous, a few words naming what the visitor has not told you, in the visitor's "
-    "language. Empty when clear.\n\n"
-    "topic — exactly one category:\n"
-    "not_handled — the visitor's latest message asks about one of the subjects this help chat does not "
-    "answer, listed below. Judge what the visitor wants, not which words they use.\n"
-    "handled — anything else, and everything when the list below is empty."
-)
-
-_NO_SUBJECTS = "(none: every subject is handled)"
-
-
-def _system_prompt(off_topic_subjects: str) -> str:
-    subjects = " ".join(off_topic_subjects.split()) or _NO_SUBJECTS
-    return f"{_SYSTEM_PROMPT}\n\nSubjects this help chat does not answer:\n{subjects}"
-
-
-class TurnJudgement(BaseModel):
-    """The question judge's verdict on the visitor's latest turn."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
-
-    topic: Literal["handled", "not_handled"]
-    scope: Literal["conversation", "organisation", "world"]
-    wants_human: bool
-    sentiment: Literal["negative", "neutral", "positive"]
-    clarity: Literal["clear", "ambiguous"]
-    # Read by no code, and kept for a measured reason: without it, on production
-    # klai-fast on 2026-09-17, "mijn telefoon werkt niet" was ambiguous in 1 of 3
-    # rounds instead of 3 of 3, and "dankjewel" was conversation in 1 of 3
-    # instead of 3 of 3. Naming what is missing makes the model decide clarity.
-    missing: str
 
 
 async def structured_judge_call[J: BaseModel](
@@ -196,24 +126,6 @@ def conversation_excerpt(messages: list[dict]) -> str:
             label = "Visitor (LATEST message)"
         lines.append(f"{label}: {_clip(content)}")
     return "\n\n".join(lines)
-
-
-async def judge_turn(
-    messages: list[dict], settings: Settings, *, off_topic_subjects: str = "", delegated_org_id: str | None = None
-) -> TurnJudgement | None:
-    """Judge the visitor's latest turn; ``None`` means the judge failed. Never raises."""
-    excerpt = conversation_excerpt(messages)
-    if "(LATEST message)" not in excerpt:
-        return None
-    return await structured_judge_call(
-        name="turn_judge",
-        system_prompt=_system_prompt(off_topic_subjects),
-        user_content=excerpt,
-        schema=TurnJudgement,
-        timeout_seconds=_TURN_JUDGE_TIMEOUT_SECONDS,
-        settings=settings,
-        delegated_org_id=delegated_org_id,
-    )
 
 
 def is_conversational(scope: str | None) -> bool:
