@@ -110,12 +110,8 @@ def salient_tokens(text: str) -> set[str]:
 
 def is_followup_query(text: str) -> bool:
     """Return True when *text* is a pure follow-up: deictic tokens only, no salient subject."""
-    tokens = {
-        match.group(0).lower() for match in _TOKEN_RE.finditer(text) if match.group(0)
-    }
-    return bool(tokens & _DEICTIC_REWRITE_TOKENS) and not (
-        tokens - _QUERY_REWRITE_STOPWORDS
-    )
+    tokens = {match.group(0).lower() for match in _TOKEN_RE.finditer(text) if match.group(0)}
+    return bool(tokens & _DEICTIC_REWRITE_TOKENS) and not (tokens - _QUERY_REWRITE_STOPWORDS)
 
 
 def rewrite_preserves_subject(raw_query: str, rewritten: str) -> bool:

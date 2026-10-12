@@ -81,6 +81,7 @@ from app.services.chat_turn_rules import (
     split_sub_questions,
 )
 from app.services.citations import (
+    ComposedCitations,
     compose_answer_with_trusted_sources,
     evidence_chunks_from_chunks,
     evidence_pack_items_as_chunks,
@@ -88,6 +89,7 @@ from app.services.citations import (
     source_url_key,
     strip_model_citation_artifacts,
     trusted_sources_from_evidence_pack,
+    urls_in_passages,
 )
 from app.services.gap_classification import classify_gap
 from app.services.gap_events import record_gap_event
@@ -197,6 +199,55 @@ def safety_refusal_response(*, model: str, query: str = "") -> dict:
 # A dash used as punctuation: an em dash anywhere between words, an en dash
 # with a space on either side. "9\u201317" keeps its range dash.
 _PUNCTUATION_DASH = re.compile(r"\s*\u2014\s*|\s+\u2013\s+")
+
+
+# A phone number: nine or more digits with optional spaces, dots, slashes,
+# dashes or brackets, starting with a country code or a zero. "0031" or "085"
+# alone is a number type in these articles and does not match; a date range
+# ("01-09-2026 - 30-09-2026") is excluded by its year.
+_PHONE_RE = re.compile(r"(?<![\w@.])(?:\+\d{1,3}|0)[\d\s()./\-]{7,}\d(?![\w@])")
+_DATE_RE = re.compile(r"\d{2}-\d{2}-\d{4}")
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_ORPHAN_MARKER_RE = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s*$")
+# The last nine digits identify a number whether it is written with a country
+# code, a zero or a bracketed zero.
+_NUMBER_TAIL = 9
+
+
+def _contact_details(text: str) -> set[str]:
+    numbers = {
+        re.sub(r"\D", "", m)[-_NUMBER_TAIL:]
+        for m in _PHONE_RE.findall(text)
+        if len(re.sub(r"\D", "", m)) >= _NUMBER_TAIL and not _DATE_RE.search(m)
+    }
+    return numbers | {m.lower() for m in _EMAIL_RE.findall(text)}
+
+
+def without_unsourced_contact_details(text: str, chunks: list[dict] | None) -> str:
+    """Drop every sentence with a phone number or e-mail address that does not stand in ``chunks``.
+
+    The profile forbids repeating a support number from an article and the
+    model does it anyway; the check flags the sentence and nothing acts. In
+    the first week of real traffic after the selection step the widget gave a
+    Belgian number from an article about another subject three times and an
+    invented head-office number once. Code decides on provenance: a number or
+    address that stands in the passages the writer read may stay.
+    """
+    known: set[str] = set()
+    for chunk in chunks or []:
+        if isinstance(chunk.get("text"), str):
+            known |= _contact_details(chunk["text"])
+    kept_lines: list[str] = []
+    for line in text.split("\n"):
+        if not line.strip():
+            kept_lines.append(line)
+            continue
+        sentences = [s for s in _SENTENCE_RE.split(line) if (_contact_details(s) - known) == set()]
+        if not sentences or all(_ORPHAN_MARKER_RE.match(s) for s in sentences):
+            continue
+        kept_lines.append(" ".join(sentences))
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
 
 
 def without_dashes(text: str, *, helpdesk: bool) -> str:
@@ -2214,7 +2265,10 @@ def _compose_backend_managed_answer(
         decision = {"reason": "broad_mode_answer", "broad_mode": "answer"}
         if offered_appointment:
             decision["escalation"] = _appointment_escalation()
-        return f"{marker}\n\n{_answer_without_retrieved_sources(text, citation_chunks)}", [], decision
+        broad_text = _answer_without_retrieved_sources(text, citation_chunks)
+        if helpdesk:
+            broad_text = without_unsourced_contact_details(broad_text, [])
+        return f"{marker}\n\n{broad_text}", [], decision
 
     # A source below the score bar must share a word with the question to be
     # cited. The selection step read the passage and pointed at the sentence
@@ -2227,7 +2281,14 @@ def _compose_backend_managed_answer(
         trusted_sources or [],
         query_text=None if chosen_by_selection else user_query,
         evidence_chunks=citation_chunks or [],
+        # The help widget may repeat an address only when it stands in the
+        # passages the writer read (an API endpoint, the web phone address).
+        allowed_urls=urls_in_passages(citation_chunks or []) if helpdesk else None,
     )
+    if helpdesk and composed.content:
+        gated = without_unsourced_contact_details(composed.content, citation_chunks)
+        if gated != composed.content:
+            composed = ComposedCitations(content=gated, sources=composed.sources, decision=composed.decision)
     if not composed.content:
         decision = dict(composed.decision)
         decision[_NO_CITABLE_SOURCES_DECISION_KEY] = True
@@ -2409,6 +2470,10 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     answer_mode = knowledge_turn.answer_mode if knowledge_turn is not None else profile.kb_mode
     draft_text, model_offered_appointment = strip_appointment_offer_marker(draft)
     safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
+    if helpdesk:
+        # The judges may hand this text to the visitor instead of the composed
+        # one; it passes the same provenance gate.
+        safe_text = without_unsourced_contact_details(safe_text, citation_chunks)
     if not safe_text:
         return content, sources, decision
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]

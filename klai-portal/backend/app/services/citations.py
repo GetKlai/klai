@@ -25,6 +25,7 @@ from klai_citations import (
     source_url_key,
     strip_model_citation_artifacts,
     trusted_sources_from_evidence_pack,
+    urls_in_passages,
 )
 
 __all__ = [
@@ -48,4 +49,5 @@ __all__ = [
     "source_url_key",
     "strip_model_citation_artifacts",
     "trusted_sources_from_evidence_pack",
+    "urls_in_passages",
 ]

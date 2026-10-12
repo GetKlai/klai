@@ -1467,3 +1467,86 @@ async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(m
 
     assert text == contact_reply("nl")
     assert litellm.retrieve_requests == []
+
+
+# ─── The provenance gate: addresses and numbers only from the passages ───
+
+
+def _article_with(text: str) -> dict:
+    return {
+        "chunk_id": "c3",
+        "evidence_id": "ev3",
+        "title": "Klik-en-bel koppeling",
+        "text": text,
+        "source_url": "https://help.example.com/klik-en-bel",
+        "reranker_score": 0.9,
+    }
+
+
+async def _gated_turn(monkeypatch, reply: str, article_text: str):
+    article = _article_with(article_text)
+    litellm = _LiteLLM(model_text=reply, selection=_selection("answers", (1, article_text[:60])), turn=_turn_verdict())
+    return await _route_turn(
+        monkeypatch,
+        turn=_turn_verdict(),
+        question="Wat is het adres van de koppeling?",
+        band="high",
+        items=[article],
+        litellm=litellm,
+    )
+
+
+async def test_an_address_that_stands_in_the_passage_reaches_the_visitor_and_an_invented_one_does_not(monkeypatch):
+    """A visitor asked twice for the API address and got an empty line: the
+    reply stripper removed every URL, the one from the article included."""
+    _, text, _ = await _gated_turn(
+        monkeypatch,
+        "Het adres is https://api.example.com/clicktodial/ en de uitleg staat op https://evil.example.com/phish.",
+        "Stuur de aanvraag naar https://api.example.com/clicktodial/ met je token.",
+    )
+
+    assert "https://api.example.com/clicktodial/" in text
+    assert "evil.example.com" not in text
+
+
+async def test_a_phone_number_that_is_not_in_the_passage_takes_its_sentence_with_it(monkeypatch):
+    """The widget gave a Belgian number from another article three times and
+    an invented head-office number once; the check flagged the sentence and
+    nothing acted."""
+    _, text, _ = await _gated_turn(
+        monkeypatch,
+        "Vul het formaat +31507009999 in. Lukt dat niet, bel dan 03 303 4020.",
+        "Gebruik het formaat +31507009999, zonder spaties.",
+    )
+
+    assert "+31507009999" in text
+    assert "303 4020" not in text
+    assert "Lukt dat niet" not in text
+
+
+def test_the_contact_gate_reads_dotted_numbers_keeps_the_next_sentence_and_drops_an_orphan_marker():
+    text = (
+        "1. Bel 03.303.40.20. gebruik daarna de handleiding.\n"
+        "2. Vul het formaat +31 (0)50 700 9999 in.\n"
+        "Tussen 01-09-2026 - 30-09-2026 geldt de actie."
+    )
+    passage = [{"text": "Gebruik het formaat 050 700 9999 zonder spaties."}]
+
+    gated = partner_chat.without_unsourced_contact_details(text, passage)
+
+    assert "303" not in gated
+    assert "gebruik daarna de handleiding." in gated
+    assert "+31 (0)50 700 9999" in gated
+    assert "01-09-2026 - 30-09-2026" in gated
+    assert "\n1.\n" not in f"\n{gated}\n"
+
+
+async def test_the_judges_cannot_hand_the_visitor_the_ungated_draft(monkeypatch):
+    """The judges may return the draft instead of the composed text; that text
+    passes the same gate."""
+    reply = "Bel ons op 03 303 4020. Dan kijken we mee."
+    litellm = _LiteLLM(model_text=reply, answer_judge=_answer_verdict("answered"), grounding=httpx.ConnectError("x"))
+
+    text, _, _ = await _answer(litellm, stream=False)
+
+    assert "303 4020" not in text
