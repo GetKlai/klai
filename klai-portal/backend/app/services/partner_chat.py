@@ -3852,13 +3852,13 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         if rewrite.taxonomy_node_ids:
             retrieve_body["taxonomy_node_ids"] = rewrite.taxonomy_node_ids
     else:
-        # A follow-up travels with the two queries of the conversation's case
-        # (case_file.py has the numbers); a first question with none: two
-        # paraphrases from their own model call found the known article in 19
-        # of 21 first turns against 18 of 21 without, and answered 41 against
-        # 43 (plan §8, step M). A fanned-out message gets none either:
-        # retrieval-api would run the variants of the whole message inside
-        # every sub-question's pass.
+        # Every widget turn travels with the two queries of the conversation's
+        # case (case_file.py has the numbers). The two paraphrases a first
+        # question used to get from their own model call are gone: on 58 first
+        # turns they found the known article in 19 of 21 against 18 of 21 with
+        # the case's queries, and answered 41 against 40 (plan §8, step M). A
+        # fanned-out message gets none: retrieval-api would run the variants of
+        # the whole message inside every sub-question's pass.
         query_variants = [] if sub_queries else list(follow_up_variants or [])
         retrieve_body = {
             # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010

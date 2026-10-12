@@ -38,10 +38,11 @@ async def test_the_record_is_written_before_the_later_check_and_its_signals_afte
     turn = KnowledgeTurn()
     turn.grounding_check = asyncio.create_task(later_check())
 
+    before = set(partner._pending)
     partner._write_widget_record(
         turn, widget_id="w1", session_key="s1", role="assistant", content="x", turn_id="t1", answer_signals=signals
     )
-    await asyncio.gather(*partner._pending)
+    await asyncio.gather(*(partner._pending - before))
 
     assert order == ["record:False", "patch:all_in_articles:t1"]
 
@@ -52,10 +53,11 @@ async def test_without_a_later_check_the_record_is_written_once_and_never_patche
     monkeypatch.setattr(partner, "record_widget_turn", record)
     monkeypatch.setattr(partner, "patch_answer_signals", patch)
 
+    before = set(partner._pending)
     partner._write_widget_record(
         KnowledgeTurn(), widget_id="w1", session_key="s1", role="assistant", content="x", answer_signals={}
     )
-    await asyncio.gather(*partner._pending)
+    await asyncio.gather(*(partner._pending - before))
 
     record.assert_awaited_once()
     patch.assert_not_awaited()

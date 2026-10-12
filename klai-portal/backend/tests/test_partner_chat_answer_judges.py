@@ -1046,21 +1046,20 @@ async def test_the_judge_is_told_which_subjects_are_not_answered(monkeypatch):
     assert "prijzen, tarieven, offertes" in case_request["messages"][0]["content"]
 
 
-async def test_the_case_runs_concurrently_with_retrieval_on_a_first_turn():
-    """Each side waits for the other to have started; run one after the other, this times out."""
+async def test_the_case_runs_before_retrieval_on_a_first_turn():
+    """The search carries the case's queries, so the case is complete when the search starts."""
     from app.api.partner import ChatCompletionsRequest, chat_completions
 
-    retrieval_started, case_started = asyncio.Event(), asyncio.Event()
+    order: list[str] = []
 
-    async def retrieve(**_kwargs):
-        retrieval_started.set()
-        await asyncio.wait_for(case_started.wait(), 1)
+    async def retrieve(**kwargs):
+        order.append(f"retrieve:{kwargs['follow_up_variants']}")
         return [CHUNK_900], "SUPPORT PROFILE", [], False
 
     async def update_case(_messages, _previous, _settings, **_kwargs):
-        case_started.set()
-        await asyncio.wait_for(retrieval_started.wait(), 1)
-        return case_file.Case.model_validate(_case())
+        await asyncio.sleep(0)
+        order.append("case")
+        return case_file.Case.model_validate(_case("knowledge", "zoekvraag uit de zaak"))
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeResult(rows=[FakeKB(id=10, name="KB", slug="kb-a", org_id=42)]))
@@ -1079,6 +1078,7 @@ async def test_the_case_runs_concurrently_with_retrieval_on_a_first_turn():
     ):
         await chat_completions(request=request, http_request=MagicMock(headers={}, client=None), auth=auth, db=db)
 
+    assert order == ["case", "retrieve:['zoekvraag uit de zaak']"]
     timing = chat.call_args.kwargs["turn_timing"]
     assert {"retrieval_ms", "case_ms", "started_at"} <= timing.keys()
 
@@ -1418,11 +1418,12 @@ async def test_a_visitor_who_wants_contact_is_not_told_the_articles_lack_an_answ
     assert litellm.answer_requests == []
 
 
-async def test_a_first_question_searches_on_its_own_words_whatever_the_case_suggests(monkeypatch):
+async def test_a_first_question_searches_with_the_cases_queries_beside_its_own_words(monkeypatch):
     litellm = _LiteLLM(model_text=ANSWER_900, case=_case("knowledge", "zoekvraag uit de zaak"))
     litellm, _, _ = await _route_turn(monkeypatch, band="high", litellm=litellm)
 
-    assert _retrieve_body(litellm)["query_variants"] is None
+    assert _retrieve_body(litellm)["query"] == QUESTION_900
+    assert _retrieve_body(litellm)["query_variants"] == ["zoekvraag uit de zaak"]
 
 
 async def test_a_failed_case_leaves_the_turn_as_it_was(monkeypatch):
