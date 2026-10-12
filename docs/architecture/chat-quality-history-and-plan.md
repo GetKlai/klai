@@ -29,6 +29,9 @@ Er zijn twee chats op dezelfde kennis. De interne chat laat medewerkers de kenni
 | 22 tot 24 sep | Een vraagstap in drie versies; de regel voor zwakke bronnen | 17 gesprekken met een gesimuleerde bezoeker. Later bleek dat de vraagstap in 0 van 488 herspeelde vragen iets deed (AJ 2.53, 2.54) |
 | 24 tot 25 sep | Eén pijplijn voor widget, partner en interne chat; maskering van persoonsgegevens op widgetaanroepen; een vaste vraagstap | De widget is na het samenvoegen niet opnieuw gemeten; de maskering is niet gemeten |
 | 28 tot 29 sep | Review door de eigenaar van 109 echte antwoorden uit 58 gesprekken | Aandeel goede antwoorden 54% naar 37% |
+| 30 sep | De sporen van alle beoordeelde gesprekken gelezen; de reparatie op de widget eruit; een keuzestap vóór het schrijven die bepaalt welke passages de vraag beantwoorden, en een vaste "niet gevonden" in code als geen passage dat doet | Eerst per onderdeel op gelezen gevallen met herhalingen, dan gekoppeld op kleine sets, dan twee rondes naast twee rondes van het oude pad op de hele meetlat (§8) |
+| 5 tot 12 okt | Eerste week echt verkeer met de keuzestap gelezen: 58 gesprekken, 118 beurten | Ongeveer twee derde goed of eerlijk, tegenover ruim een derde in september (één lezer, niet de eigenaar). Wat overblijft wijst naar het zoeken op vervolgbeurten, het linkfilter en de herkomst van harde feiten (§8) |
+| 12 okt | Het ontwerp herzien vanuit de architectuur: één expliciete gespreksstaat als ruggengraat, drie modelaanroepen op het pad, herkomstcontrole in code, meten erachter (§5) | Nog te bouwen en te bewijzen, in de volgorde van §7 |
 
 **Wat de review liet zien** [gemeten, 109 antwoorden, door één mens beoordeeld]. De grootste foutsoorten over de hele periode: antwoord beschadigd door de reparatie (18), een duidelijke vraag verkeerd gelezen (12), een kale of nutteloze reactie (14), geweigerd terwijl het antwoord er was (6). Bij een sterke beste bron (score 0,4 of hoger) zakte het aandeel goede antwoorden van 18 op 33 naar 8 op 26; bij een zwakke beste bron van 14 op 26 naar 8 op 17. Het verlies zit dus vooral waar de zoekscore hoog is. De beschadiging door reparatie is niet nieuw: ze kwam vóór 24 september even vaak voor. Bij deze aantallen is 54% naar 37% een richting (p ongeveer 0,09); de foutsoorten zelf zijn per antwoord gelezen.
 
@@ -149,33 +152,31 @@ Op 30 september is de broncode gelezen van twaalf systemen met een chat over eig
 
 ## 5. Het ontwerp
 
-### Het leidende inzicht
+### De twee inzichten waarop het rust
 
-Een klein model dat passages krijgt over het onderwerp van de vraag, schrijft een antwoord, ook als het antwoord er niet in staat. Het leent de vorm uit wat het leest (een menupad, een stappenlijst) en vult de inhoud zelf in. Een instructie "zeg dat het er niet staat" houdt dat niet tegen: bij zwakke bronnen werd ze in vier op de tien gevallen genegeerd.
+**Eerste inzicht (30 september).** Een klein model dat passages krijgt over het onderwerp van de vraag, schrijft een antwoord, ook als het antwoord er niet in staat. Het leent de vorm uit wat het leest en vult de inhoud zelf in. De zoekscore voorkomt dat niet, want ze meet of een passage op de zoekvraag lijkt, niet of ze de vraag beantwoordt. Daaruit volgt: beslis vóór het schrijven wat de schrijver mag lezen en of er geschreven wordt; na het schrijven wordt alleen gemeten [gemeten, §8; onderzoek §3.1 en §3.2; broncode §3.6]. Dit is gebouwd (de keuzestap) en live.
 
-De zoekscore kan dit niet voorkomen, want ze meet of een passage op de zoekvraag lijkt, niet of ze de vraag beantwoordt. In bijna de helft van de nagespeelde beurten waarin het model schreef, bevatte geen enkele passage het antwoord; in de meerderheid daarvan was de score hoog [gemeten, §8].
+**Tweede inzicht (12 oktober, uit de eerste week echt verkeer).** Elke beurt wordt behandeld als een losse vraag met een lap geschiedenis erachter. Vier modelaanroepen leiden daar elk voor zich uit af wat de bezoeker bedoelt (de vraagbeoordelaar, de herschrijving van de zoekvraag, de keuzestap, de schrijver); niemand legt het vast en niemand geeft het door. Daarom verliest "Android" of "als ingaand nummer" het onderwerp in het zoeken, terwijl de keuzestap drie stappen later wél opschrijft wat de bezoeker nodig heeft en dat veld daarna verdampt. De context van een supportgesprek is niet de laatste zin maar de zaak: het probleem, product, apparaat en richting, wat al geprobeerd is, en wat de bezoeker nu wil [gemeten: ruim twintig vervolgbeurten naar "niet gevonden" in één week; onderzoek: CLAMBER en Sufficient Context over verzinnen bij onvoldoende context; broncode: geen van de twaalf gelezen systemen houdt gespreksstaat bij, ze herschrijven alleen de vraag].
 
-Daaruit volgt de regel waar het ontwerp op rust:
+Daaruit volgt de regel waar het ontwerp nu op rust:
 
-> **Beslis vóór het schrijven wat de schrijver mag lezen, en of er geschreven wordt. Na het schrijven wordt alleen nog gemeten, niet meer gerepareerd.**
-
-Dit is ook wat het onderzoek zegt (§3.1: een model verzint vooral bij onvoldoende context; §3.2: eerst kiezen, dan schrijven) en wat de open-source systemen in hun code doen (§3.6). Wat wij daaraan toevoegen is dat het oordeel niet op onderwerp toetst maar op "beantwoordt dit deze vraag, voor hetzelfde product, apparaat en dezelfde richting", en dat "staat er niet in" in code wordt afgehandeld in plaats van aan de schrijver te worden gevraagd.
+> **Eén expliciete zaak per gesprek, in code bewaard en per beurt bijgewerkt. Elke modelaanroep is een zuivere functie van die zaak plus de passages. Code kiest de route. Alles wat naar de bezoeker gaat, wordt in code op herkomst gecontroleerd. Na het schrijven wordt alleen gemeten.**
 
 ### De stroom
 
-Eén stroom voor beide chats; alleen de uiteinden verschillen.
+Eén stroom voor de publieke en de interne chat; de code is sinds 24 september al één pad, alleen de uiteinden verschillen (tabel verderop). Gebouwd en bewezen wordt op de widget, omdat daar de meetlat ligt; de interne chat volgt op dezelfde code met een eigen meetlat (stap N in §7).
 
-| # | Stap | Wie | Wat het oplevert |
-|---|---|---|---|
-| 1 | **Begrijpen.** Soort beurt (kennisvraag, verzoek om een mens, praatje, onderwerp dat niet behandeld wordt) en toon | klein model, vaste velden; code kiest de route | route |
-| 2 | **Zoeken.** Breed: de woorden van de bezoeker plus extra zoekvragen. Liever te veel vinden dan te weinig, want stap 3 kiest | zoekmachine | passages |
-| 3 | **Kiezen.** Eén oordeel uit drie over de gevonden passages: deze beantwoorden de vraag, het hangt af van één feit, of geen enkele doet het | middelgroot model, vaste velden; code kiest de route | de gekozen passages, of een route zonder schrijver |
-| 4a | **Schrijven**, uit alleen de gekozen passages, kort, met alleen de stappen die het artikel geeft | antwoordmodel | het antwoord |
-| 4b | **Eén vraag**, als het antwoord per variant verschilt; hooguit één keer per gesprek | antwoordmodel, met het ontbrekende feit uit stap 3 | de vraag |
-| 4c | **Eerlijk "niet gevonden"** met de weg naar een mens | code, vaste tekst | de reactie |
-| 5 | **Meten.** De controle per zin kijkt mee en legt vast; ze verandert het antwoord niet | middelgroot model | meetgegevens |
+| # | Stap | Wie | Levert | Ten opzichte van nu |
+|---|---|---|---|---|
+| 1 | **Begrijpen: de zaak bijwerken.** Eén aanroep leest de zaak van de vorige beurt en het nieuwe bericht en levert vaste velden: probleem; product, apparaat, richting; al geprobeerd; wat de bezoeker nú wil (kennis, mens, contact, afspraak, praatje, buiten onderwerp); toon; twee zoekvragen afgeleid uit de zaak | klein model, vaste velden | de zaak, in het gesprek bewaard | Vervangt vier aanroepen: vraagbeoordelaar, herschrijving, verwijswoorden in het zoeken, herformuleringen. "Dit werkt niet" wordt "geprobeerd: X" en de zoekvraag blijft het probleem |
+| 2 | **Route in code.** Mens, contact, afspraak, praatje, buiten onderwerp: vaste reactie, geen schrijver | code | reactie, of door | De regex en de beoordelaar herkennen dit nu half; "ik wil jullie mailen" hoort nooit "niet gevonden" te krijgen |
+| 3 | **Zoeken, breed en op secties.** De twee zoekvragen plus de letterlijke zin, gefuseerd, teruggebracht tot hele secties (ouder-uitbreiding zoals Onyx, Dify, RAGFlow doen), zonder dubbelen en zonder losse feitzinnen uit de kennisgraaf | zoekmachine | secties | Breder zoeken is veilig omdat stap 4 kiest; zonder keuzestap haalde het alleen lijkende artikelen binnen [gemeten, stap A] |
+| 4 | **Kiezen**, tegen de zaak in plaats van tegen de laatste zin: behoefte, letterlijk citaat, oordeel; citaat in code teruggezocht | middelgroot model | gekozen secties, of een route zonder schrijver | Staat er; krijgt de zaak als invoer |
+| 5 | **Schrijven** uit de gekozen secties met de regels die het antwoord dragen; of de ene vraag; of de vaste tekst | model, model, code | de reactie | Staat er |
+| 6 | **Herkomstpoort in code.** Elke url, elk telefoonnummer, elk e-mailadres en elke menunaam in het antwoord moet in de gekozen passages staan; wat daar niet staat gaat niet mee. Links uit de passages blijven juist staan | code | de reactie | Vervangt het linkfilter dat nu het antwoord wegknipt en vangt het nummer uit een ander artikel. Exact werk, dus code [gemeten: de controle op harde feiten dekte een vijfde van alle afgekeurde zinnen, maar voor deze klasse volledig] |
+| 7 | **Meten.** De controle per zin, en per beurt een volledig spoor (zaak, zoekvragen, passages, keuze, opdracht), kort bewaard naast het gesprek | code en model | meetgegevens | Een vaste reactie bewaart nu niets, en het spoor bestaat alleen in de privé-replay |
 
-Valt stap 3 uit, dan loopt de beurt zonder keuze door, zoals elk open-source systeem dat ook doet: een storing mag geen weigering worden.
+Van maximaal acht modelaanroepen per beurt naar drie op het pad en één meting erachter. Valt stap 1 of 4 uit, dan loopt de beurt door zoals elk gelezen open-source systeem dat doet: een storing wordt geen weigering.
 
 | Punt in de stroom | Publieke chat | Interne chat |
 |---|---|---|
@@ -183,23 +184,26 @@ Valt stap 3 uit, dan loopt de beurt zonder keuze door, zoals elk open-source sys
 | Weg naar een mens | Afspraakknop | Bestaat niet |
 | Bronnen | Bronkaart | Volledige bronnenlijst |
 | Toegang | Publieke kennis | De kennisbanken van de medewerker |
-| Invoer | Korte vragen | Lange vragen en geplakte klantmails, eerst gedistilleerd |
+| Invoer | Korte vragen | Lange vragen en geplakte klantmails, eerst gedistilleerd; de zaak neemt die distillatie over |
 
-### Wat dit overbodig maakt
+### Wat dit per fout van de eerste week doet
 
-Deze onderdelen bestaan omdat de schrijver alles te lezen kreeg. Ze gaan eruit zodra de meting van begin tot eind het beeld van de proef bevestigt, elk met een eigen regel in §8:
+- Vervolgbeurt naar "niet gevonden" (de grootste): stap 1 en 3.
+- Eerste vraag die de kennisbank wel beantwoordt en toch "niet gevonden" krijgt: stap 3, en daarna lezen welke artikelen nog steeds niet komen.
+- Het linkfilter dat het antwoord wegknipt: stap 6, met stap C (linkteksten behouden bij het inlezen) ervóór.
+- Een telefoonnummer uit een artikel over een ander onderwerp: stap 6.
+- Contactverzoeken en de losse zin uit het profielvoorbeeld: stap 2, en het voorbeeld uit het profiel.
+- Een eenwoords vervolg dat het onderwerp verliest: stap 1.
 
-- de regel voor zwakke bronnen op basis van de score (stap 3 leest de passages zelf);
-- de vraagstap die artikeltitels vergelijkt (stap 3 ziet of het antwoord per variant verschilt);
-- het herschrijven na de controle (op de widget al weg; de regel die ervoor in de plaats kwam gaat ook weg);
-- de lichte antwoordbeoordelaar, als stap 3 en de controle samen hetzelfde zeggen.
+### Wat eruit gaat
+
+De lichte antwoordbeoordelaar, de regel voor zwakke bronnen op de widget, de vraagstap op artikeltitels, de herformuleringen als losse aanroep, het linkfilter als tekstknipper, en de brede modus als apart pad (de zaak zegt al wat de bezoeker wil). Elk pas na de meting die laat zien dat de nieuwe stap het dekt, met een eigen regel in §8. De herformuleringen hadden de sterkste meting van alle stappen (63 om 43, AJ 2.33); die meting wordt herhaald met de zoekvragen uit de zaak vóór ze eruit gaan.
 
 ### Wat het ontwerp niet oplost
 
-- **Het zoeken.** Stap 3 maakt zichtbaar hoe vaak het juiste artikel niet bij de passages zit terwijl de kennisbank het heeft. Dat wordt het volgende knelpunt, en stap 3 maakt breder zoeken veilig: een extra zoekgang haalt lijkende artikelen binnen, en die worden nu weggekozen in plaats van uitgeschreven.
-- **De brontekst.** Een gat waar een linktekst hoort blijft een gat.
-- **Wat niet in de kennisbank staat.** Dat blijft "niet gevonden", en wordt een lijst voor de eigenaar.
-- **Een keuzestap die ernaast zit.** Het oordelende model keurde in een eerdere proef een kwart van de goede antwoorden af op alleen het oordeel "staat er niet in" [gemeten, §8 stap 10]. In de proef met kiezen waren de gelezen afwijzingen terecht, maar dit is het risico dat de meting van begin tot eind moet wegen.
+- **Wat niet in de kennisbank staat.** Dat blijft "niet gevonden" en wordt een lijst voor de eigenaar.
+- **De brontekst.** Een gat waar een linktekst hoort blijft een gat tot stap C.
+- **Een keuzestap die ernaast zit.** Ze viel in de eerste week 6 van de 139 keer uit op tijd en oordeelde in de gelezen gevallen juist; het risico blijft dat ze een goed artikel afwijst, en de meetlat moet dat elke stap opnieuw wegen.
 
 ### Hoe het pad werkte op de helpwidget vóór de keuzestap (ochtend van 30 september)
 
@@ -235,15 +239,7 @@ Een nieuw cijfer voor "goed" is er niet [aanname zolang de eigenaar niet opnieuw
 
 ### Volgorde vanaf nu
 
-Uit het echte verkeer van de eerste week (§8). Elke stap wordt eerst klein bewezen op de gelezen gevallen, dan gekoppeld op een kleine set, dan op de hele meetlat.
-
-1. **Zoeken op vervolgbeurten.** Een bezoeker die het antwoord corrigeert of verfijnt krijgt nu "niet gevonden" omdat de zoekvraag het onderwerp mist. Met de keuzestap erachter is breder zoeken veilig: de extra zoekgang van stap A (de eerdere woorden van de bezoeker plus de herschrijving) komt terug, en de keuzestap kiest eruit. Meetlat: de ruim twintig vervolgbeurten uit oktober plus de 51 uit september.
-2. **Zoeken op eerste beurten die de kennisbank wel beantwoordt.** Belrechten, internationaal bellen, gespreksopnames: het artikel bestaat en komt niet in de acht passages. Eerst lezen waarom (woordkeuze, score, kennisgraaf), dan pas een voorstel.
-3. **Het linkfilter.** Een adres dat het antwoord is (een API-url, een menupad met link) moet blijven staan als het uit een artikel komt; nu verdwijnt het en blijft "Klik op." over. Hangt samen met stap C (linkteksten bij het inlezen).
-4. **Telefoonnummers uit artikelen.** Het profiel verbiedt een supportnummer uit een artikel te herhalen, het model doet het toch, en de controle keurt de zin af zonder gevolg. Dit is een geval voor code: een telefoonnummer dat niet in de gekozen passages staat, of dat uit een passage over een ander onderwerp komt, gaat niet mee.
-5. **Verzoeken om contact.** "Ik wil jullie mailen", "medewerker spreken": de vraagbeoordelaar herkent "wil een mens" niet altijd, en het profielvoorbeeld "Laat het gerust weten als je vastloopt" wordt als antwoord gebruikt. Het voorbeeld uit het profiel halen; de herkenning meten op de gelezen gevallen.
-6. **De keuzestap zelf.** Zes van de 139 keer viel ze uit op tijd; het record van een vaste reactie bewaart niet wat gevonden was, zodat een "niet gevonden" achteraf niet te beoordelen is. Beide zijn meetgaten, geen gedrag.
-7. Daarna wat eerder al stond: vragen met meerdere delen, de brontekst, opruimen van de lichte beoordelaar en de regel voor zwakke bronnen, en de interne chat.
+De volgorde is die van de stappen H tot en met N in §7: eerst de zaak (H), dan de herkomstpoort (I), dan zoeken op secties (J), de route voor contactverzoeken (K), het spoor (L), opruimen (M) en de interne chat (N). Wat uit de eerste week echt verkeer kwam staat in §8.
 
 ## 6. Werkafspraken
 
@@ -292,6 +288,18 @@ Volgorde: eerst vastleggen en de meetlat, daarna de kleine wijzigingen met de gr
 | E | Zoeken | Kenmerken per artikel (richting, apparaat) zodat importeren niet wint van exporteren | L | Zoekmeting op de verkeerd gelezen gevallen |
 | F | Schrijven en controleren | De reparatie op de widget is eruit (zie §8). Nog open: de regels in het profiel die om een complete procedure vragen, en de lichte antwoordbeoordelaar | – | Hele meetlat opnieuw, sporen lezen |
 | G | Interne chat | Dezelfde stappen, met een eigen meetlat uit echte interne vragen; daarna de oude route uit | L | Meetlat intern |
+
+**Herzien op 12 oktober, na de eerste week echt verkeer en het ontwerp van §5.** De stappen B tot en met G blijven staan waar ze nog niet gedekt zijn; de stappen hieronder zijn de architectuur van §5, in de volgorde waarin ze gebouwd en bewezen worden. Elke stap gaat eerst los op gelezen gevallen met herhalingen, dan gekoppeld op een kleine set die elke route raakt, dan op de hele meetlat; pas dan live.
+
+| # | Stap op het pad | Wat verandert | Omvang | Validatie |
+|---|---|---|---|---|
+| H | Begrijpen: de zaak | Eén aanroep die de zaak bijwerkt en de zoekvragen eruit afleidt; de zaak wordt bij het gesprek bewaard | L | Eerst los: op de ruim zeventig vervolgbeurten uit september en oktober, draagt de zoekvraag het onderwerp en komt het artikel in de passages? Dan gekoppeld aan de keuzestap. De meting van de herformuleringen herhaald |
+| I | Herkomstpoort in code | Url, telefoonnummer, e-mailadres en menunaam in het antwoord moeten in de gekozen passages staan; het linkfilter als tekstknipper gaat eruit | S | De zes beurten met weggeknipte adressen en de vier met een telefoonnummer uit oktober; geen verlies op de goede antwoorden van de meetlat |
+| J | Zoeken op secties, gefuseerd | Twee zoekvragen plus de letterlijke zin, gefuseerd; passage teruggebracht tot haar sectie; dubbelen en losse feitzinnen eruit vóór de keuzestap | M | Aandeel beurten waar het bekende artikel in de passages zit; de keuzestap als vangnet, dus ook het aandeel "staat er niet in" |
+| K | Route in code voor contactverzoeken | Mens, contact, afspraak uit de zaak krijgen een vaste reactie; het profielvoorbeeld "Laat het gerust weten als je vastloopt" eruit | S | De contactverzoeken uit oktober en september |
+| L | Spoor per beurt | De zaak, de zoekvragen, de gevonden passages, de keuze en de opdracht kort bewaard naast het gesprek, ook bij een vaste reactie | M | Een weekreview kan zonder naspelen |
+| M | Opruimen | Lichte antwoordbeoordelaar, regel voor zwakke bronnen op de widget, vraagstap op artikeltitels, herformuleringen als losse aanroep, brede modus als apart pad | M | Per onderdeel een meting op de hele meetlat vóór het eruit gaat |
+| N | Interne chat | Dezelfde stroom op dezelfde code, met een eigen meetlat uit echte interne vragen (was stap G) | L | Meetlat intern |
 
 
 Wat eerder is afgewezen en hier niet terugkomt: doorvragen als opdracht aan het antwoordmodel, een ruimer budget voor de controle, het samenvoegen van de twee controles achteraf, de zekerheidsband als reden om te weigeren, meer passages of een vierde bron. Twee stappen raken aan eerder werk en zeggen daarom wat er nu anders is. Stap A: op 18 september is de herschrijving van vervolgvragen juist beperkt tot verwijswoorden, omdat ze in een vijfde van de gevallen het gesprek voortzette in plaats van een zoekvraag te maken (AJ 2.6); de sporen laten zien dat die beperking het onderwerp kost, en de interne route heeft intussen een herschrijving met een rem op het verliezen van het onderwerp. Stap C: het behouden van linkteksten is op 19 september gemeten en niet uitgerold omdat een beoordelend model geen voorkeur had (IQ §11); nu is er een maat in code die het gevolg van de gaten direct telt.
