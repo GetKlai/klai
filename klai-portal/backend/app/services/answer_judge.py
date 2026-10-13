@@ -106,7 +106,7 @@ async def judge_answer(
     )
 
 
-AnswerDecision = Literal["answer", "partial_answer", "clarifying_question", "refusal", "general_knowledge"]
+AnswerDecision = Literal["answer", "partial_answer", "refusal", "general_knowledge"]
 
 
 def decide_answer(
@@ -115,8 +115,6 @@ def decide_answer(
     has_sources: bool,
     escalation: bool,
     conversational: bool,
-    clarity: Literal["clear", "ambiguous"] | None,
-    draft_is_question: bool,
     judgement: AnswerJudgement | None,
 ) -> AnswerDecision:
     """What the user gets, for every surface. The judges only add; they never remove.
@@ -143,8 +141,7 @@ def decide_answer(
       appointment button under the answer (``partial_answer``) on the widget;
       the internal chat has no button, so there it only records the verdict.
     * Without a source: the original claims rule. Unsupported statements get the
-      refusal; otherwise the text is shown, as a clarifying question (no
-      buttons) when the turn is ambiguous and the draft ends on a question.
+      refusal; otherwise the text is shown.
     * A failed judge: shown with a source, refused without one.
 
     Safety blocks and broad-mode answers never get here.
@@ -161,11 +158,9 @@ def decide_answer(
         return "partial_answer"
     if judgement.grounding == "some_not_in_articles":
         return "refusal"
-    if clarity == "ambiguous" and draft_is_question and not (escalation or conversational):
-        return "clarifying_question"
     return "answer"
 
 
 def is_clarifying_question(text: str) -> bool:
-    """The draft ends on a question: what the ambiguous-turn addendum asks the model to write."""
+    """The text ends on a question."""
     return text.rstrip().rstrip("*_ ").endswith("?")

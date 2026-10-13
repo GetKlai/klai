@@ -155,7 +155,6 @@ async def test_streaming_markers_upstream_connect_error_emits_error_frame():
                 system_prompt="system",
                 settings=_settings(),
                 org_id=1,
-                citation_output="markers",
             )
         ]
     body = b"".join(chunks).decode()
@@ -176,7 +175,6 @@ async def test_streaming_markers_upstream_read_error_emits_error_frame():
                 system_prompt="system",
                 settings=_settings(),
                 org_id=1,
-                citation_output="markers",
             )
         ]
     body = b"".join(chunks).decode()
@@ -199,7 +197,6 @@ async def test_streaming_markers_upstream_status_error_emits_error_frame():
                 system_prompt="system",
                 settings=_settings(),
                 org_id=1,
-                citation_output="markers",
             )
         ]
     body = b"".join(chunks).decode()

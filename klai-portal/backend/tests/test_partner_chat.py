@@ -46,7 +46,7 @@ def _mock_retrieval_log(monkeypatch):
     The assertion tests (test_retrieval_log_scheduled) still verify that
     asyncio.create_task was called; only the argument type changes.
     """
-    monkeypatch.setattr("app.api.partner.write_retrieval_log", MagicMock())
+    monkeypatch.setattr("app.services.widget_turn.write_retrieval_log", MagicMock())
 
 
 @pytest.fixture(autouse=True)
@@ -396,7 +396,7 @@ async def test_partial_kb_id_resolution_proceeds_with_resolved_subset():
         with (
             patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
             patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-            patch("app.api.partner.asyncio"),
+            patch("app.services.widget_turn.asyncio"),
         ):
             await chat_completions(
                 request=req,
@@ -439,7 +439,7 @@ async def test_key_with_kb_access_and_no_requested_ids_passes_slugs_to_retrieval
     with (
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(
             request=req,
@@ -574,7 +574,7 @@ async def test_happy_path_non_streaming():
             "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
         ),
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         result = await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -612,7 +612,7 @@ async def test_retrieval_log_scheduled():
             return_value=([{"chunk_id": "c1", "text": "ctx", "reranker_score": 0.9}], "prompt", [], False),
         ),
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.api.partner.asyncio") as mock_asyncio,
+        patch("app.services.widget_turn.asyncio") as mock_asyncio,
     ):
         await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -650,7 +650,7 @@ async def test_kb_id_to_slug_translation():
     with (
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(), db=db)
 
@@ -693,7 +693,7 @@ async def test_knowledge_options_override_retrieval_query_kbs_and_top_k():
     with (
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response) as mock_chat,
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(
             request=req,
@@ -801,7 +801,7 @@ async def test_streaming_returns_event_stream_content_type():
             "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
         ),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         from starlette.responses import StreamingResponse
 
@@ -863,20 +863,16 @@ async def test_widget_streaming_uses_structured_citation_mode():
         ) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
-    assert mock_retrieve.call_args.kwargs["backend_managed_citations"] is True
     assert mock_retrieve.call_args.kwargs["page_context"] == {
         "url": "https://example.com/pricing",
         "path": "/pricing",
         "title": "Pricing",
     }
-    assert chat_stream.call_args.kwargs["citation_output"] == "markers"
     assert chat_stream.call_args.kwargs["citation_chunks"] == retrieved_chunks
-    assert chat_stream.call_args.kwargs["citation_source_urls"] == {}
-    assert chat_stream.call_args.kwargs["citation_source_metadata"] == {}
     assert chat_stream.call_args.kwargs["page_context"] == {
         "url": "https://example.com/pricing",
         "path": "/pricing",
@@ -918,65 +914,11 @@ async def test_widget_page_context_ignored_when_disabled():
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
     assert mock_retrieve.call_args.kwargs["page_context"] is None
-
-
-@pytest.mark.asyncio
-async def test_partner_streaming_uses_backend_managed_citations():
-    """Partner API calls use the same deterministic source selector as widgets."""
-    from app.api.partner import ChatCompletionsRequest, chat_completions
-
-    fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
-    auth = make_partner_auth(kb_access={10: "read"})
-
-    req = ChatCompletionsRequest(
-        messages=[{"role": "user", "content": "Hoe voeg ik een gebruiker toe?"}],
-        model="klai-primary",
-        stream=True,
-    )
-
-    async def mock_streaming_gen():
-        yield b"data: [DONE]\n\n"
-
-    retrieved_chunks = [
-        {
-            "chunk_id": "c1",
-            "title": "Invite and remove people",
-            "source_url": "https://www.getklai.com/docs/klai-help/invite-and-remove-people",
-            "text": "Invite a colleague from Admin > Users.",
-        }
-    ]
-
-    with (
-        patch(
-            "app.api.partner.retrieve_context",
-            return_value=(
-                retrieved_chunks,
-                "prompt",
-                [
-                    {
-                        "title": "Invite and remove people",
-                        "url": "https://www.getklai.com/docs/klai-help/invite-and-remove-people",
-                    }
-                ],
-                False,  # broad-turn flag (4-tuple from retrieve_context)
-            ),
-        ) as mock_retrieve,
-        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
-        patch("app.api.partner.asyncio"),
-    ):
-        await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
-
-    assert mock_retrieve.call_args.kwargs["backend_managed_citations"] is True
-    assert chat_stream.call_args.kwargs["citation_output"] == "markers"
-    assert chat_stream.call_args.kwargs["citation_source_urls"] == {}
-    assert chat_stream.call_args.kwargs["citation_source_metadata"] == {}
 
 
 @pytest.mark.asyncio
@@ -1008,7 +950,7 @@ async def test_streaming_chunks_forwarded():
             "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
         ),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         result = await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -1044,7 +986,7 @@ async def test_streaming_done_terminator():
     with (
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         result = await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -1078,120 +1020,13 @@ async def test_streaming_retrieval_log_fires():
     with (
         patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1"}], "prompt", [], False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio") as mock_asyncio,
+        patch("app.services.widget_turn.asyncio") as mock_asyncio,
     ):
         await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
         )
 
     mock_asyncio.create_task.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_non_streaming_strips_unretrieved_links(monkeypatch):
-    """Non-streaming partner/widget completions strip invented Markdown URLs."""
-    from app.services.partner_chat import chat_completion_non_streaming
-
-    class _Resp:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "choices": [
-                    {"message": {"content": ("Bron: [goed](https://getklai.com/) [fout](https://getklai.com/404)")}}
-                ]
-            }
-
-    class _Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_):
-            return None
-
-        async def post(self, *_, **__):
-            return _Resp()
-
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
-
-    settings = MagicMock()
-    settings.litellm_base_url = "http://litellm"
-    settings.litellm_master_key = "secret"
-
-    body = await chat_completion_non_streaming(
-        messages=[{"role": "user", "content": "Is Klai open source?"}],
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="prompt",
-        settings=settings,
-        allowed_source_urls={"https://getklai.com/"},
-    )
-
-    content = body["choices"][0]["message"]["content"]
-    assert "[goed](https://getklai.com/)" in content
-    assert "https://getklai.com/404" not in content
-    assert "fout" in content
-
-
-@pytest.mark.asyncio
-async def test_streaming_strips_unretrieved_links(monkeypatch):
-    """Streaming partner/widget completions sanitize split Markdown links before emitting."""
-    from app.services.partner_chat import chat_completion_streaming
-
-    events = [
-        {"choices": [{"delta": {"content": "Bron: [fout](https://getklai.com/4"}}]},
-        {"choices": [{"delta": {"content": "04) en [goed](https://getklai.com/)"}}]},
-        {"choices": [{"delta": {"content": "."}}]},
-    ]
-
-    class _StreamResp:
-        def raise_for_status(self):
-            return None
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_):
-            return None
-
-        async def aiter_lines(self):
-            for event in events:
-                yield "data: " + json.dumps(event)
-            yield "data: [DONE]"
-
-    class _Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_):
-            return None
-
-        def stream(self, *_, **__):
-            return _StreamResp()
-
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
-
-    settings = MagicMock()
-    settings.litellm_base_url = "http://litellm"
-    settings.litellm_master_key = "secret"
-
-    chunks = []
-    async for chunk in chat_completion_streaming(
-        messages=[{"role": "user", "content": "Is Klai open source?"}],
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="prompt",
-        settings=settings,
-        allowed_source_urls={"https://getklai.com/"},
-    ):
-        chunks.append(chunk)
-
-    body = b"".join(chunks).decode()
-    assert "https://getklai.com/404" not in body
-    assert "fout" in body
-    assert "https://getklai.com/" in body
-    assert "[DONE]" in body
 
 
 @pytest.mark.asyncio
@@ -1232,7 +1067,6 @@ async def test_non_streaming_blocks_hazardous_model_output(monkeypatch):
         temperature=0.7,
         system_prompt="prompt",
         settings=settings,
-        citation_output="markers",
     )
 
     content = body["choices"][0]["message"]["content"]
@@ -1288,7 +1122,6 @@ async def test_streaming_widget_mode_blocks_hazardous_model_output(monkeypatch):
         temperature=0.7,
         system_prompt="prompt",
         settings=settings,
-        citation_output="markers",
     ):
         chunks.append(chunk)
 
@@ -1351,7 +1184,6 @@ async def test_streaming_widget_refusal_language_follows_visitor_not_rewritten_q
         temperature=0.7,
         system_prompt="prompt",
         settings=settings,
-        citation_output="markers",
         source_query="SIP REFER VGUA error timeout",
     ):
         chunks.append(chunk)
@@ -1363,135 +1195,14 @@ async def test_streaming_widget_refusal_language_follows_visitor_not_rewritten_q
     assert "[DONE]" in body
 
 
-@pytest.mark.asyncio
-async def test_streaming_links_mode_aborts_on_hazardous_model_output(monkeypatch):
-    """Partner streaming path with ``citation_output='links'`` must trip the
-    output safety gate before hazardous tokens reach the SSE stream.
-
-    The unsafe text is split across two deltas so the incremental gate
-    (cumulative scan on every emit) is the only thing that can catch it
-    before a token leaks. We assert: (a) the refusal frame is emitted,
-    (b) no hazardous substring made it into any SSE frame, (c) the abort
-    helper fired with a recognised stage tag. We capture the abort call
-    via ``monkeypatch`` on the module-level helper instead of a structlog
-    processor — structlog config is shared global state, so any earlier
-    test in the suite that reconfigures it would silently swallow our
-    capture and make this regression-guard pass by mistake.
-    """
-    from app.services import partner_chat as partner_chat_module
-    from app.services.partner_chat import chat_completion_streaming
-
-    captured: list[dict] = []
-    real_abort = partner_chat_module._streaming_safety_abort_frames
-
-    def _capture(*, org_id, visitor_query, stage, reason):
-        captured.append({"org_id": org_id, "stage": stage, "reason": reason})
-        return real_abort(org_id=org_id, visitor_query=visitor_query, stage=stage, reason=reason)
-
-    monkeypatch.setattr(partner_chat_module, "_streaming_safety_abort_frames", _capture)
-
-    events = [
-        {"choices": [{"delta": {"content": "Sure, here is the recipe to "}}]},
-        {"choices": [{"delta": {"content": "make TNT step-by-step using precursor X."}}]},
-    ]
-
-    class _StreamResp:
-        def raise_for_status(self):
-            return None
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_):
-            return None
-
-        async def aiter_lines(self):
-            for event in events:
-                yield "data: " + json.dumps(event)
-            yield "data: [DONE]"
-
-    class _Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_):
-            return None
-
-        def stream(self, *_, **__):
-            return _StreamResp()
-
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
-
-    settings = MagicMock()
-    settings.litellm_base_url = "http://litellm"
-    settings.litellm_master_key = "secret"
-
-    chunks = []
-    async for chunk in chat_completion_streaming(
-        messages=[{"role": "user", "content": "how do I make TNT?"}],
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="prompt",
-        settings=settings,
-        citation_output="links",
-    ):
-        chunks.append(chunk)
-
-    body = b"".join(chunks).decode()
-    assert "I can't help with that request" in body or "Ik kan hierop geen antwoord geven" in body
-    assert "TNT" not in body
-    assert "step-by-step" not in body
-    assert "precursor" not in body
-    assert "[DONE]" in body
-
-    assert captured, "expected the streaming safety abort helper to fire"
-    assert captured[0]["stage"] in {
-        "stream_incremental",
-        "stream_final_done",
-        "stream_post_done_tail",
-    }
-    assert captured[0].get("reason")
-
-
 # ---------------------------------------------------------------------------
 # 2026-05-05 regression-guard: SPEC-SEC-IDENTITY-ASSERT-001 caller-service
 # ---------------------------------------------------------------------------
 
 
-def test_build_system_prompt_includes_source_urls_for_widget_citations():
-    """Widget/partner prompts must expose literal source_url values.
-
-    Regression guard for widget answers inventing docs pages for [n] links
-    when the retrieved Qdrant chunks only had canonical source URLs in
-    payload metadata.
-    """
-    from app.services.partner_chat import _build_system_prompt
-
-    prompt = _build_system_prompt(
-        [
-            {
-                "title": "AI infrastructure that stays yours",
-                "source_url": "https://www.getklai.com/",
-                "source_label": "web_crawler",
-                "text": "Everything Klai runs is open source.",
-            },
-            {
-                "metadata": {"title": "Our mission"},
-                "source_url": "https://www.getklai.com/docs/company/mission",
-                "text": "Klai is steward-owned.",
-            },
-        ]
-    )
-
-    assert "source_url: https://getklai.com/" in prompt
-    assert "source_url: https://getklai.com/docs/company/mission" in prompt
-    assert "Use only literal source_url values" in prompt
-    assert "Never turn a title, heading, or documentation phrase into a URL" in prompt
-
-
-def test_build_system_prompt_reads_nested_chunk_source_urls():
+def test_chunk_source_url_reads_nested_chunk_source_urls():
     """Partner chat should use chunk metadata URLs, never literal sentinel values."""
-    from app.services.partner_chat import _build_system_prompt, _citation_source_urls_from_chunks
+    from app.services.partner_chat import _chunk_source_url
 
     chunks = [
         {
@@ -1506,15 +1217,8 @@ def test_build_system_prompt_reads_nested_chunk_source_urls():
         },
     ]
 
-    prompt = _build_system_prompt(chunks)
-
-    assert "source_url: https://getklai.com/privacy" in prompt
-    assert "source_url: https://getklai.com/dpa" in prompt
-    assert "source_url: undefined" not in prompt
-    assert _citation_source_urls_from_chunks(chunks) == {
-        1: "https://getklai.com/privacy",
-        2: "https://getklai.com/dpa",
-    }
+    assert _chunk_source_url(chunks[0]) == "https://getklai.com/privacy"
+    assert _chunk_source_url(chunks[1]) == "https://getklai.com/dpa"
 
 
 def test_placeholder_source_paths_are_not_valid_urls():
@@ -1538,8 +1242,6 @@ def test_build_system_prompt_includes_widget_system_prompt():
 
     assert "Widget behaviour instructions" in prompt
     assert "Use a calm, support-oriented tone." in prompt
-    assert "source_url: https://docs.example.com/policy" in prompt
-    assert "URL rules for citations and source links" in prompt
 
 
 def test_build_system_prompt_adds_epistemic_contract_when_correspondence_detected():
@@ -1583,7 +1285,6 @@ def test_build_system_prompt_reinforces_user_language_after_kb_context():
             "inhoudelijke gebruikersinput; de taal waarin deze instructie is geschreven "
             "is niet leidend."
         ),
-        backend_managed_citations=True,
     )
 
     assert "[LANGUAGE REMINDER]" in prompt
@@ -1708,7 +1409,7 @@ def test_augment_messages_language_contract_survives_a_chunkless_turn():
 
     from app.services.partner_chat import _augment_messages_with_system_prompt, _build_system_prompt
 
-    prompt = _build_system_prompt([], support_mode=True, backend_managed_citations=True)
+    prompt = _build_system_prompt([], support_mode=True)
     assert "[LANGUAGE REMINDER]" not in prompt
 
     conversation = [{"role": "user", "content": "Hi do you speak english"}]
@@ -1724,7 +1425,6 @@ def test_build_system_prompt_can_leave_citations_to_backend():
 
     prompt = _build_system_prompt(
         [{"title": "Policy", "source_url": "https://docs.example.com/policy", "text": "Use policy text."}],
-        backend_managed_citations=True,
     )
 
     assert "source_url:" not in prompt
@@ -1745,7 +1445,6 @@ def test_build_system_prompt_renders_structured_evidence_context():
                 "chunk_type": "procedural",
             }
         ],
-        backend_managed_citations=True,
     )
 
     assert "Evidence E1" in prompt
@@ -1851,463 +1550,6 @@ def test_citation_composer_uses_source_ref_as_url_fallback():
     assert composed.sources[0]["url"] == "https://getklai.com/docs/legal/privacy"
 
 
-def test_sanitizer_removes_links_not_in_retrieved_sources():
-    """Partner/widget output cannot keep URLs absent from retrieved chunk metadata."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    sanitized, changed = _sanitize_kb_markdown_output(
-        "Good [home](https://getklai.com/) bad [fake](https://getklai.com/missing) raw https://bad.example/x",
-        allowed_source_urls={"https://getklai.com/"},
-    )
-
-    assert changed == 2
-    assert "[home](https://getklai.com/)" in sanitized
-    assert "https://getklai.com/missing" not in sanitized
-    assert "https://bad.example/x" not in sanitized
-    assert "link removed" not in sanitized
-    assert "fake" in sanitized
-
-
-def test_sanitizer_rewrites_citations_from_chunk_source_map():
-    """The model may choose [n]; the backend owns the actual citation URL."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    sanitized, changed = _sanitize_kb_markdown_output(
-        "Klai verwerkt accountgegevens [1](undefined) en factuurgegevens [2].",
-        allowed_source_urls=set(),
-        citation_source_urls={
-            1: "https://www.getklai.com/privacy",
-            2: "https://www.getklai.com/subprocessors",
-        },
-    )
-
-    assert changed >= 1
-    assert "[1](https://getklai.com/privacy)" in sanitized
-    assert "[2](https://getklai.com/subprocessors)" in sanitized
-    assert "undefined" not in sanitized
-
-
-def test_sanitizer_deduplicates_adjacent_citations_for_same_document():
-    """Multiple chunks from one document should render as one source link."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    sanitized, changed = _sanitize_kb_markdown_output(
-        "Klai is steward-owned [1][2], [3] and mission-led [4].",
-        allowed_source_urls=set(),
-        citation_source_urls={
-            1: "https://www.getklai.com/docs/company/steward-ownership",
-            2: "https://getklai.com/docs/company/steward-ownership",
-            3: "https://www.getklai.com/docs/company/steward-ownership/",
-            4: "https://www.getklai.com/docs/company/mission",
-        },
-    )
-
-    assert changed >= 1
-    assert sanitized == (
-        "Klai is steward-owned "
-        "[1](https://getklai.com/docs/company/steward-ownership) "
-        "and mission-led [2](https://getklai.com/docs/company/mission)."
-    )
-    assert "www.getklai.com" not in sanitized
-
-
-def test_sanitizer_removes_repeated_same_document_citations_across_answer():
-    """A widget answer should not show the same source link after every bullet."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    sanitized, changed = _sanitize_kb_markdown_output(
-        ("Klai B.V. collects:\n- Account data [1].\n- Usage data [1].\n- Query data [1].\n- Billing data [1]."),
-        allowed_source_urls=set(),
-        citation_source_urls={1: "https://www.getklai.com/docs/legal/privacy"},
-    )
-
-    assert changed >= 1
-    assert sanitized.count("https://getklai.com/docs/legal/privacy") == 1
-    assert sanitized == (
-        "Klai B.V. collects:\n"
-        "- Account data [1](https://getklai.com/docs/legal/privacy).\n"
-        "- Usage data.\n"
-        "- Query data.\n"
-        "- Billing data."
-    )
-
-
-def test_sanitizer_separates_multiple_different_citations():
-    """Adjacent different source links must not render as one glued label."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    sanitized, changed = _sanitize_kb_markdown_output(
-        "Klai is public [1][3][7].",
-        allowed_source_urls=set(),
-        citation_source_urls={
-            1: "https://getklai.com/docs/company/open-source",
-            3: "https://getklai.com/docs/legal/dpa",
-            7: "https://getklai.com/docs/legal/subprocessors",
-        },
-    )
-
-    assert changed >= 1
-    assert sanitized == (
-        "Klai is public "
-        "[1](https://getklai.com/docs/company/open-source), "
-        "[2](https://getklai.com/docs/legal/dpa), "
-        "[3](https://getklai.com/docs/legal/subprocessors)."
-    )
-
-
-def test_sanitizer_maps_chunk_numbers_to_document_source_numbers():
-    """Visible source numbers are document numbers, not raw retrieval chunk indices."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    sanitized, changed = _sanitize_kb_markdown_output(
-        "Steward ownership is written into the articles [13].",
-        allowed_source_urls=set(),
-        citation_source_urls={
-            1: "https://getklai.com/docs/company/open-source",
-            13: "https://getklai.com/docs/company/steward-ownership",
-        },
-    )
-
-    assert changed == 0
-    assert sanitized == (
-        "Steward ownership is written into the articles [1](https://getklai.com/docs/company/steward-ownership)."
-    )
-
-
-def test_sanitizer_repairs_malformed_citation_link_text():
-    """The backend should not leak '4(https://...)' into the widget."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    sanitized, changed = _sanitize_kb_markdown_output(
-        "Naam en e-mailadres 4(https://getklai.com/docs/legal/privacy).",
-        allowed_source_urls=set(),
-        citation_source_urls={4: "https://getklai.com/docs/legal/privacy"},
-    )
-
-    assert changed >= 1
-    assert sanitized == ("Naam en e-mailadres [1](https://getklai.com/docs/legal/privacy).")
-
-
-def test_sanitizer_can_emit_structured_citation_markers():
-    """Widget output keeps source markers in text and moves URLs to structured sources."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    emitted_order: list[str] = []
-    sanitized, changed = _sanitize_kb_markdown_output(
-        ("Naam en e-mailadres 4(https://getklai.com/docs/legal/privacy). Gebruik [4]. DPA [7]."),
-        allowed_source_urls=set(),
-        citation_source_urls={
-            4: "https://getklai.com/docs/legal/privacy",
-            7: "https://getklai.com/docs/legal/dpa",
-        },
-        emitted_source_key_order=emitted_order,
-        citation_output="markers",
-    )
-
-    assert changed >= 1
-    assert sanitized == "Naam en e-mailadres (1). Gebruik. DPA (2)."
-    assert emitted_order == [
-        "https://getklai.com/docs/legal/privacy",
-        "https://getklai.com/docs/legal/dpa",
-    ]
-
-
-def test_sanitizer_groups_structured_citation_markers_with_commas():
-    """Widget markers use one compact parenthesized group for same-position sources."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    emitted_order: list[str] = []
-    sanitized, changed = _sanitize_kb_markdown_output(
-        "Klai is public [1][3][7].",
-        allowed_source_urls=set(),
-        citation_source_urls={
-            1: "https://getklai.com/docs/company/open-source",
-            3: "https://getklai.com/docs/legal/dpa",
-            7: "https://getklai.com/docs/legal/subprocessors",
-        },
-        emitted_source_key_order=emitted_order,
-        citation_output="markers",
-    )
-
-    assert changed >= 1
-    assert sanitized == "Klai is public (1,2,3)."
-    assert emitted_order == [
-        "https://getklai.com/docs/company/open-source",
-        "https://getklai.com/docs/legal/dpa",
-        "https://getklai.com/docs/legal/subprocessors",
-    ]
-
-
-def test_sanitizer_converts_bare_number_citation_runs_for_widget_markers():
-    """Models sometimes emit citation numbers as '3,5,8' without brackets."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    emitted_order: list[str] = []
-    sanitized, changed = _sanitize_kb_markdown_output(
-        "Klai is een Europees AI-platform. 3,5,8",
-        allowed_source_urls=set(),
-        citation_source_urls={
-            3: "https://getklai.com/",
-            5: "https://getklai.com/docs/company/steward-ownership",
-            8: "https://getklai.com/docs/legal/privacy",
-        },
-        emitted_source_key_order=emitted_order,
-        citation_output="markers",
-    )
-
-    assert changed >= 1
-    assert sanitized == "Klai is een Europees AI-platform. (1,2,3)"
-    assert emitted_order == [
-        "https://getklai.com/",
-        "https://getklai.com/docs/company/steward-ownership",
-        "https://getklai.com/docs/legal/privacy",
-    ]
-
-
-def test_sanitizer_removes_parenthesized_raw_urls_without_placeholder():
-    """Raw unretrieved URLs in parentheses should not render as '(link removed)'."""
-    from app.services.partner_chat import _sanitize_kb_markdown_output
-
-    sanitized, changed = _sanitize_kb_markdown_output(
-        "Klai is open source [1] (https://github.com/getklai/klai).",
-        allowed_source_urls={"https://getklai.com/"},
-    )
-
-    assert changed == 1
-    assert "https://github.com/getklai/klai" not in sanitized
-    assert "link removed" not in sanitized
-    assert "()" not in sanitized
-    assert sanitized == "Klai is open source [1]."
-
-
-def test_stream_sanitizer_holds_split_markdown_links_until_safe():
-    """Split SSE deltas cannot leak an unapproved URL before the closing ')'."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    allowed = {"https://getklai.com/"}
-    out1, pending, changed1 = _pop_sanitized_stream_text(
-        "See [fake](https://getklai.com/miss",
-        allowed_source_urls=allowed,
-        final=False,
-    )
-    out2, pending, changed2 = _pop_sanitized_stream_text(
-        pending + "ing) and [home](https://getklai.com/).",
-        allowed_source_urls=allowed,
-        final=True,
-    )
-
-    assert out1 == "See "
-    assert pending == ""
-    assert changed1 + changed2 == 1
-    assert "https://getklai.com/missing" not in out1 + out2
-    assert "[home](https://getklai.com/)" in out1 + out2
-
-
-def test_stream_sanitizer_rewrites_split_undefined_citation_to_chunk_url():
-    """A streamed [1] followed by (undefined) must not become /undefined in the widget."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    citations = {1: "https://www.getklai.com/privacy"}
-    out1, pending, changed1 = _pop_sanitized_stream_text(
-        "Klai verwerkt accountgegevens [1]",
-        allowed_source_urls=set(),
-        citation_source_urls=citations,
-        final=False,
-    )
-    out2, pending, changed2 = _pop_sanitized_stream_text(
-        pending + "(undefined).",
-        allowed_source_urls=set(),
-        citation_source_urls=citations,
-        final=True,
-    )
-
-    body = out1 + out2
-    assert out1 == "Klai verwerkt accountgegevens "
-    assert pending == ""
-    assert changed1 + changed2 == 1
-    assert body == "Klai verwerkt accountgegevens [1](https://getklai.com/privacy)."
-    assert "undefined" not in body
-
-
-def test_stream_sanitizer_links_bare_citation_from_chunk_url():
-    """Bare [n] citations are linked from retrieval metadata once the token is complete."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    out, pending, changed = _pop_sanitized_stream_text(
-        "Zie [1].",
-        allowed_source_urls=set(),
-        citation_source_urls={1: "https://www.getklai.com/privacy"},
-        final=True,
-    )
-
-    assert pending == ""
-    assert changed == 0
-    assert out == "Zie [1](https://getklai.com/privacy)."
-
-
-def test_stream_sanitizer_deduplicates_split_bare_citation_run():
-    """Streaming should hold citation runs long enough to avoid repeated links."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    citations = {
-        1: "https://www.getklai.com/docs/company/steward-ownership",
-        2: "https://getklai.com/docs/company/steward-ownership",
-        3: "https://www.getklai.com/docs/company/steward-ownership/",
-    }
-    out1, pending, changed1 = _pop_sanitized_stream_text(
-        "Klai is steward-owned [1]",
-        allowed_source_urls=set(),
-        citation_source_urls=citations,
-        final=False,
-    )
-    out2, pending, changed2 = _pop_sanitized_stream_text(
-        pending + "[2][3].",
-        allowed_source_urls=set(),
-        citation_source_urls=citations,
-        final=True,
-    )
-
-    assert out1 == "Klai is steward-owned "
-    assert pending == ""
-    assert changed1 + changed2 == 1
-    assert out2 == "[1](https://getklai.com/docs/company/steward-ownership)."
-
-
-def test_stream_sanitizer_removes_repeated_same_document_citations_across_deltas():
-    """Streaming keeps answer-level source state, not just per-delta state."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    emitted: set[str] = set()
-    citations = {1: "https://www.getklai.com/docs/legal/privacy"}
-    out1, pending, changed1 = _pop_sanitized_stream_text(
-        "Account data [1].\nUsage data ",
-        allowed_source_urls=set(),
-        citation_source_urls=citations,
-        emitted_source_keys=emitted,
-        final=False,
-    )
-    out2, pending, changed2 = _pop_sanitized_stream_text(
-        pending + "[1].",
-        allowed_source_urls=set(),
-        citation_source_urls=citations,
-        emitted_source_keys=emitted,
-        final=True,
-    )
-
-    body = out1 + out2
-    assert pending == ""
-    assert changed1 + changed2 == 1
-    assert body == "Account data [1](https://getklai.com/docs/legal/privacy).\nUsage data."
-    assert body.count("https://getklai.com/docs/legal/privacy") == 1
-
-
-def test_stream_sanitizer_separates_explicit_citation_link_runs():
-    """Explicit Markdown citation links can also arrive glued together."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    citations = {
-        1: "https://getklai.com/docs/company/open-source",
-        3: "https://getklai.com/docs/legal/dpa",
-        7: "https://getklai.com/docs/legal/subprocessors",
-    }
-    out, pending, changed = _pop_sanitized_stream_text(
-        (
-            "[1](https://getklai.com/docs/company/open-source)"
-            "[3](https://getklai.com/docs/legal/dpa)"
-            "[7](https://getklai.com/docs/legal/subprocessors)."
-        ),
-        allowed_source_urls=set(),
-        citation_source_urls=citations,
-        emitted_source_keys=set(),
-        final=True,
-    )
-
-    assert pending == ""
-    assert changed == 0
-    assert out == (
-        "[1](https://getklai.com/docs/company/open-source), "
-        "[2](https://getklai.com/docs/legal/dpa), "
-        "[3](https://getklai.com/docs/legal/subprocessors)."
-    )
-
-
-def test_stream_sanitizer_repairs_malformed_citation_link_text():
-    """Streaming should repair label(url) citations before the widget sees them."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    out, pending, changed = _pop_sanitized_stream_text(
-        "Naam en e-mailadres 4(https://getklai.com/docs/legal/privacy).",
-        allowed_source_urls=set(),
-        citation_source_urls={4: "https://getklai.com/docs/legal/privacy"},
-        emitted_source_keys=set(),
-        final=True,
-    )
-
-    assert pending == ""
-    assert changed >= 1
-    assert out == "Naam en e-mailadres [1](https://getklai.com/docs/legal/privacy)."
-
-
-def test_stream_sanitizer_can_emit_structured_citation_markers():
-    """Streaming widget output keeps URLs out of assistant text."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    emitted_order: list[str] = []
-    out, pending, changed = _pop_sanitized_stream_text(
-        "Naam en e-mailadres 4(https://getklai.com/docs/legal/privacy).",
-        allowed_source_urls=set(),
-        citation_source_urls={4: "https://getklai.com/docs/legal/privacy"},
-        emitted_source_keys=set(),
-        emitted_source_key_order=emitted_order,
-        citation_output="markers",
-        final=True,
-    )
-
-    assert pending == ""
-    assert changed >= 1
-    assert out == "Naam en e-mailadres (1)."
-    assert emitted_order == ["https://getklai.com/docs/legal/privacy"]
-
-
-def test_stream_sanitizer_converts_bare_number_citation_runs_for_widget_markers():
-    """The stream guard keeps citation-number tails long enough to normalize them."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    emitted_order: list[str] = []
-    citations = {
-        3: "https://getklai.com/",
-        5: "https://getklai.com/docs/company/steward-ownership",
-        8: "https://getklai.com/docs/legal/privacy",
-    }
-    out1, pending, changed1 = _pop_sanitized_stream_text(
-        "Klai is een Europees AI-platform. 3,",
-        allowed_source_urls=set(),
-        citation_source_urls=citations,
-        emitted_source_keys=set(),
-        emitted_source_key_order=emitted_order,
-        citation_output="markers",
-        final=False,
-    )
-    out2, pending, changed2 = _pop_sanitized_stream_text(
-        pending + "5,8",
-        allowed_source_urls=set(),
-        citation_source_urls=citations,
-        emitted_source_keys=set(),
-        emitted_source_key_order=emitted_order,
-        citation_output="markers",
-        final=True,
-    )
-
-    assert pending == ""
-    assert changed1 + changed2 >= 1
-    assert out1 + out2 == "Klai is een Europees AI-platform. (1,2,3)"
-    assert emitted_order == [
-        "https://getklai.com/",
-        "https://getklai.com/docs/company/steward-ownership",
-        "https://getklai.com/docs/legal/privacy",
-    ]
-
-
 @pytest.mark.asyncio
 async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
     """Widget streams receive controlled source metadata selected after generation."""
@@ -2353,14 +1595,6 @@ async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
         temperature=0.7,
         system_prompt="prompt",
         settings=settings,
-        allowed_source_urls=set(),
-        citation_source_urls={4: "https://getklai.com/docs/legal/privacy"},
-        citation_source_metadata={
-            "https://getklai.com/docs/legal/privacy": {
-                "title": "Privacy policy",
-                "url": "https://getklai.com/docs/legal/privacy",
-            }
-        },
         citation_chunks=[
             {
                 "title": "Privacy policy",
@@ -2375,7 +1609,6 @@ async def test_streaming_widget_mode_emits_structured_sources(monkeypatch):
                 "url": "https://getklai.com/docs/legal/privacy",
             }
         ],
-        citation_output="markers",
     ):
         chunks.append(chunk)
 
@@ -2458,7 +1691,6 @@ async def test_streaming_widget_mode_composes_sources_without_model_citations(mo
                 "url": "https://getklai.com/docs/company/steward-ownership",
             }
         ],
-        citation_output="markers",
     ):
         chunks.append(chunk)
 
@@ -2536,7 +1768,6 @@ async def test_streaming_widget_mode_respects_emit_sources_false(monkeypatch):
                 "url": "https://getklai.com/docs/company/steward-ownership",
             }
         ],
-        citation_output="markers",
         emit_sources=False,
     ):
         chunks.append(chunk)
@@ -2640,7 +1871,6 @@ async def test_streaming_widget_mode_filters_sources_against_composed_answer(mon
                 "evidence_ids": ["E2"],
             },
         ],
-        citation_output="markers",
     ):
         chunks.append(chunk)
 
@@ -2717,7 +1947,6 @@ async def test_streaming_widget_mode_keeps_uploaded_document_source_without_url(
                 "evidence_ids": ["E1"],
             }
         ],
-        citation_output="markers",
     ):
         chunks.append(chunk)
 
@@ -2774,7 +2003,6 @@ async def test_streaming_widget_mode_refuses_uncited_answer_without_sources(monk
         system_prompt="prompt",
         settings=settings,
         citation_chunks=[{"title": "Untitled", "text": "Klai information without URL."}],
-        citation_output="markers",
     ):
         chunks.append(chunk)
 
@@ -2783,31 +2011,6 @@ async def test_streaming_widget_mode_refuses_uncited_answer_without_sources(monk
     assert "legal search" not in body
     assert "beschikbare kennisbronnen" in body
     assert '"sources"' not in body
-
-
-def test_stream_sanitizer_removes_split_parenthesized_raw_urls_without_placeholder():
-    """Split parenthesized raw URLs should be removed silently, not rendered."""
-    from app.services.partner_chat import _pop_sanitized_stream_text
-
-    allowed = {"https://getklai.com/"}
-    out1, pending, changed1 = _pop_sanitized_stream_text(
-        "Klai is open source [1] (https://github.com/get",
-        allowed_source_urls=allowed,
-        final=False,
-    )
-    out2, pending, changed2 = _pop_sanitized_stream_text(
-        pending + "klai/klai).",
-        allowed_source_urls=allowed,
-        final=True,
-    )
-
-    body = out1 + out2
-    assert pending == ""
-    assert changed1 + changed2 == 1
-    assert "https://github.com/getklai/klai" not in body
-    assert "link removed" not in body
-    assert "()" not in body
-    assert body == "Klai is open source [1]."
 
 
 def test_language_correctness_log_does_not_duplicate_structlog_event(monkeypatch):

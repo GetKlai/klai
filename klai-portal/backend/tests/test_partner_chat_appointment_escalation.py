@@ -132,7 +132,6 @@ async def test_widget_classifier_controls_escalation(
         return Reply(
             text="Artikelantwoord",
             sources=[],
-            decision={},
             signals={},
             language=None,
             turn=KnowledgeTurn(),
@@ -146,7 +145,7 @@ async def test_widget_classifier_controls_escalation(
     # A support-mode turn runs in widget_turn, any other in chat_completions.
     for module in (partner, widget_turn):
         monkeypatch.setattr(module, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
-        monkeypatch.setattr(module, "write_retrieval_log", AsyncMock())
+    monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
     monkeypatch.setattr(widget_turn, "write_reply", written)
     monkeypatch.setattr(partner, "chat_completion_non_streaming", completion)
     monkeypatch.setattr(partner, "chat_completion_streaming", streaming)
@@ -429,7 +428,6 @@ async def test_stream_partner_path_has_no_escalation_frames(monkeypatch):
             source_query="hello",
             trusted_sources=_grounded_sources(),
             citation_chunks=[_good_chunk()],
-            citation_output="markers",
         )
     ]
 
@@ -533,7 +531,6 @@ async def test_non_streaming_partner_has_no_escalation_key(monkeypatch):
         temperature=0.7,
         system_prompt="sys",
         settings=_settings(),
-        citation_output="markers",
         source_query="ik kom er niet uit",
         org_id=42,
         trusted_sources=_grounded_sources(),

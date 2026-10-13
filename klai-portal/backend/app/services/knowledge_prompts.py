@@ -54,8 +54,6 @@ def sub_query_grouped_context(
     chunks: list[dict[str, Any]],
     sub_query_results: list[dict] | None,
     unchecked_questions: list[str] | None = None,
-    *,
-    include_source_urls: bool = False,
 ) -> str | None:
     """Evidence grouped per sub-question, with explicit coverage notes.
 
@@ -99,7 +97,7 @@ def sub_query_grouped_context(
             continue
         question_chunks = chunks_by_index.get(index) if isinstance(index, int) else None
         if question_chunks:
-            block = f"{header}\n{render_evidence_context(question_chunks, include_source_urls=include_source_urls)}"
+            block = f"{header}\n{render_evidence_context(question_chunks)}"
             if entry.get("confidence_band") in ("low", "unknown"):
                 block += (
                     "\n[Low relevance for this question — cite only what is "
@@ -132,7 +130,7 @@ def sub_query_grouped_context(
                 "suggest splitting the message into smaller parts.]"
             )
     if ungrouped:
-        rendered = render_evidence_context(ungrouped, include_source_urls=include_source_urls)
+        rendered = render_evidence_context(ungrouped)
         if rendered:
             blocks.append(f"[Additional evidence, not tied to one question]\n{rendered}")
     return "\n\n".join(blocks)
@@ -172,7 +170,7 @@ def kb_context_block(
     grouped = sub_query_grouped_context(chunks, sub_query_results, unchecked_questions)
     if grouped is not None:
         lines.append(grouped)
-    elif rendered := render_evidence_context(chunks, include_source_urls=False):
+    elif rendered := render_evidence_context(chunks):
         lines.append(rendered)
     for chunk in chunks:
         image_urls = [

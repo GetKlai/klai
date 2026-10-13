@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 import structlog
@@ -58,7 +58,6 @@ from app.services.partner_chat import (
     _response_language,
     _strip_web_search_tools,
     _text_offers_appointment,
-    _visitor_question,
     output_safety_violation,
     safety_refusal_message,
     without_unsourced_contact_details,
@@ -93,7 +92,6 @@ async def write_reply(
     broad_mode: bool = False,
     conversational: bool = False,
     force_escalation: bool = False,
-    clarity: Literal["clear", "ambiguous"] | None = None,
     sentiment: str | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
@@ -161,7 +159,6 @@ async def write_reply(
         return Reply(
             text="",
             sources=[],
-            decision={"route": "tool_calls"},
             signals=answer_signals if answer_signals is not None else {},
             language=response_language,
             turn=turn,
@@ -203,7 +200,6 @@ async def write_reply(
             response_language=response_language,
             force_escalation=force_escalation,
             conversational=conversational,
-            clarity=clarity,
             knowledge_turn=turn,
             delegated_org_id=delegated_org_id,
             helpdesk=helpdesk,
@@ -250,7 +246,6 @@ async def write_reply(
     return Reply(
         text=content,
         sources=sources,
-        decision={**decision, "route": "written"},
         signals=answer_signals if answer_signals is not None else {},
         language=response_language,
         turn=turn,
@@ -332,7 +327,6 @@ async def _judge(
     response_language: str | None,
     force_escalation: bool,
     conversational: bool,
-    clarity: Literal["clear", "ambiguous"] | None,
     knowledge_turn: KnowledgeTurn,
     delegated_org_id: str | None,
     helpdesk: bool,
@@ -344,10 +338,8 @@ async def _judge(
     nothing to judge and keeps the composer's refusal; a consented broad-mode
     answer is not judged either.
 
-    A clarifying question carries no buttons: a "broaden the search" or "book
-    an appointment" button under a question reads as a refusal. An uncited
-    answer keeps only an appointment offer that the backend forced or the
-    model's own words make; a partial answer always gets one.
+    An uncited answer keeps only an appointment offer that the backend forced
+    or the model's own words make; a partial answer always gets one.
     """
     if decision.get("broad_mode") == "answer":
         return content, sources, decision
@@ -404,7 +396,7 @@ async def _judge(
         # refusing (decide_answer).
         judgement, grounding = await light_judge, None
         knowledge_turn.grounding_check = _check_answer_later(
-            question=_visitor_question(messages),
+            question=_last_user_message(messages) or "",
             draft=safe_text,
             articles=articles,
             settings=settings,
@@ -419,7 +411,7 @@ async def _judge(
         judgement, grounding = await asyncio.gather(
             light_judge,
             check_grounding(
-                question=_visitor_question(messages),
+                question=_last_user_message(messages) or "",
                 draft=safe_text,
                 articles=articles,
                 settings=settings,
@@ -438,8 +430,6 @@ async def _judge(
         has_sources=bool(sources),
         escalation=force_escalation,
         conversational=conversational,
-        clarity=clarity,
-        draft_is_question=is_clarifying_question(safe_text),
         judgement=judgement,
     )
     verdicts = judgement.model_dump() if judgement is not None else {}
@@ -510,8 +500,6 @@ def _decided(
         if refused:
             return content, sources, decision
         return _refusal("answer_judge_refusal", response_language, citation_chunks, helpdesk=helpdesk)
-    if outcome == "clarifying_question":
-        return safe_text, [], {"reason": "clarifying_question"}
     if refused:
         content, sources = safe_text, []
         decision = {
@@ -536,8 +524,8 @@ def _decided(
             decision["escalation"] = _appointment_escalation()
     if outcome == "partial_answer" and helpdesk:
         decision["escalation"] = _appointment_escalation()
-    # Only a reply the visitor actually reads: a refusal and a clarifying
-    # question state nothing about the organisation. Nothing changes a reply
+    # Only a reply the visitor actually reads: a refusal states nothing about
+    # the organisation. Nothing changes a reply
     # after it is written: what the writer may read is decided before
     # (passage_selection.py), and the check's verdict is kept for measuring.
     # Editing a flagged reply was the largest cause of a bad answer in the
