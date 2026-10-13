@@ -26,7 +26,9 @@ Modelaliassen (`deploy/litellm/config.yaml`): `klai-primary` en `klai-fast` zijn
 
 ---
 
-## 1. Pad A: interne chat (LibreChat → LiteLLM)
+## 1. Pad A: interne chat (LibreChat → LiteLLM), sinds 13 oktober niet meer in gebruik
+
+**Op 13 oktober 2026 is elke tenant op het portalpad gezet** (`scripts/switch_internal_chat.py <slug> portal`): het endpoint "Klai AI" van elke LibreChat wijst naar `portal-api:8010/partner/v1`, dus elk LibreChat-gesprek loopt door §2.2. De hook hieronder is de terugweg (`switch_internal_chat.py <slug> litellm`) tot het portalpad zich op echt verkeer heeft bewezen; daarna gaat hij uit de LiteLLM-container. De beschrijving blijft staan tot dan.
 
 LibreChat vraagt altijd `klai-primary` aan, ook voor titels (`deploy/librechat/librechat.yaml:176-202`). LiteLLM draait de callbacks in deze volgorde (`deploy/litellm/config.yaml:126-158`): `klai_knowledge.klai_knowledge_hook`, `custom_router.token_router`, `klai_pii_observe`, `klai_pii_enforce`. "Mock" hieronder betekent: het model wordt overgeslagen en de gebruiker krijgt een vaste tekst (`data["mock_response"]`). Alle ankers in deze sectie zijn in `deploy/litellm/` tenzij anders vermeld.
 
