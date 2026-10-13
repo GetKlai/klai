@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.passage_selection import Evidence, PassageSelection
+from app.services.passage_selection import Evidence, PassageSelection, writer_brief
 
 _STEP = "Sluit het basisstation van de headset aan op je toestel met de meegeleverde USB-kabel."
 _SECTIONS = [
@@ -104,3 +104,35 @@ def test_a_quote_that_stands_in_no_passage_still_means_not_in_passages():
 
     assert selection.chosen(_SECTIONS) == []
     assert selection.not_in_passages(_SECTIONS) is True
+
+
+def test_the_brief_speaks_the_words_of_the_surface_it_is_written_for():
+    """The internal chat's user is an employee reading the knowledge base; a
+    brief about "help articles" and "the visitor" made Strict answer an
+    employee with "the help articles do not cover this"."""
+    selection = PassageSelection(
+        need="aansluiten", evidence=[Evidence(passage=1, quote=_STEP)], verdict="answers", question=""
+    )
+
+    widget = writer_brief(selection, _SECTIONS, internal=False, source_only=True)
+    internal = writer_brief(selection, _SECTIONS, internal=True, source_only=True)
+
+    assert "What the visitor needs" in widget and "help articles" in widget
+    assert "What the user needs" in internal and "knowledge base" in internal
+    assert "visitor" not in internal and "help article" not in internal
+    assert _STEP in widget and _STEP in internal
+
+
+def test_open_mode_is_not_held_to_the_source_s_own_words():
+    """Open may fill from general knowledge; the stricter sentence made its
+    answers worse in two internal rounds, Strict's better."""
+    selection = PassageSelection(
+        need="aansluiten", evidence=[Evidence(passage=1, quote=_STEP)], verdict="answers", question=""
+    )
+
+    strict = writer_brief(selection, _SECTIONS, internal=True, source_only=True)
+    open_mode = writer_brief(selection, _SECTIONS, internal=True, source_only=False)
+
+    assert "own order and its own words" in strict
+    assert "own order and its own words" not in open_mode
+    assert "Do not add a step, menu, cause or example that is not in the source." in open_mode

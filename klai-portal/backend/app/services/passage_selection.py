@@ -253,23 +253,45 @@ async def select_passages(
     return selection
 
 
-def writer_brief(selection: PassageSelection, chunks: list[dict]) -> str:
-    """Tell the writer what the chosen passages were chosen for.
+def writer_brief(selection: PassageSelection, chunks: list[dict], *, internal: bool, source_only: bool) -> str:
+    """Tell the writer what the chosen passages were chosen for, and how closely to keep to them.
 
     Handed only the passage, the writer still built a complete-looking
     procedure around it. The lines the selection pointed at are the answer;
-    naming them, and the need they answer, keeps the reply on them.
+    naming them, and the need they answer, keeps the reply on them. A
+    ``source_only`` reply (the widget, internal Strict) is also asked for the
+    source's own order and words, and no step, cause or example of the
+    writer's own: two replay rounds of the widget meetlat (2026-10-13) gave
+    21% and 23% flagged sentences against 26% and 25% before, and 6 and 9
+    answers that were mostly unsupported against 13 and 9; four fewer of the
+    81 expected answers came in both rounds, two of them read as an honest
+    "not covered" where a procedure used to be invented. On internal Strict
+    (2026-10-14, 36 checked answers) unsupported sentences per answer went
+    from 2.9 to 2.6. Internal Open may fill from general knowledge, and there
+    the stricter sentence made answers worse in two rounds (2.7 to 3.3 and
+    3.7 to 4.4 per answer), so Open keeps the lines and the shorter rule. The
+    internal chat gets the brief in its own words: its user is an employee
+    and the passages are the knowledge base, not help articles.
     """
     lines = list(dict.fromkeys(own for _, own in selection.found(chunks) if own))
     if not lines:
         return ""
     listed = "\n".join(f"- {line}" for line in lines)
+    who, what = ("user", "knowledge base") if internal else ("visitor", "help articles")
     return (
-        "\n\n[This turn] What the visitor needs: "
+        f"\n\n[This turn] What the {who} needs: "
         + " ".join(selection.need.split())
-        + "\nThe help articles above answer it in these lines:\n"
+        + f"\nThe {what} above answer{'s' if internal else ''} it in these lines:\n"
         + listed
-        + "\nBuild the reply on these lines and the steps that stand with them in the article. If they cover "
-        "only part of what the visitor needs, give that part and say in one sentence what the help articles do not "
-        "cover. Do not add a step, menu, cause or example that is not in the article."
+        + (
+            f"\nWrite the reply from these lines and the steps that stand with them in the source, in the source's "
+            f"own order and its own words (translated into the {who}'s language when needed): do not reword, merge, "
+            "split or complete a step, and name a menu, button or setting exactly as the source names it. If the "
+            f"lines cover only part of what the {who} needs, give that part and say in one sentence what the {what} "
+            "does not cover. Where the source gives no cause, give none; where it gives no example, give none."
+            if source_only
+            else f"\nBuild the reply on these lines and the steps that stand with them in the source. If they cover "
+            f"only part of what the {who} needs, give that part and say in one sentence what the {what} does not "
+            "cover. Do not add a step, menu, cause or example that is not in the source."
+        )
     )
