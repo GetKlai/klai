@@ -2895,7 +2895,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     )
 
     if turn.passages_chosen and turn.selection is not None and not broad:
-        system_prompt += writer_brief(turn.selection, selection_chunks)
+        system_prompt += writer_brief(turn.selection, selection_chunks, internal=internal)
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
 
