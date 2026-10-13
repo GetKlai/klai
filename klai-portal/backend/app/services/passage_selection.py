@@ -146,8 +146,19 @@ class PassageSelection(BaseModel):
         return list(picked.values())
 
     def not_in_passages(self, chunks: list[dict]) -> bool:
-        """No passage answers: the verdict says so, or no quoted sentence could be found back."""
-        return self.verdict == "not_in_passages" or (bool(self.evidence) and not self.found(chunks))
+        """No passage answers: no quoted sentence stands in a passage, or, without any quote, the verdict says so.
+
+        A verified quote outranks the verdict word. In five replay rounds of
+        the meetlat (2026-10-13) the model copied a sentence that stood in a
+        passage and still wrote "not_in_passages" 39 times; the owner expected
+        an answer in 31 of those turns and "not found" in 6. The prompt asks
+        for the list to be empty when there is no evidence, so a filled list
+        is the model's own finding, and the writer gets those passages with
+        the brief to say what they do not cover.
+        """
+        if self.evidence:
+            return not self.found(chunks)
+        return self.verdict == "not_in_passages"
 
 
 async def select_passages(

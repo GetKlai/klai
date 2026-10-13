@@ -29,6 +29,24 @@ def test_the_pointed_passage_wins_when_it_carries_the_quote_too():
     assert [chunk["chunk_id"] for chunk in selection.chosen(twice)] == ["d"]
 
 
+def test_a_verified_quote_outranks_a_not_in_passages_verdict():
+    """Five replay rounds: 39 "not in the passages" verdicts came with a sentence
+    that stood in a passage, and the owner expected an answer in 31 of them."""
+    selection = PassageSelection(
+        need="", evidence=[Evidence(passage=2, quote=_STEP)], verdict="not_in_passages", question=""
+    )
+
+    assert selection.not_in_passages(_SECTIONS) is False
+    assert [chunk["chunk_id"] for chunk in selection.chosen(_SECTIONS)] == ["b"]
+
+
+def test_without_any_quote_the_verdict_decides():
+    selection = PassageSelection(need="", evidence=[], verdict="not_in_passages", question="")
+    assert selection.not_in_passages(_SECTIONS) is True
+    thanks = PassageSelection(need="", evidence=[], verdict="answers", question="")
+    assert thanks.not_in_passages(_SECTIONS) is False
+
+
 def test_a_quote_that_stands_in_no_passage_still_means_not_in_passages():
     selection = PassageSelection(
         need="",
