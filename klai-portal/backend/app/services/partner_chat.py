@@ -68,7 +68,7 @@ from app.services.answer_grounding import (
     check_grounding,
     grounding_budget,
 )
-from app.services.answer_judge import decide_answer, is_clarifying_question, judge_answer
+from app.services.answer_judge import decide_answer, is_clarifying_question
 from app.services.chat_profile import ChatProfile, KbMode
 from app.services.chat_turn_rules import (
     MAX_SUB_QUESTIONS,
@@ -107,7 +107,6 @@ from app.services.llm_safety_adapter import (
 from app.services.passage_selection import PassageSelection, select_passages, writer_brief
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
 from app.services.query_paraphrase import first_question_variants
-from app.services.query_rewrite import rewrite_for_retrieval
 from app.services.user_provided_content import has_user_provided_content
 from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
@@ -2358,7 +2357,7 @@ def _check_answer_later(
     return task
 
 
-async def _judge_composed_answer(  # noqa: C901 - one decision per internal mode
+async def _judge_composed_answer(
     content: str,
     sources: list[dict],
     decision: dict[str, Any],
@@ -2369,32 +2368,20 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per internal mode
     settings: Settings,
     org_id: int | str | None,
     answer_signals: dict[str, Any] | None,
-    response_language: str | None,
-    clarity: Literal["clear", "ambiguous"] | None,
     profile: ChatProfile = ChatProfile(surface="widget"),
     knowledge_turn: KnowledgeTurn | None = None,
     delegated_org_id: str | None = None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3 for the internal chat: the answer judge, then the one decision.
+    """SPEC-RAG-ANSWER-JUDGES-001 REQ-3 for an internal Open or general turn: the one decision, no judge.
 
-    What differs per turn is the mode it is answered under
-    (``knowledge_turn.answer_mode``, see :func:`app.services.answer_judge.decide_answer`).
-    Partner-API keys return the composer's result untouched and make no call:
-    the judge and the refusal are written for an employee. The help widget's
-    twin is ``widget_write._judge``.
+    These turns stream live, because an employee reads the tokens as they
+    arrive: an Open answer may use general knowledge by design, so it is shown
+    as written and checked afterwards for the record only; a general turn is
+    not checked at all, it had no articles. The internal Strict turn is held
+    and judged in ``widget_write.write_reply``, like the help widget's.
+    Partner-API keys return the composer's result untouched and make no call.
 
-    Runs on the composer's result rather than inside it. The composer is
-    synchronous with two production callers and a large body of direct tests;
-    the judge is an HTTP call, and one async step after it keeps a single home
-    for the rule. Callers do not call this on a safety-blocked turn.
-
-    A Strict turn is judged and checked here, held until the check decides. An
-    Open turn is shown as written and checked afterwards for the record only; a
-    general turn is not checked at all, it had no articles.
-
-    The judge sees the draft after the marker and link stripper, exactly the
-    text the user would get. An empty result (the model wrote nothing) has
-    nothing to judge and keeps the composer's refusal.
+    An empty result (the model wrote nothing) keeps the composer's refusal.
     """
     if profile.surface != "internal":
         return content, sources, decision
@@ -2404,130 +2391,35 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per internal mode
     if not safe_text:
         return content, sources, decision
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
-
-    if answer_mode != "strict":
-        outcome = decide_answer(
-            kb_mode=answer_mode,
-            has_sources=bool(sources),
-            escalation=False,
-            conversational=False,
-            clarity=clarity,
-            draft_is_question=is_clarifying_question(safe_text),
-            judgement=None,
-        )
-        logger.info("partner_chat_answer_judge", org_id=org_id, decision=outcome, kb_mode=answer_mode)
-        if answer_signals is not None:
-            answer_signals["decision"] = outcome
-        if answer_mode == "open" and articles and knowledge_turn is not None and answer_signals is not None:
-            knowledge_turn.grounding_check = _check_answer_later(
-                question=_visitor_question(messages),
-                draft=safe_text,
-                articles=articles,
-                settings=settings,
-                org_id=org_id,
-                delegated_org_id=delegated_org_id,
-                answer_signals=answer_signals,
-            )
-        # Without a source the composer's refusal is replaced by the model's own
-        # words, cleaned like every reply without a source; an Open one is
-        # labelled general knowledge in the footer.
-        # A general turn searched nothing, so its links (web search, file
-        # names) are the model's or the user's own and stay as the hook left them.
-        uncited = draft_text if answer_mode == "general" else safe_text
-        return (content, sources, decision) if sources else (uncited, [], {"reason": outcome})
-
-    if knowledge_turn is not None and (knowledge_turn.user_provided_content or knowledge_turn.pasted_correspondence):
-        # The answer rests on what the employee attached or pasted. Judged
-        # against the articles alone, two correct observations from a
-        # screenshot read as two unsupported statements and get repaired away,
-        # with or without articles (the hook's _repair_would_be_wrong). The
-        # composer's canned refusal is replaced by the model's own words, the
-        # same way an uncited draft with no unsupported claims is below.
-        if answer_signals is not None:
-            answer_signals["decision"] = "answer"
-        return (content, sources, decision) if sources else (safe_text, [], {"reason": "user_provided_content"})
-
-    checks_started = time.perf_counter()
-    # Both checks read the same draft and run together, so the heavier one
-    # costs its own 2.1 s median once and nothing on top of the light judge.
-    judgement, grounding = await asyncio.gather(
-        judge_answer(
-            messages=messages, draft=safe_text, articles=articles, settings=settings, delegated_org_id=delegated_org_id
-        ),
-        check_grounding(
+    outcome = decide_answer(
+        kb_mode=answer_mode,
+        has_sources=bool(sources),
+        escalation=False,
+        conversational=False,
+        clarity=None,
+        draft_is_question=False,
+        judgement=None,
+    )
+    logger.info("partner_chat_answer_judge", org_id=org_id, decision=outcome, kb_mode=answer_mode)
+    if answer_signals is not None:
+        answer_signals["decision"] = outcome
+    if answer_mode == "open" and articles and knowledge_turn is not None and answer_signals is not None:
+        knowledge_turn.grounding_check = _check_answer_later(
             question=_visitor_question(messages),
             draft=safe_text,
             articles=articles,
             settings=settings,
             org_id=org_id,
-            timeout_seconds=grounding_budget(profile.surface),
             delegated_org_id=delegated_org_id,
-        ),
-    )
-    checks_ms = _elapsed_ms(checks_started)
-    if judgement is not None and grounding is not None:
-        # The statement-level check decides grounding: measured against 54
-        # hand-checked answers it catches 96% where the light judge caught 22%.
-        judgement = judgement.model_copy(update={"grounding": _grounding_label(grounding)})
-    outcome = decide_answer(
-        kb_mode="strict",
-        has_sources=bool(sources),
-        escalation=False,
-        conversational=False,
-        clarity=clarity,
-        draft_is_question=is_clarifying_question(safe_text),
-        judgement=judgement,
-    )
-    verdicts = judgement.model_dump() if judgement is not None else {}
-    logger.info(
-        "partner_chat_answer_judge",
-        org_id=org_id,
-        decision=outcome,
-        judge_failed=judgement is None,
-        grounding_checked=grounding is not None,
-        checks_ms=checks_ms,
-        unsupported=len(grounding.unsupported) if grounding is not None else None,
-        **verdicts,
-    )
-    if answer_signals is not None:
-        answer_signals.update(verdicts, decision=outcome)
-        _grounding_signals(answer_signals, grounding, keep_statements=False)
-        if judgement is None:
-            answer_signals.setdefault("judge_failed", []).append("answer")
-
-    refused = bool(decision.get(_NO_CITABLE_SOURCES_DECISION_KEY))
-    if outcome == "refusal":
-        if refused:
-            return content, sources, decision
-        refusal: dict[str, Any] = {"reason": "answer_judge_refusal", _NO_CITABLE_SOURCES_DECISION_KEY: True}
-        return _no_citable_sources_message(response_language, suggest_open_mode=True), [], refusal
-    if outcome == "clarifying_question":
-        return safe_text, [], {"reason": "clarifying_question"}
-    if refused:
-        content, sources = safe_text, []
-        decision = {
-            key: value
-            for key, value in decision.items()
-            if key not in (_NO_CITABLE_SOURCES_DECISION_KEY, "broad_mode", "escalation")
-        }
-        decision["reason"] = "uncited_no_claims"
-    # Nothing changes a reply after it is written: what the writer may read is
-    # decided before (passage_selection.py), and the check's verdict is kept
-    # for measuring. The internal rewrite went on 2026-10-13, after the
-    # selection step reached Strict (plan §8).
-    if (
-        outcome in ("answer", "partial_answer")
-        and grounding is not None
-        and len(grounding.statements) >= 2
-        and len(grounding.unsupported) == len(grounding.statements)
-        and not (citation_chunks and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks))
-    ):
-        # The selection step did not choose this turn's passages (it failed,
-        # or was skipped), so the writer read everything retrieval found. A
-        # reply in which the check then supports nothing is not shown.
-        refusal = {"reason": "grounding_nothing_left", _NO_CITABLE_SOURCES_DECISION_KEY: True}
-        return _no_citable_sources_message(response_language, suggest_open_mode=True), [], refusal
-    return content, sources, decision
+            answer_signals=answer_signals,
+        )
+    # Without a source the composer's refusal is replaced by the model's own
+    # words, cleaned like every reply without a source; an Open one is
+    # labelled general knowledge in the footer.
+    # A general turn searched nothing, so its links (web search, file
+    # names) are the model's or the user's own and stay as the hook left them.
+    uncited = draft_text if answer_mode == "general" else safe_text
+    return (content, sources, decision) if sources else (uncited, [], {"reason": outcome})
 
 
 def _visitor_question(messages: list[dict]) -> str:
@@ -2623,7 +2515,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     web_chunks: list[dict] | None = None,
     web_query: str | None = None,
     emit_sources: bool = True,
-    clarity: Literal["clear", "ambiguous"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     conversation: list[dict] | None = None,
@@ -2654,18 +2545,14 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     ``citation_chunks`` but differs on a broad-mode turn, where the caller
     empties the citation list on purpose.
 
-    ``profile.stream_live`` (only an Open internal turn) streams content
+    ``profile.stream_live`` (an internal Open or general turn) streams content
     incrementally, through :func:`_pop_live_stream_text`, instead of holding
     it for composition. Composition still runs once on the full text at the
     end for sources/signals, but its content is not re-sent: the caller
-    already saw it live. A held turn (every other profile, unchanged
-    default) keeps buffering everything, and now sends an empty-content
-    keepalive frame per upstream token while it waits — but ONLY for
-    ``surface == "internal"``: widget/partner clients are proven byte-for-byte
-    unchanged by the existing streaming tests, and adding a frame those tests
-    do not expect would fail them even though the widget's own SSE parser
-    (``klai-widget/src/api/chat-stream.ts``) already ignores an empty
-    ``delta.content`` (falsy check before ``onToken``).
+    already saw it live. A held turn (the partner key) buffers everything.
+    The internal Strict turn is not streamed here: widget_write.write_reply
+    holds and judges it, and it no longer sends the empty keepalive frames
+    this path sent while it waited.
 
     A ``tool_calls`` delta is forwarded unbuffered the moment it arrives,
     regardless of hold/live — see :func:`_sse_tool_calls_delta`. It never
@@ -2748,8 +2635,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
                             if safe_text:
                                 live_emitted.append(safe_text)
                                 yield _sse_content_delta(safe_text)
-                        elif profile.surface == "internal":
-                            yield _sse_content_delta("")
     except httpx.TransportError:
         logger.warning("partner_chat_upstream_unreachable", org_id=org_id, target=chat_url, exc_info=True)
         yield _sse_error_frame("Chat service unavailable")
@@ -2812,8 +2697,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             settings=settings,
             org_id=org_id,
             answer_signals=answer_signals,
-            response_language=response_language,
-            clarity=clarity,
             profile=profile,
             knowledge_turn=knowledge_turn,
             delegated_org_id=delegated_org_id,
@@ -3294,20 +3177,22 @@ class KnowledgeTurn:
     # The mode the answer is decided under (answer_judge.decide_answer): the
     # profile's, or "general" for an internal turn that searched nothing.
     answer_mode: KbMode = "strict"
-    # Help widget only: what the selection step made of the retrieved passages
-    # (app.services.passage_selection). None when it did not run or failed.
+    # Help widget and internal chat: what the selection step made of the
+    # retrieved passages (app.services.passage_selection). None when it did
+    # not run or failed.
     selection: PassageSelection | None = None
-    # No retrieved passage answers the question; the caller replies without a model.
+    # No retrieved passage answers the question; the widget and internal
+    # Strict reply without a model, internal Open writes from every passage.
     not_in_passages: bool = False
     # The writer's passages are the selection's, not everything retrieval found.
     passages_chosen: bool = False
-    # An Open turn's grounding check, which runs after the reply; the per-turn
-    # record waits for it before it is written.
+    # The grounding check that runs after the reply (an Open turn, or a reply
+    # written from chosen passages); the per-turn record waits for it.
     grounding_check: asyncio.Task[None] | None = None
     # Internal only (app.services.user_provided_content.has_user_provided_content):
     # this turn carries an attachment, a converted PDF, or an explicit question
     # about the visible conversation. Read by the Strict zero-chunk refusal
-    # exception and by _judge_composed_answer's grounding-check bypass.
+    # exception and by the internal Strict writer's check bypass (widget_write._judge).
     user_provided_content: bool = False
     pasted_correspondence: bool = False
 
@@ -3477,17 +3362,18 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     web_search_available: bool = False,
     # Caller-owned sink for what this turn decided besides the prompt.
     knowledge_turn: KnowledgeTurn | None = None,
-    # Help widget, follow-up turns: the case's search queries (case_file.py),
-    # run as extra retrieval passes beside the visitor's own words.
+    # The case's search queries (case_file.py), run as extra retrieval passes
+    # beside the visitor's own words: a help-widget follow-up, and an internal
+    # follow-up or pasted mail.
     follow_up_variants: list[str] | None = None,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
     One retrieval for every surface; ``profile`` sets what differs. An
-    internal turn sends the employee's identity and scope, a rewritten query
-    with the raw one beside it, and top_k 20; a Strict turn that cannot search
-    sets ``knowledge_turn.refusal`` and returns an empty prompt, and the
-    caller answers with that text without calling a model.
+    internal turn sends the employee's identity and scope and top_k 20; a
+    Strict turn that cannot search sets ``knowledge_turn.refusal`` and returns
+    an empty prompt, and the caller answers with that text without calling a
+    model.
 
     Follows the pattern from deploy/litellm/klai_knowledge.py.
 
@@ -3613,65 +3499,47 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
 
     conversation_history = _build_conversation_history(messages)
     retrieval_user_id = profile.user_id if internal else partner_user_id
-    retrieve_body: dict
-    if internal:
-        rewrite = await rewrite_for_retrieval(
-            query,
-            conversation_history,
-            zitadel_org_id=zitadel_org_id,
-            kb_slugs=kb_slugs,
-            pasted_correspondence=latest_correspondence,
-            settings=settings,
+    # A first help-widget question travels with two paraphrases, a follow-up
+    # with the two queries of the conversation's case (query_paraphrase.py and
+    # case_file.py have the numbers). A fanned-out message gets none:
+    # retrieval-api would run the variants of the whole message inside every
+    # sub-question's pass. The literal sentence stays the query on every
+    # surface, and retrieval-api resolves its references from the history: the
+    # internal chat's own rewrite went in step O4, the case replaced it.
+    query_variants = (
+        []
+        if sub_queries
+        else await first_question_variants(
+            messages, query, settings, support_mode=support_mode, delegated_org_id=zitadel_org_id
         )
-        retrieve_body = {
-            "query": _clip_retrieval_history_content(rewrite.query),
-            "raw_query": _clip_retrieval_history_content(query),
-            "coreference_resolved": rewrite.coreference_resolved,
-            # The org comes from the authenticated key, never from the profile.
-            "org_id": zitadel_org_id,
-            "user_id": retrieval_user_id,
-            "scope": profile.kb_scope,
-            "top_k": top_k,
-            "conversation_history": conversation_history,
-            "telemetry_level": telemetry_level,
-            "kb_narrow": profile.kb_mode == "strict",
-        }
-        if kb_slugs:
-            retrieve_body["kb_slugs"] = kb_slugs
-        elif profile.kb_scope == "both":
+        or list(follow_up_variants or [])
+    )
+    retrieve_body: dict = {
+        # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
+        # REQ-2.5) using the same helper as conversation_history entries. An
+        # unclipped query has no real bound short of the 128 KB request-body
+        # cap, sends garbage into coreference + BGE-M3 embedding (8192-token
+        # sequence limit), and can surface as an upstream 502 for partners.
+        "query": _clip_retrieval_history_content(query),
+        "org_id": zitadel_org_id,  # retrieval-api expects string org_id, from the key, never the profile
+        "scope": "org",
+        "top_k": top_k,
+        "conversation_history": conversation_history,
+        "query_variants": query_variants or None,
+    }
+    if kb_slugs:
+        retrieve_body["kb_slugs"] = kb_slugs
+    if internal:
+        retrieve_body.update(
+            user_id=retrieval_user_id,
+            scope=profile.kb_scope,
+            telemetry_level=telemetry_level,
+            kb_narrow=profile.kb_mode == "strict",
+        )
+        if not kb_slugs and profile.kb_scope == "both":
             # Every org KB plus every private KB the employee owns.
             retrieve_body["include_owned_private_kbs"] = True
-        if rewrite.taxonomy_node_ids:
-            retrieve_body["taxonomy_node_ids"] = rewrite.taxonomy_node_ids
     else:
-        # A first question travels with two paraphrases, a follow-up with the
-        # two queries of the conversation's case (query_paraphrase.py and
-        # case_file.py have the numbers). A fanned-out message gets none:
-        # retrieval-api would run the variants of the whole message inside
-        # every sub-question's pass.
-        query_variants = (
-            []
-            if sub_queries
-            else await first_question_variants(
-                messages, query, settings, support_mode=support_mode, delegated_org_id=zitadel_org_id
-            )
-            or list(follow_up_variants or [])
-        )
-        retrieve_body = {
-            # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
-            # REQ-2.5) using the same helper as conversation_history entries. An
-            # unclipped query has no real bound short of the 128 KB request-body
-            # cap, sends garbage into coreference + BGE-M3 embedding (8192-token
-            # sequence limit), and can surface as an upstream 502 for partners.
-            "query": _clip_retrieval_history_content(query),
-            "org_id": zitadel_org_id,  # retrieval-api expects string org_id
-            "scope": "org",
-            "top_k": top_k,
-            "conversation_history": conversation_history,
-        }
-        if kb_slugs:
-            retrieve_body["kb_slugs"] = kb_slugs
-        retrieve_body["query_variants"] = query_variants or None
         if partner_user_id is not None:
             # F2: synthetic partner-level identity for product_events tagging.
             retrieve_body["user_id"] = partner_user_id
@@ -3797,8 +3665,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         }
     # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001: a low or unknown band without direct
     # evidence for the question. Only the Strict-risk model choice reads it;
-    # what the answer may say on weak evidence follows the article scores
-    # (the weak-source rule in partner.py), on every surface.
+    # what the writer may read is the selection step's decision.
     turn.low_confidence = should_clarify(
         result.get("confidence_band"), has_direct_evidence=has_direct_evidence_for_query(query, chunks)
     )
@@ -3836,18 +3703,16 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         # The user's own attachment is still readable with zero KB evidence;
         # fall through to the zero_chunks prompt below instead of refusing.
 
-    # Help widget and internal Strict: the writer reads only the passages that
+    # Help widget and internal chat: the writer reads only the passages that
     # answer the question (passage_selection.py has the numbers). Not on a
-    # turn that is answered broadly, which reads no articles, not on a
-    # multi-part message, whose parts each need their own passages, and not on
-    # an internal Open turn, which may answer from general knowledge. "Not in
-    # the passages" narrows nothing here: the widget's caller answers that
-    # turn without a model unless the visitor asked for a person, and a Strict
-    # internal turn refuses below as it does with zero passages.
+    # turn that is answered broadly, which reads no articles, and not on a
+    # multi-part message, whose parts each need their own passages. "Not in
+    # the passages" narrows nothing here: the caller routes that turn (the
+    # widget's "not found", the internal Strict refusal), and an internal
+    # Open turn, which may answer from general knowledge, gets every passage.
     selection_chunks: list[dict] = []
-    selection_surface = (support_mode and not internal) or (internal and profile.kb_mode == "strict")
     if (
-        selection_surface
+        (support_mode or internal)
         and chunks
         and not turn.multi_question
         and not turn.user_provided_content
@@ -3876,12 +3741,6 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
             turn.passages_chosen = True
             chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
             trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
-        if internal and turn.not_in_passages:
-            # Strict promised knowledge-base-only answers, and nothing found
-            # answers this question: the same fixed refusal as with zero
-            # passages, decided before any model writes.
-            turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
-            return [], "", [], False
 
     # Consented general-knowledge fallback: decided here, on the same
     # post-safety-filter chunks the gap event sees, and surfaced to the caller
@@ -3937,7 +3796,6 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     citation_output: CitationOutput = "links",
     source_query: str | None = None,
     page_context: PageContext | None = None,
-    clarity: Literal["clear", "ambiguous"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
@@ -3970,8 +3828,6 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
 
     litellm_url = settings.litellm_base_url
     chat_url = f"{litellm_url}/v1/chat/completions"
-    if profile.surface == "internal" and profile.kb_mode == "strict":
-        tools = _strip_web_search_tools(tools)
 
     request_json = _llm_request_body(
         model,
@@ -4095,8 +3951,6 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                     settings=settings,
                     org_id=org_id,
                     answer_signals=answer_signals,
-                    response_language=response_language,
-                    clarity=clarity,
                     profile=profile,
                     knowledge_turn=knowledge_turn,
                     delegated_org_id=delegated_org_id,
@@ -4214,7 +4068,6 @@ async def chat_completion_streaming(
     source_query: str | None = None,
     emit_sources: bool = True,
     page_context: PageContext | None = None,
-    clarity: Literal["clear", "ambiguous"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
@@ -4243,17 +4096,14 @@ async def chat_completion_streaming(
     frame is omitted entirely when the decision is ``None``, which it is on
     pasted correspondence (see :func:`_response_language`).
 
-    ``tools``/``tool_choice`` are stripped of web-search affordances once
-    here, for a Strict profile, before either inner path sees them — one
-    strip, not one per path. See :func:`_strip_web_search_tools`.
+    An internal Strict turn is not written here: ``widget_write.write_reply``
+    holds and judges it, and drops a web-search tool before the call.
     """
     response_language = _response_language(messages, pasted_correspondence=pasted_correspondence)
     augmented_messages = _augment_messages_with_system_prompt(
         messages, system_prompt, page_context, response_language=response_language, profile=profile
     )
     user_query = source_query or _last_user_message(messages) or ""
-    if profile.surface == "internal" and profile.kb_mode == "strict":
-        tools = _strip_web_search_tools(tools)
     if response_language is not None:
         yield _sse_language_delta(response_language)
     if citation_output == "markers":
@@ -4270,7 +4120,6 @@ async def chat_completion_streaming(
             web_chunks=web_chunks,
             web_query=web_query,
             emit_sources=emit_sources,
-            clarity=clarity,
             answer_signals=answer_signals,
             signal_chunks=signal_chunks,
             conversation=messages,

@@ -1,7 +1,7 @@
 """One-chat-pipeline slice 4: the knowledge path does for the internal
 profile what the LiteLLM hook does today (modes, scope with identity,
-retrieval parameters, sub-question fan-out, query rewrite, trivial gate,
-Strict-risk model choice), while a widget single-question turn stays
+retrieval parameters, sub-question fan-out, trivial gate, Strict-risk
+model choice; the query rewrite gave way to the case in step O4), while a widget single-question turn stays
 byte-identical.
 
 Every test drives ``chat_completions`` end to end with one HTTP double that
@@ -61,21 +61,27 @@ class _Resp:
         return self._payload
 
 
+def _dumps(payload: dict) -> str:
+    # The recorder's post() takes a body named ``json``, which hides the module there.
+    return json.dumps(payload)
+
+
 class _Recorder:
     """httpx.AsyncClient double: records POST bodies by URL suffix.
 
-    The query rewrite also posts to LiteLLM, without a ``stream`` field; it is
-    kept apart so ``model_bodies`` holds only the answer call. Its reply is
-    ``rewrite_text`` (empty = the rewrite falls back to the raw question).
+    The structured calls beside the answer (the case, the selection step) also
+    post to LiteLLM, without a ``stream`` field; they are kept apart so
+    ``model_bodies`` holds only the answer call. The case call gets ``case``
+    when one is set; every other such call gets an empty reply, so it fails open.
     """
 
     def __init__(self, retrieve_payload: dict | Exception, model_text: str = ANSWER) -> None:
         self.retrieve_payload = retrieve_payload
         self.model_text = model_text
-        self.rewrite_text = ""
+        self.case: dict | None = None
         self.retrieve_bodies: list[dict] = []
         self.model_bodies: list[dict] = []
-        self.rewrite_bodies: list[dict] = []
+        self.side_bodies: list[dict] = []
 
     def factory(self, *_: Any, **__: Any) -> _Recorder:
         return self
@@ -93,8 +99,10 @@ class _Recorder:
                 raise self.retrieve_payload
             return _Resp(self.retrieve_payload)
         if "stream" not in json:
-            self.rewrite_bodies.append(json)
-            return _Resp({"choices": [{"message": {"content": self.rewrite_text}}]})
+            self.side_bodies.append(json)
+            schema = (json.get("response_format") or {}).get("json_schema", {}).get("name")
+            reply = _dumps(self.case) if schema == "case_update" and self.case is not None else ""
+            return _Resp({"choices": [{"message": {"content": reply}}]})
         self.model_bodies.append(json)
         return _Resp(
             {
@@ -124,6 +132,7 @@ def pipeline(monkeypatch):
     """Patch everything around chat_completions that is not the knowledge path."""
     import app.api.partner as partner
     import app.services.partner_chat as partner_chat
+    import app.services.widget_turn as widget_turn
 
     monkeypatch.setattr(partner.settings, "knowledge_retrieve_url", "http://retrieval.example.com")
     monkeypatch.setattr(partner.settings, "litellm_base_url", "http://litellm.example.com")
@@ -133,6 +142,7 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())
     monkeypatch.setattr(partner_chat, "_schedule_gap_event", MagicMock())
+    monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
 
     def run(recorder: _Recorder):
         monkeypatch.setattr(partner_chat.httpx, "AsyncClient", recorder.factory)
@@ -430,9 +440,21 @@ async def test_internal_prompt_is_foundation_then_templates_then_librechats_own_
 
 
 @pytest.mark.asyncio
-async def test_internal_query_is_rewritten_and_the_raw_question_travels_beside_it(internal_pipeline):
+async def test_internal_follow_up_searches_its_own_words_with_the_cases_queries_beside_them(internal_pipeline):
+    """Step O4: the case replaced the internal query rewrite, as on the widget. The
+    literal sentence is the query, retrieval-api resolves its references, and the
+    case's two queries run as extra passes."""
     recorder = _Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"})
-    recorder.rewrite_text = "Hoe vraag ik verlof aan in het verlofsysteem?"
+    recorder.case = {
+        "problem": "verlof aanvragen",
+        "product": "verlofsysteem",
+        "variant": "",
+        "tried": [],
+        "wants": "knowledge",
+        "out_of_scope": False,
+        "sentiment": "neutral",
+        "queries": ["verlof aanvragen verlofsysteem", "verlofaanvraag indienen verlofsysteem"],
+    }
     internal_pipeline(recorder)
 
     await _chat(
@@ -446,9 +468,9 @@ async def test_internal_query_is_rewritten_and_the_raw_question_travels_beside_i
     )
 
     body = recorder.retrieve_bodies[0]
-    assert body["query"] == "Hoe vraag ik verlof aan in het verlofsysteem?"
-    assert body["raw_query"] == "Hoe vraag ik verlof aan?"
-    assert body["coreference_resolved"] is True
+    assert body["query"] == "Hoe vraag ik verlof aan?"
+    assert body["query_variants"] == ["verlof aanvragen verlofsysteem", "verlofaanvraag indienen verlofsysteem"]
+    assert "raw_query" not in body and "coreference_resolved" not in body
 
 
 # --- one trivial gate --------------------------------------------------------------
@@ -618,8 +640,8 @@ async def test_strict_zero_chunks_attachment_answer_is_not_refused_or_repaired(i
     content = result["choices"][0]["message"]["content"]
     assert "Op de screenshot staat een foutmelding over inloggen." in content
     assert no_citable_sources_message("nl", suggest_open_mode=True) not in content
-    # No grounding check or answer judge call: only the query rewrite shows up
-    # beside the answer call itself, proving the repair step never ran.
-    assert len(recorder.rewrite_bodies) == 1
+    # No grounding check or answer judge call: only the case shows up beside
+    # the answer call itself, proving no check ran on the employee's own input.
+    assert len(recorder.side_bodies) == 1
 
     assert len(recorder.retrieve_bodies) == 1

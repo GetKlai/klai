@@ -11,8 +11,8 @@ Modes:
   Each question is retrieved once through retrieval-api with the body the live
   path sends (``retrieve_context``), without the paraphrase or rewrite model
   calls, and the evidence pack is cached in the output folder. The gate runs on
-  every question and the question writer (klai-fast) only on the ones it
-  fires on. Writes ``labels.jsonl`` for the owner to fill in.
+  every question; its question writer went in step O4. Writes ``labels.jsonl``
+  for the owner to fill in.
 - ``gate <sample folder>`` (local, no settings, no network, no model): the
   gate again over the questions and cached packs a ``sample`` run wrote, with
   the owner's labels carried over, so every change is re-scored for free.
@@ -64,8 +64,6 @@ from app.services.clarify_gate import ClarifyDecision, clarify_gate  # noqa: E40
 REPO_ROOT = BACKEND_ROOT.parents[1]
 _SAMPLE_DAYS = 60
 _WIDGET_TOP_K = 8
-# klai-fast allows 45 requests a minute per key; the writer stays well under it.
-_WRITER_PAUSE_SECONDS = 1.5
 # The gate's own threshold comes from settings in the service; the local modes
 # have no settings, so they read the same environment variable and default.
 _LOCAL_THRESHOLD = float(os.getenv("KLAI_GAP_SOFT_THRESHOLD", "0.4"))
@@ -388,7 +386,6 @@ async def run_sample(org_slug: str, count: int) -> None:
     from app.core.config import settings
     from app.core.database import cross_org_session
     from app.models.portal import PortalOrg
-    from app.services.clarify_decision import write_question
     from app.services.partner_chat import INTERNAL_RETRIEVE_TOP_K
 
     out = _out_dir()
@@ -416,18 +413,13 @@ async def run_sample(org_slug: str, count: int) -> None:
         chunks = evidence_pack_items_as_chunks(pack)
         messages = [{"role": "user", "content": question}]
         scores = [c["reranker_score"] for c in chunks if c.get("reranker_score") is not None]
+        # The question writer went with clarify_decision.py in step O4: no chat
+        # path asks from this gate any more, so only its decision is scored.
         gate = clarify_gate(messages, chunks, threshold)
-        if gate.reason == "asked":
-            gate = await write_question(messages, gate, settings, delegated_org_id=org.zitadel_org_id)
-            await asyncio.sleep(_WRITER_PAUSE_SECONDS)
         rows.append(_row(row_id, surface, messages, max(scores, default=None), gate, threshold))
     path = _write_rows(out, rows)
     _print_gate_summary(rows)
-    writer = Counter(r["reason"] for r in rows if r["fired"])
-    print(
-        f"question writer: asked {writer['asked']}, model_failed {writer['model_failed']}, "
-        f"question_shape {writer['question_shape']}; retrieval failed {failed}"
-    )
+    print(f"retrieval failed {failed}")
     print(f"files: {path.parent}")
 
 
