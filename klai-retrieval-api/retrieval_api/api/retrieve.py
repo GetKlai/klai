@@ -474,7 +474,7 @@ async def _resolve_identity_and_telemetry(
         elif req.kb_slugs is not None:
             req = req.model_copy(update={"kb_slugs": None})
 
-    evidence_max_sources = (
+    evidence_max_sources = req.max_sources or (
         MULTI_KB_MAX_SOURCES if len(set(req.kb_slugs or ())) > 1 else DEFAULT_MAX_SOURCES
     )
 
@@ -584,6 +584,26 @@ async def _resolve_identity_and_telemetry(
 # reranker, scoring against the bare query, pushed those candidates back out.
 
 
+def _one_per_parent(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the best-ranked child per parent chunk, in rank order.
+
+    Several children of one parent match the same question, and the response
+    swaps every child's text for the parent's, so the caller received the
+    same section under two or three ids: 44 of 456 passages in one replayed
+    round of the help widget. Applied before every top_k cut, so the slots
+    hold distinct sections. A chunk without a parent keeps its own id as key.
+    """
+    kept: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    for chunk in chunks:
+        key = chunk.get("parent_chunk_id") or chunk["chunk_id"]
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(chunk)
+    return kept
+
+
 async def _query_variant_pass(req: RetrieveRequest, text: str) -> list[dict[str, Any]]:
     """Embed, search and rerank one variant on its own text; top_k results."""
     query_vector, sparse_vector = await asyncio.gather(embed_single(text), embed_sparse(text))
@@ -594,11 +614,13 @@ async def _query_variant_pass(req: RetrieveRequest, text: str) -> list[dict[str,
         cast(SparseVector | None, sparse_vector),
     )
     if not raw or not settings.reranker_enabled:
-        return raw[: req.top_k]
-    reranked = await reranker.rerank(text, raw[: settings.reranker_candidates], req.top_k)
+        return _one_per_parent(raw)[: req.top_k]
+    reranked = _one_per_parent(
+        await reranker.rerank(text, raw[: settings.reranker_candidates], req.top_k * 3)
+    )
     if settings.ranking_contract_mode == "active":
         _set_final_rank_scores(reranked)
-    return reranked
+    return reranked[: req.top_k]
 
 
 def _start_query_variant_passes(state: RetrievalPipelineState) -> None:
@@ -638,9 +660,9 @@ async def _merge_query_variant_passes(state: RetrievalPipelineState) -> None:
             fused[cid] = fused.get(cid, 0.0) + 1.0 / (60 + rank + 1)
             items.setdefault(cid, chunk)
     before = {chunk["chunk_id"] for chunk in state.reranked}
-    state.reranked = sorted(items.values(), key=lambda c: fused[c["chunk_id"]], reverse=True)[
-        : state.req.top_k
-    ]
+    state.reranked = _one_per_parent(
+        sorted(items.values(), key=lambda c: fused[c["chunk_id"]], reverse=True)
+    )[: state.req.top_k]
     # No trace step: the step vocabulary is pinned by the trace tests and these
     # two counts are what the measurement needs.
     state.decision_record["query_variants_run"] = len(ranked_lists) - 1
@@ -933,7 +955,9 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
         rerank_top_n = min(len(rerank_input), max(req.top_k, req.top_k * 3))
         async with state.trace.step("rerank", started_at=t_rerank) as rerank_step:
             rerank_step.meta("candidates_in", len(rerank_input))
-            state.reranked = await reranker.rerank(state.query_resolved, rerank_input, rerank_top_n)
+            state.reranked = _one_per_parent(
+                await reranker.rerank(state.query_resolved, rerank_input, rerank_top_n)
+            )
             rerank_step.meta("candidates_out", len(state.reranked))
         state.rerank_ms = rerank_step.duration_ms
         step_latency_seconds.labels(step="rerank").observe(state.rerank_ms / 1000)
@@ -943,7 +967,7 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
             r.get("reranker_score") or r.get("score", 0) for r in state.reranked[:5]
         ]
     else:
-        state.reranked = state.raw_results[: req.top_k]
+        state.reranked = _one_per_parent(state.raw_results)[: req.top_k]
         state.reranked_to = len(state.reranked)
         rerank_step = state.trace.mark_skipped(
             "rerank",
