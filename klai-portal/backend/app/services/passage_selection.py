@@ -69,6 +69,45 @@ _WORD = re.compile(r"\w+")
 _LINE_END = re.compile(r"\n|(?<=[.!?])\s+")
 _LINE_WORD_SHARE = 0.6
 _MAX_LINES_PER_QUOTE = 6
+# A quote that outranks a "not in the passages" verdict must be a sentence,
+# not a few common words; the 39 measured cases all quoted whole sentences.
+_OVERRIDE_MIN_WORDS = 5
+
+
+def _share(quote: list[str], chunk: dict) -> float:
+    """The share of the quote's words that stand in the passage."""
+    words = set(_WORD.findall(str(chunk.get("text") or "").lower()))
+    return sum(word in words for word in quote) / len(quote)
+
+
+def _as_a_sentence(quote: list[str], chunk: dict) -> bool:
+    """The quote's words stand in the passage in this order and close together.
+
+    The word-share check accepts a quote whose words lie scattered over three
+    sentences; a quote that outranks the verdict must be one sentence of the
+    passage, so its words must follow each other within twice the quote's
+    length (markup and a mended link text may sit in between).
+    """
+    words = _WORD.findall(str(chunk.get("text") or "").lower())
+    for start, word in enumerate(words):
+        if word != quote[0]:
+            continue
+        position, matched = start, 0
+        for needle in quote:
+            while position < len(words) and words[position] != needle:
+                position += 1
+            if position >= len(words) or position - start > 2 * len(quote):
+                break
+            matched += 1
+            position += 1
+        if matched >= _QUOTE_WORD_SHARE * len(quote):
+            return True
+    return False
+
+
+def _article(chunk: dict) -> str:
+    """What two passages of one article share: the source, or the title where there is none."""
+    return str(chunk.get("source_url") or chunk.get("title") or "")
 
 
 class Evidence(BaseModel):
@@ -101,15 +140,30 @@ class PassageSelection(BaseModel):
         """
         pairs: list[tuple[dict, str]] = []
         for item in self.evidence:
+            quote = _WORD.findall(item.quote.lower())
+            if not quote:
+                continue
+            # The sentence is the evidence; the passage number is the model's
+            # weakest output. Retrieval hands over up to seven near-identical
+            # sections of one article, and in two meetlat turns (both replay
+            # rounds, 2026-10-13) the model copied the right sentence and
+            # numbered the wrong section, which turned an answer into "not
+            # found". The pointed passage first; otherwise the best-matching
+            # section of the same article (same source, or title without one),
+            # never another article, whose like-worded sentence could be about
+            # another product.
             if not 0 < item.passage <= len(chunks):
                 continue
-            chunk = chunks[item.passage - 1]
+            pointed = chunks[item.passage - 1]
+            if _share(quote, pointed) >= _QUOTE_WORD_SHARE:
+                chunk = pointed
+            else:
+                same_article = [c for c in chunks if _article(c) == _article(pointed)]
+                best = max(same_article, key=lambda c: _share(quote, c), default=None)
+                if best is None or _share(quote, best) < _QUOTE_WORD_SHARE:
+                    continue
+                chunk = best
             text = str(chunk.get("text") or "")
-            quote = _WORD.findall(item.quote.lower())
-            if not quote or sum(word in set(_WORD.findall(text.lower())) for word in quote) < _QUOTE_WORD_SHARE * len(
-                quote
-            ):
-                continue
             wanted = set(quote)
             lines = [" ".join(line.split()) for line in _LINE_END.split(text)]
             own = [
@@ -133,8 +187,25 @@ class PassageSelection(BaseModel):
         return list(picked.values())
 
     def not_in_passages(self, chunks: list[dict]) -> bool:
-        """No passage answers: the verdict says so, or no quoted sentence could be found back."""
-        return self.verdict == "not_in_passages" or (bool(self.evidence) and not self.found(chunks))
+        """No passage answers: no quoted sentence stands in a passage, or, without any quote, the verdict says so.
+
+        A verified quote outranks the verdict word. In five replay rounds of
+        the meetlat (2026-10-13) the model copied a sentence that stood in a
+        passage and still wrote "not_in_passages" 39 times; the owner expected
+        an answer in 31 of those turns and "not found" in 6. The prompt asks
+        for the list to be empty when there is no evidence, so a filled list
+        is the model's own finding, and the writer gets those passages with
+        the brief to say what they do not cover. Only a quote of a sentence's
+        length outranks the verdict: "Dat kan niet." stands in many passages.
+        """
+        if self.verdict == "not_in_passages":
+            strong = [item for item in self.evidence if len(_WORD.findall(item.quote)) >= _OVERRIDE_MIN_WORDS]
+            return not any(
+                _as_a_sentence(_WORD.findall(item.quote.lower()), chunk)
+                for chunk, _ in self.model_copy(update={"evidence": strong}).found(chunks)
+                for item in strong
+            )
+        return bool(self.evidence) and not self.found(chunks)
 
 
 async def select_passages(
