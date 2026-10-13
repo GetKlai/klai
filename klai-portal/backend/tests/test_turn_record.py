@@ -72,6 +72,7 @@ async def test_a_follow_up_adds_the_cases_queries_beside_its_own_words(monkeypat
     ]
     await _retrieve(follow_up, _settings(), follow_up_variants=_VARIANTS)
     assert captured["body"]["query"] == "en per collega?"
+    assert captured["body"]["max_sources"] == 8, "a selecting turn asks for a source per passage"
     assert captured["body"]["query_variants"] == _VARIANTS, "the visitor's own words stay the primary query"
     assert len(captured["body"]["conversation_history"]) == 3
 
