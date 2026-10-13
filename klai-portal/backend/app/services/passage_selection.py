@@ -80,6 +80,36 @@ def _share(quote: list[str], chunk: dict) -> float:
     return sum(word in words for word in quote) / len(quote)
 
 
+def _as_a_sentence(quote: list[str], chunk: dict) -> bool:
+    """The quote's words stand in the passage in this order and close together.
+
+    The word-share check accepts a quote whose words lie scattered over three
+    sentences; a quote that outranks the verdict must be one sentence of the
+    passage, so its words must follow each other within twice the quote's
+    length (markup and a mended link text may sit in between).
+    """
+    words = _WORD.findall(str(chunk.get("text") or "").lower())
+    for start, word in enumerate(words):
+        if word != quote[0]:
+            continue
+        position, matched = start, 0
+        for needle in quote:
+            while position < len(words) and words[position] != needle:
+                position += 1
+            if position >= len(words) or position - start > 2 * len(quote):
+                break
+            matched += 1
+            position += 1
+        if matched >= _QUOTE_WORD_SHARE * len(quote):
+            return True
+    return False
+
+
+def _article(chunk: dict) -> str:
+    """What two passages of one article share: the source, or the title where there is none."""
+    return str(chunk.get("source_url") or chunk.get("title") or "")
+
+
 class Evidence(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -119,15 +149,16 @@ class PassageSelection(BaseModel):
             # rounds, 2026-10-13) the model copied the right sentence and
             # numbered the wrong section, which turned an answer into "not
             # found". The pointed passage first; otherwise the best-matching
-            # section of the same article (same title), never another article,
-            # whose like-worded sentence could be about another product.
+            # section of the same article (same source, or title without one),
+            # never another article, whose like-worded sentence could be about
+            # another product.
             if not 0 < item.passage <= len(chunks):
                 continue
             pointed = chunks[item.passage - 1]
             if _share(quote, pointed) >= _QUOTE_WORD_SHARE:
                 chunk = pointed
             else:
-                same_article = [c for c in chunks if c.get("title") == pointed.get("title")]
+                same_article = [c for c in chunks if _article(c) == _article(pointed)]
                 best = max(same_article, key=lambda c: _share(quote, c), default=None)
                 if best is None or _share(quote, best) < _QUOTE_WORD_SHARE:
                     continue
@@ -169,7 +200,11 @@ class PassageSelection(BaseModel):
         """
         if self.verdict == "not_in_passages":
             strong = [item for item in self.evidence if len(_WORD.findall(item.quote)) >= _OVERRIDE_MIN_WORDS]
-            return not self.model_copy(update={"evidence": strong}).found(chunks)
+            return not any(
+                _as_a_sentence(_WORD.findall(item.quote.lower()), chunk)
+                for chunk, _ in self.model_copy(update={"evidence": strong}).found(chunks)
+                for item in strong
+            )
         return bool(self.evidence) and not self.found(chunks)
 
 

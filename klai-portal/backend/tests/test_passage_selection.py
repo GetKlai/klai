@@ -34,6 +34,32 @@ def test_a_quote_never_moves_to_another_article():
     assert selection.not_in_passages(other) is True
 
 
+def test_a_shared_title_is_not_the_same_article():
+    """Two articles named alike: the fallback follows the source, not the name."""
+    two = [
+        {"chunk_id": "p", "title": "Installatie", "source_url": "https://help.example.com/app", "text": "Over de app."},
+        {"chunk_id": "q", "title": "Installatie", "source_url": "https://help.example.com/toestel", "text": _STEP},
+    ]
+    selection = PassageSelection(need="", evidence=[Evidence(passage=1, quote=_STEP)], verdict="answers", question="")
+
+    assert selection.chosen(two) == []
+
+
+def test_words_scattered_over_three_sentences_do_not_outrank_the_verdict():
+    scattered = {
+        "chunk_id": "s",
+        "title": "Headset",
+        "text": "Sluit de deur. Het basisstation staat op de kast. De headset ligt op je bureau. Je Yealink-apparaat "
+        "heeft een USB-kabel aan de meegeleverde voet.",
+    }
+    selection = PassageSelection(
+        need="", evidence=[Evidence(passage=1, quote=_STEP)], verdict="not_in_passages", question=""
+    )
+
+    assert selection.not_in_passages([scattered]) is True
+    assert selection.not_in_passages(_SECTIONS) is False, "the same sentence in one piece still counts"
+
+
 def test_a_few_common_words_do_not_outrank_a_not_in_passages_verdict():
     short = [{"chunk_id": "f", "title": "Fax", "text": "Faxen. Dat kan niet meer sinds 2024."}]
     selection = PassageSelection(
