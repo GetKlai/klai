@@ -185,38 +185,6 @@ def _content_frames(body: str) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_held_internal_turn_with_sources_appends_footer_before_done(monkeypatch):
-    from app.services.partner_chat import chat_completion_streaming
-
-    events = [{"choices": [{"delta": {"content": "Naam 4(https://getklai.com/docs/legal/privacy)."}}]}]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client(events))
-
-    chunks = []
-    async for chunk in chat_completion_streaming(
-        messages=[{"role": "user", "content": "Welke gegevens staan in de privacy policy?"}],
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="prompt",
-        settings=_settings(),
-        citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
-        trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        citation_output="markers",
-        profile=ChatProfile(surface="internal", kb_mode="strict"),
-    ):
-        chunks.append(chunk)
-
-    body = b"".join(chunks).decode()
-    final_content = _content_frames(body)[-1]
-    assert final_content.startswith("Naam.")
-    assert "**Bronnen**\n- [Privacy policy](https://getklai.com/docs/legal/privacy)" in final_content
-    assert "**Agent activiteit**\n- Modus: Strict, alleen kennisbank." in final_content
-    # Structured sources frame for the widget stays exactly as composed —
-    # the footer does not change that contract.
-    assert '"sources": [{"label": "1", "title": "Privacy policy"' in body
-    assert body.index("Agent activiteit") < body.index("[DONE]")
-
-
-@pytest.mark.asyncio
 async def test_live_internal_turn_with_sources_appends_footer_as_extra_delta(monkeypatch):
     from app.services.partner_chat import chat_completion_streaming
 
@@ -232,7 +200,6 @@ async def test_live_internal_turn_with_sources_appends_footer_as_extra_delta(mon
         settings=_settings(),
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        citation_output="markers",
         profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
     ):
         chunks.append(chunk)
@@ -265,7 +232,6 @@ async def test_internal_turn_without_sources_gets_no_footer(monkeypatch):
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
@@ -293,7 +259,6 @@ async def test_widget_stream_with_sources_is_unaffected_by_the_internal_footer(m
         settings=_settings(),
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        citation_output="markers",
         profile=ChatProfile(surface="widget"),
     ):
         chunks.append(chunk)
@@ -337,7 +302,6 @@ async def test_non_streaming_internal_turn_with_sources_appends_footer_to_messag
         settings=_settings(),
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        citation_output="markers",
         profile=ChatProfile(surface="internal", kb_mode="strict"),
     )
 
@@ -380,7 +344,6 @@ async def test_non_streaming_widget_turn_is_unaffected_by_the_internal_footer(mo
         settings=_settings(),
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        citation_output="markers",
     )
 
     assert result["choices"][0]["message"]["content"] == "Naam."

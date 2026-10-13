@@ -2,9 +2,9 @@
 
 SPEC-RAG-ANSWER-JUDGES-001. Every support-mode answer stores what the
 statement-level check found in ``widget_messages.answer_signals``: how many
-statements the articles do not support, whether the answer was repaired, and
-what the visitor ended up seeing. This prints that per day so the effect on real
-traffic can be read without rebuilding the query each time.
+statements the articles do not support and what the visitor ended up seeing.
+This prints that per day so the effect on real traffic can be read without
+rebuilding the query each time.
 
 Run on the server:
 
@@ -36,7 +36,6 @@ _QUERY = text(
     SELECT date_trunc('day', a.created_at)::date AS day,
            count(*) AS answers,
            count(*) FILTER (WHERE (a.answer_signals->>'unsupported')::int > 0) AS with_unsupported,
-           count(*) FILTER (WHERE (a.answer_signals->>'repaired')::bool) AS repaired,
            count(*) FILTER (WHERE a.answer_signals->>'decision' = 'refusal') AS refused,
            count(*) FILTER (WHERE a.answer_signals ? 'judge_failed') AS check_failed,
            round(avg((a.answer_signals->>'unsupported')::int)::numeric, 2) AS avg_unsupported
@@ -60,13 +59,11 @@ async def main(days: int, org_id: int) -> None:
     if not rows:
         print("Geen gemeten antwoorden in deze periode.")
         return
-    print(
-        f"{'dag':<12}{'antwoorden':>11}{'met onbewezen':>15}{'gerepareerd':>13}{'geweigerd':>11}{'check faalde':>14}{'gem.':>7}"
-    )
+    print(f"{'dag':<12}{'antwoorden':>11}{'met onbewezen':>15}{'geweigerd':>11}{'check faalde':>14}{'gem.':>7}")
     for row in rows:
         print(
             f"{row['day']!s:<12}{row['answers']:>11}{row['with_unsupported']:>15}"
-            f"{row['repaired']:>13}{row['refused']:>11}{row['check_failed']:>14}{row['avg_unsupported']!s:>7}"
+            f"{row['refused']:>11}{row['check_failed']:>14}{row['avg_unsupported']!s:>7}"
         )
 
 

@@ -626,7 +626,6 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
         temperature=0.7,
         system_prompt="sys",
         settings=settings,
-        citation_output="markers",
         **kwargs,
     )
 
@@ -739,7 +738,7 @@ async def test_api_threads_consent_and_clears_chunks_on_broad_turn(consent: bool
     auth = make_partner_auth(kb_access={10: "read"})
     auth.key_id = "wgt_901"
 
-    written = Reply(text="", sources=[], decision={}, signals={}, language=None, turn=KnowledgeTurn())
+    written = Reply(text="", sources=[], signals={}, language=None, turn=KnowledgeTurn())
 
     with (
         patch(

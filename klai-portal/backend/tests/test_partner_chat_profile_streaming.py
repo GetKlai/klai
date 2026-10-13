@@ -114,7 +114,6 @@ async def test_tool_call_delta_reaches_client_before_stream_ends(monkeypatch):
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         tools=[{"type": "function", "function": {"name": "lookup"}}],
     ):
         chunks.append(chunk)
@@ -150,7 +149,6 @@ async def test_tool_call_content_never_enters_composed_text_or_grounding_input(m
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         tools=[{"type": "function", "function": {"name": "lookup"}}],
     ):
         chunks.append(chunk)
@@ -242,7 +240,6 @@ async def test_open_internal_profile_yields_multiple_content_frames(monkeypatch)
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
     ):
         chunks.append(chunk)
@@ -269,7 +266,6 @@ async def test_widget_profile_gets_no_keepalives_frames_stay_unchanged(monkeypat
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         profile=ChatProfile(surface="widget"),
     ):
         chunks.append(chunk)
@@ -296,7 +292,6 @@ async def test_live_turn_never_streams_a_model_written_link_and_never_repeats_th
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
     ):
         chunks.append(chunk)
@@ -321,7 +316,6 @@ async def test_internal_generation_call_carries_the_org_for_pii_masking(
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         delegated_org_id=delegated_org_id,
     ):
         pass
@@ -408,7 +402,6 @@ async def test_partner_keeps_its_web_search_tool(monkeypatch):
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         profile=ChatProfile(surface="partner"),
         tools=[web_tool],
     ):

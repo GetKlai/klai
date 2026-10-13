@@ -181,7 +181,6 @@ async def _search(inputs: TurnInputs, turn: KnowledgeTurn, follow_up_variants: l
         partner_user_id=inputs.partner_user_id,
         widget_system_prompt=inputs.widget_system_prompt,
         page_context=inputs.page_context,
-        backend_managed_citations=True,
         support_mode=True,
         broad_mode=bool(request.broad_mode),
         tone_register=inputs.tone_register,
@@ -410,7 +409,6 @@ def fixed_reply(
     return Reply(
         text=text,
         sources=[],
-        decision={"route": decision},
         signals=inputs.answer_signals,
         language=language,
         turn=turn,

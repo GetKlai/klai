@@ -140,7 +140,6 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(partner, "_widget_system_prompt", AsyncMock(return_value=None))
     monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=False))
-    monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())
     monkeypatch.setattr(partner_chat, "_schedule_gap_event", MagicMock())
     monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
 

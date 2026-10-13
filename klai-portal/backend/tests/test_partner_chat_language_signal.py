@@ -189,7 +189,7 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
 
     This is the case that silently breaks if the emission point is copied from
     the broad_mode frame (fires only on the refusal/broad_mode decision path).
-    Uses citation_output="markers" with real sources so the composer produces
+    Uses real sources so the composer produces
     a normal cited answer, not a refusal.
     """
     monkeypatch.setattr(
@@ -218,7 +218,6 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
         trusted_sources=[
             {"label": "1", "title": "Steward ownership", "url": "https://getklai.com/docs/company/steward-ownership"}
         ],
-        citation_output="markers",
     ):
         chunks.append(chunk)
 
@@ -255,7 +254,6 @@ async def test_non_streaming_ordinary_answered_turn_also_carries_the_language_si
         trusted_sources=[
             {"label": "1", "title": "Steward ownership", "url": "https://getklai.com/docs/company/steward-ownership"}
         ],
-        citation_output="markers",
     )
 
     message = body["choices"][0]["message"]

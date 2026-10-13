@@ -52,21 +52,6 @@ SIGNALS: list[ObservabilitySignal] = [
         source="SPEC-RAG-ANSWER-JUDGES-001, REQ-2, REQ-3",
     ),
     ObservabilitySignal(
-        name="partner_chat_answer_repair",
-        kind="log",
-        service="portal-api (widget)",
-        purpose={
-            "nl": (
-                "Per reparatie of die gelukt is, niets overliet, of mislukte. Zonder dit is niet te zien "
-                "hoe vaak een antwoord is ingekort omdat de artikelen een uitspraak niet droegen."
-            ),
-            "en": "Per repair, whether it succeeded, left nothing, or failed. Without it there is no way to see how often an answer was cut back because the articles did not carry a statement.",
-        },
-        how_to_read='VictoriaLogs: service:portal-api AND "partner_chat_answer_repair"',
-        read_automatically=False,
-        source="evolutie.md 2.8, 2.9",
-    ),
-    ObservabilitySignal(
         name="partner_chat_turn_timing",
         kind="log",
         service="portal-api (widget)",
@@ -103,11 +88,10 @@ SIGNALS: list[ObservabilitySignal] = [
         service="portal-api (database)",
         purpose={
             "nl": (
-                "Per opgeslagen widgetantwoord hoeveel uitspraken de artikelen niet droegen, of het "
-                "gerepareerd is, welke beslissing viel, en of een controle mislukte. De bron voor het "
-                "dagrapport."
+                "Per opgeslagen widgetantwoord hoeveel uitspraken de artikelen niet droegen, welke "
+                "beslissing viel, en of een controle mislukte. De bron voor het dagrapport."
             ),
-            "en": "Per stored widget answer, how many statements the articles did not carry, whether it was repaired, which decision was taken, and whether a check failed. The source for the daily report.",
+            "en": "Per stored widget answer, how many statements the articles did not carry, which decision was taken, and whether a check failed. The source for the daily report.",
         },
         how_to_read="Postgres: widget_messages.answer_signals (JSONB)",
         read_automatically=False,
@@ -167,10 +151,10 @@ SIGNALS: list[ObservabilitySignal] = [
         purpose={
             "nl": (
                 "Dagrapport over widget_messages.answer_signals: per dag hoeveel antwoorden er waren, "
-                "hoeveel een onbewezen uitspraak bevatten, hoeveel gerepareerd of geweigerd werden, en "
+                "hoeveel een onbewezen uitspraak bevatten, hoeveel geweigerd werden, en "
                 "hoe vaak een controle mislukte."
             ),
-            "en": "Daily report over widget_messages.answer_signals: per day how many answers there were, how many contained an unsupported statement, how many were repaired or refused, and how often a check failed.",
+            "en": "Daily report over widget_messages.answer_signals: per day how many answers there were, how many contained an unsupported statement, how many were refused, and how often a check failed.",
         },
         how_to_read=(
             "docker exec -w /repo/klai-portal/backend klai-core-portal-api-1 "
