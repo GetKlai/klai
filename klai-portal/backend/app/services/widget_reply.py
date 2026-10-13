@@ -1,9 +1,11 @@
-"""One help-widget reply, and the one place that renders it for the wire.
+"""One chat reply, and the one place that renders it for the wire.
 
-The widget's turn (widget_turn.py) ends in a ``Reply`` whether the text was
-written by the model or decided in code. This module turns a ``Reply`` into
-the two shapes the widget contract allows: the non-streaming completion body
-and the SSE frames. Nothing else renders a widget reply.
+The widget's turn (widget_turn.py) and the internal chat's turn
+(internal_turn.py) end in a ``Reply`` whether the text was written by the
+model or decided in code. This module turns a ``Reply`` into the two shapes
+the contract allows: the non-streaming completion body and the SSE frames.
+Nothing else renders such a reply; only an internal Open or general answer,
+streamed live, has its own frames.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from app.services.partner_chat import (
     _sse_escalation_delta,
     _sse_language_delta,
     _sse_sources_delta,
+    _sse_tool_calls_delta,
 )
 
 _DONE = b"data: [DONE]\n\n"
@@ -30,7 +33,7 @@ _DONE = b"data: [DONE]\n\n"
 
 @dataclass
 class Reply:
-    """One widget reply, decided in code or written, with what the caller needs to send and record it."""
+    """One reply, decided in code or written, with what the caller needs to send and record it."""
 
     text: str
     sources: list[dict]
@@ -46,6 +49,8 @@ class Reply:
     passages: int = 0
     # The answer call's id, model and usage as LiteLLM returned them; empty on a reply decided in code.
     completion: dict[str, Any] = field(default_factory=dict)
+    # The employee's own tools the answer model called (internal Strict only); the client runs them.
+    tool_calls: list[dict] | None = None
 
 
 class AnswerUpstreamError(HTTPException):
@@ -71,13 +76,15 @@ def reply_body(reply: Reply, *, model: str, include_sources: bool = True) -> dic
         message["broad_mode"] = reply.broad_mode
     if reply.appointment:
         message["escalation"] = _appointment_escalation()
+    if reply.tool_calls:
+        message["tool_calls"] = reply.tool_calls
     return {
         # Kept from the renderer a reply decided in code used before this one.
         "id": "chatcmpl-off-topic",
         "object": "chat.completion",
         "model": model,
         **reply.completion,
-        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+        "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if reply.tool_calls else "stop"}],
     }
 
 
@@ -90,6 +97,16 @@ def reply_frames(reply: Reply, *, include_sources: bool = True) -> list[bytes]:
         frames.append(_sse_broad_mode_delta(reply.broad_mode))
     if reply.appointment:
         frames.append(_sse_escalation_delta(_appointment_escalation()))
+    if reply.tool_calls:
+        # A streamed tool call carries its position; the completion body's calls do not.
+        frames.append(_sse_tool_calls_delta([{"index": i, **call} for i, call in enumerate(reply.tool_calls)]))
+        if not reply.text:
+            # OpenAI clients read this finish reason as "run the tools now".
+            return [
+                *frames,
+                b'data: {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}\n\n',
+                _DONE,
+            ]
     if reply.passages:
         frames.append(
             _sse_activity_delta(

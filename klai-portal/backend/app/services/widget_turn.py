@@ -5,7 +5,9 @@ what needs no articles, search, select, route in code what the selection
 decided, write. ``app.api.partner.chat_completions`` resolves the request, the
 widget's settings and the previous case before the turn, and records and sends
 the ``Reply`` after it; a reply decided in code and a written one both come
-back as a ``Reply``.
+back as a ``Reply``. The internal chat runs the same flow (internal_turn.py)
+and shares the steps that are the same there: the question, the fixed reply
+and the retrieval log.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import asyncio
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import structlog
 from klai_chat_prompts import contact_reply, no_citable_sources_message
@@ -24,7 +26,6 @@ from app.core.config import Settings
 from app.services import case_file, turn_judge
 from app.services import escalation_intent as escalation_service
 from app.services.chat_profile import ChatProfile
-from app.services.clarify_decision import plain_question
 from app.services.clarify_gate import already_asked
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
@@ -37,6 +38,7 @@ from app.services.partner_chat import (
     retrieve_context,
     timed,
 )
+from app.services.passage_selection import plain_question
 from app.services.pasted_correspondence import latest_user_turn_has_correspondence
 from app.services.retrieval_log import write_retrieval_log
 from app.services.widget_reply import Reply
@@ -50,6 +52,14 @@ logger = structlog.get_logger()
 
 # Hold references to fire-and-forget tasks to prevent GC (same pattern as partner_dependencies)
 _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
+
+
+class StepInputs(Protocol):
+    """What the steps shared with the internal chat read from a turn's inputs."""
+
+    request: ChatCompletionsRequest
+    auth: PartnerAuthContext
+    answer_signals: dict[str, Any]
 
 
 @dataclass
@@ -219,7 +229,7 @@ async def _route(inputs: TurnInputs, turn: KnowledgeTurn, found: Found, case: ca
         return _contact_request_reply(inputs, turn, case)
     if not_found := _not_in_passages_reply(inputs, turn, found, escalation):
         return not_found
-    if question := _question_reply(inputs, turn, found, escalation, scope):
+    if question := question_reply(inputs, turn, found, escalation, scope):
         return question
     return Writing(escalation, conversational)
 
@@ -279,7 +289,7 @@ async def _off_topic_reply(
         wgt_id=inputs.auth.key_id,
         referral=referral is not None,
     )
-    return _fixed(inputs, turn, referral or inputs.off_topic_reply, language, decision="off_topic", refused=False)
+    return fixed_reply(inputs, turn, referral or inputs.off_topic_reply, language, decision="off_topic", refused=False)
 
 
 def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_file.Case) -> Reply:
@@ -290,7 +300,7 @@ def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_f
         wgt_id=inputs.auth.key_id,
         wants=case.wants,
     )
-    return _fixed(inputs, turn, contact_reply(language), language, decision="human_request", refused=False)
+    return fixed_reply(inputs, turn, contact_reply(language), language, decision="human_request", refused=False)
 
 
 def _not_in_passages_reply(
@@ -317,13 +327,13 @@ def _not_in_passages_reply(
         wgt_id=inputs.auth.key_id,
         passages=len(found.chunks),
     )
-    return _fixed(
+    return fixed_reply(
         inputs, turn, no_citable_sources_message(language, helpdesk=True), language, decision="refusal", refused=True
     )
 
 
-def _question_reply(
-    inputs: TurnInputs, turn: KnowledgeTurn, found: Found, escalation: str | None, scope: str | None
+def question_reply(
+    inputs: StepInputs, turn: KnowledgeTurn, found: Found, escalation: str | None, scope: str | None
 ) -> Reply | None:
     # The one question this turn should ask. Not on a broad turn (no articles
     # to reason over), not when the visitor asked for a person or is
@@ -368,11 +378,13 @@ def _question_reply(
     inputs.answer_signals.update(planned_question=True, question_asked=True, clarity="ambiguous")
     language = resolve_conversation_language(messages).language
     question = " ".join(selection.question.split())
-    return _fixed(inputs, turn, question, language, decision="clarifying_question", refused=False, appointment=False)
+    return fixed_reply(
+        inputs, turn, question, language, decision="clarifying_question", refused=False, appointment=False
+    )
 
 
-def _fixed(
-    inputs: TurnInputs,
+def fixed_reply(
+    inputs: StepInputs,
     turn: KnowledgeTurn,
     text: str,
     language: str | None,
@@ -381,7 +393,7 @@ def _fixed(
     refused: bool,
     appointment: bool = True,
 ) -> Reply:
-    """A reply decided in code: recorded like any other, with the appointment button unless it is a question."""
+    """A reply decided in code: recorded like any other, with the appointment button unless told otherwise."""
     inputs.answer_signals.update(
         decision=decision,
         sources_count=0,
@@ -416,7 +428,7 @@ async def _write(
     if request.web_search:
         # Live web search never runs for a public widget key.
         logger.debug("partner_web_search_ignored_widget", org_id=auth.org_id)
-    _log_retrieval(auth, found.chunks)
+    log_retrieval(auth.org_id, f"partner:{auth.key_id}", found.chunks)
     knowledge = request.knowledge
     system_prompt = found.system_prompt
     if writing.escalation:
@@ -448,11 +460,12 @@ async def _write(
     )
 
 
-def _log_retrieval(auth: PartnerAuthContext, chunks: list[dict]) -> None:
+def log_retrieval(org_id: int, user_id: str, chunks: list[dict]) -> None:
+    """The chunks this turn read, keyed so that feedback on the answer finds them (rl:{org}:{user})."""
     task = asyncio.create_task(
         write_retrieval_log(
-            org_id=auth.org_id,
-            user_id=f"partner:{auth.key_id}",
+            org_id=org_id,
+            user_id=user_id,
             chunk_ids=[c.get("chunk_id", "") for c in chunks if c.get("chunk_id")],
             reranker_scores=[c.get("reranker_score", 0.0) for c in chunks if c.get("reranker_score") is not None],
             query_resolved="",
