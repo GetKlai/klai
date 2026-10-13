@@ -423,36 +423,6 @@ async def test_a_single_flag_leaves_the_answer_alone():
 _INTERNAL_STRICT: dict[str, Any] = {"profile": ChatProfile(surface="internal", kb_mode="strict"), "support_mode": False}
 
 
-@pytest.mark.parametrize("stream", [True, False])
-async def test_a_repair_cannot_smuggle_a_link_past_the_stripper(stream):
-    """The repair model returns free text, so it passes the same guards the
-    composer's output passed. A prompt that forbids URLs is not a guarantee.
-    Internal chat: the widget no longer edits a reply."""
-    litellm = _LiteLLM(
-        model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
-        grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
-        repaired=ANSWER_900 + " Zie https://evil.example.com/phish en [1].",
-    )
-
-    text, _, _ = await _answer(litellm, stream=stream, **_INTERNAL_STRICT, **_with_900_sources())
-
-    assert "evil.example.com" not in text
-    assert "[1]" not in text
-
-
-async def test_an_empty_repair_keeps_the_answer_the_visitor_would_have_had():
-    litellm = _LiteLLM(
-        model_text=ANSWER_900 + " Bel 020-7001234 voor een terugboeking.",
-        grounding=_grounding("Bel 020-7001234 voor een terugboeking.", contradicted=True, supported=(ANSWER_900,)),
-        repaired="   ",
-    )
-
-    text, _, extras = await _answer(litellm, stream=True, **_INTERNAL_STRICT, **_with_900_sources())
-
-    assert text.startswith(ANSWER_900)
-    assert extras["sources"]
-
-
 async def test_a_failed_grounding_check_leaves_the_answer_alone():
     """Fail direction: what the visitor got before this check existed."""
     litellm = _LiteLLM(model_text=ANSWER_900, grounding=httpx.ConnectError("boom"))

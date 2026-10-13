@@ -6,9 +6,9 @@ from app.services.passage_selection import Evidence, PassageSelection
 
 _STEP = "Sluit het basisstation van de headset aan op je toestel met de meegeleverde USB-kabel."
 _SECTIONS = [
-    {"chunk_id": "a", "text": "Over de headset. De headset werkt draadloos binnen tien meter van het basisstation."},
-    {"chunk_id": "b", "text": "Aansluiten. " + _STEP + " Gebruik de aansluiting aan de onderkant."},
-    {"chunk_id": "c", "text": "Opladen. Zet de headset op het basisstation om hem op te laden."},
+    {"chunk_id": "a", "title": "Headset", "text": "Over de headset. De headset werkt draadloos binnen tien meter."},
+    {"chunk_id": "b", "title": "Headset", "text": "Aansluiten. " + _STEP + " Gebruik de aansluiting aan de onderkant."},
+    {"chunk_id": "c", "title": "Headset", "text": "Opladen. Zet de headset op het basisstation om hem op te laden."},
 ]
 
 
@@ -22,8 +22,29 @@ def test_a_quote_under_the_wrong_passage_number_counts_for_the_passage_that_carr
     assert selection.not_in_passages(_SECTIONS) is False
 
 
+def test_a_quote_never_moves_to_another_article():
+    """A like-worded sentence in another article can be about another product."""
+    other = [
+        {"chunk_id": "x", "title": "Facturen", "text": "Over facturen."},
+        {"chunk_id": "y", "title": "App", "text": _STEP},
+    ]
+    selection = PassageSelection(need="", evidence=[Evidence(passage=1, quote=_STEP)], verdict="answers", question="")
+
+    assert selection.chosen(other) == []
+    assert selection.not_in_passages(other) is True
+
+
+def test_a_few_common_words_do_not_outrank_a_not_in_passages_verdict():
+    short = [{"chunk_id": "f", "title": "Fax", "text": "Faxen. Dat kan niet meer sinds 2024."}]
+    selection = PassageSelection(
+        need="", evidence=[Evidence(passage=1, quote="Dat kan niet.")], verdict="not_in_passages", question=""
+    )
+
+    assert selection.not_in_passages(short) is True
+
+
 def test_the_pointed_passage_wins_when_it_carries_the_quote_too():
-    twice = [_SECTIONS[1], {"chunk_id": "d", "text": _STEP}]
+    twice = [_SECTIONS[1], {"chunk_id": "d", "title": "Headset", "text": _STEP}]
     selection = PassageSelection(need="", evidence=[Evidence(passage=2, quote=_STEP)], verdict="answers", question="")
 
     assert [chunk["chunk_id"] for chunk in selection.chosen(twice)] == ["d"]

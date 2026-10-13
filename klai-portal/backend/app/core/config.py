@@ -306,7 +306,7 @@ class Settings(BaseSettings):
     # every widget/internal answer, and could exhaust it before anyone was
     # awake, failing that check with answer_grounding_call_failed.
     conversation_judge_model: str = "klai-judge"
-    # The statement-level grounding check and its repair. Deliberately not the
+    # The statement-level grounding check. Deliberately not the
     # small model the answer shares its quota with: measured on 2026-09-17 the
     # small model caught 22% of answers stating something the articles do not,
     # this one 96%.

@@ -2439,7 +2439,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     unsupported. Callers do not call this on a safety-blocked turn.
 
     A Strict turn (the widget, internal Strict) is judged and checked here,
-    held until the check decides, and repaired above the threshold. An Open
+    held until the check decides. An Open
     turn is shown as written and checked afterwards for the record only; a
     general turn is not checked at all, it had no articles.
 
@@ -2629,7 +2629,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             decision["escalation"] = _appointment_escalation()
     if outcome == "partial_answer" and helpdesk:
         decision["escalation"] = _appointment_escalation()
-    # Internal chat only, and only a reply the user actually reads: a refusal
+    # Only a reply the user actually reads: a refusal
     # and a clarifying question state nothing about the organisation. On the
     # help widget and internal Strict nothing changes a reply after it is
     # written: what the writer may read is decided before

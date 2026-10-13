@@ -296,6 +296,26 @@ async def test_strict_turn_whose_passages_do_not_answer_gets_the_strict_refusal_
 
 
 @pytest.mark.asyncio
+async def test_strict_answer_nobody_supports_over_unchosen_passages_is_refused(monkeypatch):
+    """The widget's one guard after writing now holds on internal Strict too:
+    the selection did not choose (it failed open here), the writer read every
+    passage, and the check supports none of the two statements."""
+    llm = _LiteLLM(
+        UNRELATED + " Parkeren is gratis op zondag.", grounding=_unsupported(UNRELATED, "Parkeren is gratis op zondag.")
+    )
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+    )
+
+    assert turn.text == STRICT_REFUSAL
+    assert llm.of("repair") == []
+
+
+@pytest.mark.asyncio
 async def test_open_turn_runs_no_selection_step(monkeypatch):
     llm = _LiteLLM(selection=NOT_IN_PASSAGES)
 
@@ -423,7 +443,6 @@ async def test_strict_answer_with_flagged_statements_goes_out_as_written_and_rec
                 *_unsupported("Een aanvraag kost tien euro.", "Je krijgt altijd een extra vrije dag.")["statements"],
             ]
         },
-        repaired="Je vraagt verlof aan in het HR-portaal onder Verlof.",
     )
 
     turn = await _turn(

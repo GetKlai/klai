@@ -17,8 +17,9 @@ this module is the caller.
 The check only records what it found. A repair step that let the same model
 edit a flagged reply ran here from September 2026: it was the largest cause of
 a bad answer in the owner's review of the widget (procedures cut to headings),
-went off the widget on 30 September and off internal Strict on 13 October,
-once the selection step decided before writing what the writer may read
+went off the widget on 30 September and off the portal's internal chat on
+13 October, once the selection step decided before writing what the writer
+may read; the LiteLLM hook of the LibreChat path keeps its own repair
 (docs/architecture/chat-quality-history-and-plan.md, §8). What no check fixes
 is a real article applied to the wrong question; that stays a knowledge problem.
 
@@ -31,7 +32,6 @@ on the widget after the reply went out when the passages were chosen; measured
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 
 import httpx
@@ -232,10 +232,3 @@ async def check_grounding(
 
 # A removal can leave "1." or "**Stap 2:**" with nothing behind it. The repair
 # model is told to renumber, and mostly does; this is the mechanical backstop.
-_EMPTY_STEP_RE = re.compile(r"(?m)^\s*(?:[-*+]|\d+[.)]|\*\*Stap \d+:\*\*|Stap \d+:)\s*$\n?")
-
-
-def cleanup_repair_artifacts(text: str) -> str:
-    """Drop list markers and step labels the repair left without content."""
-    cleaned = _EMPTY_STEP_RE.sub("", text)
-    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
