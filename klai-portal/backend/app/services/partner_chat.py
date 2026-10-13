@@ -65,11 +65,9 @@ from app.core.database import tenant_scoped_session
 from app.services.answer_epistemics import pop_answer_contract_stream_text, strip_answer_contract_markers
 from app.services.answer_footer import render_answer_footer, strip_answer_footer_from_text
 from app.services.answer_grounding import (
-    NOTHING_LEFT,
     GroundingCheck,
     check_grounding,
     grounding_budget,
-    repair_answer,
 )
 from app.services.answer_judge import decide_answer, is_clarifying_question, judge_answer
 from app.services.chat_profile import ChatProfile, KbMode
@@ -2356,9 +2354,9 @@ def _grounding_signals(sink: dict[str, Any] | None, grounding: GroundingCheck | 
         return
     sink["unsupported"] = len(grounding.unsupported)
     if keep_statements:
-        # The draft's flagged statements, not only their count: one flag is
-        # left unrepaired by design (worth_repairing), and without the text a
-        # measurement cannot tell whether that flag was right. Capped; it is
+        # The draft's flagged statements, not only their count: nothing
+        # changes a reply after writing, and without the text a measurement
+        # cannot tell whether a flag was right. Capped; it is
         # text the stored reply already holds. Not shown in the activity view yet.
         sink["unsupported_statements"] = [item.statement[:300] for item in grounding.unsupported[:5]]
 
@@ -2390,7 +2388,7 @@ def _check_answer_later(
             articles=articles,
             settings=settings,
             org_id=org_id,
-            timeout_seconds=grounding_budget("internal")[0],
+            timeout_seconds=grounding_budget("internal"),
             delegated_org_id=delegated_org_id,
         )
         _grounding_signals(answer_signals, grounding, keep_statements=keep_statements)
@@ -2521,7 +2519,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     # will DO, which a skip-list in the prompt could not separate.
     if helpdesk and (contract := chat_contract_article(appointment_offered=True)) is not None:
         articles = [*articles, contract]
-    check_seconds, repair_seconds = grounding_budget(profile.surface)
+    check_seconds = grounding_budget(profile.surface)
     checks_started = time.perf_counter()
     light_judge = judge_answer(
         messages=messages, draft=safe_text, articles=articles, settings=settings, delegated_org_id=delegated_org_id
@@ -2633,15 +2631,16 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         decision["escalation"] = _appointment_escalation()
     # Internal chat only, and only a reply the user actually reads: a refusal
     # and a clarifying question state nothing about the organisation. On the
-    # help widget nothing changes a reply after it is written: what the writer
-    # may read is decided before (passage_selection.py), and the check's
-    # verdict is kept for measuring. Editing a flagged reply there was the
-    # largest cause of a bad answer in the owner's review, and turning it into
-    # a refusal on one "contradicted" threw away a correct procedure whose
-    # warning the check misread.
+    # help widget and internal Strict nothing changes a reply after it is
+    # written: what the writer may read is decided before
+    # (passage_selection.py), and the check's verdict is kept for measuring.
+    # Editing a flagged reply was the largest cause of a bad answer in the
+    # owner's review, and turning it into a refusal on one "contradicted"
+    # threw away a correct procedure whose warning the check misread. The
+    # internal rewrite went on 2026-10-13, after the selection step reached
+    # Strict (plan §8).
     if (
-        helpdesk
-        and outcome in ("answer", "partial_answer")
+        outcome in ("answer", "partial_answer")
         and grounding is not None
         and len(grounding.statements) >= 2
         and len(grounding.unsupported) == len(grounding.statements)
@@ -2653,22 +2652,10 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         refusal = {
             "reason": "grounding_nothing_left",
             _NO_CITABLE_SOURCES_DECISION_KEY: True,
-            **_helpdesk_refusal_offers(citation_chunks),
+            **(_helpdesk_refusal_offers(citation_chunks) if helpdesk else {}),
         }
-        return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
-    if internal and outcome in ("answer", "partial_answer") and grounding is not None and grounding.worth_repairing:
-        content, sources, decision = await _repair_unsupported_statements(
-            content,
-            sources,
-            decision,
-            grounding=grounding,
-            citation_chunks=citation_chunks,
-            settings=settings,
-            org_id=org_id,
-            answer_signals=answer_signals,
-            timeout_seconds=repair_seconds,
-            delegated_org_id=delegated_org_id,
-        )
+        message = _no_citable_sources_message(response_language, helpdesk=helpdesk, suggest_open_mode=internal)
+        return message, [], refusal
     # A reply without a source that the judge does not call an answer is the
     # visitor's dead end, and the button under it is the way out. The profile
     # and the weak-source rule ask the model to say so; measured on the owner's
@@ -2697,63 +2684,6 @@ def _grounding_label(grounding: GroundingCheck) -> str:
     if grounding.unsupported:
         return "some_not_in_articles"
     return "all_in_articles" if grounding.statements else "no_company_statements"
-
-
-async def _repair_unsupported_statements(
-    content: str,
-    sources: list[dict],
-    decision: dict[str, Any],
-    *,
-    grounding: GroundingCheck,
-    citation_chunks: list[dict] | None,
-    settings: Settings,
-    org_id: int | str | None,
-    answer_signals: dict[str, Any] | None,
-    timeout_seconds: float,
-    delegated_org_id: str | None,
-) -> tuple[str, list[dict], dict[str, Any]]:
-    """Internal chat: remove the statements the articles do not support, keep the rest.
-
-    Measured on 150 real answers, editing took answers with an unsupported
-    statement from 49% to 11% and cost no good answer. A failed repair keeps
-    the composed answer.
-    """
-    repaired = await repair_answer(
-        draft=content,
-        unsupported=grounding.unsupported,
-        settings=settings,
-        timeout_seconds=timeout_seconds,
-        delegated_org_id=delegated_org_id,
-    )
-    if repaired not in (None, NOTHING_LEFT):
-        # The repair model returns free text, so it passes the same two guards
-        # the composer's output already passed: the link and citation stripper,
-        # and the output safety check. A prompt that forbids adding a URL is not
-        # a guarantee (reproduced on the conversational branch, 2026-09-15).
-        repaired = _answer_without_retrieved_sources(str(repaired), citation_chunks)
-        if not repaired:
-            repaired = None
-        elif safety_reason := output_safety_violation(repaired):
-            logger.warning("partner_chat_repair_blocked", org_id=org_id, reason=safety_reason)
-            repaired = None
-    logger.info(
-        "partner_chat_answer_repair",
-        org_id=org_id,
-        unsupported=len(grounding.unsupported),
-        result="failed" if repaired is None else ("nothing_left" if repaired == NOTHING_LEFT else "repaired"),
-    )
-    if answer_signals is not None:
-        answer_signals["repaired"] = repaired not in (None, NOTHING_LEFT, content)
-    if repaired is None or repaired == content:
-        return content, sources, decision
-    if repaired == NOTHING_LEFT:
-        # The LiteLLM hook makes the same call on this outcome
-        # (deploy/litellm/klai_answer_grounding.py's kb_answer_repair_kept):
-        # emptying an employee's answer is a bigger change than the
-        # measurement supports, so the unrepaired answer goes out as it was.
-        logger.info("partner_chat_answer_repair_kept", org_id=org_id, unsupported=len(grounding.unsupported))
-        return content, sources, decision
-    return repaired, sources, {**decision, "reason": "grounding_repaired"}
 
 
 def _log_turn_timing(

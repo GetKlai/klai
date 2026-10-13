@@ -420,41 +420,6 @@ async def test_a_single_flag_leaves_the_answer_alone():
     assert litellm.repair_requests == []
 
 
-async def test_an_internal_strict_turn_keeps_the_unrepaired_answer_when_nothing_survives_repair():
-    """The LiteLLM hook keeps the unrepaired answer on this outcome instead of
-    emptying it into a refusal (kb_answer_repair_kept: "emptying an employee's
-    answer is a bigger change than the measurement supports"). Internal chat
-    makes the same call."""
-    draft = (
-        "Je betaalt je factuur via automatische incasso. Bel 020-7001234 om te storneren. "
-        "Het bedrag staat binnen 3 werkdagen terug."
-    )
-    litellm = _LiteLLM(
-        model_text=draft,
-        grounding=_grounding(
-            "Bel 020-7001234 om te storneren.",
-            "Het bedrag staat binnen 3 werkdagen terug.",
-        ),
-        repaired="NOTHING_LEFT",
-    )
-
-    text, signals, extras = await _answer(
-        litellm,
-        stream=True,
-        profile=ChatProfile(surface="internal", kb_mode="strict"),
-        support_mode=False,
-        **_with_900_sources(),
-    )
-
-    assert len(litellm.repair_requests) == 1
-    # The internal-chat footer is appended after the composed answer (see
-    # test_answer_footer.py); the answer itself is the unrepaired draft.
-    assert text.startswith(draft)
-    assert extras["sources"]
-    assert signals["refused"] is False
-    assert signals["repaired"] is False
-
-
 _INTERNAL_STRICT: dict[str, Any] = {"profile": ChatProfile(surface="internal", kb_mode="strict"), "support_mode": False}
 
 

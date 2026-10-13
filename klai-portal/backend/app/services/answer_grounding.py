@@ -1,4 +1,4 @@
-"""Statement-level grounding check, and the repair that follows from it.
+"""Statement-level grounding check: what a reply states that the articles do not.
 
 SPEC-RAG-ANSWER-JUDGES-001 §"Geen onzin". The light answer judge asks one
 question about a whole draft and answers it on klai-fast; measured against 54
@@ -12,18 +12,20 @@ unsupported statement, 29% serious).
 
 The prompts, the schema and the request text live in ``klai-libs/chat-prompts``
 so the internal chat path judges by the same words and reads the same shape;
-this module is the widget's caller and owns the repair.
+this module is the caller.
 
-The answer is repaired, not refused. Deleting flagged sentences in code cost one
-good answer and damaged two of 150; letting the same model edit the reply cost
-none, so that is what runs here. What the repair cannot fix is a real article
-applied to the wrong question (6 of 18 serious cases); that stays a knowledge
-problem.
+The check only records what it found. A repair step that let the same model
+edit a flagged reply ran here from September 2026: it was the largest cause of
+a bad answer in the owner's review of the widget (procedures cut to headings),
+went off the widget on 30 September and off internal Strict on 13 October,
+once the selection step decided before writing what the writer may read
+(docs/architecture/chat-quality-history-and-plan.md, §8). What no check fixes
+is a real article applied to the wrong question; that stays a knowledge problem.
 
-Both calls run on ``settings.answer_grounding_model`` (klai-medium: 900 RPM,
-against the ~90 RPM the answer model shares with every other small call). The
-check runs beside the light judge, so it costs its own latency once: measured
-2.1 s median, 4.7 s in the slowest tenth, plus 0.85 s for a repair.
+The call runs on ``settings.answer_grounding_model`` (klai-medium: 900 RPM,
+against the ~90 RPM the answer model shares with every other small call), and
+on the widget after the reply went out when the passages were chosen; measured
+2.1 s median, 4.7 s in the slowest tenth.
 """
 
 from __future__ import annotations
@@ -36,13 +38,9 @@ import httpx
 import structlog
 from klai_chat_prompts import (
     GROUNDING_CHECK_SYSTEM_PROMPT,
-    GROUNDING_NOTHING_LEFT,
-    GROUNDING_REPAIR_SYSTEM_PROMPT,
-    GroundedStatement,
     GroundingCheck,
     grounding_check_response_format,
     grounding_check_user_content,
-    grounding_repair_user_content,
     parse_grounding_check,
 )
 
@@ -52,27 +50,21 @@ from app.services.litellm_delegation import with_delegated_org, with_feature_tag
 logger = structlog.get_logger()
 
 # Measured live on 2026-09-18. The check runs in 1.9 s at the median and 3.4 s in
-# the slowest tenth; a short repair takes under a second. On a long step list the
-# two together still filled the whole 5 s budget and put a turn at 9.0 s, on top
-# of 3.2 s of writing. The visitor waits for all of it, so the check gets 4 s and
-# the repair 3 s: the median is untouched and the worst case drops by 3 s. A
-# timeout keeps the answer exactly as it was.
+# the slowest tenth; on a long step list it filled a 5 s budget and put a turn
+# at 9.0 s, on top of 3.2 s of writing. A visitor waits for it only when the
+# passages were not chosen, so the check gets 4 s: the median is untouched and
+# the worst case is bounded. A timeout keeps the answer exactly as it was.
 _CHECK_TIMEOUT_SECONDS = 4.0
-_REPAIR_TIMEOUT_SECONDS = 3.0
-# The internal chat keeps the LiteLLM hook's budget (check 12 s, repair 8 s).
+# The internal chat keeps the LiteLLM hook's budget (check 12 s).
 # An employee's answer is a whole procedure rather than a short help reply, so
 # the check has more statements to go through (plan §7.2, "Antwoordlengte"),
 # and a Strict turn is held until the check decides anyway.
 _INTERNAL_CHECK_TIMEOUT_SECONDS = 12.0
-_INTERNAL_REPAIR_TIMEOUT_SECONDS = 8.0
-NOTHING_LEFT = GROUNDING_NOTHING_LEFT
 
 
-def grounding_budget(surface: str) -> tuple[float, float]:
-    """(check, repair) seconds for one surface; the widget and partner keep theirs."""
-    if surface == "internal":
-        return _INTERNAL_CHECK_TIMEOUT_SECONDS, _INTERNAL_REPAIR_TIMEOUT_SECONDS
-    return _CHECK_TIMEOUT_SECONDS, _REPAIR_TIMEOUT_SECONDS
+def grounding_budget(surface: str) -> float:
+    """Seconds for the statement check on one surface; the widget and partner keep theirs."""
+    return _INTERNAL_CHECK_TIMEOUT_SECONDS if surface == "internal" else _CHECK_TIMEOUT_SECONDS
 
 
 async def _post(
@@ -247,35 +239,3 @@ def cleanup_repair_artifacts(text: str) -> str:
     """Drop list markers and step labels the repair left without content."""
     cleaned = _EMPTY_STEP_RE.sub("", text)
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-
-
-async def repair_answer(
-    *,
-    draft: str,
-    unsupported: list[GroundedStatement],
-    settings: Settings,
-    timeout_seconds: float,
-    delegated_org_id: str | None,
-) -> str | None:
-    """Return the reply without its unsupported statements, ``None`` on failure.
-
-    Returns :data:`NOTHING_LEFT` when the model judges that nothing useful is
-    left; the caller decides what the visitor sees then.
-    """
-    if not unsupported:
-        return draft
-    content = await _call(
-        system_prompt=GROUNDING_REPAIR_SYSTEM_PROMPT,
-        user_content=grounding_repair_user_content(draft=draft, unsupported=unsupported),
-        settings=settings,
-        timeout_seconds=timeout_seconds,
-        delegated_org_id=delegated_org_id,
-    )
-    if content is None:
-        return None
-    stripped = content.strip()
-    if stripped == NOTHING_LEFT:
-        return NOTHING_LEFT
-    # Empty output is a failed call, not a verdict that nothing was left: only
-    # the sentinel may cost the visitor a sourced answer.
-    return cleanup_repair_artifacts(stripped) or None

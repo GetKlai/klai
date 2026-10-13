@@ -101,15 +101,28 @@ class PassageSelection(BaseModel):
         """
         pairs: list[tuple[dict, str]] = []
         for item in self.evidence:
-            if not 0 < item.passage <= len(chunks):
-                continue
-            chunk = chunks[item.passage - 1]
-            text = str(chunk.get("text") or "")
             quote = _WORD.findall(item.quote.lower())
-            if not quote or sum(word in set(_WORD.findall(text.lower())) for word in quote) < _QUOTE_WORD_SHARE * len(
-                quote
-            ):
+            if not quote:
                 continue
+            # The sentence is the evidence; the passage number is the model's
+            # weakest output. Retrieval hands over up to seven near-identical
+            # sections of one article, and in two meetlat turns (both replay
+            # rounds, 2026-10-13) the model copied the right sentence and
+            # numbered the wrong one, which turned an answer into "not found".
+            # The pointed passage first, then any passage that carries it.
+            pointed = chunks[item.passage - 1 : item.passage] if 0 < item.passage <= len(chunks) else []
+            chunk = next(
+                (
+                    candidate
+                    for candidate in [*pointed, *chunks]
+                    if sum(word in set(_WORD.findall(str(candidate.get("text") or "").lower())) for word in quote)
+                    >= _QUOTE_WORD_SHARE * len(quote)
+                ),
+                None,
+            )
+            if chunk is None:
+                continue
+            text = str(chunk.get("text") or "")
             wanted = set(quote)
             lines = [" ".join(line.split()) for line in _LINE_END.split(text)]
             own = [

@@ -411,13 +411,19 @@ async def test_internal_weak_source_rule_follows_the_article_scores_not_the_band
 
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.asyncio
-async def test_strict_answer_above_the_repair_threshold_is_repaired(monkeypatch, stream):
+async def test_strict_answer_with_flagged_statements_goes_out_as_written_and_recorded(monkeypatch, stream):
+    """The rewrite after the check is gone (2026-10-13): what the writer may read
+    is decided before writing, and the check only records what it found."""
     extra = " Een aanvraag kost tien euro. Je krijgt altijd een extra vrije dag."
-    repaired = "Je vraagt verlof aan in het HR-portaal onder Verlof."
     llm = _LiteLLM(
         ANSWER + extra,
-        grounding=_unsupported("Een aanvraag kost tien euro.", "Je krijgt altijd een extra vrije dag."),
-        repaired=repaired,
+        grounding={
+            "statements": [
+                *_supported(ANSWER)["statements"],
+                *_unsupported("Een aanvraag kost tien euro.", "Je krijgt altijd een extra vrije dag.")["statements"],
+            ]
+        },
+        repaired="Je vraagt verlof aan in het HR-portaal onder Verlof.",
     )
 
     turn = await _turn(
@@ -428,8 +434,10 @@ async def test_strict_answer_above_the_repair_threshold_is_repaired(monkeypatch,
         stream=stream,
     )
 
-    assert turn.text.startswith(repaired + "\n\n**Bronnen**")
-    assert "tien euro" not in turn.text
+    assert turn.text.startswith(ANSWER + extra)
+    assert llm.of("repair") == []
+    (record,) = turn.records
+    assert record["unsupported"] == 2
 
 
 @pytest.mark.asyncio
@@ -541,7 +549,7 @@ async def test_every_litellm_call_of_an_internal_and_a_widget_turn_carries_the_o
     )
 
     kinds = {_LiteLLM._kind(body) for body in internal.calls}
-    assert kinds >= {"rewrite", "clarify_question", "answer", "answer_judge", "grounding_check", "repair"}
+    assert kinds >= {"rewrite", "clarify_question", "answer", "answer_judge", "grounding_check"}
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in internal.calls)
     assert {"passage_selection", "answer", "answer_judge", "grounding_check"} <= {
         _LiteLLM._kind(b) for b in widget.calls
