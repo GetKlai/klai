@@ -2656,6 +2656,12 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         "top_k": top_k,
         "conversation_history": conversation_history,
         "query_variants": query_variants or None,
+        # The selection step (passage_selection.py) reads every passage before
+        # the writer sees one, so these turns ask the evidence pack for as
+        # many sources as passages: the default cap of three left the known
+        # article out of the pack in turns where retrieval had found it (plan
+        # §8, step J). A partner key has no selection step and keeps the cap.
+        "max_sources": min(top_k, 8) if (support_mode or internal) else None,
     }
     if kb_slugs:
         retrieve_body["kb_slugs"] = kb_slugs
