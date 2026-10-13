@@ -302,7 +302,7 @@ async def _run_chat_completions(*, support_mode_flag: bool, stream: bool, tone_r
     async def mock_streaming_gen():
         yield b"data: [DONE]\n\n"
 
-    written = Reply(text="", sources=[], decision={}, signals={}, language=None, turn=KnowledgeTurn())
+    written = Reply(text="", sources=[], signals={}, language=None, turn=KnowledgeTurn())
     tone_reader = AsyncMock(return_value=tone_register_flag)
     # A support-mode turn runs in widget_turn, any other in chat_completions.
     turn_module = "app.services.widget_turn" if support_mode_flag else "app.api.partner"
@@ -323,7 +323,7 @@ async def _run_chat_completions(*, support_mode_flag: bool, stream: bool, tone_r
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
         patch("app.api.partner.chat_completion_non_streaming", new=AsyncMock(return_value={"choices": []})) as plain,
         patch("app.api.partner.asyncio"),
-        patch(f"{turn_module}.write_retrieval_log", new=AsyncMock()),
+        patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
@@ -421,9 +421,7 @@ async def _run_with_scope(*, chunks, scope_result):
         patch("app.api.partner.case_file.update_case", new=classifier),
         patch(
             "app.services.widget_turn.write_reply",
-            new=AsyncMock(
-                return_value=Reply(text="", sources=[], decision={}, signals={}, language=None, turn=KnowledgeTurn())
-            ),
+            new=AsyncMock(return_value=Reply(text="", sources=[], signals={}, language=None, turn=KnowledgeTurn())),
         ) as chat_call,
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),

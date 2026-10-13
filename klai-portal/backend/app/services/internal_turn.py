@@ -196,7 +196,6 @@ async def _write(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, timi
         trusted_sources=found.trusted_sources,
         source_query=knowledge.query if knowledge is not None else None,
         answer_signals=inputs.answer_signals,
-        signal_chunks=found.chunks,
         turn_timing=timing,
         delegated_org_id=auth.zitadel_org_id,
         knowledge_turn=turn,

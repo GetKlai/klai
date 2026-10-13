@@ -46,7 +46,7 @@ def _mock_retrieval_log(monkeypatch):
     The assertion tests (test_retrieval_log_scheduled) still verify that
     asyncio.create_task was called; only the argument type changes.
     """
-    monkeypatch.setattr("app.api.partner.write_retrieval_log", MagicMock())
+    monkeypatch.setattr("app.services.widget_turn.write_retrieval_log", MagicMock())
 
 
 @pytest.fixture(autouse=True)
@@ -396,7 +396,7 @@ async def test_partial_kb_id_resolution_proceeds_with_resolved_subset():
         with (
             patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
             patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-            patch("app.api.partner.asyncio"),
+            patch("app.services.widget_turn.asyncio"),
         ):
             await chat_completions(
                 request=req,
@@ -439,7 +439,7 @@ async def test_key_with_kb_access_and_no_requested_ids_passes_slugs_to_retrieval
     with (
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(
             request=req,
@@ -574,7 +574,7 @@ async def test_happy_path_non_streaming():
             "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
         ),
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         result = await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -612,7 +612,7 @@ async def test_retrieval_log_scheduled():
             return_value=([{"chunk_id": "c1", "text": "ctx", "reranker_score": 0.9}], "prompt", [], False),
         ),
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.api.partner.asyncio") as mock_asyncio,
+        patch("app.services.widget_turn.asyncio") as mock_asyncio,
     ):
         await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -650,7 +650,7 @@ async def test_kb_id_to_slug_translation():
     with (
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(), db=db)
 
@@ -693,7 +693,7 @@ async def test_knowledge_options_override_retrieval_query_kbs_and_top_k():
     with (
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response) as mock_chat,
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(
             request=req,
@@ -801,7 +801,7 @@ async def test_streaming_returns_event_stream_content_type():
             "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
         ),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         from starlette.responses import StreamingResponse
 
@@ -863,7 +863,7 @@ async def test_widget_streaming_uses_structured_citation_mode():
         ) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
@@ -918,7 +918,7 @@ async def test_widget_page_context_ignored_when_disabled():
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
@@ -969,7 +969,7 @@ async def test_partner_streaming_uses_backend_managed_citations():
             ),
         ) as mock_retrieve,
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
@@ -1008,7 +1008,7 @@ async def test_streaming_chunks_forwarded():
             "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
         ),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         result = await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -1044,7 +1044,7 @@ async def test_streaming_done_terminator():
     with (
         patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio"),
+        patch("app.services.widget_turn.asyncio"),
     ):
         result = await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -1078,7 +1078,7 @@ async def test_streaming_retrieval_log_fires():
     with (
         patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1"}], "prompt", [], False)),
         patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.api.partner.asyncio") as mock_asyncio,
+        patch("app.services.widget_turn.asyncio") as mock_asyncio,
     ):
         await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -1491,7 +1491,7 @@ def test_build_system_prompt_includes_source_urls_for_widget_citations():
 
 def test_build_system_prompt_reads_nested_chunk_source_urls():
     """Partner chat should use chunk metadata URLs, never literal sentinel values."""
-    from app.services.partner_chat import _build_system_prompt, _citation_source_urls_from_chunks
+    from app.services.partner_chat import _build_system_prompt
 
     chunks = [
         {
@@ -1511,10 +1511,6 @@ def test_build_system_prompt_reads_nested_chunk_source_urls():
     assert "source_url: https://getklai.com/privacy" in prompt
     assert "source_url: https://getklai.com/dpa" in prompt
     assert "source_url: undefined" not in prompt
-    assert _citation_source_urls_from_chunks(chunks) == {
-        1: "https://getklai.com/privacy",
-        2: "https://getklai.com/dpa",
-    }
 
 
 def test_placeholder_source_paths_are_not_valid_urls():

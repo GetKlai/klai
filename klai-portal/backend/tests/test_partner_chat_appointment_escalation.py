@@ -132,7 +132,6 @@ async def test_widget_classifier_controls_escalation(
         return Reply(
             text="Artikelantwoord",
             sources=[],
-            decision={},
             signals={},
             language=None,
             turn=KnowledgeTurn(),
@@ -146,7 +145,7 @@ async def test_widget_classifier_controls_escalation(
     # A support-mode turn runs in widget_turn, any other in chat_completions.
     for module in (partner, widget_turn):
         monkeypatch.setattr(module, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
-        monkeypatch.setattr(module, "write_retrieval_log", AsyncMock())
+    monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
     monkeypatch.setattr(widget_turn, "write_reply", written)
     monkeypatch.setattr(partner, "chat_completion_non_streaming", completion)
     monkeypatch.setattr(partner, "chat_completion_streaming", streaming)

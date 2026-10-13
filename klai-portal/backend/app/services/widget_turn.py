@@ -410,7 +410,6 @@ def fixed_reply(
     return Reply(
         text=text,
         sources=[],
-        decision={"route": decision},
         signals=inputs.answer_signals,
         language=language,
         turn=turn,

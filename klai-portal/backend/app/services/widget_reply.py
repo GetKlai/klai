@@ -37,8 +37,6 @@ class Reply:
 
     text: str
     sources: list[dict]
-    # The route the turn took; for a written reply the composer's decision with it.
-    decision: dict[str, Any]
     signals: dict[str, Any]
     language: str | None
     # Carries the deferred grounding check the record waits for.

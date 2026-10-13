@@ -55,7 +55,6 @@ def _written(**overrides: Any) -> Reply:
     fields: dict[str, Any] = {
         "text": ANSWER,
         "sources": [dict(SOURCE)],
-        "decision": {"route": "written"},
         "signals": {},
         "language": "nl",
         "turn": KnowledgeTurn(),
@@ -73,7 +72,6 @@ def _fixed(**overrides: Any) -> Reply:
     fields: dict[str, Any] = {
         "text": "Een vaste tekst.",
         "sources": [],
-        "decision": {"route": "off_topic"},
         "signals": {},
         "language": "nl",
         "turn": KnowledgeTurn(),

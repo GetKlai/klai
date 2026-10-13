@@ -22,7 +22,6 @@ from app.services.pasted_correspondence import (
     detect_pasted_correspondence,
     extract_pasted_correspondence_text,
     latest_user_turn_has_correspondence,
-    pasted_correspondence_activity_line,
     text_contains_pasted_correspondence,
 )
 
@@ -187,12 +186,6 @@ class TestScopeBlockContract:
         lowered = PASTED_CORRESPONDENCE_SCOPE.casefold()
         assert "most likely cause" not in lowered
         assert "conclusion section" not in lowered
-
-
-class TestActivityLine:
-    def test_activity_line_texts(self):
-        assert pasted_correspondence_activity_line("nl").startswith("- Geplakte correspondentie gedetecteerd")
-        assert pasted_correspondence_activity_line("en").startswith("- Pasted correspondence detected")
 
 
 class TestLatestTurnDetection:

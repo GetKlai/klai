@@ -77,7 +77,7 @@ from app.services.prompt_templates import internal_turn_settings
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip
-from app.services.retrieval_log import find_correlated_log, write_retrieval_log
+from app.services.retrieval_log import find_correlated_log
 from app.services.web_search import build_web_results_block, search_web, web_results_as_chunks
 from app.services.widget_audit import (
     hash_audit_value,
@@ -96,7 +96,7 @@ from app.services.widget_handoff import (
 )
 from app.services.widget_reply import AnswerUpstreamError, Reply, error_frames, reply_body, reply_frames
 from app.services.widget_theme import _merge_css_variables
-from app.services.widget_turn import TurnInputs, widget_turn
+from app.services.widget_turn import TurnInputs, log_retrieval, widget_turn
 
 logger = structlog.get_logger()
 
@@ -2076,22 +2076,6 @@ async def _replayed(frames: list[bytes]) -> AsyncGenerator[bytes]:
         yield frame
 
 
-def _log_retrieval(auth: PartnerAuthContext, chunks: list[dict]) -> None:
-    task = asyncio.create_task(
-        write_retrieval_log(
-            org_id=auth.org_id,
-            user_id=f"partner:{auth.key_id}",
-            chunk_ids=[c.get("chunk_id", "") for c in chunks if c.get("chunk_id")],
-            reranker_scores=[c.get("reranker_score", 0.0) for c in chunks if c.get("reranker_score") is not None],
-            query_resolved="",
-            embedding_model_version="",
-            retrieved_at=datetime.now(UTC),
-        )
-    )
-    _pending.add(task)
-    task.add_done_callback(_pending.discard)
-
-
 def _reply_response(reply: Reply, request: ChatCompletionsRequest, record: dict[str, Any] | None) -> Any:
     """Send a widget or internal reply the way the request asked for it, and record a widget turn."""
     knowledge = request.knowledge
@@ -2269,13 +2253,11 @@ async def chat_completions(  # noqa: C901
             _write_internal_record(auth.org_id, outcome.signals, outcome.turn)
             return _reply_response(outcome, request, None)
         chunks, system_prompt, trusted_sources, knowledge_turn, turn_timing = outcome
-        broad_turn = False
-        answer_model = request.model
     else:
         knowledge_turn = KnowledgeTurn()
         turn_timing = None
         with retrieval_upstream_errors(auth.org_id):
-            chunks, system_prompt, trusted_sources, broad_turn = await retrieve_context(
+            chunks, system_prompt, trusted_sources, _ = await retrieve_context(
                 answer_signals=answer_signals,
                 org_id=auth.org_id,
                 zitadel_org_id=auth.zitadel_org_id,
@@ -2301,9 +2283,8 @@ async def chat_completions(  # noqa: C901
                 web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
                 knowledge_turn=knowledge_turn,
             )
-        answer_model = request.model
         # 7. Fire retrieval log async
-        _log_retrieval(auth, chunks)
+        log_retrieval(auth.org_id, f"partner:{auth.key_id}", chunks)
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
@@ -2323,7 +2304,7 @@ async def chat_completions(  # noqa: C901
     # the internal turn's to its own record; partner-API turns keep none.
     generation: dict[str, Any] = {
         "messages": request.messages,
-        "model": answer_model,
+        "model": request.model,
         "temperature": request.temperature,
         "system_prompt": system_prompt,
         "settings": settings,
@@ -2331,7 +2312,7 @@ async def chat_completions(  # noqa: C901
         "allowed_source_urls": allowed_source_urls,
         "citation_source_urls": citation_source_urls,
         "citation_source_metadata": citation_source_metadata,
-        "citation_chunks": [] if broad_turn else chunks,
+        "citation_chunks": chunks,
         "web_chunks": web_chunks,
         "web_query": web_query,
         "trusted_sources": trusted_sources,
@@ -2339,7 +2320,6 @@ async def chat_completions(  # noqa: C901
         "source_query": knowledge.query if knowledge is not None else None,
         "page_context": page_context,
         "answer_signals": answer_signals if audit.ready or internal else None,
-        "signal_chunks": chunks,
         "turn_timing": turn_timing,
         "profile": profile,
         "tools": request.tools,

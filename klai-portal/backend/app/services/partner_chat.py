@@ -671,19 +671,6 @@ def _chunk_source_title(chunk: dict) -> str:
     return "Source"
 
 
-def _citation_source_urls_from_chunks(chunks: list[dict]) -> dict[int, str]:
-    citation_urls: dict[int, str] = {}
-    first_url_by_key: dict[str, str] = {}
-    for index, chunk in enumerate(chunks, 1):
-        source_url = _chunk_source_url(chunk)
-        key = _source_url_key(source_url)
-        if not source_url or not key:
-            continue
-        first_url_by_key.setdefault(key, source_url)
-        citation_urls[index] = first_url_by_key[key]
-    return citation_urls
-
-
 def _citation_source_metadata_from_chunks(chunks: list[dict]) -> dict[str, dict[str, str]]:
     sources: dict[str, dict[str, str]] = {}
     for chunk in chunks:
@@ -2396,8 +2383,6 @@ async def _judge_composed_answer(
         has_sources=bool(sources),
         escalation=False,
         conversational=False,
-        clarity=None,
-        draft_is_question=False,
         judgement=None,
     )
     logger.info("partner_chat_answer_judge", org_id=org_id, decision=outcome, kb_mode=answer_mode)
@@ -2405,7 +2390,7 @@ async def _judge_composed_answer(
         answer_signals["decision"] = outcome
     if answer_mode == "open" and articles and knowledge_turn is not None and answer_signals is not None:
         knowledge_turn.grounding_check = _check_answer_later(
-            question=_visitor_question(messages),
+            question=_last_user_message(messages) or "",
             draft=safe_text,
             articles=articles,
             settings=settings,
@@ -2420,10 +2405,6 @@ async def _judge_composed_answer(
     # names) are the model's or the user's own and stay as the hook left them.
     uncited = draft_text if answer_mode == "general" else safe_text
     return (content, sources, decision) if sources else (uncited, [], {"reason": outcome})
-
-
-def _visitor_question(messages: list[dict]) -> str:
-    return _last_user_message(messages) or ""
 
 
 def _grounding_label(grounding: GroundingCheck) -> str:
@@ -2516,7 +2497,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     web_query: str | None = None,
     emit_sources: bool = True,
     answer_signals: dict[str, Any] | None = None,
-    signal_chunks: list[dict] | None = None,
     conversation: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
     profile: ChatProfile = ChatProfile(surface="widget"),
@@ -2541,9 +2521,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
 
     ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`)
     — filled once the answer is composed, and never part of any frame.
-    ``signal_chunks`` is the retrieval result to score it on; it defaults to
-    ``citation_chunks`` but differs on a broad-mode turn, where the caller
-    empties the citation list on purpose.
 
     ``profile.stream_live`` (an internal Open or general turn) streams content
     incrementally, through :func:`_pop_live_stream_text`, instead of holding
@@ -2551,8 +2528,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     end for sources/signals, but its content is not re-sent: the caller
     already saw it live. A held turn (the partner key) buffers everything.
     The internal Strict turn is not streamed here: widget_write.write_reply
-    holds and judges it, and it no longer sends the empty keepalive frames
-    this path sent while it waited.
+    holds and judges it.
 
     A ``tool_calls`` delta is forwarded unbuffered the moment it arrives,
     regardless of hold/live — see :func:`_sse_tool_calls_delta`. It never
@@ -2561,12 +2537,11 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
 
     For ``surface == "internal"`` with citable sources, a text footer
     (:func:`app.services.answer_footer.render_answer_footer`) is appended as
-    the LAST render step, after composition/judge/repair have settled
-    ``sources`` — a held turn gets it baked into ``content``; a live turn,
-    whose content was already streamed with the model's own raw markers, gets
-    it as one extra content delta after the live text (see the emission
-    below). ``knowledge_turn`` carries the sub-questions for that footer and
-    the mode the answer is decided under.
+    the LAST render step, after composition has settled ``sources``. An
+    internal turn here is live, its content already streamed with the model's
+    own raw markers, so the footer follows as one extra content delta after the
+    live text (see the emission below). ``knowledge_turn`` carries the
+    sub-questions for that footer and the mode the answer is decided under.
 
     ``pasted_correspondence`` strips the answer-contract markers the
     correspondence prompt asks for, from the live stream as it goes and from
@@ -2722,7 +2697,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         answer_signals,
         decision=decision,
         refused=refused,
-        chunks=signal_chunks if signal_chunks is not None else citation_chunks,
+        chunks=citation_chunks,
         sources=sources,
         model=model,
         query_text=visitor_query,
@@ -2732,8 +2707,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     # (chat-quality-history-and-plan.md §7.2): the widget got its
     # sources/escalation frames above; an internal turn additionally gets
     # them as a text footer, because LibreChat renders only text. Built from
-    # the same finalised ``sources`` the frames above used, so a held and a
-    # live turn number it identically — see the docstring above.
+    # the same finalised ``sources`` the frames above used.
     footer_text = ""
     if profile.surface == "internal" and emit_sources:
         footer_text = render_answer_footer(
@@ -2744,8 +2718,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             language=response_language,
             general_knowledge=decision.get("reason") == "general_knowledge",
         )
-        if footer_text and not profile.stream_live:
-            content = f"{content.rstrip()}\n\n{footer_text}"
     # What still has to go out: the whole answer on a held turn, only the
     # unseen tail (plus the footer) on a live one.
     outgoing = content
@@ -3797,7 +3769,6 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     source_query: str | None = None,
     page_context: PageContext | None = None,
     answer_signals: dict[str, Any] | None = None,
-    signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
@@ -3924,7 +3895,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                         answer_signals,
                         decision={"reason": safety_reason},
                         refused=False,
-                        chunks=signal_chunks if signal_chunks is not None else citation_chunks,
+                        chunks=citation_chunks,
                         sources=[],
                         model=model,
                         query_text=visitor_query,
@@ -3970,7 +3941,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                     answer_signals,
                     decision=decision,
                     refused=refused,
-                    chunks=signal_chunks if signal_chunks is not None else citation_chunks,
+                    chunks=citation_chunks,
                     sources=sources,
                     model=model,
                     query_text=visitor_query,
@@ -4069,7 +4040,6 @@ async def chat_completion_streaming(
     emit_sources: bool = True,
     page_context: PageContext | None = None,
     answer_signals: dict[str, Any] | None = None,
-    signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
@@ -4121,7 +4091,6 @@ async def chat_completion_streaming(
             web_query=web_query,
             emit_sources=emit_sources,
             answer_signals=answer_signals,
-            signal_chunks=signal_chunks,
             conversation=messages,
             turn_timing=turn_timing,
             profile=profile,

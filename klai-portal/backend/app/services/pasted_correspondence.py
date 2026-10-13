@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from typing import Any
 
 # Header labels that make up a pasted email-header block. Matched at line
 # start (optionally quoted with ">" or bolded with "**" by markdown paste).
@@ -218,19 +217,3 @@ PASTED_CORRESPONDENCE_SCOPE = (
     "Give concrete checks the reader can perform first.\n"
     "Use these four sections once each and return the markers exactly as written.]"
 )
-
-
-def pasted_correspondence_activity_line(language: str) -> str:
-    """Visible agent-activity footer line; rendered in code, not by the model."""
-    if language == "nl":
-        return (
-            "- Geplakte correspondentie gedetecteerd: inhoud behandeld als "
-            "claims van de afzender, niet als geverifieerde feiten."
-        )
-    return "- Pasted correspondence detected: content treated as the sender's claims, not as verified facts."
-
-
-def pasted_correspondence_detected_from_meta(kb_meta: dict[str, Any] | None) -> bool:
-    if not isinstance(kb_meta, dict):
-        return False
-    return bool(kb_meta.get("pasted_correspondence_detected"))

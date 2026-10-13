@@ -739,7 +739,7 @@ async def test_api_threads_consent_and_clears_chunks_on_broad_turn(consent: bool
     auth = make_partner_auth(kb_access={10: "read"})
     auth.key_id = "wgt_901"
 
-    written = Reply(text="", sources=[], decision={}, signals={}, language=None, turn=KnowledgeTurn())
+    written = Reply(text="", sources=[], signals={}, language=None, turn=KnowledgeTurn())
 
     with (
         patch(

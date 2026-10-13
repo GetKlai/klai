@@ -223,7 +223,7 @@ async def _widget_chat(monkeypatch, *, model_text: str, chunks: list[dict], stre
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner.record_widget_turn", new=AsyncMock()) as record,
-        patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+        patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
     ):
         result = await chat_completions(request=request, http_request=_http_request_stub(), auth=auth, db=db)
         frames = [frame async for frame in result.body_iterator] if stream else []

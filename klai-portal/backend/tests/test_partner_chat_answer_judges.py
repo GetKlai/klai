@@ -208,7 +208,7 @@ class _LiteLLM:
 
 
 def _written_reply() -> Reply:
-    return Reply(text="", sources=[], decision={}, signals={}, language=None, turn=KnowledgeTurn())
+    return Reply(text="", sources=[], signals={}, language=None, turn=KnowledgeTurn())
 
 
 def _frames(chunks: list[bytes]) -> list[dict]:
@@ -302,7 +302,7 @@ async def test_a_judge_that_doubts_an_answer_with_sources_adds_the_button_and_ne
     # repaired rather than removed (see the grounding tests below).
     litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict(verdict))
 
-    text, signals, extras = await _answer(litellm, stream=stream, clarity="clear", **_with_900_sources())
+    text, signals, extras = await _answer(litellm, stream=stream, **_with_900_sources())
 
     assert text == ANSWER_900
     assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
@@ -354,18 +354,6 @@ async def test_partial_answer_keeps_its_sources_and_gets_the_appointment_button(
     assert extras["sources"]
     assert extras["escalation"] == [{"appointment": True}]
     assert signals["decision"] == "partial_answer"
-
-
-@pytest.mark.parametrize("stream", [True, False])
-async def test_ambiguous_turn_shows_the_clarifying_question_without_buttons(stream):
-    litellm = _LiteLLM(model_text=CLARIFYING_QUESTION, answer_judge=_answer_verdict("not_answered"))
-
-    text, signals, extras = await _answer(litellm, stream=stream, clarity="ambiguous")
-
-    assert text == CLARIFYING_QUESTION
-    assert extras == {"broad_mode": [], "escalation": [], "sources": []}
-    assert signals["decision"] == "clarifying_question"
-    assert signals["refused"] is False
 
 
 # ─── The statement-level grounding check and its repair ─────────────────
@@ -462,7 +450,7 @@ async def test_a_clarifying_question_is_not_repaired():
         grounding=_grounding("Gaat het om je factuur of om je abonnement?"),
     )
 
-    text, _, _ = await _answer(litellm, stream=True, clarity="ambiguous")
+    text, _, _ = await _answer(litellm, stream=True)
 
     # An unsupported "statement" inside a question is the checker overreaching;
     # the decision table already refuses a question that carries a claim.
@@ -487,14 +475,12 @@ async def test_a_turn_wrongly_called_conversational_keeps_its_sources():
     assert signals["decision"] == "answer"
 
 
-@pytest.mark.parametrize("clarity", ["clear", "ambiguous"])
-async def test_uncited_draft_without_claims_is_shown_as_before_the_judges(clarity):
+async def test_uncited_draft_without_claims_is_shown_as_before_the_judges():
     # The original claims rule: text without a source that states nothing about
-    # the organisation reaches the visitor. Only an ambiguous turn whose draft
-    # ends on a question is labelled a clarifying question.
+    # the organisation reaches the visitor.
     litellm = _LiteLLM(model_text="Dat kan ik niet vinden.", answer_judge=_answer_verdict("not_answered"))
 
-    text, signals, _ = await _answer(litellm, stream=True, clarity=clarity)
+    text, signals, _ = await _answer(litellm, stream=True)
 
     assert text.startswith("Dat kan ik niet vinden.")
     assert signals["decision"] == "answer"
@@ -558,13 +544,13 @@ async def test_an_uncited_reply_that_answers_keeps_no_button():
     assert not extras.get("escalation")
 
 
-async def test_ambiguous_turn_whose_question_carries_a_claim_is_refused():
+async def test_a_question_that_carries_a_claim_is_refused():
     litellm = _LiteLLM(
         model_text="Bedoel je je abonnement van 5 euro per maand?",
         answer_judge=_answer_verdict("not_answered", claims=True),
     )
 
-    text, _, _ = await _answer(litellm, stream=True, clarity="ambiguous")
+    text, _, _ = await _answer(litellm, stream=True)
 
     assert text == REFUSAL_NL
 
@@ -608,7 +594,7 @@ async def test_escalation_keeps_its_reply_and_button_whatever_the_verdict():
     reply = "Je kunt met de knop hieronder een afspraak maken met een medewerker."
     litellm = _LiteLLM(model_text=reply, answer_judge=_answer_verdict("not_answered", claims=False))
 
-    text, signals, extras = await _answer(litellm, stream=True, force_escalation=True, clarity="ambiguous")
+    text, signals, extras = await _answer(litellm, stream=True, force_escalation=True)
 
     assert text == reply
     assert extras["escalation"] == [{"appointment": True}]
@@ -637,7 +623,7 @@ async def test_passed_reply_is_stripped_of_links_before_the_judge_and_the_visito
         answer_judge=_answer_verdict("not_answered"),
     )
 
-    text, _, _ = await _answer(litellm, stream=True, clarity="ambiguous")
+    text, _, _ = await _answer(litellm, stream=True)
 
     assert CLARIFYING_QUESTION in text
     for artifact in ("http", "evil.example", "voys.nl", "[1]"):
