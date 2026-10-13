@@ -56,8 +56,6 @@ from app.services.partner_chat import (
     context_safety_violation,
     fixed_reply_response,
     fixed_reply_stream,
-    off_topic_response,
-    off_topic_stream,
     openai_chat_completion_non_streaming,
     openai_chat_completion_streaming,
     retrieval_upstream_errors,
@@ -100,8 +98,9 @@ from app.services.widget_handoff import (
     send_handoff_visitor_message,
     start_hubspot_handoff,
 )
+from app.services.widget_reply import AnswerUpstreamError, Reply, error_frames, reply_body, reply_frames
 from app.services.widget_theme import _merge_css_variables
-from app.services.widget_turn import Reply, TurnInputs, widget_turn
+from app.services.widget_turn import TurnInputs, widget_turn
 
 logger = structlog.get_logger()
 
@@ -2083,27 +2082,15 @@ async def _replayed(frames: list[bytes]) -> AsyncGenerator[bytes]:
 
 def _widget_reply_response(reply: Reply, request: ChatCompletionsRequest, record: dict[str, Any] | None) -> Any:
     """Send a help-widget reply the way the request asked for it, and record it."""
-    if reply.frames is not None:
-        frames = _replayed(reply.frames)
+    knowledge = request.knowledge
+    include_sources = knowledge.include_sources if knowledge is not None else True
+    if request.stream:
+        frames = _replayed(reply_frames(reply, include_sources=include_sources))
         if record is not None:
             frames = _audit_streaming_wrapper(frames, turn=reply.turn, **record, answer_signals=reply.signals)
         return StreamingResponse(content=frames, media_type="text/event-stream")
-    if reply.body is not None:
-        return _sent_body(reply.body, request, reply.turn, reply.signals, record)
-    if record is not None:
-        task = asyncio.create_task(
-            record_widget_turn(**record, role="assistant", content=reply.text, answer_signals=reply.signals or None)
-        )
-        _pending.add(task)
-        task.add_done_callback(_pending.discard)
-    if request.stream:
-        return StreamingResponse(
-            content=off_topic_stream(reply=reply.text, language=reply.language, appointment=reply.appointment),
-            media_type="text/event-stream",
-        )
-    return off_topic_response(
-        model=request.model, reply=reply.text, language=reply.language, appointment=reply.appointment
-    )
+    body = reply_body(reply, model=request.model, include_sources=include_sources)
+    return _sent_body(body, request, reply.turn, reply.signals, record)
 
 
 def _log_retrieval(auth: PartnerAuthContext, profile: ChatProfile, chunks: list[dict]) -> None:
@@ -2250,30 +2237,36 @@ async def chat_completions(  # noqa: C901
 
     if support_mode:
         # The help widget's turn runs as the flow of chat-quality-history-and-plan.md §5.
-        reply = await widget_turn(
-            TurnInputs(
-                request=request,
-                auth=auth,
-                settings=settings,
-                profile=profile,
-                kb_slugs=kb_slugs,
-                retrieval_enabled=retrieval_enabled,
-                partner_user_id=partner_user_id,
-                widget_system_prompt=widget_system_prompt,
-                page_context=page_context,
-                tone_register=tone_register,
-                off_topic_subjects=off_topic_subjects,
-                off_topic_reply=off_topic_reply,
-                previous_case=await _previous_case(request, auth, audit),
-                audit_widget_id=audit.widget_id,
-                audit_session_key=audit.session_key,
-                user_turn_write=user_turn_write,
-                audit_ready=audit.ready,
-                pasted_correspondence=pasted_correspondence,
-                answer_signals=answer_signals,
-                turn_started=turn_started,
-            )
+        turn = TurnInputs(
+            request=request,
+            auth=auth,
+            settings=settings,
+            profile=profile,
+            kb_slugs=kb_slugs,
+            retrieval_enabled=retrieval_enabled,
+            partner_user_id=partner_user_id,
+            widget_system_prompt=widget_system_prompt,
+            page_context=page_context,
+            tone_register=tone_register,
+            off_topic_subjects=off_topic_subjects,
+            off_topic_reply=off_topic_reply,
+            previous_case=await _previous_case(request, auth, audit),
+            audit_widget_id=audit.widget_id,
+            audit_session_key=audit.session_key,
+            user_turn_write=user_turn_write,
+            audit_ready=audit.ready,
+            pasted_correspondence=pasted_correspondence,
+            answer_signals=answer_signals,
+            turn_started=turn_started,
         )
+        try:
+            reply = await widget_turn(turn)
+        except AnswerUpstreamError as error:
+            if not request.stream:
+                raise
+            # Once streaming has started a failure cannot become a 502, so a
+            # streamed request gets the error as a frame (see _sse_error_frame).
+            return StreamingResponse(content=_replayed(error_frames(error)), media_type="text/event-stream")
         return _widget_reply_response(reply, request, record)
 
     templates_block, telemetry_level = "", "shadow"
@@ -2404,12 +2397,7 @@ async def chat_completions(  # noqa: C901
         "citation_output": citation_output,
         "source_query": knowledge.query if knowledge is not None else None,
         "page_context": page_context,
-        "support_mode": False,
-        "broad_mode": broad_turn,
-        "force_escalation": False,
         "clarity": clarity,
-        "conversational": False,
-        "sentiment": None,
         "answer_signals": answer_signals if audit.ready or internal else None,
         "signal_chunks": chunks,
         "turn_timing": turn_timing,

@@ -26,9 +26,11 @@ from klai_chat_prompts import (
 
 from app.services.case_file import Case
 from app.services.partner_chat import (
+    KnowledgeTurn,
     _build_system_prompt,
     _compose_backend_managed_answer,
 )
+from app.services.widget_reply import Reply
 
 # Signature phrases that exist in exactly one of the profiles, so a
 # prompt built with the wrong base is caught immediately.
@@ -300,6 +302,7 @@ async def _run_chat_completions(*, support_mode_flag: bool, stream: bool, tone_r
     async def mock_streaming_gen():
         yield b"data: [DONE]\n\n"
 
+    written = Reply(text="", sources=[], decision={}, signals={}, language=None, turn=KnowledgeTurn())
     tone_reader = AsyncMock(return_value=tone_register_flag)
     # A support-mode turn runs in widget_turn, any other in chat_completions.
     turn_module = "app.services.widget_turn" if support_mode_flag else "app.api.partner"
@@ -314,27 +317,25 @@ async def _run_chat_completions(*, support_mode_flag: bool, stream: bool, tone_r
             "app.api.partner._widget_tone_register",
             new=tone_reader,
         ),
-        patch(
-            f"{turn_module}.chat_completion_streaming",
-            return_value=mock_streaming_gen(),
-        ) as chat_stream,
-        patch(
-            f"{turn_module}.chat_completion_non_streaming",
-            new=AsyncMock(return_value={"choices": []}),
-        ) as chat_nonstream,
+        # The help widget's reply is written by one function whether it streams or not;
+        # any other turn still has a streaming and a plain generation.
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=written)) as write,
+        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
+        patch("app.api.partner.chat_completion_non_streaming", new=AsyncMock(return_value={"choices": []})) as plain,
         patch("app.api.partner.asyncio"),
         patch(f"{turn_module}.write_retrieval_log", new=AsyncMock()),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
-    return mock_retrieve, (chat_stream if stream else chat_nonstream), tone_reader
+    generation = write if support_mode_flag else (chat_stream if stream else plain)
+    return mock_retrieve, generation, tone_reader
 
 
 @pytest.mark.asyncio
 async def test_widget_support_mode_threaded_into_retrieval_and_streaming():
     mock_retrieve, chat_stream, _tone_reader = await _run_chat_completions(support_mode_flag=True, stream=True)
     assert mock_retrieve.call_args.kwargs["support_mode"] is True
-    assert chat_stream.call_args.kwargs["support_mode"] is True
+    chat_stream.assert_awaited_once()
     # No tone_register configured on the widget → the restrained default is
     # what reaches retrieval; the completion functions never see the field
     # (they only render the already-built prompt).
@@ -346,7 +347,7 @@ async def test_widget_support_mode_threaded_into_retrieval_and_streaming():
 async def test_widget_support_mode_threaded_into_non_streaming():
     mock_retrieve, chat_nonstream, _tone_reader = await _run_chat_completions(support_mode_flag=True, stream=False)
     assert mock_retrieve.call_args.kwargs["support_mode"] is True
-    assert chat_nonstream.call_args.kwargs["support_mode"] is True
+    chat_nonstream.assert_awaited_once()
     assert mock_retrieve.call_args.kwargs["tone_register"] == "restrained"
     assert "tone_register" not in chat_nonstream.call_args.kwargs
 
@@ -355,7 +356,9 @@ async def test_widget_support_mode_threaded_into_non_streaming():
 async def test_widget_support_mode_defaults_off():
     mock_retrieve, chat_stream, _tone_reader = await _run_chat_completions(support_mode_flag=False, stream=True)
     assert mock_retrieve.call_args.kwargs["support_mode"] is False
-    assert chat_stream.call_args.kwargs["support_mode"] is False
+    # Outside support mode the turn is not written by the widget's writer.
+    assert chat_stream.call_args is not None
+    assert "force_escalation" not in chat_stream.call_args.kwargs
 
 
 @pytest.mark.asyncio
@@ -417,8 +420,10 @@ async def _run_with_scope(*, chunks, scope_result):
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value=None)),
         patch("app.api.partner.case_file.update_case", new=classifier),
         patch(
-            "app.services.widget_turn.chat_completion_non_streaming",
-            new=AsyncMock(return_value={"choices": []}),
+            "app.services.widget_turn.write_reply",
+            new=AsyncMock(
+                return_value=Reply(text="", sources=[], decision={}, signals={}, language=None, turn=KnowledgeTurn())
+            ),
         ) as chat_call,
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),

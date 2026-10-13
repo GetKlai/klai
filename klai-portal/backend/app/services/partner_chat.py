@@ -41,9 +41,7 @@ from klai_chat_prompts import (
     SUPPORT_BROAD_CHAT_SYSTEM_PROMPT,
     SUPPORT_CHAT_SYSTEM_PROMPT,
     SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT,
-    appointment_offer_sentence,
     broad_mode_answer_marker,
-    chat_contract_article,
     final_response_language_reminder,
     has_direct_evidence_for_query,
     should_clarify,
@@ -195,11 +193,6 @@ def safety_refusal_response(*, model: str, query: str = "") -> dict:
     }
 
 
-# A dash used as punctuation: an em dash anywhere between words, an en dash
-# with a space on either side. "9\u201317" keeps its range dash.
-_PUNCTUATION_DASH = re.compile(r"\s*\u2014\s*|\s+\u2013\s+")
-
-
 # A phone number: nine or more digits with optional spaces, dots, slashes,
 # dashes or brackets, starting with a country code or a zero. "0031" or "085"
 # alone is a number type in these articles and does not match; a date range
@@ -247,43 +240,6 @@ def without_unsourced_contact_details(text: str, chunks: list[dict] | None) -> s
             continue
         kept_lines.append(" ".join(sentences))
     return re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
-
-
-def without_dashes(text: str, *, helpdesk: bool) -> str:
-    """The widget owner wants no dash as punctuation in a reply; the model copies them from the prompt."""
-    return _PUNCTUATION_DASH.sub(", ", text) if helpdesk else text
-
-
-def off_topic_response(*, model: str, reply: str, language: str | None, appointment: bool = True) -> dict:
-    """The referral for a subject this widget does not answer.
-
-    No answer model writes here: the visitor gets the referral that names their
-    subject in a fixed sentence, or the configured one (off_topic_referral.py),
-    and the appointment button, so a price or a procedure cannot slip in. Putting the
-    same rule in the widget's base prompt was measured on 2026-09-17 and landed
-    it right 8 times out of 15.
-    """
-    message: dict[str, Any] = {"role": "assistant", "content": reply, "sources": []}
-    if appointment:
-        message["escalation"] = _appointment_escalation()
-    if language is not None:
-        message["language"] = language
-    return {
-        "id": "chatcmpl-off-topic",
-        "object": "chat.completion",
-        "model": model,
-        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
-    }
-
-
-async def off_topic_stream(*, reply: str, language: str | None, appointment: bool = True) -> AsyncGenerator[bytes]:
-    """The same reply as :func:`off_topic_response`, in the widget's frames."""
-    if language is not None:
-        yield _sse_language_delta(language)
-    if appointment:
-        yield _sse_escalation_delta(_appointment_escalation())
-    yield _sse_content_delta(reply)
-    yield b"data: [DONE]\n\n"
 
 
 async def safety_refusal_stream(query: str = "") -> AsyncGenerator[bytes]:
@@ -2402,7 +2358,7 @@ def _check_answer_later(
     return task
 
 
-async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus the widget-only appointment button
+async def _judge_composed_answer(  # noqa: C901 - one decision per internal mode
     content: str,
     sources: list[dict],
     decision: dict[str, Any],
@@ -2413,56 +2369,38 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     settings: Settings,
     org_id: int | str | None,
     answer_signals: dict[str, Any] | None,
-    helpdesk: bool,
     response_language: str | None,
-    force_escalation: bool,
-    conversational: bool,
     clarity: Literal["clear", "ambiguous"] | None,
     profile: ChatProfile = ChatProfile(surface="widget"),
     knowledge_turn: KnowledgeTurn | None = None,
     delegated_org_id: str | None = None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3: the answer judge, then the one decision.
+    """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3 for the internal chat: the answer judge, then the one decision.
 
-    One decision for every surface that is judged: the helpdesk widget
-    (``helpdesk``) and the internal chat. What differs is the mode the turn is
-    answered under (``knowledge_turn.answer_mode``, see
-    :func:`app.services.answer_judge.decide_answer`) and the widget's
-    appointment button, which only a helpdesk turn carries. Partner-API keys
-    and internal widgets return the composer's result untouched and make no
-    call: the judge and the refusal are written for a visitor or an employee.
+    What differs per turn is the mode it is answered under
+    (``knowledge_turn.answer_mode``, see :func:`app.services.answer_judge.decide_answer`).
+    Partner-API keys return the composer's result untouched and make no call:
+    the judge and the refusal are written for an employee. The help widget's
+    twin is ``widget_write._judge``.
 
     Runs on the composer's result rather than inside it. The composer is
     synchronous with two production callers and a large body of direct tests;
     the judge is an HTTP call, and one async step after it keeps a single home
-    for the rule. A consented broad-mode answer is not judged either; it is
-    labelled general knowledge, and every fact in it would count as
-    unsupported. Callers do not call this on a safety-blocked turn.
+    for the rule. Callers do not call this on a safety-blocked turn.
 
-    A Strict turn (the widget, internal Strict) is judged and checked here,
-    held until the check decides. An Open
-    turn is shown as written and checked afterwards for the record only; a
+    A Strict turn is judged and checked here, held until the check decides. An
+    Open turn is shown as written and checked afterwards for the record only; a
     general turn is not checked at all, it had no articles.
 
     The judge sees the draft after the marker and link stripper, exactly the
     text the user would get. An empty result (the model wrote nothing) has
     nothing to judge and keeps the composer's refusal.
-
-    A clarifying question carries no buttons: a "broaden the search" or "book
-    an appointment" button under a question reads as a refusal. An uncited
-    answer keeps only an appointment offer that the backend forced or the
-    model's own words make; a partial answer always gets one.
     """
-    internal = profile.surface == "internal"
-    if not (helpdesk or internal) or decision.get("broad_mode") == "answer":
+    if profile.surface != "internal":
         return content, sources, decision
     answer_mode = knowledge_turn.answer_mode if knowledge_turn is not None else profile.kb_mode
-    draft_text, model_offered_appointment = strip_appointment_offer_marker(draft)
+    draft_text, _ = strip_appointment_offer_marker(draft)
     safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
-    if helpdesk:
-        # The judges may hand this text to the visitor instead of the composed
-        # one; it passes the same provenance gate.
-        safe_text = without_unsourced_contact_details(safe_text, citation_chunks)
     if not safe_text:
         return content, sources, decision
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
@@ -2471,8 +2409,8 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         outcome = decide_answer(
             kb_mode=answer_mode,
             has_sources=bool(sources),
-            escalation=force_escalation,
-            conversational=conversational,
+            escalation=False,
+            conversational=False,
             clarity=clarity,
             draft_is_question=is_clarifying_question(safe_text),
             judgement=None,
@@ -2498,11 +2436,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         uncited = draft_text if answer_mode == "general" else safe_text
         return (content, sources, decision) if sources else (uncited, [], {"reason": outcome})
 
-    if (
-        internal
-        and knowledge_turn is not None
-        and (knowledge_turn.user_provided_content or knowledge_turn.pasted_correspondence)
-    ):
+    if knowledge_turn is not None and (knowledge_turn.user_provided_content or knowledge_turn.pasted_correspondence):
         # The answer rests on what the employee attached or pasted. Judged
         # against the articles alone, two correct observations from a
         # screenshot read as two unsupported statements and get repaired away,
@@ -2513,55 +2447,23 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             answer_signals["decision"] = "answer"
         return (content, sources, decision) if sources else (safe_text, [], {"reason": "user_provided_content"})
 
-    # The checker only sees the question, the articles and the reply, so it cannot
-    # know a booking button is really attached and flagged "Klik op de knop hieronder
-    # om een afspraak in te plannen" as an unsupported claim about the company. Handing
-    # it the guarantee as one more article keeps it strict about what that appointment
-    # will DO, which a skip-list in the prompt could not separate.
-    if helpdesk and (contract := chat_contract_article(appointment_offered=True)) is not None:
-        articles = [*articles, contract]
-    check_seconds = grounding_budget(profile.surface)
     checks_started = time.perf_counter()
-    light_judge = judge_answer(
-        messages=messages, draft=safe_text, articles=articles, settings=settings, delegated_org_id=delegated_org_id
-    )
-    chosen = bool(citation_chunks) and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks or [])
-    deferred = helpdesk and chosen and bool(sources) and knowledge_turn is not None and answer_signals is not None
-    if deferred and knowledge_turn is not None and answer_signals is not None:
-        # The writer read only passages the selection step chose and cited
-        # one, and after writing nothing changes such a widget reply (below),
-        # so the statement check is measurement and runs after the reply went
-        # out. On the critical path it cost 1.6 s median of a 6.2 s written
-        # turn in the first week of real traffic; the light judge, which
-        # decides the appointment button, costs 0.4 s. An uncited reply keeps
-        # the check on the path: without a source its statements decide
-        # between showing and refusing (decide_answer).
-        judgement, grounding = await light_judge, None
-        knowledge_turn.grounding_check = _check_answer_later(
+    # Both checks read the same draft and run together, so the heavier one
+    # costs its own 2.1 s median once and nothing on top of the light judge.
+    judgement, grounding = await asyncio.gather(
+        judge_answer(
+            messages=messages, draft=safe_text, articles=articles, settings=settings, delegated_org_id=delegated_org_id
+        ),
+        check_grounding(
             question=_visitor_question(messages),
             draft=safe_text,
             articles=articles,
             settings=settings,
             org_id=org_id,
+            timeout_seconds=grounding_budget(profile.surface),
             delegated_org_id=delegated_org_id,
-            answer_signals=answer_signals,
-            keep_statements=True,
-        )
-    else:
-        # Both checks read the same draft and run together, so the heavier one
-        # costs its own 2.1 s median once and nothing on top of the light judge.
-        judgement, grounding = await asyncio.gather(
-            light_judge,
-            check_grounding(
-                question=_visitor_question(messages),
-                draft=safe_text,
-                articles=articles,
-                settings=settings,
-                org_id=org_id,
-                timeout_seconds=check_seconds,
-                delegated_org_id=delegated_org_id,
-            ),
-        )
+        ),
+    )
     checks_ms = _elapsed_ms(checks_started)
     if judgement is not None and grounding is not None:
         # The statement-level check decides grounding: measured against 54
@@ -2570,8 +2472,8 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     outcome = decide_answer(
         kb_mode="strict",
         has_sources=bool(sources),
-        escalation=force_escalation,
-        conversational=conversational,
+        escalation=False,
+        conversational=False,
         clarity=clarity,
         draft_is_question=is_clarifying_question(safe_text),
         judgement=judgement,
@@ -2589,8 +2491,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
     )
     if answer_signals is not None:
         answer_signals.update(verdicts, decision=outcome)
-        if not deferred:
-            _grounding_signals(answer_signals, grounding, keep_statements=helpdesk)
+        _grounding_signals(answer_signals, grounding, keep_statements=False)
         if judgement is None:
             answer_signals.setdefault("judge_failed", []).append("answer")
 
@@ -2599,10 +2500,7 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         if refused:
             return content, sources, decision
         refusal: dict[str, Any] = {"reason": "answer_judge_refusal", _NO_CITABLE_SOURCES_DECISION_KEY: True}
-        if helpdesk:
-            refusal.update(_helpdesk_refusal_offers(citation_chunks))
-        message = _no_citable_sources_message(response_language, helpdesk=helpdesk, suggest_open_mode=internal)
-        return message, [], refusal
+        return _no_citable_sources_message(response_language, suggest_open_mode=True), [], refusal
     if outcome == "clarifying_question":
         return safe_text, [], {"reason": "clarifying_question"}
     if refused:
@@ -2613,33 +2511,10 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
             if key not in (_NO_CITABLE_SOURCES_DECISION_KEY, "broad_mode", "escalation")
         }
         decision["reason"] = "uncited_no_claims"
-        # A reply with no source that does not answer the question is a dead end
-        # for the visitor, so it carries the same button the backend's own
-        # refusal carries. Without this the model's own "dat staat niet in onze
-        # helpartikelen" arrived bare, and a visitor in a simulated conversation
-        # on 2026-09-18 needed two more turns to find out a person was reachable
-        # at all: they repeated their question, got the backend refusal with the
-        # button, and then had to ask how to book.
-        # Not on a conversational turn: decide_answer deliberately treats one as an
-        # answer even when the light judge calls it unanswered, and a button under
-        # "graag gedaan" offers help with nothing.
-        dead_end = not conversational and judgement is not None and judgement.verdict != "answered"
-        if helpdesk and (
-            force_escalation or dead_end or (model_offered_appointment and _text_offers_appointment(safe_text))
-        ):
-            decision["escalation"] = _appointment_escalation()
-    if outcome == "partial_answer" and helpdesk:
-        decision["escalation"] = _appointment_escalation()
-    # Only a reply the user actually reads: a refusal
-    # and a clarifying question state nothing about the organisation. On the
-    # help widget and internal Strict nothing changes a reply after it is
-    # written: what the writer may read is decided before
-    # (passage_selection.py), and the check's verdict is kept for measuring.
-    # Editing a flagged reply was the largest cause of a bad answer in the
-    # owner's review, and turning it into a refusal on one "contradicted"
-    # threw away a correct procedure whose warning the check misread. The
-    # internal rewrite went on 2026-10-13, after the selection step reached
-    # Strict (plan §8).
+    # Nothing changes a reply after it is written: what the writer may read is
+    # decided before (passage_selection.py), and the check's verdict is kept
+    # for measuring. The internal rewrite went on 2026-10-13, after the
+    # selection step reached Strict (plan §8).
     if (
         outcome in ("answer", "partial_answer")
         and grounding is not None
@@ -2650,30 +2525,8 @@ async def _judge_composed_answer(  # noqa: C901 - one decision per mode, plus th
         # The selection step did not choose this turn's passages (it failed,
         # or was skipped), so the writer read everything retrieval found. A
         # reply in which the check then supports nothing is not shown.
-        refusal = {
-            "reason": "grounding_nothing_left",
-            _NO_CITABLE_SOURCES_DECISION_KEY: True,
-            **(_helpdesk_refusal_offers(citation_chunks) if helpdesk else {}),
-        }
-        message = _no_citable_sources_message(response_language, helpdesk=helpdesk, suggest_open_mode=internal)
-        return message, [], refusal
-    # A reply without a source that the judge does not call an answer is the
-    # visitor's dead end, and the button under it is the way out. The profile
-    # and the weak-source rule ask the model to say so; measured on the owner's
-    # review of real answers, 5 of 15 such replies did not. The sentence is
-    # ours, so it is there whenever the button is. Not behind a question: the
-    # visitor is asked something, not sent away. Not under a reply that kept
-    # its source: a judge may add the button to such a reply, never change it.
-    if (
-        helpdesk
-        and not sources
-        and decision.get("escalation")
-        and judgement is not None
-        and judgement.verdict != "answered"
-        and not _text_offers_appointment(content)
-        and not is_clarifying_question(content)
-    ):
-        content = f"{content.rstrip()} {appointment_offer_sentence(response_language)}"
+        refusal = {"reason": "grounding_nothing_left", _NO_CITABLE_SOURCES_DECISION_KEY: True}
+        return _no_citable_sources_message(response_language, suggest_open_mode=True), [], refusal
     return content, sources, decision
 
 
@@ -2770,12 +2623,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     web_chunks: list[dict] | None = None,
     web_query: str | None = None,
     emit_sources: bool = True,
-    support_mode: bool = False,
-    broad_mode: bool = False,
-    conversational: bool = False,
-    force_escalation: bool = False,
     clarity: Literal["clear", "ambiguous"] | None = None,
-    sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     conversation: list[dict] | None = None,
@@ -2797,16 +2645,8 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     an upstream failure (LiteLLM mid-restart / 5xx) happens pre-first-byte and is
     surfaced as a clean SSE error frame instead of a broken stream.
 
-    ``broad_mode`` is the API layer's decision (see ``_broad_mode_active``) that
-    this turn is a consented general-knowledge answer; it reaches the composer
-    unchanged. Both the composer's answer label and its offer signal on a public
-    refusal surface as a ``delta.broad_mode`` frame before content, so the widget
-    can label the message or render the consent button without parsing prose.
-
-    An answer that offers the visitor an appointment surfaces the same way, as a
-    ``delta.escalation`` frame carrying ``{"appointment": true}`` — the widget
-    puts its booking button under that one message instead of keeping a bar on
-    screen forever. Absent frame = no offer.
+    The help widget's reply is not written here: widget_write.write_reply
+    composes it and widget_reply.reply_frames renders it.
 
     ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`)
     — filled once the answer is composed, and never part of any frame.
@@ -2945,9 +2785,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         user_query,
         web_chunks,
         web_query,
-        helpdesk=support_mode,
-        broad=broad_mode,
-        force_escalation=force_escalation,
         response_language=response_language,
         suggest_open_mode=profile.surface == "internal",
     )
@@ -2975,17 +2812,12 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             settings=settings,
             org_id=org_id,
             answer_signals=answer_signals,
-            helpdesk=support_mode,
             response_language=response_language,
-            force_escalation=force_escalation,
-            conversational=conversational,
             clarity=clarity,
             profile=profile,
             knowledge_turn=knowledge_turn,
             delegated_org_id=delegated_org_id,
         )
-        content = without_dashes(content, helpdesk=support_mode)
-        decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
     _log_turn_timing(
         turn_timing,
         org_id=org_id,
@@ -3042,16 +2874,6 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         outgoing = _unstreamed_tail(content, "".join(live_emitted), draft, citation_chunks)
         if footer_text:
             outgoing = f"{outgoing.rstrip()}\n\n{footer_text}"
-    # Safety refusals above replace the decision dict, so no broad signal
-    # survives on a blocked turn — deliberate: a blocked answer neither
-    # labels itself general knowledge nor invites the visitor to broaden.
-    broad_signal = decision.get("broad_mode") if isinstance(decision, dict) else None
-    if broad_signal in ("offer", "answer"):
-        yield _sse_broad_mode_delta(broad_signal)
-    # Same reasoning for the appointment offer: it rides on the decision dict,
-    # so a safety-blocked turn drops it with everything else.
-    if escalation := _appointment_escalation_signal(decision):
-        yield _sse_escalation_delta(escalation)
     if citation_chunks:
         yield _sse_activity_delta(
             [
@@ -4115,12 +3937,7 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     citation_output: CitationOutput = "links",
     source_query: str | None = None,
     page_context: PageContext | None = None,
-    support_mode: bool = False,
-    broad_mode: bool = False,
-    conversational: bool = False,
-    force_escalation: bool = False,
     clarity: Literal["clear", "ambiguous"] | None = None,
-    sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
@@ -4136,15 +3953,6 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
     POST to litellm with stream=false. Emits the
     ``chat_synthesis_complete`` log event before returning so
     cross-lingual correctness is observable on every call (REQ-07).
-
-    ``broad_mode`` is the API layer's per-turn general-knowledge decision
-    (only ever True for the consented helpdesk widget); on the marker path it
-    reaches the composer, and the resulting signal surfaces as
-    ``message.broad_mode`` ("answer" | "offer") for non-streaming widget use.
-
-    An answer that offers the visitor an appointment carries
-    ``message.escalation = {"appointment": true}``, the non-streaming twin of
-    the ``delta.escalation`` frame. Absent key = no offer.
 
     ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`);
     it is filled on the marker path and never added to the returned body.
@@ -4273,9 +4081,6 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                     composer_query,
                     web_chunks,
                     web_query,
-                    helpdesk=support_mode,
-                    broad=broad_mode,
-                    force_escalation=force_escalation,
                     response_language=response_language,
                     suggest_open_mode=profile.surface == "internal",
                 )
@@ -4290,18 +4095,13 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                     settings=settings,
                     org_id=org_id,
                     answer_signals=answer_signals,
-                    helpdesk=support_mode,
                     response_language=response_language,
-                    force_escalation=force_escalation,
-                    conversational=conversational,
                     clarity=clarity,
                     profile=profile,
                     knowledge_turn=knowledge_turn,
                     delegated_org_id=delegated_org_id,
                 )
-                rendered_content = without_dashes(rendered_content, helpdesk=support_mode)
                 answer_judge_ms = _elapsed_ms(judge_started)
-                decision.update({"sentiment": sentiment} if support_mode and sentiment else {})
                 # Popped before the log so that event keeps its exact payload;
                 # the marker only travels to the audit sink.
                 refused = bool(decision.pop(_NO_CITABLE_SOURCES_DECISION_KEY, False))
@@ -4338,10 +4138,6 @@ async def chat_completion_non_streaming(  # noqa: C901 - tools stripping/forward
                     )
                     if footer_text:
                         message["content"] = f"{rendered_content.rstrip()}\n\n{footer_text}"
-                if isinstance(decision, dict) and decision.get("broad_mode") in ("offer", "answer"):
-                    message["broad_mode"] = decision["broad_mode"]
-                if escalation := _appointment_escalation_signal(decision):
-                    message["escalation"] = escalation
         stripped_links = 0
         _log_turn_timing(
             turn_timing,
@@ -4418,12 +4214,7 @@ async def chat_completion_streaming(
     source_query: str | None = None,
     emit_sources: bool = True,
     page_context: PageContext | None = None,
-    support_mode: bool = False,
-    broad_mode: bool = False,
-    conversational: bool = False,
-    force_escalation: bool = False,
     clarity: Literal["clear", "ambiguous"] | None = None,
-    sentiment: Literal["negative", "neutral", "positive"] | None = None,
     answer_signals: dict[str, Any] | None = None,
     signal_chunks: list[dict] | None = None,
     turn_timing: dict[str, float] | None = None,
@@ -4439,10 +4230,6 @@ async def chat_completion_streaming(
     Marker mode is the current partner/widget API path: it buffers the model
     output, runs the deterministic citation composer, then emits only sources
     that support the final answer. Link mode is the legacy sanitizer path.
-
-    ``broad_mode`` is the API layer's per-turn general-knowledge decision
-    (see ``_broad_mode_active``); it only affects the marker path and is
-    ignored by the legacy link sanitizer.
 
     ``answer_signals`` is the caller's audit sink, filled by the marker path
     once the answer is composed. The legacy link sanitizer has no composed
@@ -4483,12 +4270,7 @@ async def chat_completion_streaming(
             web_chunks=web_chunks,
             web_query=web_query,
             emit_sources=emit_sources,
-            support_mode=support_mode,
-            broad_mode=broad_mode,
-            conversational=conversational,
-            force_escalation=force_escalation,
             clarity=clarity,
-            sentiment=sentiment,
             answer_signals=answer_signals,
             signal_chunks=signal_chunks,
             conversation=messages,

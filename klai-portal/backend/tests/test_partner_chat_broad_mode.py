@@ -42,12 +42,15 @@ from klai_chat_prompts import (
 )
 from klai_chat_prompts.language import resolve_conversation_language
 
-from app.services import partner_chat
+from app.services import partner_chat, widget_write
 from app.services.partner_chat import (
+    KnowledgeTurn,
     _broad_mode_active,
     _chat_completion_streaming_with_composed_citations,
     _compose_backend_managed_answer,
 )
+from app.services.widget_reply import Reply, reply_body, reply_frames
+from app.services.widget_write import write_reply
 
 _HELPDESK_REFUSAL_NL = no_citable_sources_message("nl", helpdesk=True)
 
@@ -415,11 +418,14 @@ async def test_retrieve_early_returns_never_broad(monkeypatch):
 
 
 def _stream_patches(monkeypatch, model_text: str):
-    """Stand in for the LiteLLM streaming call with a canned model output."""
+    """Stand in for the LiteLLM call, streamed (generic path) or plain (the widget's), with a canned model output."""
 
     class _MockResp:
         def raise_for_status(self):
             return None
+
+        def json(self):
+            return {"choices": [{"index": 0, "message": {"role": "assistant", "content": model_text}}]}
 
         async def aiter_lines(self):
             payload = json.dumps({"choices": [{"index": 0, "delta": {"content": model_text}}]})
@@ -443,15 +449,23 @@ def _stream_patches(monkeypatch, model_text: str):
         def stream(self, *_, **__):
             return _StreamCtx()
 
+        async def post(self, *_, **__):
+            return _MockResp()
+
     monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
 
 
 async def _collect(**kwargs) -> list[bytes]:
-    # Mirrors what chat_completion_streaming does: the decision comes from the
-    # visitor's messages, never from user_query (the KB-tuned rewrite). Tests
-    # that care about the language therefore still prove the rewrite cannot
-    # decide it; test_stream_refusal_language_follows_the_conversation covers
-    # the production wiring itself, one level up.
+    # The widget's reply is written once and rendered as frames; the partner
+    # path still streams. Either way the language decision comes from the
+    # visitor's messages, never from the source query (the KB-tuned rewrite),
+    # so tests that care about the language still prove the rewrite cannot
+    # decide it.
+    if kwargs.pop("support_mode", False):
+        kwargs["messages"] = kwargs.pop("augmented_messages")
+        kwargs["source_query"] = kwargs.pop("user_query")
+        kwargs.setdefault("system_prompt", "sys")
+        return reply_frames(await write_reply(**kwargs))
     kwargs.setdefault(
         "response_language",
         resolve_conversation_language(kwargs["augmented_messages"]).language,
@@ -544,7 +558,7 @@ async def test_stream_safety_block_suppresses_broad_signal(monkeypatch):
     """Blocked output must neither show the broad label nor re-offer: the
     replaced decision drops the broad_mode key."""
     _stream_patches(monkeypatch, "IGNORED")
-    monkeypatch.setattr(partner_chat, "output_safety_violation", lambda text: "prompt_injection")
+    monkeypatch.setattr(widget_write, "output_safety_violation", lambda text: "prompt_injection")
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
@@ -602,6 +616,11 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
     kwargs.setdefault("org_id", 42)
     kwargs.setdefault("messages", [{"role": "user", "content": "wat is dect?"}])
     kwargs.setdefault("source_query", "wat is dect?")
+    if kwargs.pop("support_mode", False):
+        reply = await write_reply(
+            model="klai-primary", temperature=0.7, system_prompt="sys", settings=settings, **kwargs
+        )
+        return reply_body(reply, model="klai-primary")
     return await partner_chat.chat_completion_non_streaming(
         model="klai-primary",
         temperature=0.7,
@@ -658,9 +677,8 @@ async def test_stream_refusal_language_follows_visitor_not_source_query(monkeypa
     # Driven through the public entry, not the internal helper: the decision is
     # taken there now, so that is the only level where "source_query cannot
     # decide the language" is a property of production rather than of the test.
-    frames = [
-        frame
-        async for frame in partner_chat.chat_completion_streaming(
+    frames = reply_frames(
+        await write_reply(
             messages=[{"role": "user", "content": "Wat gaat hier mis met doorverbinden?"}],
             model="klai-primary",
             temperature=0.7,
@@ -671,10 +689,8 @@ async def test_stream_refusal_language_follows_visitor_not_source_query(monkeypa
             source_query="call transfer SIP REFER error timeout fix",
             trusted_sources=[],
             citation_chunks=[],
-            citation_output="markers",
-            support_mode=True,
         )
-    ]
+    )
 
     deltas = _parse_frames(frames)
     assert _delta_values(deltas, "language") == ["nl"]
@@ -723,8 +739,7 @@ async def test_api_threads_consent_and_clears_chunks_on_broad_turn(consent: bool
     auth = make_partner_auth(kb_access={10: "read"})
     auth.key_id = "wgt_901"
 
-    async def mock_streaming_gen():
-        yield b"data: [DONE]\n\n"
+    written = Reply(text="", sources=[], decision={}, signals={}, language=None, turn=KnowledgeTurn())
 
     with (
         patch(
@@ -733,7 +748,7 @@ async def test_api_threads_consent_and_clears_chunks_on_broad_turn(consent: bool
         ),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
-        patch("app.services.widget_turn.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=written)) as chat_stream,
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
     ):
@@ -773,21 +788,18 @@ async def test_stream_refusal_speaks_the_conversation_language_not_the_latest_tu
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
 
-    frames = [
-        frame
-        async for frame in partner_chat.chat_completion_streaming(
+    frames = reply_frames(
+        await write_reply(
             messages=_EN_SHORT_FOLLOW_UP,
             model="klai-primary",
             temperature=0.7,
             system_prompt="sys",
             settings=settings,
             org_id=42,
-            support_mode=True,
             trusted_sources=[],
             citation_chunks=[],
-            citation_output="markers",
         )
-    ]
+    )
 
     content = "".join(_delta_values(_parse_frames(frames), "content"))
     assert content == no_citable_sources_message("en", helpdesk=True)

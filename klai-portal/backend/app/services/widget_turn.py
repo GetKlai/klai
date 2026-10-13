@@ -11,7 +11,6 @@ back as a ``Reply``.
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -33,8 +32,6 @@ from app.services.partner_chat import (
     KnowledgeTurn,
     PageContext,
     _last_user_message,
-    chat_completion_non_streaming,
-    chat_completion_streaming,
     output_safety_violation,
     retrieval_upstream_errors,
     retrieve_context,
@@ -42,6 +39,8 @@ from app.services.partner_chat import (
 )
 from app.services.pasted_correspondence import latest_user_turn_has_correspondence
 from app.services.retrieval_log import write_retrieval_log
+from app.services.widget_reply import Reply
+from app.services.widget_write import write_reply
 
 if TYPE_CHECKING:
     from app.api.partner import ChatCompletionsRequest
@@ -79,27 +78,6 @@ class TurnInputs:
     # writes into it, the record stores it, the visitor never sees it.
     answer_signals: dict[str, Any]
     turn_started: float
-
-
-@dataclass
-class Reply:
-    """One widget reply, decided in code or written, with what the caller needs to send and record it."""
-
-    text: str
-    sources: list[dict]
-    # The route the turn took, and for a written reply what steered the writer.
-    decision: dict[str, Any]
-    signals: dict[str, Any]
-    language: str | None
-    # Carries the deferred grounding check the record waits for.
-    turn: KnowledgeTurn
-    appointment: bool = False
-    broad_mode: str | None = None
-    # A written reply as the generation produced it, sent unchanged: the
-    # completion body, or the frames of a streamed request. Both None on a
-    # reply decided in code, which the caller renders from the fields above.
-    body: dict[str, Any] | None = None
-    frames: list[bytes] | None = None
 
 
 class Found(NamedTuple):
@@ -434,91 +412,40 @@ async def _write(
     sentiment: str | None,
     timing: dict[str, float],
 ) -> Reply:
-    request = inputs.request
+    request, auth = inputs.request, inputs.auth
     if request.web_search:
         # Live web search never runs for a public widget key.
-        logger.debug("partner_web_search_ignored_widget", org_id=inputs.auth.org_id)
-    _log_retrieval(inputs.auth, found.chunks)
-    generation = _generation(inputs, turn, found, writing, sentiment=sentiment, timing=timing)
-    body: dict[str, Any] | None = None
-    frames: list[bytes] | None = None
-    if request.stream:
-        # The widget profile holds the reply until it is composed, so the
-        # frames are collected here and sent as they are.
-        knowledge = request.knowledge
-        emit_sources = knowledge.include_sources if knowledge is not None else True
-        frames = [frame async for frame in chat_completion_streaming(**generation, emit_sources=emit_sources)]
-        message = _streamed_message(frames)
-    else:
-        body = await chat_completion_non_streaming(**generation)
-        choices = body.get("choices") or []
-        message = (choices[0].get("message") or {}) if choices else {}
-    sources = message.get("sources")
-    return Reply(
-        text=str(message.get("content") or ""),
-        sources=[s for s in sources if isinstance(s, dict)] if isinstance(sources, list) else [],
-        decision={"route": "written", "escalation": writing.escalation, "conversational": writing.conversational},
-        signals=inputs.answer_signals,
-        language=message.get("language"),
-        turn=turn,
-        appointment=bool(message.get("escalation")),
-        broad_mode=message.get("broad_mode"),
-        body=body,
-        frames=frames,
-    )
-
-
-def _generation(
-    inputs: TurnInputs,
-    turn: KnowledgeTurn,
-    found: Found,
-    writing: Writing,
-    *,
-    sentiment: str | None,
-    timing: dict[str, float],
-) -> dict[str, Any]:
-    """The generation's arguments, the same on a streamed and a non-streamed request."""
-    request, auth = inputs.request, inputs.auth
+        logger.debug("partner_web_search_ignored_widget", org_id=auth.org_id)
+    _log_retrieval(auth, found.chunks)
     knowledge = request.knowledge
     system_prompt = found.system_prompt
     if writing.escalation:
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[writing.escalation]
     if writing.conversational:
         system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
-    return {
-        "messages": request.messages,
-        "model": request.model,
-        "temperature": request.temperature,
-        "system_prompt": system_prompt,
-        "settings": inputs.settings,
-        "org_id": auth.org_id,
-        "allowed_source_urls": set(),
-        "citation_source_urls": {},
-        "citation_source_metadata": {},
-        "citation_chunks": [] if found.broad else found.chunks,
-        "web_chunks": [],
-        "web_query": None,
-        "trusted_sources": found.trusted_sources,
-        "citation_output": "markers",
-        "source_query": knowledge.query if knowledge is not None else None,
-        "page_context": inputs.page_context,
-        "support_mode": True,
-        "broad_mode": found.broad,
-        "force_escalation": writing.escalation is not None,
-        "clarity": None,
-        "conversational": writing.conversational,
-        "sentiment": sentiment,
+    return await write_reply(
+        messages=request.messages,
+        model=request.model,
+        temperature=request.temperature,
+        system_prompt=system_prompt,
+        settings=inputs.settings,
+        org_id=auth.org_id,
+        citation_chunks=[] if found.broad else found.chunks,
+        trusted_sources=found.trusted_sources,
+        source_query=knowledge.query if knowledge is not None else None,
+        page_context=inputs.page_context,
+        broad_mode=found.broad,
+        force_escalation=writing.escalation is not None,
+        conversational=writing.conversational,
+        sentiment=sentiment,
         # The signals go to the widget's audit row, so only when it is written.
-        "answer_signals": inputs.answer_signals if inputs.audit_ready else None,
-        "signal_chunks": found.chunks,
-        "turn_timing": timing,
-        "profile": inputs.profile,
-        "tools": request.tools,
-        "tool_choice": request.tool_choice,
-        "delegated_org_id": auth.zitadel_org_id,
-        "knowledge_turn": turn,
-        "pasted_correspondence": inputs.pasted_correspondence,
-    }
+        answer_signals=inputs.answer_signals if inputs.audit_ready else None,
+        signal_chunks=found.chunks,
+        turn_timing=timing,
+        delegated_org_id=auth.zitadel_org_id,
+        knowledge_turn=turn,
+        pasted_correspondence=inputs.pasted_correspondence,
+    )
 
 
 def _log_retrieval(auth: PartnerAuthContext, chunks: list[dict]) -> None:
@@ -535,24 +462,3 @@ def _log_retrieval(auth: PartnerAuthContext, chunks: list[dict]) -> None:
     )
     _pending.add(task)
     task.add_done_callback(_pending.discard)
-
-
-def _streamed_message(frames: list[bytes]) -> dict[str, Any]:
-    """The streamed reply read back from its frames, in the shape of a completion body's message."""
-    message: dict[str, Any] = {"content": ""}
-    for frame in frames:
-        for line in frame.split(b"\n"):
-            payload = line.removeprefix(b"data: ").strip() if line.startswith(b"data: ") else b""
-            if payload in (b"", b"[DONE]"):
-                continue
-            try:
-                event = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-            delta = (event.get("choices") or [{}])[0].get("delta") or {}
-            if isinstance(delta.get("content"), str):
-                message["content"] += delta["content"]
-            message.update(
-                {key: delta[key] for key in ("sources", "language", "escalation", "broad_mode") if key in delta}
-            )
-    return message
