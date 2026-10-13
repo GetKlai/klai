@@ -86,6 +86,14 @@ class RetrieveRequest(BaseModel):
     # evidence pack stays one pack without per-question namespacing. Bounded
     # like sub_queries: at most 3 entries of 500 characters.
     query_variants: list[str] | None = Field(None, max_length=3)
+    # How many distinct sources the evidence pack may carry. Unset keeps the
+    # default of 3 (5 across several knowledge bases), which was sized for a
+    # writer that read every passage. A caller with a selection step in front
+    # of its writer (klai-portal, step J of its chat plan) asks for its top_k:
+    # on the replayed help-widget turns of 2026-10-13 the known article was
+    # retrieved in 33 of 40 turns but the three-source cap and duplicate
+    # sections left a median of five passages from three articles.
+    max_sources: int | None = Field(None, ge=1, le=8)
 
     @field_validator("conversation_history")
     @classmethod

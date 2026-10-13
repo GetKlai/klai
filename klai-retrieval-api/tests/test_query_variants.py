@@ -94,6 +94,53 @@ def test_variants_fuse_what_only_they_retrieve(client):
     assert all(variant in embed_calls for variant in _VARIANTS), embed_calls
 
 
+def test_one_section_is_served_once_however_many_children_matched(client):
+    """Three children of one parent and one of another: the caller gets two
+    passages, the best-ranked child of each parent, and the second slot is
+    not wasted on the same section."""
+
+    async def _search(query_vector, req, candidates, sparse_vector=None, **_kwargs):
+        return [
+            {**_chunk("a1", "sectie a"), "parent_chunk_id": 10},
+            {**_chunk("a2", "sectie a"), "parent_chunk_id": 10},
+            {**_chunk("b1", "sectie b"), "parent_chunk_id": 11},
+            {**_chunk("a3", "sectie a"), "parent_chunk_id": 10},
+        ]
+
+    with _patch_all(_patches(_search, [])):
+        body = {
+            "query": "hoe stel ik een wachtrij in?",
+            "org_id": "org-1",
+            "scope": "org",
+            "top_k": 2,
+        }
+        resp = client.post("/retrieve", json=body)
+
+    assert resp.status_code == 200
+    assert [chunk["chunk_id"] for chunk in resp.json()["chunks"]] == ["a1", "b1"]
+
+
+def test_max_sources_widens_the_evidence_pack_for_a_caller_that_selects(client):
+    """Four articles retrieved: the default pack keeps three sources, a caller
+    that asks for four gets four; above eight the request is refused."""
+
+    async def _search(query_vector, req, candidates, sparse_vector=None, **_kwargs):
+        return [
+            {**_chunk(f"c{i}", f"artikel {i}"), "source_url": f"https://help.example.com/{i}"}
+            for i in range(4)
+        ]
+
+    body = {"query": "hoe stel ik een wachtrij in?", "org_id": "org-1", "scope": "org", "top_k": 8}
+    with _patch_all(_patches(_search, [])):
+        default = client.post("/retrieve", json=body)
+        widened = client.post("/retrieve", json={**body, "max_sources": 4})
+        too_many = client.post("/retrieve", json={**body, "max_sources": 9})
+
+    assert len(default.json()["evidence_pack"]["sources"]) == 3
+    assert len(widened.json()["evidence_pack"]["sources"]) == 4
+    assert too_many.status_code == 422
+
+
 def test_without_variants_one_search_runs(client):
     """No variants, and a variant equal to the query, add no pass."""
     calls = {"n": 0}
