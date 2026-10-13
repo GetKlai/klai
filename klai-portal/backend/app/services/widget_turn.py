@@ -136,6 +136,9 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
                 timed(_search(inputs, turn, [])), timed(_read_case(inputs))
             )
             _keep_case(inputs, case)
+    # Feedback on a reply finds its retrieval under rl:{org}:{key}, so the log
+    # is written before any route returns.
+    log_retrieval(inputs.auth.org_id, f"partner:{inputs.auth.key_id}", found.chunks)
     # 5. Route in code what the case and the selection decided.
     routed = await _route(inputs, turn, found, case)
     if isinstance(routed, Reply):
@@ -428,7 +431,6 @@ async def _write(
     if request.web_search:
         # Live web search never runs for a public widget key.
         logger.debug("partner_web_search_ignored_widget", org_id=auth.org_id)
-    log_retrieval(auth.org_id, f"partner:{auth.key_id}", found.chunks)
     knowledge = request.knowledge
     system_prompt = found.system_prompt
     if writing.escalation:

@@ -138,6 +138,10 @@ def reply_frames(reply: Reply, *, include_sources: bool = True) -> list[bytes]:
             )
         )
     frames.append(_sse_content_delta(reply.text))
+    if reply.tool_calls:
+        # Text beside a tool call still ends on "run the tools now"; without
+        # it an OpenAI client shows the text and never runs the tool.
+        frames.append(b'data: {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}\n\n')
     frames.append(_DONE)
     return frames
 

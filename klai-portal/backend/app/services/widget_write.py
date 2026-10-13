@@ -50,6 +50,7 @@ from app.services.partner_chat import (
     _grounding_label,
     _grounding_signals,
     _helpdesk_refusal_offers,
+    _is_web_search_tool,
     _last_user_message,
     _llm_request_body,
     _log_citation_rescues,
@@ -142,13 +143,21 @@ async def write_reply(
         delegated_org_id=delegated_org_id,
         language=response_language,
         tools=_strip_web_search_tools(tools),
-        tool_choice=tool_choice,
+        # A forced choice of a tool Strict just stripped would name a tool the
+        # request no longer carries.
+        tool_choice=None if isinstance(tool_choice, dict) and _is_web_search_tool(tool_choice) else tool_choice,
     )
     generation_ms = _elapsed_ms(generation_started)
     if tool_calls and not draft.strip():
         # A turn that only calls a tool is not an answer yet: the client runs
         # the tool and sends its result back. Composing it would put the
-        # no-sources refusal after the tool call.
+        # no-sources refusal after the tool call. The record still gets the
+        # route and the timing.
+        if answer_signals is not None:
+            answer_signals.update(decision="tool_calls", model=model, sources_count=0, refused=False)
+        _log_turn_timing(
+            turn_timing, org_id=org_id, generation_ms=generation_ms, answer_judge_ms=0, answer_signals=answer_signals
+        )
         return Reply(
             text="",
             sources=[],

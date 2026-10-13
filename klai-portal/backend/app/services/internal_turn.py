@@ -105,13 +105,15 @@ async def internal_turn(inputs: InternalInputs) -> Reply | Live:
             )
     if case is None and inputs.profile.kb_mode != "general":
         inputs.answer_signals["judge_failed"] = ["case"]
+    profile, auth = inputs.profile, inputs.auth
+    # The employee's sub: feedback on a reply finds its retrieval under
+    # rl:{org}:{user}, so the log is written before any route returns, or a
+    # thumbs-down on a question would bind to the previous turn's passages.
+    log_retrieval(auth.org_id, profile.user_id or f"partner:{auth.key_id}", found.chunks)
     # 4. Route in code.
     if routed := _route(inputs, turn, found, case):
         return routed
     timing = {"started_at": inputs.turn_started, "retrieval_ms": retrieval_ms, "case_ms": case_ms}
-    profile, auth = inputs.profile, inputs.auth
-    # The employee's sub: feedback on an answer finds its retrieval under rl:{org}:{user}.
-    log_retrieval(auth.org_id, profile.user_id or f"partner:{auth.key_id}", found.chunks)
     if profile.kb_mode != "strict":
         # 5. Write, live. An employee reads the tokens as they arrive, and an
         # Open answer may use general knowledge by design, so nothing holds it
@@ -212,6 +214,7 @@ async def _write(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, timi
         sub_queries=turn.sub_queries,
         language=reply.language,
     )
-    if footer and reply.text:
+    knowledge = request.knowledge
+    if footer and reply.text and (knowledge is None or knowledge.include_sources):
         reply.text = f"{reply.text.rstrip()}\n\n{footer}"
     return reply
