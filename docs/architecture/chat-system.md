@@ -130,11 +130,11 @@ De generieke generatie (`chat_completion_streaming` of `chat_completion_non_stre
 
 **Antwoorden, weigeren, verduidelijken of een mens aanbieden**
 - *Pad A.* Weigeren gebeurt vóór het model (instellingen onbereikbaar, veiligheid, en in Strict: geen kennisbank, retrieval faalt, nul chunks, lage zekerheid bij geplakte mail) of erna (Strict zonder ondersteunde bron, tenzij de claims-check niets bedenkelijks ziet). Verduidelijken is een instructie aan het antwoordmodel bij A20; of het model daarna echt een vraag stelt, wordt niet vastgelegd. Een mens aanbieden bestaat niet.
-- *Pad B.* Verduidelijken via de vaste vraagstap (B12, vóór het schrijven), intern ook als een bronloos concept op een vraagteken eindigt na de vraagstap op titels (B18). Weigeren als de keuzestap zegt dat het er niet in staat (widget en intern Strict), of bij geen bron plus onbewezen uitspraken. Intern bij zwakke bronnen eerlijk "staat er niet" (B13). Afspraakknop bij weigering, deelantwoord, escalatie en buiten het onderwerp.
+- *Pad B.* Verduidelijken via de vraag van de keuzestap (W5, vóór het schrijven), op de widget en intern. Weigeren als de keuzestap zegt dat het er niet in staat (widget en intern Strict), of bij geen bron plus onbewezen uitspraken. Intern bij zwakke bronnen eerlijk "staat er niet" (B13). Afspraakknop bij weigering, deelantwoord, escalatie en buiten het onderwerp.
 
 **Wordt de zekerheidsband gebruikt?**
 - *Pad A: ja*, voor verduidelijken (A20), de Strict-weigering bij geplakte mail (A21), de upgrade naar `klai-medium` (A24) en een lagere bronlat (A27). De gebruiker ziet de band in de voettekst (A31).
-- *Pad B: nee.* Opgeslagen, niet gebruikt. Zwakke resultaten worden herkend met "alle rerankerscores < 0,4" (B8, B13).
+- *Pad B: nee.* Opgeslagen, niet gebruikt. Zwakke resultaten worden herkend met "alle rerankerscores < 0,4" (W3); sinds oktober beslist de keuzestap (W4) of een passage antwoordt, niet de score.
 
 **Meerdere vragen in één bericht**
 - *Pad A*: deelvragen krijgen een eigen zoekpass, de rest verschijnt als "niet doorzocht"; zet de per-vraag-instructie in de prompt, schakelt verduidelijken uit en geeft in Strict een upgrade naar `klai-medium`.
@@ -169,7 +169,7 @@ Voorstellen die al gemeten zijn. Stel ze niet opnieuw voor zonder te zeggen wat 
 
 | Idee | Wanneer | Waarom afgewezen |
 |---|---|---|
-| Antwoordmodel in dezelfde generatie laten doorvragen | 17 sep, 18 sep, 22 sep | Het model vraagt dan bijna nooit (2 op 150; 7 op 32; 4 op 12); een aparte stap (B12) werkt wel |
+| Antwoordmodel in dezelfde generatie laten doorvragen | 17 sep, 18 sep, 22 sep | Het model vraagt dan bijna nooit (2 op 150; 7 op 32; 4 op 12); een aparte stap (W5, de vraag van de keuzestap) werkt wel |
 | Vorige antwoord als extra zoekleg bij vervolgvragen | 18 sep | Zoekwinst 39% → 64%, eind-tot-eind gelijk met meer verzinsels |
 | Doorvragen op een taxonomie-aspect | 18 sep | Vindt even vaak het goede artikel (7 van 12) |
 | Promptvarianten tegen verzonnen details | 17-18 sep | Gelijk of slechter; controle per zin met reparatie werkt wel |
