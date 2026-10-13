@@ -302,6 +302,19 @@ Volgorde: eerst vastleggen en de meetlat, daarna de kleine wijzigingen met de gr
 | N | Interne chat | Gebouwd (zie §8): de keuzestap op intern Strict, met de vaste Strict-weigering als geen passage antwoordt, en de reparatie achteraf eruit (13 okt). Niet: de zaak op de interne chat, want de open modus, waar de meeste medewerkers in werken, leest geen passages (was stap G) | L | Meetlat intern |
 
 
+**Herzien op 13 oktober, na stap M en N.** De stroom van §5 bestaat als losse kleine modules (zaak, keuze, herkomst), maar wordt aangeroepen vanuit de oude, vertakte route: één functie van 762 regels met twintig vlaggen, twee bestanden van samen ruim 8.600 regels, acht complexiteitsuitzonderingen, en drie chatpaden die geen één stroom zijn. De stappen hieronder maken van de stroom de drager zelf, halen de laatste dubbele mechanismen eruit en brengen de interne chat op dezelfde code. De werking gaat voor, de opruiming volgt de werking. Elke snede wordt door een eigen uitvoerder in een eigen worktree gebouwd en gaat pas live na de meetlat.
+
+| # | Snede | Wat verandert | Omvang | Validatie |
+|---|---|---|---|---|
+| O1 | De drager | Eén `widget_turn()` in de volgorde van §5 die een `Reply` teruggeeft; `chat_completions` wordt dun (auth, scope, record, uitzenden). Geen gedragswijziging | L | Suite groen; één meetronde gelijk aan de laatste binnen de ruis van de keuzestap |
+| O3 | Eén compositie | De streaming- en niet-streamingpaden, de vaste-reactiefuncties en `_judge_composed_answer` worden één compositiestap plus één uitzender; intern Open blijft live streamen | M | Suite groen; één meetronde |
+| O2 | Knop uit code | De keuzestap krijgt `covers: all \| part`; de afspraakknop komt uit dat veld en de escalatie; `judge_answer` en `decide_answer` eruit (een aanroep en 0,4 s minder per geschreven beurt) | S | Eerst los in het keuzelab met herhalingen, dan een meetronde |
+| O4 | Interne chat op dezelfde stroom | `internal_turn()` met dezelfde stappen: de zaak vervangt `query_rewrite`, de keuzestap in Open als opdracht (zonder weigering) en in Strict als poort, de vraagstap op titels en de zwakke-bronnennotitie eruit | L | Interne meetlat, Open en Strict |
+| O5 | Alleen weghalen | Dood na O1 tot O4: `answer_judge.py`, `clarify_decision.py`, `query_rewrite.py`, de vlaggen in `KnowledgeTurn`, oude verwijzingen; `chat-system.md` naar de nieuwe stroom | M | Suite groen; niets erbij |
+| O6 | Pad A | Het LibreChat-pad over op het portalpad, de hook met eigen reparatie en citatiecode eruit. Een keuze voor de eigenaar, niet in deze reeks | L | Meetlat op LibreChat-gesprekken |
+
+Volgorde: O1, O3, dan O2 en O4 naast elkaar, dan O5.
+
 Wat eerder is afgewezen en hier niet terugkomt: doorvragen als opdracht aan het antwoordmodel, een ruimer budget voor de controle, het samenvoegen van de twee controles achteraf, de zekerheidsband als reden om te weigeren, meer passages of een vierde bron. Twee stappen raken aan eerder werk en zeggen daarom wat er nu anders is. Stap A: op 18 september is de herschrijving van vervolgvragen juist beperkt tot verwijswoorden, omdat ze in een vijfde van de gevallen het gesprek voortzette in plaats van een zoekvraag te maken (AJ 2.6); de sporen laten zien dat die beperking het onderwerp kost, en de interne route heeft intussen een herschrijving met een rem op het verliezen van het onderwerp. Stap C: het behouden van linkteksten is op 19 september gemeten en niet uitgerold omdat een beoordelend model geen voorkeur had (IQ §11); nu is er een maat in code die het gevolg van de gaten direct telt.
 
 ## 8. Uitkomsten per stap
