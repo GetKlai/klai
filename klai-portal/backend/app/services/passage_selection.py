@@ -254,11 +254,16 @@ async def select_passages(
 
 
 def writer_brief(selection: PassageSelection, chunks: list[dict]) -> str:
-    """Tell the writer what the chosen passages were chosen for.
+    """Tell the writer what the chosen passages were chosen for, and to keep the article's own steps.
 
     Handed only the passage, the writer still built a complete-looking
     procedure around it. The lines the selection pointed at are the answer;
-    naming them, and the need they answer, keeps the reply on them.
+    naming them, and the need they answer, keeps the reply on them. Asking
+    for the article's own order and words, and no step, cause or example of
+    the writer's own, took the share of flagged sentences from 26% and 25%
+    to 21% and 23% over two replay rounds of the meetlat (2026-10-13) and
+    answers that were mostly unsupported from 13 and 9 to 6 and 9; four of
+    81 expected answers became an honest "the articles do not cover this".
     """
     lines = list(dict.fromkeys(own for _, own in selection.found(chunks) if own))
     if not lines:
@@ -269,7 +274,9 @@ def writer_brief(selection: PassageSelection, chunks: list[dict]) -> str:
         + " ".join(selection.need.split())
         + "\nThe help articles above answer it in these lines:\n"
         + listed
-        + "\nBuild the reply on these lines and the steps that stand with them in the article. If they cover "
-        "only part of what the visitor needs, give that part and say in one sentence what the help articles do not "
-        "cover. Do not add a step, menu, cause or example that is not in the article."
+        + "\nWrite the reply from these lines and the steps that stand with them in the article, in the article's "
+        "own order and its own words: do not reword, merge, split or complete a step, and name a menu, button or "
+        "setting exactly as the article names it. If the lines cover only part of what the visitor needs, give that "
+        "part and say in one sentence what the help articles do not cover. Where the article gives no cause, give "
+        "none; where it gives no example, give none."
     )
