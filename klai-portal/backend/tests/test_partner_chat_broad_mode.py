@@ -728,14 +728,14 @@ async def test_api_threads_consent_and_clears_chunks_on_broad_turn(consent: bool
 
     with (
         patch(
-            "app.api.partner.retrieve_context",
+            "app.services.widget_turn.retrieve_context",
             return_value=(weak if not broad_flag else [], "prompt", [], broad_flag),
         ),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
-        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
+        patch("app.services.widget_turn.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
         patch("app.api.partner.asyncio"),
-        patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+        patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 

@@ -11,16 +11,14 @@ import json
 import re
 import time
 import uuid
-from asyncio import gather as asyncio_gather
-from collections.abc import AsyncGenerator, Awaitable
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from klai_chat_prompts import contact_reply, no_citable_sources_message
 from klai_chat_prompts.kb_modes import build_template_instructions_block, weak_sources_notice
 from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
@@ -42,15 +40,12 @@ from app.core.permissions import assert_platform_unlocked
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
-from app.services import case_file, turn_judge
-from app.services import escalation_intent as escalation_service
+from app.services import case_file
 from app.services.chat_attachments import process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
-from app.services.clarify_decision import clarify_decision, plain_question
-from app.services.clarify_gate import already_asked
+from app.services.clarify_decision import clarify_decision
 from app.services.events import emit_event
 from app.services.gap_classification import classify_gap
-from app.services.off_topic_referral import off_topic_referral
 from app.services.partner_chat import (
     INTERNAL_RETRIEVE_TOP_K,
     KnowledgeTurn,
@@ -65,11 +60,12 @@ from app.services.partner_chat import (
     off_topic_stream,
     openai_chat_completion_non_streaming,
     openai_chat_completion_streaming,
-    output_safety_violation,
+    retrieval_upstream_errors,
     retrieve_context,
     safety_refusal_response,
     safety_refusal_stream,
     strict_risk_model,
+    timed,
     widget_input_safety_violation,
 )
 from app.services.partner_rate_limit import check_rate_limit, check_weighted_rate_limit
@@ -105,6 +101,7 @@ from app.services.widget_handoff import (
     start_hubspot_handoff,
 )
 from app.services.widget_theme import _merge_css_variables
+from app.services.widget_turn import Reply, TurnInputs, widget_turn
 
 logger = structlog.get_logger()
 
@@ -1848,12 +1845,6 @@ async def canonical_chat_completions(
     )
 
 
-async def _timed[T](awaitable: Awaitable[T]) -> tuple[T, int]:
-    started = time.perf_counter()
-    result = await awaitable
-    return result, round((time.perf_counter() - started) * 1000)
-
-
 async def _partner_kb_scope(
     request: ChatCompletionsRequest, auth: PartnerAuthContext, db: AsyncSession
 ) -> tuple[bool, list[str]]:
@@ -1909,6 +1900,257 @@ async def _partner_kb_scope(
     return retrieval_enabled, kb_slugs
 
 
+def _partner_user_id(auth: PartnerAuthContext) -> str | None:
+    # F2 (audit retrieval-coupling-2026-05-06): pass synthetic partner_user_id
+    # so retrieval-api pins verified_caller and emits the
+    # `knowledge.queried` product_event with the correct (org, partner-key)
+    # tuple. Matches the existing convention used in chat_completions for
+    # write_retrieval_log.
+    #
+    # 2026-05-12 HOTFIX (chat-widget-launch-day): the F2 claim only resolves
+    # correctly when ``auth.key_id`` is a partner_api_keys UUID. Widget-driven
+    # calls authenticate via the widgets table (separate domain — see
+    # klai-portal/backend/app/models/widgets.py) and ``auth.key_id`` carries a
+    # ``wgt_<hex>`` identifier that is NOT a UUID. Forwarding it as
+    # ``partner:<wgt_id>`` made retrieval-api's identity-assert call portal-api's
+    # ``_resolve_partner_key_org_slug``, which SELECTed against
+    # ``partner_api_keys.id`` (uuid column) and asyncpg raised DataError →
+    # portal-api 5xx → SDK collapsed to ``portal_unreachable`` → 403 on
+    # /retrieve → widget chat showed "Er ging iets mis". Only forward the
+    # claim when it is parseable as a UUID; the widget path falls back to
+    # tenant-only verification at retrieval-api (already correct via the
+    # X-Internal-Secret + caller_service:portal-api contract). Product-event
+    # tagging on widget retrieval reverts to None until a dedicated
+    # ``evidence:"widget_key"`` path exists in identity-assert (follow-up
+    # SPEC). See pitfalls/process-rules.md → retrieve-caller-service-header-mismatch.
+    try:
+        uuid.UUID(str(auth.key_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return f"partner:{auth.key_id}"
+
+
+async def _attachment_error_reply(request: ChatCompletionsRequest) -> Any:
+    """Turn the latest user turn's PDF attachments into text, or return the reply that says why one failed."""
+    attachment_language = resolve_conversation_language(request.messages).language
+    attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
+    if attachment_result.user_visible_error is not None:
+        if request.stream:
+            return StreamingResponse(
+                content=fixed_reply_stream(attachment_result.user_visible_error),
+                media_type="text/event-stream",
+            )
+        return fixed_reply_response(model=request.model, message=attachment_result.user_visible_error)
+    if attachment_result.processed_count:
+        request.messages = attachment_result.messages
+    return None
+
+
+@dataclass
+class _WidgetAudit:
+    """Who a widget turn is recorded for; empty for other callers and for a widget key with no widgets row."""
+
+    widget_id: str | None = None
+    session_key: str | None = None
+    ip_hash: str | None = None
+    ua_hash: str | None = None
+
+    @property
+    def ready(self) -> bool:
+        return self.widget_id is not None and self.session_key is not None
+
+
+async def _widget_audit(auth: PartnerAuthContext, http_request: Request, db: AsyncSession) -> _WidgetAudit:
+    # Widget audit identity, resolved BEFORE retrieval. The gap event the
+    # pad schedules inside retrieve_context must be able to point back at the
+    # conversation the question came from, and (widget_id, session_key) is the
+    # pair the audit writer keys on (SPEC-KNOWLEDGE-ACTIVITY-001 §4.5). Values
+    # and exclusions are unchanged from when this block ran after retrieval:
+    # non-widget traffic and a widget key with no widgets row still get no
+    # audit at all. SPEC-WIDGET-ACTIVITY-001.
+    widget_uuid_row = (
+        await db.execute(select(Widget.id).where(Widget.widget_id == str(auth.key_id)))
+    ).scalar_one_or_none()
+    if widget_uuid_row is None:
+        return _WidgetAudit()
+    bearer = http_request.headers.get("authorization", "")
+    raw_token = bearer.removeprefix("Bearer ").strip()
+    return _WidgetAudit(
+        widget_id=str(widget_uuid_row),
+        session_key=getattr(auth, "session_key", None) or session_key_from_token(raw_token),
+        ip_hash=hash_audit_value(http_request.client.host if http_request.client else None),
+        ua_hash=hash_audit_value(http_request.headers.get("user-agent")),
+    )
+
+
+def _record_user_turn(
+    audit: _WidgetAudit, request: ChatCompletionsRequest, http_request: Request, auth: PartnerAuthContext
+) -> asyncio.Task[int | None] | None:
+    # The user turn is written before retrieval so the gap task can wait for
+    # the conversation row instead of racing it (first-turn gaps used to lose
+    # their provenance). Still fire-and-forget: the chat never waits on it.
+    if audit.widget_id is None:
+        return None
+    last_user_msg = next(
+        (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
+        "",
+    )
+    if not audit.session_key or not last_user_msg:
+        return None
+    task = asyncio.create_task(
+        record_widget_turn(
+            widget_id=audit.widget_id,
+            session_key=audit.session_key,
+            role="user",
+            content=last_user_msg,
+            ip_hash=audit.ip_hash,
+            user_agent_hash=audit.ua_hash,
+            # The visitor's question language. The row keeps the newest
+            # non-NULL value (COALESCE(EXCLUDED, existing) in the UPSERT);
+            # the exact per-answer language lives in answer_signals.
+            language_detected=identify_text_language(last_user_msg) or None,
+            loaded_origin=http_request.headers.get("origin") or None,
+            is_preview=getattr(auth, "is_preview", False),
+            visitor_name=request.visitor_name,
+            visitor_email=request.visitor_email,
+        )
+    )
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
+    return task
+
+
+async def _previous_case(request: ChatCompletionsRequest, auth: PartnerAuthContext, audit: _WidgetAudit) -> dict | None:
+    # Help widget: the case stored with the previous assistant turn
+    # (case_file.py). A read that fails costs this turn its case and nothing
+    # else. Only on a follow-up, and only when the stored turn is this
+    # conversation's last answer: one session token serves every
+    # conversation the widget starts in it.
+    if not audit.ready or not case_file.is_follow_up(request.messages):
+        return None
+    try:
+        stored = await last_case(widget_id=audit.widget_id, session_key=audit.session_key)  # type: ignore[arg-type]
+    except Exception:
+        stored = None
+        logger.warning("partner_chat_previous_case_unavailable", org_id=auth.org_id, exc_info=True)
+    return case_file.stored_case_for(request.messages, stored)
+
+
+def _record_fields(
+    audit: _WidgetAudit, request: ChatCompletionsRequest, http_request: Request, auth: PartnerAuthContext
+) -> dict[str, Any]:
+    return {
+        "widget_id": audit.widget_id,
+        "session_key": audit.session_key,
+        "loaded_origin": http_request.headers.get("origin") or None,
+        "is_preview": getattr(auth, "is_preview", False),
+        "turn_id": request.widget_turn_id,
+    }
+
+
+def _sent_body(
+    result: dict,
+    request: ChatCompletionsRequest,
+    turn: KnowledgeTurn,
+    answer_signals: dict[str, Any],
+    record: dict[str, Any] | None,
+) -> dict:
+    """The non-streaming body as the caller asked for it, recorded when the widget turn is audited."""
+    knowledge = request.knowledge
+    if knowledge is not None and not knowledge.include_sources:
+        for choice in result.get("choices") or []:
+            message = choice.get("message") if isinstance(choice, dict) else None
+            if isinstance(message, dict):
+                message.pop("sources", None)
+    if record is not None:
+        assistant_text, assistant_sources = _extract_assistant_text_and_sources(result)
+        if assistant_text:
+            _write_widget_record(
+                turn,
+                **record,
+                role="assistant",
+                content=assistant_text,
+                sources=assistant_sources,
+                answer_signals=answer_signals or None,
+            )
+    return result
+
+
+async def _replayed(frames: list[bytes]) -> AsyncGenerator[bytes]:
+    for frame in frames:
+        yield frame
+
+
+def _widget_reply_response(reply: Reply, request: ChatCompletionsRequest, record: dict[str, Any] | None) -> Any:
+    """Send a help-widget reply the way the request asked for it, and record it."""
+    if reply.frames is not None:
+        frames = _replayed(reply.frames)
+        if record is not None:
+            frames = _audit_streaming_wrapper(frames, turn=reply.turn, **record, answer_signals=reply.signals)
+        return StreamingResponse(content=frames, media_type="text/event-stream")
+    if reply.body is not None:
+        return _sent_body(reply.body, request, reply.turn, reply.signals, record)
+    if record is not None:
+        task = asyncio.create_task(
+            record_widget_turn(**record, role="assistant", content=reply.text, answer_signals=reply.signals or None)
+        )
+        _pending.add(task)
+        task.add_done_callback(_pending.discard)
+    if request.stream:
+        return StreamingResponse(
+            content=off_topic_stream(reply=reply.text, language=reply.language, appointment=reply.appointment),
+            media_type="text/event-stream",
+        )
+    return off_topic_response(
+        model=request.model, reply=reply.text, language=reply.language, appointment=reply.appointment
+    )
+
+
+def _log_retrieval(auth: PartnerAuthContext, profile: ChatProfile, chunks: list[dict]) -> None:
+    task = asyncio.create_task(
+        write_retrieval_log(
+            org_id=auth.org_id,
+            # The employee's sub for LibreChat traffic: feedback on an answer
+            # finds its retrieval under rl:{org}:{user}, as with the hook.
+            user_id=profile.user_id if profile.user_id is not None else f"partner:{auth.key_id}",
+            chunk_ids=[c.get("chunk_id", "") for c in chunks if c.get("chunk_id")],
+            reranker_scores=[c.get("reranker_score", 0.0) for c in chunks if c.get("reranker_score") is not None],
+            query_resolved="",
+            embedding_model_version="",
+            retrieved_at=datetime.now(UTC),
+        )
+    )
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
+
+
+async def _internal_clarify(
+    request: ChatCompletionsRequest,
+    chunks: list[dict],
+    answer_signals: dict[str, Any],
+    org_id: int,
+    delegated_org_id: str | None,
+) -> str | None:
+    """The prompt addendum for the one question an internal turn ends on, or None (clarify_decision.py)."""
+    decision = await clarify_decision(request.messages, chunks, settings, delegated_org_id=delegated_org_id)
+    if decision.addendum:
+        answer_signals["planned_question"] = True
+        answer_signals["asked_about"] = decision.axis
+    # Counts and fixed words only, never the question or the options: they
+    # are tenant article titles and the visitor's own words.
+    logger.info(
+        "clarify_decision",
+        org_id=org_id,
+        wgt_id=None,
+        fired=decision.addendum is not None,
+        reason=decision.reason,
+        axis=decision.axis,
+        documents=decision.documents,
+        options=len(decision.options),
+    )
+    return decision.addendum
+
+
 async def chat_completions(  # noqa: C901
     request: ChatCompletionsRequest,
     http_request: Request,
@@ -1943,18 +2185,8 @@ async def chat_completions(  # noqa: C901
     # its UI has no upload, so a widget key must not be a public route into
     # docling. The language is decided on the unmodified messages, so a Dutch
     # PDF never overrules an English question.
-    if profile.surface != "widget":
-        attachment_language = resolve_conversation_language(request.messages).language
-        attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
-        if attachment_result.user_visible_error is not None:
-            if request.stream:
-                return StreamingResponse(
-                    content=fixed_reply_stream(attachment_result.user_visible_error),
-                    media_type="text/event-stream",
-                )
-            return fixed_reply_response(model=request.model, message=attachment_result.user_visible_error)
-        if attachment_result.processed_count:
-            request.messages = attachment_result.messages
+    if profile.surface != "widget" and (attachment_reply := await _attachment_error_reply(request)):
+        return attachment_reply
 
     if safety_response := _input_safety_block_response(request, auth, profile):
         return safety_response
@@ -1973,34 +2205,7 @@ async def chat_completions(  # noqa: C901
         retrieval_enabled, kb_slugs = await _partner_kb_scope(request, auth, db)
 
     # 6. Retrieve context.
-    # F2 (audit retrieval-coupling-2026-05-06): pass synthetic partner_user_id
-    # so retrieval-api pins verified_caller and emits the
-    # `knowledge.queried` product_event with the correct (org, partner-key)
-    # tuple. Matches the existing convention used at line ~205 below for
-    # write_retrieval_log.
-    #
-    # 2026-05-12 HOTFIX (chat-widget-launch-day): the F2 claim only resolves
-    # correctly when ``auth.key_id`` is a partner_api_keys UUID. Widget-driven
-    # calls authenticate via the widgets table (separate domain — see
-    # klai-portal/backend/app/models/widgets.py) and ``auth.key_id`` carries a
-    # ``wgt_<hex>`` identifier that is NOT a UUID. Forwarding it as
-    # ``partner:<wgt_id>`` made retrieval-api's identity-assert call portal-api's
-    # ``_resolve_partner_key_org_slug``, which SELECTed against
-    # ``partner_api_keys.id`` (uuid column) and asyncpg raised DataError →
-    # portal-api 5xx → SDK collapsed to ``portal_unreachable`` → 403 on
-    # /retrieve → widget chat showed "Er ging iets mis". Only forward the
-    # claim when it is parseable as a UUID; the widget path falls back to
-    # tenant-only verification at retrieval-api (already correct via the
-    # X-Internal-Secret + caller_service:portal-api contract). Product-event
-    # tagging on widget retrieval reverts to None until a dedicated
-    # ``evidence:"widget_key"`` path exists in identity-assert (follow-up
-    # SPEC). See pitfalls/process-rules.md → retrieve-caller-service-header-mismatch.
-    partner_user_id: str | None
-    try:
-        uuid.UUID(str(auth.key_id))
-        partner_user_id = f"partner:{auth.key_id}"
-    except (ValueError, AttributeError, TypeError):
-        partner_user_id = None
+    partner_user_id = _partner_user_id(auth)
     widget_system_prompt = await _widget_system_prompt(auth, db)
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
     support_mode = await _widget_support_mode_enabled(auth, db) if is_widget_chat else False
@@ -2012,63 +2217,10 @@ async def chat_completions(  # noqa: C901
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
     )
 
-    # 6a. Widget audit identity, resolved BEFORE retrieval. The gap event the
-    # pad schedules inside retrieve_context must be able to point back at the
-    # conversation the question came from, and (widget_id, session_key) is the
-    # pair the audit writer keys on (SPEC-KNOWLEDGE-ACTIVITY-001 §4.5). Values
-    # and exclusions are unchanged from when this block ran after retrieval:
-    # non-widget traffic and a widget key with no widgets row still get no
-    # audit at all. SPEC-WIDGET-ACTIVITY-001.
-    audit_widget_id: str | None = None
-    audit_session_key: str | None = None
-    audit_ip_hash: str | None = None
-    audit_ua_hash: str | None = None
-    if is_widget_chat:
-        widget_uuid_row = (
-            await db.execute(select(Widget.id).where(Widget.widget_id == str(auth.key_id)))
-        ).scalar_one_or_none()
-        if widget_uuid_row is not None:
-            audit_widget_id = str(widget_uuid_row)
-            bearer = http_request.headers.get("authorization", "")
-            raw_token = bearer.removeprefix("Bearer ").strip()
-            audit_session_key = getattr(auth, "session_key", None) or session_key_from_token(raw_token)
-            audit_ip_hash = hash_audit_value(http_request.client.host if http_request.client else None)
-            audit_ua_hash = hash_audit_value(http_request.headers.get("user-agent"))
-
-    # Known as soon as the audit identity is resolved, and needed before the
-    # first early return that still has to record its answer.
-    audit_ready = is_widget_chat and audit_widget_id is not None and audit_session_key is not None
-
-    # The user turn is written before retrieval so the gap task can wait for
-    # the conversation row instead of racing it (first-turn gaps used to lose
-    # their provenance). Still fire-and-forget: the chat never waits on it.
-    user_turn_write: asyncio.Task[int | None] | None = None
-    if is_widget_chat and audit_widget_id is not None:
-        last_user_msg = next(
-            (str(m.get("content", "")) for m in reversed(request.messages) if m.get("role") == "user"),
-            "",
-        )
-        if audit_session_key and last_user_msg:
-            user_turn_write = asyncio.create_task(
-                record_widget_turn(
-                    widget_id=audit_widget_id,
-                    session_key=audit_session_key,
-                    role="user",
-                    content=last_user_msg,
-                    ip_hash=audit_ip_hash,
-                    user_agent_hash=audit_ua_hash,
-                    # The visitor's question language. The row keeps the newest
-                    # non-NULL value (COALESCE(EXCLUDED, existing) in the UPSERT);
-                    # the exact per-answer language lives in answer_signals.
-                    language_detected=identify_text_language(last_user_msg) or None,
-                    loaded_origin=http_request.headers.get("origin") or None,
-                    is_preview=getattr(auth, "is_preview", False),
-                    visitor_name=request.visitor_name,
-                    visitor_email=request.visitor_email,
-                )
-            )
-            _pending.add(user_turn_write)
-            user_turn_write.add_done_callback(_pending.discard)
+    audit = await _widget_audit(auth, http_request, db) if is_widget_chat else _WidgetAudit()
+    user_turn_write = _record_user_turn(audit, request, http_request, auth)
+    # What the turn's assistant record is written with; None when nothing is recorded.
+    record = _record_fields(audit, request, http_request, auth) if audit.ready else None
 
     # SPEC-PARTNER-KB-SCOPE-001 invariant: when retrieval is enabled,
     # kb_slugs must never be empty here — retrieve_context() only sends
@@ -2095,6 +2247,35 @@ async def chat_completions(  # noqa: C901
     # the same system prompt a later fan-out/clarify gate (slice 4/5) must
     # also skip on, the way klai_knowledge.py does today.
     pasted_correspondence = detect_pasted_correspondence(request.messages)
+
+    if support_mode:
+        # The help widget's turn runs as the flow of chat-quality-history-and-plan.md §5.
+        reply = await widget_turn(
+            TurnInputs(
+                request=request,
+                auth=auth,
+                settings=settings,
+                profile=profile,
+                kb_slugs=kb_slugs,
+                retrieval_enabled=retrieval_enabled,
+                partner_user_id=partner_user_id,
+                widget_system_prompt=widget_system_prompt,
+                page_context=page_context,
+                tone_register=tone_register,
+                off_topic_subjects=off_topic_subjects,
+                off_topic_reply=off_topic_reply,
+                previous_case=await _previous_case(request, auth, audit),
+                audit_widget_id=audit.widget_id,
+                audit_session_key=audit.session_key,
+                user_turn_write=user_turn_write,
+                audit_ready=audit.ready,
+                pasted_correspondence=pasted_correspondence,
+                answer_signals=answer_signals,
+                turn_started=turn_started,
+            )
+        )
+        return _widget_reply_response(reply, request, record)
+
     templates_block, telemetry_level = "", "shadow"
     if profile.surface == "internal" and profile.user_id is not None:
         instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
@@ -2105,185 +2286,48 @@ async def chat_completions(  # noqa: C901
     # travels with it for LiteLLM to apply the tenant's PII policy.
     delegated_org_id = auth.zitadel_org_id
 
-    def fixed_reply(reply: str, language: str | None, *, decision: str, refused: bool, appointment: bool = True) -> Any:
-        """A widget reply decided in code: recorded like any other, with the appointment button unless it is a question."""
-        answer_signals.update(
-            decision=decision,
-            sources_count=0,
-            refused=refused,
-            broad_mode=False,
-            model=request.model,
-            appointment=appointment,
-        )
-        if language is not None:
-            answer_signals["language"] = language
-        if audit_ready:
-            task = asyncio.create_task(
-                record_widget_turn(
-                    widget_id=audit_widget_id,  # type: ignore[arg-type]
-                    session_key=audit_session_key,  # type: ignore[arg-type]
-                    role="assistant",
-                    content=reply,
-                    loaded_origin=http_request.headers.get("origin") or None,
-                    is_preview=getattr(auth, "is_preview", False),
-                    turn_id=request.widget_turn_id,
-                    answer_signals=answer_signals or None,
-                )
-            )
-            _pending.add(task)
-            task.add_done_callback(_pending.discard)
-        if request.stream:
-            return StreamingResponse(
-                content=off_topic_stream(reply=reply, language=language, appointment=appointment),
-                media_type="text/event-stream",
-            )
-        return off_topic_response(model=request.model, reply=reply, language=language, appointment=appointment)
-
-    def _contact_request_reply(found_case: case_file.Case) -> Any:
-        language = resolve_conversation_language(request.messages).language
-        logger.info(
-            "partner_chat_contact_request",
+    with retrieval_upstream_errors(auth.org_id):
+        retrieval = retrieve_context(
+            answer_signals=answer_signals,
             org_id=auth.org_id,
-            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            wants=found_case.wants,
+            zitadel_org_id=auth.zitadel_org_id,
+            kb_slugs=kb_slugs,
+            messages=request.messages,
+            settings=settings,
+            partner_user_id=partner_user_id,
+            widget_system_prompt=widget_system_prompt,
+            page_context=page_context,
+            backend_managed_citations=True,
+            support_mode=False,
+            broad_mode=bool(request.broad_mode),
+            tone_register=tone_register,
+            pasted_correspondence=pasted_correspondence,
+            is_preview=getattr(auth, "is_preview", False),
+            audit_widget_id=audit.widget_id,
+            audit_session_key=audit.session_key,
+            audit_write=user_turn_write,
+            retrieval_query=knowledge.query if knowledge is not None else None,
+            top_k=INTERNAL_RETRIEVE_TOP_K
+            if internal
+            else knowledge.top_k
+            if knowledge is not None and knowledge.top_k is not None
+            else 8,
+            retrieval_enabled=retrieval_enabled,
+            profile=profile,
+            templates_block=templates_block,
+            telemetry_level=telemetry_level,
+            web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
+            knowledge_turn=knowledge_turn,
         )
-        return fixed_reply(contact_reply(language), language, decision="human_request", refused=False)
-
-    try:
-        # ``broad`` (4th element) is retrieve_context's per-turn decision:
-        # support mode + visitor consent + a real retrieval attempt that
-        # produced a gap. It drives the no-chunks handoff below so a broad
-        # answer can neither cite weak chunks nor show a misleading
-        # "passages gevonden" activity. The retrieval log still records the
-        # real (weak) chunks: retrieval genuinely ran.
-        # Help widget: the case stored with the previous assistant turn
-        # (case_file.py). A read that fails costs this turn its case and
-        # nothing else.
-        previous_case: dict | None = None
-        case: case_file.Case | None = None
-        case_ms = 0
-        # Only on a follow-up, and only when the stored turn is this
-        # conversation's last answer: one session token serves every
-        # conversation the widget starts in it.
-        if support_mode and audit_ready and case_file.is_follow_up(request.messages):
-            try:
-                stored = await last_case(widget_id=audit_widget_id, session_key=audit_session_key)  # type: ignore[arg-type]
-            except Exception:
-                stored = None
-                logger.warning("partner_chat_previous_case_unavailable", org_id=auth.org_id, exc_info=True)
-            previous_case = case_file.stored_case_for(request.messages, stored)
-
-        def retrieval(follow_up_variants: list[str]):
-            return retrieve_context(
-                follow_up_variants=follow_up_variants,
-                answer_signals=answer_signals,
-                org_id=auth.org_id,
-                zitadel_org_id=auth.zitadel_org_id,
-                kb_slugs=kb_slugs,
-                messages=request.messages,
-                settings=settings,
-                partner_user_id=partner_user_id,
-                widget_system_prompt=widget_system_prompt,
-                page_context=page_context,
-                backend_managed_citations=True,
-                support_mode=support_mode,
-                broad_mode=bool(request.broad_mode),
-                tone_register=tone_register,
-                pasted_correspondence=pasted_correspondence,
-                is_preview=getattr(auth, "is_preview", False),
-                audit_widget_id=audit_widget_id,
-                audit_session_key=audit_session_key,
-                audit_write=user_turn_write,
-                retrieval_query=knowledge.query if knowledge is not None else None,
-                top_k=INTERNAL_RETRIEVE_TOP_K
-                if profile.surface == "internal"
-                else knowledge.top_k
-                if knowledge is not None and knowledge.top_k is not None
-                else 8,
-                retrieval_enabled=retrieval_enabled,
-                profile=profile,
-                templates_block=templates_block,
-                telemetry_level=telemetry_level,
-                web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
-                knowledge_turn=knowledge_turn,
-            )
-
-        # The case is the one reading of the turn (case_file.py): what the
-        # visitor wants, their tone, whether the subject is one this widget
-        # answers, and the queries for a follow-up's search. It replaced the
-        # question judge that used to run beside it (plan §8, step M).
         turn_timing: dict[str, float] | None = None
-        if support_mode:
-            case_update = case_file.update_case(
-                request.messages,
-                previous_case,
-                settings,
-                off_topic_subjects=off_topic_subjects,
-                delegated_org_id=auth.zitadel_org_id,
-            )
-            if case_file.is_follow_up(request.messages):
-                # The case's queries go into a follow-up's search, so the case
-                # comes first. A first question keeps its two paraphrases and
-                # runs the case beside the search: the case's queries narrow
-                # (product, problem, variant) where the paraphrases widen, and
-                # on the meetlat that widening brought both variants' sections
-                # in, so the selection step could ask which one applies; with
-                # the case's queries alone two of the six expected clarifying
-                # questions were answered instead (plan §8, step M).
-                case, case_ms = await _timed(case_update)
-                if case is not None:
-                    answer_signals["case"] = case.model_dump()
-                if case is not None and case.wants in case_file.CONTACT_WANTS:
-                    # The route for a person, contact or an appointment needs
-                    # no articles: decided here, before the search (plan §5,
-                    # step 2). A first turn runs the case beside the search and
-                    # takes this route below. It wins from the referral for a
-                    # subject this widget does not answer: "kan ik jullie ook
-                    # gewoon bellen" read as such a subject on the meetlat, and
-                    # the visitor asked how to reach a person, not about it.
-                    return _contact_request_reply(case)
-                follow_up_variants = case.search_variants(_last_user_message(request.messages) or "") if case else []
-                retrieval_result, retrieval_ms = await _timed(retrieval(follow_up_variants))
-            else:
-                (retrieval_result, retrieval_ms), (case, case_ms) = await asyncio_gather(
-                    _timed(retrieval([])), _timed(case_update)
-                )
-            if case is not None:
-                answer_signals["case"] = case.model_dump()
-            turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms, "case_ms": case_ms}
-        elif internal:
-            retrieval_result, retrieval_ms = await _timed(retrieval([]))
+        if internal:
+            retrieval_result, retrieval_ms = await timed(retrieval)
             turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms}
         else:
-            retrieval_result = await retrieval([])
+            retrieval_result = await retrieval
         chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
-        # The weak-source rule reads this on every judged surface (below).
-        gap = classify_gap(chunks) if support_mode or internal else None
-    except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"error": {"type": "upstream_error", "message": "Retrieval service timeout"}},
-        ) from exc
-    except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "partner_chat_retrieval_upstream_status_error",
-            org_id=auth.org_id,
-            status_code=exc.response.status_code if exc.response is not None else None,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"error": {"type": "upstream_error", "message": "Retrieval service error"}},
-        ) from exc
-    except httpx.RequestError as exc:
-        logger.warning(
-            "partner_chat_retrieval_upstream_request_error",
-            org_id=auth.org_id,
-            error_type=type(exc).__name__,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"error": {"type": "upstream_error", "message": "Retrieval service unavailable"}},
-        ) from exc
+        # The weak-source rule reads this on the internal chat (below).
+        gap = classify_gap(chunks) if internal else None
 
     if knowledge_turn.refusal is not None:
         # A Strict turn without evidence: the fixed text, no model call.
@@ -2296,216 +2340,31 @@ async def chat_completions(  # noqa: C901
         request.model, profile=profile, turn=knowledge_turn, chunks=chunks, messages=request.messages
     )
 
-    # 6b. Optional live web search (opt-in per request, gated per API key,
-    #     never for public widget keys). Web results are a SEPARATE citation
-    #     tier from the knowledge base: they are passed alongside the KB chunks
-    #     (never merged) so the composer keeps KB and web apart, tags each
-    #     source with its origin, and only refuses when both tiers are empty.
-    # Escalation is the backend's call, not the model's: when the visitor asks
-    # for a person or is frustrated, the button goes under this answer whatever
-    # retrieval found, and the model is told so for this one turn. See
-    # escalation_intent.py for why this layer exists.
-    escalation = escalation_service.escalation_intent(_last_user_message(request.messages)) if support_mode else None
-    scope = case.scope if case else None
-    sentiment = case.sentiment if case else None
-    # The case reads the whole conversation and names what the visitor wants
-    # now; "ik wil jullie mailen" and "graag contact met een medewerker" got
-    # the not-found text in the first week of real traffic because neither
-    # the phrase detector nor the turn judge called them a request for a
-    # person. Such a turn is answered in code: handed to the writer with the
-    # human-request instruction, it still answered "can I create an e-mail
-    # ticket" with another product's ticket button.
-    if case is not None and case.wants in case_file.CONTACT_WANTS:
-        escalation = escalation_service.HUMAN_REQUEST
-        wants_contact = True
-    else:
-        wants_contact = False
-        if escalation is None and sentiment == "negative":
-            escalation = escalation_service.FRUSTRATION
-    if escalation:
-        system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[escalation]
-    force_escalation = escalation is not None
-
-    # SPEC-RAG-ANSWER-TIERS-001 REQ-1. A conversational turn leaves the
-    # knowledge pipeline only on a retrieval gap: with usable chunks the
-    # composer answers from them either way, and the answer judge still checks
-    # what an uncited reply claims. The class also reaches the generation, or
-    # the profile would tell the model to refuse "do you speak English".
-    conversational = gap is not None and turn_judge.is_conversational(scope)
-    if conversational:
-        system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
-
     # Clarity is the internal clarify step's label on a draft that ends on a
     # question (below). On the widget the selection step asks its one question
     # before anything is written, so no model judges clarity there any more.
     clarity: Literal["clear", "ambiguous"] | None = None
-
-    if support_mode:
-        # Every turn logs its reading, a failure as its own word: a share you
-        # cannot see is a boundary that drifts unnoticed.
-        if case is None:
-            answer_signals["judge_failed"] = ["case"]
-        logger.info(
-            "partner_chat_turn_judge",
-            org_id=auth.org_id,
-            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            turn_scope=turn_judge.scope_label(scope),
-            wants_human=wants_contact,
-            sentiment=sentiment,
-            topic=("not_handled" if case.out_of_scope else "handled") if case else None,
-            retrieval_gap=gap,
-        )
-
-    # A subject this widget does not answer (prices, quotes, payment terms):
-    # the visitor gets a referral with the appointment button and no answer
-    # model sees the articles, so a price cannot slip in from one. The referral
-    # names the visitor's subject in a sentence of ours, or falls back to the
-    # tenant's own (off_topic_referral.py); that call waits up to 2.5 s, on these
-    # turns only. A request for a person lands here too: the human-request turn
-    # would generate with the articles in the prompt, and the phrase detector
-    # also fires on "kan iemand mij vertellen wat X kost".
-    if (
-        support_mode
-        and off_topic_subjects
-        and off_topic_reply
-        and case is not None
-        and case.out_of_scope
-        and not wants_contact
-    ):
-        # A failed case falls through to the normal answer on purpose: that is
-        # what the visitor got before this setting existed, and refusing every
-        # turn because one call timed out would be worse than answering one
-        # price question. Same fail direction as every other check here.
-        language = resolve_conversation_language(request.messages).language
-        referral = await off_topic_referral(
-            _last_user_message(request.messages) or "", language, settings, delegated_org_id=auth.zitadel_org_id
-        )
-        logger.info(
-            "partner_chat_off_topic",
-            org_id=auth.org_id,
-            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            referral=referral is not None,
-        )
-        return fixed_reply(referral or off_topic_reply, language, decision="off_topic", refused=False)
-
-    if support_mode and wants_contact and case is not None:
-        return _contact_request_reply(case)
-
-    # Retrieval found passages, and none of them answers this question
-    # (passage_selection.py): the visitor gets the honest "not found" with the
-    # appointment button and no answer model writes, because a model that is
-    # handed passages on the same subject writes a procedure out of them. A
-    # frustrated visitor gets this reply too: it carries the appointment, and
-    # sending that turn to the writer with every passage produced an invented
-    # cause. Not when the visitor asked for a person: that turn is about the
-    # appointment itself. The turn judge's "conversational" does not exempt a
-    # turn: the selection step read the same conversation and calls a
-    # thank-you or a remark an answer that needs no passage, and the smaller
-    # judge labelled "how do I put this on my laptop" conversational, which
-    # sent it to the writer with passages that did not answer it.
-    selection = knowledge_turn.selection
-    if support_mode and knowledge_turn.not_in_passages and escalation != escalation_service.HUMAN_REQUEST:
-        language = resolve_conversation_language(request.messages).language
-        logger.info(
-            "partner_chat_not_in_passages",
-            org_id=auth.org_id,
-            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            passages=len(chunks),
-        )
-        return fixed_reply(
-            no_citable_sources_message(language, helpdesk=True), language, decision="refusal", refused=True
-        )
-
     # The one question this turn should ask, decided against what retrieval
-    # found (clarify_decision.py), on the widget and the internal chat alike.
-    # Not on a broad turn (no articles to reason over), not when the visitor
-    # asked for a person or is frustrated: there the reply is the appointment,
-    # not on a conversational turn, and not when the latest turn is pasted
-    # correspondence, whose question is the distilled email itself.
-    may_ask = (
-        not broad_turn
-        and escalation is None
-        and not turn_judge.is_conversational(scope)
-        and not latest_user_turn_has_correspondence(request.messages)
-    )
-    if support_mode and may_ask:
-        # Help widget: the selection step read the passages themselves, so it
-        # decides whether the steps differ per variant, and it wrote the one
-        # question. That question is the whole reply, sent as it is: asked to
-        # put it into words, the answer model wrote an opening line and stopped
-        # in two of four replayed turns. Once per conversation, as before; the
-        # title comparison below stays for the internal chat.
-        # The question is model-written and goes out as it is, so it passes
-        # the checks a written reply passes: one plain line ending on a
-        # question mark (which is also how "already asked" recognises it next
-        # turn), and the output safety check. It needs passages to have been
-        # chosen: a question about variants nobody found is a guess.
-        asks = (
-            selection is not None
-            and selection.verdict == "depends"
-            and knowledge_turn.passages_chosen
-            and plain_question(selection.question)
-            and output_safety_violation(selection.question) is None
-            and not already_asked(request.messages)
-        )
-        logger.info(
-            "clarify_decision",
-            org_id=auth.org_id,
-            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            fired=asks,
-            reason=selection.verdict if selection else "no_selection",
-        )
-        if asks and selection is not None:
-            answer_signals.update(planned_question=True, question_asked=True, clarity="ambiguous")
-            return fixed_reply(
-                " ".join(selection.question.split()),
-                resolve_conversation_language(request.messages).language,
-                decision="clarifying_question",
-                refused=False,
-                appointment=False,
-            )
-    elif internal and may_ask:
-        decision = await clarify_decision(request.messages, chunks, settings, delegated_org_id=delegated_org_id)
-        if decision.addendum:
-            system_prompt += decision.addendum
+    # found (clarify_decision.py). Not on a broad turn (no articles to reason
+    # over), and not when the latest turn is pasted correspondence, whose
+    # question is the distilled email itself.
+    if internal and not broad_turn and not latest_user_turn_has_correspondence(request.messages):
+        if addendum := await _internal_clarify(request, chunks, answer_signals, auth.org_id, delegated_org_id):
+            system_prompt += addendum
             # The reply will end on that question, so the turn is clarifying
             # like the judge's own: without a citable source that keeps the
             # buttons off it (answer_judge.decide_answer). With a source the
             # judges still only add, so the appointment button can stand under
             # the question; that contract is older than this step.
             clarity = "ambiguous"
-            answer_signals["planned_question"] = True
-            answer_signals["asked_about"] = decision.axis
-        # Counts and fixed words only, never the question or the options: they
-        # are tenant article titles and the visitor's own words.
-        logger.info(
-            "clarify_decision",
-            org_id=auth.org_id,
-            wgt_id=auth.key_id if str(auth.key_id).startswith("wgt_") else None,
-            fired=decision.addendum is not None,
-            reason=decision.reason,
-            axis=decision.axis,
-            documents=decision.documents,
-            options=len(decision.options),
-        )
 
     # Nothing retrieval found is a clear match: answer only from an article that
     # really covers the question. The clarify decision never asks on such a
-    # turn, so this rule always applies there. A greeting or a thank-you usually
-    # retrieves only weak articles too; it keeps the conversational reply. One
-    # rule for every judged surface, read from the article scores; the retrieval
-    # band is stored, never used here. Only the wording differs: the widget
-    # offers its appointment button, an internal Open turn may still answer from
-    # general knowledge.
-    # Not where the selection step chose the passages: it read them, the score did not.
-    if (
-        internal
-        and not knowledge_turn.passages_chosen
-        and gap == "soft"
-        and not broad_turn
-        and escalation is None
-        and not conversational
-    ):
+    # turn, so this rule always applies there. Read from the article scores; the
+    # retrieval band is stored, never used here. An internal Open turn may still
+    # answer from general knowledge. Not where the selection step chose the
+    # passages: it read them, the score did not.
+    if internal and not knowledge_turn.passages_chosen and gap == "soft" and not broad_turn:
         system_prompt += weak_sources_notice(profile.kb_mode == "strict")
         answer_signals["weak_sources"] = True
 
@@ -2517,29 +2376,8 @@ async def chat_completions(  # noqa: C901
     )
 
     # 7. Fire retrieval log async
-    chunk_ids = [c.get("chunk_id", "") for c in chunks if c.get("chunk_id")]
-    reranker_scores = [c.get("reranker_score", 0.0) for c in chunks if c.get("reranker_score") is not None]
+    _log_retrieval(auth, profile, chunks)
 
-    task = asyncio.create_task(
-        write_retrieval_log(
-            org_id=auth.org_id,
-            # The employee's sub for LibreChat traffic: feedback on an answer
-            # finds its retrieval under rl:{org}:{user}, as with the hook.
-            user_id=profile.user_id if profile.user_id is not None else f"partner:{auth.key_id}",
-            chunk_ids=chunk_ids,
-            reranker_scores=reranker_scores,
-            query_resolved="",
-            embedding_model_version="",
-            retrieved_at=datetime.now(UTC),
-        )
-    )
-    _pending.add(task)
-    task.add_done_callback(_pending.discard)
-
-    # 7b. Widget audit-trail: log the user turn immediately, and the
-    # assistant turn once the response is composed. Fire-and-forget so
-    # an audit hiccup never breaks the chat. The identity these writes use
-    # was resolved in step 6a, before retrieval. SPEC-WIDGET-ACTIVITY-001.
     (
         allowed_source_urls,
         citation_source_urls,
@@ -2547,122 +2385,59 @@ async def chat_completions(  # noqa: C901
         citation_output,
     ) = _citation_runtime_options(trusted_sources, is_widget_chat=is_widget_chat)
 
-    # The widget's signals go to its audit row, the internal turn's to its own
-    # record; partner-API turns keep none.
-    turn_signals = answer_signals if audit_ready or internal else None
-    # 8. Streaming or non-streaming
+    # 8. Streaming or non-streaming. The widget's signals go to its audit row,
+    # the internal turn's to its own record; partner-API turns keep none.
+    generation: dict[str, Any] = {
+        "messages": request.messages,
+        "model": answer_model,
+        "temperature": request.temperature,
+        "system_prompt": system_prompt,
+        "settings": settings,
+        "org_id": auth.org_id,
+        "allowed_source_urls": allowed_source_urls,
+        "citation_source_urls": citation_source_urls,
+        "citation_source_metadata": citation_source_metadata,
+        "citation_chunks": [] if broad_turn else chunks,
+        "web_chunks": web_chunks,
+        "web_query": web_query,
+        "trusted_sources": trusted_sources,
+        "citation_output": citation_output,
+        "source_query": knowledge.query if knowledge is not None else None,
+        "page_context": page_context,
+        "support_mode": False,
+        "broad_mode": broad_turn,
+        "force_escalation": False,
+        "clarity": clarity,
+        "conversational": False,
+        "sentiment": None,
+        "answer_signals": answer_signals if audit.ready or internal else None,
+        "signal_chunks": chunks,
+        "turn_timing": turn_timing,
+        "profile": profile,
+        "tools": request.tools,
+        "tool_choice": request.tool_choice,
+        "delegated_org_id": delegated_org_id,
+        "knowledge_turn": knowledge_turn,
+        "pasted_correspondence": pasted_correspondence,
+    }
     if request.stream:
         streaming_gen = chat_completion_streaming(
-            messages=request.messages,
-            model=answer_model,
-            temperature=request.temperature,
-            system_prompt=system_prompt,
-            settings=settings,
-            org_id=auth.org_id,
-            allowed_source_urls=allowed_source_urls,
-            citation_source_urls=citation_source_urls,
-            citation_source_metadata=citation_source_metadata,
-            citation_chunks=[] if broad_turn else chunks,
-            web_chunks=web_chunks,
-            web_query=web_query,
-            trusted_sources=trusted_sources,
-            citation_output=citation_output,
-            source_query=knowledge.query if knowledge is not None else None,
-            emit_sources=knowledge.include_sources if knowledge is not None else True,
-            page_context=page_context,
-            support_mode=support_mode,
-            broad_mode=broad_turn,
-            force_escalation=force_escalation,
-            clarity=clarity,
-            conversational=conversational,
-            sentiment=sentiment,
-            answer_signals=turn_signals,
-            signal_chunks=chunks,
-            turn_timing=turn_timing,
-            profile=profile,
-            tools=request.tools,
-            tool_choice=request.tool_choice,
-            delegated_org_id=delegated_org_id,
-            knowledge_turn=knowledge_turn,
-            pasted_correspondence=pasted_correspondence,
+            **generation, emit_sources=knowledge.include_sources if knowledge is not None else True
         )
         if internal:
             streaming_gen = _internal_record_streaming_wrapper(
                 streaming_gen, org_id=auth.org_id, answer_signals=answer_signals, turn=knowledge_turn
             )
-        if audit_ready:
+        if record is not None:
             streaming_gen = _audit_streaming_wrapper(
-                streaming_gen,
-                turn=knowledge_turn,
-                widget_id=audit_widget_id,  # type: ignore[arg-type]
-                session_key=audit_session_key,  # type: ignore[arg-type]
-                loaded_origin=http_request.headers.get("origin") or None,
-                is_preview=getattr(auth, "is_preview", False),
-                turn_id=request.widget_turn_id,
-                answer_signals=answer_signals,
+                streaming_gen, turn=knowledge_turn, **record, answer_signals=answer_signals
             )
-        return StreamingResponse(
-            content=streaming_gen,
-            media_type="text/event-stream",
-        )
+        return StreamingResponse(content=streaming_gen, media_type="text/event-stream")
 
-    # Non-streaming
-    result = await chat_completion_non_streaming(
-        messages=request.messages,
-        model=answer_model,
-        temperature=request.temperature,
-        system_prompt=system_prompt,
-        settings=settings,
-        org_id=auth.org_id,
-        allowed_source_urls=allowed_source_urls,
-        citation_source_urls=citation_source_urls,
-        citation_source_metadata=citation_source_metadata,
-        citation_chunks=[] if broad_turn else chunks,
-        web_chunks=web_chunks,
-        web_query=web_query,
-        trusted_sources=trusted_sources,
-        citation_output=citation_output,
-        source_query=knowledge.query if knowledge is not None else None,
-        page_context=page_context,
-        support_mode=support_mode,
-        broad_mode=broad_turn,
-        force_escalation=force_escalation,
-        clarity=clarity,
-        conversational=conversational,
-        sentiment=sentiment,
-        answer_signals=turn_signals,
-        signal_chunks=chunks,
-        turn_timing=turn_timing,
-        profile=profile,
-        tools=request.tools,
-        tool_choice=request.tool_choice,
-        delegated_org_id=delegated_org_id,
-        knowledge_turn=knowledge_turn,
-        pasted_correspondence=pasted_correspondence,
-    )
+    result = await chat_completion_non_streaming(**generation)
     if internal:
         _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
-    if knowledge is not None and not knowledge.include_sources:
-        for choice in result.get("choices") or []:
-            message = choice.get("message") if isinstance(choice, dict) else None
-            if isinstance(message, dict):
-                message.pop("sources", None)
-    if audit_ready:
-        assistant_text, assistant_sources = _extract_assistant_text_and_sources(result)
-        if assistant_text:
-            _write_widget_record(
-                knowledge_turn,
-                widget_id=audit_widget_id,  # type: ignore[arg-type]
-                session_key=audit_session_key,  # type: ignore[arg-type]
-                role="assistant",
-                content=assistant_text,
-                sources=assistant_sources,
-                loaded_origin=http_request.headers.get("origin") or None,
-                is_preview=getattr(auth, "is_preview", False),
-                turn_id=request.widget_turn_id,
-                answer_signals=answer_signals or None,
-            )
-    return result
+    return _sent_body(result, request, knowledge_turn, answer_signals, record)
 
 
 # ---------------------------------------------------------------------------

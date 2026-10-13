@@ -25,7 +25,8 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
@@ -3570,6 +3571,44 @@ def _record_retrieval_band(sink: dict[str, Any] | None, result: dict, *, blocked
             logger.warning("partner_chat_unexpected_confidence_band", band=band)
         band = "unknown"
     sink["band"] = "unknown" if blocked_chunk_count else band
+
+
+async def timed[T](awaitable: Awaitable[T]) -> tuple[T, int]:
+    started = time.perf_counter()
+    result = await awaitable
+    return result, round((time.perf_counter() - started) * 1000)
+
+
+@contextmanager
+def retrieval_upstream_errors(org_id: int) -> Iterator[None]:
+    """A retrieval-api failure as the caller's 502, with the upstream status or error type logged."""
+    try:
+        yield
+    except (httpx.TimeoutException, httpx.ReadTimeout) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": {"type": "upstream_error", "message": "Retrieval service timeout"}},
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "partner_chat_retrieval_upstream_status_error",
+            org_id=org_id,
+            status_code=exc.response.status_code if exc.response is not None else None,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": {"type": "upstream_error", "message": "Retrieval service error"}},
+        ) from exc
+    except httpx.RequestError as exc:
+        logger.warning(
+            "partner_chat_retrieval_upstream_request_error",
+            org_id=org_id,
+            error_type=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": {"type": "upstream_error", "message": "Retrieval service unavailable"}},
+        ) from exc
 
 
 async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches kept inline so the order stays readable

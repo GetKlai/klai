@@ -301,8 +301,10 @@ async def _run_chat_completions(*, support_mode_flag: bool, stream: bool, tone_r
         yield b"data: [DONE]\n\n"
 
     tone_reader = AsyncMock(return_value=tone_register_flag)
+    # A support-mode turn runs in widget_turn, any other in chat_completions.
+    turn_module = "app.services.widget_turn" if support_mode_flag else "app.api.partner"
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
+        patch(f"{turn_module}.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch(
             "app.api.partner._widget_support_mode_enabled",
@@ -313,15 +315,15 @@ async def _run_chat_completions(*, support_mode_flag: bool, stream: bool, tone_r
             new=tone_reader,
         ),
         patch(
-            "app.api.partner.chat_completion_streaming",
+            f"{turn_module}.chat_completion_streaming",
             return_value=mock_streaming_gen(),
         ) as chat_stream,
         patch(
-            "app.api.partner.chat_completion_non_streaming",
+            f"{turn_module}.chat_completion_non_streaming",
             new=AsyncMock(return_value={"choices": []}),
         ) as chat_nonstream,
         patch("app.api.partner.asyncio"),
-        patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+        patch(f"{turn_module}.write_retrieval_log", new=AsyncMock()),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
@@ -409,17 +411,17 @@ async def _run_with_scope(*, chunks, scope_result):
     )
     classifier = AsyncMock(return_value=case)
     with (
-        patch("app.api.partner.retrieve_context", return_value=(chunks, "SUPPORT PROFILE", [], False)),
+        patch("app.services.widget_turn.retrieve_context", return_value=(chunks, "SUPPORT PROFILE", [], False)),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value=None)),
         patch("app.api.partner.case_file.update_case", new=classifier),
         patch(
-            "app.api.partner.chat_completion_non_streaming",
+            "app.services.widget_turn.chat_completion_non_streaming",
             new=AsyncMock(return_value={"choices": []}),
         ) as chat_call,
         patch("app.api.partner.asyncio"),
-        patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+        patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
