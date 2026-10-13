@@ -1,9 +1,12 @@
-"""The one decision after retrieval: answer, or ask which variant applies.
+"""The clarify gate on article titles: answer, or ask which variant applies.
 
 SPEC-RAG-ANSWER-JUDGES-001 logbook 2.54. The gate reads the retrieved articles,
 not a model: it asks only when strong articles from different documents cover
 the same topic in different variants and the conversation names none of them.
-A model only writes the question.
+No chat path asks from it any more: the selection step's own question replaced
+it on the widget (step M) and on the internal chat (step O4), and the tests of
+its question writer went with that writer. The gate itself is still scored by
+scripts/clarify_gate_eval.py.
 
 synthetic-data: generator=hand-written seed=0 (fictional product "Alpha phone
 app", help.example.com URLs).
@@ -11,12 +14,7 @@ app", help.example.com URLs).
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
-from app.services import clarify_decision as cd
-from app.services.clarify_gate import ClarifyDecision, clarify_gate
+from app.services.clarify_gate import clarify_gate
 
 THRESHOLD = 0.4
 
@@ -187,37 +185,3 @@ def test_on_the_device_axis_the_options_are_the_devices_and_a_brand_word_names_n
     gate = clarify_gate([{"role": "user", "content": "no connection with zeta"}], [iphone, android], THRESHOLD)
 
     assert (gate.reason, gate.options) == ("asked", ("iPhone", "Android"))
-
-
-async def _decide(question: str | None) -> ClarifyDecision:
-    reply = None if question is None else cd.ClarifyQuestion(question=question)
-    with patch.object(cd, "structured_judge_call", AsyncMock(return_value=reply)) as call:
-        decision = await cd.clarify_decision(ASK, [IPHONE, ANDROID], MagicMock(klai_gap_soft_threshold=THRESHOLD))
-    assert call.await_count == 1
-    return decision
-
-
-async def test_the_written_question_reaches_the_answer_prompt():
-    decision = await _decide("Do you call with the iPhone app or the Android app?")
-
-    assert decision.reason == "asked"
-    assert decision.addendum is not None
-    assert "Do you call with the iPhone app or the Android app?" in decision.addendum
-
-
-@pytest.mark.parametrize(
-    "question",
-    ["See https://help.example.com/app for the steps?", "Which app?\nAnd which phone?", "Which {app} do you use?"],
-)
-async def test_a_written_question_that_is_not_one_plain_line_is_dropped(question):
-    decision = await _decide(question)
-
-    assert decision.reason == "question_shape"
-    assert decision.addendum is None
-
-
-async def test_a_failed_writer_answers_directly():
-    decision = await _decide(None)
-
-    assert decision.reason == "model_failed"
-    assert decision.addendum is None

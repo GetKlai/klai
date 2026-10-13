@@ -88,6 +88,7 @@ from app.core.database import cross_org_session, tenant_scoped_session  # noqa: 
 from app.core.provisioning_names import provisioning_names_for_slug  # noqa: E402
 from app.logging_setup import setup_logging  # noqa: E402
 from app.models.portal import PortalOrg  # noqa: E402
+from app.services import widget_turn  # noqa: E402
 from app.services.answer_footer import strip_answer_footer_from_text  # noqa: E402
 from app.services.chat_profile import ChatProfile, resolve_internal_profile  # noqa: E402
 from app.services.internal_chat_identity import LibreChatIdentityError  # noqa: E402
@@ -638,7 +639,7 @@ async def main(org_slug: str, count: int, max_turns: int) -> None:
     partner.record_internal_turn = _capture_internal_turn  # type: ignore[assignment]
     # The retrieval log keys feedback to the chunks of the employee's latest
     # turn; a replayed turn written there would be mistaken for theirs.
-    partner.write_retrieval_log = _skip_retrieval_log  # type: ignore[assignment]
+    widget_turn.write_retrieval_log = _skip_retrieval_log  # type: ignore[assignment]
 
     saved = _read_saved_sample(out, count, max_turns)
     if saved is None:

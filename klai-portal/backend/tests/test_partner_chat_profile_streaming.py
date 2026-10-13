@@ -1,6 +1,8 @@
 """Slice 2 of the one-chat-pipeline plan (docs/architecture/chat-quality-history-and-plan.md §7):
 tools/tool_choice forwarding, tool_calls passthrough, and profile-driven
-streaming (hold + keepalive vs. live) in the knowledge path.
+streaming (held vs. live) in the knowledge path. Since step O4 the internal
+Strict turn is held and written by widget_write.write_reply, so the empty
+keepalive frames an internal held stream sent are gone, and their test with them.
 
 docs/.context/step0-architecture.md §4 row 2 is the contract for these tests.
 """
@@ -175,26 +177,48 @@ def test_strip_web_search_tools_removes_only_web_search():
     assert [t["function"]["name"] for t in kept] == ["lookup_kb"]
 
 
+class _PostingClient:
+    """Captures every JSON body posted to LiteLLM and answers each with the same text."""
+
+    def __init__(self, bodies: list[dict]):
+        self.bodies = bodies
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return None
+
+    async def post(self, url, *, json, headers):
+        self.bodies.append(json)
+        response = MagicMock()
+        response.json.return_value = {"choices": [{"message": {"content": "Antwoord."}}]}
+        return response
+
+
 @pytest.mark.asyncio
 async def test_strict_profile_strips_web_search_tool_before_forwarding(monkeypatch):
-    events = [{"choices": [{"delta": {"content": "Antwoord."}}]}]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+    """The internal Strict turn is written by write_reply since step O4; Strict never searches the web."""
+    from app.services.widget_write import write_reply
 
-    async for _ in chat_completion_streaming(
+    bodies: list[dict] = []
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _PostingClient(bodies))
+
+    await write_reply(
         messages=[{"role": "user", "content": "Vraag"}],
         model="klai-primary",
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         profile=ChatProfile(surface="internal", kb_mode="strict"),
-        tools=[{"type": "function", "function": {"name": "web_search"}}],
-    ):
-        pass
+        tools=[
+            {"type": "function", "function": {"name": "web_search"}},
+            {"type": "function", "function": {"name": "lookup_kb"}},
+        ],
+    )
 
-    sent = _RecordingClient.last_json
-    assert sent is not None
-    assert "tools" not in sent
+    (answer,) = [body for body in bodies if "stream" in body]
+    assert [tool["function"]["name"] for tool in answer["tools"]] == ["lookup_kb"]
 
 
 # ---------------------------------------------------------------------------
@@ -226,38 +250,6 @@ async def test_open_internal_profile_yields_multiple_content_frames(monkeypatch)
     frames = _sse_content_frames(b"".join(chunks).decode())
     content_frames = [f for f in frames if f.get("content")]
     assert len(content_frames) >= 2, "an Open internal turn must stream more than one content frame"
-
-
-@pytest.mark.asyncio
-async def test_held_turn_yields_keepalives_and_no_content_before_final(monkeypatch):
-    events = [
-        {"choices": [{"delta": {"content": "Klai "}}]},
-        {"choices": [{"delta": {"content": "ondersteunt SIP-trunking."}}]},
-    ]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
-
-    chunks = []
-    async for chunk in chat_completion_streaming(
-        messages=[{"role": "user", "content": "Ondersteunt Klai SIP-trunking?"}],
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="prompt",
-        settings=_settings(),
-        citation_output="markers",
-        # Held (default stream_live=False), internal surface so keepalives fire.
-        profile=ChatProfile(surface="internal", kb_mode="open"),
-    ):
-        chunks.append(chunk)
-
-    frames = _sse_content_frames(b"".join(chunks).decode())
-    # Only the content-bearing deltas: language/sources/activity frames are a
-    # separate signal channel, not part of the "held vs. keepalive" contract.
-    content_frames = [f for f in frames if "content" in f]
-    assert content_frames, "expected at least the keepalive + final content frame"
-    *before_final, final = content_frames
-    assert before_final, "a held turn with a slow (multi-delta) upstream must emit keepalives"
-    assert all(f["content"] == "" for f in before_final), "no non-empty content frame before the final one"
-    assert final["content"], "the final frame carries the composed answer"
 
 
 @pytest.mark.asyncio

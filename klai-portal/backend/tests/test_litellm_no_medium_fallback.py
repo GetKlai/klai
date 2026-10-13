@@ -62,25 +62,6 @@ async def test_structured_judge_call_sends_no_fallbacks(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_rewrite_sends_no_fallbacks(monkeypatch) -> None:
-    from app.services import query_rewrite
-
-    client = _CaptureClient("Hoe stel ik voicemail in?")
-    monkeypatch.setattr(httpx, "AsyncClient", client)
-
-    await query_rewrite.rewrite_for_retrieval(
-        "Hoe stel ik voicemail in?",
-        [],
-        zitadel_org_id="zorg-acme",
-        kb_slugs=[],
-        pasted_correspondence=False,
-        settings=_settings(),
-    )
-
-    assert client.bodies[0]["fallbacks"] == []
-
-
-@pytest.mark.asyncio
 async def test_summarizer_sends_no_fallbacks(monkeypatch) -> None:
     from app.services import summarizer
 

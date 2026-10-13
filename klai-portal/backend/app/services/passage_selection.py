@@ -72,6 +72,23 @@ _MAX_LINES_PER_QUOTE = 6
 # A quote that outranks a "not in the passages" verdict must be a sentence,
 # not a few common words; the 39 measured cases all quoted whole sentences.
 _OVERRIDE_MIN_WORDS = 5
+# The selection's question goes out as the whole reply, so it has to look like
+# a question and nothing else: one line, a question mark, no link or code.
+_QUESTION_MAX_CHARS = 200
+_QUESTION_MAX_WORDS = 25
+_NOT_A_QUESTION = re.compile(r"https?:|www\.|[\[\]`{}<>|]")
+
+
+def plain_question(question: str) -> bool:
+    """One short line that ends on a question mark and carries no link, list or instruction."""
+    asked = " ".join(question.split())
+    return (
+        "\n" not in question.strip()
+        and asked.endswith("?")
+        and len(asked) <= _QUESTION_MAX_CHARS
+        and len(asked.split()) <= _QUESTION_MAX_WORDS
+        and not _NOT_A_QUESTION.search(asked)
+    )
 
 
 def _share(quote: list[str], chunk: dict) -> float:

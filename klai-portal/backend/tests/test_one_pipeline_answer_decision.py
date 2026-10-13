@@ -1,9 +1,12 @@
 """One-chat-pipeline slice 5: one answer decision for every surface.
 
 The internal chat now takes what the widget already had instead of the LiteLLM
-hook's copies: ``decide_answer`` decides per mode, the clarify decision asks the one
-question, the weak-source rule replaces the band, the grounding check and its
-repair live in one place, and every turn leaves one record of signals.
+hook's copies: ``decide_answer`` decides per mode, the grounding check lives in
+one place, and every turn leaves one record of signals. Since step O4 it runs
+the widget's flow (internal_turn.py): the case instead of the query rewrite,
+the selection step on every turn with passages, its question instead of the
+clarify step on article titles, and no weak-source notice. The tests of those
+three removed mechanisms went with them.
 
 Every test drives ``chat_completions`` end to end. Only HTTP is doubled: one
 LiteLLM route that tells the calls apart by the schema each one sends, and
@@ -23,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 import respx
-from klai_chat_prompts import CLARIFY_TURN_ADDENDUM, no_citable_sources_message
+from klai_chat_prompts import no_citable_sources_message
 
 from app.api.partner_dependencies import PartnerAuthContext
 from app.services.chat_profile import ChatProfile
@@ -106,6 +109,7 @@ class _LiteLLM:
             return schema
         if "You edit a reply" in body["messages"][0]["content"]:
             return "repair"
+        # Every call without a schema and a stream field would be the removed query rewrite.
         return "answer" if "stream" in body else "rewrite"
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -171,6 +175,7 @@ async def _turn(
     stream: bool = False,
     key_id: str = "key-internal",
     support_mode: bool = False,
+    history: tuple[dict, ...] = (),
 ) -> _Turn:
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
@@ -213,7 +218,7 @@ async def _turn(
         kb_access={10: "read"},
         rate_limit_rpm=60,
     )
-    request = ChatCompletionsRequest(messages=[{"role": "user", "content": question}], stream=stream)
+    request = ChatCompletionsRequest(messages=[*history, {"role": "user", "content": question}], stream=stream)
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
     with respx.mock(assert_all_called=False) as router:
@@ -317,18 +322,25 @@ async def test_strict_answer_nobody_supports_over_unchosen_passages_is_refused(m
 
 
 @pytest.mark.asyncio
-async def test_open_turn_runs_no_selection_step(monkeypatch):
+async def test_open_turn_whose_passages_do_not_answer_still_writes_from_every_passage(monkeypatch):
+    """Step O4: the selection step reads an Open turn's passages too, but Open may
+    answer from general knowledge by design, so "not in the passages" refuses
+    nothing there: the writer gets every passage, live, without a brief."""
     llm = _LiteLLM(selection=NOT_IN_PASSAGES)
 
     turn = await _turn(
         monkeypatch,
         llm,
         profile=_internal(kb_mode="open"),
-        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        retrieval={"evidence_pack": _pack(items=2), "confidence_band": "high"},
+        stream=True,
     )
 
-    assert turn.text != STRICT_REFUSAL
-    assert llm.of("passage_selection") == []
+    assert len(llm.of("passage_selection")) == 1
+    assert turn.text.startswith(ANSWER)
+    activity = [a for f in turn.frames for c in f["choices"] for a in c["delta"].get("activity") or []]
+    assert {"step": "knowledge_retrieved", "count": 2} in [{"step": a["step"], "count": a["count"]} for a in activity]
+    assert "[This turn]" not in _system_prompt(llm)
 
 
 # --- Open and general never refuse for a missing source ---------------------------
@@ -395,36 +407,52 @@ def _variant_pack(score: float = 0.82) -> dict:
 VARIANT_QUESTION = "Heb je een vast contract of een oproepcontract?"
 
 
+DEPENDS = {
+    "need": "verlof aanvragen",
+    "evidence": [{"passage": 1, "quote": "Je vraagt verlof aan in het HR-portaal onder Verlof."}],
+    "verdict": "depends",
+    "question": VARIANT_QUESTION,
+}
+
+
+@pytest.mark.parametrize("kb_mode", ["strict", "open"])
 @pytest.mark.asyncio
-async def test_internal_question_over_variant_articles_gets_the_written_question_not_a_clarify_instruction(
-    monkeypatch,
-):
-    llm = _LiteLLM(question=VARIANT_QUESTION)
+async def test_the_selections_question_is_the_whole_reply_in_strict_and_open(monkeypatch, kb_mode):
+    """Step O4: the question the selection step wrote replaces the clarify step on
+    article titles; no writer runs, and no question-writer call is made."""
+    llm = _LiteLLM(selection=DEPENDS)
 
     turn = await _turn(
         monkeypatch,
         llm,
-        profile=_internal(),
-        retrieval={"evidence_pack": _variant_pack(), "confidence_band": "low"},
+        profile=_internal(kb_mode=kb_mode),
+        retrieval={"evidence_pack": _variant_pack(), "confidence_band": "high"},
     )
 
-    prompt = _system_prompt(llm)
-    assert VARIANT_QUESTION in prompt
-    assert CLARIFY_TURN_ADDENDUM["internal"].strip() not in prompt
-    assert turn.records[-1]["planned_question"] is True
-    assert turn.records[-1]["asked_about"] == "edition"
+    assert turn.text == VARIANT_QUESTION
+    assert llm.of("answer") == [] and llm.of("clarify_question") == []
+    (record,) = turn.records
+    assert record["decision"] == "clarifying_question"
+    assert record["question_asked"] is True
 
 
-@pytest.mark.parametrize(("band", "score", "told"), [("low", 0.9, False), ("high", 0.2, True)])
 @pytest.mark.asyncio
-async def test_internal_weak_source_rule_follows_the_article_scores_not_the_band(monkeypatch, band, score, told):
+async def test_an_internal_follow_up_makes_no_rewrite_and_no_title_clarify_call(monkeypatch):
+    """Step O4: the case is the turn's one reading; the query rewrite and the
+    clarify step on article titles, which fired over these variant articles, are gone."""
     llm = _LiteLLM()
 
     await _turn(
-        monkeypatch, llm, profile=_internal(), retrieval={"evidence_pack": _pack(score=score), "confidence_band": band}
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _variant_pack(), "confidence_band": "high"},
+        history=({"role": "user", "content": "Ik wil vrij."}, {"role": "assistant", "content": "Waarvoor?"}),
     )
 
-    assert ("Retrieval found nothing that clearly matches" in _system_prompt(llm)) is told
+    kinds = {_LiteLLM._kind(body) for body in llm.calls}
+    assert {"case_update", "passage_selection", "answer"} <= kinds
+    assert not kinds & {"rewrite", "clarify_question"}
 
 
 # --- Grounding check and repair ---------------------------------------------------
@@ -538,6 +566,8 @@ async def test_internal_turn_writes_one_record_of_signals_and_no_text(monkeypatc
     assert set(record["timings"]) >= {"retrieval_ms", "generation_ms", "checks_ms", "total_ms"}
     stored = json.dumps(record)
     assert "HR-portaal" not in stored and QUESTION not in stored
+    # The footer moved with the Strict writer into internal_turn (step O4).
+    assert "**Agent activiteit**\n- Modus: Strict, alleen kennisbank." in turn.text
 
 
 # --- PII: the org travels with every internal call --------------------------------
@@ -569,7 +599,7 @@ async def test_every_litellm_call_of_an_internal_and_a_widget_turn_carries_the_o
     )
 
     kinds = {_LiteLLM._kind(body) for body in internal.calls}
-    assert kinds >= {"rewrite", "clarify_question", "answer", "answer_judge", "grounding_check"}
+    assert kinds >= {"case_update", "passage_selection", "answer", "answer_judge", "grounding_check"}
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in internal.calls)
     assert {"passage_selection", "answer", "answer_judge", "grounding_check"} <= {
         _LiteLLM._kind(b) for b in widget.calls
@@ -581,14 +611,17 @@ async def test_every_litellm_call_of_an_internal_and_a_widget_turn_carries_the_o
 
 
 class _ToolCallOnly(_LiteLLM):
-    """The answer call streams a tool call and no text, as an agent step does."""
+    """The answer call returns a tool call and no text, as an agent step does: streamed (Open) or whole (Strict)."""
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        if self._kind(body) == "answer" and body.get("stream"):
+        if self._kind(body) == "answer":
             self.calls.append(body)
-            call = {"index": 0, "id": "call_1", "function": {"name": "lookup", "arguments": "{}"}}
-            frame = json.dumps({"choices": [{"index": 0, "delta": {"tool_calls": [call]}}]})
+            call = {"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}
+            if not body["stream"]:
+                message = {"role": "assistant", "content": None, "tool_calls": [call]}
+                return httpx.Response(200, json={"choices": [{"message": message, "finish_reason": "tool_calls"}]})
+            frame = json.dumps({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, **call}]}}]})
             return httpx.Response(200, content=f"data: {frame}\n\ndata: [DONE]\n\n".encode())
         return super().__call__(request)
 

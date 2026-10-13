@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from klai_chat_prompts.kb_modes import build_template_instructions_block, weak_sources_notice
+from klai_chat_prompts.kb_modes import build_template_instructions_block
 from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
 from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import RedisError
@@ -43,11 +43,9 @@ from app.models.widgets import Widget, WidgetKbAccess
 from app.services import case_file
 from app.services.chat_attachments import process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
-from app.services.clarify_decision import clarify_decision
 from app.services.events import emit_event
-from app.services.gap_classification import classify_gap
+from app.services.internal_turn import InternalInputs, internal_turn
 from app.services.partner_chat import (
-    INTERNAL_RETRIEVE_TOP_K,
     KnowledgeTurn,
     _is_web_search_tool,
     _last_user_message,
@@ -62,8 +60,6 @@ from app.services.partner_chat import (
     retrieve_context,
     safety_refusal_response,
     safety_refusal_stream,
-    strict_risk_model,
-    timed,
     widget_input_safety_violation,
 )
 from app.services.partner_rate_limit import check_rate_limit, check_weighted_rate_limit
@@ -76,7 +72,7 @@ from app.services.partner_support import (
     _message_payload,
     _session_payload,
 )
-from app.services.pasted_correspondence import detect_pasted_correspondence, latest_user_turn_has_correspondence
+from app.services.pasted_correspondence import detect_pasted_correspondence
 from app.services.prompt_templates import internal_turn_settings
 from app.services.quality_scorer import schedule_quality_update
 from app.services.redis_client import get_redis_pool
@@ -2080,26 +2076,11 @@ async def _replayed(frames: list[bytes]) -> AsyncGenerator[bytes]:
         yield frame
 
 
-def _widget_reply_response(reply: Reply, request: ChatCompletionsRequest, record: dict[str, Any] | None) -> Any:
-    """Send a help-widget reply the way the request asked for it, and record it."""
-    knowledge = request.knowledge
-    include_sources = knowledge.include_sources if knowledge is not None else True
-    if request.stream:
-        frames = _replayed(reply_frames(reply, include_sources=include_sources))
-        if record is not None:
-            frames = _audit_streaming_wrapper(frames, turn=reply.turn, **record, answer_signals=reply.signals)
-        return StreamingResponse(content=frames, media_type="text/event-stream")
-    body = reply_body(reply, model=request.model, include_sources=include_sources)
-    return _sent_body(body, request, reply.turn, reply.signals, record)
-
-
-def _log_retrieval(auth: PartnerAuthContext, profile: ChatProfile, chunks: list[dict]) -> None:
+def _log_retrieval(auth: PartnerAuthContext, chunks: list[dict]) -> None:
     task = asyncio.create_task(
         write_retrieval_log(
             org_id=auth.org_id,
-            # The employee's sub for LibreChat traffic: feedback on an answer
-            # finds its retrieval under rl:{org}:{user}, as with the hook.
-            user_id=profile.user_id if profile.user_id is not None else f"partner:{auth.key_id}",
+            user_id=f"partner:{auth.key_id}",
             chunk_ids=[c.get("chunk_id", "") for c in chunks if c.get("chunk_id")],
             reranker_scores=[c.get("reranker_score", 0.0) for c in chunks if c.get("reranker_score") is not None],
             query_resolved="",
@@ -2111,31 +2092,25 @@ def _log_retrieval(auth: PartnerAuthContext, profile: ChatProfile, chunks: list[
     task.add_done_callback(_pending.discard)
 
 
-async def _internal_clarify(
-    request: ChatCompletionsRequest,
-    chunks: list[dict],
-    answer_signals: dict[str, Any],
-    org_id: int,
-    delegated_org_id: str | None,
-) -> str | None:
-    """The prompt addendum for the one question an internal turn ends on, or None (clarify_decision.py)."""
-    decision = await clarify_decision(request.messages, chunks, settings, delegated_org_id=delegated_org_id)
-    if decision.addendum:
-        answer_signals["planned_question"] = True
-        answer_signals["asked_about"] = decision.axis
-    # Counts and fixed words only, never the question or the options: they
-    # are tenant article titles and the visitor's own words.
-    logger.info(
-        "clarify_decision",
-        org_id=org_id,
-        wgt_id=None,
-        fired=decision.addendum is not None,
-        reason=decision.reason,
-        axis=decision.axis,
-        documents=decision.documents,
-        options=len(decision.options),
-    )
-    return decision.addendum
+def _reply_response(reply: Reply, request: ChatCompletionsRequest, record: dict[str, Any] | None) -> Any:
+    """Send a widget or internal reply the way the request asked for it, and record a widget turn."""
+    knowledge = request.knowledge
+    include_sources = knowledge.include_sources if knowledge is not None else True
+    if request.stream:
+        frames = _replayed(reply_frames(reply, include_sources=include_sources))
+        if record is not None:
+            frames = _audit_streaming_wrapper(frames, turn=reply.turn, **record, answer_signals=reply.signals)
+        return StreamingResponse(content=frames, media_type="text/event-stream")
+    body = reply_body(reply, model=request.model, include_sources=include_sources)
+    return _sent_body(body, request, reply.turn, reply.signals, record)
+
+
+def _upstream_error_response(error: AnswerUpstreamError, request: ChatCompletionsRequest) -> Any:
+    if not request.stream:
+        raise error
+    # Once streaming has started a failure cannot become a 502, so a streamed
+    # request gets the error as a frame (see _sse_error_frame).
+    return StreamingResponse(content=_replayed(error_frames(error)), media_type="text/event-stream")
 
 
 async def chat_completions(  # noqa: C901
@@ -2262,104 +2237,73 @@ async def chat_completions(  # noqa: C901
         try:
             reply = await widget_turn(turn)
         except AnswerUpstreamError as error:
-            if not request.stream:
-                raise
-            # Once streaming has started a failure cannot become a 502, so a
-            # streamed request gets the error as a frame (see _sse_error_frame).
-            return StreamingResponse(content=_replayed(error_frames(error)), media_type="text/event-stream")
-        return _widget_reply_response(reply, request, record)
+            return _upstream_error_response(error, request)
+        return _reply_response(reply, request, record)
 
-    templates_block, telemetry_level = "", "shadow"
-    if profile.surface == "internal" and profile.user_id is not None:
-        instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
-        templates_block = build_template_instructions_block(instructions)
-    knowledge_turn = KnowledgeTurn()
     internal = profile.surface == "internal"
-    # Every model call of the turn runs on LiteLLM's master key, so the org
-    # travels with it for LiteLLM to apply the tenant's PII policy.
-    delegated_org_id = auth.zitadel_org_id
-
-    with retrieval_upstream_errors(auth.org_id):
-        retrieval = retrieve_context(
-            answer_signals=answer_signals,
-            org_id=auth.org_id,
-            zitadel_org_id=auth.zitadel_org_id,
-            kb_slugs=kb_slugs,
-            messages=request.messages,
-            settings=settings,
-            partner_user_id=partner_user_id,
-            widget_system_prompt=widget_system_prompt,
-            page_context=page_context,
-            backend_managed_citations=True,
-            support_mode=False,
-            broad_mode=bool(request.broad_mode),
-            tone_register=tone_register,
-            pasted_correspondence=pasted_correspondence,
-            is_preview=getattr(auth, "is_preview", False),
-            audit_widget_id=audit.widget_id,
-            audit_session_key=audit.session_key,
-            audit_write=user_turn_write,
-            retrieval_query=knowledge.query if knowledge is not None else None,
-            top_k=INTERNAL_RETRIEVE_TOP_K
-            if internal
-            else knowledge.top_k
-            if knowledge is not None and knowledge.top_k is not None
-            else 8,
-            retrieval_enabled=retrieval_enabled,
-            profile=profile,
-            templates_block=templates_block,
-            telemetry_level=telemetry_level,
-            web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
-            knowledge_turn=knowledge_turn,
-        )
-        turn_timing: dict[str, float] | None = None
-        if internal:
-            retrieval_result, retrieval_ms = await timed(retrieval)
-            turn_timing = {"started_at": turn_started, "retrieval_ms": retrieval_ms}
-        else:
-            retrieval_result = await retrieval
-        chunks, system_prompt, trusted_sources, broad_turn = retrieval_result
-        # The weak-source rule reads this on the internal chat (below).
-        gap = classify_gap(chunks) if internal else None
-
-    if knowledge_turn.refusal is not None:
-        # A Strict turn without evidence: the fixed text, no model call.
-        answer_signals.update(decision="refusal", refused=True, sources_count=0)
-        _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
-        if request.stream:
-            return StreamingResponse(content=fixed_reply_stream(knowledge_turn.refusal), media_type="text/event-stream")
-        return fixed_reply_response(model=request.model, message=knowledge_turn.refusal)
-    answer_model = strict_risk_model(
-        request.model, profile=profile, turn=knowledge_turn, chunks=chunks, messages=request.messages
-    )
-
-    # Clarity is the internal clarify step's label on a draft that ends on a
-    # question (below). On the widget the selection step asks its one question
-    # before anything is written, so no model judges clarity there any more.
-    clarity: Literal["clear", "ambiguous"] | None = None
-    # The one question this turn should ask, decided against what retrieval
-    # found (clarify_decision.py). Not on a broad turn (no articles to reason
-    # over), and not when the latest turn is pasted correspondence, whose
-    # question is the distilled email itself.
-    if internal and not broad_turn and not latest_user_turn_has_correspondence(request.messages):
-        if addendum := await _internal_clarify(request, chunks, answer_signals, auth.org_id, delegated_org_id):
-            system_prompt += addendum
-            # The reply will end on that question, so the turn is clarifying
-            # like the judge's own: without a citable source that keeps the
-            # buttons off it (answer_judge.decide_answer). With a source the
-            # judges still only add, so the appointment button can stand under
-            # the question; that contract is older than this step.
-            clarity = "ambiguous"
-
-    # Nothing retrieval found is a clear match: answer only from an article that
-    # really covers the question. The clarify decision never asks on such a
-    # turn, so this rule always applies there. Read from the article scores; the
-    # retrieval band is stored, never used here. An internal Open turn may still
-    # answer from general knowledge. Not where the selection step chose the
-    # passages: it read them, the score did not.
-    if internal and not knowledge_turn.passages_chosen and gap == "soft" and not broad_turn:
-        system_prompt += weak_sources_notice(profile.kb_mode == "strict")
-        answer_signals["weak_sources"] = True
+    if internal:
+        # The internal chat runs the same flow (internal_turn.py). A Strict
+        # reply comes back held and composed; an Open or general one is
+        # streamed live below, because employees read the tokens as they arrive.
+        templates_block, telemetry_level = "", "shadow"
+        if profile.user_id is not None:
+            instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
+            templates_block = build_template_instructions_block(instructions)
+        try:
+            outcome = await internal_turn(
+                InternalInputs(
+                    request=request,
+                    auth=auth,
+                    settings=settings,
+                    profile=profile,
+                    templates_block=templates_block,
+                    telemetry_level=telemetry_level,
+                    pasted_correspondence=pasted_correspondence,
+                    answer_signals=answer_signals,
+                    turn_started=turn_started,
+                )
+            )
+        except AnswerUpstreamError as error:
+            return _upstream_error_response(error, request)
+        if isinstance(outcome, Reply):
+            _write_internal_record(auth.org_id, outcome.signals, outcome.turn)
+            return _reply_response(outcome, request, None)
+        chunks, system_prompt, trusted_sources, knowledge_turn, turn_timing = outcome
+        broad_turn = False
+        answer_model = request.model
+    else:
+        knowledge_turn = KnowledgeTurn()
+        turn_timing = None
+        with retrieval_upstream_errors(auth.org_id):
+            chunks, system_prompt, trusted_sources, broad_turn = await retrieve_context(
+                answer_signals=answer_signals,
+                org_id=auth.org_id,
+                zitadel_org_id=auth.zitadel_org_id,
+                kb_slugs=kb_slugs,
+                messages=request.messages,
+                settings=settings,
+                partner_user_id=partner_user_id,
+                widget_system_prompt=widget_system_prompt,
+                page_context=page_context,
+                backend_managed_citations=True,
+                support_mode=False,
+                broad_mode=bool(request.broad_mode),
+                tone_register=tone_register,
+                pasted_correspondence=pasted_correspondence,
+                is_preview=getattr(auth, "is_preview", False),
+                audit_widget_id=audit.widget_id,
+                audit_session_key=audit.session_key,
+                audit_write=user_turn_write,
+                retrieval_query=knowledge.query if knowledge is not None else None,
+                top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
+                retrieval_enabled=retrieval_enabled,
+                profile=profile,
+                web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
+                knowledge_turn=knowledge_turn,
+            )
+        answer_model = request.model
+        # 7. Fire retrieval log async
+        _log_retrieval(auth, chunks)
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
@@ -2367,9 +2311,6 @@ async def chat_completions(  # noqa: C901
         is_widget_chat=is_widget_chat,
         system_prompt=system_prompt,
     )
-
-    # 7. Fire retrieval log async
-    _log_retrieval(auth, profile, chunks)
 
     (
         allowed_source_urls,
@@ -2397,14 +2338,15 @@ async def chat_completions(  # noqa: C901
         "citation_output": citation_output,
         "source_query": knowledge.query if knowledge is not None else None,
         "page_context": page_context,
-        "clarity": clarity,
         "answer_signals": answer_signals if audit.ready or internal else None,
         "signal_chunks": chunks,
         "turn_timing": turn_timing,
         "profile": profile,
         "tools": request.tools,
         "tool_choice": request.tool_choice,
-        "delegated_org_id": delegated_org_id,
+        # Every model call of the turn runs on LiteLLM's master key, so the org
+        # travels with it for LiteLLM to apply the tenant's PII policy.
+        "delegated_org_id": auth.zitadel_org_id,
         "knowledge_turn": knowledge_turn,
         "pasted_correspondence": pasted_correspondence,
     }

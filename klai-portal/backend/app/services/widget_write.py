@@ -4,6 +4,11 @@ One composition for a streamed and a non-streamed request. The model call is
 held until the reply is composed anyway (citations are chosen against the
 final text), so there is nothing to stream from the model; the caller renders
 the ``Reply`` as frames or as a body (widget_reply.py).
+
+An internal Strict turn is written here too (internal_turn.py), with what
+differs for an employee: the Strict refusal that suggests the open mode instead
+of the helpdesk text, no appointment button or sentence, the employee's own
+tools and attachments, and statements kept as counts only.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from app.core.config import Settings
 from app.services.answer_epistemics import strip_answer_contract_markers
 from app.services.answer_grounding import GroundingCheck, check_grounding, grounding_budget
 from app.services.answer_judge import AnswerJudgement, decide_answer, is_clarifying_question, judge_answer
+from app.services.chat_profile import ChatProfile
 from app.services.partner_chat import (
     _CHOSEN_PASSAGE_KEY,
     _NO_CITABLE_SOURCES_DECISION_KEY,
@@ -44,11 +50,13 @@ from app.services.partner_chat import (
     _grounding_label,
     _grounding_signals,
     _helpdesk_refusal_offers,
+    _is_web_search_tool,
     _last_user_message,
     _llm_request_body,
     _log_citation_rescues,
     _log_turn_timing,
     _response_language,
+    _strip_web_search_tools,
     _text_offers_appointment,
     _visitor_question,
     output_safety_violation,
@@ -93,6 +101,9 @@ async def write_reply(
     delegated_org_id: str | None = None,
     knowledge_turn: KnowledgeTurn | None = None,
     pasted_correspondence: bool = False,
+    profile: ChatProfile = ChatProfile(surface="widget"),
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
 ) -> Reply:
     """Write the answer, compose its citations, check it, and return what the visitor is to read.
 
@@ -103,11 +114,15 @@ async def write_reply(
     the visitor receives. ``signal_chunks`` is the retrieval result to score the
     answer on; it differs from ``citation_chunks`` on a broad turn, where the
     caller empties the citation list on purpose.
+    ``profile`` is the widget's unless an internal Strict turn is written; only
+    that turn sends ``tools`` (a widget key may not), and Strict never searches
+    the web, so a web-search tool is dropped.
     """
     turn = knowledge_turn if knowledge_turn is not None else KnowledgeTurn()
+    helpdesk = profile.surface != "internal"
     response_language = _response_language(messages, pasted_correspondence=pasted_correspondence)
     augmented = _augment_messages_with_system_prompt(
-        messages, system_prompt, page_context, response_language=response_language
+        messages, system_prompt, page_context, response_language=response_language, profile=profile
     )
     # The page-context message is prepended, so the last user turn here is the
     # human's own words, never the rewritten retrieval query. The refusal
@@ -119,7 +134,7 @@ async def write_reply(
     user_query = source_query or _last_user_message(messages) or ""
 
     generation_started = time.perf_counter()
-    completion, draft = await _generate(
+    completion, draft, tool_calls = await _generate(
         augmented,
         model=model,
         temperature=temperature,
@@ -127,8 +142,32 @@ async def write_reply(
         org_id=org_id,
         delegated_org_id=delegated_org_id,
         language=response_language,
+        tools=_strip_web_search_tools(tools),
+        # A forced choice of a tool Strict just stripped would name a tool the
+        # request no longer carries.
+        tool_choice=None if isinstance(tool_choice, dict) and _is_web_search_tool(tool_choice) else tool_choice,
     )
     generation_ms = _elapsed_ms(generation_started)
+    if tool_calls and not draft.strip():
+        # A turn that only calls a tool is not an answer yet: the client runs
+        # the tool and sends its result back. Composing it would put the
+        # no-sources refusal after the tool call. The record still gets the
+        # route and the timing.
+        if answer_signals is not None:
+            answer_signals.update(decision="tool_calls", model=model, sources_count=0, refused=False)
+        _log_turn_timing(
+            turn_timing, org_id=org_id, generation_ms=generation_ms, answer_judge_ms=0, answer_signals=answer_signals
+        )
+        return Reply(
+            text="",
+            sources=[],
+            decision={"route": "tool_calls"},
+            signals=answer_signals if answer_signals is not None else {},
+            language=response_language,
+            turn=turn,
+            completion=completion,
+            tool_calls=tool_calls,
+        )
     if pasted_correspondence:
         draft = strip_answer_contract_markers(draft)
     content, sources, decision = _compose_backend_managed_answer(
@@ -136,10 +175,11 @@ async def write_reply(
         trusted_sources,
         citation_chunks,
         user_query,
-        helpdesk=True,
+        helpdesk=helpdesk,
         broad=broad_mode,
         force_escalation=force_escalation,
         response_language=response_language,
+        suggest_open_mode=not helpdesk,
     )
     judge_started = time.perf_counter()
     if safety_reason := output_safety_violation(draft):
@@ -166,8 +206,10 @@ async def write_reply(
             clarity=clarity,
             knowledge_turn=turn,
             delegated_org_id=delegated_org_id,
+            helpdesk=helpdesk,
         )
-        content = without_dashes(content)
+        if helpdesk:
+            content = without_dashes(content)
         if sentiment:
             decision["sentiment"] = sentiment
     _log_turn_timing(
@@ -216,6 +258,7 @@ async def write_reply(
         broad_mode=decision.get("broad_mode"),
         passages=len(citation_chunks or []),
         completion=completion,
+        tool_calls=tool_calls,
     )
 
 
@@ -228,16 +271,18 @@ async def _generate(
     org_id: int | str | None,
     delegated_org_id: str | None,
     language: str | None,
-) -> tuple[dict[str, Any], str]:
-    """The answer model's text, and the id, model and usage it came with."""
+    tools: list[dict] | None,
+    tool_choice: Any | None,
+) -> tuple[dict[str, Any], str, list[dict] | None]:
+    """The answer model's text, the id, model and usage it came with, and the tools it called."""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
     request_json = _llm_request_body(
         model,
         messages,
         temperature,
         stream=False,
-        tools=None,
-        tool_choice=None,
+        tools=tools,
+        tool_choice=tool_choice,
         delegated_org_id=delegated_org_id,
     )
     try:
@@ -264,12 +309,13 @@ async def _generate(
         )
         raise AnswerUpstreamError("Chat service error", language) from exc
     choices = body.get("choices") or []
-    text = ((choices[0].get("message") or {}).get("content") if choices else None) or ""
+    message = (choices[0].get("message") or {}) if choices else {}
+    text = message.get("content") or ""
     completion = {key: body[key] for key in ("id", "model", "usage") if key in body}
     if choices and choices[0].get("finish_reason"):
         # A truncated answer keeps saying so ("length"), as the plain body always did.
         completion["finish_reason"] = choices[0]["finish_reason"]
-    return completion, text if isinstance(text, str) else ""
+    return completion, text if isinstance(text, str) else "", message.get("tool_calls") or None
 
 
 async def _judge(
@@ -289,6 +335,7 @@ async def _judge(
     clarity: Literal["clear", "ambiguous"] | None,
     knowledge_turn: KnowledgeTurn,
     delegated_org_id: str | None,
+    helpdesk: bool,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3: the answer judge, then the one decision.
 
@@ -305,20 +352,40 @@ async def _judge(
     if decision.get("broad_mode") == "answer":
         return content, sources, decision
     draft_text, model_offered_appointment = strip_appointment_offer_marker(draft)
-    # The judges may hand this text to the visitor instead of the composed
-    # one; it passes the same provenance gate.
-    safe_text = without_unsourced_contact_details(
-        _answer_without_retrieved_sources(draft_text, citation_chunks), citation_chunks
-    )
+    safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
+    if helpdesk:
+        # The judges may hand this text to the visitor instead of the composed
+        # one; it passes the same provenance gate.
+        safe_text = without_unsourced_contact_details(safe_text, citation_chunks)
     if not safe_text:
         return content, sources, decision
+    searched_nothing = knowledge_turn.answer_mode == "general"
+    own_input = knowledge_turn.user_provided_content or knowledge_turn.pasted_correspondence
+    if not helpdesk and (searched_nothing or own_input):
+        # An internal Strict turn that searched nothing (a thank-you, a
+        # question about Klai itself) has no article to miss, and one that
+        # rests on what the employee attached or pasted is not judged against
+        # the articles: two correct observations from a screenshot read as two
+        # unsupported statements. Without a source the model's own words go
+        # out; a turn that searched nothing keeps its links, they are the
+        # model's or the employee's own.
+        if answer_signals is not None:
+            answer_signals["decision"] = "answer"
+        if sources:
+            return content, sources, decision
+        return (
+            (draft_text, [], {"reason": "answer"})
+            if searched_nothing
+            else (safe_text, [], {"reason": "user_provided_content"})
+        )
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
     # The checker only sees the question, the articles and the reply, so it cannot
     # know a booking button is really attached and flagged "Klik op de knop hieronder
     # om een afspraak in te plannen" as an unsupported claim about the company. Handing
     # it the guarantee as one more article keeps it strict about what that appointment
-    # will DO, which a skip-list in the prompt could not separate.
-    if (contract := chat_contract_article(appointment_offered=True)) is not None:
+    # will DO, which a skip-list in the prompt could not separate. The internal chat
+    # has no button.
+    if helpdesk and (contract := chat_contract_article(appointment_offered=True)) is not None:
         articles = [*articles, contract]
     chosen = bool(citation_chunks) and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks or [])
     deferred = chosen and bool(sources) and answer_signals is not None
@@ -344,7 +411,7 @@ async def _judge(
             org_id=org_id,
             delegated_org_id=delegated_org_id,
             answer_signals=answer_signals,
-            keep_statements=True,
+            keep_statements=helpdesk,
         )
     else:
         # Both checks read the same draft and run together, so the heavier one
@@ -357,7 +424,7 @@ async def _judge(
                 articles=articles,
                 settings=settings,
                 org_id=org_id,
-                timeout_seconds=grounding_budget("widget"),
+                timeout_seconds=grounding_budget("widget" if helpdesk else "internal"),
                 delegated_org_id=delegated_org_id,
             ),
         )
@@ -389,7 +456,8 @@ async def _judge(
     if answer_signals is not None:
         answer_signals.update(verdicts, decision=outcome)
         if not deferred:
-            _grounding_signals(answer_signals, grounding, keep_statements=True)
+            # The internal record keeps signals, never text (record_internal_turn).
+            _grounding_signals(answer_signals, grounding, keep_statements=helpdesk)
         if judgement is None:
             answer_signals.setdefault("judge_failed", []).append("answer")
     return _decided(
@@ -405,7 +473,19 @@ async def _judge(
         force_escalation=force_escalation,
         conversational=conversational,
         offered_by_model=model_offered_appointment,
+        helpdesk=helpdesk,
     )
+
+
+def _refusal(
+    reason: str, response_language: str | None, citation_chunks: list[dict] | None, *, helpdesk: bool
+) -> tuple[str, list[dict], dict[str, Any]]:
+    """The fixed "not in the sources" reply: the helpdesk text with its offers, or the Strict text suggesting Open."""
+    decision: dict[str, Any] = {"reason": reason, _NO_CITABLE_SOURCES_DECISION_KEY: True}
+    if helpdesk:
+        decision.update(_helpdesk_refusal_offers(citation_chunks))
+    text = _no_citable_sources_message(response_language, helpdesk=helpdesk, suggest_open_mode=not helpdesk)
+    return text, [], decision
 
 
 def _decided(
@@ -422,18 +502,14 @@ def _decided(
     force_escalation: bool,
     conversational: bool,
     offered_by_model: bool,
+    helpdesk: bool,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """What the visitor gets for the judges' outcome: the composed reply, a refusal, or the model's own words."""
     refused = bool(decision.get(_NO_CITABLE_SOURCES_DECISION_KEY))
     if outcome == "refusal":
         if refused:
             return content, sources, decision
-        refusal: dict[str, Any] = {
-            "reason": "answer_judge_refusal",
-            _NO_CITABLE_SOURCES_DECISION_KEY: True,
-            **_helpdesk_refusal_offers(citation_chunks),
-        }
-        return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
+        return _refusal("answer_judge_refusal", response_language, citation_chunks, helpdesk=helpdesk)
     if outcome == "clarifying_question":
         return safe_text, [], {"reason": "clarifying_question"}
     if refused:
@@ -454,10 +530,11 @@ def _decided(
         # Not on a conversational turn: decide_answer deliberately treats one as an
         # answer even when the light judge calls it unanswered, and a button under
         # "graag gedaan" offers help with nothing.
+        # The internal chat has no button to offer.
         dead_end = not conversational and judgement is not None and judgement.verdict != "answered"
-        if force_escalation or dead_end or (offered_by_model and _text_offers_appointment(safe_text)):
+        if helpdesk and (force_escalation or dead_end or (offered_by_model and _text_offers_appointment(safe_text))):
             decision["escalation"] = _appointment_escalation()
-    if outcome == "partial_answer":
+    if outcome == "partial_answer" and helpdesk:
         decision["escalation"] = _appointment_escalation()
     # Only a reply the visitor actually reads: a refusal and a clarifying
     # question state nothing about the organisation. Nothing changes a reply
@@ -477,12 +554,7 @@ def _decided(
         # The selection step did not choose this turn's passages (it failed,
         # or was skipped), so the writer read everything retrieval found. A
         # reply in which the check then supports nothing is not shown.
-        refusal = {
-            "reason": "grounding_nothing_left",
-            _NO_CITABLE_SOURCES_DECISION_KEY: True,
-            **_helpdesk_refusal_offers(citation_chunks),
-        }
-        return _no_citable_sources_message(response_language, helpdesk=True), [], refusal
+        return _refusal("grounding_nothing_left", response_language, citation_chunks, helpdesk=helpdesk)
     # A reply without a source that the judge does not call an answer is the
     # visitor's dead end, and the button under it is the way out. The profile
     # and the weak-source rule ask the model to say so; measured on the owner's
