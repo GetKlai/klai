@@ -8,19 +8,18 @@ Dit is de kaart van het chatpad. Lees hem vóór je een voorstel doet of code ve
 
 ## 0. In één scherm
 
-Er zijn **twee chatpaden** met elk hun eigen beslislogica. Ze delen alleen de zoekdienst (`/retrieve`), de prompttekst uit `klai-libs/chat-prompts` en de bronselectie uit `klai-libs/citations`.
+Sinds 13 oktober 2026 is er **één chatpad**: `POST /partner/v1/chat/completions` in portal-api, dat de helpwidget, de interne chat (LibreChat-medewerkers) en de partner-API bedient. Het oude pad A (LibreChat → LiteLLM-hook) staat nog in de LiteLLM-container als terugweg, maar geen omgeving gebruikt het (§1).
 
-| | Pad A: interne chat | Pad B: website-widget en partner-API |
-|---|---|---|
-| Ingang | LibreChat → LiteLLM-proxy, hook `klai_knowledge.py` | `POST /partner/v1/chat/completions` in portal-api |
-| Waar de beslissingen vallen | LiteLLM-callbacks vóór en na het model | portal-api, rond één modelaanroep |
-| Vraag verduidelijken | instructie aan het antwoordmodel, bij band `low` zonder direct bewijs | vaste regel over de gevonden artikelen (`clarify_gate`) beslist of er één vraag komt; een klein model schrijft alleen die vraag |
-| Zwakke zoekresultaten | band stuurt verduidelijken, Strict-weigering en modelkeuze | band wordt alleen opgeslagen; de regel "alle bronnen < 0,4" stuurt |
-| Onbewezen uitspraken | alleen in Strict gecontroleerd en gerepareerd; Open niet | gecontroleerd per uitspraak; widget laat het antwoord heel of weigert, intern repareert |
-| Mens aanbieden | bestaat niet | afspraakknop bij weigering, deelantwoord, escalatie |
-| Wat er per beurt bewaard wordt | alleen logregels (30 dagen) | `widget_messages.answer_signals` in de database |
-
-**Twee paden is de uitzondering, niet de regel.** Het doel is één pijplijn ([plan](chat-quality-history-and-plan.md#7-plan)). Een wijziging aan het chatpad zegt in de PR per beslissing die ze raakt: *gedeeld*, of *bewust apart, omdat …*. Geldige redenen om apart te zijn: de ingang en identiteit (teamkey tegenover anonieme bezoeker), de modi (Strict/Open tegenover support/breed), de afspraakknop tegenover de bronnenvoettekst, en het distilleren van geplakte correspondentie. De rest van de verschillen in de tabel hierboven is toevallig ontstaan en wordt samengevoegd; "het was al zo" is geen reden.
+| | Helpwidget (support) | Interne chat (Strict, Open, general) | Partner-API |
+|---|---|---|---|
+| Drager | `widget_turn()` (§2.1) | `internal_turn()` op dezelfde stapfuncties (§2.2) | de generieke generatie (§2.3) |
+| Lezen | de zaak per gesprek, opgeslagen bij de beurt | de zaak per beurt, zonder vorige | – |
+| Zoeken | letterlijke zin + parafrasen (eerste beurt) of zaak-zoekvragen (vervolg), acht bronnen | letterlijke zin + zaak-zoekvragen, acht bronnen | letterlijke zin, drie bronnen |
+| Kiezen vóór schrijven | ja, met citaten die code terugzoekt | ja; Strict als poort, Open als opdracht | nee |
+| Routes in code | contact, buiten onderwerp, niet gevonden, de vraag | niet gevonden (Strict), de vraag | – |
+| Na het schrijven | herkomstpoort, lichte beoordelaar voor de knop, controle per zin erna | Strict als de widget zonder knop; Open live met de controle erna | uitvoerveiligheid |
+| Mens aanbieden | afspraakknop | bestaat niet | – |
+| Wat er per beurt bewaard wordt | `widget_messages.answer_signals` met het hele spoor | `internal_chat_turns`, alleen signalen | – |
 
 Modelaliassen (`deploy/litellm/config.yaml`): `klai-primary` en `klai-fast` zijn allebei `mistral-small-2603` (`:7,29`), `klai-medium` is `mistral-medium-3.5` (`:70`), `klai-large` is `mistral-large-2512` (`:47`). `klai-judge` is hetzelfde model als `klai-medium`, maar op de Vibe-key van de Klai-organisatie (hetzelfde Vibe-tegoed als `klai-ingest`, zonder fallback), voor al het achtergrondwerk op Medium van portal-api: de nachtelijke judges, support-case-analyse en het groeperen van gaten (`settings.conversation_judge_model`). Medium-calls binnen een chatbeurt blijven op `klai-medium`. Bij een quotafout vallen primary en fast terug op medium (`:114`). LiteLLM-timeout 120 s met 1 retry (`:122,125`).
 
@@ -157,7 +156,7 @@ De generieke generatie (`chat_completion_streaming` of `chat_completion_non_stre
 **Logregels van pad B** (`service:portal-api`, structlog, info komt wel aan): `partner_chat_turn_judge` (velden uit de zaak), `partner_chat_answer_judge`, `partner_chat_query_paraphrase`, `case_update_failed`, `passage_selection`, `partner_chat_contact_request`, `partner_chat_not_in_passages`, `clarify_decision`, `partner_chat_turn_timing`, `answer_grounding_late`, `partner_chat_off_topic`.
 
 **Database**
-- `widget_messages.answer_signals` (per assistent-beurt van support-widgets): band, top_score (vóór boosts), gat-type, bronnen, broad_mode, taal, model, duidelijkheid, verdict, grounding, beslissing, aantal onbewezen uitspraken, gerepareerd, geplande vraag, zwakke bronnen. Pad A heeft hier geen tegenhanger.
+- `widget_messages.answer_signals` (per assistent-beurt van support-widgets): de zaak (`case`), de zoekvraag en zoekgangen met de gevonden passages (`search`), het oordeel van de keuzestap met citaten en vraag (`selection`), band, top_score, gat-type, bronnen, broad_mode, taal, model, verdict en grounding van de controle, beslissing, aantal en tekst van onbewezen uitspraken, geplande vraag, afspraakknop, tijd per stap (`timings`). De interne chat bewaart in `internal_chat_turns` dezelfde signalen zonder tekst (geen citaten, geen zaaktekst).
 - `portal_retrieval_gaps` voor beide paden; `conversation_quality_judgments` (nachtelijke LLM-beoordeling per widgetgesprek, `klai-judge`); `telemetry.query_shadow` (retrieval-api).
 - `knowledge.rag_eval_results`: de nachtelijke RAGAS-run in knowledge-ingest. Die **genereert zijn eigen antwoord met `klai-fast`** en meet dus geen van beide chatpaden (`klai-knowledge-ingest/knowledge_ingest/eval/judge_client.py:4-20`).
 
