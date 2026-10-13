@@ -93,7 +93,6 @@ def test_build_system_prompt_support_mode_keeps_widget_instructions_and_chunks()
         chunks,
         widget_system_prompt="Be brief.",
         support_mode=True,
-        backend_managed_citations=True,
     )
     assert _SUPPORT_ONLY in prompt
     assert "Be brief." in prompt

@@ -200,7 +200,6 @@ async def test_live_internal_turn_with_sources_appends_footer_as_extra_delta(mon
         settings=_settings(),
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        citation_output="markers",
         profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
     ):
         chunks.append(chunk)
@@ -233,7 +232,6 @@ async def test_internal_turn_without_sources_gets_no_footer(monkeypatch):
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        citation_output="markers",
         profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
@@ -261,7 +259,6 @@ async def test_widget_stream_with_sources_is_unaffected_by_the_internal_footer(m
         settings=_settings(),
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        citation_output="markers",
         profile=ChatProfile(surface="widget"),
     ):
         chunks.append(chunk)
@@ -305,7 +302,6 @@ async def test_non_streaming_internal_turn_with_sources_appends_footer_to_messag
         settings=_settings(),
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        citation_output="markers",
         profile=ChatProfile(surface="internal", kb_mode="strict"),
     )
 
@@ -348,7 +344,6 @@ async def test_non_streaming_widget_turn_is_unaffected_by_the_internal_footer(mo
         settings=_settings(),
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        citation_output="markers",
     )
 
     assert result["choices"][0]["message"]["content"] == "Naam."

@@ -428,7 +428,6 @@ async def test_stream_partner_path_has_no_escalation_frames(monkeypatch):
             source_query="hello",
             trusted_sources=_grounded_sources(),
             citation_chunks=[_good_chunk()],
-            citation_output="markers",
         )
     ]
 
@@ -532,7 +531,6 @@ async def test_non_streaming_partner_has_no_escalation_key(monkeypatch):
         temperature=0.7,
         system_prompt="sys",
         settings=_settings(),
-        citation_output="markers",
         source_query="ik kom er niet uit",
         org_id=42,
         trusted_sources=_grounded_sources(),

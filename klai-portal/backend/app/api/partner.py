@@ -526,22 +526,6 @@ async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> s
     return register if register == "expressive" else "restrained"
 
 
-def _citation_runtime_options(
-    trusted_sources: list[dict[str, Any]],
-    *,
-    is_widget_chat: bool,
-) -> tuple[set[str], dict[int, str], dict[str, dict[str, str]], Literal["links", "markers"]]:
-    """Return citation inputs for backend-managed document-level citations.
-
-    Both widget and partner API chat use the shared deterministic selector.
-    The legacy link sanitizer still exists for direct helper coverage and
-    rollback, but this endpoint no longer asks the model to choose visible
-    citation links.
-    """
-    _ = trusted_sources, is_widget_chat
-    return set(), {}, {}, "markers"
-
-
 async def _audit_streaming_wrapper(
     inner: AsyncGenerator[bytes],
     *,
@@ -2267,7 +2251,6 @@ async def chat_completions(  # noqa: C901
                 partner_user_id=partner_user_id,
                 widget_system_prompt=widget_system_prompt,
                 page_context=page_context,
-                backend_managed_citations=True,
                 support_mode=False,
                 broad_mode=bool(request.broad_mode),
                 tone_register=tone_register,
@@ -2293,13 +2276,6 @@ async def chat_completions(  # noqa: C901
         system_prompt=system_prompt,
     )
 
-    (
-        allowed_source_urls,
-        citation_source_urls,
-        citation_source_metadata,
-        citation_output,
-    ) = _citation_runtime_options(trusted_sources, is_widget_chat=is_widget_chat)
-
     # 8. Streaming or non-streaming. The widget's signals go to its audit row,
     # the internal turn's to its own record; partner-API turns keep none.
     generation: dict[str, Any] = {
@@ -2309,14 +2285,10 @@ async def chat_completions(  # noqa: C901
         "system_prompt": system_prompt,
         "settings": settings,
         "org_id": auth.org_id,
-        "allowed_source_urls": allowed_source_urls,
-        "citation_source_urls": citation_source_urls,
-        "citation_source_metadata": citation_source_metadata,
         "citation_chunks": chunks,
         "web_chunks": web_chunks,
         "web_query": web_query,
         "trusted_sources": trusted_sources,
-        "citation_output": citation_output,
         "source_query": knowledge.query if knowledge is not None else None,
         "page_context": page_context,
         "answer_signals": answer_signals if audit.ready or internal else None,

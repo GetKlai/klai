@@ -145,7 +145,6 @@ async def _search(inputs: InternalInputs, turn: KnowledgeTurn, follow_up_variant
         kb_slugs=list(profile.kb_slugs or []),
         messages=request.messages,
         settings=inputs.settings,
-        backend_managed_citations=True,
         pasted_correspondence=inputs.pasted_correspondence,
         is_preview=getattr(auth, "is_preview", False),
         retrieval_query=knowledge.query if knowledge is not None else None,

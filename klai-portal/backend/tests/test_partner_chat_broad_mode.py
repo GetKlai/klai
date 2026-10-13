@@ -626,7 +626,6 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
         temperature=0.7,
         system_prompt="sys",
         settings=settings,
-        citation_output="markers",
         **kwargs,
     )
 

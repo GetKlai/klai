@@ -249,13 +249,9 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str,
     with respx.mock(assert_all_called=False) as router:
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
         if generic and stream:
-            frames = _frames(
-                [c async for c in partner_chat.chat_completion_streaming(**kwargs, citation_output="markers")]
-            )
+            frames = _frames([c async for c in partner_chat.chat_completion_streaming(**kwargs)])
         elif generic:
-            message = (await partner_chat.chat_completion_non_streaming(**kwargs, citation_output="markers"))[
-                "choices"
-            ][0]["message"]
+            message = (await partner_chat.chat_completion_non_streaming(**kwargs))["choices"][0]["message"]
         else:
             reply = await write_reply(**kwargs)
             frames = _frames(reply_frames(reply))
