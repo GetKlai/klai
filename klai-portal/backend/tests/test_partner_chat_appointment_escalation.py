@@ -31,7 +31,7 @@ from klai_chat_prompts import appointment_offer_marker, no_citable_sources_messa
 from klai_chat_prompts.language import resolve_conversation_language
 
 from app.api import partner
-from app.services import partner_chat
+from app.services import partner_chat, widget_turn
 from app.services.case_file import Case
 from app.services.escalation_intent import escalation_intent
 from app.services.partner_chat import (
@@ -132,12 +132,14 @@ async def test_widget_classifier_controls_escalation(
 
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-alpha"]))
     monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=support_mode))
-    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
     judge = AsyncMock(return_value=_case(**classification))
     monkeypatch.setattr(partner.case_file, "update_case", judge)
-    monkeypatch.setattr(partner, "chat_completion_non_streaming", completion)
-    monkeypatch.setattr(partner, "chat_completion_streaming", streaming)
-    monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())
+    # A support-mode turn runs in widget_turn, any other in chat_completions.
+    for module in (partner, widget_turn):
+        monkeypatch.setattr(module, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
+        monkeypatch.setattr(module, "chat_completion_non_streaming", completion)
+        monkeypatch.setattr(module, "chat_completion_streaming", streaming)
+        monkeypatch.setattr(module, "write_retrieval_log", AsyncMock())
 
     response = await partner.chat_completions(
         request=request,

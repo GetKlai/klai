@@ -758,7 +758,7 @@ async def _route_turn(
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
         patch("app.api.partner.asyncio"),
-        patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+        patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
         patch("app.api.partner.last_case", new=AsyncMock(return_value=previous_case)),
         patch("app.services.partner_chat._schedule_gap_event"),
     ):
@@ -1008,14 +1008,16 @@ async def test_the_case_runs_concurrently_with_retrieval_on_a_first_turn():
     auth.key_id = "wgt_901"
     request = ChatCompletionsRequest(messages=[{"role": "user", "content": QUESTION_900}], stream=False)
     with (
-        patch("app.api.partner.retrieve_context", new=retrieve),
+        patch("app.services.widget_turn.retrieve_context", new=retrieve),
         patch("app.api.partner.case_file.update_case", new=update_case),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
-        patch("app.api.partner.chat_completion_non_streaming", new=AsyncMock(return_value={"choices": []})) as chat,
+        patch(
+            "app.services.widget_turn.chat_completion_non_streaming", new=AsyncMock(return_value={"choices": []})
+        ) as chat,
         patch("app.api.partner.asyncio"),
-        patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+        patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
     ):
         await chat_completions(request=request, http_request=MagicMock(headers={}, client=None), auth=auth, db=db)
 
