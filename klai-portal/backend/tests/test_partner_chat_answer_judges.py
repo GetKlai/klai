@@ -20,8 +20,11 @@ import respx
 from helpers import FakeKB, FakeResult, make_partner_auth
 from klai_chat_prompts import appointment_offer_sentence, contact_reply, no_citable_sources_message
 
-from app.services import case_file, partner_chat, query_paraphrase, turn_judge
+from app.services import case_file, partner_chat, query_paraphrase, turn_judge, widget_write
 from app.services.chat_profile import ChatProfile
+from app.services.partner_chat import KnowledgeTurn
+from app.services.widget_reply import Reply, reply_body, reply_frames
+from app.services.widget_write import write_reply
 
 LITELLM = "http://litellm:4000"
 RETRIEVAL = "http://retrieval-api:8040"
@@ -204,6 +207,10 @@ class _LiteLLM:
         return None
 
 
+def _written_reply() -> Reply:
+    return Reply(text="", sources=[], decision={}, signals={}, language=None, turn=KnowledgeTurn())
+
+
 def _frames(chunks: list[bytes]) -> list[dict]:
     out = []
     for raw in chunks:
@@ -219,7 +226,11 @@ def _delta(frames: list[dict], key: str) -> list[Any]:
 
 
 async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str, dict, dict]:
-    """Run one widget turn; return (visible text, signals, extras). No citable source unless overridden."""
+    """Run one widget turn; return (visible text, signals, extras). No citable source unless overridden.
+
+    A widget turn is written once and rendered as frames or as a body; the internal chat
+    and the partner key (``support_mode=False``) still run on the generation functions.
+    """
     signals: dict[str, Any] = {}
     kwargs: dict[str, Any] = {
         "messages": VISITOR,
@@ -230,16 +241,26 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str,
         "org_id": 42,
         "citation_chunks": [],
         "trusted_sources": [],
-        "citation_output": "markers",
         "source_query": "rekening factuur abonnement kosten",
-        "support_mode": True,
         "answer_signals": signals,
         **overrides,
     }
+    generic = not kwargs.pop("support_mode", True)
     with respx.mock(assert_all_called=False) as router:
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
+        if generic and stream:
+            frames = _frames(
+                [c async for c in partner_chat.chat_completion_streaming(**kwargs, citation_output="markers")]
+            )
+        elif generic:
+            message = (await partner_chat.chat_completion_non_streaming(**kwargs, citation_output="markers"))[
+                "choices"
+            ][0]["message"]
+        else:
+            reply = await write_reply(**kwargs)
+            frames = _frames(reply_frames(reply))
+            message = reply_body(reply, model=kwargs["model"])["choices"][0]["message"]
         if stream:
-            frames = _frames([c async for c in partner_chat.chat_completion_streaming(**kwargs)])
             text = "".join(_delta(frames, "content"))
             extras = {
                 "broad_mode": _delta(frames, "broad_mode"),
@@ -247,7 +268,6 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str,
                 "sources": [s for batch in _delta(frames, "sources") for s in batch],
             }
         else:
-            message = (await partner_chat.chat_completion_non_streaming(**kwargs))["choices"][0]["message"]
             text = message["content"]
             extras = {
                 "broad_mode": [message["broad_mode"]] if "broad_mode" in message else [],
@@ -640,7 +660,7 @@ async def test_answer_judge_does_not_run(overrides):
 
 
 async def test_safety_blocked_turn_is_never_judged(monkeypatch):
-    monkeypatch.setattr(partner_chat, "output_safety_violation", lambda text: "prompt_injection")
+    monkeypatch.setattr(widget_write, "output_safety_violation", lambda text: "prompt_injection")
     litellm = _LiteLLM(model_text=CLARIFYING_QUESTION)
 
     await _answer(litellm, stream=True)
@@ -758,7 +778,7 @@ async def _route_turn(
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
         patch("app.api.partner.asyncio"),
-        patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+        patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
         patch("app.api.partner.last_case", new=AsyncMock(return_value=previous_case)),
         patch("app.services.partner_chat._schedule_gap_event"),
     ):
@@ -1008,14 +1028,14 @@ async def test_the_case_runs_concurrently_with_retrieval_on_a_first_turn():
     auth.key_id = "wgt_901"
     request = ChatCompletionsRequest(messages=[{"role": "user", "content": QUESTION_900}], stream=False)
     with (
-        patch("app.api.partner.retrieve_context", new=retrieve),
+        patch("app.services.widget_turn.retrieve_context", new=retrieve),
         patch("app.api.partner.case_file.update_case", new=update_case),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
-        patch("app.api.partner.chat_completion_non_streaming", new=AsyncMock(return_value={"choices": []})) as chat,
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written_reply())) as chat,
         patch("app.api.partner.asyncio"),
-        patch("app.api.partner.write_retrieval_log", new=AsyncMock()),
+        patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
     ):
         await chat_completions(request=request, http_request=MagicMock(headers={}, client=None), auth=auth, db=db)
 

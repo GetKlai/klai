@@ -174,7 +174,7 @@ async def _turn(
 ) -> _Turn:
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
-    from app.services import partner_chat
+    from app.services import partner_chat, widget_turn
 
     for name, value in {
         "litellm_base_url": LITELLM,
@@ -192,6 +192,7 @@ async def _turn(
     monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=support_mode))
     monkeypatch.setattr(partner, "_widget_tone_register", AsyncMock(return_value="restrained"))
     monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())
+    monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
     monkeypatch.setattr(partner_chat, "_schedule_gap_event", MagicMock())
     records: list[dict] = []
 

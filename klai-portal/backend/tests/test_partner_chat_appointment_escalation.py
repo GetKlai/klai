@@ -28,16 +28,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from helpers import FakeResult, make_partner_auth
 from klai_chat_prompts import appointment_offer_marker, no_citable_sources_message
-from klai_chat_prompts.language import resolve_conversation_language
 
 from app.api import partner
-from app.services import partner_chat
+from app.services import partner_chat, widget_turn, widget_write
 from app.services.case_file import Case
 from app.services.escalation_intent import escalation_intent
-from app.services.partner_chat import (
-    _chat_completion_streaming_with_composed_citations,
-    _compose_backend_managed_answer,
-)
+from app.services.partner_chat import KnowledgeTurn, _compose_backend_managed_answer
+from app.services.widget_reply import Reply, reply_body, reply_frames
+from app.services.widget_write import write_reply
 
 MARKER = appointment_offer_marker()
 HUMAN_QUERY = "Kan er iemand van jullie hier eens naar kijken?"
@@ -121,23 +119,37 @@ async def test_widget_classifier_controls_escalation(
 
     async def completion(**kwargs):
         message = {"role": "assistant", "content": "Artikelantwoord", "sources": []}
-        if kwargs["force_escalation"]:
+        if kwargs.get("force_escalation"):
             message["escalation"] = {"appointment": True}
         return {"choices": [{"message": message}]}
 
     async def streaming(**kwargs):
-        if kwargs["force_escalation"]:
+        if kwargs.get("force_escalation"):
             yield b'data: {"choices":[{"delta":{"escalation":{"appointment":true}}}]}\n\n'
         yield b"data: [DONE]\n\n"
 
+    async def written(**kwargs):
+        return Reply(
+            text="Artikelantwoord",
+            sources=[],
+            decision={},
+            signals={},
+            language=None,
+            turn=KnowledgeTurn(),
+            appointment=kwargs["force_escalation"],
+        )
+
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-alpha"]))
     monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=support_mode))
-    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
     judge = AsyncMock(return_value=_case(**classification))
     monkeypatch.setattr(partner.case_file, "update_case", judge)
+    # A support-mode turn runs in widget_turn, any other in chat_completions.
+    for module in (partner, widget_turn):
+        monkeypatch.setattr(module, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
+        monkeypatch.setattr(module, "write_retrieval_log", AsyncMock())
+    monkeypatch.setattr(widget_turn, "write_reply", written)
     monkeypatch.setattr(partner, "chat_completion_non_streaming", completion)
     monkeypatch.setattr(partner, "chat_completion_streaming", streaming)
-    monkeypatch.setattr(partner, "write_retrieval_log", AsyncMock())
 
     response = await partner.chat_completions(
         request=request,
@@ -291,7 +303,139 @@ def test_marker_only_reply_is_not_rendered_as_a_bare_marker():
     assert decision["escalation"] == {"appointment": True}
 
 
-# ─── streaming: delta.escalation ─────────────────────────────────────────
+# ─── the widget's reply: delta.escalation and message.escalation ─────────
+
+
+def _settings() -> MagicMock:
+    settings = MagicMock()
+    settings.litellm_base_url = "http://litellm:4000"
+    settings.litellm_master_key = "key"
+    return settings
+
+
+def _model_says(monkeypatch, model_text: str) -> None:
+    class _MockResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": "chatcmpl-1",
+                "object": "chat.completion",
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": model_text}, "finish_reason": "stop"}
+                ],
+            }
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, *_, **__):
+            return _MockResp()
+
+    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+
+
+async def _written(monkeypatch, model_text: str, **kwargs) -> Reply:
+    _model_says(monkeypatch, model_text)
+    kwargs.setdefault("messages", [{"role": "user", "content": "ik kom er niet uit"}])
+    kwargs.setdefault("source_query", "ik kom er niet uit")
+    return await write_reply(
+        model="klai-primary", temperature=0.7, system_prompt="sys", settings=_settings(), org_id=42, **kwargs
+    )
+
+
+async def _widget_frames(monkeypatch, model_text: str, **kwargs) -> list[dict]:
+    return _parse_frames(reply_frames(await _written(monkeypatch, model_text, **kwargs)))
+
+
+async def _widget_message(monkeypatch, model_text: str, **kwargs) -> dict:
+    reply = await _written(monkeypatch, model_text, **kwargs)
+    return reply_body(reply, model="klai-primary")["choices"][0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_escalation_frame_for_a_model_offer(monkeypatch):
+    # Grounded on purpose: the frame must come from the model's marker, not
+    # from the canned refusal that also escalates.
+    decisions = []
+    monkeypatch.setattr(widget_write, "_log_citation_rescues", lambda decision, **_: decisions.append(decision))
+
+    parsed = await _widget_frames(
+        monkeypatch,
+        "Je reset het wachtwoord via Instellingen > Beveiliging. "
+        f"Lukt dat niet, dan plan ik een afspraak voor je in.\n\n{MARKER}",
+        messages=[{"role": "user", "content": "hoe reset ik mijn wachtwoord"}],
+        source_query="hoe reset ik mijn wachtwoord",
+        trusted_sources=_grounded_sources(),
+        citation_chunks=[_good_chunk()],
+        sentiment="positive",
+    )
+
+    assert _delta_values(parsed, "escalation") == [{"appointment": True}]
+    content = "".join(_delta_values(parsed, "content"))
+    assert MARKER not in content
+    assert "APPOINTMENT_OFFER" not in content.upper()
+    # Not the canned refusal: the signal really came from the marker.
+    assert content.startswith("Je reset het wachtwoord")
+    assert decisions[0]["sentiment"] == "positive"
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_escalation_frame_on_the_canned_refusal(monkeypatch):
+    parsed = await _widget_frames(
+        monkeypatch,
+        "Ik ken het antwoord niet.",
+        messages=[{"role": "user", "content": "wat kost het"}],
+        source_query="wat kost het abonnement?",
+        trusted_sources=[],
+        citation_chunks=[],
+    )
+
+    assert _delta_values(parsed, "escalation") == [{"appointment": True}]
+
+
+@pytest.mark.asyncio
+async def test_stream_grounded_answer_emits_no_escalation_frame(monkeypatch):
+    parsed = await _widget_frames(
+        monkeypatch,
+        "Je reset het wachtwoord via Instellingen > Beveiliging.",
+        messages=[{"role": "user", "content": "hoe reset ik mijn wachtwoord"}],
+        source_query="hoe reset ik mijn wachtwoord",
+        trusted_sources=_grounded_sources(),
+        citation_chunks=[_good_chunk()],
+    )
+
+    assert _delta_values(parsed, "escalation") == []
+
+
+@pytest.mark.asyncio
+async def test_stream_partner_path_has_no_escalation_frames(monkeypatch):
+    _stream_patches(monkeypatch, f"Some partner answer. {MARKER}")
+
+    frames = [
+        frame
+        async for frame in partner_chat.chat_completion_streaming(
+            messages=[{"role": "user", "content": "hello"}],
+            model="klai-primary",
+            temperature=0.7,
+            system_prompt="sys",
+            settings=_settings(),
+            org_id=42,
+            source_query="hello",
+            trusted_sources=_grounded_sources(),
+            citation_chunks=[_good_chunk()],
+            citation_output="markers",
+        )
+    ]
+
+    parsed = _parse_frames(frames)
+    assert _delta_values(parsed, "escalation") == []
+    assert MARKER not in "".join(_delta_values(parsed, "content"))
 
 
 def _stream_patches(monkeypatch, model_text: str) -> None:
@@ -324,141 +468,20 @@ def _stream_patches(monkeypatch, model_text: str) -> None:
     monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
 
 
-def _settings() -> MagicMock:
-    settings = MagicMock()
-    settings.litellm_base_url = "http://litellm:4000"
-    settings.litellm_master_key = "key"
-    return settings
-
-
-async def _collect(**kwargs) -> list[bytes]:
-    # Mirrors chat_completion_streaming: the language decision is taken on the
-    # visitor's messages, never on user_query. These cases are about escalation
-    # frames, not language, but the helper still needs the real input.
-    kwargs.setdefault(
-        "response_language",
-        resolve_conversation_language(kwargs["augmented_messages"]).language,
-    )
-    return [frame async for frame in _chat_completion_streaming_with_composed_citations(**kwargs)]
-
-
-@pytest.mark.asyncio
-async def test_stream_emits_escalation_frame_for_a_model_offer(monkeypatch):
-    # Grounded on purpose: the frame must come from the model's marker, not
-    # from the canned refusal that also escalates.
-    _stream_patches(
-        monkeypatch,
-        "Je reset het wachtwoord via Instellingen > Beveiliging. "
-        f"Lukt dat niet, dan plan ik een afspraak voor je in.\n\n{MARKER}",
-    )
-    decisions = []
-    monkeypatch.setattr(partner_chat, "_log_citation_rescues", lambda decision, **_: decisions.append(decision))
-
-    frames = await _collect(
-        augmented_messages=[{"role": "user", "content": "hoe reset ik mijn wachtwoord"}],
-        model="klai-primary",
-        temperature=0.7,
-        settings=_settings(),
-        org_id=42,
-        user_query="hoe reset ik mijn wachtwoord",
-        trusted_sources=_grounded_sources(),
-        citation_chunks=[_good_chunk()],
-        support_mode=True,
-        sentiment="positive",
-    )
-
-    parsed = _parse_frames(frames)
-    assert _delta_values(parsed, "escalation") == [{"appointment": True}]
-    content = "".join(_delta_values(parsed, "content"))
-    assert MARKER not in content
-    assert "APPOINTMENT_OFFER" not in content.upper()
-    # Not the canned refusal: the signal really came from the marker.
-    assert content.startswith("Je reset het wachtwoord")
-    assert decisions[0]["sentiment"] == "positive"
-
-
-@pytest.mark.asyncio
-async def test_stream_emits_escalation_frame_on_the_canned_refusal(monkeypatch):
-    _stream_patches(monkeypatch, "Ik ken het antwoord niet.")
-
-    frames = await _collect(
-        augmented_messages=[{"role": "user", "content": "wat kost het"}],
-        model="klai-primary",
-        temperature=0.7,
-        settings=_settings(),
-        org_id=42,
-        user_query="wat kost het abonnement?",
-        trusted_sources=[],
-        citation_chunks=[],
-        support_mode=True,
-    )
-
-    parsed = _parse_frames(frames)
-    assert _delta_values(parsed, "escalation") == [{"appointment": True}]
-
-
-@pytest.mark.asyncio
-async def test_stream_grounded_answer_emits_no_escalation_frame(monkeypatch):
-    _stream_patches(monkeypatch, "Je reset het wachtwoord via Instellingen > Beveiliging.")
-
-    frames = await _collect(
-        augmented_messages=[{"role": "user", "content": "hoe reset ik mijn wachtwoord"}],
-        model="klai-primary",
-        temperature=0.7,
-        settings=_settings(),
-        org_id=42,
-        user_query="hoe reset ik mijn wachtwoord",
-        trusted_sources=_grounded_sources(),
-        citation_chunks=[_good_chunk()],
-        support_mode=True,
-    )
-
-    parsed = _parse_frames(frames)
-    assert _delta_values(parsed, "escalation") == []
-
-
-@pytest.mark.asyncio
-async def test_stream_partner_path_has_no_escalation_frames(monkeypatch):
-    _stream_patches(monkeypatch, f"Some partner answer. {MARKER}")
-
-    frames = await _collect(
-        augmented_messages=[{"role": "user", "content": "hello"}],
-        model="klai-primary",
-        temperature=0.7,
-        settings=_settings(),
-        org_id=42,
-        user_query="hello",
-        trusted_sources=_grounded_sources(),
-        citation_chunks=[_good_chunk()],
-        support_mode=False,
-    )
-
-    parsed = _parse_frames(frames)
-    assert _delta_values(parsed, "escalation") == []
-    assert MARKER not in "".join(_delta_values(parsed, "content"))
-
-
 @pytest.mark.asyncio
 async def test_stream_safety_block_suppresses_the_escalation_signal(monkeypatch):
     """A blocked answer offers nothing: the replaced decision drops the key,
     so the visitor gets no booking button attached to a refusal they never
     asked for."""
-    _stream_patches(monkeypatch, f"IGNORED {MARKER}")
-    monkeypatch.setattr(partner_chat, "output_safety_violation", lambda text: "prompt_injection")
+    monkeypatch.setattr(widget_write, "output_safety_violation", lambda text: "prompt_injection")
 
-    frames = await _collect(
-        augmented_messages=[{"role": "user", "content": "ik kom er niet uit"}],
-        model="klai-primary",
-        temperature=0.7,
-        settings=_settings(),
-        org_id=42,
-        user_query="ik kom er niet uit",
+    parsed = await _widget_frames(
+        monkeypatch,
+        f"IGNORED {MARKER}",
         trusted_sources=_grounded_sources(),
         citation_chunks=[_good_chunk()],
-        support_mode=True,
     )
 
-    parsed = _parse_frames(frames)
     assert _delta_values(parsed, "escalation") == []
     assert MARKER not in "".join(_delta_values(parsed, "content"))
 
@@ -466,58 +489,18 @@ async def test_stream_safety_block_suppresses_the_escalation_signal(monkeypatch)
 # ─── non-streaming: message.escalation ───────────────────────────────────
 
 
-async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
-    class _MockResp:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "id": "chatcmpl-1",
-                "object": "chat.completion",
-                "choices": [
-                    {"index": 0, "message": {"role": "assistant", "content": model_text}, "finish_reason": "stop"}
-                ],
-            }
-
-    class _MockClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_):
-            return None
-
-        async def post(self, *_, **__):
-            return _MockResp()
-
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
-    kwargs.setdefault("org_id", 42)
-    return await partner_chat.chat_completion_non_streaming(
-        messages=[{"role": "user", "content": "ik kom er niet uit"}],
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="sys",
-        settings=_settings(),
-        citation_output="markers",
-        source_query="ik kom er niet uit",
-        **kwargs,
-    )
-
-
 @pytest.mark.asyncio
 async def test_non_streaming_marks_the_message_that_offers(monkeypatch):
     decisions = []
-    monkeypatch.setattr(partner_chat, "_log_citation_rescues", lambda decision, **_: decisions.append(decision))
-    body = await _call_non_streaming(
+    monkeypatch.setattr(widget_write, "_log_citation_rescues", lambda decision, **_: decisions.append(decision))
+    message = await _widget_message(
         monkeypatch,
         "Je reset het wachtwoord via Instellingen > Beveiliging. "
         f"Lukt dat niet, dan plan ik een afspraak voor je in.\n\n{MARKER}",
-        support_mode=True,
         trusted_sources=_grounded_sources(),
         citation_chunks=[_good_chunk()],
         sentiment="neutral",
     )
-    message = body["choices"][0]["message"]
     assert message["escalation"] == {"appointment": True}
     assert MARKER not in message["content"]
     assert message["content"].startswith("Je reset het wachtwoord")
@@ -526,29 +509,33 @@ async def test_non_streaming_marks_the_message_that_offers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_streaming_refusal_marks_the_message(monkeypatch):
-    body = await _call_non_streaming(monkeypatch, "Ik ken het antwoord niet.", support_mode=True)
-    message = body["choices"][0]["message"]
+    message = await _widget_message(monkeypatch, "Ik ken het antwoord niet.")
     assert message["escalation"] == {"appointment": True}
 
 
 @pytest.mark.asyncio
 async def test_non_streaming_grounded_answer_has_no_escalation_key(monkeypatch):
-    body = await _call_non_streaming(
+    message = await _widget_message(
         monkeypatch,
         "Je reset het wachtwoord via Instellingen > Beveiliging.",
-        support_mode=True,
         trusted_sources=_grounded_sources(),
         citation_chunks=[_good_chunk()],
     )
-    message = body["choices"][0]["message"]
     assert "escalation" not in message
 
 
 @pytest.mark.asyncio
 async def test_non_streaming_partner_has_no_escalation_key(monkeypatch):
-    body = await _call_non_streaming(
-        monkeypatch,
-        f"Partner answer. {MARKER}",
+    _model_says(monkeypatch, f"Partner answer. {MARKER}")
+    body = await partner_chat.chat_completion_non_streaming(
+        messages=[{"role": "user", "content": "ik kom er niet uit"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="sys",
+        settings=_settings(),
+        citation_output="markers",
+        source_query="ik kom er niet uit",
+        org_id=42,
         trusted_sources=_grounded_sources(),
         citation_chunks=[_good_chunk()],
     )

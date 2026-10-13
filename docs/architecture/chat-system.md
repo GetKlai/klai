@@ -90,6 +90,7 @@ LibreChat geeft het model ook de MCP-tool `klai-knowledge` (`deploy/librechat/li
 
 | # | Stap | Beslist op basis van | LLM | Bij falen | Vastgelegd als |
 |---|---|---|---|---|---|
+| B0 | **De drager** (sinds 13 oktober): `chat_completions` (`api/partner.py`) lost het verzoek, de rechten, de scope en de widgetinstellingen op en roept voor een support-beurt `widget_turn()` aan (`services/widget_turn.py`), dat de stappen hieronder in de volgorde van het plan (§5) doorloopt en een `Reply` teruggeeft; `write_reply` (`services/widget_write.py`) is de ene schrijfstap en `services/widget_reply.py` de ene uitzender (JSON of frames). De regelnummers in de rijen hieronder verwijzen naar de code van vóór die verbouwing waar ze nog staan | – | nee | – | – |
 | B1 | Permissie (`api/partner.py:1896`), model en berichtvorm (`_validate_chat_request`, `:750`; toegestaan `klai-primary` en `klai-fast`, `:111`), invoerveiligheid (`_input_safety_block_response`, `:704`). Een widget mag geen tools meesturen (`:1908`) | request | nee | 400/403 of weigering | – |
 | B2 | KB-scope fail-closed (`_partner_kb_scope`, `api/partner.py:1827`) | key/widget | nee | fail-closed | `partner_kb_ids_unresolved` |
 | B3 | User-beurt naar `widget_messages`, vóór het zoeken (`api/partner.py:2016-2041`) | – | nee | – | `widget_messages` |
