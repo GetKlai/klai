@@ -152,7 +152,7 @@ De generieke generatie (`chat_completion_streaming` of `chat_completion_non_stre
 
 **Logregels van pad A** (`service:litellm` in VictoriaLogs). Alleen **warning en hoger** komt aan (`klai_kb_citation_render.py:1016-1022`). Zichtbaar zijn onder meer `query_rewrite*`, `kb_clarify_decision`, `low_confidence_injection_applied`, `kb_answer_claims`, `kb_answer_grounding`, `kb_answer_repaired`, `kb_citations_*`, `chat_synthesis_complete`, `llm_safety_litellm_*`. **Niet zichtbaar** (info): de routerbeslissing (`custom_router.py:272`), taxonomie, meta-vragen, titelverzoeken en de Strict-weigeringen zonder kennisbank. Welk model een interne beurt kreeg, is daardoor niet terug te vinden.
 
-**Logregels van pad B** (`service:portal-api`, structlog, info komt wel aan): `partner_chat_turn_judge`, `partner_chat_answer_judge`, `partner_chat_query_paraphrase`, `partner_chat_answer_repair`, `clarify_decision`, `partner_chat_turn_timing`, `answer_grounding_late`, `partner_chat_off_topic`.
+**Logregels van pad B** (`service:portal-api`, structlog, info komt wel aan): `partner_chat_turn_judge` (velden uit de zaak), `partner_chat_answer_judge`, `partner_chat_query_paraphrase`, `case_update_failed`, `passage_selection`, `partner_chat_contact_request`, `partner_chat_not_in_passages`, `clarify_decision`, `partner_chat_turn_timing`, `answer_grounding_late`, `partner_chat_off_topic`.
 
 **Database**
 - `widget_messages.answer_signals` (per assistent-beurt van support-widgets): band, top_score (vóór boosts), gat-type, bronnen, broad_mode, taal, model, duidelijkheid, verdict, grounding, beslissing, aantal onbewezen uitspraken, gerepareerd, geplande vraag, zwakke bronnen. Pad A heeft hier geen tegenhanger.
