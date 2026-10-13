@@ -197,8 +197,10 @@ async def write_reply(
         query_text=visitor_query,
         reply=content,
     )
+    # The query side of this measurement is the visitor's own words, never a
+    # rewritten search query (docs: knowledge.md, "Multilingual chat").
     _emit_language_correctness_log(
-        org_id=org_id, query=user_query, response_text=content, chunks_injected=len(citation_chunks or [])
+        org_id=org_id, query=visitor_query, response_text=content, chunks_injected=len(citation_chunks or [])
     )
     # A safety refusal replaced the decision wholesale, so a blocked answer
     # neither labels itself general knowledge, invites the visitor to broaden,
@@ -248,6 +250,11 @@ async def _generate(
             )
             resp.raise_for_status()
             body = resp.json()
+    except ValueError as exc:
+        # A 200 that is not JSON: the old streamed path skipped such lines and
+        # fell back to the refusal; here it is an upstream error like any other.
+        logger.warning("partner_chat_upstream_error", org_id=org_id, status_code=200, exc_info=True)
+        raise AnswerUpstreamError("Chat service error", language) from exc
     except httpx.TransportError as exc:
         logger.warning("partner_chat_upstream_unreachable", org_id=org_id, target=chat_url, exc_info=True)
         raise AnswerUpstreamError("Chat service unavailable", language) from exc
@@ -258,7 +265,11 @@ async def _generate(
         raise AnswerUpstreamError("Chat service error", language) from exc
     choices = body.get("choices") or []
     text = ((choices[0].get("message") or {}).get("content") if choices else None) or ""
-    return {key: body[key] for key in ("id", "model", "usage") if key in body}, text if isinstance(text, str) else ""
+    completion = {key: body[key] for key in ("id", "model", "usage") if key in body}
+    if choices and choices[0].get("finish_reason"):
+        # A truncated answer keeps saying so ("length"), as the plain body always did.
+        completion["finish_reason"] = choices[0]["finish_reason"]
+    return completion, text if isinstance(text, str) else ""
 
 
 async def _judge(

@@ -71,13 +71,15 @@ def reply_body(reply: Reply, *, model: str, include_sources: bool = True) -> dic
         message["broad_mode"] = reply.broad_mode
     if reply.appointment:
         message["escalation"] = _appointment_escalation()
+    completion = dict(reply.completion)
+    finish_reason = completion.pop("finish_reason", "stop")
     return {
         # Kept from the renderer a reply decided in code used before this one.
         "id": "chatcmpl-off-topic",
         "object": "chat.completion",
         "model": model,
-        **reply.completion,
-        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+        **completion,
+        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
     }
 
 
