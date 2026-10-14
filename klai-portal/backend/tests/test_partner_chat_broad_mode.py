@@ -12,7 +12,7 @@ Covered seams:
   retrieval gap into a broad turn (and nothing else).
 * ``retrieve_context`` — profile swap + source clearing, and the invariant
   that the knowledge-gap event still fires on a broad answer.
-* ``_compose_backend_managed_answer`` — the marker is applied here (never by
+* ``_compose_answer`` — the marker is applied here (never by
   the model), and the offer signal tags only public helpdesk refusals.
 * ``write_reply`` and ``reply_frames`` — the widget's ``delta.broad_mode``
   frames ("offer" / "answer"), including suppression on safety-blocked
@@ -43,7 +43,7 @@ from klai_chat_prompts import (
 
 from app.services import retrieval_context, widget_write
 from app.services.partner_chat import (
-    _compose_backend_managed_answer,
+    _compose_answer,
 )
 from app.services.retrieval_context import KnowledgeTurn, _broad_mode_active
 from app.services.widget_reply import Reply, reply_body, reply_frames
@@ -121,7 +121,7 @@ def test_broad_fires_on_hard_gaps_only():
 
 
 def test_compose_broad_answer_prefixes_marker_and_drops_sources():
-    text, sources, decision = _compose_backend_managed_answer(
+    text, sources, decision = _compose_answer(
         "Een SIP trunk is een virtuele telefoonlijn.",
         [{"title": "Art", "url": "https://example.com/a"}],  # ignored: broad never cites
         [_good_chunk()],
@@ -138,7 +138,7 @@ def test_compose_broad_answer_prefixes_marker_and_drops_sources():
 
 
 def test_compose_broad_answer_english_marker_for_english_query():
-    text, _, _ = _compose_backend_managed_answer(
+    text, _, _ = _compose_answer(
         "A SIP trunk is a virtual phone line.",
         [],
         [],
@@ -154,7 +154,7 @@ def test_compose_broad_empty_output_falls_back_to_refusal_without_signals():
     # Model produced nothing even with broad consent: honest helpdesk refusal,
     # unlabelled (nothing was claimed as general knowledge) and no offer
     # re-pitch (consent already happened this turn).
-    text, sources, decision = _compose_backend_managed_answer(
+    text, sources, decision = _compose_answer(
         "   ", [], [], "wat is een sip trunk?", helpdesk=True, broad=True, response_language="nl"
     )
     assert text == no_citable_sources_message("nl", helpdesk=True)
@@ -166,7 +166,7 @@ def test_compose_helpdesk_refusal_tags_offer():
     # No usable evidence + helpdesk wording ⇒ the widget may now offer broad
     # mode. The refusal text itself stays byte-identical (widget_outcome rule 1
     # matches on it verbatim).
-    text, sources, decision = _compose_backend_managed_answer(
+    text, sources, decision = _compose_answer(
         "Ik weet het ook niet.",  # model text, but nothing citable supports it
         [],
         [],
@@ -180,7 +180,7 @@ def test_compose_helpdesk_refusal_tags_offer():
 
 
 def test_compose_partner_refusal_does_not_tag_offer():
-    _, _, decision = _compose_backend_managed_answer(
+    _, _, decision = _compose_answer(
         "Whatever the model said.", [], [], "what is the price", helpdesk=False, response_language="en"
     )
     assert "broad_mode" not in decision
@@ -189,7 +189,7 @@ def test_compose_partner_refusal_does_not_tag_offer():
 def test_compose_grounded_helpdesk_answer_carries_no_broad_signal():
     chunk = _good_chunk()
     answer = "Je reset het wachtwoord via Instellingen > Beveiliging. [1]"
-    _text, sources, decision = _compose_backend_managed_answer(
+    _text, sources, decision = _compose_answer(
         answer,
         [{"label": "1", "title": "Reset", "url": "https://example.com/reset", "evidence_ids": ["c1"]}],
         [chunk],

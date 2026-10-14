@@ -34,7 +34,7 @@ from app.services import partner_chat, widget_turn, widget_write
 from app.services.case_file import Case
 from app.services.chat_profile import ChatProfile
 from app.services.escalation_intent import escalation_intent
-from app.services.partner_chat import _compose_backend_managed_answer
+from app.services.partner_chat import _compose_answer
 from app.services.retrieval_context import KnowledgeTurn
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
@@ -156,7 +156,7 @@ def test_helpdesk_refusal_offers_an_appointment():
     """The canned refusal ends with "plan dan een afspraak" — the offer is in
     the text, so the signal must be there too or the button never appears on
     the single most frequent answer the bot gives."""
-    text, _sources, decision = _compose_backend_managed_answer(
+    text, _sources, decision = _compose_answer(
         "Ik weet het ook niet.",
         [],
         [],
@@ -174,7 +174,7 @@ def test_refusal_over_found_articles_does_not_offer_a_broader_search():
     """A broad answer needs a turn where retrieval found nothing at all. Offered
     over articles that were found, the visitor agrees, retrieval finds articles
     again and the reply is a second "not found" (seen in the owner's review)."""
-    _text, _sources, decision = _compose_backend_managed_answer(
+    _text, _sources, decision = _compose_answer(
         "Ik weet het ook niet.", [], [_good_chunk()], "wat kost het abonnement?", helpdesk=True, response_language="nl"
     )
     assert decision["escalation"] == {"appointment": True}
@@ -184,7 +184,7 @@ def test_refusal_over_found_articles_does_not_offer_a_broader_search():
 def test_broad_mode_no_output_still_offers_an_appointment():
     # Consent was already given, so no broad re-offer — but the visitor is
     # looking at the refusal text, which does offer an appointment.
-    _text, _sources, decision = _compose_backend_managed_answer(
+    _text, _sources, decision = _compose_answer(
         "   ", [], [], "wat kost het abonnement?", helpdesk=True, broad=True, response_language="nl"
     )
     assert decision["escalation"] == {"appointment": True}
@@ -193,7 +193,7 @@ def test_broad_mode_no_output_still_offers_an_appointment():
 def test_partner_refusal_carries_no_escalation():
     """Partner API callers never run the SUPPORT prompt and have no booking
     panel; their refusal wording does not offer anything."""
-    _text, _sources, decision = _compose_backend_managed_answer(
+    _text, _sources, decision = _compose_answer(
         "Whatever the model said.", [], [], "what is the price", helpdesk=False, response_language="en"
     )
     assert "escalation" not in decision
@@ -209,7 +209,7 @@ def test_model_marker_becomes_the_signal_and_leaves_the_text():
         "Je reset het wachtwoord via Instellingen > Beveiliging. "
         f"Lukt dat niet, dan plan ik een afspraak voor je in.\n\n{MARKER}"
     )
-    text, sources, decision = _compose_backend_managed_answer(
+    text, sources, decision = _compose_answer(
         answer,
         _grounded_sources(),
         [_good_chunk()],
@@ -227,7 +227,7 @@ def test_model_marker_becomes_the_signal_and_leaves_the_text():
 
 def test_grounded_answer_without_the_marker_has_no_escalation():
     answer = "Je reset het wachtwoord via Instellingen > Beveiliging."
-    _text, sources, decision = _compose_backend_managed_answer(
+    _text, sources, decision = _compose_answer(
         answer,
         _grounded_sources(),
         [_good_chunk()],
@@ -244,7 +244,7 @@ def test_broad_answer_marker_is_stripped_and_signals():
         "Nummerportering duurt in Nederland meestal een werkdag. "
         f"Wil je het zeker weten, plan dan een afspraak met een medewerker.\n{MARKER}"
     )
-    text, _sources, decision = _compose_backend_managed_answer(
+    text, _sources, decision = _compose_answer(
         answer,
         [],
         [],
@@ -262,7 +262,7 @@ def test_partner_path_strips_the_marker_but_never_signals():
     """A marker on the partner path is model noise, not a contract. It is still
     removed — a visitor may never see it — but it grants no escalation."""
     answer = f"Here is the answer. {MARKER}"
-    text, _sources, decision = _compose_backend_managed_answer(
+    text, _sources, decision = _compose_answer(
         answer,
         _grounded_sources(),
         [_good_chunk()],
@@ -277,9 +277,7 @@ def test_partner_path_strips_the_marker_but_never_signals():
 def test_marker_only_reply_is_not_rendered_as_a_bare_marker():
     """Degenerate output (nothing but the marker) must not turn into a message
     whose entire content is the token."""
-    text, _sources, decision = _compose_backend_managed_answer(
-        MARKER, [], [], "help me", helpdesk=True, response_language=None
-    )
+    text, _sources, decision = _compose_answer(MARKER, [], [], "help me", helpdesk=True, response_language=None)
     assert MARKER not in text
     assert text == no_citable_sources_message("nl", helpdesk=True)
     assert decision["escalation"] == {"appointment": True}
@@ -535,7 +533,7 @@ def test_forced_escalation_sets_signal_on_grounded_answer() -> None:
     (measured 2026-09-09 against the Voys widget). Now the decision carries the
     signal because the backend, not the model, made the call."""
     text = "Ga naar Instellingen > Beveiliging en reset daar je wachtwoord."
-    content, sources, decision = _compose_backend_managed_answer(
+    content, sources, decision = _compose_answer(
         text,
         _grounded_sources(),
         [_good_chunk()],
@@ -551,7 +549,7 @@ def test_forced_escalation_sets_signal_on_grounded_answer() -> None:
 
 def test_forced_escalation_is_ignored_off_the_helpdesk_path() -> None:
     """Partner-API callers never get the SUPPORT profile or the button."""
-    _, _, decision = _compose_backend_managed_answer(
+    _, _, decision = _compose_answer(
         "Some answer.",
         _grounded_sources(),
         [_good_chunk()],
@@ -564,7 +562,7 @@ def test_forced_escalation_is_ignored_off_the_helpdesk_path() -> None:
 
 
 def test_grounded_answer_without_force_or_marker_has_no_signal() -> None:
-    _, _, decision = _compose_backend_managed_answer(
+    _, _, decision = _compose_answer(
         "Ga naar Instellingen > Beveiliging.",
         _grounded_sources(),
         [_good_chunk()],
@@ -580,7 +578,7 @@ def test_bare_marker_without_an_offer_in_the_text_is_ignored() -> None:
     offer sentence. The button must not appear under a reply that never
     mentions an appointment."""
     text = f"Ga naar Instellingen > Beveiliging en reset daar je wachtwoord.\n{MARKER}"
-    content, _, decision = _compose_backend_managed_answer(
+    content, _, decision = _compose_answer(
         text,
         _grounded_sources(),
         [_good_chunk()],
@@ -594,7 +592,7 @@ def test_bare_marker_without_an_offer_in_the_text_is_ignored() -> None:
 
 def test_marker_with_a_real_offer_in_the_text_still_counts() -> None:
     text = f"Je kunt een afspraak inplannen met een medewerker via de knop hieronder.\n{MARKER}"
-    _, _, decision = _compose_backend_managed_answer(
+    _, _, decision = _compose_answer(
         text,
         _grounded_sources(),
         [_good_chunk()],
@@ -607,7 +605,7 @@ def test_marker_with_a_real_offer_in_the_text_still_counts() -> None:
 
 def test_forced_escalation_needs_no_offer_sentence() -> None:
     """The backend decided; the button follows even if the model wrote only steps."""
-    _, _, decision = _compose_backend_managed_answer(
+    _, _, decision = _compose_answer(
         "**Stap 1:** Ga naar Beheer.",
         _grounded_sources(),
         [_good_chunk()],

@@ -116,7 +116,7 @@ def _pop_live_stream_text(buffer: str) -> tuple[str, str]:
 
     It only withholds and never rewrites citation markup, because a live turn
     shows the model's own words as they arrive; composition still runs once on
-    the full text at the end, same as a held turn.
+    the full text at the end.
     """
     start = _earliest_guard_start(buffer)
     if start >= 0:
@@ -277,7 +277,7 @@ def _unstreamed_tail(final_text: str, emitted_text: str, raw_text: str, citation
 
     A live turn streams the model's words up to any link or URL, which the
     guard holds back until the end. The rest must come from the composed answer
-    so a model-written link is cleaned like on a held turn. The composer may
+    so a model-written link is cleaned there. The composer may
     normalise whitespace, so the cut tolerates that; if it changed text the
     caller already saw, the answer cannot be aligned and replaying it would
     duplicate the whole answer (LibreChat, 2026-06-11), so the raw remainder
@@ -294,7 +294,7 @@ def _unstreamed_tail(final_text: str, emitted_text: str, raw_text: str, citation
     return leading + _answer_without_retrieved_sources(remainder, citation_chunks)
 
 
-def _compose_backend_managed_answer(
+def _compose_answer(
     text: str,
     trusted_sources: list[dict[str, Any]] | None,
     citation_chunks: list[dict] | None,
@@ -810,7 +810,7 @@ async def _settle_live_answer(
     the same finalised ``sources`` as text.
     """
     draft = stream.draft
-    content, sources, decision = _compose_backend_managed_answer(
+    content, sources, decision = _compose_answer(
         draft,
         trusted_sources,
         citation_chunks,
@@ -1200,7 +1200,7 @@ async def chat_completion_non_streaming(
                     query_text=visitor_query,
                 )
                 continue
-            rendered_content, sources, decision = _compose_backend_managed_answer(
+            rendered_content, sources, decision = _compose_answer(
                 content,
                 trusted_sources,
                 citation_chunks,
@@ -1305,7 +1305,7 @@ async def chat_completion_streaming(
     knowledge_turn: KnowledgeTurn | None = None,
     pasted_correspondence: bool = False,
 ) -> AsyncGenerator[bytes]:
-    """Stream LiteLLM SSE response with backend-managed KB citations.
+    """Stream LiteLLM SSE response with the citations composed on the full text.
 
     The internal chat's live leg (an Open or general turn): it buffers the model
     output, runs the deterministic citation composer, then emits only sources
