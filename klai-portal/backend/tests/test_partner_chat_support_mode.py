@@ -25,7 +25,8 @@ from klai_chat_prompts import (
 )
 
 from app.services.case_file import Case
-from app.services.partner_chat import KnowledgeTurn, _build_system_prompt, _compose_backend_managed_answer
+from app.services.partner_chat import _compose_backend_managed_answer
+from app.services.retrieval_context import KnowledgeTurn, _build_system_prompt
 from app.services.widget_reply import Reply
 
 # Signature phrases that exist in exactly one of the profiles, so a

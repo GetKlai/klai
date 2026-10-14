@@ -63,9 +63,10 @@ from app.services.chat_safety import (
     widget_input_safety_violation,
 )
 from app.services.internal_turn import InternalInputs, internal_turn
-from app.services.partner_chat import KnowledgeTurn, chat_completion_non_streaming, chat_completion_streaming
+from app.services.partner_chat import chat_completion_non_streaming, chat_completion_streaming
 from app.services.pasted_correspondence import detect_pasted_correspondence
 from app.services.prompt_templates import internal_turn_settings
+from app.services.retrieval_context import KnowledgeTurn
 from app.services.web_search import build_web_results_block, search_web, web_results_as_chunks
 from app.services.widget_audit import (
     hash_audit_value,

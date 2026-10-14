@@ -22,7 +22,7 @@ from klai_chat_prompts import appointment_offer_sentence, contact_reply, no_cita
 
 from app.services import case_file, chat_safety, partner_chat, query_paraphrase, turn_judge, widget_write
 from app.services.chat_profile import ChatProfile
-from app.services.partner_chat import KnowledgeTurn
+from app.services.retrieval_context import KnowledgeTurn
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
 
@@ -756,7 +756,7 @@ async def _route_turn(
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
         patch("app.api.partner.last_case", new=AsyncMock(return_value=previous_case)),
-        patch("app.services.partner_chat._schedule_gap_event"),
+        patch("app.services.retrieval_context._schedule_gap_event"),
     ):
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
         retrieve_route = router.post(f"{RETRIEVAL}/retrieve").mock(return_value=_retrieval_reply(band, items))
@@ -808,7 +808,7 @@ async def test_a_cited_reply_from_chosen_passages_is_checked_after_it_went_out(s
     """The writer read only passages the selection chose and cited one: nothing
     changes such a reply after writing, so the statement check is measurement
     and runs after the reply, with the light judge alone on the path."""
-    from app.services.partner_chat import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
+    from app.services.retrieval_context import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
 
     litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("answered"))
     turn = KnowledgeTurn()
@@ -827,7 +827,7 @@ async def test_a_cited_reply_from_chosen_passages_is_checked_after_it_went_out(s
 @pytest.mark.parametrize("stream", [True, False])
 async def test_an_uncited_reply_from_chosen_passages_keeps_the_check_on_the_path(stream):
     """Without a source the statements decide between showing and refusing, so the check waits."""
-    from app.services.partner_chat import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
+    from app.services.retrieval_context import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
 
     litellm = _LiteLLM(model_text="Dat regel je onder Beheer.", answer_judge=_answer_verdict("not_answered"))
     turn = KnowledgeTurn()

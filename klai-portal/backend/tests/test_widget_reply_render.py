@@ -20,7 +20,7 @@ from fastapi import HTTPException
 from helpers import FakeKB, FakeResult, make_partner_auth
 
 from app.api.partner import ChatCompletionsRequest, chat_completions
-from app.services.partner_chat import KnowledgeTurn
+from app.services.retrieval_context import KnowledgeTurn
 from app.services.widget_reply import AnswerUpstreamError, Reply, error_frames, reply_body, reply_frames
 from app.services.widget_write import write_reply
 

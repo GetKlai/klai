@@ -32,9 +32,9 @@ from app.services.chat_sources import PageContext
 from app.services.clarify_gate import already_asked
 from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
-from app.services.partner_chat import KnowledgeTurn, retrieval_upstream_errors, retrieve_context, timed
 from app.services.passage_selection import plain_question
 from app.services.pasted_correspondence import latest_user_turn_has_correspondence
+from app.services.retrieval_context import KnowledgeTurn, retrieval_upstream_errors, retrieve_context, timed
 from app.services.retrieval_log import write_retrieval_log
 from app.services.widget_reply import Reply
 from app.services.widget_write import write_reply

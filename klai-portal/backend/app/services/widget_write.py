@@ -52,9 +52,7 @@ from app.services.chat_safety import (
 )
 from app.services.chat_sources import PageContext, _chunk_source_title
 from app.services.partner_chat import (
-    _CHOSEN_PASSAGE_KEY,
     _NO_CITABLE_SOURCES_DECISION_KEY,
-    KnowledgeTurn,
     _answer_without_retrieved_sources,
     _check_answer_later,
     _compose_backend_managed_answer,
@@ -65,6 +63,7 @@ from app.services.partner_chat import (
     _log_citation_rescues,
     _log_turn_timing,
 )
+from app.services.retrieval_context import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
 from app.services.widget_reply import AnswerUpstreamError, Reply
 from app.trace import get_trace_headers
 

@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.api import partner
-from app.services.partner_chat import KnowledgeTurn
+from app.services.retrieval_context import KnowledgeTurn
 from app.services.widget_reply import Reply, reply_frames
 
 

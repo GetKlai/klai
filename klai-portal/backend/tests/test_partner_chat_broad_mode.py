@@ -42,13 +42,12 @@ from klai_chat_prompts import (
 )
 from klai_chat_prompts.language import resolve_conversation_language
 
-from app.services import partner_chat, widget_write
+from app.services import retrieval_context, widget_write
 from app.services.partner_chat import (
-    KnowledgeTurn,
-    _broad_mode_active,
     _chat_completion_streaming_with_composed_citations,
     _compose_backend_managed_answer,
 )
+from app.services.retrieval_context import KnowledgeTurn, _broad_mode_active
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
 
@@ -211,7 +210,7 @@ def _stub_gap_writer(monkeypatch) -> AsyncMock:
     """Silence the fire-and-forget gap writer (real path needs a live DB
     session); returns the mock so tests can assert on it."""
     mock = AsyncMock()
-    monkeypatch.setattr("app.services.partner_chat.record_gap_event", mock)
+    monkeypatch.setattr("app.services.retrieval_context.record_gap_event", mock)
     return mock
 
 
@@ -233,7 +232,7 @@ def _patch_retrieve(monkeypatch, payload: dict[str, Any]) -> None:
         async def post(self, url, json=None, headers=None):
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _MockClient())
 
 
 def _fake_settings() -> MagicMock:
@@ -253,7 +252,7 @@ async def _retrieve(**overrides: Any):
         "settings": _fake_settings(),
     }
     kwargs.update(overrides)
-    return await partner_chat.retrieve_context(**kwargs)
+    return await retrieval_context.retrieve_context(**kwargs)
 
 
 _EVIDENCE_PACK_NL = {
@@ -340,7 +339,7 @@ async def test_retrieve_gap_event_still_fires_on_broad_answer(monkeypatch):
     mock_record = _stub_gap_writer(monkeypatch)
 
     _, _, _, broad = await _retrieve(broad_mode=True)
-    tasks = list(partner_chat._pending_gap_tasks)
+    tasks = list(retrieval_context._pending_gap_tasks)
     if tasks:
         await asyncio.gather(*tasks)
 
@@ -393,7 +392,7 @@ async def test_retrieve_early_returns_never_broad(monkeypatch):
         async def post(self, *_, **__):
             raise AssertionError("retrieval-api must not be called")
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _NoClient())
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _NoClient())
 
     _, prompt, _, broad = await _retrieve(broad_mode=True, retrieval_enabled=False)
     assert broad is False

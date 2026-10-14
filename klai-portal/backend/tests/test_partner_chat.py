@@ -20,7 +20,7 @@ from fastapi import HTTPException
 from helpers import FakeKB, FakeResult, make_partner_auth
 
 from app.services.chat_profile import ChatProfile
-from app.services.partner_chat import KnowledgeTurn
+from app.services.retrieval_context import KnowledgeTurn
 from app.services.widget_reply import Reply
 
 
@@ -64,7 +64,7 @@ def _mock_gap_event_scheduling(monkeypatch):
     gap write against a real DB session. The widget gap path is covered in
     its own module (test_gap_events_widget.py) with the scheduler live.
     """
-    monkeypatch.setattr("app.services.partner_chat._schedule_gap_event", MagicMock())
+    monkeypatch.setattr("app.services.retrieval_context._schedule_gap_event", MagicMock())
 
 
 # ---------------------------------------------------------------------------
@@ -1070,7 +1070,7 @@ def test_placeholder_source_paths_are_not_valid_urls():
 
 def test_build_system_prompt_includes_widget_system_prompt():
     """Widget admin behaviour instructions are added without replacing KB grounding."""
-    from app.services.partner_chat import _build_system_prompt
+    from app.services.retrieval_context import _build_system_prompt
 
     prompt = _build_system_prompt(
         [{"title": "Policy", "source_url": "https://docs.example.com/policy", "text": "Use policy text."}],
@@ -1084,8 +1084,8 @@ def test_build_system_prompt_includes_widget_system_prompt():
 def test_build_system_prompt_adds_epistemic_contract_when_correspondence_detected():
     """One-chat-pipeline slice 3: pasted correspondence is detection-gated
     prompt content, not a permanent addition — see PASTED_CORRESPONDENCE_SCOPE."""
-    from app.services.partner_chat import _build_system_prompt
     from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE
+    from app.services.retrieval_context import _build_system_prompt
 
     prompt = _build_system_prompt([], pasted_correspondence=True)
 
@@ -1095,7 +1095,7 @@ def test_build_system_prompt_adds_epistemic_contract_when_correspondence_detecte
 def test_build_system_prompt_is_unchanged_without_pasted_correspondence():
     """A request without pasted correspondence must produce a byte-identical
     prompt to a call that never knew the parameter existed (default False)."""
-    from app.services.partner_chat import _build_system_prompt
+    from app.services.retrieval_context import _build_system_prompt
 
     chunks = [{"title": "Policy", "source_url": "https://docs.example.com/policy", "text": "Use policy text."}]
     baseline = _build_system_prompt(chunks, widget_system_prompt="Use a calm tone.")
@@ -1107,7 +1107,7 @@ def test_build_system_prompt_is_unchanged_without_pasted_correspondence():
 
 def test_build_system_prompt_reinforces_user_language_after_kb_context():
     """Widget/partner prompts must not let Dutch KB chunks be the final language anchor."""
-    from app.services.partner_chat import _build_system_prompt
+    from app.services.retrieval_context import _build_system_prompt
 
     prompt = _build_system_prompt(
         [
@@ -1131,7 +1131,7 @@ def test_build_system_prompt_reinforces_user_language_after_kb_context():
 
 
 def test_build_system_prompt_includes_optional_page_context_guardrails():
-    from app.services.partner_chat import _build_system_prompt
+    from app.services.retrieval_context import _build_system_prompt
 
     prompt = _build_system_prompt(
         [],
@@ -1245,7 +1245,7 @@ def test_augment_messages_language_contract_survives_a_chunkless_turn():
     from klai_chat_prompts.language import resolve_conversation_language
 
     from app.services.chat_prompting import _augment_messages_with_system_prompt
-    from app.services.partner_chat import _build_system_prompt
+    from app.services.retrieval_context import _build_system_prompt
 
     prompt = _build_system_prompt([])
     assert "[LANGUAGE REMINDER]" not in prompt
@@ -1259,7 +1259,7 @@ def test_augment_messages_language_contract_survives_a_chunkless_turn():
 
 def test_build_system_prompt_can_leave_citations_to_backend():
     """Widget prompts should not invite the model to write source markers."""
-    from app.services.partner_chat import _build_system_prompt
+    from app.services.retrieval_context import _build_system_prompt
 
     prompt = _build_system_prompt(
         [{"title": "Policy", "source_url": "https://docs.example.com/policy", "text": "Use policy text."}],
@@ -1271,7 +1271,7 @@ def test_build_system_prompt_can_leave_citations_to_backend():
 
 
 def test_build_system_prompt_renders_structured_evidence_context():
-    from app.services.partner_chat import _build_system_prompt
+    from app.services.retrieval_context import _build_system_prompt
 
     prompt = _build_system_prompt(
         [
@@ -1450,7 +1450,7 @@ async def test_retrieve_context_sends_caller_service_header(monkeypatch):
     locks the header in. See pitfalls →
     retrieve-caller-service-header-mismatch.
     """
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     captured: dict = {}
 
@@ -1473,7 +1473,7 @@ async def test_retrieve_context_sends_caller_service_header(monkeypatch):
             captured["headers"] = headers or {}
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _MockClient())
 
     fake_settings = MagicMock()
     fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
@@ -1497,7 +1497,7 @@ async def test_retrieve_context_sends_caller_service_header(monkeypatch):
 @pytest.mark.asyncio
 async def test_retrieve_context_uses_explicit_query_and_top_k(monkeypatch):
     """Partner API callers can decouple generation messages from RAG search."""
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     captured: dict = {}
 
@@ -1519,7 +1519,7 @@ async def test_retrieve_context_uses_explicit_query_and_top_k(monkeypatch):
             captured["body"] = json
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _MockClient())
 
     fake_settings = MagicMock()
     fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
@@ -1551,7 +1551,7 @@ async def test_retrieve_context_clips_oversized_last_user_message_query(monkeypa
     and downstream it feeds coreference + BGE-M3 embedding (8192-token
     sequence limit) verbatim. See partner-retrieval-query-clip finding."""
     from app.services.chat_prompting import _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     captured: dict = {}
 
@@ -1573,7 +1573,7 @@ async def test_retrieve_context_clips_oversized_last_user_message_query(monkeypa
             captured["body"] = json
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _MockClient())
 
     fake_settings = MagicMock()
     fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
@@ -1601,7 +1601,7 @@ async def test_retrieve_context_clips_oversized_explicit_retrieval_query(monkeyp
     """The `knowledge.query` (retrieval_query) override must be clipped the
     same way as the last-user-message fallback."""
     from app.services.chat_prompting import _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     captured: dict = {}
 
@@ -1623,7 +1623,7 @@ async def test_retrieve_context_clips_oversized_explicit_retrieval_query(monkeyp
             captured["body"] = json
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _MockClient())
 
     fake_settings = MagicMock()
     fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
@@ -1650,7 +1650,7 @@ async def test_retrieve_context_clips_oversized_explicit_retrieval_query(monkeyp
 @pytest.mark.asyncio
 async def test_retrieve_context_short_query_passes_through_unchanged(monkeypatch):
     """Queries under the clip threshold must reach retrieval-api verbatim."""
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     captured: dict = {}
 
@@ -1672,7 +1672,7 @@ async def test_retrieve_context_short_query_passes_through_unchanged(monkeypatch
             captured["body"] = json
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _MockClient())
 
     fake_settings = MagicMock()
     fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
@@ -1697,7 +1697,7 @@ async def test_retrieve_context_short_query_passes_through_unchanged(monkeypatch
 @pytest.mark.asyncio
 async def test_retrieve_context_can_disable_retrieval(monkeypatch):
     """knowledge.enabled=false must not call retrieval-api."""
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     class _MockClient:
         async def __aenter__(self):
@@ -1709,7 +1709,7 @@ async def test_retrieve_context_can_disable_retrieval(monkeypatch):
         async def post(self, *_, **__):
             raise AssertionError("retrieval-api should not be called")
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _MockClient())
 
     fake_settings = MagicMock()
     fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
@@ -1739,7 +1739,7 @@ async def test_retrieve_context_threads_pasted_correspondence_into_prompt(monkey
     """One-chat-pipeline slice 3: detection is computed once by the caller
     (see app.api.partner.chat_completions) and must reach the prompt on every
     return path retrieve_context can take, including retrieval-disabled."""
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     fake_settings = MagicMock()
     fake_settings.knowledge_retrieve_url = "http://retrieval-api:8040"
@@ -1770,7 +1770,7 @@ async def test_retrieve_context_passes_partner_user_id(monkeypatch):
     pinning verified_caller, so emit_event drops the knowledge.queried event
     via the product_event_skipped_no_identity warning branch.
     """
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     captured: dict = {}
 
@@ -1793,7 +1793,7 @@ async def test_retrieve_context_passes_partner_user_id(monkeypatch):
             return _MockResp()
 
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.retrieval_context.httpx.AsyncClient",
         lambda timeout: _MockClient(),
     )
 
@@ -1818,7 +1818,7 @@ async def test_retrieve_context_passes_partner_user_id(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_retrieve_context_degrades_identity_assertion_403_to_no_kb(monkeypatch):
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     request = httpx.Request("POST", "http://retrieval-api:8040/retrieve")
     response = httpx.Response(
@@ -1842,7 +1842,7 @@ async def test_retrieve_context_degrades_identity_assertion_403_to_no_kb(monkeyp
             return _MockResp()
 
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.retrieval_context.httpx.AsyncClient",
         lambda timeout: _MockClient(),
     )
 
@@ -1870,7 +1870,7 @@ async def test_retrieve_context_degrades_identity_assertion_403_to_no_kb(monkeyp
 
 @pytest.mark.asyncio
 async def test_retrieve_context_propagates_non_identity_status_errors(monkeypatch):
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     request = httpx.Request("POST", "http://retrieval-api:8040/retrieve")
     response = httpx.Response(
@@ -1894,7 +1894,7 @@ async def test_retrieve_context_propagates_non_identity_status_errors(monkeypatc
             return _MockResp()
 
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.retrieval_context.httpx.AsyncClient",
         lambda timeout: _MockClient(),
     )
 
@@ -1915,7 +1915,7 @@ async def test_retrieve_context_propagates_non_identity_status_errors(monkeypatc
 
 @pytest.mark.asyncio
 async def test_retrieve_context_passes_clean_page_context(monkeypatch):
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     captured: dict = {}
 
@@ -1938,7 +1938,7 @@ async def test_retrieve_context_passes_clean_page_context(monkeypatch):
             return _MockResp()
 
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.retrieval_context.httpx.AsyncClient",
         lambda timeout: _MockClient(),
     )
 
@@ -1974,7 +1974,7 @@ async def test_retrieve_context_passes_clean_page_context(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_retrieve_context_drops_unsafe_page_context(monkeypatch):
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     captured: dict = {}
 
@@ -1997,7 +1997,7 @@ async def test_retrieve_context_drops_unsafe_page_context(monkeypatch):
             return _MockResp()
 
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.retrieval_context.httpx.AsyncClient",
         lambda timeout: _MockClient(),
     )
 
@@ -2026,7 +2026,7 @@ async def test_retrieve_context_drops_unsafe_page_context(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_retrieve_context_drops_unsafe_retrieved_chunks(monkeypatch):
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     class _MockResp:
         def raise_for_status(self):
@@ -2077,7 +2077,7 @@ async def test_retrieve_context_drops_unsafe_retrieved_chunks(monkeypatch):
             return _MockResp()
 
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.retrieval_context.httpx.AsyncClient",
         lambda timeout: _MockClient(),
     )
 
@@ -2105,7 +2105,7 @@ async def test_retrieve_context_omits_user_id_when_partner_user_id_none(monkeypa
     """Backwards-compat: existing callers without partner_user_id parameter
     MUST NOT have a user_id field in the body. Existing /retrieve behaviour
     relies on this for non-partner internal callers."""
-    from app.services.partner_chat import retrieve_context
+    from app.services.retrieval_context import retrieve_context
 
     captured: dict = {}
 
@@ -2128,7 +2128,7 @@ async def test_retrieve_context_omits_user_id_when_partner_user_id_none(monkeypa
             return _MockResp()
 
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.retrieval_context.httpx.AsyncClient",
         lambda timeout: _MockClient(),
     )
 

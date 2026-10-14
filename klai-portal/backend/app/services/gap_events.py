@@ -3,7 +3,7 @@
 Extracted verbatim from POST /internal/v1/gap-events so the HTTP endpoint
 (LiteLLM hook → LibreChat, klai-knowledge-mcp → third-party clients) and
 in-process callers — the widget / partner chatpad in
-``app.services.partner_chat.retrieve_context`` — run through the identical
+``app.services.retrieval_context.retrieve_context`` — run through the identical
 privacy-gating and tenant-scoping code. Portal-internal callers MUST call
 this function directly, never loop back over HTTP to portal-api's own
 endpoint.

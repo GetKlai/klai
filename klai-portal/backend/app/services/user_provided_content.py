@@ -9,7 +9,7 @@ the one-chat-pipeline plan (docs/architecture/chat-quality-history-and-plan.md
 pasted, even with zero knowledge-base evidence — Strict/Open governs KB
 grounding, never whether the model may look at the user's own input.
 
-Used by :func:`app.services.partner_chat.retrieve_context` (the Strict
+Used by :func:`app.services.retrieval_context.retrieve_context` (the Strict
 zero-chunk refusal exception, internal surface only) and
 :func:`app.services.partner_chat._finish_live_answer` (skip the grounding
 check/repair, which has no articles to check a screenshot description

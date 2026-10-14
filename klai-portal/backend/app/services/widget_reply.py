@@ -26,7 +26,7 @@ from app.services.chat_sse import (
     _sse_sources_delta,
     _sse_tool_calls_delta,
 )
-from app.services.partner_chat import KnowledgeTurn
+from app.services.retrieval_context import KnowledgeTurn
 
 _DONE = b"data: [DONE]\n\n"
 
