@@ -24,10 +24,7 @@ from app.api.partner_dependencies import (
     require_permission,
 )
 from app.core.config import settings
-from app.services.partner_chat import (
-    openai_chat_completion_non_streaming,
-    openai_chat_completion_streaming,
-)
+from app.services.openai_passthrough import openai_chat_completion_non_streaming, openai_chat_completion_streaming
 from app.services.partner_rate_limit import check_rate_limit, check_weighted_rate_limit
 from app.services.redis_client import get_redis_pool
 

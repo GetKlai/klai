@@ -20,7 +20,7 @@ import respx
 from helpers import FakeKB, FakeResult, make_partner_auth
 from klai_chat_prompts import appointment_offer_sentence, contact_reply, no_citable_sources_message
 
-from app.services import case_file, partner_chat, query_paraphrase, turn_judge, widget_write
+from app.services import case_file, chat_safety, partner_chat, query_paraphrase, turn_judge, widget_write
 from app.services.chat_profile import ChatProfile
 from app.services.partner_chat import KnowledgeTurn
 from app.services.widget_reply import Reply, reply_body, reply_frames
@@ -1456,7 +1456,7 @@ def test_the_contact_gate_reads_dotted_numbers_keeps_the_next_sentence_and_drops
     )
     passage = [{"text": "Gebruik het formaat 050 700 9999 zonder spaties."}]
 
-    gated = partner_chat.without_unsourced_contact_details(text, passage)
+    gated = chat_safety.without_unsourced_contact_details(text, passage)
 
     assert "303" not in gated
     assert "gebruik daarna de handleiding." in gated

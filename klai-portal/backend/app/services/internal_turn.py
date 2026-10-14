@@ -27,12 +27,11 @@ from app.core.config import Settings
 from app.services import case_file
 from app.services.answer_footer import render_answer_footer
 from app.services.chat_profile import ChatProfile
+from app.services.chat_prompting import _is_web_search_tool, _response_language
+from app.services.chat_safety import _last_user_message
 from app.services.partner_chat import (
     INTERNAL_RETRIEVE_TOP_K,
     KnowledgeTurn,
-    _is_web_search_tool,
-    _last_user_message,
-    _response_language,
     retrieval_upstream_errors,
     retrieve_context,
     strict_risk_model,

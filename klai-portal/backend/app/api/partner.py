@@ -53,12 +53,8 @@ from app.models.widgets import Widget
 from app.services import case_file
 from app.services.chat_attachments import process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
-from app.services.internal_turn import InternalInputs, internal_turn
-from app.services.partner_chat import (
-    KnowledgeTurn,
+from app.services.chat_safety import (
     _last_user_message,
-    chat_completion_non_streaming,
-    chat_completion_streaming,
     context_safety_violation,
     fixed_reply_response,
     fixed_reply_stream,
@@ -66,6 +62,8 @@ from app.services.partner_chat import (
     safety_refusal_stream,
     widget_input_safety_violation,
 )
+from app.services.internal_turn import InternalInputs, internal_turn
+from app.services.partner_chat import KnowledgeTurn, chat_completion_non_streaming, chat_completion_streaming
 from app.services.pasted_correspondence import detect_pasted_correspondence
 from app.services.prompt_templates import internal_turn_settings
 from app.services.web_search import build_web_results_block, search_web, web_results_as_chunks

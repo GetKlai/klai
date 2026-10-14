@@ -49,7 +49,7 @@ def _request(body: object, *, headers: dict[str, str] | None = None, raw: bytes 
 
 
 def test_openai_passthrough_metadata_strips_user_metadata():
-    from app.services.partner_chat import _with_openai_passthrough_metadata
+    from app.services.openai_passthrough import _with_openai_passthrough_metadata
 
     body = {"metadata": {"customer": "acme"}, "messages": [{"role": "user", "content": "hi"}]}
 
@@ -148,7 +148,7 @@ async def test_openai_compatible_chat_defaults_output_cap(monkeypatch):
 
 
 def test_openai_passthrough_metadata_translates_prompt_cache_key_to_extra_body():
-    from app.services.partner_chat import _with_openai_passthrough_metadata
+    from app.services.openai_passthrough import _with_openai_passthrough_metadata
 
     body = {"prompt_cache_key": "abc", "messages": [{"role": "user", "content": "hi"}]}
 
@@ -160,7 +160,7 @@ def test_openai_passthrough_metadata_translates_prompt_cache_key_to_extra_body()
 
 
 def test_openai_passthrough_metadata_overwrites_caller_extra_body():
-    from app.services.partner_chat import _with_openai_passthrough_metadata
+    from app.services.openai_passthrough import _with_openai_passthrough_metadata
 
     body = {
         "prompt_cache_key": "abc",
@@ -179,7 +179,7 @@ def test_openai_passthrough_metadata_namespaces_cache_key_per_org():
     upstream Mistral cache. See .claude/rules/klai pitfall
     'fail-open-auth' class — a shared secret/key surface without
     per-tenant scoping is a cross-tenant oracle."""
-    from app.services.partner_chat import _with_openai_passthrough_metadata
+    from app.services.openai_passthrough import _with_openai_passthrough_metadata
 
     body = {"prompt_cache_key": "abc", "messages": [{"role": "user", "content": "hi"}]}
 
@@ -191,7 +191,7 @@ def test_openai_passthrough_metadata_namespaces_cache_key_per_org():
 def test_openai_passthrough_metadata_namespaces_cache_key_with_org_id_none():
     """Defensive default: org_id=None must still namespace (literal
     'org:none:' prefix) — never forward an un-namespaced key."""
-    from app.services.partner_chat import _with_openai_passthrough_metadata
+    from app.services.openai_passthrough import _with_openai_passthrough_metadata
 
     body = {"prompt_cache_key": "abc", "messages": [{"role": "user", "content": "hi"}]}
 
@@ -201,7 +201,7 @@ def test_openai_passthrough_metadata_namespaces_cache_key_with_org_id_none():
 
 
 def test_openai_passthrough_metadata_no_extra_body_when_key_absent():
-    from app.services.partner_chat import _with_openai_passthrough_metadata
+    from app.services.openai_passthrough import _with_openai_passthrough_metadata
 
     forwarded = _with_openai_passthrough_metadata({"messages": [{"role": "user", "content": "hi"}]})
 
@@ -212,7 +212,7 @@ def test_openai_passthrough_metadata_no_extra_body_when_key_absent():
 async def test_openai_non_streaming_sends_prompt_cache_key_as_extra_body_to_litellm(monkeypatch):
     from types import SimpleNamespace
 
-    from app.services import partner_chat
+    from app.services import openai_passthrough
 
     captured: dict = {}
 
@@ -230,7 +230,7 @@ async def test_openai_non_streaming_sends_prompt_cache_key_as_extra_body_to_lite
     client.post = post
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
-    monkeypatch.setattr(partner_chat.httpx, "AsyncClient", MagicMock(return_value=client))
+    monkeypatch.setattr(openai_passthrough.httpx, "AsyncClient", MagicMock(return_value=client))
 
     settings = SimpleNamespace(
         litellm_base_url="http://litellm",
@@ -238,7 +238,7 @@ async def test_openai_non_streaming_sends_prompt_cache_key_as_extra_body_to_lite
         litellm_master_key="master-key",
     )
 
-    await partner_chat.openai_chat_completion_non_streaming(
+    await openai_passthrough.openai_chat_completion_non_streaming(
         {"messages": [{"role": "user", "content": "hi"}], "prompt_cache_key": "abc"},
         settings,
         org_id=42,
@@ -256,7 +256,7 @@ async def test_openai_non_streaming_emits_cache_usage_telemetry(monkeypatch):
     `service:portal-api AND event:partner_openai_cache_usage`."""
     from types import SimpleNamespace
 
-    from app.services import partner_chat
+    from app.services import openai_passthrough
 
     resp = MagicMock()
     resp.status_code = 200
@@ -277,7 +277,7 @@ async def test_openai_non_streaming_emits_cache_usage_telemetry(monkeypatch):
     client.post = post
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
-    monkeypatch.setattr(partner_chat.httpx, "AsyncClient", MagicMock(return_value=client))
+    monkeypatch.setattr(openai_passthrough.httpx, "AsyncClient", MagicMock(return_value=client))
 
     settings = SimpleNamespace(
         litellm_base_url="http://litellm",
@@ -286,9 +286,9 @@ async def test_openai_non_streaming_emits_cache_usage_telemetry(monkeypatch):
     )
 
     mock_logger = MagicMock()
-    monkeypatch.setattr(partner_chat, "logger", mock_logger)
+    monkeypatch.setattr(openai_passthrough, "logger", mock_logger)
 
-    await partner_chat.openai_chat_completion_non_streaming(
+    await openai_passthrough.openai_chat_completion_non_streaming(
         {"messages": [{"role": "user", "content": "hi"}], "prompt_cache_key": "abc"},
         settings,
         org_id=42,
@@ -310,7 +310,7 @@ async def test_openai_non_streaming_cache_usage_telemetry_defaults_zero_without_
     must never raise."""
     from types import SimpleNamespace
 
-    from app.services import partner_chat
+    from app.services import openai_passthrough
 
     resp = MagicMock()
     resp.status_code = 200
@@ -325,7 +325,7 @@ async def test_openai_non_streaming_cache_usage_telemetry_defaults_zero_without_
     client.post = post
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
-    monkeypatch.setattr(partner_chat.httpx, "AsyncClient", MagicMock(return_value=client))
+    monkeypatch.setattr(openai_passthrough.httpx, "AsyncClient", MagicMock(return_value=client))
 
     settings = SimpleNamespace(
         litellm_base_url="http://litellm",
@@ -334,9 +334,9 @@ async def test_openai_non_streaming_cache_usage_telemetry_defaults_zero_without_
     )
 
     mock_logger = MagicMock()
-    monkeypatch.setattr(partner_chat, "logger", mock_logger)
+    monkeypatch.setattr(openai_passthrough, "logger", mock_logger)
 
-    await partner_chat.openai_chat_completion_non_streaming(
+    await openai_passthrough.openai_chat_completion_non_streaming(
         {"messages": [{"role": "user", "content": "hi"}]},
         settings,
         org_id=7,
@@ -407,7 +407,7 @@ async def test_openai_compatible_chat_absent_prompt_cache_key_sends_no_extra_bod
     assert "prompt_cache_key" not in sent
     assert "extra_body" not in sent
 
-    from app.services.partner_chat import _with_openai_passthrough_metadata
+    from app.services.openai_passthrough import _with_openai_passthrough_metadata
 
     assert "extra_body" not in _with_openai_passthrough_metadata(sent)
 
@@ -643,7 +643,7 @@ async def test_openai_compatible_chat_tpm_cost_uses_largest_output_field(monkeyp
 @pytest.mark.asyncio
 async def test_openai_non_streaming_preserves_upstream_4xx(monkeypatch):
     from app.core.config import Settings
-    from app.services.partner_chat import openai_chat_completion_non_streaming
+    from app.services.openai_passthrough import openai_chat_completion_non_streaming
 
     upstream_body = {"error": {"type": "invalid_request_error", "message": "context length exceeded"}}
 
@@ -661,7 +661,7 @@ async def test_openai_non_streaming_preserves_upstream_4xx(monkeypatch):
             request = httpx.Request("POST", "http://litellm.test/v1/chat/completions")
             return httpx.Response(400, json=upstream_body, request=request)
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.services.openai_passthrough.httpx.AsyncClient", FakeClient)
 
     result = await openai_chat_completion_non_streaming(
         {"messages": [{"role": "user", "content": "hi"}]},
@@ -675,7 +675,7 @@ async def test_openai_non_streaming_preserves_upstream_4xx(monkeypatch):
 @pytest.mark.asyncio
 async def test_openai_non_streaming_uses_general_chat_key(monkeypatch):
     from app.core.config import Settings
-    from app.services.partner_chat import openai_chat_completion_non_streaming
+    from app.services.openai_passthrough import openai_chat_completion_non_streaming
 
     seen_headers: dict[str, str] = {}
 
@@ -694,7 +694,7 @@ async def test_openai_non_streaming_uses_general_chat_key(monkeypatch):
             request = httpx.Request("POST", "http://litellm.test/v1/chat/completions")
             return httpx.Response(200, json={"choices": []}, request=request)
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.services.openai_passthrough.httpx.AsyncClient", FakeClient)
 
     await openai_chat_completion_non_streaming(
         {"messages": [{"role": "user", "content": "hi"}]},
@@ -711,7 +711,7 @@ async def test_openai_non_streaming_uses_general_chat_key(monkeypatch):
 @pytest.mark.asyncio
 async def test_openai_non_streaming_fails_closed_without_general_chat_key():
     from app.core.config import Settings
-    from app.services.partner_chat import openai_chat_completion_non_streaming
+    from app.services.openai_passthrough import openai_chat_completion_non_streaming
 
     with pytest.raises(HTTPException) as exc:
         await openai_chat_completion_non_streaming(
@@ -729,7 +729,7 @@ async def test_openai_non_streaming_fails_closed_without_general_chat_key():
 @pytest.mark.asyncio
 async def test_openai_non_streaming_fails_closed_when_general_chat_key_matches_master():
     from app.core.config import Settings
-    from app.services.partner_chat import openai_chat_completion_non_streaming
+    from app.services.openai_passthrough import openai_chat_completion_non_streaming
 
     with pytest.raises(HTTPException) as exc:
         await openai_chat_completion_non_streaming(
@@ -747,7 +747,7 @@ async def test_openai_non_streaming_fails_closed_when_general_chat_key_matches_m
 @pytest.mark.asyncio
 async def test_openai_streaming_preserves_upstream_4xx_before_stream_start(monkeypatch):
     from app.core.config import Settings
-    from app.services.partner_chat import openai_chat_completion_streaming
+    from app.services.openai_passthrough import openai_chat_completion_streaming
 
     upstream_body = {"error": {"type": "invalid_request_error", "message": "context length exceeded"}}
 
@@ -769,7 +769,7 @@ async def test_openai_streaming_preserves_upstream_4xx_before_stream_start(monke
         async def aclose(self):
             self.closed = True
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.services.openai_passthrough.httpx.AsyncClient", FakeClient)
 
     result = await openai_chat_completion_streaming(
         {"messages": [{"role": "user", "content": "hi"}]},

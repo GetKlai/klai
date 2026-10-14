@@ -96,7 +96,7 @@ def test_footer_is_stripped_from_retrieval_history_and_model_history():
     same strip, ported into portal's history builders, so a footer never
     enters a search query or the model's history.
     """
-    from app.services.partner_chat import _augment_messages_with_system_prompt, _build_conversation_history
+    from app.services.chat_prompting import _augment_messages_with_system_prompt, _build_conversation_history
 
     footer_answer = (
         "Je kunt de VPN-instellingen aanpassen in het portaal.\n\n"

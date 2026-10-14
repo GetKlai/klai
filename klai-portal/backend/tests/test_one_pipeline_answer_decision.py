@@ -30,7 +30,7 @@ from klai_chat_prompts import no_citable_sources_message
 
 from app.api.partner_dependencies import PartnerAuthContext
 from app.services.chat_profile import ChatProfile
-from app.services.partner_chat import safety_refusal_message
+from app.services.chat_safety import safety_refusal_message
 
 LITELLM = "http://litellm.example.com"
 RETRIEVAL = "http://retrieval.example.com"
