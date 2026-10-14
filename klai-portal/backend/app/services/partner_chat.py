@@ -25,7 +25,8 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -678,86 +679,56 @@ def _renumber_sources(sources: list[dict]) -> list[dict]:
     return sources
 
 
-async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - live streaming + tool_calls branching alongside composition
-    *,
-    augmented_messages: list[dict],
-    model: str,
-    temperature: float,
-    settings: Settings,
-    org_id: int | str | None,
-    user_query: str,
-    trusted_sources: list[dict[str, Any]] | None,
-    citation_chunks: list[dict] | None,
-    response_language: str | None,
-    web_chunks: list[dict] | None = None,
-    web_query: str | None = None,
-    emit_sources: bool = True,
-    answer_signals: dict[str, Any] | None = None,
-    conversation: list[dict] | None = None,
-    turn_timing: dict[str, float] | None = None,
-    profile: ChatProfile = ChatProfile(surface="widget"),
-    tools: list[dict] | None = None,
-    tool_choice: Any | None = None,
-    delegated_org_id: str | None = None,
-    knowledge_turn: KnowledgeTurn | None = None,
-    pasted_correspondence: bool = False,
+@dataclass
+class _LiveStream:
+    """What the model has sent so far on a live turn, and what of it the employee has already seen."""
+
+    pasted_correspondence: bool
+    raw_text_parts: list[str] = field(default_factory=list)
+    live_emitted: list[str] = field(default_factory=list)
+    live_buffer: str = ""
+    marker_buffer: str = ""
+    called_tool: bool = False
+    failed: bool = False
+
+    def take(self, text: str) -> str:
+        """Keep a content delta and return the part of it that is safe to send now."""
+        self.raw_text_parts.append(text)
+        if self.pasted_correspondence:
+            text, self.marker_buffer = pop_answer_contract_stream_text(self.marker_buffer + text, final=False)
+        self.live_buffer += text
+        safe_text, self.live_buffer = _pop_live_stream_text(self.live_buffer)
+        if safe_text:
+            self.live_emitted.append(safe_text)
+        return safe_text
+
+    @property
+    def draft(self) -> str:
+        draft = "".join(self.raw_text_parts)
+        return strip_answer_contract_markers(draft) if self.pasted_correspondence else draft
+
+
+@dataclass
+class _Settled:
+    """The live answer once composed: what it says, its sources and decision, and the part still to send."""
+
+    content: str
+    sources: list[dict[str, Any]]
+    decision: dict[str, Any]
+    outgoing: str
+
+
+async def _stream_model(
+    stream: _LiveStream, *, request_json: dict, settings: Settings, org_id: int | str | None
 ) -> AsyncGenerator[bytes]:
-    """Stream the internal chat's Open or general turn live, then compose its citations.
+    """Step 1: stream the model's deltas to the employee as they arrive.
 
-    The content is streamed incrementally through :func:`_pop_live_stream_text`,
-    because an employee reads the tokens as they arrive. Composition still runs
-    once on the full text at the end for sources and signals, but its content
-    is not re-sent: the caller already saw it live. An upstream failure before
-    the first byte (LiteLLM mid-restart / 5xx) is surfaced as a clean SSE error
-    frame.
-
-    The widget, the partner key and the internal Strict turn are not written
-    here: widget_write.write_reply composes and holds them, and
-    widget_reply.reply_frames renders them.
-
-    ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`)
-    — filled once the answer is composed, and never part of any frame.
-
-    A ``tool_calls`` delta is forwarded unbuffered the moment it arrives,
-    regardless of what is streamed — see :func:`_sse_tool_calls_delta`. It never
-    enters ``raw_text_parts``, so it can never reach the citation composer or
-    the grounding check.
-
-    With citable sources, a text footer
-    (:func:`app.services.answer_footer.render_answer_footer`) is appended as
-    the LAST render step, after composition has settled ``sources``. The
-    content already streamed with the model's own raw markers, so the footer
-    follows as one extra content delta after the live text (see the emission
-    below). ``knowledge_turn`` carries the sub-questions for that footer and
-    the mode the answer is decided under.
-
-    ``pasted_correspondence`` strips the answer-contract markers the
-    correspondence prompt asks for, from the live stream as it goes and from
-    the text every later step reads.
+    A ``tool_calls`` delta is forwarded unbuffered the moment it arrives; it
+    never enters the text, so it can never reach the citation composer or the
+    grounding check. An upstream failure is surfaced as a clean SSE error
+    frame and sets ``stream.failed``.
     """
-    raw_text_parts: list[str] = []
-    sub_queries = knowledge_turn.sub_queries if knowledge_turn is not None else []
-    # The page-context message is prepended, so the last user turn in
-    # augmented_messages is the human's own words, never the rewritten
-    # retrieval query. The canned source refusal follows the conversation
-    # decision (response_language above); this stays the input for the
-    # output-safety refusal, which has no conversation decision to follow.
-    visitor_query = _last_user_message(augmented_messages) or ""
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
-    generation_started = time.perf_counter()
-    live_buffer = ""
-    live_emitted: list[str] = []
-    called_tool = False
-    marker_buffer = ""
-    request_json = _llm_request_body(
-        model,
-        augmented_messages,
-        temperature,
-        stream=True,
-        tools=tools,
-        tool_choice=tool_choice,
-        delegated_org_id=delegated_org_id,
-    )
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream(
@@ -785,23 +756,17 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - li
                         continue
                     delta = (evt.get("choices") or [{}])[0].get("delta") or {}
                     if tool_calls := delta.get("tool_calls"):
-                        called_tool = True
+                        stream.called_tool = True
                         yield _sse_tool_calls_delta(tool_calls)
                     text = delta.get("content")
                     if isinstance(text, str) and text:
-                        raw_text_parts.append(text)
-                        if pasted_correspondence:
-                            text, marker_buffer = pop_answer_contract_stream_text(marker_buffer + text, final=False)
-                        live_buffer += text
-                        safe_text, live_buffer = _pop_live_stream_text(live_buffer)
-                        if safe_text:
-                            live_emitted.append(safe_text)
+                        if safe_text := stream.take(text):
                             yield _sse_content_delta(safe_text)
     except httpx.TransportError:
         logger.warning("partner_chat_upstream_unreachable", org_id=org_id, target=chat_url, exc_info=True)
+        stream.failed = True
         yield _sse_error_frame("Chat service unavailable")
         yield b"data: [DONE]\n\n"
-        return
     except httpx.HTTPStatusError as exc:
         logger.warning(
             "partner_chat_upstream_error",
@@ -809,22 +774,42 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - li
             status_code=exc.response.status_code,
             exc_info=True,
         )
+        stream.failed = True
         yield _sse_error_frame("Chat service error")
         yield b"data: [DONE]\n\n"
-        return
 
-    generation_ms = _elapsed_ms(generation_started)
-    draft = "".join(raw_text_parts)
-    if called_tool and not draft.strip():
-        # A turn that only calls a tool is not an answer yet: the client runs
-        # the tool and sends its result back. Composing it would append the
-        # no-sources refusal to the tool call. OpenAI clients read the
-        # tool_calls finish reason as "run the tools now".
-        yield b'data: {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}\n\n'
-        yield b"data: [DONE]\n\n"
-        return
-    if pasted_correspondence:
-        draft = strip_answer_contract_markers(draft)
+
+async def _settle_live_answer(
+    stream: _LiveStream,
+    *,
+    model: str,
+    settings: Settings,
+    org_id: int | str | None,
+    user_query: str,
+    visitor_query: str,
+    trusted_sources: list[dict[str, Any]] | None,
+    citation_chunks: list[dict] | None,
+    response_language: str | None,
+    web_chunks: list[dict] | None,
+    web_query: str | None,
+    emit_sources: bool,
+    answer_signals: dict[str, Any] | None,
+    conversation: list[dict] | None,
+    turn_timing: dict[str, float] | None,
+    generation_ms: int,
+    profile: ChatProfile,
+    delegated_org_id: str | None,
+    knowledge_turn: KnowledgeTurn | None,
+) -> _Settled:
+    """Step 2: compose the full text once it is in: citations, safety, the decision, the signals, the footer.
+
+    The content was already streamed with the model's own raw markers, so what
+    is left to send is the unseen tail, plus the footer as the LAST render
+    step (chat-quality-history-and-plan.md §7.2): the sources frame is
+    structured data, but LibreChat renders only text, so the footer carries
+    the same finalised ``sources`` as text.
+    """
+    draft = stream.draft
     content, sources, decision = _compose_backend_managed_answer(
         draft,
         trusted_sources,
@@ -890,30 +875,31 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - li
         query_text=visitor_query,
         reply=content,
     )
-    # Deliberately kept separate as the last render step
-    # (chat-quality-history-and-plan.md §7.2): the sources frame emitted
-    # below is structured data, but LibreChat renders only text, so the footer
-    # carries the same finalised ``sources`` as text.
     footer_text = ""
     if profile.surface == "internal" and emit_sources:
         footer_text = render_answer_footer(
             sources=sources,
             kb_mode=profile.kb_mode,
             chunks_injected=len(citation_chunks or []),
-            sub_queries=sub_queries,
+            sub_queries=knowledge_turn.sub_queries if knowledge_turn is not None else [],
             language=response_language,
             general_knowledge=decision.get("reason") == "general_knowledge",
         )
-    # What still has to go out: only the unseen tail (plus the footer), since
-    # the rest was streamed live.
     if decision.pop("output_blocked", False):
         # The streamed part cannot be taken back; the rest of the draft is
         # withheld and the refusal follows it.
         outgoing = f"\n\n{content}"
     else:
-        outgoing = _unstreamed_tail(content, "".join(live_emitted), draft, citation_chunks)
+        outgoing = _unstreamed_tail(content, "".join(stream.live_emitted), draft, citation_chunks)
         if footer_text:
             outgoing = f"{outgoing.rstrip()}\n\n{footer_text}"
+    return _Settled(content=content, sources=sources, decision=decision, outgoing=outgoing)
+
+
+def _closing_frames(
+    settled: _Settled, *, citation_chunks: list[dict] | None, web_chunks: list[dict] | None, emit_sources: bool
+) -> Iterator[bytes]:
+    """Step 3: the frames that end a live turn: the activity, the sources, the unseen tail, DONE."""
     if citation_chunks:
         yield _sse_activity_delta(
             [
@@ -936,36 +922,125 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - li
                 }
             ]
         )
-    if not sources or not emit_sources:
-        if outgoing:
-            yield _sse_content_delta(outgoing)
-        yield b"data: [DONE]\n\n"
-        _emit_language_correctness_log(
-            org_id=org_id,
-            query=user_query,
-            response_text=content,
-            chunks_injected=len(citation_chunks or []),
+    if settled.sources and emit_sources:
+        yield _sse_sources_delta(settled.sources)
+        yield _sse_activity_delta(
+            [
+                {
+                    "step": "sources_attached",
+                    "label": "Bronnen gekoppeld",
+                    "detail": f"{len(settled.sources)} bronnen beschikbaar",
+                    "count": len(settled.sources),
+                }
+            ]
         )
-        return
-
-    yield _sse_sources_delta(sources)
-    yield _sse_activity_delta(
-        [
-            {
-                "step": "sources_attached",
-                "label": "Bronnen gekoppeld",
-                "detail": f"{len(sources)} bronnen beschikbaar",
-                "count": len(sources),
-            }
-        ]
-    )
-    if outgoing:
-        yield _sse_content_delta(outgoing)
+    if settled.outgoing:
+        yield _sse_content_delta(settled.outgoing)
     yield b"data: [DONE]\n\n"
+
+
+async def _chat_completion_streaming_with_composed_citations(
+    *,
+    augmented_messages: list[dict],
+    model: str,
+    temperature: float,
+    settings: Settings,
+    org_id: int | str | None,
+    user_query: str,
+    trusted_sources: list[dict[str, Any]] | None,
+    citation_chunks: list[dict] | None,
+    response_language: str | None,
+    web_chunks: list[dict] | None = None,
+    web_query: str | None = None,
+    emit_sources: bool = True,
+    answer_signals: dict[str, Any] | None = None,
+    conversation: list[dict] | None = None,
+    turn_timing: dict[str, float] | None = None,
+    profile: ChatProfile,
+    tools: list[dict] | None = None,
+    tool_choice: Any | None = None,
+    delegated_org_id: str | None = None,
+    knowledge_turn: KnowledgeTurn | None = None,
+    pasted_correspondence: bool = False,
+) -> AsyncGenerator[bytes]:
+    """Stream the internal chat's Open or general turn live, then compose its citations.
+
+    Three steps: the model's deltas go to the employee as they arrive
+    (:func:`_stream_model`), the full text is composed once it is in
+    (:func:`_settle_live_answer`), and the frames that end the turn follow
+    (:func:`_closing_frames`). Composition never re-sends what was streamed:
+    only the unseen tail and the footer go out after it.
+
+    The widget, the partner key and the internal Strict turn are not written
+    here: widget_write.write_reply composes and holds them, and
+    widget_reply.reply_frames renders them.
+
+    ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`)
+    — filled once the answer is composed, and never part of any frame.
+
+    ``pasted_correspondence`` strips the answer-contract markers the
+    correspondence prompt asks for, from the live stream as it goes and from
+    the text every later step reads.
+    """
+    # The page-context message is prepended, so the last user turn in
+    # augmented_messages is the human's own words, never the rewritten
+    # retrieval query. The canned source refusal follows the conversation
+    # decision (response_language above); this stays the input for the
+    # output-safety refusal, which has no conversation decision to follow.
+    visitor_query = _last_user_message(augmented_messages) or ""
+    request_json = _llm_request_body(
+        model,
+        augmented_messages,
+        temperature,
+        stream=True,
+        tools=tools,
+        tool_choice=tool_choice,
+        delegated_org_id=delegated_org_id,
+    )
+    stream = _LiveStream(pasted_correspondence=pasted_correspondence)
+    generation_started = time.perf_counter()
+    async for frame in _stream_model(stream, request_json=request_json, settings=settings, org_id=org_id):
+        yield frame
+    if stream.failed:
+        return
+    generation_ms = _elapsed_ms(generation_started)
+    if stream.called_tool and not "".join(stream.raw_text_parts).strip():
+        # A turn that only calls a tool is not an answer yet: the client runs
+        # the tool and sends its result back. Composing it would append the
+        # no-sources refusal to the tool call. OpenAI clients read the
+        # tool_calls finish reason as "run the tools now".
+        yield b'data: {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}\n\n'
+        yield b"data: [DONE]\n\n"
+        return
+    settled = await _settle_live_answer(
+        stream,
+        model=model,
+        settings=settings,
+        org_id=org_id,
+        user_query=user_query,
+        visitor_query=visitor_query,
+        trusted_sources=trusted_sources,
+        citation_chunks=citation_chunks,
+        response_language=response_language,
+        web_chunks=web_chunks,
+        web_query=web_query,
+        emit_sources=emit_sources,
+        answer_signals=answer_signals,
+        conversation=conversation,
+        turn_timing=turn_timing,
+        generation_ms=generation_ms,
+        profile=profile,
+        delegated_org_id=delegated_org_id,
+        knowledge_turn=knowledge_turn,
+    )
+    for frame in _closing_frames(
+        settled, citation_chunks=citation_chunks, web_chunks=web_chunks, emit_sources=emit_sources
+    ):
+        yield frame
     _emit_language_correctness_log(
         org_id=org_id,
         query=user_query,
-        response_text=content,
+        response_text=settled.content,
         chunks_injected=len(citation_chunks or []),
     )
 

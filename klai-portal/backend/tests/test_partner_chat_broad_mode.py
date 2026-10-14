@@ -14,9 +14,9 @@ Covered seams:
   that the knowledge-gap event still fires on a broad answer.
 * ``_compose_backend_managed_answer`` — the marker is applied here (never by
   the model), and the offer signal tags only public helpdesk refusals.
-* ``_chat_completion_streaming_with_composed_citations`` — the widget-facing
-  ``delta.broad_mode`` frames ("offer" / "answer"), including suppression on
-  safety-blocked output.
+* ``write_reply`` and ``reply_frames`` — the widget's ``delta.broad_mode``
+  frames ("offer" / "answer"), including suppression on safety-blocked
+  output.
 * ``chat_completion_non_streaming`` — ``message.broad_mode`` on the marker
   path.
 * ``partner.py`` plumbing — the request-level consent flag and the
@@ -40,11 +40,9 @@ from klai_chat_prompts import (
     broad_mode_answer_marker,
     no_citable_sources_message,
 )
-from klai_chat_prompts.language import resolve_conversation_language
 
 from app.services import retrieval_context, widget_write
 from app.services.partner_chat import (
-    _chat_completion_streaming_with_composed_citations,
     _compose_backend_managed_answer,
 )
 from app.services.retrieval_context import KnowledgeTurn, _broad_mode_active
@@ -441,21 +439,15 @@ def _stream_patches(monkeypatch, model_text: str):
 
 
 async def _collect(**kwargs) -> list[bytes]:
-    # The widget's reply is written once and rendered as frames; the partner
-    # path still streams. Either way the language decision comes from the
-    # visitor's messages, never from the source query (the KB-tuned rewrite),
-    # so tests that care about the language still prove the rewrite cannot
-    # decide it.
-    if kwargs.pop("widget", False):
-        kwargs["messages"] = kwargs.pop("augmented_messages")
-        kwargs["source_query"] = kwargs.pop("user_query")
-        kwargs.setdefault("system_prompt", "sys")
-        return reply_frames(await write_reply(**kwargs))
-    kwargs.setdefault(
-        "response_language",
-        resolve_conversation_language(kwargs["augmented_messages"]).language,
-    )
-    return [frame async for frame in _chat_completion_streaming_with_composed_citations(**kwargs)]
+    # The widget's reply is written once and rendered as frames. The language
+    # decision comes from the visitor's messages, never from the source query
+    # (the KB-tuned rewrite), so tests that care about the language still
+    # prove the rewrite cannot decide it.
+    kwargs.pop("widget", None)
+    kwargs["messages"] = kwargs.pop("augmented_messages")
+    kwargs["source_query"] = kwargs.pop("user_query")
+    kwargs.setdefault("system_prompt", "sys")
+    return reply_frames(await write_reply(**kwargs))
 
 
 @pytest.mark.asyncio
@@ -513,29 +505,6 @@ async def test_stream_refusal_without_consent_emits_offer_frame(monkeypatch):
     # The stored refusal text is the exact canned string (outcome rule 1),
     # in the language IDENTIFIED from the query — "nl" here.
     assert content == no_citable_sources_message("nl", helpdesk=True)
-
-
-@pytest.mark.asyncio
-async def test_stream_partner_path_has_no_broad_frames(monkeypatch):
-    _stream_patches(monkeypatch, "Some partner answer.")
-    settings = MagicMock()
-    settings.litellm_base_url = "http://litellm:4000"
-    settings.litellm_master_key = "key"
-
-    frames = await _collect(
-        augmented_messages=[{"role": "user", "content": "hello"}],
-        model="klai-primary",
-        temperature=0.7,
-        settings=settings,
-        org_id=42,
-        user_query="hello",
-        trusted_sources=[],
-        citation_chunks=[],
-        widget=False,
-    )
-
-    parsed = _parse_frames(frames)
-    assert _delta_values(parsed, "broad_mode") == []
 
 
 @pytest.mark.asyncio
