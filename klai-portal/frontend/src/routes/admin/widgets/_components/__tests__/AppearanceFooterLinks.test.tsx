@@ -71,8 +71,6 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_show_meta_label',
     'admin_widgets_show_sources_help',
     'admin_widgets_show_sources_label',
-    'admin_widgets_support_mode_help',
-    'admin_widgets_support_mode_label',
     'admin_widgets_theme_dark',
     'admin_widgets_theme_label',
     'admin_widgets_theme_light',

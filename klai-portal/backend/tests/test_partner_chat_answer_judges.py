@@ -228,8 +228,8 @@ def _delta(frames: list[dict], key: str) -> list[Any]:
 async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str, dict, dict]:
     """Run one widget turn; return (visible text, signals, extras). No citable source unless overridden.
 
-    A widget turn is written once and rendered as frames or as a body; the internal chat
-    and the partner key (``support_mode=False``) still run on the generation functions.
+    A widget or partner turn is written once and rendered as frames or as a body; the
+    internal chat's live leg (``live_leg=True``) still runs on the generation functions.
     """
     signals: dict[str, Any] = {}
     kwargs: dict[str, Any] = {
@@ -245,7 +245,7 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str,
         "answer_signals": signals,
         **overrides,
     }
-    generic = not kwargs.pop("support_mode", True)
+    generic = kwargs.pop("live_leg", False)
     with respx.mock(assert_all_called=False) as router:
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
         if generic and stream:
@@ -424,7 +424,7 @@ async def test_a_single_flag_leaves_the_answer_alone():
     assert litellm.repair_requests == []
 
 
-_INTERNAL_STRICT: dict[str, Any] = {"profile": ChatProfile(surface="internal", kb_mode="strict"), "support_mode": False}
+_INTERNAL_STRICT: dict[str, Any] = {"profile": ChatProfile(surface="internal", kb_mode="strict"), "live_leg": True}
 
 
 async def test_a_failed_grounding_check_leaves_the_answer_alone():
@@ -627,15 +627,10 @@ async def test_passed_reply_is_stripped_of_links_before_the_judge_and_the_visito
     assert "evil.example" not in litellm.judge_requests[0]["messages"][1]["content"]
 
 
-@pytest.mark.parametrize(
-    "overrides",
-    [{"support_mode": False}, {"broad_mode": True}],
-    ids=["outside_support_mode", "broad_mode_answer"],
-)
-async def test_answer_judge_does_not_run(overrides):
+async def test_answer_judge_does_not_run_on_a_broad_mode_answer():
     litellm = _LiteLLM(model_text="DECT is een standaard voor draadloze telefonie.")
 
-    _, signals, _ = await _answer(litellm, stream=True, **overrides)
+    _, signals, _ = await _answer(litellm, stream=True, broad_mode=True)
 
     assert litellm.judge_requests == []
     assert "decision" not in signals
@@ -757,7 +752,6 @@ async def _route_turn(
     with (
         respx.mock(assert_all_called=False) as router,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
@@ -1013,7 +1007,6 @@ async def test_the_case_runs_concurrently_with_retrieval_on_a_first_turn():
         patch("app.services.widget_turn.retrieve_context", new=retrieve),
         patch("app.api.partner.case_file.update_case", new=update_case),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
         patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written_reply())) as chat,
         patch("app.api.partner.asyncio"),

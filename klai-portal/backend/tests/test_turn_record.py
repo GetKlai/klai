@@ -55,7 +55,6 @@ async def _retrieve(messages: list[dict], settings: MagicMock, **overrides: Any)
         kb_slugs=["support"],
         messages=messages,
         settings=settings,
-        support_mode=True,
         **overrides,
     )
 

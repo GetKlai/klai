@@ -115,6 +115,7 @@ async def test_tool_call_delta_reaches_client_before_stream_ends(monkeypatch):
         system_prompt="prompt",
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
     ):
         chunks.append(chunk)
 
@@ -150,6 +151,7 @@ async def test_tool_call_content_never_enters_composed_text_or_grounding_input(m
         system_prompt="prompt",
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
     ):
         chunks.append(chunk)
 
@@ -250,33 +252,6 @@ async def test_open_internal_profile_yields_multiple_content_frames(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_widget_profile_gets_no_keepalives_frames_stay_unchanged(monkeypatch):
-    """surface != "internal" must not gain any new frame: existing widget/partner
-    streaming tests assert exact byte sequences, so keepalives are internal-only."""
-    events = [
-        {"choices": [{"delta": {"content": "Klai "}}]},
-        {"choices": [{"delta": {"content": "ondersteunt SIP-trunking."}}]},
-    ]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
-
-    chunks = []
-    async for chunk in chat_completion_streaming(
-        messages=[{"role": "user", "content": "Ondersteunt Klai SIP-trunking?"}],
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="prompt",
-        settings=_settings(),
-        profile=ChatProfile(surface="widget"),
-    ):
-        chunks.append(chunk)
-
-    frames = _sse_content_frames(b"".join(chunks).decode())
-    # Exactly one content frame: the composed answer, no keepalives at all.
-    content_frames = [f for f in frames if "content" in f]
-    assert len(content_frames) == 1
-
-
-@pytest.mark.asyncio
 async def test_live_turn_never_streams_a_model_written_link_and_never_repeats_the_answer(monkeypatch):
     events = [
         {"choices": [{"delta": {"content": "Vraag verlof aan via "}}]},
@@ -317,6 +292,7 @@ async def test_internal_generation_call_carries_the_org_for_pii_masking(
         system_prompt="prompt",
         settings=_settings(),
         delegated_org_id=delegated_org_id,
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
     ):
         pass
 
@@ -388,23 +364,3 @@ def test_widget_history_tool_messages_never_reach_the_model():
     )
 
     assert all(m["role"] != "tool" and "tool_calls" not in m for m in sent)
-
-
-@pytest.mark.asyncio
-async def test_partner_keeps_its_web_search_tool(monkeypatch):
-    events = [{"choices": [{"delta": {"content": "Antwoord."}}]}]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
-    web_tool = {"type": "function", "function": {"name": "web_search"}}
-
-    async for _ in chat_completion_streaming(
-        messages=[{"role": "user", "content": "Wat is het weer?"}],
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="prompt",
-        settings=_settings(),
-        profile=ChatProfile(surface="partner"),
-        tools=[web_tool],
-    ):
-        pass
-
-    assert (_RecordingClient.last_json or {}).get("tools") == [web_tool]

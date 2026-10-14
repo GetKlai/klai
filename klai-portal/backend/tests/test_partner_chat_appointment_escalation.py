@@ -32,6 +32,7 @@ from klai_chat_prompts import appointment_offer_marker, no_citable_sources_messa
 from app.api import partner
 from app.services import partner_chat, widget_turn, widget_write
 from app.services.case_file import Case
+from app.services.chat_profile import ChatProfile
 from app.services.escalation_intent import escalation_intent
 from app.services.partner_chat import KnowledgeTurn, _compose_backend_managed_answer
 from app.services.widget_reply import Reply, reply_body, reply_frames
@@ -96,19 +97,16 @@ def _delta_values(frames: list[dict], key: str) -> list[Any]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("query", "classification", "stream", "support_mode", "expected"),
+    ("query", "classification", "stream", "expected"),
     [
-        (HUMAN_QUERY, {"wants_human": True}, False, True, True),
-        (HUMAN_QUERY, {"wants_human": True}, True, True, True),
-        (NEGATIVE_QUERY, {"wants_human": False, "sentiment": "negative"}, False, True, True),
-        (NEUTRAL_QUERY, NEUTRAL, False, True, False),
-        ("IK WIL EEN MEDEWERKER SPREKEN", NEUTRAL, False, True, True),
-        (NEUTRAL_QUERY, {"wants_human": True}, False, False, False),
+        (HUMAN_QUERY, {"wants_human": True}, False, True),
+        (HUMAN_QUERY, {"wants_human": True}, True, True),
+        (NEGATIVE_QUERY, {"wants_human": False, "sentiment": "negative"}, False, True),
+        (NEUTRAL_QUERY, NEUTRAL, False, False),
+        ("IK WIL EEN MEDEWERKER SPREKEN", NEUTRAL, False, True),
     ],
 )
-async def test_widget_classifier_controls_escalation(
-    monkeypatch, query, classification, stream, support_mode, expected
-):
+async def test_widget_classifier_controls_escalation(monkeypatch, query, classification, stream, expected):
     assert escalation_intent(HUMAN_QUERY) is escalation_intent(NEGATIVE_QUERY) is None
 
     auth = make_partner_auth(kb_access={10: "read"})
@@ -116,17 +114,6 @@ async def test_widget_classifier_controls_escalation(
     request = partner.ChatCompletionsRequest(messages=[{"role": "user", "content": query}], stream=stream)
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeResult())
-
-    async def completion(**kwargs):
-        message = {"role": "assistant", "content": "Artikelantwoord", "sources": []}
-        if kwargs.get("force_escalation"):
-            message["escalation"] = {"appointment": True}
-        return {"choices": [{"message": message}]}
-
-    async def streaming(**kwargs):
-        if kwargs.get("force_escalation"):
-            yield b'data: {"choices":[{"delta":{"escalation":{"appointment":true}}}]}\n\n'
-        yield b"data: [DONE]\n\n"
 
     async def written(**kwargs):
         return Reply(
@@ -139,16 +126,11 @@ async def test_widget_classifier_controls_escalation(
         )
 
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-alpha"]))
-    monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=support_mode))
     judge = AsyncMock(return_value=_case(**classification))
     monkeypatch.setattr(partner.case_file, "update_case", judge)
-    # A support-mode turn runs in widget_turn, any other in chat_completions.
-    for module in (partner, widget_turn):
-        monkeypatch.setattr(module, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
+    monkeypatch.setattr(widget_turn, "retrieve_context", AsyncMock(return_value=([_good_chunk()], "prompt", [], False)))
     monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
     monkeypatch.setattr(widget_turn, "write_reply", written)
-    monkeypatch.setattr(partner, "chat_completion_non_streaming", completion)
-    monkeypatch.setattr(partner, "chat_completion_streaming", streaming)
 
     response = await partner.chat_completions(
         request=request,
@@ -163,7 +145,7 @@ async def test_widget_classifier_controls_escalation(
     else:
         escalated = "escalation" in response["choices"][0]["message"]
     assert escalated is expected
-    assert judge.await_count == int(support_mode)
+    judge.assert_awaited_once()
 
 
 # ─── composer: the backend's own two cases ───────────────────────────────
@@ -419,6 +401,7 @@ async def test_stream_partner_path_has_no_escalation_frames(monkeypatch):
     frames = [
         frame
         async for frame in partner_chat.chat_completion_streaming(
+            profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
             messages=[{"role": "user", "content": "hello"}],
             model="klai-primary",
             temperature=0.7,
@@ -526,6 +509,7 @@ async def test_non_streaming_grounded_answer_has_no_escalation_key(monkeypatch):
 async def test_non_streaming_partner_has_no_escalation_key(monkeypatch):
     _model_says(monkeypatch, f"Partner answer. {MARKER}")
     body = await partner_chat.chat_completion_non_streaming(
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
         messages=[{"role": "user", "content": "ik kom er niet uit"}],
         model="klai-primary",
         temperature=0.7,

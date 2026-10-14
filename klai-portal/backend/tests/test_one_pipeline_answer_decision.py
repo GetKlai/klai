@@ -174,7 +174,6 @@ async def _turn(
     question: str = QUESTION,
     stream: bool = False,
     key_id: str = "key-internal",
-    support_mode: bool = False,
     history: tuple[dict, ...] = (),
 ) -> _Turn:
     from app.api import partner
@@ -194,7 +193,6 @@ async def _turn(
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["handboek"]))
     monkeypatch.setattr(partner, "_widget_system_prompt", AsyncMock(return_value=None))
     monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
-    monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=support_mode))
     monkeypatch.setattr(partner, "_widget_tone_register", AsyncMock(return_value="restrained"))
     monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
     monkeypatch.setattr(partner_chat, "_schedule_gap_event", MagicMock())
@@ -594,7 +592,6 @@ async def test_every_litellm_call_of_an_internal_and_a_widget_turn_carries_the_o
         profile=ChatProfile(surface="widget"),
         retrieval={"evidence_pack": _variant_pack(), "confidence_band": "high"},
         key_id="wgt_acme",
-        support_mode=True,
     )
 
     kinds = {_LiteLLM._kind(body) for body in internal.calls}

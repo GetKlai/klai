@@ -2,9 +2,8 @@
  * Tests for the "subjects this assistant does not answer" fields on the
  * widget Algemeen tab.
  *
- * The backend only honours the setting when customer-facing mode is on and
- * BOTH fields are filled, so the tab must not offer them for an internal
- * widget, and a save must carry both values through widget_config.
+ * The backend only honours the setting when BOTH fields are filled, so a save
+ * must carry both values through widget_config.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -39,8 +38,6 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_widgets_page_context_help',
     'admin_widgets_page_context_label',
     'admin_widgets_role_scope_placeholder',
-    'admin_widgets_support_mode_help',
-    'admin_widgets_support_mode_label',
     'admin_widgets_tone_register_expressive',
     'admin_widgets_tone_register_expressive_help',
     'admin_widgets_tone_register_help',
@@ -109,7 +106,6 @@ function makeWidget(configOverrides?: Partial<WidgetConfig>): WidgetDetailRespon
       collect_user_info: false,
       page_context_enabled: false,
       widget_position: 'right',
-      support_mode: true,
       ...configOverrides,
     },
     kb_access: [],
@@ -135,13 +131,6 @@ beforeEach(() => {
 })
 
 describe('DetailsTab - subjects the widget does not answer', () => {
-  it('hides both fields while customer-facing mode is off, because the backend ignores them there', () => {
-    renderTab(makeWidget({ support_mode: false }))
-
-    expect(document.getElementById('widget-off-topic-subjects')).toBeNull()
-    expect(document.getElementById('widget-off-topic-reply')).toBeNull()
-  })
-
   it('loads the saved subjects and reply into the fields', () => {
     renderTab(
       makeWidget({

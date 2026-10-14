@@ -762,7 +762,7 @@ _SUPPORT_BODY: Final[str] = (
 )
 
 # Expressive-register variant of the SUPPORT profile, selected per widget via
-# the ``tone_register`` widget-config field when ``support_mode`` is on
+# the ``tone_register`` widget-config field
 # ("expressive"; default "restrained" keeps SUPPORT_CHAT_SYSTEM_PROMPT).
 # Per docs/research/voys-tone-of-voice.md § 6 the brand demonstrably runs TWO
 # registers: the dry help-article one SUPPORT follows, and a higher marketing/
@@ -992,7 +992,7 @@ META_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _M
 SUPPORT_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_BODY
 
 # Expressive-register variant of SUPPORT, selected by the widget backend only
-# when the widget runs in support mode with tone_register="expressive" — see
+# when the widget has tone_register="expressive" — see
 # the module docstring, rule 10. Same language-detection preamble, same truth
 # rules; only the ## Tone section differs.
 SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\n\n" + _SUPPORT_EXPRESSIVE_BODY

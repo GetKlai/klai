@@ -1,4 +1,4 @@
-"""The first support-mode question goes to retrieval with two paraphrases; nothing else does.
+"""The first widget or partner question goes to retrieval with two paraphrases; nothing else does.
 
 SPEC-RAG-ANSWER-JUDGES-001, logbook 2.33. The paraphrases are retrieval input
 only: the visitor's own words stay the primary query, a follow-up turn keeps
@@ -61,7 +61,6 @@ async def _retrieve(messages: list[dict], settings: MagicMock, **overrides: Any)
         kb_slugs=["support"],
         messages=messages,
         settings=settings,
-        support_mode=True,
         **overrides,
     )
 

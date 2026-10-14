@@ -47,7 +47,6 @@ from app.services.events import emit_event
 from app.services.internal_turn import InternalInputs, internal_turn
 from app.services.partner_chat import (
     KnowledgeTurn,
-    _is_web_search_tool,
     _last_user_message,
     chat_completion_non_streaming,
     chat_completion_streaming,
@@ -56,8 +55,6 @@ from app.services.partner_chat import (
     fixed_reply_stream,
     openai_chat_completion_non_streaming,
     openai_chat_completion_streaming,
-    retrieval_upstream_errors,
-    retrieve_context,
     safety_refusal_response,
     safety_refusal_stream,
     widget_input_safety_violation,
@@ -96,7 +93,7 @@ from app.services.widget_handoff import (
 )
 from app.services.widget_reply import AnswerUpstreamError, Reply, error_frames, reply_body, reply_frames
 from app.services.widget_theme import _merge_css_variables
-from app.services.widget_turn import TurnInputs, log_retrieval, widget_turn
+from app.services.widget_turn import TurnInputs, widget_turn
 
 logger = structlog.get_logger()
 
@@ -224,9 +221,8 @@ class ChatCompletionsRequest(BaseModel):
     knowledge: KnowledgeOptions | None = None
     # Opt-in live web search. When true, portal-api queries the same self-hosted
     # SearXNG instance the chat surfaces use, then injects the top results into
-    # the system prompt for this turn. Default off so existing callers are
-    # unaffected and search only runs when explicitly requested. Gated per key
-    # by the ``web_search`` permission; never runs for public widget keys.
+    # the system prompt for this turn. Default off. Honoured on the internal
+    # chat only (gated by the key's ``web_search`` permission); refused with a 400 elsewhere.
     web_search: bool = False
     # Optional explicit query for the web search. Integrations should pass a
     # concise, natural-language query here (e.g. the ticket subject) — it makes
@@ -238,10 +234,10 @@ class ChatCompletionsRequest(BaseModel):
     # turn's help-article retrieval comes up empty or weak, answer from general
     # domain knowledge instead of refusing — labelled as general knowledge,
     # never citing help articles, and never for company-specific claims (the
-    # boundary lives in the prompt profile). Honoured only while the widget
-    # runs in support mode; ignored for partner API keys, whose behaviour is
-    # unchanged. Retrieval always runs first regardless, so knowledge gaps
-    # keep being recorded even when a broad answer follows.
+    # boundary lives in the prompt profile). Honoured on every widget and
+    # partner turn, which all run widget_turn; the internal chat ignores it.
+    # Retrieval always runs first regardless, so knowledge gaps keep being
+    # recorded even when a broad answer follows.
     broad_mode: bool = False
     # Widget feedback addressing: the widget client generates one random hex
     # id per assistant turn and sends it here; the audit writer stores it on
@@ -258,6 +254,7 @@ class ChatCompletionsRequest(BaseModel):
     # turns are not audited. Same limits as the HubSpot handoff request.
     visitor_name: str | None = Field(default=None, max_length=120)
     visitor_email: str | None = Field(default=None, max_length=254)
+    # Internal chat only; a widget or partner key gets a 400 (chat_completions).
     # Forwarded to LiteLLM unmodified except for a Strict-KB profile, which
     # strips web-search tools (see chat_completion_streaming). Client-side
     # tool execution: portal never calls a tool itself, it only relays the
@@ -456,33 +453,12 @@ async def _widget_page_context_enabled(auth: PartnerAuthContext, db: AsyncSessio
     return bool(config.get("page_context_enabled")) if isinstance(config, dict) else False
 
 
-async def _widget_support_mode_enabled(auth: PartnerAuthContext, db: AsyncSession) -> bool:
-    """Return whether this widget answers as a public help-page assistant.
-
-    Same shape as :func:`_widget_page_context_enabled`: a private widget_config
-    flag read only for widget JWT callers. When true, the chat uses the
-    customer-facing ``SUPPORT_CHAT_SYSTEM_PROMPT`` profile and the helpdesk
-    refusal variant; when false/absent the internal-team GROUNDED wording is
-    kept unchanged.
-    """
-    if not str(auth.key_id).startswith("wgt_"):
-        return False
-    result = await db.execute(
-        select(Widget.widget_config).where(
-            Widget.widget_id == auth.key_id,
-            Widget.org_id == auth.org_id,
-        )
-    )
-    config = result.scalar_one_or_none() or {}
-    return bool(config.get("support_mode")) if isinstance(config, dict) else False
-
-
 async def _widget_off_topic(auth: PartnerAuthContext, db: AsyncSession) -> tuple[str, str]:
     """Return this widget's (subjects it does not answer, reply to give instead).
 
     Both empty means the feature is off, which is every widget until an admin
     fills them in. Same shape and same widget-JWT restriction as
-    :func:`_widget_support_mode_enabled`.
+    :func:`_widget_page_context_enabled`.
     """
     if not str(auth.key_id).startswith("wgt_"):
         return "", ""
@@ -507,9 +483,9 @@ async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> s
     """Return this widget's customer-facing register: ``"restrained"`` (default)
     or ``"expressive"``.
 
-    Same shape as :func:`_widget_support_mode_enabled`, same restriction to
-    widget JWT callers. The value only selects between the two SUPPORT
-    profiles when support mode is on; anything unrecognised falls back to
+    Same shape as :func:`_widget_page_context_enabled`, same restriction to
+    widget JWT callers. The value selects between the two SUPPORT profiles;
+    anything unrecognised falls back to
     ``"restrained"``, so a hand-edited or stale widget_config can never
     silently switch a live widget to the expressive voice.
     """
@@ -1723,13 +1699,13 @@ async def _maybe_apply_web_search(
     *,
     request: ChatCompletionsRequest,
     auth: PartnerAuthContext,
-    is_widget_chat: bool,
     system_prompt: str,
 ) -> tuple[str, list[dict], str | None]:
     """Append live web results to the prompt and return them as evidence chunks.
 
-    Opt-in per request (``request.web_search``), gated by the key's
-    ``web_search`` permission, and never run for public widget keys. Fail-open:
+    Opt-in per request (``request.web_search``) on an internal chat turn, gated
+    by the key's ``web_search`` permission; a widget or partner turn runs
+    ``widget_turn``, which never searches the web. Fail-open:
     if search returns nothing or errors, the original prompt, an empty chunk
     list and ``None`` are returned so the answer still goes out without web context.
 
@@ -1742,9 +1718,6 @@ async def _maybe_apply_web_search(
     would be stripped to the "no citable sources" refusal.
     """
     if not request.web_search:
-        return system_prompt, [], None
-    if is_widget_chat:
-        logger.debug("partner_web_search_ignored_widget", org_id=auth.org_id)
         return system_prompt, [], None
 
     require_permission(auth, "web_search")  # raises 403 if the key lacks it
@@ -2081,7 +2054,7 @@ def _upstream_error_response(error: AnswerUpstreamError, request: ChatCompletion
     return StreamingResponse(content=_replayed(error_frames(error)), media_type="text/event-stream")
 
 
-async def chat_completions(  # noqa: C901
+async def chat_completions(
     request: ChatCompletionsRequest,
     http_request: Request,
     auth: PartnerAuthContext = Depends(get_partner_key),
@@ -2105,10 +2078,16 @@ async def chat_completions(  # noqa: C901
 
     # 2-3. Model and messages validation.
     _validate_chat_request(request)
-    # Tools reach the model's prompt, so an anonymous widget visitor may not
-    # supply them; partner and internal keys are authenticated integrations.
-    if profile.surface == "widget" and (request.tools or request.tool_choice is not None):
-        raise _openai_error(status.HTTP_400_BAD_REQUEST, "tools are not supported on widget keys")
+    # Tools reach the model's prompt, so only the internal chat offers them: a
+    # widget visitor is anonymous, and a partner key runs the widget's turn,
+    # which writes its reply without a tool step.
+    if profile.surface != "internal" and (request.tools or request.tool_choice is not None):
+        raise _openai_error(status.HTTP_400_BAD_REQUEST, "tools are not supported on widget and partner keys")
+    # The same holds for live web results: the widget's turn reads the help
+    # articles only, so a request that asks for the web gets an error, not a
+    # reply that quietly did without.
+    if profile.surface != "internal" and request.web_search:
+        raise _openai_error(status.HTTP_400_BAD_REQUEST, "web_search is not supported on widget and partner keys")
 
     # 3a. PDF attachments in the latest user turn become text before anything
     # reads the messages. Not for the widget: its visitors are anonymous and
@@ -2138,11 +2117,8 @@ async def chat_completions(  # noqa: C901
     partner_user_id = _partner_user_id(auth)
     widget_system_prompt = await _widget_system_prompt(auth, db)
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
-    support_mode = await _widget_support_mode_enabled(auth, db) if is_widget_chat else False
     off_topic_subjects, off_topic_reply = await _widget_off_topic(auth, db) if is_widget_chat else ("", "")
-    # Register only matters when support mode is on; for internal widgets and
-    # partner-key traffic it stays the default and changes nothing.
-    tone_register = await _widget_tone_register(auth, db) if is_widget_chat and support_mode else "restrained"
+    tone_register = await _widget_tone_register(auth, db) if is_widget_chat else "restrained"
     page_context = (
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
     )
@@ -2178,8 +2154,8 @@ async def chat_completions(  # noqa: C901
     # also skip on, the way klai_knowledge.py does today.
     pasted_correspondence = detect_pasted_correspondence(request.messages)
 
-    if support_mode:
-        # The help widget's turn runs as the flow of chat-quality-history-and-plan.md §5.
+    if profile.surface != "internal":
+        # Every widget and partner turn runs as the flow of chat-quality-history-and-plan.md §5.
         turn = TurnInputs(
             request=request,
             auth=auth,
@@ -2208,76 +2184,41 @@ async def chat_completions(  # noqa: C901
             return _upstream_error_response(error, request)
         return _reply_response(reply, request, record)
 
-    internal = profile.surface == "internal"
-    if internal:
-        # The internal chat runs the same flow (internal_turn.py). A Strict
-        # reply comes back held and composed; an Open or general one is
-        # streamed live below, because employees read the tokens as they arrive.
-        templates_block, telemetry_level = "", "shadow"
-        if profile.user_id is not None:
-            instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
-            templates_block = build_template_instructions_block(instructions)
-        try:
-            outcome = await internal_turn(
-                InternalInputs(
-                    request=request,
-                    auth=auth,
-                    settings=settings,
-                    profile=profile,
-                    templates_block=templates_block,
-                    telemetry_level=telemetry_level,
-                    pasted_correspondence=pasted_correspondence,
-                    answer_signals=answer_signals,
-                    turn_started=turn_started,
-                )
-            )
-        except AnswerUpstreamError as error:
-            return _upstream_error_response(error, request)
-        if isinstance(outcome, Reply):
-            _write_internal_record(auth.org_id, outcome.signals, outcome.turn)
-            return _reply_response(outcome, request, None)
-        chunks, system_prompt, trusted_sources, knowledge_turn, turn_timing = outcome
-    else:
-        knowledge_turn = KnowledgeTurn()
-        turn_timing = None
-        with retrieval_upstream_errors(auth.org_id):
-            chunks, system_prompt, trusted_sources, _ = await retrieve_context(
-                answer_signals=answer_signals,
-                org_id=auth.org_id,
-                zitadel_org_id=auth.zitadel_org_id,
-                kb_slugs=kb_slugs,
-                messages=request.messages,
+    # The internal chat runs the same flow (internal_turn.py). A Strict reply
+    # comes back held and composed; an Open or general one is streamed live
+    # below, because employees read the tokens as they arrive.
+    templates_block, telemetry_level = "", "shadow"
+    if profile.user_id is not None:
+        instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
+        templates_block = build_template_instructions_block(instructions)
+    try:
+        outcome = await internal_turn(
+            InternalInputs(
+                request=request,
+                auth=auth,
                 settings=settings,
-                partner_user_id=partner_user_id,
-                widget_system_prompt=widget_system_prompt,
-                page_context=page_context,
-                support_mode=False,
-                broad_mode=bool(request.broad_mode),
-                tone_register=tone_register,
-                pasted_correspondence=pasted_correspondence,
-                is_preview=getattr(auth, "is_preview", False),
-                audit_widget_id=audit.widget_id,
-                audit_session_key=audit.session_key,
-                audit_write=user_turn_write,
-                retrieval_query=knowledge.query if knowledge is not None else None,
-                top_k=knowledge.top_k if knowledge is not None and knowledge.top_k is not None else 8,
-                retrieval_enabled=retrieval_enabled,
                 profile=profile,
-                web_search_available=any(_is_web_search_tool(tool) for tool in request.tools or []),
-                knowledge_turn=knowledge_turn,
+                templates_block=templates_block,
+                telemetry_level=telemetry_level,
+                pasted_correspondence=pasted_correspondence,
+                answer_signals=answer_signals,
+                turn_started=turn_started,
             )
-        # 7. Fire retrieval log async
-        log_retrieval(auth.org_id, f"partner:{auth.key_id}", chunks)
+        )
+    except AnswerUpstreamError as error:
+        return _upstream_error_response(error, request)
+    if isinstance(outcome, Reply):
+        _write_internal_record(auth.org_id, outcome.signals, outcome.turn)
+        return _reply_response(outcome, request, None)
+    chunks, system_prompt, trusted_sources, knowledge_turn, turn_timing = outcome
 
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
         auth=auth,
-        is_widget_chat=is_widget_chat,
         system_prompt=system_prompt,
     )
 
-    # 8. Streaming or non-streaming. The widget's signals go to its audit row,
-    # the internal turn's to its own record; partner-API turns keep none.
+    # 8. Streaming or non-streaming; the turn's signals go to its own record.
     generation: dict[str, Any] = {
         "messages": request.messages,
         "model": request.model,
@@ -2290,8 +2231,7 @@ async def chat_completions(  # noqa: C901
         "web_query": web_query,
         "trusted_sources": trusted_sources,
         "source_query": knowledge.query if knowledge is not None else None,
-        "page_context": page_context,
-        "answer_signals": answer_signals if audit.ready or internal else None,
+        "answer_signals": answer_signals,
         "turn_timing": turn_timing,
         "profile": profile,
         "tools": request.tools,
@@ -2303,23 +2243,19 @@ async def chat_completions(  # noqa: C901
         "pasted_correspondence": pasted_correspondence,
     }
     if request.stream:
-        streaming_gen = chat_completion_streaming(
-            **generation, emit_sources=knowledge.include_sources if knowledge is not None else True
+        streaming_gen = _internal_record_streaming_wrapper(
+            chat_completion_streaming(
+                **generation, emit_sources=knowledge.include_sources if knowledge is not None else True
+            ),
+            org_id=auth.org_id,
+            answer_signals=answer_signals,
+            turn=knowledge_turn,
         )
-        if internal:
-            streaming_gen = _internal_record_streaming_wrapper(
-                streaming_gen, org_id=auth.org_id, answer_signals=answer_signals, turn=knowledge_turn
-            )
-        if record is not None:
-            streaming_gen = _audit_streaming_wrapper(
-                streaming_gen, turn=knowledge_turn, **record, answer_signals=answer_signals
-            )
         return StreamingResponse(content=streaming_gen, media_type="text/event-stream")
 
     result = await chat_completion_non_streaming(**generation)
-    if internal:
-        _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
-    return _sent_body(result, request, knowledge_turn, answer_signals, record)
+    _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
+    return _sent_body(result, request, knowledge_turn, answer_signals, None)
 
 
 # ---------------------------------------------------------------------------
@@ -3395,7 +3331,6 @@ async def widget_config(
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
-        "support_mode": widget_config_data.get("support_mode", False),
         # Interim appointment redirect (booking API pending) — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
         # Voys-specific: in-widget Nerds booking panel — see _widget_nerds_integration.
@@ -3533,7 +3468,6 @@ async def public_bot_config(
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
-        "support_mode": widget_config_data.get("support_mode", False),
         # Interim appointment redirect (booking API pending) — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
         # Voys-specific: in-widget Nerds booking panel — see _widget_nerds_integration.

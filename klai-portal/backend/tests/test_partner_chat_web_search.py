@@ -1,10 +1,11 @@
-"""Web search for the Partner API (server-side SearXNG fetch + cite).
+"""Web search on the internal chat's live leg (server-side SearXNG fetch + cite).
 
 `web_search: true` makes portal-api query the same SearXNG instance the chat
 surfaces use, inject the results as an untrusted context block into the system
 prompt, AND feed them to the citation composer as a separate web tier so they
 become citable sources tagged `origin: "web"`. Gated per API key
-(`web_search` permission) and never run for public widget keys.
+(`web_search` permission) and never run for a widget or partner key, whose
+turns run widget_turn.
 
 These tests cover:
 - search_web: calls SearXNG /search?format=json, parses + bounds results,
@@ -411,29 +412,13 @@ def test_compose_dedupes_same_url_across_kb_and_web():
 
 
 @pytest.mark.asyncio
-async def test_maybe_apply_web_search_skips_widget(monkeypatch):
-    import app.api.partner as partner
-
-    search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
-    monkeypatch.setattr(partner, "search_web", search)
-    req = _req(web_search=True, messages=[{"role": "user", "content": "is there an outage?"}])
-    prompt, chunks, web_query = await partner._maybe_apply_web_search(
-        request=req, auth=_auth({"chat": True, "web_search": True}), is_widget_chat=True, system_prompt="sp"
-    )
-    assert (prompt, chunks, web_query) == ("sp", [], None)
-    search.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_maybe_apply_web_search_requires_permission(monkeypatch):
     import app.api.partner as partner
 
     monkeypatch.setattr(partner, "search_web", AsyncMock(return_value=[]))
     req = _req(web_search=True, messages=[{"role": "user", "content": "q"}])
     with pytest.raises(HTTPException) as exc:
-        await partner._maybe_apply_web_search(
-            request=req, auth=_auth({"chat": True}), is_widget_chat=False, system_prompt="sp"
-        )
+        await partner._maybe_apply_web_search(request=req, auth=_auth({"chat": True}), system_prompt="sp")
     assert exc.value.status_code == 403
 
 
@@ -445,7 +430,7 @@ async def test_maybe_apply_web_search_searches_with_resolved_query(monkeypatch):
     monkeypatch.setattr(partner, "search_web", search)
     req = _req(web_search=True, web_search_query="my concise query", messages=[{"role": "user", "content": "q"}])
     prompt, chunks, web_query = await partner._maybe_apply_web_search(
-        request=req, auth=_auth({"chat": True, "web_search": True}), is_widget_chat=False, system_prompt="sp"
+        request=req, auth=_auth({"chat": True, "web_search": True}), system_prompt="sp"
     )
     assert web_query == "my concise query"
     assert chunks and chunks[0]["source_url"] == "https://x.test/1"
@@ -454,85 +439,27 @@ async def test_maybe_apply_web_search_searches_with_resolved_query(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chat_handler_web_search_requires_partner_permission(monkeypatch):
+async def test_chat_handler_web_search_is_refused_for_a_widget_or_partner_key(monkeypatch):
+    """A widget and a partner key both run widget_turn, which reads the help
+    articles only; a request that asks for the web gets a 400 instead of a
+    reply that quietly did without, so the permission is never meaningless."""
     import app.api.partner as partner
 
-    monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=[]))
-    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [], False)))
-    search = AsyncMock(return_value=[])
+    search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
     monkeypatch.setattr(partner, "search_web", search)
-    req = _req(web_search=True, stream=False, messages=[{"role": "user", "content": "q"}])
+    req = _req(web_search=True, stream=False, web_search_query="concise", messages=[{"role": "user", "content": "q"}])
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(HTTPException) as raised:
         await partner.chat_completions(
             request=req,
             http_request=MagicMock(headers={}, client=MagicMock(host="127.0.0.1")),
-            auth=_auth({"chat": True}),
+            auth=_auth({"chat": True, "web_search": True}),
             db=AsyncMock(),
         )
 
-    assert exc.value.status_code == 403
+    assert raised.value.status_code == 400
+    assert "web_search" in str(raised.value.detail)
     search.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_chat_handler_web_search_never_runs_for_widget_key(monkeypatch):
-    import app.api.partner as partner
-
-    # kb_access resolves to a real slug (SPEC-PARTNER-KB-SCOPE-001 fails closed
-    # on an unresolvable KB scope) — this test is about web search, not KB scope.
-    monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-1"]))
-    monkeypatch.setattr(partner, "_widget_system_prompt", AsyncMock(return_value=None))
-    monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
-    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [], False)))
-    search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
-    chat = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "search_web", search)
-    monkeypatch.setattr(partner, "chat_completion_non_streaming", chat)
-    req = _req(web_search=True, stream=False, messages=[{"role": "user", "content": "q"}])
-    auth = _auth({"chat": True, "web_search": True})
-    auth.key_id = "wgt_test_widget"
-    db = AsyncMock()
-    widget_uuid_result = MagicMock()
-    widget_uuid_result.scalar_one_or_none = MagicMock(return_value=None)
-    db.execute = AsyncMock(return_value=widget_uuid_result)
-
-    await partner.chat_completions(
-        request=req,
-        http_request=MagicMock(headers={}, client=MagicMock(host="127.0.0.1")),
-        auth=auth,
-        db=db,
-    )
-
-    search.assert_not_awaited()
-    chat.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_chat_handler_web_search_allowed_for_partner_key(monkeypatch):
-    import app.api.partner as partner
-
-    # kb_access resolves to a real slug (SPEC-PARTNER-KB-SCOPE-001 fails closed
-    # on an unresolvable KB scope) — this test is about web search, not KB scope.
-    monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-1"]))
-    monkeypatch.setattr(partner, "retrieve_context", AsyncMock(return_value=([], "sp", [], False)))
-    search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
-    chat = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "search_web", search)
-    monkeypatch.setattr(partner, "chat_completion_non_streaming", chat)
-    req = _req(web_search=True, stream=False, web_search_query="concise", messages=[{"role": "user", "content": "q"}])
-
-    await partner.chat_completions(
-        request=req,
-        http_request=MagicMock(headers={}, client=MagicMock(host="127.0.0.1")),
-        auth=_auth({"chat": True, "web_search": True}),
-        db=AsyncMock(),
-    )
-
-    search.assert_awaited_once()
-    assert search.await_args.args[0] == "concise"
-    assert chat.await_args.kwargs["web_query"] == "concise"
-    assert chat.await_args.kwargs["web_chunks"][0]["source_url"] == "https://x.test/1"
 
 
 def test_web_chunks_not_cited_when_answer_unrelated():

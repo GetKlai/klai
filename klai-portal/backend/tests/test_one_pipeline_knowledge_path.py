@@ -1,8 +1,7 @@
 """One-chat-pipeline slice 4: the knowledge path does for the internal
 profile what the LiteLLM hook does today (modes, scope with identity,
 retrieval parameters, sub-question fan-out, trivial gate, Strict-risk
-model choice; the query rewrite gave way to the case in step O4), while a widget single-question turn stays
-byte-identical.
+model choice; the query rewrite gave way to the case in step O4).
 
 Every test drives ``chat_completions`` end to end with one HTTP double that
 records each POST by URL, so an assertion reads what actually left portal-api:
@@ -15,7 +14,6 @@ example.com URLs, invented KB slugs).
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -24,7 +22,6 @@ import pytest
 from app.api.partner_dependencies import PartnerAuthContext
 from app.services.chat_profile import ChatProfile
 
-GOLDEN_PATH = Path(__file__).parent / "fixtures" / "widget_knowledge_golden.json"
 ANSWER = "Je reset je wachtwoord via de inlogpagina."
 
 
@@ -139,7 +136,6 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["handboek"]))
     monkeypatch.setattr(partner, "_widget_system_prompt", AsyncMock(return_value=None))
     monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
-    monkeypatch.setattr(partner, "_widget_support_mode_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(partner_chat, "_schedule_gap_event", MagicMock())
     monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
 
@@ -169,28 +165,6 @@ async def _chat(
 
 def _system_prompt(recorder: _Recorder) -> str:
     return recorder.model_bodies[-1]["messages"][0]["content"]
-
-
-# --- widget stays byte-identical ------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_widget_single_question_retrieve_body_and_prompt_match_the_golden(pipeline):
-    recorder = pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
-
-    await _chat(
-        _auth(key_id="wgt_golden"),
-        ChatProfile(surface="widget"),
-        [{"role": "user", "content": "Hoe reset ik mijn wachtwoord?"}],
-    )
-
-    from klai_chat_prompts import GROUNDED_CHAT_SYSTEM_PROMPT
-
-    golden = json.loads(GOLDEN_PATH.read_text())
-    assert recorder.retrieve_bodies == [golden["retrieve_body"]]
-    assert _system_prompt(recorder) == golden["system_prompt"].replace(
-        "{GROUNDED_CHAT_SYSTEM_PROMPT}", GROUNDED_CHAT_SYSTEM_PROMPT
-    )
 
 
 # --- internal profile ------------------------------------------------------------

@@ -14,6 +14,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
+from app.services.chat_profile import ChatProfile
 from app.services.partner_chat import chat_completion_non_streaming, chat_completion_streaming
 
 
@@ -46,6 +47,7 @@ async def _call() -> None:
         system_prompt="system",
         settings=_settings(),
         org_id=1,
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
     )
 
 
@@ -149,6 +151,7 @@ async def test_streaming_markers_upstream_connect_error_emits_error_frame():
         chunks = [
             chunk
             async for chunk in chat_completion_streaming(
+                profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
                 messages=[{"role": "user", "content": "hi"}],
                 model="klai-primary",
                 temperature=0.7,
@@ -169,6 +172,7 @@ async def test_streaming_markers_upstream_read_error_emits_error_frame():
         chunks = [
             chunk
             async for chunk in chat_completion_streaming(
+                profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
                 messages=[{"role": "user", "content": "hi"}],
                 model="klai-primary",
                 temperature=0.7,
@@ -191,6 +195,7 @@ async def test_streaming_markers_upstream_status_error_emits_error_frame():
         chunks = [
             chunk
             async for chunk in chat_completion_streaming(
+                profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
                 messages=[{"role": "user", "content": "hi"}],
                 model="klai-primary",
                 temperature=0.7,

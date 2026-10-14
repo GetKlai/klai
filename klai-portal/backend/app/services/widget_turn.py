@@ -1,10 +1,11 @@
-"""The help widget's support-mode turn, step by step in the order of the flow.
+"""Every widget and partner-key turn, step by step in the order of the flow.
 
 The flow is chat-quality-history-and-plan.md §5: read the case, route in code
 what needs no articles, search, select, route in code what the selection
 decided, write. ``app.api.partner.chat_completions`` resolves the request, the
 widget's settings and the previous case before the turn, and records and sends
-the ``Reply`` after it; a reply decided in code and a written one both come
+the ``Reply`` after it (a partner key has no widget, so its turn is not
+recorded); a reply decided in code and a written one both come
 back as a ``Reply``. The internal chat runs the same flow (internal_turn.py)
 and shares the steps that are the same there: the question, the fixed reply
 and the retrieval log.
@@ -94,8 +95,8 @@ class Found(NamedTuple):
     chunks: list[dict]
     system_prompt: str
     trusted_sources: list[dict[str, Any]]
-    # retrieve_context's per-turn decision: support mode + visitor consent + a
-    # real retrieval attempt that produced a gap. The writer then neither cites
+    # retrieve_context's per-turn decision: visitor consent + a real retrieval
+    # attempt that produced a gap. The writer then neither cites
     # the weak chunks nor shows a misleading "passages gevonden" activity; the
     # retrieval log still records them, retrieval genuinely ran.
     broad: bool
@@ -181,7 +182,6 @@ async def _search(inputs: TurnInputs, turn: KnowledgeTurn, follow_up_variants: l
         partner_user_id=inputs.partner_user_id,
         widget_system_prompt=inputs.widget_system_prompt,
         page_context=inputs.page_context,
-        support_mode=True,
         broad_mode=bool(request.broad_mode),
         tone_register=inputs.tone_register,
         pasted_correspondence=inputs.pasted_correspondence,
@@ -195,7 +195,7 @@ async def _search(inputs: TurnInputs, turn: KnowledgeTurn, follow_up_variants: l
         profile=inputs.profile,
         templates_block="",
         telemetry_level="shadow",
-        # A widget key may not send tools (chat_completions rejects them).
+        # A widget or partner key may not send tools (chat_completions rejects them).
         web_search_available=False,
         knowledge_turn=turn,
     )
@@ -426,9 +426,6 @@ async def _write(
     timing: dict[str, float],
 ) -> Reply:
     request, auth = inputs.request, inputs.auth
-    if request.web_search:
-        # Live web search never runs for a public widget key.
-        logger.debug("partner_web_search_ignored_widget", org_id=auth.org_id)
     knowledge = request.knowledge
     system_prompt = found.system_prompt
     if writing.escalation:
