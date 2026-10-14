@@ -62,7 +62,7 @@ from app.services.chat_safety import (
     safety_refusal_stream,
     widget_input_safety_violation,
 )
-from app.services.internal_turn import InternalInputs, internal_turn
+from app.services.internal_turn import InternalInputs, Live, internal_turn
 from app.services.partner_chat import chat_completion_non_streaming, chat_completion_streaming
 from app.services.pasted_correspondence import detect_pasted_correspondence
 from app.services.prompt_templates import internal_turn_settings
@@ -865,29 +865,8 @@ def _upstream_error_response(error: AnswerUpstreamError, request: ChatCompletion
     return StreamingResponse(content=_replayed(error_frames(error)), media_type="text/event-stream")
 
 
-async def chat_completions(
-    request: ChatCompletionsRequest,
-    http_request: Request,
-    auth: PartnerAuthContext = Depends(get_partner_key),
-    db: AsyncSession = Depends(get_db),
-    profile: ChatProfile | None = None,
-):
-    """Chat completions with RAG context from knowledge bases.
-
-    TASK-008: Non-streaming path.
-    TASK-009: Streaming SSE path.
-    """
-    turn_started = time.perf_counter()
-    # 1. Permission check
-    require_permission(auth, "chat")
-    # canonical_chat_completions always passes the profile; direct callers get
-    # the one their key resolves to. From here on the profile, not the key, is
-    # what the generation functions receive.
-    if profile is None:
-        profile = await resolve_chat_profile(db, auth, None)
-    structlog.contextvars.bind_contextvars(chat_surface=profile.surface, chat_kb_mode=profile.kb_mode)
-
-    # 2-3. Model and messages validation.
+def _refuse_or_admit(request: ChatCompletionsRequest, profile: ChatProfile) -> None:
+    """Step 1: what the request may ask for on this surface; raises the 400 when it asks for more."""
     _validate_chat_request(request)
     # Tools reach the model's prompt, so only the internal chat offers them: a
     # widget visitor is anonymous, and a partner key runs the widget's turn,
@@ -900,32 +879,25 @@ async def chat_completions(
     if profile.surface != "internal" and request.web_search:
         raise _openai_error(status.HTTP_400_BAD_REQUEST, "web_search is not supported on widget and partner keys")
 
-    # 3a. PDF attachments in the latest user turn become text before anything
-    # reads the messages. Not for the widget: its visitors are anonymous and
-    # its UI has no upload, so a widget key must not be a public route into
-    # docling. The language is decided on the unmodified messages, so a Dutch
-    # PDF never overrules an English question.
-    if profile.surface != "widget" and (attachment_reply := await _attachment_error_reply(request)):
-        return attachment_reply
 
-    if safety_response := _input_safety_block_response(request, auth, profile):
-        return safety_response
+async def _widget_or_partner_turn(
+    request: ChatCompletionsRequest,
+    http_request: Request,
+    auth: PartnerAuthContext,
+    db: AsyncSession,
+    profile: ChatProfile,
+    *,
+    pasted_correspondence: bool,
+    turn_started: float,
+) -> Any:
+    """Step 2a: a widget or partner turn, as the flow of chat-quality-history-and-plan.md §5.
+
+    The widget's own settings (instruction, page context, off-topic subjects,
+    tone) and its audit identity are read here; a partner key has none of
+    them and records nothing.
+    """
     is_widget_chat = str(auth.key_id).startswith("wgt_")
-
-    # 4. Validate KB access. ``knowledge`` is a Klai extension on top of the
-    # OpenAI-compatible request shape. Top-level knowledge_base_ids remains
-    # supported for existing partner clients.
-    knowledge = request.knowledge
-    if profile.surface == "internal":
-        # The employee's own KB settings, resolved into the profile, scope the
-        # turn; the internal key's kb_access plays no part. No slugs means every
-        # org KB, which retrieval-api scopes by the key's org and the employee.
-        retrieval_enabled, kb_slugs = True, list(profile.kb_slugs or [])
-    else:
-        retrieval_enabled, kb_slugs = await _partner_kb_scope(request, auth, db)
-
-    # 6. Retrieve context.
-    partner_user_id = _partner_user_id(auth)
+    retrieval_enabled, kb_slugs = await _partner_kb_scope(request, auth, db)
     widget_system_prompt = await _widget_system_prompt(auth, db)
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
     off_topic_subjects, off_topic_reply = await _widget_off_topic(auth, db) if is_widget_chat else ("", "")
@@ -943,65 +915,63 @@ async def chat_completions(
     # kb_slugs must never be empty here — retrieve_context() only sends
     # kb_slugs to retrieval-api when the list is truthy, and an empty list
     # is silently treated as "no KB restriction" (widens to every KB the
-    # org can see). The 400/403 guards above must have already fired for
-    # every empty-scope case by this point. The internal surface is the
-    # exception by design: its empty list is the employee's "every org KB".
-    assert profile.surface == "internal" or not retrieval_enabled or kb_slugs, (
+    # org can see). The 400/403 guards in _partner_kb_scope must have already
+    # fired for every empty-scope case by this point.
+    assert not retrieval_enabled or kb_slugs, (
         "chat_completions: retrieve_context must not be called with empty kb_slugs while retrieval is enabled"
     )
 
-    # Retrieval certainty of this answer: retrieve_context writes the band, the
-    # completion pad fills the rest in-process, and we hand the dict to the audit
-    # write, so the widget visitor's response never carries it. Only wired to the
-    # audit trail when it will read it.
-    # @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §4.1
-    answer_signals: dict[str, Any] = {}
-    # Pasted third-party correspondence (one-chat-pipeline slice 3, moved from
-    # klai_pasted_correspondence.py): conversation-wide by design so a
-    # follow-up turn still gets the epistemic contract while the
-    # correspondence stays in context. Threaded into retrieve_context so
-    # every return path (including the no-retrieval early returns) builds
-    # the same system prompt a later fan-out/clarify gate (slice 4/5) must
-    # also skip on, the way klai_knowledge.py does today.
-    pasted_correspondence = detect_pasted_correspondence(request.messages)
+    turn = TurnInputs(
+        request=request,
+        auth=auth,
+        settings=settings,
+        profile=profile,
+        kb_slugs=kb_slugs,
+        retrieval_enabled=retrieval_enabled,
+        partner_user_id=_partner_user_id(auth),
+        widget_system_prompt=widget_system_prompt,
+        page_context=page_context,
+        tone_register=tone_register,
+        off_topic_subjects=off_topic_subjects,
+        off_topic_reply=off_topic_reply,
+        previous_case=await _previous_case(request, auth, audit),
+        audit_widget_id=audit.widget_id,
+        audit_session_key=audit.session_key,
+        user_turn_write=user_turn_write,
+        audit_ready=audit.ready,
+        pasted_correspondence=pasted_correspondence,
+        # Retrieval certainty of this answer: retrieve_context writes the band,
+        # the writer fills the rest in-process, and the dict goes to the audit
+        # row, so the visitor's response never carries it.
+        # @MX:SPEC: SPEC-KNOWLEDGE-ACTIVITY-001 §4.1
+        answer_signals={},
+        turn_started=turn_started,
+    )
+    try:
+        reply = await widget_turn(turn)
+    except AnswerUpstreamError as error:
+        return _upstream_error_response(error, request)
+    return _reply_response(reply, request, record)
 
-    if profile.surface != "internal":
-        # Every widget and partner turn runs as the flow of chat-quality-history-and-plan.md §5.
-        turn = TurnInputs(
-            request=request,
-            auth=auth,
-            settings=settings,
-            profile=profile,
-            kb_slugs=kb_slugs,
-            retrieval_enabled=retrieval_enabled,
-            partner_user_id=partner_user_id,
-            widget_system_prompt=widget_system_prompt,
-            page_context=page_context,
-            tone_register=tone_register,
-            off_topic_subjects=off_topic_subjects,
-            off_topic_reply=off_topic_reply,
-            previous_case=await _previous_case(request, auth, audit),
-            audit_widget_id=audit.widget_id,
-            audit_session_key=audit.session_key,
-            user_turn_write=user_turn_write,
-            audit_ready=audit.ready,
-            pasted_correspondence=pasted_correspondence,
-            answer_signals=answer_signals,
-            turn_started=turn_started,
-        )
-        try:
-            reply = await widget_turn(turn)
-        except AnswerUpstreamError as error:
-            return _upstream_error_response(error, request)
-        return _reply_response(reply, request, record)
 
-    # The internal chat runs the same flow (internal_turn.py). A Strict reply
-    # comes back held and composed; an Open or general one is streamed live
-    # below, because employees read the tokens as they arrive.
+async def _internal_chat_turn(
+    request: ChatCompletionsRequest,
+    auth: PartnerAuthContext,
+    db: AsyncSession,
+    profile: ChatProfile,
+    *,
+    pasted_correspondence: bool,
+    turn_started: float,
+) -> Any:
+    """Step 2b: an internal chat turn (internal_turn.py). A Strict reply comes back held and composed; an Open or general one is streamed live, because employees read the tokens as they arrive."""
+    # The employee's own KB settings, resolved into the profile, scope the
+    # turn; the internal key's kb_access plays no part. No slugs means every
+    # org KB, which retrieval-api scopes by the key's org and the employee.
     templates_block, telemetry_level = "", "shadow"
     if profile.user_id is not None:
         instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
         templates_block = build_template_instructions_block(instructions)
+    answer_signals: dict[str, Any] = {}
     try:
         outcome = await internal_turn(
             InternalInputs(
@@ -1021,15 +991,28 @@ async def chat_completions(
     if isinstance(outcome, Reply):
         _write_internal_record(auth.org_id, outcome.signals, outcome.turn)
         return _reply_response(outcome, request, None)
-    chunks, system_prompt, trusted_sources, knowledge_turn, turn_timing = outcome
+    return await _internal_live_response(
+        request, auth, profile, outcome, answer_signals=answer_signals, pasted_correspondence=pasted_correspondence
+    )
 
+
+async def _internal_live_response(
+    request: ChatCompletionsRequest,
+    auth: PartnerAuthContext,
+    profile: ChatProfile,
+    live: Live,
+    *,
+    answer_signals: dict[str, Any],
+    pasted_correspondence: bool,
+) -> Any:
+    """Step 3: the live leg of an internal Open or general turn, streamed or not, with its signals recorded."""
+    chunks, system_prompt, trusted_sources, knowledge_turn, turn_timing = live
     system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
         request=request,
         auth=auth,
         system_prompt=system_prompt,
     )
-
-    # 8. Streaming or non-streaming; the turn's signals go to its own record.
+    knowledge = request.knowledge
     generation: dict[str, Any] = {
         "messages": request.messages,
         "model": request.model,
@@ -1067,6 +1050,55 @@ async def chat_completions(
     result = await chat_completion_non_streaming(**generation)
     _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
     return _sent_body(result, request)
+
+
+async def chat_completions(
+    request: ChatCompletionsRequest,
+    http_request: Request,
+    auth: PartnerAuthContext = Depends(get_partner_key),
+    db: AsyncSession = Depends(get_db),
+    profile: ChatProfile | None = None,
+):
+    """One chat turn, streamed or not: admit the request, then run it as the turn of its surface.
+
+    The widget and the partner key run ``widget_turn``; the internal chat runs
+    ``internal_turn``, whose Open and general replies are streamed live.
+    """
+    turn_started = time.perf_counter()
+    require_permission(auth, "chat")
+    # canonical_chat_completions always passes the profile; direct callers get
+    # the one their key resolves to. From here on the profile, not the key, is
+    # what the turn receives.
+    if profile is None:
+        profile = await resolve_chat_profile(db, auth, None)
+    structlog.contextvars.bind_contextvars(chat_surface=profile.surface, chat_kb_mode=profile.kb_mode)
+    _refuse_or_admit(request, profile)
+    # PDF attachments in the latest user turn become text before anything
+    # reads the messages. Not for the widget: its visitors are anonymous and
+    # its UI has no upload, so a widget key must not be a public route into
+    # docling. The language is decided on the unmodified messages, so a Dutch
+    # PDF never overrules an English question.
+    if profile.surface != "widget" and (attachment_reply := await _attachment_error_reply(request)):
+        return attachment_reply
+    if safety_response := _input_safety_block_response(request, auth, profile):
+        return safety_response
+    # Pasted third-party correspondence is conversation-wide by design, so a
+    # follow-up turn still gets the epistemic contract while the
+    # correspondence stays in context; every prompt of the turn is built on it.
+    pasted_correspondence = detect_pasted_correspondence(request.messages)
+    if profile.surface != "internal":
+        return await _widget_or_partner_turn(
+            request,
+            http_request,
+            auth,
+            db,
+            profile,
+            pasted_correspondence=pasted_correspondence,
+            turn_started=turn_started,
+        )
+    return await _internal_chat_turn(
+        request, auth, db, profile, pasted_correspondence=pasted_correspondence, turn_started=turn_started
+    )
 
 
 router.include_router(support_sessions_router)
