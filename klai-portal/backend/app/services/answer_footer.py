@@ -95,7 +95,7 @@ def render_answer_footer(
     the activity section with its general-knowledge line even without sources.
 
     ``sources`` must be the same labelled list the answer's inline citation
-    markers were composed against (``_compose_backend_managed_answer``'s
+    markers were composed against (``_compose_answer``'s
     return value) — that is what keeps the footer's source order in step with
     the numbers the employee already saw, on both a held and a live turn: both
     compose that list from the same accumulated text (see
