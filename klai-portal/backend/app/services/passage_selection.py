@@ -40,7 +40,11 @@ SELECTION_SYSTEM_PROMPT = (
     "replace it.\n"
     "evidence: go through the passages and copy, word for word, the sentence or step that tells the visitor how to "
     "do it or gives the fact they asked for. At most three passages, one sentence each, with the passage number. "
-    "Copy only sentences that carry the how or the fact. A sentence that merely says something exists, is "
+    "Copy only sentences that carry the how or the fact. With each sentence, variant: the device, app, phone model "
+    "or subscription the passage gives this sentence for, copied as the passage names it (the heading or the line "
+    "it stands under), or an empty string when the passage gives it for every variant or names none. When the "
+    "passages give different steps for different variants, copy one sentence per variant. "
+    "A sentence that merely says something exists, is "
     "supported or is available does not tell how to do it and is not evidence. A sentence saying that what the "
     "visitor wants is not possible or no longer supported IS the fact they need. Leave the list empty when there "
     "is no such sentence. It must be about the same product, device and direction (import is not export, inbound "
@@ -132,6 +136,15 @@ class Evidence(BaseModel):
 
     passage: int
     quote: str
+    # The variant the passage gives the sentence for, in the passage's words.
+    # Asked for per sentence, with one sentence per variant, the model sees
+    # the variants side by side and asks which applies: on the 66 lab turns
+    # (2026-10-14, three repeats) the owner's expected question came 11 of 18
+    # times against 4 of 18 without the field, while 7 answers became a
+    # question of the kind a colleague would ask (Android or iPhone, which
+    # Yealink model). Asking the model for the variants of a passage as a
+    # separate list and deciding in code asked needlessly twice as often.
+    variant: str
 
 
 class PassageSelection(BaseModel):

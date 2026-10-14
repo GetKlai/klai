@@ -163,7 +163,7 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
 
     selection = PassageSelection(
         need="belplan wijzigen",
-        evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")],
+        evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.", variant="")],
         verdict="answers",
         question="",
     )
@@ -179,7 +179,7 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
     assert signals["search"]["found"] == [{"title": "Belplan", "url": "https://help.example.com/belplan", "score": 0.9}]
     assert signals["selection"] == {
         "verdict": "answers",
-        "evidence": [{"passage": 1, "quote": "Klik op Belplan wijzigen."}],
+        "evidence": [{"passage": 1, "quote": "Klik op Belplan wijzigen.", "variant": ""}],
         "question": "",
     }
 
