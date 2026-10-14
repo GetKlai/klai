@@ -76,13 +76,16 @@ async def test_a_streamed_reply_is_recorded_from_the_reply_before_its_first_fram
         turn=KnowledgeTurn(),
     )
     written: list[dict[str, Any]] = []
-    monkeypatch.setattr(partner, "_write_widget_record", lambda turn, **fields: written.append(fields))
+    monkeypatch.setattr(
+        partner, "_write_widget_record", lambda turn, **fields: written.append({"turn": turn, **fields})
+    )
     request = partner.ChatCompletionsRequest(messages=[{"role": "user", "content": "Hoe?"}], stream=True)
 
     response = partner._reply_response(reply, request, {"widget_id": "w1", "session_key": "s1", "turn_id": "t1"})
 
     assert written == [
         {
+            "turn": reply.turn,
             "widget_id": "w1",
             "session_key": "s1",
             "turn_id": "t1",

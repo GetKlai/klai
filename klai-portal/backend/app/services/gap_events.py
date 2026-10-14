@@ -19,7 +19,7 @@ upstream-supplied level is never trusted.
 
 # @MX:WARN: Fire-and-forget callers must pass an RLS-scoped session — use
 # @MX:WARN: app.core.database.tenant_scoped_session when no request session
-# @MX:WARN: is at hand (see partner_chat._schedule_gap_event for the pattern).
+# @MX:WARN: is at hand (see retrieval_context._schedule_gap_event for the pattern).
 """
 
 from __future__ import annotations

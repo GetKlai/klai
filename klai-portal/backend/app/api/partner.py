@@ -838,18 +838,19 @@ async def _replayed(frames: list[bytes]) -> AsyncGenerator[bytes]:
 
 def _reply_response(reply: Reply, request: ChatCompletionsRequest, record: dict[str, Any] | None) -> Any:
     """Send a widget or internal reply the way the request asked for it, and record a widget turn."""
+    knowledge = request.knowledge
+    include_sources = knowledge.include_sources if knowledge is not None else True
     if record is not None and reply.text:
-        # Recorded once, from the Reply itself, before anything is sent.
+        # Recorded once, from the Reply itself, as the visitor gets it: the
+        # write starts before the first frame and runs beside the sending.
         _write_widget_record(
             reply.turn,
             **record,
             role="assistant",
             content=reply.text,
-            sources=reply.sources or None,
+            sources=(reply.sources or None) if include_sources else None,
             answer_signals=reply.signals or None,
         )
-    knowledge = request.knowledge
-    include_sources = knowledge.include_sources if knowledge is not None else True
     if request.stream:
         frames = _replayed(reply_frames(reply, include_sources=include_sources))
         return StreamingResponse(content=frames, media_type="text/event-stream")

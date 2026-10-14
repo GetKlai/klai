@@ -2,7 +2,7 @@
 
 **Stand: 24 september 2026, commit `67e387304` op main; §2 (pad B) herschreven op 13 oktober 2026 naar de code na de sneden O1 tot en met O5 van het plan.** Alleen code en configuratie zijn als bron gebruikt. Specs en oudere architectuurdocumenten zijn behandeld als claims en waar nodig gecorrigeerd. Elke bewering heeft een anker `bestand:regel` (paden relatief aan de map die erbij staat).
 
-Dit is de kaart van het chatpad. Lees hem vóór je een voorstel doet of code verandert in `deploy/litellm/`, `klai-portal/backend/app/services/partner_chat.py`, `answer_*.py`, `turn_judge.py`, `query_paraphrase.py`, `klai-libs/chat-prompts/` of `klai-retrieval-api/retrieval_api/api/retrieve.py`, en werk hem bij in dezelfde PR als je een stap, een LLM-aanroep of een beslisregel verandert. Wat er onderzocht is en waarom het zo gebouwd is, staat in [chat-quality-history-and-plan.md](chat-quality-history-and-plan.md).
+Dit is de kaart van het chatpad. Lees hem vóór je een voorstel doet of code verandert in `deploy/litellm/`, `klai-portal/backend/app/services/partner_chat.py`, `retrieval_context.py`, `chat_prompting.py`, `chat_safety.py`, `chat_sources.py`, `chat_sse.py`, `openai_passthrough.py`, `widget_turn.py`, `widget_write.py`, `passage_selection.py`, `answer_*.py`, `turn_judge.py`, `query_paraphrase.py`, `klai-libs/chat-prompts/` of `klai-retrieval-api/retrieval_api/api/retrieve.py`, en werk hem bij in dezelfde PR als je een stap, een LLM-aanroep of een beslisregel verandert. Wat er onderzocht is en waarom het zo gebouwd is, staat in [chat-quality-history-and-plan.md](chat-quality-history-and-plan.md).
 
 ---
 
