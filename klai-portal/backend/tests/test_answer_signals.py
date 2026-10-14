@@ -361,7 +361,7 @@ async def test_user_turn_carries_the_question_language(monkeypatch):
 
 
 async def _retrieve_with_signals(monkeypatch, payload: dict) -> dict:
-    from app.services import partner_chat
+    from app.services import retrieval_context
 
     class _Resp:
         def raise_for_status(self) -> None:
@@ -384,11 +384,11 @@ async def _retrieve_with_signals(monkeypatch, payload: dict) -> dict:
     settings.knowledge_retrieve_url = "http://retrieval-api:8040"
     settings.retrieval_api_internal_secret = "secret"
     settings.internal_secret = "fallback"
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
-    monkeypatch.setattr("app.services.partner_chat._schedule_gap_event", lambda **_: None)
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _Client())
+    monkeypatch.setattr("app.services.retrieval_context._schedule_gap_event", lambda **_: None)
 
     sink: dict = {}
-    await partner_chat.retrieve_context(
+    await retrieval_context.retrieve_context(
         org_id=42,
         zitadel_org_id="zit-org-1",
         kb_slugs=["kb-alpha"],
@@ -416,7 +416,7 @@ async def test_band_is_the_retrieval_services_band_not_a_recomputation(monkeypat
 async def test_band_is_unknown_when_the_safety_filter_changed_the_retrieved_set(monkeypatch):
     """The service banded the set it served; once a chunk is dropped here that set
     no longer reached the prompt, so no band is claimed for it."""
-    monkeypatch.setattr("app.services.partner_chat.context_safety_violation", lambda *_, **__: "test_block")
+    monkeypatch.setattr("app.services.retrieval_context.context_safety_violation", lambda *_, **__: "test_block")
 
     sink = await _retrieve_with_signals(monkeypatch, _payload("high"))
 

@@ -96,6 +96,21 @@ _ALLOWLIST: dict[str, str] = {
     "app/services/kb_offboarding.py": (
         "service layer — orchestrator called from admin/users.py routes after _get_caller_org sets tenant"
     ),
+    # The partner API was one module until it was split by concern; it passed
+    # this audit only because the widget-config routes in the same file call
+    # set_tenant. Every query in partner.py and partner_feedback.py runs on
+    # the session that get_partner_key (Depends or called directly) already
+    # ran set_tenant on. partner_hubspot.py has one more session: the event
+    # stream replays handoff messages on a fresh AsyncSessionLocal() without a
+    # tenant, which the widget_handoff_messages policy allows for that read.
+    "app/api/partner.py": "partner routes — get_partner_key runs set_tenant on the request session before any query",
+    "app/api/partner_feedback.py": (
+        "partner routes — get_partner_key runs set_tenant on the request session before any query"
+    ),
+    "app/api/partner_hubspot.py": (
+        "partner routes — get_partner_key runs set_tenant on the request session; the event-stream replay "
+        "reads widget_handoff_messages on a tenant-less session its policy allows"
+    ),
 }
 
 

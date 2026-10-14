@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.api.partner import (
+from app.api.partner_dependencies import PartnerAuthContext
+from app.api.partner_hubspot import (
     StartHubSpotHandoffRequest,
     start_widget_hubspot_handoff,
     stream_widget_hubspot_handoff_events,
 )
-from app.api.partner_dependencies import PartnerAuthContext
 from app.services.widget_handoff import build_handoff_context_text, record_hubspot_agent_reply
 
 
@@ -126,7 +126,7 @@ async def test_start_handoff_refused_for_a_tenant_that_is_not_the_platform_tenan
     widget.widget_config["allowed_origins"] = ["https://voys.getklai.com"]
     db.execute = AsyncMock(return_value=_Result((widget, _FakeOrg(slug="voys"))))
 
-    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+    with patch("app.api.partner_hubspot.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
         with pytest.raises(HTTPException) as exc_info:
             await start_widget_hubspot_handoff(
                 http_request=_widget_request("https://voys.getklai.com"),
@@ -149,7 +149,7 @@ async def test_start_handoff_allows_the_platform_tenant_on_its_own_allowed_origi
     widget.widget_config["allowed_origins"] = ["https://help.example.com"]
     db.execute = AsyncMock(return_value=_Result((widget, _FakeOrg(slug="getklai"))))
 
-    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+    with patch("app.api.partner_hubspot.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
         start_handoff.return_value = {
             "id": 1,
             "status": "active",
@@ -171,7 +171,7 @@ async def test_start_handoff_rejects_widget_without_hubspot_integration() -> Non
     widget = _FakeWidget(widget_config={"integrations": {"hubspot": {"status": "disconnected"}}})
     db.execute = AsyncMock(return_value=_Result((widget, _FakeOrg(slug="getklai"))))
 
-    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+    with patch("app.api.partner_hubspot.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
         with pytest.raises(HTTPException) as exc_info:
             await start_widget_hubspot_handoff(
                 http_request=_widget_request(),
@@ -209,12 +209,12 @@ async def test_handoff_events_subscribes_before_replay_and_closes_db_before_stre
         return [{"id": 4, "content": "Hallo", "direction": "agent"}]
 
     with (
-        patch("app.api.partner.AsyncSessionLocal", return_value=_SessionLocal(order, db)),
-        patch("app.api.partner.get_partner_key", side_effect=fake_get_partner_key),
-        patch("app.api.partner._require_hubspot_widget_handoff_enabled", side_effect=fake_require_enabled),
-        patch("app.api.partner.get_active_handoff_session_id", side_effect=fake_get_active_handoff_session_id),
-        patch("app.api.partner.get_redis_pool", side_effect=fake_get_redis_pool),
-        patch("app.api.partner.list_visible_handoff_messages", side_effect=fake_list_visible_handoff_messages),
+        patch("app.api.partner_hubspot.AsyncSessionLocal", return_value=_SessionLocal(order, db)),
+        patch("app.api.partner_hubspot.get_partner_key", side_effect=fake_get_partner_key),
+        patch("app.api.partner_hubspot._require_hubspot_widget_handoff_enabled", side_effect=fake_require_enabled),
+        patch("app.api.partner_hubspot.get_active_handoff_session_id", side_effect=fake_get_active_handoff_session_id),
+        patch("app.api.partner_hubspot.get_redis_pool", side_effect=fake_get_redis_pool),
+        patch("app.api.partner_hubspot.list_visible_handoff_messages", side_effect=fake_list_visible_handoff_messages),
     ):
         response = await stream_widget_hubspot_handoff_events(request=_widget_request(), last_event_id=3)
 
@@ -248,7 +248,7 @@ async def test_start_handoff_rejects_wrong_origin() -> None:
     db = AsyncMock()
     db.execute = AsyncMock(return_value=_Result((_FakeWidget(), _FakeOrg(slug="getklai"))))
 
-    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+    with patch("app.api.partner_hubspot.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
         with pytest.raises(HTTPException) as exc_info:
             await start_widget_hubspot_handoff(
                 http_request=_widget_request("https://voys.getklai.com"),
@@ -274,7 +274,7 @@ async def test_start_handoff_rejects_missing_origin() -> None:
     db = AsyncMock()
     db.execute = AsyncMock(return_value=_Result((_FakeWidget(), _FakeOrg(slug="getklai"))))
 
-    with patch("app.api.partner.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
+    with patch("app.api.partner_hubspot.start_hubspot_handoff", new_callable=AsyncMock) as start_handoff:
         with pytest.raises(HTTPException) as exc_info:
             await start_widget_hubspot_handoff(
                 http_request=_widget_request(None),

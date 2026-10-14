@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import partner_chat, query_paraphrase
+from app.services import query_paraphrase, retrieval_context
 
 _QUESTION = "Goedemorgen, mijn vaste lijn en mobiele lijn gaan gelijk over tot voicemail."
 _VARIANTS = [
@@ -42,8 +42,8 @@ def _capture_retrieve(monkeypatch, captured: dict[str, Any]) -> None:
             captured["body"] = json
             return _Resp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
-    monkeypatch.setattr(partner_chat, "_schedule_gap_event", lambda *a, **k: None)
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _Client())
+    monkeypatch.setattr(retrieval_context, "_schedule_gap_event", lambda *a, **k: None)
 
 
 def _settings() -> MagicMock:
@@ -55,7 +55,7 @@ def _settings() -> MagicMock:
 
 
 async def _retrieve(messages: list[dict], settings: MagicMock, **overrides: Any):
-    return await partner_chat.retrieve_context(
+    return await retrieval_context.retrieve_context(
         org_id=42,
         zitadel_org_id="zit-org-1",
         kb_slugs=["support"],
@@ -153,7 +153,7 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
         "reranker_score": 0.9,
     }
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.retrieval_context.httpx.AsyncClient",
         lambda timeout: _ClientWith(
             {"chunks": [], "evidence_pack": {"items": [chunk], "sources": []}, "confidence_band": "high"}
         ),
@@ -169,7 +169,7 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
     signals: dict[str, Any] = {}
     with (
         patch.object(query_paraphrase, "paraphrase_first_question", AsyncMock(return_value=_VARIANTS)),
-        patch.object(partner_chat, "select_passages", AsyncMock(return_value=selection)),
+        patch.object(retrieval_context, "select_passages", AsyncMock(return_value=selection)),
     ):
         await _retrieve([{"role": "user", "content": _QUESTION}], _settings(), answer_signals=signals)
 

@@ -13,12 +13,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.services.chat_profile import ChatProfile
-from app.services.partner_chat import (
-    _build_conversation_history,
-    _last_user_message,
-    _strip_web_search_tools,
-    chat_completion_streaming,
-)
+from app.services.chat_prompting import _build_conversation_history, _strip_web_search_tools
+from app.services.chat_safety import _last_user_message
+from app.services.partner_chat import chat_completion_streaming
 
 
 def _sse_content_frames(body: str) -> list[dict]:
@@ -115,7 +112,7 @@ async def test_tool_call_delta_reaches_client_before_stream_ends(monkeypatch):
         system_prompt="prompt",
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
 
@@ -151,7 +148,7 @@ async def test_tool_call_content_never_enters_composed_text_or_grounding_input(m
         system_prompt="prompt",
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
 
@@ -222,7 +219,7 @@ async def test_strict_profile_strips_web_search_tool_before_forwarding(monkeypat
 
 
 # ---------------------------------------------------------------------------
-# Open internal (stream_live) vs. held turns.
+# Open internal turns stream live.
 # ---------------------------------------------------------------------------
 
 
@@ -242,7 +239,7 @@ async def test_open_internal_profile_yields_multiple_content_frames(monkeypatch)
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
 
@@ -267,7 +264,7 @@ async def test_live_turn_never_streams_a_model_written_link_and_never_repeats_th
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
 
@@ -292,7 +289,7 @@ async def test_internal_generation_call_carries_the_org_for_pii_masking(
         system_prompt="prompt",
         settings=_settings(),
         delegated_org_id=delegated_org_id,
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         pass
 
@@ -302,7 +299,7 @@ async def test_internal_generation_call_carries_the_org_for_pii_masking(
 
 @pytest.mark.asyncio
 async def test_delegated_passthrough_uses_the_master_key_so_litellm_honours_the_org(monkeypatch):
-    from app.services.partner_chat import openai_chat_completion_non_streaming
+    from app.services.openai_passthrough import openai_chat_completion_non_streaming
 
     sent: dict = {}
 
@@ -322,7 +319,7 @@ async def test_delegated_passthrough_uses_the_master_key_so_litellm_honours_the_
             response.json.return_value = {"choices": [{"message": {"content": "Titel"}}]}
             return response
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", _Client)
+    monkeypatch.setattr("app.services.openai_passthrough.httpx.AsyncClient", _Client)
     settings = _settings()
     settings.litellm_general_chat_key = "general"
 
@@ -338,7 +335,7 @@ async def test_delegated_passthrough_uses_the_master_key_so_litellm_honours_the_
 
 
 def test_a_delegated_title_passthrough_keeps_its_passthrough_marker():
-    from app.services.partner_chat import _with_openai_passthrough_metadata
+    from app.services.openai_passthrough import _with_openai_passthrough_metadata
 
     body = _with_openai_passthrough_metadata({"model": "klai-primary", "messages": []}, delegated_org_id="zorg-a")
 
@@ -350,7 +347,7 @@ def test_a_delegated_title_passthrough_keeps_its_passthrough_marker():
 
 
 def test_widget_history_tool_messages_never_reach_the_model():
-    from app.services.partner_chat import _augment_messages_with_system_prompt
+    from app.services.chat_prompting import _augment_messages_with_system_prompt
 
     messages = [
         {"role": "user", "content": "Hoi"},

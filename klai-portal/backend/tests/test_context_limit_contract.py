@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.partner_chat import _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS
+from app.services.chat_prompting import _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS
 
 _RETRIEVAL_API_RELATIVE_PATH = "klai-retrieval-api/retrieval_api/models.py"
 _LITELLM_HOOK_RELATIVE_PATH = "deploy/litellm/klai_kb_request_context.py"

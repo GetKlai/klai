@@ -160,8 +160,8 @@ def test_partner_widget_lookup_filters_soft_deleted_in_select() -> None:
     """
     import inspect
 
-    import app.api.partner as partner_module
     import app.api.partner_dependencies as deps_module
+    import app.api.partner_widget_config as partner_module
 
     partner_src = inspect.getsource(partner_module)
     deps_src = inspect.getsource(deps_module)
@@ -169,7 +169,7 @@ def test_partner_widget_lookup_filters_soft_deleted_in_select() -> None:
     # widget_config + public_bot_config each have one occurrence;
     # the third occurrence is the chat-path Widget lookup at line ~1038.
     assert partner_src.count("Widget.deleted_at.is_(None)") >= 3, (
-        "All three public-facing Widget lookups in partner.py must filter on deleted_at"
+        "All three public-facing Widget lookups in partner_widget_config.py must filter on deleted_at"
     )
     assert "Widget.deleted_at.is_(None)" in deps_src, (
         "Session-token auth lookup in partner_dependencies.py must filter on deleted_at"

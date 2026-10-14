@@ -83,6 +83,7 @@ from starlette.responses import StreamingResponse  # noqa: E402
 
 from app.api import partner  # noqa: E402
 from app.api.partner_dependencies import PartnerAuthContext  # noqa: E402
+from app.api.partner_openai_compat import _chat_sse_delta_text  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.core.database import cross_org_session, tenant_scoped_session  # noqa: E402
 from app.core.provisioning_names import provisioning_names_for_slug  # noqa: E402
@@ -323,7 +324,7 @@ async def _old_answer(client: httpx.AsyncClient, tenant_key: str, librechat_user
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
-                text = partner._chat_sse_delta_text(line.encode())
+                text = _chat_sse_delta_text(line.encode())
                 if text:
                     first_token_ms = first_token_ms or _ms_since(started)
                     parts.append(text)
@@ -372,7 +373,7 @@ async def _new_answer(org: PortalOrg, profile: ChatProfile, messages: list[dict]
         if not isinstance(response, StreamingResponse):
             raise TypeError("the new path answered a streaming request without a stream")
         async for chunk in response.body_iterator:
-            text = partner._chat_sse_delta_text(chunk if isinstance(chunk, bytes) else str(chunk).encode())
+            text = _chat_sse_delta_text(chunk if isinstance(chunk, bytes) else str(chunk).encode())
             if text:
                 first_token_ms = first_token_ms or _ms_since(started)
                 parts.append(text)

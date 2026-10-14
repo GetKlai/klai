@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.services import partner_chat
+from app.services import retrieval_context
 
 _QUESTION = "Goedemorgen, mijn vaste lijn en mobiele lijn gaan gelijk over tot voicemail."
 _VARIANTS = [
@@ -36,8 +36,8 @@ def _capture_retrieve(monkeypatch, captured: dict[str, Any]) -> None:
             captured["body"] = json
             return _Resp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
-    monkeypatch.setattr(partner_chat, "_schedule_gap_event", lambda *a, **k: None)
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _Client())
+    monkeypatch.setattr(retrieval_context, "_schedule_gap_event", lambda *a, **k: None)
 
 
 def _settings() -> MagicMock:
@@ -49,7 +49,7 @@ def _settings() -> MagicMock:
 
 
 async def _retrieve(messages: list[dict], settings: MagicMock, **overrides: Any):
-    return await partner_chat.retrieve_context(
+    return await retrieval_context.retrieve_context(
         org_id=42,
         zitadel_org_id="zit-org-1",
         kb_slugs=["support"],

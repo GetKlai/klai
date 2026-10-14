@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import partner_chat
+from app.services import retrieval_context
 
 _REAL_QUERY = "Waar vind ik het retourbeleid?"
 
@@ -58,7 +58,7 @@ def _patch_retrieve(monkeypatch, payload: dict[str, Any]) -> None:
         async def post(self, url, json=None, headers=None):
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: _MockClient())
 
 
 def _fake_settings() -> MagicMock:
@@ -100,12 +100,12 @@ async def _call_retrieve_context(**overrides: Any) -> tuple[list[dict], str, lis
         "settings": _fake_settings(),
     }
     kwargs.update(overrides)
-    return await partner_chat.retrieve_context(**kwargs)
+    return await retrieval_context.retrieve_context(**kwargs)
 
 
 async def _drain_gap_tasks() -> None:
     """Await the fire-and-forget gap tasks scheduled during the test."""
-    tasks = list(partner_chat._pending_gap_tasks)
+    tasks = list(retrieval_context._pending_gap_tasks)
     if tasks:
         await asyncio.gather(*tasks)
 
@@ -116,9 +116,9 @@ async def test_widget_hard_gap_registers_gap_event(monkeypatch):
     widget traffic and scoped to the org id the pad already knows."""
     captured: dict[str, Any] = {}
     _patch_retrieve(monkeypatch, {"chunks": []})  # no evidence_pack → 0 chunks
-    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
 
-    with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+    with patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record:
         chunks, _, _, _broad = await _call_retrieve_context()
         await _drain_gap_tasks()
 
@@ -128,8 +128,8 @@ async def test_widget_hard_gap_registers_gap_event(monkeypatch):
     assert kwargs["gap_type"] == "hard"
     assert kwargs["zitadel_org_id"] == "zit-org-1"
     assert kwargs["query_text"] == _REAL_QUERY
-    assert kwargs["user_id"] == partner_chat._WIDGET_ANONYMOUS_USER_ID
-    assert kwargs["caller_client_id"] == partner_chat._WIDGET_GAP_CALLER_CLIENT_ID
+    assert kwargs["user_id"] == retrieval_context._WIDGET_ANONYMOUS_USER_ID
+    assert kwargs["caller_client_id"] == retrieval_context._WIDGET_GAP_CALLER_CLIENT_ID
     assert kwargs["chunks_retrieved"] == 0
     # RLS: the write runs on a session bound to the portal-internal org id.
     assert captured["session_org_id"] == 42
@@ -155,9 +155,9 @@ async def test_widget_good_results_registers_no_gap_event(monkeypatch):
             }
         },
     )
-    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
 
-    with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+    with patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record:
         chunks, _, _, _broad = await _call_retrieve_context()
         await _drain_gap_tasks()
 
@@ -174,7 +174,7 @@ async def test_widget_gap_respects_shadow_telemetry_level(monkeypatch):
     captured: dict[str, Any] = {}
     _patch_retrieve(monkeypatch, {"chunks": []})
     monkeypatch.setattr(
-        "app.services.partner_chat.tenant_scoped_session",
+        "app.services.retrieval_context.tenant_scoped_session",
         _fake_tenant_session(captured, org=_FakeOrg("shadow")),
     )
 
@@ -187,7 +187,7 @@ async def test_widget_gap_respects_shadow_telemetry_level(monkeypatch):
     assert _REAL_QUERY not in gap.query_text
     assert gap.gap_type == "hard"
     assert gap.org_id == 42
-    assert gap.caller_client_id == partner_chat._WIDGET_GAP_CALLER_CLIENT_ID
+    assert gap.caller_client_id == retrieval_context._WIDGET_GAP_CALLER_CLIENT_ID
 
 
 @pytest.mark.asyncio
@@ -212,9 +212,9 @@ async def test_widget_gap_soft_classification_with_none_scores(monkeypatch):
             }
         },
     )
-    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
 
-    with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+    with patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record:
         chunks, _, _, _broad = await _call_retrieve_context()
         await _drain_gap_tasks()
 
@@ -251,9 +251,9 @@ async def test_widget_soft_gap_derives_kb_slug_from_widget_scope(monkeypatch):
             }
         },
     )
-    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
 
-    with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+    with patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record:
         await _call_retrieve_context(kb_slugs=["kb-alpha"])
         await _drain_gap_tasks()
 
@@ -286,9 +286,9 @@ async def test_widget_soft_gap_keeps_kb_slug_none_when_scope_is_ambiguous(monkey
             }
         },
     )
-    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
 
-    with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+    with patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record:
         await _call_retrieve_context(kb_slugs=["kb-alpha", "kb-beta"])
         await _drain_gap_tasks()
 
@@ -302,12 +302,12 @@ async def test_widget_gap_write_failure_does_not_break_chat(monkeypatch):
     returns normally."""
     captured: dict[str, Any] = {}
     _patch_retrieve(monkeypatch, {"chunks": []})
-    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
     mock_logger = MagicMock()
-    monkeypatch.setattr("app.services.partner_chat.logger", mock_logger)
+    monkeypatch.setattr("app.services.retrieval_context.logger", mock_logger)
 
     with patch(
-        "app.services.partner_chat.record_gap_event",
+        "app.services.retrieval_context.record_gap_event",
         AsyncMock(side_effect=RuntimeError("database is down")),
     ):
         chunks, system_prompt, trusted_sources, _broad = await _call_retrieve_context()
@@ -329,7 +329,7 @@ async def test_off_telemetry_level_writes_nothing(monkeypatch):
     captured: dict[str, Any] = {}
     _patch_retrieve(monkeypatch, {"chunks": []})
     monkeypatch.setattr(
-        "app.services.partner_chat.tenant_scoped_session",
+        "app.services.retrieval_context.tenant_scoped_session",
         _fake_tenant_session(captured, org=_FakeOrg("off")),
     )
 
@@ -351,9 +351,9 @@ async def test_widget_gap_records_visitor_question_language(monkeypatch):
     ):
         captured: dict[str, Any] = {}
         _patch_retrieve(monkeypatch, {"chunks": []})
-        monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+        monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
 
-        with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+        with patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record:
             await _call_retrieve_context(messages=[{"role": "user", "content": query}])
             await _drain_gap_tasks()
 
@@ -368,11 +368,11 @@ async def test_widget_gap_attaches_audit_conversation_id(monkeypatch):
     side can jump to the conversation. When that row does not exist yet —
     the audit write is fire-and-forget and can lose the race against this
     one — the gap is still written, just without provenance."""
-    with patch("app.services.partner_chat.find_conversation_id", AsyncMock(return_value=(77, False))) as mock_find:
+    with patch("app.services.retrieval_context.find_conversation_id", AsyncMock(return_value=(77, False))) as mock_find:
         captured: dict[str, Any] = {}
         _patch_retrieve(monkeypatch, {"chunks": []})
-        monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
-        with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+        monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
+        with patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record:
             await _call_retrieve_context(audit_widget_id="11111111-1111-1111-1111-111111111111", audit_session_key="sk")
             await _drain_gap_tasks()
 
@@ -382,14 +382,14 @@ async def test_widget_gap_attaches_audit_conversation_id(monkeypatch):
     )
     assert mock_record.await_args.kwargs["conversation_id"] == 77
 
-    with patch("app.services.partner_chat.find_conversation_id", AsyncMock(return_value=None)):
+    with patch("app.services.retrieval_context.find_conversation_id", AsyncMock(return_value=None)):
         captured_missing: dict[str, Any] = {}
         _patch_retrieve(monkeypatch, {"chunks": []})
         monkeypatch.setattr(
-            "app.services.partner_chat.tenant_scoped_session",
+            "app.services.retrieval_context.tenant_scoped_session",
             _fake_tenant_session(captured_missing),
         )
-        with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_missing:
+        with patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_missing:
             await _call_retrieve_context(audit_widget_id="11111111-1111-1111-1111-111111111111", audit_session_key="sk")
             await _drain_gap_tasks()
 
@@ -403,11 +403,11 @@ async def test_widget_gap_skips_a_test_marked_conversation(monkeypatch):
     already marked as a test message must not editorialise the gap backlog,
     same as it drops out of the activity list, the summary, the outcome loop
     and the nightly judge."""
-    with patch("app.services.partner_chat.find_conversation_id", AsyncMock(return_value=(77, True))):
+    with patch("app.services.retrieval_context.find_conversation_id", AsyncMock(return_value=(77, True))):
         captured: dict[str, Any] = {}
         _patch_retrieve(monkeypatch, {"chunks": []})
-        monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
-        with patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record:
+        monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
+        with patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record:
             await _call_retrieve_context(audit_widget_id="11111111-1111-1111-1111-111111111111", audit_session_key="sk")
             await _drain_gap_tasks()
 
@@ -420,16 +420,16 @@ async def test_widget_gap_survives_conversation_lookup_failure(monkeypatch):
     the conversation id, never the gap row and never the chat answer."""
     captured: dict[str, Any] = {}
     _patch_retrieve(monkeypatch, {"chunks": []})
-    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
     mock_logger = MagicMock()
-    monkeypatch.setattr("app.services.partner_chat.logger", mock_logger)
+    monkeypatch.setattr("app.services.retrieval_context.logger", mock_logger)
 
     with (
         patch(
-            "app.services.partner_chat.find_conversation_id",
+            "app.services.retrieval_context.find_conversation_id",
             AsyncMock(side_effect=RuntimeError("connection reset")),
         ),
-        patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record,
+        patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record,
     ):
         chunks, system_prompt, trusted_sources, _broad = await _call_retrieve_context(
             audit_widget_id="11111111-1111-1111-1111-111111111111",
@@ -462,10 +462,10 @@ async def test_widget_gap_waits_for_the_user_turn_audit_write(monkeypatch):
 
     captured: dict[str, Any] = {}
     _patch_retrieve(monkeypatch, {"chunks": []})
-    monkeypatch.setattr("app.services.partner_chat.tenant_scoped_session", _fake_tenant_session(captured))
+    monkeypatch.setattr("app.services.retrieval_context.tenant_scoped_session", _fake_tenant_session(captured))
     with (
-        patch("app.services.partner_chat.find_conversation_id", AsyncMock(side_effect=_lookup)),
-        patch("app.services.partner_chat.record_gap_event", AsyncMock()) as mock_record,
+        patch("app.services.retrieval_context.find_conversation_id", AsyncMock(side_effect=_lookup)),
+        patch("app.services.retrieval_context.record_gap_event", AsyncMock()) as mock_record,
     ):
         await _call_retrieve_context(
             audit_widget_id="11111111-1111-1111-1111-111111111111",

@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.api.partner import widget_config, widget_config_preflight
+from app.api.partner_widget_config import widget_config, widget_config_preflight
 
 # ---------------------------------------------------------------------------
 # Shared fixtures (mirror test_widget_config.py)
@@ -114,11 +114,11 @@ async def test_partner_cors_widget_origin_no_credentials() -> None:
     request = _make_request(origin="https://customer.example")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -186,9 +186,9 @@ async def test_partner_cors_blocks_unlisted_origin() -> None:
     request = _make_request(origin="https://evil.example")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 

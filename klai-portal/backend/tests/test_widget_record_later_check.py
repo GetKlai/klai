@@ -15,7 +15,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.api import partner
-from app.services.partner_chat import KnowledgeTurn
+from app.services.retrieval_context import KnowledgeTurn
+from app.services.widget_reply import Reply, reply_frames
 
 
 @pytest.mark.asyncio
@@ -62,3 +63,36 @@ async def test_without_a_later_check_the_record_is_written_once_and_never_patche
 
     record.assert_awaited_once()
     patch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_reply_is_recorded_from_the_reply_before_its_first_frame(monkeypatch):
+    source = {"label": "1", "title": "Voorbeeld artikel", "url": "https://help.example.com/a", "origin": "kb"}
+    reply = Reply(
+        text="Open de instellingen.",
+        sources=[source],
+        signals={"decision": "answer"},
+        language="nl",
+        turn=KnowledgeTurn(),
+    )
+    written: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        partner, "_write_widget_record", lambda turn, **fields: written.append({"turn": turn, **fields})
+    )
+    request = partner.ChatCompletionsRequest(messages=[{"role": "user", "content": "Hoe?"}], stream=True)
+
+    response = partner._reply_response(reply, request, {"widget_id": "w1", "session_key": "s1", "turn_id": "t1"})
+
+    assert written == [
+        {
+            "turn": reply.turn,
+            "widget_id": "w1",
+            "session_key": "s1",
+            "turn_id": "t1",
+            "role": "assistant",
+            "content": "Open de instellingen.",
+            "sources": [source],
+            "answer_signals": {"decision": "answer"},
+        }
+    ]
+    assert [frame async for frame in response.body_iterator] == reply_frames(reply)

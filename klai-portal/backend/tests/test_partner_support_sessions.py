@@ -45,7 +45,7 @@ def _auth():
 
 @pytest.mark.asyncio
 async def test_create_support_session_upserts_and_returns_messages():
-    from app.api.partner import PartnerSupportSessionRequest, create_support_session
+    from app.api.partner_support_sessions import PartnerSupportSessionRequest, create_support_session
 
     session_id = "11111111-1111-1111-1111-111111111111"
     db = _db_with_results(
@@ -88,7 +88,7 @@ async def test_create_support_session_upserts_and_returns_messages():
 
 @pytest.mark.asyncio
 async def test_append_support_message_requires_existing_session():
-    from app.api.partner import PartnerSupportMessageRequest, append_support_message
+    from app.api.partner_support_sessions import PartnerSupportMessageRequest, append_support_message
 
     db = _db_with_results([FakeDbResult([])])
 
@@ -105,7 +105,7 @@ async def test_append_support_message_requires_existing_session():
 
 @pytest.mark.asyncio
 async def test_append_support_message_persists_next_sequence():
-    from app.api.partner import PartnerSupportMessageRequest, append_support_message
+    from app.api.partner_support_sessions import PartnerSupportMessageRequest, append_support_message
 
     session_id = "11111111-1111-1111-1111-111111111111"
     db = _db_with_results(
