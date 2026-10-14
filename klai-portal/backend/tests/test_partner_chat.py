@@ -19,6 +19,9 @@ import pytest
 from fastapi import HTTPException
 from helpers import FakeKB, FakeResult, make_partner_auth
 
+from app.services.partner_chat import KnowledgeTurn
+from app.services.widget_reply import Reply
+
 
 def _http_request_stub() -> MagicMock:
     """Minimal Request stub for chat_completions; widget-only audit
@@ -35,18 +38,20 @@ def _widget_auth(**kwargs):
     return auth
 
 
-@pytest.fixture(autouse=True)
-def _mock_retrieval_log(monkeypatch):
-    """Prevent orphaned coroutines when asyncio.create_task is mocked.
+def _written(text: str = "Hi") -> Reply:
+    return Reply(text=text, sources=[], signals={}, language=None, turn=KnowledgeTurn())
 
-    Tests in this module mock the entire asyncio module.  If write_retrieval_log
-    were a real coroutine function, GC at interpreter shutdown would emit
-    'coroutine was never awaited' — after all hooks have already been cleaned up.
-    Replacing it with a plain MagicMock prevents coroutine creation entirely.
-    The assertion tests (test_retrieval_log_scheduled) still verify that
-    asyncio.create_task was called; only the argument type changes.
+
+@pytest.fixture(autouse=True)
+def _mock_turn_side_calls(monkeypatch):
+    """Keep the turn's fire-and-forget retrieval log and its case call off the network.
+
+    Every widget and partner turn runs widget_turn, which reads the case on
+    the fast model and schedules the retrieval log; request-shape tests here
+    assert neither (test_retrieval_log_scheduled patches the log itself).
     """
-    monkeypatch.setattr("app.services.widget_turn.write_retrieval_log", MagicMock())
+    monkeypatch.setattr("app.services.widget_turn.log_retrieval", MagicMock())
+    monkeypatch.setattr("app.services.case_file.update_case", AsyncMock(return_value=None))
 
 
 @pytest.fixture(autouse=True)
@@ -202,8 +207,8 @@ async def test_widget_prompt_injection_hazardous_input_blocked_before_retrieval(
     )
 
     with (
-        patch("app.api.partner.retrieve_context") as mock_retrieve,
-        patch("app.api.partner.chat_completion_non_streaming") as mock_chat,
+        patch("app.services.widget_turn.retrieve_context") as mock_retrieve,
+        patch("app.services.widget_turn.write_reply") as mock_chat,
     ):
         result = await chat_completions(
             request=req,
@@ -264,7 +269,7 @@ async def test_explicit_empty_top_level_kb_ids_returns_400():
     )
 
     with (
-        patch("app.api.partner.retrieve_context") as mock_retrieve,
+        patch("app.services.widget_turn.retrieve_context") as mock_retrieve,
         pytest.raises(HTTPException) as exc_info,
     ):
         await chat_completions(
@@ -290,7 +295,7 @@ async def test_explicit_empty_knowledge_kb_ids_returns_400():
     )
 
     with (
-        patch("app.api.partner.retrieve_context") as mock_retrieve,
+        patch("app.services.widget_turn.retrieve_context") as mock_retrieve,
         pytest.raises(HTTPException) as exc_info,
     ):
         await chat_completions(
@@ -320,7 +325,7 @@ async def test_key_with_no_kb_access_returns_403_and_skips_retrieval():
     )
 
     with (
-        patch("app.api.partner.retrieve_context") as mock_retrieve,
+        patch("app.services.widget_turn.retrieve_context") as mock_retrieve,
         pytest.raises(HTTPException) as exc_info,
     ):
         await chat_completions(
@@ -351,7 +356,7 @@ async def test_all_authorized_kb_ids_unresolvable_returns_403_and_skips_retrieva
     )
 
     with (
-        patch("app.api.partner.retrieve_context") as mock_retrieve,
+        patch("app.services.widget_turn.retrieve_context") as mock_retrieve,
         pytest.raises(HTTPException) as exc_info,
     ):
         await chat_completions(
@@ -385,18 +390,10 @@ async def test_partial_kb_id_resolution_proceeds_with_resolved_subset():
         knowledge_base_ids=[10, 20],
     )
 
-    litellm_response = {
-        "id": "chatcmpl-123",
-        "object": "chat.completion",
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    }
-
     with structlog.testing.capture_logs() as cap:
         with (
-            patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
-            patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-            patch("app.services.widget_turn.asyncio"),
+            patch("app.services.widget_turn.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
+            patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())),
         ):
             await chat_completions(
                 request=req,
@@ -429,17 +426,9 @@ async def test_key_with_kb_access_and_no_requested_ids_passes_slugs_to_retrieval
         stream=False,
     )
 
-    litellm_response = {
-        "id": "chatcmpl-123",
-        "object": "chat.completion",
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    }
-
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
-        patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.services.widget_turn.asyncio"),
+        patch("app.services.widget_turn.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())),
     ):
         await chat_completions(
             request=req,
@@ -469,7 +458,7 @@ async def test_retrieval_timeout_returns_502():
     )
 
     with (
-        patch("app.api.partner.retrieve_context", side_effect=httpx.ReadTimeout("timeout")),
+        patch("app.services.widget_turn.retrieve_context", side_effect=httpx.ReadTimeout("timeout")),
         pytest.raises(HTTPException) as exc_info,
     ):
         await chat_completions(
@@ -501,7 +490,7 @@ async def test_retrieval_http_status_error_returns_502():
     )
 
     with (
-        patch("app.api.partner.retrieve_context", side_effect=upstream_error),
+        patch("app.services.widget_turn.retrieve_context", side_effect=upstream_error),
         pytest.raises(HTTPException) as exc_info,
     ):
         await chat_completions(
@@ -529,7 +518,7 @@ async def test_retrieval_request_error_returns_502():
 
     with (
         patch(
-            "app.api.partner.retrieve_context",
+            "app.services.widget_turn.retrieve_context",
             side_effect=httpx.ConnectError("connection failed", request=upstream_request),
         ),
         pytest.raises(HTTPException) as exc_info,
@@ -556,31 +545,18 @@ async def test_happy_path_non_streaming():
         stream=False,
     )
 
-    litellm_response = {
-        "id": "chatcmpl-123",
-        "object": "chat.completion",
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": "Hi there!"},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    }
-
     with (
         patch(
-            "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
+            "app.services.widget_turn.retrieve_context",
+            return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False),
         ),
-        patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.services.widget_turn.asyncio"),
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written("Hi there!"))),
     ):
         result = await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
         )
 
-    assert result["id"] == "chatcmpl-123"
+    assert result["object"] == "chat.completion"
     assert result["choices"][0]["message"]["content"] == "Hi there!"
 
 
@@ -599,26 +575,19 @@ async def test_retrieval_log_scheduled():
         stream=False,
     )
 
-    litellm_response = {
-        "id": "chatcmpl-123",
-        "object": "chat.completion",
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    }
-
     with (
         patch(
-            "app.api.partner.retrieve_context",
+            "app.services.widget_turn.retrieve_context",
             return_value=([{"chunk_id": "c1", "text": "ctx", "reranker_score": 0.9}], "prompt", [], False),
         ),
-        patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.services.widget_turn.asyncio") as mock_asyncio,
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())),
+        patch("app.services.widget_turn.log_retrieval") as mock_log,
     ):
         await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
         )
 
-    mock_asyncio.create_task.assert_called_once()
+    mock_log.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -640,17 +609,9 @@ async def test_kb_id_to_slug_translation():
         knowledge_base_ids=[10, 20],
     )
 
-    litellm_response = {
-        "id": "chatcmpl-123",
-        "object": "chat.completion",
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    }
-
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
-        patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response),
-        patch("app.services.widget_turn.asyncio"),
+        patch("app.services.widget_turn.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(), db=db)
 
@@ -684,16 +645,9 @@ async def test_knowledge_options_override_retrieval_query_kbs_and_top_k():
         ),
     )
 
-    litellm_response = {
-        "id": "chatcmpl-123",
-        "object": "chat.completion",
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
-    }
-
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
-        patch("app.api.partner.chat_completion_non_streaming", return_value=litellm_response) as mock_chat,
-        patch("app.services.widget_turn.asyncio"),
+        patch("app.services.widget_turn.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())) as mock_chat,
     ):
         await chat_completions(
             request=req,
@@ -792,16 +746,12 @@ async def test_streaming_returns_event_stream_content_type():
         stream=True,
     )
 
-    async def mock_streaming_gen():
-        yield b"data: {}\n\n"
-        yield b"data: [DONE]\n\n"
-
     with (
         patch(
-            "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
+            "app.services.widget_turn.retrieve_context",
+            return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False),
         ),
-        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.services.widget_turn.asyncio"),
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())),
     ):
         from starlette.responses import StreamingResponse
 
@@ -834,9 +784,6 @@ async def test_widget_streaming_uses_structured_citation_mode():
         },
     )
 
-    async def mock_streaming_gen():
-        yield b"data: [DONE]\n\n"
-
     retrieved_chunks = [
         {
             "chunk_id": "c1",
@@ -848,7 +795,7 @@ async def test_widget_streaming_uses_structured_citation_mode():
 
     with (
         patch(
-            "app.api.partner.retrieve_context",
+            "app.services.widget_turn.retrieve_context",
             return_value=(
                 retrieved_chunks,
                 "prompt",
@@ -862,8 +809,7 @@ async def test_widget_streaming_uses_structured_citation_mode():
             ),
         ) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=True)),
-        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()) as chat_stream,
-        patch("app.services.widget_turn.asyncio"),
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())) as write,
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
@@ -872,8 +818,8 @@ async def test_widget_streaming_uses_structured_citation_mode():
         "path": "/pricing",
         "title": "Pricing",
     }
-    assert chat_stream.call_args.kwargs["citation_chunks"] == retrieved_chunks
-    assert chat_stream.call_args.kwargs["page_context"] == {
+    assert write.call_args.kwargs["citation_chunks"] == retrieved_chunks
+    assert write.call_args.kwargs["page_context"] == {
         "url": "https://example.com/pricing",
         "path": "/pricing",
         "title": "Pricing",
@@ -907,61 +853,14 @@ async def test_widget_page_context_ignored_when_disabled():
         },
     )
 
-    async def mock_streaming_gen():
-        yield b"data: [DONE]\n\n"
-
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
+        patch("app.services.widget_turn.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.services.widget_turn.asyncio"),
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
 
     assert mock_retrieve.call_args.kwargs["page_context"] is None
-
-
-@pytest.mark.asyncio
-async def test_streaming_chunks_forwarded():
-    """Mock LiteLLM streaming chunks are forwarded byte-for-byte."""
-    from app.api.partner import ChatCompletionsRequest, chat_completions
-
-    fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=FakeResult(rows=fake_kbs))
-
-    req = ChatCompletionsRequest(
-        messages=[{"role": "user", "content": "Hello"}],
-        model="klai-primary",
-        stream=True,
-    )
-
-    expected_bytes = [
-        b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
-        b"data: [DONE]\n\n",
-    ]
-
-    async def mock_streaming_gen():
-        for chunk in expected_bytes:
-            yield chunk
-
-    with (
-        patch(
-            "app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1", "text": "ctx"}], "prompt", [], False)
-        ),
-        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.services.widget_turn.asyncio"),
-    ):
-        result = await chat_completions(
-            request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
-        )
-
-        received = []
-        async for chunk in result.body_iterator:
-            received.append(chunk)
-
-        assert len(received) == 2
-        assert b"[DONE]" in received[-1]
 
 
 @pytest.mark.asyncio
@@ -979,14 +878,9 @@ async def test_streaming_done_terminator():
         stream=True,
     )
 
-    async def mock_streaming_gen():
-        yield b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'
-        yield b"data: [DONE]\n\n"
-
     with (
-        patch("app.api.partner.retrieve_context", return_value=([], "prompt", [], False)),
-        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.services.widget_turn.asyncio"),
+        patch("app.services.widget_turn.retrieve_context", return_value=([], "prompt", [], False)),
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())),
     ):
         result = await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
@@ -1014,19 +908,16 @@ async def test_streaming_retrieval_log_fires():
         stream=True,
     )
 
-    async def mock_streaming_gen():
-        yield b"data: [DONE]\n\n"
-
     with (
-        patch("app.api.partner.retrieve_context", return_value=([{"chunk_id": "c1"}], "prompt", [], False)),
-        patch("app.api.partner.chat_completion_streaming", return_value=mock_streaming_gen()),
-        patch("app.services.widget_turn.asyncio") as mock_asyncio,
+        patch("app.services.widget_turn.retrieve_context", return_value=([{"chunk_id": "c1"}], "prompt", [], False)),
+        patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())),
+        patch("app.services.widget_turn.log_retrieval") as mock_log,
     ):
         await chat_completions(
             request=req, http_request=_http_request_stub(), auth=make_partner_auth(kb_access={10: "read"}), db=db
         )
 
-    mock_asyncio.create_task.assert_called_once()
+    mock_log.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1409,7 +1300,7 @@ def test_augment_messages_language_contract_survives_a_chunkless_turn():
 
     from app.services.partner_chat import _augment_messages_with_system_prompt, _build_system_prompt
 
-    prompt = _build_system_prompt([], support_mode=True)
+    prompt = _build_system_prompt([])
     assert "[LANGUAGE REMINDER]" not in prompt
 
     conversation = [{"role": "user", "content": "Hi do you speak english"}]

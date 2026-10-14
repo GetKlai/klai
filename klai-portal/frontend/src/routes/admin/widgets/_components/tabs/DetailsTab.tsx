@@ -31,21 +31,19 @@ export function DetailsTab({ widget }: Props) {
   const [systemPrompt, setSystemPrompt] = useState(config.system_prompt)
   const [templateSlug, setTemplateSlug] = useState<string>(config.template_slug ?? '')
   const [pageContextEnabled, setPageContextEnabled] = useState(config.page_context_enabled ?? false)
-  const [supportMode, setSupportMode] = useState(config.support_mode ?? false)
   const [toneRegister, setToneRegister] = useState<'restrained' | 'expressive'>(config.tone_register ?? 'restrained')
   const [offTopicSubjects, setOffTopicSubjects] = useState(config.off_topic_subjects ?? '')
   const [offTopicReply, setOffTopicReply] = useState(config.off_topic_reply ?? '')
 
   // The preview panel follows name and description live. Instructions,
-  // template, customer-facing mode and the page-context toggle only reach
-  // the model after save, so the tab reports them as dirty instead.
+  // template, register, off-topic subjects and the page-context toggle only
+  // reach the model after save, so the tab reports them as dirty instead.
   usePublishWidgetPreview('details', {
     name,
     description,
     modelBehaviorDirty:
       systemPrompt.trim() !== config.system_prompt ||
       (templateSlug || null) !== (config.template_slug ?? null) ||
-      supportMode !== (config.support_mode ?? false) ||
       // The register reaches the model through the system prompt, so an
       // unsaved change to it cannot show up in the preview either. Leaving it
       // out here made the panel answer in the saved tone without saying so,
@@ -67,11 +65,10 @@ export function DetailsTab({ widget }: Props) {
     setSystemPrompt(config.system_prompt)
     setTemplateSlug(config.template_slug ?? '')
     setPageContextEnabled(config.page_context_enabled ?? false)
-    setSupportMode(config.support_mode ?? false)
     setToneRegister(config.tone_register ?? 'restrained')
     setOffTopicSubjects(config.off_topic_subjects ?? '')
     setOffTopicReply(config.off_topic_reply ?? '')
-  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled, config.support_mode, config.tone_register, config.off_topic_subjects, config.off_topic_reply])
+  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled, config.tone_register, config.off_topic_subjects, config.off_topic_reply])
 
   const isDirty =
     name.trim() !== widget.name ||
@@ -79,7 +76,6 @@ export function DetailsTab({ widget }: Props) {
     systemPrompt.trim() !== config.system_prompt ||
     (templateSlug || null) !== (config.template_slug ?? null) ||
     pageContextEnabled !== (config.page_context_enabled ?? false) ||
-    supportMode !== (config.support_mode ?? false) ||
     toneRegister !== (config.tone_register ?? 'restrained') ||
     offTopicSubjects.trim() !== (config.off_topic_subjects ?? '') ||
     offTopicReply.trim() !== (config.off_topic_reply ?? '')
@@ -101,10 +97,6 @@ export function DetailsTab({ widget }: Props) {
       system_prompt: systemPrompt.trim(),
       template_slug: templateSlug || null,
       page_context_enabled: pageContextEnabled,
-      support_mode: supportMode,
-      // Only meaningful with support_mode on (the backend ignores it for
-      // internal widgets); stored regardless so switching customer mode
-      // back on restores the admin's earlier register choice.
       tone_register: toneRegister,
       off_topic_subjects: offTopicSubjects.trim(),
       off_topic_reply: offTopicReply.trim(),
@@ -195,69 +187,58 @@ export function DetailsTab({ widget }: Props) {
             label={m.admin_widgets_page_context_label()}
             help={m.admin_widgets_page_context_help()}
           />
-          <WidgetToggleCard
-            id="support-mode"
-            checked={supportMode}
-            onChange={setSupportMode}
-            label={m.admin_widgets_support_mode_label()}
-            help={m.admin_widgets_support_mode_help()}
-          />
-          {supportMode && (
+          <div className="space-y-1.5">
+            <Label>{m.admin_widgets_tone_register_label()}</Label>
+            <p className="text-xs text-gray-600">{m.admin_widgets_tone_register_help()}</p>
+            <RadioCardGroup
+              aria-label={m.admin_widgets_tone_register_label()}
+              value={toneRegister}
+              onChange={(value) => setToneRegister(value === 'expressive' ? 'expressive' : 'restrained')}
+              options={[
+                {
+                  value: 'restrained',
+                  label: m.admin_widgets_tone_register_restrained(),
+                  description: m.admin_widgets_tone_register_restrained_help(),
+                },
+                {
+                  value: 'expressive',
+                  label: m.admin_widgets_tone_register_expressive(),
+                  description: m.admin_widgets_tone_register_expressive_help(),
+                },
+              ]}
+            />
+          </div>
+          <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label>{m.admin_widgets_tone_register_label()}</Label>
-              <p className="text-xs text-gray-600">{m.admin_widgets_tone_register_help()}</p>
-              <RadioCardGroup
-                aria-label={m.admin_widgets_tone_register_label()}
-                value={toneRegister}
-                onChange={(value) => setToneRegister(value === 'expressive' ? 'expressive' : 'restrained')}
-                options={[
-                  {
-                    value: 'restrained',
-                    label: m.admin_widgets_tone_register_restrained(),
-                    description: m.admin_widgets_tone_register_restrained_help(),
-                  },
-                  {
-                    value: 'expressive',
-                    label: m.admin_widgets_tone_register_expressive(),
-                    description: m.admin_widgets_tone_register_expressive_help(),
-                  },
-                ]}
+              <Label htmlFor="widget-off-topic-subjects">{m.admin_widgets_off_topic_subjects_label()}</Label>
+              <p className="text-xs text-gray-600">{m.admin_widgets_off_topic_subjects_help()}</p>
+              <Textarea
+                id="widget-off-topic-subjects"
+                value={offTopicSubjects}
+                onChange={(e) => setOffTopicSubjects(e.target.value)}
+                rows={2}
+                maxLength={500}
+                placeholder={m.admin_widgets_off_topic_subjects_placeholder()}
               />
             </div>
-          )}
-          {supportMode && (
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="widget-off-topic-subjects">{m.admin_widgets_off_topic_subjects_label()}</Label>
-                <p className="text-xs text-gray-600">{m.admin_widgets_off_topic_subjects_help()}</p>
-                <Textarea
-                  id="widget-off-topic-subjects"
-                  value={offTopicSubjects}
-                  onChange={(e) => setOffTopicSubjects(e.target.value)}
-                  rows={2}
-                  maxLength={500}
-                  placeholder={m.admin_widgets_off_topic_subjects_placeholder()}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="widget-off-topic-reply">{m.admin_widgets_off_topic_reply_label()}</Label>
-                <p className="text-xs text-gray-600">{m.admin_widgets_off_topic_reply_help()}</p>
-                <Textarea
-                  id="widget-off-topic-reply"
-                  value={offTopicReply}
-                  onChange={(e) => setOffTopicReply(e.target.value)}
-                  rows={3}
-                  maxLength={500}
-                  placeholder={m.admin_widgets_off_topic_reply_placeholder()}
-                />
-              </div>
-              {offTopicHalfFilled && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  {m.admin_widgets_off_topic_incomplete()}
-                </p>
-              )}
+            <div className="space-y-1.5">
+              <Label htmlFor="widget-off-topic-reply">{m.admin_widgets_off_topic_reply_label()}</Label>
+              <p className="text-xs text-gray-600">{m.admin_widgets_off_topic_reply_help()}</p>
+              <Textarea
+                id="widget-off-topic-reply"
+                value={offTopicReply}
+                onChange={(e) => setOffTopicReply(e.target.value)}
+                rows={3}
+                maxLength={500}
+                placeholder={m.admin_widgets_off_topic_reply_placeholder()}
+              />
             </div>
-          )}
+            {offTopicHalfFilled && (
+              <p className="text-sm text-[var(--color-destructive)]">
+                {m.admin_widgets_off_topic_incomplete()}
+              </p>
+            )}
+          </div>
         </div>
       </section>
 

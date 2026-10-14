@@ -109,3 +109,22 @@ Fields that only make sense in the knowledge path (`response_format`,
 `tools`, `tool_choice`, `parallel_tool_calls`, `prompt_cache_key`) are
 rejected with a 400 (fail-loud) when combined with a value that routes to
 the knowledge path, instead of being silently ignored.
+
+## What the knowledge path answers with
+
+Every knowledge-path request from a partner key runs the same turn as the
+Klai help widget (`docs/architecture/chat-system.md` §2). In practice:
+
+- The answer is written for the customer: the support prompt, answers only
+  from the passages that answer the question, at most one clarifying
+  question per conversation. When no passage answers, the reply is the fixed
+  "not found" text with an appointment offer (`message.escalation`), not a
+  model-written answer.
+- `knowledge.query`, `knowledge.top_k`, `knowledge.include_sources` and
+  `knowledge_base_ids` work as before. `broad_mode: true` lets a turn with
+  nothing found answer from general knowledge, labelled as such.
+- `model` and `temperature` are ignored: the turn picks its own models.
+- `tools` and `tool_choice` are rejected with a 400. `web_search` still
+  routes to the knowledge path, but the turn does not search the web.
+- Partner turns are not stored in widget conversation history; you own the
+  thread, as above.

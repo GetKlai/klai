@@ -1,6 +1,6 @@
 """What the help articles did not support, per day, from real widget answers.
 
-SPEC-RAG-ANSWER-JUDGES-001. Every support-mode answer stores what the
+SPEC-RAG-ANSWER-JUDGES-001. Every widget answer stores what the
 statement-level check found in ``widget_messages.answer_signals``: how many
 statements the articles do not support and what the visitor ended up seeing.
 This prints that per day so the effect on real traffic can be read without

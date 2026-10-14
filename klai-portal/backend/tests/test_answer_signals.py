@@ -219,9 +219,9 @@ async def _widget_chat(monkeypatch, *, model_text: str, chunks: list[dict], stre
         # KB ids → slugs reads real KB rows; the FakeResult above only knows the
         # widget uuid, so resolve the slugs directly.
         patch("app.api.partner._resolve_kb_slugs", new=AsyncMock(return_value=["kb-test"])),
-        patch("app.api.partner.retrieve_context", side_effect=_fake_retrieval(chunks, band)),
+        patch("app.services.widget_turn.retrieve_context", side_effect=_fake_retrieval(chunks, band)),
+        patch("app.services.case_file.update_case", new=AsyncMock(return_value=None)),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner.record_widget_turn", new=AsyncMock()) as record,
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
     ):
@@ -246,7 +246,7 @@ async def test_non_streaming_assistant_turn_carries_answer_signals(monkeypatch):
     )
 
     signals = _assistant_signals(record)
-    assert set(signals) == SIGNAL_KEYS
+    assert SIGNAL_KEYS <= set(signals)
     assert signals["band"] == "high"
     assert signals["top_score"] == pytest.approx(0.71)
     assert signals["sources_count"] == 1
@@ -265,7 +265,7 @@ async def test_streaming_assistant_turn_carries_answer_signals(monkeypatch):
 
     assert b"answer_signals" not in b"".join(frames), "answer_signals leaked into an SSE frame"
     signals = _assistant_signals(record)
-    assert set(signals) == SIGNAL_KEYS
+    assert SIGNAL_KEYS <= set(signals)
     assert signals["band"] == "high"
     assert signals["top_score"] == pytest.approx(0.71)
     assert signals["sources_count"] == 1
@@ -429,14 +429,14 @@ async def test_output_safety_refusal_still_stores_complete_signals(monkeypatch, 
     """Both pads fill the whole record after an output-safety refusal. The
     non-streaming pad used to skip it, which left a record holding only the band
     retrieval had already written."""
-    monkeypatch.setattr("app.services.partner_chat.output_safety_violation", lambda *_: "test_block")
+    monkeypatch.setattr("app.services.widget_write.output_safety_violation", lambda *_: "test_block")
 
     record, _ = await _widget_chat(
         monkeypatch, model_text=ANSWER_TEXT, chunks=[_chunk(0.71)], stream=stream, band="high"
     )
 
     signals = _assistant_signals(record)
-    assert set(signals) == SIGNAL_KEYS
+    assert SIGNAL_KEYS <= set(signals)
     assert signals["band"] == "high"
     assert signals["sources_count"] == 0
 

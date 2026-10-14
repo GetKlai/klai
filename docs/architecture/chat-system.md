@@ -8,18 +8,18 @@ Dit is de kaart van het chatpad. Lees hem vóór je een voorstel doet of code ve
 
 ## 0. In één scherm
 
-Sinds 13 oktober 2026 is er **één chatpad**: `POST /partner/v1/chat/completions` in portal-api, dat de helpwidget, de interne chat (LibreChat-medewerkers) en de partner-API bedient. Het oude pad A (LibreChat → LiteLLM-hook) staat nog in de LiteLLM-container als terugweg, maar geen omgeving gebruikt het (§1).
+Sinds 13 oktober 2026 is er **één chatpad**: `POST /partner/v1/chat/completions` in portal-api, dat de helpwidget, de interne chat (LibreChat-medewerkers) en de partner-API bedient. Sinds 14 oktober loopt elke beurt die niet van de interne chat is door dezelfde drager, `widget_turn()`: elke widget en elke partner-key, zonder supportschakelaar en zonder generieke generatie ernaast. Het oude pad A (LibreChat → LiteLLM-hook) staat nog in de LiteLLM-container als terugweg, maar geen omgeving gebruikt het (§1).
 
-| | Helpwidget (support) | Interne chat (Strict, Open, general) | Partner-API |
-|---|---|---|---|
-| Drager | `widget_turn()` (§2.1) | `internal_turn()` op dezelfde stapfuncties (§2.2) | de generieke generatie (§2.3) |
-| Lezen | de zaak per gesprek, opgeslagen bij de beurt | de zaak per beurt, zonder vorige | – |
-| Zoeken | letterlijke zin + parafrasen (eerste beurt) of zaak-zoekvragen (vervolg), acht bronnen | letterlijke zin + zaak-zoekvragen, acht bronnen | letterlijke zin, drie bronnen |
-| Kiezen vóór schrijven | ja, met citaten die code terugzoekt | ja; Strict als poort, Open als opdracht | nee |
-| Routes in code | contact, buiten onderwerp, niet gevonden, de vraag | niet gevonden (Strict), de vraag | – |
-| Na het schrijven | herkomstpoort, lichte beoordelaar voor de knop, controle per zin erna | Strict als de widget zonder knop; Open live met de controle erna | uitvoerveiligheid |
-| Mens aanbieden | afspraakknop | bestaat niet | – |
-| Wat er per beurt bewaard wordt | `widget_messages.answer_signals` met het hele spoor | `internal_chat_turns`, alleen signalen | – |
+| | Widget en partner-API | Interne chat (Strict, Open, general) |
+|---|---|---|
+| Drager | `widget_turn()` (§2.1) | `internal_turn()` op dezelfde stapfuncties (§2.2) |
+| Lezen | de zaak per gesprek, opgeslagen bij de beurt (widget); per beurt zonder vorige (partner) | de zaak per beurt, zonder vorige |
+| Zoeken | letterlijke zin + parafrasen (eerste beurt) of zaak-zoekvragen (vervolg), acht bronnen | letterlijke zin + zaak-zoekvragen, acht bronnen |
+| Kiezen vóór schrijven | ja, met citaten die code terugzoekt | ja; Strict als poort, Open als opdracht |
+| Routes in code | contact, buiten onderwerp, niet gevonden, de vraag | niet gevonden (Strict), de vraag |
+| Na het schrijven | herkomstpoort, lichte beoordelaar voor de knop, controle per zin erna | Strict als de widget zonder knop; Open live met de controle erna |
+| Mens aanbieden | afspraakknop | bestaat niet |
+| Wat er per beurt bewaard wordt | `widget_messages.answer_signals` met het hele spoor (widget); alleen het retrievallog (partner, §2.3) | `internal_chat_turns`, alleen signalen |
 
 Modelaliassen (`deploy/litellm/config.yaml`): `klai-primary` en `klai-fast` zijn allebei `mistral-small-2603` (`:7,29`), `klai-medium` is `mistral-medium-3.5` (`:70`), `klai-large` is `mistral-large-2512` (`:47`). `klai-judge` is hetzelfde model als `klai-medium`, maar op de Vibe-key van de Klai-organisatie (hetzelfde Vibe-tegoed als `klai-ingest`, zonder fallback), voor al het achtergrondwerk op Medium van portal-api: de nachtelijke judges, support-case-analyse en het groeperen van gaten (`settings.conversation_judge_model`). Medium-calls binnen een chatbeurt blijven op `klai-medium`. Bij een quotafout vallen primary en fast terug op medium (`:114`). LiteLLM-timeout 120 s met 1 retry (`:122,125`).
 
@@ -85,13 +85,13 @@ LibreChat geeft het model ook de MCP-tool `klai-knowledge` (`deploy/librechat/li
 
 ## 2. Pad B: widget, interne chat en partner-API (portal-api)
 
-**Herschreven op 13 oktober 2026, na de sneden O1 tot en met O5 van het plan (§7 en §8).** Ingang: `POST /partner/v1/chat/completions`, functie `chat_completions` (`klai-portal/backend/app/api/partner.py`). Die functie lost het verzoek op en kiest de drager: `widget_turn()` voor een helpwidget met support-modus, `internal_turn()` voor de interne chat (LibreChat-medewerkers via de portal), en de generieke generatie voor een partner-key of een widget zonder support-modus. De twee dragers lopen de stroom van het plan (§5) in dezelfde volgorde op dezelfde stapfuncties en geven een `Reply` terug; één schrijfstap en één uitzender maken daar het antwoord van. De rijen hieronder volgen die volgorde; de kolom "Bij falen" zegt wat een uitgevallen modelaanroep doet.
+**Herschreven op 13 oktober 2026, na de sneden O1 tot en met O5 van het plan (§7 en §8).** Ingang: `POST /partner/v1/chat/completions`, functie `chat_completions` (`klai-portal/backend/app/api/partner.py`). Die functie lost het verzoek op en kiest de drager: `internal_turn()` voor de interne chat (LibreChat-medewerkers via de portal) en `widget_turn()` voor al het andere, dus elke widget en elke partner-key. De twee dragers lopen de stroom van het plan (§5) in dezelfde volgorde op dezelfde stapfuncties en geven een `Reply` terug; één schrijfstap en één uitzender maken daar het antwoord van. De rijen hieronder volgen die volgorde; de kolom "Bij falen" zegt wat een uitgevallen modelaanroep doet.
 
-### 2.1 De helpwidget met support-modus (`services/widget_turn.py`)
+### 2.1 De widget en de partner-API (`services/widget_turn.py`)
 
 | # | Stap | Beslist op basis van | LLM | Bij falen | Vastgelegd als |
 |---|---|---|---|---|---|
-| W0 | **Ingang** (`chat_completions`): rechten, model en berichtvorm, invoerveiligheid, KB-scope fail-closed (`_partner_kb_scope`), widgetinstellingen (eigen instructie, paginacontext, support-modus, onderwerpen buiten de widget, toon), de user-beurt naar `widget_messages`, de vorige zaak (`last_case` en `stored_case_for`, alleen op een vervolgbeurt en alleen als de opgeslagen beurt het laatste antwoord van dit gesprek is) | key/widget, instellingen | nee | fail-closed op scope; zonder zaak loopt de beurt | `widget_messages` (user-beurt) |
+| W0 | **Ingang** (`chat_completions`): rechten, model en berichtvorm, invoerveiligheid, KB-scope fail-closed (`_partner_kb_scope`), widgetinstellingen (eigen instructie, paginacontext, onderwerpen buiten de widget, toon), `tools` en `tool_choice` geweigerd met een 400, de user-beurt naar `widget_messages`, de vorige zaak (`last_case` en `stored_case_for`, alleen op een vervolgbeurt en alleen als de opgeslagen beurt het laatste antwoord van dit gesprek is) | key/widget, instellingen | nee | fail-closed op scope; zonder zaak loopt de beurt | `widget_messages` (user-beurt) |
 | W1 | **Lezen: de zaak** (`case_file.update_case`): probleem, product, variant, geprobeerd, wat de bezoeker nu wil, of het onderwerp buiten de widget valt, toon, twee zoekvragen. Op een vervolgbeurt vóór het zoeken (de zoekvragen gaan mee), op een eerste beurt ernaast | gesprek + vorige zaak + ingestelde onderwerpen | `klai-fast`, 3 s | beurt loopt als duidelijke kennisvraag zonder escalatie (`judge_failed: ["case"]`) | `answer_signals.case`, `partner_chat_turn_judge` |
 | W2 | **Route in code: contact.** Wil de bezoeker een mens, contact of een afspraak, dan is `contact_reply` de hele reactie, met de knop en zonder schrijver; op een vervolgbeurt vóór het zoeken, op een eerste beurt erna. Wint van de doorverwijzing (W5) | zaak | nee | – | `partner_chat_contact_request`, `decision=human_request` |
 | W3 | **Zoeken** (`retrieve_context` → `/retrieve`, §3): de letterlijke zin als hoofdvraag, `top_k=8`; op een eerste beurt twee parafrasen als extra zoekgangen (`query_paraphrase`), op een vervolgbeurt de twee zoekvragen van de zaak; een bron per passage (`max_sources`, sinds 13 oktober, stap J: de zoekdienst levert één passage per sectie en het bewijspakket houdt tot acht bronnen in plaats van drie). Chunk-veiligheid; de zekerheidsband gaat alleen naar de opslag; gat-klasse *soft* (alle scores < 0,4) of *hard* (nul chunks) | vraag, zaak | parafrasen `klai-medium`, 2,5 s | zonder parafrasen | `answer_signals.search` (zoekvraag, zoekgangen, gevonden passages met titel, url, score), `band`, `gap_type` |
@@ -105,9 +105,9 @@ LibreChat geeft het model ook de MCP-tool `klai-knowledge` (`deploy/librechat/li
 
 Dezelfde stappen op dezelfde functies, met deze verschillen. **W1:** de zaak leest elke beurt zonder vorige zaak (LibreChat stuurt het hele gesprek mee) en zonder ingestelde onderwerpen; in de general-modus geen zaak. **W2 en W5:** geen contactroute en geen doorverwijzing (er is geen knop); **staat er niet in** geldt alleen in Strict en geeft de vaste Strict-weigering met de suggestie van de open modus; de vraag van de keuzestap is de reactie in Strict én Open. **W3:** geen parafrasen; een vervolgbeurt zoekt op de letterlijke zin plus de zaak-zoekvragen (de herschrijving `query_rewrite` is weg); een geplakte mail op een eerste beurt laat de zaak vóór het zoeken lopen. **W4:** de keuzestap draait op elke beurt met passages; in Open en general kiest ze de passages en schrijft de opdracht maar weigert nooit (zonder keuze krijgt de schrijver alle passages); niet bij meegestuurde inhoud of geplakte correspondentie. **W6:** Strict schrijft via `write_reply` (vastgehouden tot geschreven en beoordeeld, zonder knop, met de Strict-weigeringstekst, de voettekst met bronnen en activiteit, webzoektools gestript); Open en general streamen live (`chat_completion_streaming`) met de controle erna. **W8:** `record_internal_turn` bewaart alleen signalen, nooit tekst, geen citaten en geen zaaktekst.
 
-### 2.3 Partner-key en widget zonder support-modus
+### 2.3 De partner-key
 
-De generieke generatie (`chat_completion_streaming` of `chat_completion_non_streaming` in `services/partner_chat.py`): zoeken, de bronnencomposer en de uitvoerveiligheid, zonder zaak, keuzestap, routes of beoordelaars. Niet gemeten; het is de route voor integraties die zelf verder verwerken.
+Een partner-key loopt dezelfde stappen als de widget in §2.1, met deze verschillen, die er allemaal uit volgen dat er geen widget is. **W0:** geen widgetinstellingen (geen eigen instructie, paginacontext, onderwerpen buiten de widget of toonkeuze, dus het ingetogen supportprofiel, tenzij de partner een eigen systeembericht meestuurt, dat het profiel vervangt), geen user-beurt naar `widget_messages` en geen vorige zaak, zodat de zaak elke beurt zonder vorige leest; een pdf in de laatste beurt wordt wel tekst, omdat de key een geauthenticeerde integratie is en geen anonieme bezoeker. **W8:** geen assistent-beurt in `widget_messages`; alleen het retrievallog voor feedback blijft, net als bij de widget. `knowledge.query`, `knowledge.top_k`, `knowledge.include_sources`, `knowledge_base_ids` en `broad_mode` werken zoals bij de widget; `model` en `temperature` negeert de beurt, `web_search` zoekt niet op het web en `tools` geeft een 400. De generieke generatie die partner-keys en widgets zonder supportschakelaar tot 14 oktober kregen, is weg (plan §8, "Eén pad voor partners"); `chat_completion_streaming` en `chat_completion_non_streaming` bedienen alleen nog de live leg van de interne chat (§2.2).
 
 ## 3. De zoekdienst `/retrieve` (klai-retrieval-api)
 
@@ -123,7 +123,7 @@ De generieke generatie (`chat_completion_streaming` of `chat_completion_non_stre
 
 **Pad A** (in volgorde): herschrijven (`klai-fast`, 1,5 s, A11) → coreferentie in `/retrieve` alleen als A11 om infrastructuurredenen oversloeg (`klai-fast`, 3 s) → generatie (primary, via de router naar large, medium of fast) → claims-check (`klai-fast`, 4 s, alleen Strict bij dreigende weigering) → grounding-check (`klai-medium`, 12 s, alleen Strict) → reparatie (`klai-medium`, 8 s, alleen boven de drempel). **Open-modus: alleen herschrijven en generatie.**
 
-**Pad B, helpwidget met support** (in volgorde): de zaak (`klai-fast`, 3 s; op een eerste beurt ∥ het zoeken) → parafrasen op een eerste beurt (`klai-medium`, 2,5 s) → de keuzestap (`klai-medium`, 4 s) → de schrijver (`klai-primary`) → de lichte beoordelaar (`klai-fast`, 2,5 s); de controle per zin (`klai-medium`) loopt ná het antwoord als de passages gekozen en geciteerd zijn, anders op het pad; een doorverwijzing buiten het onderwerp kost één aanroep extra (`klai-fast`, 2,5 s) en geen schrijver. Vier aanroepen op het pad van een geschreven vervolgbeurt, vijf op een eerste beurt, plus één meting erna. **Intern:** hetzelfde zonder parafrasen; Strict wordt vastgehouden, Open en general streamen live met de controle erna.
+**Pad B, widget en partner-API** (in volgorde): de zaak (`klai-fast`, 3 s; op een eerste beurt ∥ het zoeken) → parafrasen op een eerste beurt (`klai-medium`, 2,5 s) → de keuzestap (`klai-medium`, 4 s) → de schrijver (`klai-primary`) → de lichte beoordelaar (`klai-fast`, 2,5 s); de controle per zin (`klai-medium`) loopt ná het antwoord als de passages gekozen en geciteerd zijn, anders op het pad; een doorverwijzing buiten het onderwerp kost één aanroep extra (`klai-fast`, 2,5 s) en geen schrijver. Vier aanroepen op het pad van een geschreven vervolgbeurt, vijf op een eerste beurt, plus één meting erna. **Intern:** hetzelfde zonder parafrasen; Strict wordt vastgehouden, Open en general streamen live met de controle erna.
 
 ---
 
@@ -143,7 +143,7 @@ De generieke generatie (`chat_completion_streaming` of `chat_completion_non_stre
 
 **Modelkeuze**: de router van A24, ook op pad B. Geen van de regels is tegen antwoordkwaliteit gemeten.
 
-**Onbewezen uitspraken**: pad A Strict controleert en repareert en weigert nooit op dit signaal; pad A Open doet niets; pad B support kiest vóór het schrijven wat de schrijver leest, en de controle achteraf meet alleen.
+**Onbewezen uitspraken**: pad A Strict controleert en repareert en weigert nooit op dit signaal; pad A Open doet niets; pad B (widget, partner-API en interne chat) kiest vóór het schrijven wat de schrijver leest, en de controle achteraf meet alleen.
 
 **Wat de eerste vraag extra krijgt**: pad A niets (herschrijven draait altijd); pad B twee parafrasen, vervolgvragen krijgen coreferentie.
 
@@ -156,7 +156,7 @@ De generieke generatie (`chat_completion_streaming` of `chat_completion_non_stre
 **Logregels van pad B** (`service:portal-api`, structlog, info komt wel aan): `partner_chat_turn_judge` (velden uit de zaak), `partner_chat_answer_judge`, `partner_chat_query_paraphrase`, `case_update_failed`, `passage_selection`, `partner_chat_contact_request`, `partner_chat_not_in_passages`, `clarify_decision`, `partner_chat_turn_timing`, `answer_grounding_late`, `partner_chat_off_topic`.
 
 **Database**
-- `widget_messages.answer_signals` (per assistent-beurt van support-widgets): de zaak (`case`), de zoekvraag en zoekgangen met de gevonden passages (`search`), het oordeel van de keuzestap met citaten en vraag (`selection`), band, top_score, gat-type, bronnen, broad_mode, taal, model, verdict en grounding van de controle, beslissing, aantal en tekst van onbewezen uitspraken, geplande vraag, afspraakknop, tijd per stap (`timings`). De interne chat bewaart in `internal_chat_turns` dezelfde signalen zonder tekst (geen citaten, geen zaaktekst).
+- `widget_messages.answer_signals` (per assistent-beurt van elke widget): de zaak (`case`), de zoekvraag en zoekgangen met de gevonden passages (`search`), het oordeel van de keuzestap met citaten en vraag (`selection`), band, top_score, gat-type, bronnen, broad_mode, taal, model, verdict en grounding van de controle, beslissing, aantal en tekst van onbewezen uitspraken, geplande vraag, afspraakknop, tijd per stap (`timings`). De interne chat bewaart in `internal_chat_turns` dezelfde signalen zonder tekst (geen citaten, geen zaaktekst).
 - `portal_retrieval_gaps` voor beide paden; `conversation_quality_judgments` (nachtelijke LLM-beoordeling per widgetgesprek, `klai-judge`); `telemetry.query_shadow` (retrieval-api).
 - `knowledge.rag_eval_results`: de nachtelijke RAGAS-run in knowledge-ingest. Die **genereert zijn eigen antwoord met `klai-fast`** en meet dus geen van beide chatpaden (`klai-knowledge-ingest/knowledge_ingest/eval/judge_client.py:4-20`).
 

@@ -35,8 +35,8 @@ export type WidgetPreviewScope = 'details' | 'appearance'
 export interface WidgetPreviewDraft {
   name?: string
   description?: string
-  // True while answer-behaviour settings (instructions, template,
-  // customer-facing mode, page context) are edited but not saved; the model
+  // True while answer-behaviour settings (instructions, template, register,
+  // off-topic subjects, page context) are edited but not saved; the model
   // cannot follow them live, so the panel flags that instead.
   modelBehaviorDirty?: boolean
   headerTitle?: string

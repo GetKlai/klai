@@ -104,10 +104,9 @@ def _delta_values(frames: list[dict], key: str) -> list[Any]:
 # ─── _broad_mode_active: the predicate ───────────────────────────────────
 
 
-def test_broad_needs_support_mode_and_consent_and_a_gap():
-    assert _broad_mode_active([], support_mode=False, broad_consent=True) is False
-    assert _broad_mode_active([], support_mode=True, broad_consent=False) is False
-    assert _broad_mode_active([], support_mode=True, broad_consent=True) is True
+def test_broad_needs_consent_and_a_gap():
+    assert _broad_mode_active([], broad_consent=False) is False
+    assert _broad_mode_active([], broad_consent=True) is True
 
 
 def test_broad_fires_on_hard_gaps_only():
@@ -116,9 +115,9 @@ def test_broad_fires_on_hard_gaps_only():
     still carry a grounded answer through the rescue thresholds — so it stays
     grounded. Treating soft as broad made one "what is DECT?" turn every later
     question into general knowledge with the chunks thrown away."""
-    assert _broad_mode_active([], support_mode=True, broad_consent=True) is True  # hard
-    assert _broad_mode_active([_weak_chunk()], support_mode=True, broad_consent=True) is False  # soft
-    assert _broad_mode_active([_good_chunk()], support_mode=True, broad_consent=True) is False
+    assert _broad_mode_active([], broad_consent=True) is True  # hard
+    assert _broad_mode_active([_weak_chunk()], broad_consent=True) is False  # soft
+    assert _broad_mode_active([_good_chunk()], broad_consent=True) is False
 
 
 # ─── composer: marker applied here, offer tags public refusals ───────────
@@ -305,7 +304,7 @@ async def test_retrieve_consent_plus_gap_swaps_profile_and_clears_sources(monkey
     _patch_retrieve(monkeypatch, {"chunks": []})
     _stub_gap_writer(monkeypatch)
 
-    chunks, prompt, trusted_sources, broad = await _retrieve(support_mode=True, broad_mode=True)
+    chunks, prompt, trusted_sources, broad = await _retrieve(broad_mode=True)
 
     assert broad is True
     assert chunks == []
@@ -325,7 +324,7 @@ async def test_retrieve_consent_soft_gap_stays_grounded(monkeypatch):
     _patch_retrieve(monkeypatch, _EVIDENCE_PACK_WEAK)
     _stub_gap_writer(monkeypatch)
 
-    chunks, prompt, trusted_sources, broad = await _retrieve(support_mode=True, broad_mode=True)
+    chunks, prompt, trusted_sources, broad = await _retrieve(broad_mode=True)
 
     assert broad is False
     assert len(chunks) == 1
@@ -340,7 +339,7 @@ async def test_retrieve_gap_event_still_fires_on_broad_answer(monkeypatch):
     _patch_retrieve(monkeypatch, {"chunks": []})
     mock_record = _stub_gap_writer(monkeypatch)
 
-    _, _, _, broad = await _retrieve(support_mode=True, broad_mode=True)
+    _, _, _, broad = await _retrieve(broad_mode=True)
     tasks = list(partner_chat._pending_gap_tasks)
     if tasks:
         await asyncio.gather(*tasks)
@@ -357,7 +356,7 @@ async def test_retrieve_strong_results_win_over_consent(monkeypatch):
     _patch_retrieve(monkeypatch, _EVIDENCE_PACK_NL)
     _stub_gap_writer(monkeypatch)
 
-    chunks, prompt, trusted_sources, broad = await _retrieve(support_mode=True, broad_mode=True)
+    chunks, prompt, trusted_sources, broad = await _retrieve(broad_mode=True)
 
     assert broad is False
     assert len(chunks) == 1
@@ -372,23 +371,10 @@ async def test_retrieve_without_consent_never_broad(monkeypatch):
     _patch_retrieve(monkeypatch, {"chunks": []})
     _stub_gap_writer(monkeypatch)
 
-    _, prompt, _, broad = await _retrieve(support_mode=True, broad_mode=False)
+    _, prompt, _, broad = await _retrieve(broad_mode=False)
 
     assert broad is False
     assert SUPPORT_CHAT_SYSTEM_PROMPT in prompt
-    assert "Broad mode" not in prompt
-
-
-@pytest.mark.asyncio
-async def test_retrieve_consent_ignored_for_partner_keys(monkeypatch):
-    """broad_mode is widget-only: a partner API key request must keep the
-    GROUNDED profile even with the flag set."""
-    _patch_retrieve(monkeypatch, {"chunks": []})
-    _stub_gap_writer(monkeypatch)
-
-    _, prompt, _, broad = await _retrieve(support_mode=False, broad_mode=True)
-
-    assert broad is False
     assert "Broad mode" not in prompt
 
 
@@ -409,7 +395,7 @@ async def test_retrieve_early_returns_never_broad(monkeypatch):
 
     monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _NoClient())
 
-    _, prompt, _, broad = await _retrieve(support_mode=True, broad_mode=True, retrieval_enabled=False)
+    _, prompt, _, broad = await _retrieve(broad_mode=True, retrieval_enabled=False)
     assert broad is False
     assert "Broad mode" not in prompt
 
@@ -461,7 +447,7 @@ async def _collect(**kwargs) -> list[bytes]:
     # visitor's messages, never from the source query (the KB-tuned rewrite),
     # so tests that care about the language still prove the rewrite cannot
     # decide it.
-    if kwargs.pop("support_mode", False):
+    if kwargs.pop("widget", False):
         kwargs["messages"] = kwargs.pop("augmented_messages")
         kwargs["source_query"] = kwargs.pop("user_query")
         kwargs.setdefault("system_prompt", "sys")
@@ -490,7 +476,7 @@ async def test_stream_broad_answer_emits_answer_frame_with_marker(monkeypatch):
         user_query="wat kost het abonnement?",
         trusted_sources=[],
         citation_chunks=[],
-        support_mode=True,
+        widget=True,
         broad_mode=True,
     )
 
@@ -519,7 +505,7 @@ async def test_stream_refusal_without_consent_emits_offer_frame(monkeypatch):
         user_query="wat kost het abonnement?",
         trusted_sources=[],
         citation_chunks=[],
-        support_mode=True,
+        widget=True,
     )
 
     parsed = _parse_frames(frames)
@@ -546,7 +532,7 @@ async def test_stream_partner_path_has_no_broad_frames(monkeypatch):
         user_query="hello",
         trusted_sources=[],
         citation_chunks=[],
-        support_mode=False,
+        widget=False,
     )
 
     parsed = _parse_frames(frames)
@@ -572,7 +558,7 @@ async def test_stream_safety_block_suppresses_broad_signal(monkeypatch):
         user_query="wat is dect?",
         trusted_sources=[],
         citation_chunks=[],
-        support_mode=True,
+        widget=True,
         broad_mode=True,
     )
 
@@ -616,7 +602,7 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
     kwargs.setdefault("org_id", 42)
     kwargs.setdefault("messages", [{"role": "user", "content": "wat is dect?"}])
     kwargs.setdefault("source_query", "wat is dect?")
-    if kwargs.pop("support_mode", False):
+    if kwargs.pop("widget", False):
         reply = await write_reply(
             model="klai-primary", temperature=0.7, system_prompt="sys", settings=settings, **kwargs
         )
@@ -635,7 +621,7 @@ async def test_non_streaming_broad_answer_labels_message(monkeypatch):
     body = await _call_non_streaming(
         monkeypatch,
         "Een DECT-telefoon is een draadloze telefoon.",
-        support_mode=True,
+        widget=True,
         broad_mode=True,
     )
     message = body["choices"][0]["message"]
@@ -646,7 +632,7 @@ async def test_non_streaming_broad_answer_labels_message(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_streaming_refusal_without_consent_offers(monkeypatch):
-    body = await _call_non_streaming(monkeypatch, "Ik ken het antwoord niet.", support_mode=True)
+    body = await _call_non_streaming(monkeypatch, "Ik ken het antwoord niet.", widget=True)
     message = body["choices"][0]["message"]
     assert message["broad_mode"] == "offer"
     assert message["content"] == no_citable_sources_message("nl", helpdesk=True)
@@ -706,7 +692,7 @@ async def test_non_streaming_refusal_language_follows_visitor_not_source_query(m
         "I do not know the answer.",
         messages=[{"role": "user", "content": "Why does call transfer fail here?"}],
         source_query="doorverbinden foutmelding storing",
-        support_mode=True,
+        widget=True,
     )
     message = body["choices"][0]["message"]
     assert message["content"] == no_citable_sources_message("en", helpdesk=True)
@@ -746,7 +732,6 @@ async def test_api_threads_consent_and_clears_chunks_on_broad_turn(consent: bool
             return_value=(weak if not broad_flag else [], "prompt", [], broad_flag),
         ),
         patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_support_mode_enabled", new=AsyncMock(return_value=True)),
         patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=written)) as chat_stream,
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
@@ -811,7 +796,7 @@ async def test_non_streaming_refusal_speaks_the_conversation_language_not_the_la
         "I do not know the answer.",
         messages=_EN_SHORT_FOLLOW_UP,
         source_query="pricing plans small team",
-        support_mode=True,
+        widget=True,
     )
     message = body["choices"][0]["message"]
     assert message["content"] == no_citable_sources_message("en", helpdesk=True)
