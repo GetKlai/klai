@@ -55,9 +55,9 @@ _REQUEST_TIMEOUT = 45.0
 _VALID_CATEGORIES = {"vague", "answerable", "not_in_kb"}
 
 # The exact canned refusal, both languages, both helpdesk variants (spec.md
-# "Hoe het nu werkt": partner_chat.py's `helpdesk` param follows the
-# widget's own `support_mode` setting, so either variant can appear
-# depending on which widget is targeted).
+# "Hoe het nu werkt"): the base variant is what a widget without the former
+# support toggle answered, the helpdesk one is what every widget answers now,
+# so either can appear in recordings that span the change.
 CANNED_REFUSALS = frozenset(
     no_citable_sources_message(lang, helpdesk=helpdesk) for lang in ("nl", "en") for helpdesk in (False, True)
 )

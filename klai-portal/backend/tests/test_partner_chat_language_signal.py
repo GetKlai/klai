@@ -27,6 +27,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.services import partner_chat
+from app.services.chat_profile import ChatProfile
 
 # A single unambiguous English sentence establishes "en" on the very first
 # turn (see klai-chat-prompts language.py: establishing when nothing is set
@@ -111,6 +112,7 @@ async def test_streaming_conversation_switching_to_english_emits_one_language_fr
 
     chunks = []
     async for chunk in partner_chat.chat_completion_streaming(
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
         messages=[{"role": "user", "content": EN_1}],
         model="klai-primary",
         temperature=0.7,
@@ -136,6 +138,7 @@ async def test_non_streaming_conversation_switching_to_english_sets_message_lang
     )
 
     body = await partner_chat.chat_completion_non_streaming(
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
         messages=[{"role": "user", "content": EN_1}],
         model="klai-primary",
         temperature=0.7,
@@ -153,6 +156,7 @@ async def test_streaming_abstained_language_decision_omits_the_field(monkeypatch
 
     chunks = []
     async for chunk in partner_chat.chat_completion_streaming(
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
         messages=[],
         model="klai-primary",
         temperature=0.7,
@@ -173,6 +177,7 @@ async def test_non_streaming_abstained_language_decision_omits_the_field(monkeyp
     )
 
     body = await partner_chat.chat_completion_non_streaming(
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
         messages=[],
         model="klai-primary",
         temperature=0.7,
@@ -199,6 +204,7 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
 
     chunks = []
     async for chunk in partner_chat.chat_completion_streaming(
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
         # The language decision is taken on `messages` (English -> "en");
         # `source_query` is the separate KB-matching query the citation
         # composer scores against, mirroring the topic of the mocked answer.
@@ -224,7 +230,7 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
     body = b"".join(chunks)
     deltas = _sse_deltas(body)
     # Sanity: this really is the ordinary cited-answer path, not a refusal/broad_mode.
-    assert "".join(d.get("content", "") for d in deltas) == "Klai is steward-owned and mission-led."
+    assert "".join(d.get("content", "") for d in deltas).startswith("Klai is steward-owned and mission-led.")
     assert not any("broad_mode" in d for d in deltas)
     assert {"language": "en"} in deltas
 
@@ -238,6 +244,7 @@ async def test_non_streaming_ordinary_answered_turn_also_carries_the_language_si
     )
 
     body = await partner_chat.chat_completion_non_streaming(
+        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
         messages=[{"role": "user", "content": EN_1}],
         source_query="Wat is Klai precies en hoe werkt het?",
         model="klai-primary",
@@ -257,6 +264,6 @@ async def test_non_streaming_ordinary_answered_turn_also_carries_the_language_si
     )
 
     message = body["choices"][0]["message"]
-    assert message["content"] == "Klai is steward-owned and mission-led."
+    assert message["content"].startswith("Klai is steward-owned and mission-led.")
     assert "broad_mode" not in message
     assert message["language"] == "en"

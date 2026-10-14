@@ -36,7 +36,6 @@ import structlog
 from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from klai_chat_prompts import (
-    GROUNDED_CHAT_SYSTEM_PROMPT,
     KB_CONTEXT_LANGUAGE_REMINDER,
     SUPPORT_BROAD_CHAT_SYSTEM_PROMPT,
     SUPPORT_CHAT_SYSTEM_PROMPT,
@@ -1540,12 +1539,9 @@ async def _judge_composed_answer(
     as written and checked afterwards for the record only; a general turn is
     not checked at all, it had no articles. The internal Strict turn is held
     and judged in ``widget_write.write_reply``, like the help widget's.
-    Partner-API keys return the composer's result untouched and make no call.
 
     An empty result (the model wrote nothing) keeps the composer's refusal.
     """
-    if profile.surface != "internal":
-        return content, sources, decision
     answer_mode = knowledge_turn.answer_mode if knowledge_turn is not None else profile.kb_mode
     draft_text, _ = strip_appointment_offer_marker(draft)
     safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
@@ -1700,7 +1696,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     incrementally, through :func:`_pop_live_stream_text`, instead of holding
     it for composition. Composition still runs once on the full text at the
     end for sources/signals, but its content is not re-sent: the caller
-    already saw it live. A held turn (the partner key) buffers everything.
+    already saw it live.
     The internal Strict turn is not streamed here: widget_write.write_reply
     holds and judges it.
 
@@ -1820,7 +1816,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         web_chunks,
         web_query,
         response_language=response_language,
-        suggest_open_mode=profile.surface == "internal",
+        suggest_open_mode=True,
     )
     judge_started = time.perf_counter()
     if safety_reason := output_safety_violation(draft):
@@ -1926,7 +1922,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             ]
         )
     if not sources or not emit_sources:
-        if outgoing or not profile.stream_live:
+        if outgoing:
             yield _sse_content_delta(outgoing)
         yield b"data: [DONE]\n\n"
         _emit_language_correctness_log(
@@ -1948,7 +1944,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             }
         ]
     )
-    if outgoing or not profile.stream_live:
+    if outgoing:
         yield _sse_content_delta(outgoing)
     yield b"data: [DONE]\n\n"
     _emit_language_correctness_log(
@@ -1959,11 +1955,11 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     )
 
 
-def _broad_mode_active(chunks: list[dict], *, support_mode: bool, broad_consent: bool) -> bool:
+def _broad_mode_active(chunks: list[dict], *, broad_consent: bool) -> bool:
     """Single source of truth for "answer this turn from general knowledge".
 
-    True only for a public help-page widget (``support_mode``) whose visitor
-    explicitly consented (``broad_consent``) AND whose help-article retrieval
+    True only for a widget or partner turn whose visitor explicitly consented
+    (``broad_consent``; the internal chat never sends it) AND whose help-article retrieval
     came up empty or weak — measured with the exact same
     :func:`classify_gap` call that fires the gap event, so a broad answer and
     a knowledge-gap row always mean the same turn. Retrieval itself is never
@@ -1982,7 +1978,7 @@ def _broad_mode_active(chunks: list[dict], *, support_mode: bool, broad_consent:
     winning whenever it has anything to offer, so the visitor never has to
     think about which mode they are in.
     """
-    return bool(support_mode and broad_consent and classify_gap(chunks) == "hard")
+    return bool(broad_consent and classify_gap(chunks) == "hard")
 
 
 def _build_system_prompt(
@@ -1990,7 +1986,6 @@ def _build_system_prompt(
     original_system: str | None = None,
     widget_system_prompt: str | None = None,
     page_context: PageContext | None = None,
-    support_mode: bool = False,
     broad_mode: bool = False,
     tone_register: str = "restrained",
     pasted_correspondence: bool = False,
@@ -2010,20 +2005,17 @@ def _build_system_prompt(
     The one prompt builder for every surface; the profile picks the text. An
     internal profile gets the Strict/Open/general/meta prompts the LiteLLM
     hook built (see app.services.knowledge_prompts), selected by
-    ``internal_state``; the widget and partner prompts below are unchanged.
-    The multi-part-question layout (``multi_question``, ``sub_query_results``,
-    ``unchecked_questions``) applies to every surface, because the
-    sub-question fan-out does.
+    ``internal_state``. The multi-part-question layout (``multi_question``,
+    ``sub_query_results``, ``unchecked_questions``) applies to every surface,
+    because the sub-question fan-out does.
 
-    ``support_mode`` swaps the default profile from the internal-team GROUNDED
-    prompt to the customer-facing SUPPORT_CHAT_SYSTEM_PROMPT for public
-    help-page widgets. ``tone_register`` (only meaningful with ``support_mode``)
-    selects the brand's expressive register instead of the default restrained
-    one: ``"expressive"`` swaps in SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT, a
+    A widget or partner turn gets the customer-facing
+    SUPPORT_CHAT_SYSTEM_PROMPT. ``tone_register`` selects the brand's
+    expressive register instead of the default restrained one:
+    ``"expressive"`` swaps in SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT, a
     tone-only variant of SUPPORT whose truth rules are byte-identical; any
     other value keeps the restrained default, so an absent field cannot change
-    existing behaviour. ``broad_mode`` (only meaningful with ``support_mode``)
-    swaps further to the consented general-knowledge fallback
+    existing behaviour. ``broad_mode`` swaps to the consented general-knowledge fallback
     SUPPORT_BROAD_CHAT_SYSTEM_PROMPT — the register does not carry into broad
     mode, which keeps its single profile; callers must also pass an empty chunk
     list so no help-article context is injected on a broad turn. These flags
@@ -2059,14 +2051,12 @@ def _build_system_prompt(
             retrieval_failure=retrieval_failure,
             web_search_available=web_search_available,
         )
-    if support_mode and broad_mode:
+    if broad_mode:
         default_prompt = SUPPORT_BROAD_CHAT_SYSTEM_PROMPT
-    elif support_mode:
-        default_prompt = (
-            SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT if tone_register == "expressive" else SUPPORT_CHAT_SYSTEM_PROMPT
-        )
+    elif tone_register == "expressive":
+        default_prompt = SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT
     else:
-        default_prompt = GROUNDED_CHAT_SYSTEM_PROMPT
+        default_prompt = SUPPORT_CHAT_SYSTEM_PROMPT
     base = original_system or default_prompt
     if pasted_correspondence:
         base = f"{base}\n\n{PASTED_CORRESPONDENCE_SCOPE}"
@@ -2463,7 +2453,6 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     retrieval_query: str | None = None,
     top_k: int = 8,
     retrieval_enabled: bool = True,
-    support_mode: bool = False,
     broad_mode: bool = False,
     tone_register: str = "restrained",
     # Detected by the caller on the request's messages (see
@@ -2508,9 +2497,9 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
 
     Follows the pattern from deploy/litellm/klai_knowledge.py.
 
-    ``broad_mode`` is the helpdesk widget's per-turn visitor consent. When it
-    combines with ``support_mode`` AND a real retrieval attempt that produced a
-    hard or soft gap, the turn answers from general knowledge instead: the
+    ``broad_mode`` is the widget or partner turn's per-turn visitor consent.
+    When it combines with a real retrieval attempt that produced a hard gap,
+    the turn answers from general knowledge instead: the
     prompt swaps to the SUPPORT_BROAD profile with no article context, the
     returned trusted_sources are emptied so nothing downstream can cite, and
     the fourth tuple element is True (the caller labels the answer). The gap
@@ -2519,8 +2508,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     degradation) yields broad=False: no consented broad answer is served
     without an actual retrieval attempt that came up short.
 
-    ``tone_register`` is the widget's customer-facing register (only
-    meaningful with ``support_mode``); it selects the restrained or the
+    ``tone_register`` is the widget's customer-facing register; it selects the restrained or the
     expressive SUPPORT profile in :func:`_build_system_prompt` and is ignored
     on broad turns. Default ``"restrained"`` keeps current behaviour.
 
@@ -2573,7 +2561,6 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
             original_system,
             widget_system_prompt=widget_system_prompt,
             page_context=cleaned_page_context,
-            support_mode=support_mode,
             tone_register=tone_register,
             pasted_correspondence=pasted_correspondence,
             profile=profile,
@@ -2629,21 +2616,20 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
 
     conversation_history = _build_conversation_history(messages)
     retrieval_user_id = profile.user_id if internal else partner_user_id
-    # A first help-widget question travels with two paraphrases, a follow-up
-    # with the two queries of the conversation's case (query_paraphrase.py and
-    # case_file.py have the numbers). A fanned-out message gets none:
-    # retrieval-api would run the variants of the whole message inside every
-    # sub-question's pass. The literal sentence stays the query on every
-    # surface, and retrieval-api resolves its references from the history: the
-    # internal chat's own rewrite went in step O4, the case replaced it.
-    query_variants = (
+    # A first widget or partner question travels with two paraphrases, a
+    # follow-up with the two queries of the conversation's case
+    # (query_paraphrase.py and case_file.py have the numbers). A fanned-out
+    # message gets none: retrieval-api would run the variants of the whole
+    # message inside every sub-question's pass. The literal sentence stays the
+    # query on every surface, and retrieval-api resolves its references from
+    # the history: the internal chat's own rewrite went in step O4, the case
+    # replaced it.
+    paraphrases = (
         []
-        if sub_queries
-        else await first_question_variants(
-            messages, query, settings, support_mode=support_mode, delegated_org_id=zitadel_org_id
-        )
-        or list(follow_up_variants or [])
+        if sub_queries or internal
+        else await first_question_variants(messages, query, settings, delegated_org_id=zitadel_org_id)
     )
+    query_variants = [] if sub_queries else paraphrases or list(follow_up_variants or [])
     retrieve_body: dict = {
         # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
         # REQ-2.5) using the same helper as conversation_history entries. An
@@ -2660,8 +2646,8 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         # the writer sees one, so these turns ask the evidence pack for as
         # many sources as passages: the default cap of three left the known
         # article out of the pack in turns where retrieval had found it (plan
-        # §8, step J). A partner key has no selection step and keeps the cap.
-        "max_sources": min(top_k, 8) if (support_mode or internal) else None,
+        # §8, step J).
+        "max_sources": min(top_k, 8),
     }
     if kb_slugs:
         retrieve_body["kb_slugs"] = kb_slugs
@@ -2781,7 +2767,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         chunks = safe_chunks
         trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
     _record_retrieval_band(answer_signals, result, blocked_chunk_count=blocked_chunk_count)
-    if answer_signals is not None and support_mode and not internal:
+    if answer_signals is not None and not internal:
         # The trace of this turn's search, kept with the turn so a wrong reply
         # can be laid at the step where it went wrong without replaying it;
         # until now that trace existed only in a private replay (plan §5, step 7).
@@ -2839,21 +2825,20 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
         # The user's own attachment is still readable with zero KB evidence;
         # fall through to the zero_chunks prompt below instead of refusing.
 
-    # Help widget and internal chat: the writer reads only the passages that
-    # answer the question (passage_selection.py has the numbers). Not on a
-    # turn that is answered broadly, which reads no articles, and not on a
-    # multi-part message, whose parts each need their own passages. "Not in
-    # the passages" narrows nothing here: the caller routes that turn (the
-    # widget's "not found", the internal Strict refusal), and an internal
-    # Open turn, which may answer from general knowledge, gets every passage.
+    # Every surface: the writer reads only the passages that answer the
+    # question (passage_selection.py has the numbers). Not on a turn that is
+    # answered broadly, which reads no articles, and not on a multi-part
+    # message, whose parts each need their own passages. "Not in the passages"
+    # narrows nothing here: the caller routes that turn (the widget's "not
+    # found", the internal Strict refusal), and an internal Open turn, which
+    # may answer from general knowledge, gets every passage.
     selection_chunks: list[dict] = []
     if (
-        (support_mode or internal)
-        and chunks
+        chunks
         and not turn.multi_question
         and not turn.user_provided_content
         and not turn.pasted_correspondence
-        and not _broad_mode_active(chunks, support_mode=support_mode, broad_consent=broad_mode)
+        and not _broad_mode_active(chunks, broad_consent=broad_mode)
     ):
         selection_chunks = chunks
         turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
@@ -2883,7 +2868,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     # as the fourth tuple element so the prompt swap and the answer label can
     # never disagree. On a broad turn no article context is injected and no
     # sources can be cited, regardless of what the weak chunks might support.
-    broad = _broad_mode_active(chunks, support_mode=support_mode, broad_consent=broad_mode)
+    broad = _broad_mode_active(chunks, broad_consent=broad_mode)
     sub_query_results = [entry for entry in result.get("sub_results") or [] if isinstance(entry, dict)] or None
     system_prompt = prompt(
         [] if broad else chunks,
@@ -2929,10 +2914,9 @@ async def chat_completion_non_streaming(
     web_query: str | None = None,
     trusted_sources: list[dict[str, Any]] | None = None,
     source_query: str | None = None,
-    page_context: PageContext | None = None,
     answer_signals: dict[str, Any] | None = None,
     turn_timing: dict[str, float] | None = None,
-    profile: ChatProfile = ChatProfile(surface="widget"),
+    profile: ChatProfile,
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
     delegated_org_id: str | None = None,
@@ -2956,7 +2940,7 @@ async def chat_completion_non_streaming(
     response_language = _response_language(messages, pasted_correspondence=pasted_correspondence)
     sub_queries = knowledge_turn.sub_queries if knowledge_turn is not None else []
     augmented_messages = _augment_messages_with_system_prompt(
-        messages, system_prompt, page_context, response_language=response_language, profile=profile
+        messages, system_prompt, response_language=response_language, profile=profile
     )
 
     litellm_url = settings.litellm_base_url
@@ -3066,7 +3050,7 @@ async def chat_completion_non_streaming(
                 web_chunks,
                 web_query,
                 response_language=response_language,
-                suggest_open_mode=profile.surface == "internal",
+                suggest_open_mode=True,
             )
             judge_started = time.perf_counter()
             rendered_content, sources, decision = await _judge_composed_answer(
@@ -3154,10 +3138,9 @@ async def chat_completion_streaming(
     trusted_sources: list[dict[str, Any]] | None = None,
     source_query: str | None = None,
     emit_sources: bool = True,
-    page_context: PageContext | None = None,
     answer_signals: dict[str, Any] | None = None,
     turn_timing: dict[str, float] | None = None,
-    profile: ChatProfile = ChatProfile(surface="widget"),
+    profile: ChatProfile,
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
     delegated_org_id: str | None = None,
@@ -3166,7 +3149,7 @@ async def chat_completion_streaming(
 ) -> AsyncGenerator[bytes]:
     """Stream LiteLLM SSE response with backend-managed KB citations.
 
-    Marker mode is the current partner/widget API path: it buffers the model
+    The internal chat's live leg (an Open or general turn): it buffers the model
     output, runs the deterministic citation composer, then emits only sources
     that support the final answer.
 
@@ -3185,7 +3168,7 @@ async def chat_completion_streaming(
     """
     response_language = _response_language(messages, pasted_correspondence=pasted_correspondence)
     augmented_messages = _augment_messages_with_system_prompt(
-        messages, system_prompt, page_context, response_language=response_language, profile=profile
+        messages, system_prompt, response_language=response_language, profile=profile
     )
     user_query = source_query or _last_user_message(messages) or ""
     if response_language is not None:

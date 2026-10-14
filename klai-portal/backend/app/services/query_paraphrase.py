@@ -52,15 +52,15 @@ class QueryParaphrases(BaseModel):
 
 
 async def first_question_variants(
-    messages: list[dict], query: str, settings: Settings, *, support_mode: bool, delegated_org_id: str | None = None
+    messages: list[dict], query: str, settings: Settings, *, delegated_org_id: str | None = None
 ) -> list[str]:
-    """Paraphrases for a first support-mode question; a follow-up has its history to search on.
+    """Paraphrases for a first widget or partner question; a follow-up has its history to search on.
 
     "First" counts the visitor's turns, not the assistant's: the browser widget
     seeds every conversation with its welcome line as an assistant message and
     sends it back with the first question.
     """
-    if not support_mode or sum(message.get("role") == "user" for message in messages) > 1:
+    if sum(message.get("role") == "user" for message in messages) > 1:
         return []
     return await paraphrase_first_question(query, settings, delegated_org_id=delegated_org_id)
 
