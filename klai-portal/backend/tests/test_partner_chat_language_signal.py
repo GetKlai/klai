@@ -34,6 +34,18 @@ from app.services.chat_profile import ChatProfile
 # is cheap, any turn that passes the gate and confidence tiers establishes).
 EN_1 = "How do I invite a new user to my team and set their permissions?"
 
+# The ordinary answer as the internal profile sends it: the text, then the
+# footer render_answer_footer appends (answer_footer.py) in English, because
+# EN_1 decides the language.
+ORDINARY_ANSWER_WITH_FOOTER = (
+    "Klai is steward-owned and mission-led.\n\n"
+    "**Sources**\n"
+    "- [Steward ownership](https://getklai.com/docs/company/steward-ownership)\n\n"
+    "**Agent activity**\n"
+    "- Mode: Open, knowledge base with fallback.\n"
+    "- Knowledge base queried: 1 chunk retrieved."
+)
+
 
 def _settings() -> MagicMock:
     settings = MagicMock()
@@ -230,7 +242,7 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
     body = b"".join(chunks)
     deltas = _sse_deltas(body)
     # Sanity: this really is the ordinary cited-answer path, not a refusal/broad_mode.
-    assert "".join(d.get("content", "") for d in deltas).startswith("Klai is steward-owned and mission-led.")
+    assert "".join(d.get("content", "") for d in deltas) == ORDINARY_ANSWER_WITH_FOOTER
     assert not any("broad_mode" in d for d in deltas)
     assert {"language": "en"} in deltas
 
@@ -264,6 +276,6 @@ async def test_non_streaming_ordinary_answered_turn_also_carries_the_language_si
     )
 
     message = body["choices"][0]["message"]
-    assert message["content"].startswith("Klai is steward-owned and mission-led.")
+    assert message["content"] == ORDINARY_ANSWER_WITH_FOOTER
     assert "broad_mode" not in message
     assert message["language"] == "en"

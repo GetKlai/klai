@@ -60,10 +60,6 @@ from app.services.partner_chat import (
     widget_input_safety_violation,
 )
 from app.services.partner_rate_limit import check_rate_limit, check_weighted_rate_limit
-from app.services.partner_sse import (
-    _extract_assistant_text_and_sources,
-    _parse_audit_sse_chunk,
-)
 from app.services.partner_support import (
     _mapping,
     _message_payload,
@@ -500,57 +496,6 @@ async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> s
     config = result.scalar_one_or_none() or {}
     register = config.get("tone_register") if isinstance(config, dict) else None
     return register if register == "expressive" else "restrained"
-
-
-async def _audit_streaming_wrapper(
-    inner: AsyncGenerator[bytes],
-    *,
-    widget_id: str,
-    session_key: str,
-    loaded_origin: str | None = None,
-    is_preview: bool = False,
-    turn_id: str | None = None,
-    # Certainty signals the completion generator fills while it streams
-    # (SPEC-KNOWLEDGE-ACTIVITY-001 §4.1). Read back once the stream ends and
-    # sent to the audit row only: nothing in it is ever re-emitted as a frame.
-    answer_signals: dict[str, Any] | None = None,
-    turn: KnowledgeTurn | None = None,
-) -> AsyncGenerator[bytes]:
-    """Tee the SSE stream, capture composed text + sources, log the
-    assistant turn once the generator completes.
-
-    Parsing is best-effort — anything we can't decode is just yielded
-    through. The audit never blocks or alters the user's response.
-    """
-    composed_text: list[str] = []
-    composed_sources: list[dict] = []
-    try:
-        async for chunk in inner:
-            try:
-                text_part, src_part = _parse_audit_sse_chunk(chunk)
-                if text_part:
-                    composed_text.append(text_part)
-                if src_part:
-                    composed_sources = src_part
-            except Exception:
-                # Best-effort audit parsing — never break the user's chat.
-                logger.debug("widget_audit_sse_parse_skipped", exc_info=True)
-            yield chunk
-    finally:
-        final_text = "".join(composed_text).strip()
-        if final_text:
-            _write_widget_record(
-                turn,
-                widget_id=widget_id,
-                session_key=session_key,
-                role="assistant",
-                content=final_text,
-                sources=composed_sources or None,
-                loaded_origin=loaded_origin,
-                is_preview=is_preview,
-                turn_id=turn_id,
-                answer_signals=answer_signals or None,
-            )
 
 
 def _write_widget_record(turn: KnowledgeTurn | None, **fields: Any) -> None:
@@ -2000,31 +1945,14 @@ def _record_fields(
     }
 
 
-def _sent_body(
-    result: dict,
-    request: ChatCompletionsRequest,
-    turn: KnowledgeTurn,
-    answer_signals: dict[str, Any],
-    record: dict[str, Any] | None,
-) -> dict:
-    """The non-streaming body as the caller asked for it, recorded when the widget turn is audited."""
+def _sent_body(result: dict, request: ChatCompletionsRequest) -> dict:
+    """The non-streaming body as the caller asked for it."""
     knowledge = request.knowledge
     if knowledge is not None and not knowledge.include_sources:
         for choice in result.get("choices") or []:
             message = choice.get("message") if isinstance(choice, dict) else None
             if isinstance(message, dict):
                 message.pop("sources", None)
-    if record is not None:
-        assistant_text, assistant_sources = _extract_assistant_text_and_sources(result)
-        if assistant_text:
-            _write_widget_record(
-                turn,
-                **record,
-                role="assistant",
-                content=assistant_text,
-                sources=assistant_sources,
-                answer_signals=answer_signals or None,
-            )
     return result
 
 
@@ -2035,15 +1963,22 @@ async def _replayed(frames: list[bytes]) -> AsyncGenerator[bytes]:
 
 def _reply_response(reply: Reply, request: ChatCompletionsRequest, record: dict[str, Any] | None) -> Any:
     """Send a widget or internal reply the way the request asked for it, and record a widget turn."""
+    if record is not None and reply.text:
+        # Recorded once, from the Reply itself, before anything is sent.
+        _write_widget_record(
+            reply.turn,
+            **record,
+            role="assistant",
+            content=reply.text,
+            sources=reply.sources or None,
+            answer_signals=reply.signals or None,
+        )
     knowledge = request.knowledge
     include_sources = knowledge.include_sources if knowledge is not None else True
     if request.stream:
         frames = _replayed(reply_frames(reply, include_sources=include_sources))
-        if record is not None:
-            frames = _audit_streaming_wrapper(frames, turn=reply.turn, **record, answer_signals=reply.signals)
         return StreamingResponse(content=frames, media_type="text/event-stream")
-    body = reply_body(reply, model=request.model, include_sources=include_sources)
-    return _sent_body(body, request, reply.turn, reply.signals, record)
+    return reply_body(reply, model=request.model, include_sources=include_sources)
 
 
 def _upstream_error_response(error: AnswerUpstreamError, request: ChatCompletionsRequest) -> Any:
@@ -2255,7 +2190,7 @@ async def chat_completions(
 
     result = await chat_completion_non_streaming(**generation)
     _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
-    return _sent_body(result, request, knowledge_turn, answer_signals, None)
+    return _sent_body(result, request)
 
 
 # ---------------------------------------------------------------------------
