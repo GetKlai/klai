@@ -439,34 +439,27 @@ async def test_maybe_apply_web_search_searches_with_resolved_query(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chat_handler_web_search_never_runs_for_a_widget_or_partner_key(monkeypatch):
-    """A widget and a partner key both run widget_turn, which never searches the web."""
+async def test_chat_handler_web_search_is_refused_for_a_widget_or_partner_key(monkeypatch):
+    """A widget and a partner key both run widget_turn, which reads the help
+    articles only; a request that asks for the web gets a 400 instead of a
+    reply that quietly did without, so the permission is never meaningless."""
     import app.api.partner as partner
-    from app.services import case_file, widget_turn
-    from app.services.partner_chat import KnowledgeTurn
-    from app.services.widget_reply import Reply
 
-    # kb_access resolves to a real slug (SPEC-PARTNER-KB-SCOPE-001 fails closed
-    # on an unresolvable KB scope) — this test is about web search, not KB scope.
-    monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["kb-1"]))
-    monkeypatch.setattr(widget_turn, "retrieve_context", AsyncMock(return_value=([], "sp", [], False)))
-    monkeypatch.setattr(widget_turn, "log_retrieval", MagicMock())
-    monkeypatch.setattr(case_file, "update_case", AsyncMock(return_value=None))
     search = AsyncMock(return_value=[{"title": "T", "url": "https://x.test/1", "content": "c"}])
-    write = AsyncMock(return_value=Reply(text="ok", sources=[], signals={}, language=None, turn=KnowledgeTurn()))
     monkeypatch.setattr(partner, "search_web", search)
-    monkeypatch.setattr(widget_turn, "write_reply", write)
     req = _req(web_search=True, stream=False, web_search_query="concise", messages=[{"role": "user", "content": "q"}])
 
-    await partner.chat_completions(
-        request=req,
-        http_request=MagicMock(headers={}, client=MagicMock(host="127.0.0.1")),
-        auth=_auth({"chat": True, "web_search": True}),
-        db=AsyncMock(),
-    )
+    with pytest.raises(HTTPException) as raised:
+        await partner.chat_completions(
+            request=req,
+            http_request=MagicMock(headers={}, client=MagicMock(host="127.0.0.1")),
+            auth=_auth({"chat": True, "web_search": True}),
+            db=AsyncMock(),
+        )
 
+    assert raised.value.status_code == 400
+    assert "web_search" in str(raised.value.detail)
     search.assert_not_awaited()
-    write.assert_awaited_once()
 
 
 def test_web_chunks_not_cited_when_answer_unrelated():

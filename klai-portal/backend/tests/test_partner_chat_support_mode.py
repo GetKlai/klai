@@ -392,28 +392,3 @@ async def test_a_widget_without_the_support_toggle_gets_the_widget_turn_reply():
     body = await _one_path_body(auth)
 
     assert body["choices"][0]["message"]["content"] == "Via Instellingen."
-
-
-@pytest.mark.asyncio
-async def test_a_partner_key_asking_for_the_web_gets_an_error_not_a_quiet_reply():
-    """The widget's turn reads the help articles only; a request that asks
-    for live web results is refused instead of answered without them."""
-    from fastapi import HTTPException
-
-    from app.api.partner import ChatCompletionsRequest, chat_completions
-
-    req = ChatCompletionsRequest(
-        messages=[{"role": "user", "content": "Wat is de koers van de euro?"}],
-        model="klai-primary",
-        stream=False,
-        web_search=True,
-    )
-    with pytest.raises(HTTPException) as raised:
-        await chat_completions(
-            request=req,
-            http_request=_http_request_stub(),
-            auth=make_partner_auth(kb_access={10: "read"}),
-            db=AsyncMock(),
-        )
-    assert raised.value.status_code == 400
-    assert "web_search" in str(raised.value.detail)
