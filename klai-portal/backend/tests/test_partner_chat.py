@@ -954,7 +954,7 @@ async def test_non_streaming_blocks_hazardous_model_output(monkeypatch):
     settings.litellm_master_key = "secret"
 
     body = await chat_completion_non_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": "hoe maak ik c4?"}],
         model="klai-primary",
         temperature=0.7,
@@ -1016,7 +1016,7 @@ async def test_streaming_refusal_language_follows_visitor_not_rewritten_query(mo
 
     chunks = []
     async for chunk in chat_completion_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": "Wat gaat hier mis met doorverbinden?"}],
         model="klai-primary",
         temperature=0.7,
@@ -2279,7 +2279,7 @@ def test_no_branch_without_sources_may_return_a_link(branch):
     Parametrised on purpose — a second source-less branch added later belongs in
     this list, and leaving it out is the defect. The conversational branch was
     removed on 2026-09-18; uncited model text now passes the same stripper in
-    ``_judge_composed_answer``.
+    ``_finish_live_answer``.
     """
     from app.services.partner_chat import _compose_backend_managed_answer
 

@@ -401,7 +401,7 @@ async def test_stream_partner_path_has_no_escalation_frames(monkeypatch):
     frames = [
         frame
         async for frame in partner_chat.chat_completion_streaming(
-            profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+            profile=ChatProfile(surface="internal", kb_mode="open"),
             messages=[{"role": "user", "content": "hello"}],
             model="klai-primary",
             temperature=0.7,
@@ -509,7 +509,7 @@ async def test_non_streaming_grounded_answer_has_no_escalation_key(monkeypatch):
 async def test_non_streaming_partner_has_no_escalation_key(monkeypatch):
     _model_says(monkeypatch, f"Partner answer. {MARKER}")
     body = await partner_chat.chat_completion_non_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": "ik kom er niet uit"}],
         model="klai-primary",
         temperature=0.7,

@@ -1517,7 +1517,7 @@ def _check_answer_later(
     return task
 
 
-async def _judge_composed_answer(
+async def _finish_live_answer(
     content: str,
     sources: list[dict],
     decision: dict[str, Any],
@@ -1528,11 +1528,11 @@ async def _judge_composed_answer(
     settings: Settings,
     org_id: int | str | None,
     answer_signals: dict[str, Any] | None,
-    profile: ChatProfile = ChatProfile(surface="widget"),
+    profile: ChatProfile,
     knowledge_turn: KnowledgeTurn | None = None,
     delegated_org_id: str | None = None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """SPEC-RAG-ANSWER-JUDGES-001 REQ-3 for an internal Open or general turn: the one decision, no judge.
+    """Settle an internal Open or general turn after composition: record the one decision, start the check.
 
     These turns stream live, because an employee reads the tokens as they
     arrive: an Open answer may use general knowledge by design, so it is shown
@@ -1652,7 +1652,7 @@ def _renumber_sources(sources: list[dict]) -> list[dict]:
     return sources
 
 
-async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - hold/live + tool_calls branching alongside existing composition
+async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - live streaming + tool_calls branching alongside composition
     *,
     augmented_messages: list[dict],
     model: str,
@@ -1676,42 +1676,34 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     knowledge_turn: KnowledgeTurn | None = None,
     pasted_correspondence: bool = False,
 ) -> AsyncGenerator[bytes]:
-    """Collect text, compose deterministic citations, then stream once.
+    """Stream the internal chat's Open or general turn live, then compose its citations.
 
-    Marker-mode clients receive backend-managed document-level citations. The
-    model is explicitly told not to write citation markers, so source selection
-    must happen after generation against the final answer text.
+    The content is streamed incrementally through :func:`_pop_live_stream_text`,
+    because an employee reads the tokens as they arrive. Composition still runs
+    once on the full text at the end for sources and signals, but its content
+    is not re-sent: the caller already saw it live. An upstream failure before
+    the first byte (LiteLLM mid-restart / 5xx) is surfaced as a clean SSE error
+    frame.
 
-    Marker mode buffers the whole upstream response before emitting anything, so
-    an upstream failure (LiteLLM mid-restart / 5xx) happens pre-first-byte and is
-    surfaced as a clean SSE error frame instead of a broken stream.
-
-    The help widget's reply is not written here: widget_write.write_reply
-    composes it and widget_reply.reply_frames renders it.
+    The widget, the partner key and the internal Strict turn are not written
+    here: widget_write.write_reply composes and holds them, and
+    widget_reply.reply_frames renders them.
 
     ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`)
     — filled once the answer is composed, and never part of any frame.
 
-    ``profile.stream_live`` (an internal Open or general turn) streams content
-    incrementally, through :func:`_pop_live_stream_text`, instead of holding
-    it for composition. Composition still runs once on the full text at the
-    end for sources/signals, but its content is not re-sent: the caller
-    already saw it live.
-    The internal Strict turn is not streamed here: widget_write.write_reply
-    holds and judges it.
-
     A ``tool_calls`` delta is forwarded unbuffered the moment it arrives,
-    regardless of hold/live — see :func:`_sse_tool_calls_delta`. It never
+    regardless of what is streamed — see :func:`_sse_tool_calls_delta`. It never
     enters ``raw_text_parts``, so it can never reach the citation composer or
     the grounding check.
 
-    For ``surface == "internal"`` with citable sources, a text footer
+    With citable sources, a text footer
     (:func:`app.services.answer_footer.render_answer_footer`) is appended as
-    the LAST render step, after composition has settled ``sources``. An
-    internal turn here is live, its content already streamed with the model's
-    own raw markers, so the footer follows as one extra content delta after the
-    live text (see the emission below). ``knowledge_turn`` carries the
-    sub-questions for that footer and the mode the answer is decided under.
+    the LAST render step, after composition has settled ``sources``. The
+    content already streamed with the model's own raw markers, so the footer
+    follows as one extra content delta after the live text (see the emission
+    below). ``knowledge_turn`` carries the sub-questions for that footer and
+    the mode the answer is decided under.
 
     ``pasted_correspondence`` strips the answer-contract markers the
     correspondence prompt asks for, from the live stream as it goes and from
@@ -1772,14 +1764,13 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
                     text = delta.get("content")
                     if isinstance(text, str) and text:
                         raw_text_parts.append(text)
-                        if profile.stream_live:
-                            if pasted_correspondence:
-                                text, marker_buffer = pop_answer_contract_stream_text(marker_buffer + text, final=False)
-                            live_buffer += text
-                            safe_text, live_buffer = _pop_live_stream_text(live_buffer)
-                            if safe_text:
-                                live_emitted.append(safe_text)
-                                yield _sse_content_delta(safe_text)
+                        if pasted_correspondence:
+                            text, marker_buffer = pop_answer_contract_stream_text(marker_buffer + text, final=False)
+                        live_buffer += text
+                        safe_text, live_buffer = _pop_live_stream_text(live_buffer)
+                        if safe_text:
+                            live_emitted.append(safe_text)
+                            yield _sse_content_delta(safe_text)
     except httpx.TransportError:
         logger.warning("partner_chat_upstream_unreachable", org_id=org_id, target=chat_url, exc_info=True)
         yield _sse_error_frame("Chat service unavailable")
@@ -1826,13 +1817,13 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             stage="stream_composed_output",
             reason=safety_reason,
         )
-        # Visitor's own words, never user_query (on the widget path that is
-        # the KB-rewritten search query).
+        # The employee's own words, never user_query (the KB-rewritten search
+        # query when the caller passes one).
         content = safety_refusal_message(visitor_query)
         sources = []
         decision = {"reason": safety_reason, "output_blocked": True}
     else:
-        content, sources, decision = await _judge_composed_answer(
+        content, sources, decision = await _finish_live_answer(
             content,
             sources,
             decision,
@@ -1874,10 +1865,9 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         reply=content,
     )
     # Deliberately kept separate as the last render step
-    # (chat-quality-history-and-plan.md §7.2): the widget got its
-    # sources/escalation frames above; an internal turn additionally gets
-    # them as a text footer, because LibreChat renders only text. Built from
-    # the same finalised ``sources`` the frames above used.
+    # (chat-quality-history-and-plan.md §7.2): the sources frame emitted
+    # below is structured data, but LibreChat renders only text, so the footer
+    # carries the same finalised ``sources`` as text.
     footer_text = ""
     if profile.surface == "internal" and emit_sources:
         footer_text = render_answer_footer(
@@ -1888,14 +1878,13 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             language=response_language,
             general_knowledge=decision.get("reason") == "general_knowledge",
         )
-    # What still has to go out: the whole answer on a held turn, only the
-    # unseen tail (plus the footer) on a live one.
-    outgoing = content
-    if profile.stream_live and decision.pop("output_blocked", False):
+    # What still has to go out: only the unseen tail (plus the footer), since
+    # the rest was streamed live.
+    if decision.pop("output_blocked", False):
         # The streamed part cannot be taken back; the rest of the draft is
         # withheld and the refusal follows it.
         outgoing = f"\n\n{content}"
-    elif profile.stream_live:
+    else:
         outgoing = _unstreamed_tail(content, "".join(live_emitted), draft, citation_chunks)
         if footer_text:
             outgoing = f"{outgoing.rstrip()}\n\n{footer_text}"
@@ -2930,7 +2919,7 @@ async def chat_completion_non_streaming(
     cross-lingual correctness is observable on every call (REQ-07).
 
     ``answer_signals`` is the caller's audit sink (see :func:`_fill_answer_signals`);
-    it is filled on the marker path and never added to the returned body.
+    it is filled once the answer is composed and never added to the returned body.
 
     ``message.language`` carries the same per-turn :func:`resolve_conversation_language`
     decision that steered the system prompt (see ``response_language`` above);
@@ -2999,8 +2988,8 @@ async def chat_completion_non_streaming(
     generation_ms = _elapsed_ms(generation_started)
     answer_judge_ms = 0
     # Kept for citation composition only (see the composer's user_query):
-    # on the widget path source_query is the KB-rewritten search query and
-    # must never reach the refusal language.
+    # source_query is the KB-rewritten search query and must never reach the
+    # refusal language.
     composer_query = source_query or _last_user_message(messages) or ""
     # augmented_messages prepends page context, so this IS the human's words.
     # Used by the output-safety refusal, which identifies this one turn; the
@@ -3053,7 +3042,7 @@ async def chat_completion_non_streaming(
                 suggest_open_mode=True,
             )
             judge_started = time.perf_counter()
-            rendered_content, sources, decision = await _judge_composed_answer(
+            rendered_content, sources, decision = await _finish_live_answer(
                 rendered_content,
                 sources,
                 decision,

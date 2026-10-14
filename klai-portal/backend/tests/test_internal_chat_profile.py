@@ -289,17 +289,14 @@ async def test_strict_employee_gets_strict_profile_with_user_id(world):
 
     profile = await _resolve(world, OID_A)
 
-    assert profile == ChatProfile(
-        surface="internal", kb_mode="strict", kb_scope="org", user_id="sub-a", stream_live=False
-    )
+    assert profile == ChatProfile(surface="internal", kb_mode="strict", kb_scope="org", user_id="sub-a")
 
 
 @pytest.mark.asyncio
-async def test_open_employee_streams_live(world):
+async def test_open_employee_gets_open_profile(world):
     profile = await _resolve(world, OID_A)
 
     assert profile.kb_mode == "open"
-    assert profile.stream_live is True
 
 
 @pytest.mark.asyncio
@@ -310,7 +307,6 @@ async def test_retrieval_disabled_is_general(world):
 
     assert profile.kb_mode == "general"
     assert profile.user_id == "sub-a"
-    assert profile.stream_live is True
 
 
 @pytest.mark.asyncio

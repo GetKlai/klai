@@ -4,9 +4,9 @@ One pipeline serves the website widget, the partner API and the internal chat
 (LibreChat). The fields below are the only ways those surfaces may differ, and
 each maps to a reason in docs/architecture/chat-quality-history-and-plan.md
 §7.2: who is asking (``surface``, ``user_id``), what may be used beyond the
-knowledge base (``kb_mode``), what is searched (``kb_scope``, ``kb_slugs``),
-and how the answer is delivered (``stream_live``). A difference between
-surfaces that is not one of these is a duplicate to merge, not a new field.
+knowledge base (``kb_mode``), and what is searched (``kb_scope``, ``kb_slugs``).
+A difference between surfaces that is not one of these is a duplicate to merge,
+not a new field.
 """
 
 from __future__ import annotations
@@ -41,11 +41,6 @@ class ChatProfile:
     kb_slugs: tuple[str, ...] | None = None
     # Zitadel subject of the employee; only the internal surface has one.
     user_id: str | None = None
-    # Stream tokens as they arrive. Open and general internal turns do: an Open
-    # turn may use general knowledge and a general turn searches nothing, so
-    # neither waits on the grounding check. Every other turn is held until the
-    # check has decided what to show.
-    stream_live: bool = False
 
 
 _FORBIDDEN = {"error": {"type": "permission_error", "message": "Insufficient permissions"}}
@@ -113,5 +108,4 @@ def _internal_profile(user: PortalUser, *, knowledge: bool) -> ChatProfile:
         kb_scope=scope,
         kb_slugs=kb_slugs,
         user_id=user.zitadel_user_id,
-        stream_live=mode in ("open", "general"),
     )

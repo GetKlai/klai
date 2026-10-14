@@ -115,7 +115,7 @@ async def test_tool_call_delta_reaches_client_before_stream_ends(monkeypatch):
         system_prompt="prompt",
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
 
@@ -151,7 +151,7 @@ async def test_tool_call_content_never_enters_composed_text_or_grounding_input(m
         system_prompt="prompt",
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
 
@@ -222,7 +222,7 @@ async def test_strict_profile_strips_web_search_tool_before_forwarding(monkeypat
 
 
 # ---------------------------------------------------------------------------
-# Open internal (stream_live) vs. held turns.
+# Open internal turns stream live.
 # ---------------------------------------------------------------------------
 
 
@@ -242,7 +242,7 @@ async def test_open_internal_profile_yields_multiple_content_frames(monkeypatch)
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
 
@@ -267,7 +267,7 @@ async def test_live_turn_never_streams_a_model_written_link_and_never_repeats_th
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
 
@@ -292,7 +292,7 @@ async def test_internal_generation_call_carries_the_org_for_pii_masking(
         system_prompt="prompt",
         settings=_settings(),
         delegated_org_id=delegated_org_id,
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         pass
 

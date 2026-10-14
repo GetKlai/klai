@@ -124,7 +124,7 @@ async def test_streaming_conversation_switching_to_english_emits_one_language_fr
 
     chunks = []
     async for chunk in partner_chat.chat_completion_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": EN_1}],
         model="klai-primary",
         temperature=0.7,
@@ -150,7 +150,7 @@ async def test_non_streaming_conversation_switching_to_english_sets_message_lang
     )
 
     body = await partner_chat.chat_completion_non_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": EN_1}],
         model="klai-primary",
         temperature=0.7,
@@ -168,7 +168,7 @@ async def test_streaming_abstained_language_decision_omits_the_field(monkeypatch
 
     chunks = []
     async for chunk in partner_chat.chat_completion_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[],
         model="klai-primary",
         temperature=0.7,
@@ -189,7 +189,7 @@ async def test_non_streaming_abstained_language_decision_omits_the_field(monkeyp
     )
 
     body = await partner_chat.chat_completion_non_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[],
         model="klai-primary",
         temperature=0.7,
@@ -216,7 +216,7 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
 
     chunks = []
     async for chunk in partner_chat.chat_completion_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         # The language decision is taken on `messages` (English -> "en");
         # `source_query` is the separate KB-matching query the citation
         # composer scores against, mirroring the topic of the mocked answer.
@@ -256,7 +256,7 @@ async def test_non_streaming_ordinary_answered_turn_also_carries_the_language_si
     )
 
     body = await partner_chat.chat_completion_non_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": EN_1}],
         source_query="Wat is Klai precies en hoe werkt het?",
         model="klai-primary",

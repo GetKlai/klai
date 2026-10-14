@@ -252,7 +252,7 @@ class ChatCompletionsRequest(BaseModel):
     visitor_email: str | None = Field(default=None, max_length=254)
     # Internal chat only; a widget or partner key gets a 400 (chat_completions).
     # Forwarded to LiteLLM unmodified except for a Strict-KB profile, which
-    # strips web-search tools (see chat_completion_streaming). Client-side
+    # strips web-search tools (see widget_write.write_reply). Client-side
     # tool execution: portal never calls a tool itself, it only relays the
     # model's tool_calls deltas and accepts the tool-role results back.
     tools: list[dict[str, Any]] | None = None

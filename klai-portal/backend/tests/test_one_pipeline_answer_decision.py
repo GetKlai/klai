@@ -143,7 +143,6 @@ def _internal(**overrides: Any) -> ChatProfile:
         "user_id": "sub-employee",
     }
     values.update(overrides)
-    values.setdefault("stream_live", values["kb_mode"] in ("open", "general"))
     return ChatProfile(**values)
 
 
@@ -660,7 +659,7 @@ async def test_strict_answer_about_pasted_mail_is_not_repaired_against_the_artic
 async def test_general_answer_keeps_its_links(monkeypatch):
     llm = _LiteLLM("Kijk op https://docs.example.com/install voor de stappen.")
 
-    turn = await _turn(monkeypatch, llm, profile=_internal(kb_mode="general", stream_live=False))
+    turn = await _turn(monkeypatch, llm, profile=_internal(kb_mode="general"))
 
     assert "https://docs.example.com/install" in turn.text
 
