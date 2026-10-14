@@ -178,7 +178,7 @@ def _widget_nerds_integration(widget_config_data: dict[str, Any]) -> dict[str, A
 
 # REQ-7 (Finding B-4) abuse ceilings for the public mint paths. The per-widget
 # number used to be 10/min, which was a traffic cap, not an abuse cap: every
-# visitor of every page embedding the widget shares one bucket (help.voys.nl
+# visitor of every page embedding the widget shares one bucket (one customer
 # hit it on the 11th visitor/min). Now: 20/min per client IP (real visitors get
 # an individual budget) under a 120/min per-widget backstop (order of magnitude
 # above real traffic, mirrors the Caddy partner_per_ip edge zone). Actual LLM
