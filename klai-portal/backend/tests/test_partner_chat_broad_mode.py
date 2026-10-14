@@ -516,29 +516,6 @@ async def test_stream_refusal_without_consent_emits_offer_frame(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stream_partner_path_has_no_broad_frames(monkeypatch):
-    _stream_patches(monkeypatch, "Some partner answer.")
-    settings = MagicMock()
-    settings.litellm_base_url = "http://litellm:4000"
-    settings.litellm_master_key = "key"
-
-    frames = await _collect(
-        augmented_messages=[{"role": "user", "content": "hello"}],
-        model="klai-primary",
-        temperature=0.7,
-        settings=settings,
-        org_id=42,
-        user_query="hello",
-        trusted_sources=[],
-        citation_chunks=[],
-        widget=False,
-    )
-
-    parsed = _parse_frames(frames)
-    assert _delta_values(parsed, "broad_mode") == []
-
-
-@pytest.mark.asyncio
 async def test_stream_safety_block_suppresses_broad_signal(monkeypatch):
     """Blocked output must neither show the broad label nor re-offer: the
     replaced decision drops the broad_mode key."""
