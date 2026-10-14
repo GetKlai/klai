@@ -12,7 +12,7 @@ These tests cover:
   fail-open (returns [] on any error).
 - build_web_results_block: untrusted framing; web_results_as_chunks shape.
 - the permission gate and web-query resolution the handler relies on.
-- _compose_backend_managed_answer: KB/web kept as separate origin-tagged
+- _compose_answer: KB/web kept as separate origin-tagged
   tiers, web-only is citable (not refused), both-empty is refused.
 """
 
@@ -268,7 +268,7 @@ def test_web_chunks_become_citable_sources_without_kb():
 def test_compose_keeps_kb_and_web_as_separate_tiers():
     # KB and web are distinct trust tiers: each source is tagged with its origin
     # and the merged list gets one contiguous label sequence.
-    from app.services.partner_chat import _compose_backend_managed_answer
+    from app.services.partner_chat import _compose_answer
 
     answer = "Disable SIP-ALG on the router for the Yealink phone. Dutch GDP grew 2 percent in 2026."
     kb_chunks = [
@@ -281,7 +281,7 @@ def test_compose_keeps_kb_and_web_as_separate_tiers():
     web_chunks = web_results_as_chunks(
         [{"title": "Economy 2026", "url": "https://web.test/eco", "content": "Dutch GDP grew 2 percent in 2026"}]
     )
-    _content, sources, _decision = _compose_backend_managed_answer(
+    _content, sources, _decision = _compose_answer(
         answer,
         [],
         kb_chunks,
@@ -325,13 +325,13 @@ def test_log_citation_rescues_emits_one_actionable_event() -> None:
 
 
 def test_compose_web_only_not_refused():
-    from app.services.partner_chat import _compose_backend_managed_answer
+    from app.services.partner_chat import _compose_answer
 
     answer = "Dutch GDP grew 2 percent in 2026 according to recent data."
     web_chunks = web_results_as_chunks(
         [{"title": "Economy 2026", "url": "https://web.test/eco", "content": "Dutch GDP grew 2 percent in 2026"}]
     )
-    content, sources, _decision = _compose_backend_managed_answer(
+    content, sources, _decision = _compose_answer(
         answer, [], [], "dutch economy 2026", web_chunks, response_language="nl"
     )
     assert sources and all(s["origin"] == "web" for s in sources)
@@ -339,9 +339,9 @@ def test_compose_web_only_not_refused():
 
 
 def test_compose_refuses_when_no_kb_and_no_web():
-    from app.services.partner_chat import _compose_backend_managed_answer
+    from app.services.partner_chat import _compose_answer
 
-    _content, sources, _decision = _compose_backend_managed_answer(
+    _content, sources, _decision = _compose_answer(
         "Some ungrounded statement.", [], [], "unrelated query", None, response_language=None
     )
     assert sources == []
@@ -352,7 +352,7 @@ def test_compose_validates_web_against_web_query_not_kb_blob():
     # query, NOT the long KB-retrieval blob (user_query). A tangential web result
     # that shares blob tokens otherwise dominates query_support_tokens and the
     # relevant web source gets rejected as query_not_supported -> refusal.
-    from app.services.partner_chat import _compose_backend_managed_answer
+    from app.services.partner_chat import _compose_answer
 
     answer = "There is an outage at provider X affecting calls right now."
     web_chunks = web_results_as_chunks(
@@ -372,13 +372,11 @@ def test_compose_validates_web_against_web_query_not_kb_blob():
     blob = "Yealink router registratie ticket model"
 
     # With the KB blob as the web query_text, the relevant web source is rejected.
-    _c, blob_sources, _d = _compose_backend_managed_answer(
-        answer, [], [], blob, web_chunks, web_query=None, response_language="nl"
-    )
+    _c, blob_sources, _d = _compose_answer(answer, [], [], blob, web_chunks, web_query=None, response_language="nl")
     assert blob_sources == []
 
     # With the concise web query threaded through, it is cited.
-    _c2, web_sources, _d2 = _compose_backend_managed_answer(
+    _c2, web_sources, _d2 = _compose_answer(
         answer, [], [], blob, web_chunks, web_query="outage provider X affecting calls", response_language="nl"
     )
     assert [s["url"] for s in web_sources] == ["https://status.test/x"]
@@ -387,7 +385,7 @@ def test_compose_validates_web_against_web_query_not_kb_blob():
 
 def test_compose_dedupes_same_url_across_kb_and_web():
     # If the KB and the web both surface the same URL, emit it once (KB wins).
-    from app.services.partner_chat import _compose_backend_managed_answer
+    from app.services.partner_chat import _compose_answer
 
     answer = "Disable SIP-ALG on the router for the Yealink phone."
     same = "https://help.test/sip-alg"
@@ -397,7 +395,7 @@ def test_compose_dedupes_same_url_across_kb_and_web():
     web_chunks = web_results_as_chunks(
         [{"title": "SIP-ALG guide", "url": same, "content": "Disable SIP-ALG on the router for the Yealink phone"}]
     )
-    _content, sources, _decision = _compose_backend_managed_answer(
+    _content, sources, _decision = _compose_answer(
         answer,
         [],
         kb_chunks,

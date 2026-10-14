@@ -2220,9 +2220,9 @@ def test_build_conversation_history_window_and_role_filtering():
 
 
 def _compose(text, *, trusted=None, force_escalation=False):
-    from app.services.partner_chat import _compose_backend_managed_answer
+    from app.services.partner_chat import _compose_answer
 
-    return _compose_backend_managed_answer(
+    return _compose_answer(
         text,
         trusted or [],
         [],
@@ -2284,9 +2284,9 @@ def test_no_branch_without_sources_may_return_a_link(branch):
     removed on 2026-09-18; uncited model text now passes the same stripper in
     ``_finish_live_answer``.
     """
-    from app.services.partner_chat import _compose_backend_managed_answer
+    from app.services.partner_chat import _compose_answer
 
-    content, sources, _ = _compose_backend_managed_answer(
+    content, sources, _ = _compose_answer(
         # Every shape a renderer will autolink. The scheme-cased one is not
         # hypothetical: schemes are case-insensitive per RFC 3986, the shared
         # citation stripper matched lowercase only, and "HTTPS://" reached the

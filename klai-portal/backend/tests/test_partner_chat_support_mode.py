@@ -25,7 +25,7 @@ from klai_chat_prompts import (
 )
 
 from app.services.case_file import Case
-from app.services.partner_chat import _compose_backend_managed_answer
+from app.services.partner_chat import _compose_answer
 from app.services.retrieval_context import KnowledgeTurn, _build_system_prompt
 from app.services.widget_reply import Reply
 
@@ -115,12 +115,12 @@ def test_build_system_prompt_expressive_does_not_override_broad_profile():
     assert _SUPPORT_EXPRESSIVE_ONLY not in prompt
 
 
-# ─── _compose_backend_managed_answer refusal language ───────────────────
+# ─── _compose_answer refusal language ───────────────────
 
 
 def test_compose_refusal_helpdesk_wording_when_support():
     # No trusted sources/chunks -> nothing citable -> canned refusal.
-    text, sources, _decision = _compose_backend_managed_answer(
+    text, sources, _decision = _compose_answer(
         "Een antwoord zonder bronnen.",
         [],
         [],
@@ -134,7 +134,7 @@ def test_compose_refusal_helpdesk_wording_when_support():
 
 
 def test_compose_refusal_default_uses_internal_wording():
-    text, sources, _decision = _compose_backend_managed_answer(
+    text, sources, _decision = _compose_answer(
         "Een antwoord zonder bronnen.",
         [],
         [],
@@ -146,7 +146,7 @@ def test_compose_refusal_default_uses_internal_wording():
 
 
 def test_compose_refusal_helpdesk_english_for_non_dutch_query():
-    text, _sources, _decision = _compose_backend_managed_answer(
+    text, _sources, _decision = _compose_answer(
         "An answer with no sources.",
         [],
         [],

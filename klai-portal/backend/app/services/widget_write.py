@@ -55,7 +55,7 @@ from app.services.partner_chat import (
     _NO_CITABLE_SOURCES_DECISION_KEY,
     _answer_without_retrieved_sources,
     _check_answer_later,
-    _compose_backend_managed_answer,
+    _compose_answer,
     _elapsed_ms,
     _fill_answer_signals,
     _grounding_label,
@@ -169,7 +169,7 @@ async def write_reply(
         )
     if pasted_correspondence:
         draft = strip_answer_contract_markers(draft)
-    content, sources, decision = _compose_backend_managed_answer(
+    content, sources, decision = _compose_answer(
         draft,
         trusted_sources,
         citation_chunks,
