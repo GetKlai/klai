@@ -408,7 +408,7 @@ VARIANT_QUESTION = "Heb je een vast contract of een oproepcontract?"
 
 DEPENDS = {
     "need": "verlof aanvragen",
-    "evidence": [{"passage": 1, "quote": "Je vraagt verlof aan in het HR-portaal onder Verlof.", "variant": ""}],
+    "evidence": [{"passage": 1, "quote": "Je vraagt verlof aan in het HR-portaal onder Verlof."}],
     "verdict": "depends",
     "question": VARIANT_QUESTION,
 }

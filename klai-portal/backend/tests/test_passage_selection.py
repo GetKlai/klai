@@ -16,9 +16,7 @@ def test_a_quote_under_the_wrong_passage_number_counts_for_the_passage_that_carr
     """Retrieval hands over near-identical sections of one article; the model
     copied the right sentence and numbered the wrong section in two meetlat
     turns, which turned an answer into "not found"."""
-    selection = PassageSelection(
-        need="", evidence=[Evidence(passage=1, quote=_STEP, variant="")], verdict="answers", question=""
-    )
+    selection = PassageSelection(need="", evidence=[Evidence(passage=1, quote=_STEP)], verdict="answers", question="")
 
     assert [chunk["chunk_id"] for chunk in selection.chosen(_SECTIONS)] == ["b"]
     assert selection.not_in_passages(_SECTIONS) is False
@@ -30,9 +28,7 @@ def test_a_quote_never_moves_to_another_article():
         {"chunk_id": "x", "title": "Facturen", "text": "Over facturen."},
         {"chunk_id": "y", "title": "App", "text": _STEP},
     ]
-    selection = PassageSelection(
-        need="", evidence=[Evidence(passage=1, quote=_STEP, variant="")], verdict="answers", question=""
-    )
+    selection = PassageSelection(need="", evidence=[Evidence(passage=1, quote=_STEP)], verdict="answers", question="")
 
     assert selection.chosen(other) == []
     assert selection.not_in_passages(other) is True
@@ -44,9 +40,7 @@ def test_a_shared_title_is_not_the_same_article():
         {"chunk_id": "p", "title": "Installatie", "source_url": "https://help.example.com/app", "text": "Over de app."},
         {"chunk_id": "q", "title": "Installatie", "source_url": "https://help.example.com/toestel", "text": _STEP},
     ]
-    selection = PassageSelection(
-        need="", evidence=[Evidence(passage=1, quote=_STEP, variant="")], verdict="answers", question=""
-    )
+    selection = PassageSelection(need="", evidence=[Evidence(passage=1, quote=_STEP)], verdict="answers", question="")
 
     assert selection.chosen(two) == []
 
@@ -59,7 +53,7 @@ def test_words_scattered_over_three_sentences_do_not_outrank_the_verdict():
         "heeft een USB-kabel aan de meegeleverde voet.",
     }
     selection = PassageSelection(
-        need="", evidence=[Evidence(passage=1, quote=_STEP, variant="")], verdict="not_in_passages", question=""
+        need="", evidence=[Evidence(passage=1, quote=_STEP)], verdict="not_in_passages", question=""
     )
 
     assert selection.not_in_passages([scattered]) is True
@@ -69,10 +63,7 @@ def test_words_scattered_over_three_sentences_do_not_outrank_the_verdict():
 def test_a_few_common_words_do_not_outrank_a_not_in_passages_verdict():
     short = [{"chunk_id": "f", "title": "Fax", "text": "Faxen. Dat kan niet meer sinds 2024."}]
     selection = PassageSelection(
-        need="",
-        evidence=[Evidence(passage=1, quote="Dat kan niet.", variant="")],
-        verdict="not_in_passages",
-        question="",
+        need="", evidence=[Evidence(passage=1, quote="Dat kan niet.")], verdict="not_in_passages", question=""
     )
 
     assert selection.not_in_passages(short) is True
@@ -80,9 +71,7 @@ def test_a_few_common_words_do_not_outrank_a_not_in_passages_verdict():
 
 def test_the_pointed_passage_wins_when_it_carries_the_quote_too():
     twice = [_SECTIONS[1], {"chunk_id": "d", "title": "Headset", "text": _STEP}]
-    selection = PassageSelection(
-        need="", evidence=[Evidence(passage=2, quote=_STEP, variant="")], verdict="answers", question=""
-    )
+    selection = PassageSelection(need="", evidence=[Evidence(passage=2, quote=_STEP)], verdict="answers", question="")
 
     assert [chunk["chunk_id"] for chunk in selection.chosen(twice)] == ["d"]
 
@@ -91,7 +80,7 @@ def test_a_verified_quote_outranks_a_not_in_passages_verdict():
     """Five replay rounds: 39 "not in the passages" verdicts came with a sentence
     that stood in a passage, and the owner expected an answer in 31 of them."""
     selection = PassageSelection(
-        need="", evidence=[Evidence(passage=2, quote=_STEP, variant="")], verdict="not_in_passages", question=""
+        need="", evidence=[Evidence(passage=2, quote=_STEP)], verdict="not_in_passages", question=""
     )
 
     assert selection.not_in_passages(_SECTIONS) is False
@@ -108,7 +97,7 @@ def test_without_any_quote_the_verdict_decides():
 def test_a_quote_that_stands_in_no_passage_still_means_not_in_passages():
     selection = PassageSelection(
         need="",
-        evidence=[Evidence(passage=2, quote="Druk drie seconden op de resetknop.", variant="")],
+        evidence=[Evidence(passage=2, quote="Druk drie seconden op de resetknop.")],
         verdict="answers",
         question="",
     )
@@ -122,7 +111,7 @@ def test_the_brief_speaks_the_words_of_the_surface_it_is_written_for():
     brief about "help articles" and "the visitor" made Strict answer an
     employee with "the help articles do not cover this"."""
     selection = PassageSelection(
-        need="aansluiten", evidence=[Evidence(passage=1, quote=_STEP, variant="")], verdict="answers", question=""
+        need="aansluiten", evidence=[Evidence(passage=1, quote=_STEP)], verdict="answers", question=""
     )
 
     widget = writer_brief(selection, _SECTIONS, internal=False, source_only=True)
@@ -138,7 +127,7 @@ def test_open_mode_is_not_held_to_the_source_s_own_words():
     """Open may fill from general knowledge; the stricter sentence made its
     answers worse in two internal rounds, Strict's better."""
     selection = PassageSelection(
-        need="aansluiten", evidence=[Evidence(passage=1, quote=_STEP, variant="")], verdict="answers", question=""
+        need="aansluiten", evidence=[Evidence(passage=1, quote=_STEP)], verdict="answers", question=""
     )
 
     strict = writer_brief(selection, _SECTIONS, internal=True, source_only=True)

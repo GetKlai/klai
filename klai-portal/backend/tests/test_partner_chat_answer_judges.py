@@ -92,7 +92,7 @@ def _selection(verdict: str, *evidence: tuple[int, str], question: str = "") -> 
     """The selection step's reply: the verdict, and per passage the sentence it points at."""
     return {
         "need": "",
-        "evidence": [{"passage": number, "quote": quote, "variant": ""} for number, quote in evidence],
+        "evidence": [{"passage": number, "quote": quote} for number, quote in evidence],
         "verdict": verdict,
         "question": question,
     }

@@ -2864,8 +2864,7 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
                 {
                     "verdict": turn.selection.verdict,
                     "evidence": [
-                        {"passage": item.passage, "quote": item.quote[:200], "variant": item.variant[:60]}
-                        for item in turn.selection.evidence
+                        {"passage": item.passage, "quote": item.quote[:200]} for item in turn.selection.evidence
                     ],
                     "question": turn.selection.question[:200],
                 }
