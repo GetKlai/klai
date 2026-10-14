@@ -30,7 +30,7 @@ from klai_chat_prompts import no_citable_sources_message
 
 from app.api.partner_dependencies import PartnerAuthContext
 from app.services.chat_profile import ChatProfile
-from app.services.partner_chat import safety_refusal_message
+from app.services.chat_safety import safety_refusal_message
 
 LITELLM = "http://litellm.example.com"
 RETRIEVAL = "http://retrieval.example.com"
@@ -143,7 +143,6 @@ def _internal(**overrides: Any) -> ChatProfile:
         "user_id": "sub-employee",
     }
     values.update(overrides)
-    values.setdefault("stream_live", values["kb_mode"] in ("open", "general"))
     return ChatProfile(**values)
 
 
@@ -178,7 +177,7 @@ async def _turn(
 ) -> _Turn:
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
-    from app.services import partner_chat, widget_turn
+    from app.services import partner_chat, retrieval_context, widget_turn
 
     for name, value in {
         "litellm_base_url": LITELLM,
@@ -195,7 +194,7 @@ async def _turn(
     monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(partner, "_widget_tone_register", AsyncMock(return_value="restrained"))
     monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
-    monkeypatch.setattr(partner_chat, "_schedule_gap_event", MagicMock())
+    monkeypatch.setattr(retrieval_context, "_schedule_gap_event", MagicMock())
     records: list[dict] = []
 
     async def record(*, org_id: int, answer_signals: dict) -> None:
@@ -660,7 +659,7 @@ async def test_strict_answer_about_pasted_mail_is_not_repaired_against_the_artic
 async def test_general_answer_keeps_its_links(monkeypatch):
     llm = _LiteLLM("Kijk op https://docs.example.com/install voor de stappen.")
 
-    turn = await _turn(monkeypatch, llm, profile=_internal(kb_mode="general", stream_live=False))
+    turn = await _turn(monkeypatch, llm, profile=_internal(kb_mode="general"))
 
     assert "https://docs.example.com/install" in turn.text
 
@@ -686,7 +685,7 @@ async def test_a_blocked_live_answer_ends_with_the_refusal_not_the_rest_of_the_d
 @pytest.mark.asyncio
 async def test_a_rejected_employee_identity_is_an_error_not_a_general_answer(monkeypatch, kb_mode):
     from app.api import partner
-    from app.services import partner_chat
+    from app.services import retrieval_context
 
     llm = _LiteLLM()
     identity_error = httpx.Response(403, json={"detail": {"error": "identity_assertion_failed"}})
@@ -696,7 +695,7 @@ async def test_a_rejected_employee_identity_is_an_error_not_a_general_answer(mon
         with respx.mock(assert_all_called=False) as router:
             router.post(f"{RETRIEVAL}/retrieve").mock(return_value=identity_error)
             router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=llm)
-            await partner_chat.retrieve_context(
+            await retrieval_context.retrieve_context(
                 org_id=7,
                 zitadel_org_id="zorg-acme",
                 kb_slugs=["handboek"],

@@ -787,7 +787,8 @@ def test_production_widget_routes_carry_their_marker() -> None:
     An unmarked new widget endpoint fails here; marking a route nobody
     calls fails here too (equality, not subset)."""
     from app.api.partner import router as partner_router
-    from app.api.widget_public import MODE_ECHO, MODE_ROUTE_DECIDES, widget_cors_mode_of
+    from app.api.widget_public import MODE_ECHO, MODE_ROUTE_DECIDES
+    from app.middleware.klai_cors import _collect_widget_cors_entries
 
     expected = {
         ("POST", "/partner/v1/chat/completions"): MODE_ECHO,
@@ -800,8 +801,7 @@ def test_production_widget_routes_carry_their_marker() -> None:
     }
 
     declared: dict[tuple[str, str], str] = {}
-    for route in partner_router.routes:
-        mode = widget_cors_mode_of(route)
+    for route, _ancestors, mode in _collect_widget_cors_entries(partner_router.routes):
         if mode is None:
             continue
         methods = {str(m) for m in getattr(route, "methods", set())} - {"HEAD"}

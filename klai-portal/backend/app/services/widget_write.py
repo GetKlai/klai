@@ -32,36 +32,38 @@ from app.services.answer_epistemics import strip_answer_contract_markers
 from app.services.answer_grounding import GroundingCheck, check_grounding, grounding_budget
 from app.services.answer_judge import AnswerJudgement, decide_answer, is_clarifying_question, judge_answer
 from app.services.chat_profile import ChatProfile
-from app.services.partner_chat import (
-    _CHOSEN_PASSAGE_KEY,
-    _NO_CITABLE_SOURCES_DECISION_KEY,
-    KnowledgeTurn,
-    PageContext,
-    _answer_without_retrieved_sources,
-    _appointment_escalation,
-    _appointment_escalation_signal,
+from app.services.chat_prompting import (
     _augment_messages_with_system_prompt,
-    _check_answer_later,
-    _chunk_source_title,
-    _compose_backend_managed_answer,
-    _elapsed_ms,
     _emit_language_correctness_log,
-    _fill_answer_signals,
-    _grounding_label,
-    _grounding_signals,
-    _helpdesk_refusal_offers,
     _is_web_search_tool,
-    _last_user_message,
     _llm_request_body,
-    _log_citation_rescues,
-    _log_turn_timing,
     _response_language,
     _strip_web_search_tools,
+)
+from app.services.chat_safety import (
+    _appointment_escalation,
+    _appointment_escalation_signal,
+    _helpdesk_refusal_offers,
+    _last_user_message,
     _text_offers_appointment,
     output_safety_violation,
     safety_refusal_message,
     without_unsourced_contact_details,
 )
+from app.services.chat_sources import PageContext, _chunk_source_title
+from app.services.partner_chat import (
+    _NO_CITABLE_SOURCES_DECISION_KEY,
+    _answer_without_retrieved_sources,
+    _check_answer_later,
+    _compose_backend_managed_answer,
+    _elapsed_ms,
+    _fill_answer_signals,
+    _grounding_label,
+    _grounding_signals,
+    _log_citation_rescues,
+    _log_turn_timing,
+)
+from app.services.retrieval_context import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
 from app.services.widget_reply import AnswerUpstreamError, Reply
 from app.trace import get_trace_headers
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from app.api.partner import widget_config
+from app.api.partner_widget_config import widget_config
 
 
 def test_widget_config_docstring_exists() -> None:

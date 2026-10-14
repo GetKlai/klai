@@ -34,7 +34,8 @@ from app.services import partner_chat, widget_turn, widget_write
 from app.services.case_file import Case
 from app.services.chat_profile import ChatProfile
 from app.services.escalation_intent import escalation_intent
-from app.services.partner_chat import KnowledgeTurn, _compose_backend_managed_answer
+from app.services.partner_chat import _compose_backend_managed_answer
+from app.services.retrieval_context import KnowledgeTurn
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
 
@@ -401,7 +402,7 @@ async def test_stream_partner_path_has_no_escalation_frames(monkeypatch):
     frames = [
         frame
         async for frame in partner_chat.chat_completion_streaming(
-            profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+            profile=ChatProfile(surface="internal", kb_mode="open"),
             messages=[{"role": "user", "content": "hello"}],
             model="klai-primary",
             temperature=0.7,
@@ -509,7 +510,7 @@ async def test_non_streaming_grounded_answer_has_no_escalation_key(monkeypatch):
 async def test_non_streaming_partner_has_no_escalation_key(monkeypatch):
     _model_says(monkeypatch, f"Partner answer. {MARKER}")
     body = await partner_chat.chat_completion_non_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": "ik kom er niet uit"}],
         model="klai-primary",
         temperature=0.7,

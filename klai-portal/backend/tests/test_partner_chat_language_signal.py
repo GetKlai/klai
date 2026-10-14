@@ -34,6 +34,18 @@ from app.services.chat_profile import ChatProfile
 # is cheap, any turn that passes the gate and confidence tiers establishes).
 EN_1 = "How do I invite a new user to my team and set their permissions?"
 
+# The ordinary answer as the internal profile sends it: the text, then the
+# footer render_answer_footer appends (answer_footer.py) in English, because
+# EN_1 decides the language.
+ORDINARY_ANSWER_WITH_FOOTER = (
+    "Klai is steward-owned and mission-led.\n\n"
+    "**Sources**\n"
+    "- [Steward ownership](https://getklai.com/docs/company/steward-ownership)\n\n"
+    "**Agent activity**\n"
+    "- Mode: Open, knowledge base with fallback.\n"
+    "- Knowledge base queried: 1 chunk retrieved."
+)
+
 
 def _settings() -> MagicMock:
     settings = MagicMock()
@@ -112,7 +124,7 @@ async def test_streaming_conversation_switching_to_english_emits_one_language_fr
 
     chunks = []
     async for chunk in partner_chat.chat_completion_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": EN_1}],
         model="klai-primary",
         temperature=0.7,
@@ -138,7 +150,7 @@ async def test_non_streaming_conversation_switching_to_english_sets_message_lang
     )
 
     body = await partner_chat.chat_completion_non_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": EN_1}],
         model="klai-primary",
         temperature=0.7,
@@ -156,7 +168,7 @@ async def test_streaming_abstained_language_decision_omits_the_field(monkeypatch
 
     chunks = []
     async for chunk in partner_chat.chat_completion_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[],
         model="klai-primary",
         temperature=0.7,
@@ -177,7 +189,7 @@ async def test_non_streaming_abstained_language_decision_omits_the_field(monkeyp
     )
 
     body = await partner_chat.chat_completion_non_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[],
         model="klai-primary",
         temperature=0.7,
@@ -204,7 +216,7 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
 
     chunks = []
     async for chunk in partner_chat.chat_completion_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         # The language decision is taken on `messages` (English -> "en");
         # `source_query` is the separate KB-matching query the citation
         # composer scores against, mirroring the topic of the mocked answer.
@@ -230,7 +242,7 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
     body = b"".join(chunks)
     deltas = _sse_deltas(body)
     # Sanity: this really is the ordinary cited-answer path, not a refusal/broad_mode.
-    assert "".join(d.get("content", "") for d in deltas).startswith("Klai is steward-owned and mission-led.")
+    assert "".join(d.get("content", "") for d in deltas) == ORDINARY_ANSWER_WITH_FOOTER
     assert not any("broad_mode" in d for d in deltas)
     assert {"language": "en"} in deltas
 
@@ -244,7 +256,7 @@ async def test_non_streaming_ordinary_answered_turn_also_carries_the_language_si
     )
 
     body = await partner_chat.chat_completion_non_streaming(
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": EN_1}],
         source_query="Wat is Klai precies en hoe werkt het?",
         model="klai-primary",
@@ -264,6 +276,6 @@ async def test_non_streaming_ordinary_answered_turn_also_carries_the_language_si
     )
 
     message = body["choices"][0]["message"]
-    assert message["content"].startswith("Klai is steward-owned and mission-led.")
+    assert message["content"] == ORDINARY_ANSWER_WITH_FOOTER
     assert "broad_mode" not in message
     assert message["language"] == "en"

@@ -130,13 +130,14 @@ def pipeline(monkeypatch):
     import app.api.partner as partner
     import app.services.partner_chat as partner_chat
     import app.services.widget_turn as widget_turn
+    from app.services import retrieval_context
 
     monkeypatch.setattr(partner.settings, "knowledge_retrieve_url", "http://retrieval.example.com")
     monkeypatch.setattr(partner.settings, "litellm_base_url", "http://litellm.example.com")
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["handboek"]))
     monkeypatch.setattr(partner, "_widget_system_prompt", AsyncMock(return_value=None))
     monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
-    monkeypatch.setattr(partner_chat, "_schedule_gap_event", MagicMock())
+    monkeypatch.setattr(retrieval_context, "_schedule_gap_event", MagicMock())
     monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
 
     def run(recorder: _Recorder):

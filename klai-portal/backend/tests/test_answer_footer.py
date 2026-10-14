@@ -96,7 +96,7 @@ def test_footer_is_stripped_from_retrieval_history_and_model_history():
     same strip, ported into portal's history builders, so a footer never
     enters a search query or the model's history.
     """
-    from app.services.partner_chat import _augment_messages_with_system_prompt, _build_conversation_history
+    from app.services.chat_prompting import _augment_messages_with_system_prompt, _build_conversation_history
 
     footer_answer = (
         "Je kunt de VPN-instellingen aanpassen in het portaal.\n\n"
@@ -200,7 +200,7 @@ async def test_live_internal_turn_with_sources_appends_footer_as_extra_delta(mon
         settings=_settings(),
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        profile=ChatProfile(surface="internal", kb_mode="open", stream_live=True),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
     ):
         chunks.append(chunk)
 
@@ -238,34 +238,6 @@ async def test_internal_turn_without_sources_gets_no_footer(monkeypatch):
 
     body = b"".join(chunks).decode()
     assert "Bronnen" not in body
-    assert "Agent activiteit" not in body
-
-
-@pytest.mark.asyncio
-async def test_widget_stream_with_sources_is_unaffected_by_the_internal_footer(monkeypatch):
-    """Byte-for-byte guard: a widget turn with the same sources must not gain
-    a footer — the footer is internal-only."""
-    from app.services.partner_chat import chat_completion_streaming
-
-    events = [{"choices": [{"delta": {"content": "Naam 4(https://getklai.com/docs/legal/privacy)."}}]}]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client(events))
-
-    chunks = []
-    async for chunk in chat_completion_streaming(
-        messages=[{"role": "user", "content": "Welke gegevens staan in de privacy policy?"}],
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="prompt",
-        settings=_settings(),
-        citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
-        trusted_sources=_SINGLE_TRUSTED_SOURCE,
-        profile=ChatProfile(surface="widget"),
-    ):
-        chunks.append(chunk)
-
-    body = b"".join(chunks).decode()
-    assert _content_frames(body) == ["Naam."]
-    assert "**Bronnen**" not in body
     assert "Agent activiteit" not in body
 
 

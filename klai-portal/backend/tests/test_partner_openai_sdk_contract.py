@@ -23,11 +23,11 @@ from app.api.partner_dependencies import PartnerAuthContext  # noqa: E402
 @pytest.fixture(autouse=True)
 def _bypass_usage_limits(monkeypatch):
     """Rate/spend limiting is covered elsewhere; let it pass so we reach upstream."""
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
-    monkeypatch.setattr(partner, "get_redis_pool", AsyncMock(return_value=MagicMock()))
-    monkeypatch.setattr(partner, "check_rate_limit", AsyncMock(return_value=(True, 0)))
-    monkeypatch.setattr(partner, "check_weighted_rate_limit", AsyncMock(return_value=(True, 0)))
+    monkeypatch.setattr(partner_openai_compat, "get_redis_pool", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(partner_openai_compat, "check_rate_limit", AsyncMock(return_value=(True, 0)))
+    monkeypatch.setattr(partner_openai_compat, "check_weighted_rate_limit", AsyncMock(return_value=(True, 0)))
 
 
 def _auth() -> PartnerAuthContext:
@@ -65,10 +65,10 @@ def _sdk_client(handler) -> OpenAI:
 @pytest.mark.asyncio
 async def test_models_list_and_retrieve_are_sdk_parseable():
     """client.models.list()/retrieve() should work with canonical ids and aliases."""
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
-    models_payload = await partner.openai_compatible_models(auth=_auth())
-    alias_payload = await partner.openai_compatible_model(model="gpt-4o-mini", auth=_auth())
+    models_payload = await partner_openai_compat.openai_compatible_models(auth=_auth())
+    alias_payload = await partner_openai_compat.openai_compatible_model(model="gpt-4o-mini", auth=_auth())
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/partner/v1/models/gpt-4o-mini":
@@ -91,7 +91,7 @@ async def test_models_list_and_retrieve_are_sdk_parseable():
 @pytest.mark.asyncio
 async def test_responses_non_streaming_is_sdk_parseable(monkeypatch):
     """client.responses.create() must yield a fully-typed Response (usage + tools)."""
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     chat_result = {
         "id": "chatcmpl-1",
@@ -99,9 +99,11 @@ async def test_responses_non_streaming_is_sdk_parseable(monkeypatch):
         "choices": [{"message": {"content": "hello"}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
     }
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", AsyncMock(return_value=chat_result))
+    monkeypatch.setattr(
+        partner_openai_compat, "openai_chat_completion_non_streaming", AsyncMock(return_value=chat_result)
+    )
 
-    emitted = await partner.openai_compatible_responses(
+    emitted = await partner_openai_compat.openai_compatible_responses(
         http_request=_request({"model": "klai-fast", "input": "hi", "stream": False}),
         auth=_auth(),
     )
@@ -128,7 +130,7 @@ async def test_responses_non_streaming_is_sdk_parseable(monkeypatch):
 @pytest.mark.asyncio
 async def test_responses_non_streaming_function_call_is_sdk_parseable(monkeypatch):
     """A tool-call response must expose a typed function_call output item."""
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     chat_result = {
         "id": "chatcmpl-2",
@@ -149,9 +151,11 @@ async def test_responses_non_streaming_function_call_is_sdk_parseable(monkeypatc
         ],
         "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6},
     }
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", AsyncMock(return_value=chat_result))
+    monkeypatch.setattr(
+        partner_openai_compat, "openai_chat_completion_non_streaming", AsyncMock(return_value=chat_result)
+    )
 
-    emitted = await partner.openai_compatible_responses(
+    emitted = await partner_openai_compat.openai_compatible_responses(
         http_request=_request(
             {
                 "model": "klai-primary",
@@ -177,7 +181,7 @@ async def test_responses_streaming_is_sdk_parseable(monkeypatch):
     """client.responses.stream() must accumulate text and reach a final response."""
     from starlette.responses import StreamingResponse
 
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     async def chat_events():
         yield b'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
@@ -185,12 +189,12 @@ async def test_responses_streaming_is_sdk_parseable(monkeypatch):
         yield b"data: [DONE]\n\n"
 
     monkeypatch.setattr(
-        partner,
+        partner_openai_compat,
         "openai_chat_completion_streaming",
         AsyncMock(return_value=StreamingResponse(chat_events(), media_type="text/event-stream")),
     )
 
-    streaming = await partner.openai_compatible_responses(
+    streaming = await partner_openai_compat.openai_compatible_responses(
         http_request=_request({"model": "klai-fast", "input": "hi", "stream": True}),
         auth=_auth(),
     )

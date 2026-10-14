@@ -45,7 +45,7 @@ def _make_widget_auth():
 def test_turn_id_shape_enforced():
     from pydantic import ValidationError
 
-    from app.api.partner import WidgetFeedbackRequest
+    from app.api.partner_feedback import WidgetFeedbackRequest
 
     with pytest.raises(ValidationError):
         WidgetFeedbackRequest(turn_id="not-hex", rating="thumbsUp")
@@ -67,7 +67,7 @@ def test_turn_id_shape_enforced():
 async def test_partner_api_key_rejected():
     """pk_live_ auth context (no wgt_ key_id) → 403; the widget feedback
     endpoint must not become a second write surface for partner keys."""
-    from app.api.partner import WidgetFeedbackRequest, submit_widget_feedback
+    from app.api.partner_feedback import WidgetFeedbackRequest, submit_widget_feedback
 
     auth = make_partner_auth(permissions={"chat": True, "feedback": True, "knowledge_append": False})
 
@@ -84,7 +84,7 @@ async def test_partner_api_key_rejected():
 async def test_widget_session_without_session_key_rejected():
     """Widget JWTs always carry a session_key; without one the caller cannot
     be pinned to a conversation, so the request is refused."""
-    from app.api.partner import WidgetFeedbackRequest, submit_widget_feedback
+    from app.api.partner_feedback import WidgetFeedbackRequest, submit_widget_feedback
 
     auth = _make_widget_auth()
     auth.session_key = None
@@ -105,14 +105,14 @@ async def test_widget_session_without_session_key_rejected():
 
 @pytest.mark.asyncio
 async def test_feedback_update_is_scoped_to_own_conversation_and_org():
-    from app.api.partner import WidgetFeedbackRequest, submit_widget_feedback
+    from app.api.partner_feedback import WidgetFeedbackRequest, submit_widget_feedback
 
     auth = _make_widget_auth()
     db = AsyncMock()
     db.execute = AsyncMock(return_value=MagicMock(rowcount=1))
     db.commit = AsyncMock()
 
-    with patch("app.api.partner.get_redis_pool", new=AsyncMock(return_value=None)):
+    with patch("app.api.partner_feedback.get_redis_pool", new=AsyncMock(return_value=None)):
         result = await submit_widget_feedback(
             request=WidgetFeedbackRequest(turn_id=TURN_ID, rating="thumbsUp"),
             auth=auth,
@@ -138,14 +138,14 @@ async def test_feedback_update_is_scoped_to_own_conversation_and_org():
 async def test_feedback_on_foreign_turn_rejected():
     """A turn_id that belongs to another visitor's conversation or another
     org matches no row in the caller-scoped UPDATE → 404, no commit."""
-    from app.api.partner import WidgetFeedbackRequest, submit_widget_feedback
+    from app.api.partner_feedback import WidgetFeedbackRequest, submit_widget_feedback
 
     auth = _make_widget_auth()
     db = AsyncMock()
     db.execute = AsyncMock(return_value=MagicMock(rowcount=0))
     db.commit = AsyncMock()
 
-    with patch("app.api.partner.get_redis_pool", new=AsyncMock(return_value=None)):
+    with patch("app.api.partner_feedback.get_redis_pool", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc_info:
             await submit_widget_feedback(
                 request=WidgetFeedbackRequest(turn_id=TURN_ID, rating="thumbsUp"),
@@ -160,14 +160,14 @@ async def test_feedback_on_foreign_turn_rejected():
 @pytest.mark.asyncio
 async def test_feedback_withdraw_clears_rating():
     """rating=None (second click on the active button) writes NULL back."""
-    from app.api.partner import WidgetFeedbackRequest, submit_widget_feedback
+    from app.api.partner_feedback import WidgetFeedbackRequest, submit_widget_feedback
 
     auth = _make_widget_auth()
     db = AsyncMock()
     db.execute = AsyncMock(return_value=MagicMock(rowcount=1))
     db.commit = AsyncMock()
 
-    with patch("app.api.partner.get_redis_pool", new=AsyncMock(return_value=None)):
+    with patch("app.api.partner_feedback.get_redis_pool", new=AsyncMock(return_value=None)):
         result = await submit_widget_feedback(
             request=WidgetFeedbackRequest(turn_id=TURN_ID, rating=None),
             auth=auth,
@@ -186,15 +186,15 @@ async def test_feedback_withdraw_clears_rating():
 
 @pytest.mark.asyncio
 async def test_feedback_rate_limited_returns_429():
-    from app.api.partner import WidgetFeedbackRequest, submit_widget_feedback
+    from app.api.partner_feedback import WidgetFeedbackRequest, submit_widget_feedback
 
     auth = _make_widget_auth()
     db = AsyncMock()
     redis = AsyncMock()
 
     with (
-        patch("app.api.partner.get_redis_pool", new=AsyncMock(return_value=redis)),
-        patch("app.api.partner.check_rate_limit", new=AsyncMock(return_value=(False, 7))) as mock_rl,
+        patch("app.api.partner_feedback.get_redis_pool", new=AsyncMock(return_value=redis)),
+        patch("app.api.partner_feedback.check_rate_limit", new=AsyncMock(return_value=(False, 7))) as mock_rl,
     ):
         with pytest.raises(HTTPException) as exc_info:
             await submit_widget_feedback(

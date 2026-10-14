@@ -100,10 +100,10 @@ def _mint_stubs() -> Any:
     so acceptance tests drive app.services.partner_rate_limit.check_rate_limit
     against the fakeredis pool (fake_redis fixture)."""
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.set_tenant", new_callable=AsyncMock),
-        patch("app.api.partner.generate_session_token", return_value="tok"),
-        patch("app.api.partner.assert_platform_unlocked"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="tok"),
+        patch("app.api.partner_widget_config.assert_platform_unlocked"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
         yield
@@ -121,7 +121,7 @@ async def test_twelve_mints_from_twelve_clients_all_succeed(fake_redis):
 
     Regression for the reported traffic-cap: the per-widget number must never
     be a shared-by-all-visitors 10/min (REQ-7 ceiling is 120/min now)."""
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     with _mint_stubs():
         for n in range(12):
@@ -135,7 +135,7 @@ async def test_one_client_hammering_one_widget_stops_at_per_client_limit(fake_re
     """A single client IP is capped at 20 mints/min (REQ-7 abuse bound).
 
     The 21st mint from the same IP is 429 while other clients are unaffected."""
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     with _mint_stubs():
         hammerer = _make_request(caller_ip="198.51.100.7")
@@ -155,7 +155,7 @@ async def test_widget_ceiling_stops_many_distinct_clients(fake_redis):
     """The per-widget ceiling (120/min, REQ-7) is the backstop: 121 distinct
     client IPs within a minute → the 121st is 429 even though no client hit
     its own per-IP limit (simulates an IP-rotating botnet)."""
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     with _mint_stubs():
         for n in range(120):
@@ -175,7 +175,7 @@ async def test_share_link_hammerer_stops_at_20_and_embed_visitor_is_unaffected(f
     per-client bucket is shared with the embed path, it can never take more
     than its own IP share of the 120/min widget_mint:{id} ceiling. A
     widget-config visitor of the same widget keeps minting."""
-    from app.api.partner import public_bot_config, widget_config
+    from app.api.partner_widget_config import public_bot_config, widget_config
 
     with _mint_stubs():
         hammerer = _make_request(caller_ip="198.51.100.9")
@@ -197,10 +197,10 @@ async def test_share_link_hammerer_stops_at_20_and_embed_visitor_is_unaffected(f
 
 @pytest.mark.asyncio
 async def test_per_client_429_logs_limit_and_hashed_ip_without_raw_ip(fake_redis):
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     caller_ip = "198.51.100.42"
-    with _mint_stubs(), patch("app.api.partner.logger") as mock_logger:
+    with _mint_stubs(), patch("app.api.partner_widget_config.logger") as mock_logger:
         request = _make_request(caller_ip=caller_ip)
         for _ in range(20):
             await widget_config(id=WIDGET_ID, request=request, db=_make_db_mock())
@@ -219,17 +219,17 @@ async def test_per_client_429_logs_limit_and_hashed_ip_without_raw_ip(fake_redis
 @pytest.mark.asyncio
 async def test_widget_ceiling_429_logs_widget_limit():
     """Per-widget ceiling rejection names limit="widget" with the widget_id."""
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     db = _make_db_mock()
     request = _make_request()
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool") as mock_get_redis,
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock) as mock_rl,
-        patch("app.api.partner.logger") as mock_logger,
-        patch("app.api.partner.set_tenant", new_callable=AsyncMock),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool") as mock_get_redis,
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock) as mock_rl,
+        patch("app.api.partner_widget_config.logger") as mock_logger,
+        patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
         mock_get_redis.return_value = AsyncMock()
@@ -260,18 +260,18 @@ async def test_widget_config_429_when_client_limit_fires():
 
     The per-client bucket is checked first, so the first rejection is the
     client layer; Retry-After must still propagate."""
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     db = _make_db_mock()
     request = _make_request()
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool") as mock_get_redis,
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock) as mock_rl,
-        patch("app.api.partner.logger"),
-        patch("app.api.partner.set_tenant", new_callable=AsyncMock),
-        patch("app.api.partner.generate_session_token", return_value="tok"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool") as mock_get_redis,
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock) as mock_rl,
+        patch("app.api.partner_widget_config.logger"),
+        patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="tok"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
         mock_redis = AsyncMock()
@@ -295,18 +295,18 @@ async def test_widget_config_429_when_client_limit_fires():
 @pytest.mark.asyncio
 async def test_public_bot_config_429_when_rate_limit_fires():
     """public-bot-config returns 429 with Retry-After when rate limit exceeded (AC7.2)."""
-    from app.api.partner import public_bot_config
+    from app.api.partner_widget_config import public_bot_config
 
     db = _make_db_mock()
     request = _make_request()
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool") as mock_get_redis,
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock) as mock_rl,
-        patch("app.api.partner.logger"),
-        patch("app.api.partner.set_tenant", new_callable=AsyncMock),
-        patch("app.api.partner.generate_session_token", return_value="tok"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool") as mock_get_redis,
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock) as mock_rl,
+        patch("app.api.partner_widget_config.logger"),
+        patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="tok"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
         mock_redis = AsyncMock()
@@ -324,17 +324,17 @@ async def test_public_bot_config_429_when_rate_limit_fires():
 @pytest.mark.asyncio
 async def test_429_includes_retry_after_header():
     """429 response always includes Retry-After header with positive seconds (AC7.2)."""
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     db = _make_db_mock()
     request = _make_request()
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool") as mock_get_redis,
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock) as mock_rl,
-        patch("app.api.partner.logger"),
-        patch("app.api.partner.set_tenant", new_callable=AsyncMock),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool") as mock_get_redis,
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock) as mock_rl,
+        patch("app.api.partner_widget_config.logger"),
+        patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
         mock_redis = AsyncMock()
@@ -356,18 +356,18 @@ async def test_429_includes_retry_after_header():
 @pytest.mark.asyncio
 async def test_widget_config_200_within_limit():
     """widget-config returns 200 when rate limit is not exceeded (AC7.1)."""
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     db = _make_db_mock()
     request = _make_request()
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool") as mock_get_redis,
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock) as mock_rl,
-        patch("app.api.partner.set_tenant", new_callable=AsyncMock),
-        patch("app.api.partner.generate_session_token", return_value="tok"),
-        patch("app.api.partner.assert_platform_unlocked"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool") as mock_get_redis,
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock) as mock_rl,
+        patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="tok"),
+        patch("app.api.partner_widget_config.assert_platform_unlocked"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
         mock_redis = AsyncMock()
@@ -388,19 +388,19 @@ async def test_widget_config_200_within_limit():
 async def test_rate_limit_keys_scope_widget_and_client():
     """The per-widget ceiling key AND the per-client key (widget + caller IP) are
     both used, and the client layer is checked first (AC7.3)."""
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     widget_id = WIDGET_ID
     db = _make_db_mock()
     request = _make_request(caller_ip="203.0.113.5")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool") as mock_get_redis,
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock) as mock_rl,
-        patch("app.api.partner.set_tenant", new_callable=AsyncMock),
-        patch("app.api.partner.generate_session_token", return_value="tok"),
-        patch("app.api.partner.assert_platform_unlocked"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool") as mock_get_redis,
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock) as mock_rl,
+        patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="tok"),
+        patch("app.api.partner_widget_config.assert_platform_unlocked"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
         mock_redis = AsyncMock()
@@ -418,19 +418,19 @@ async def test_rate_limit_keys_scope_widget_and_client():
 async def test_widget_ceiling_is_120_per_minute():
     """Per-widget ceiling is 120/min (raised from 10 for REQ-7/B-4: 10/min was a
     traffic cap on legitimate visitors, 120/min is the abuse backstop)."""
-    from app.api.partner import widget_config
+    from app.api.partner_widget_config import widget_config
 
     widget_id = WIDGET_ID
     db = _make_db_mock()
     request = _make_request()
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool") as mock_get_redis,
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock) as mock_rl,
-        patch("app.api.partner.set_tenant", new_callable=AsyncMock),
-        patch("app.api.partner.generate_session_token", return_value="tok"),
-        patch("app.api.partner.assert_platform_unlocked"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool") as mock_get_redis,
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock) as mock_rl,
+        patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="tok"),
+        patch("app.api.partner_widget_config.assert_platform_unlocked"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
         mock_redis = AsyncMock()

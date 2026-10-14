@@ -11,7 +11,7 @@ import time
 from klai_chat_prompts.kb_modes import MULTI_QUESTION_GUARD_TEXT
 
 from app.services.chat_turn_rules import is_multi_question_query, split_sub_questions
-from app.services.partner_chat import _chunk_below_evidence_floor
+from app.services.retrieval_context import _chunk_below_evidence_floor
 
 INCIDENT_MESSAGE = (
     "Geef netjes antwoorden:\n"

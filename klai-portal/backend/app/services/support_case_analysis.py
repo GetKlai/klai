@@ -13,7 +13,7 @@ Two stages, both against existing infrastructure:
    language, audience, applicability and the case-message IDs that evidence it.
 2. **Retrieval + answerability** — per question, retrieval-api ``/retrieve`` is
    called scoped to the selected organization KB and authorized identity (same
-   body/headers as ``partner_chat.retrieve_context``); the judge then classifies
+   body/headers as ``retrieval_context.retrieve_context``); the judge then classifies
    whether the retrieved passages actually answer the question.
 
 Classification is content answerability, not retrieval similarity: a strong
@@ -62,7 +62,7 @@ MAX_CASE_CHARS = 200_000
 MAX_QUESTIONS = 20
 
 # Per-question retrieval query is clipped to the retrieval-api hard limit
-# (SPEC-SEC-010 REQ-2.5, mirrored from partner_chat._clip_retrieval_history_content).
+# (SPEC-SEC-010 REQ-2.5, mirrored from chat_prompting._clip_retrieval_history_content).
 _MAX_QUERY_CHARS = 8000
 _RETRIEVAL_TIMEOUT_S = 15.0
 _LLM_TIMEOUT_S = 120.0
@@ -748,7 +748,7 @@ async def _retrieve(
 ) -> list[dict]:
     """Retrieve approved passages scoped to exactly one organization KB.
 
-    Body and headers mirror ``partner_chat.retrieve_context``: string org_id,
+    Body and headers mirror ``retrieval_context.retrieve_context``: string org_id,
     ``scope="org"``, the single KB in ``kb_slugs``, the authorized ``user_id``,
     the dedicated retrieval secret and the required ``X-Caller-Service`` header.
     A ``None`` ``user_id`` is the tenant-only service identity retrieval-api's

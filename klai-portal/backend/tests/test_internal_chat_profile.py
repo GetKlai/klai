@@ -289,17 +289,14 @@ async def test_strict_employee_gets_strict_profile_with_user_id(world):
 
     profile = await _resolve(world, OID_A)
 
-    assert profile == ChatProfile(
-        surface="internal", kb_mode="strict", kb_scope="org", user_id="sub-a", stream_live=False
-    )
+    assert profile == ChatProfile(surface="internal", kb_mode="strict", kb_scope="org", user_id="sub-a")
 
 
 @pytest.mark.asyncio
-async def test_open_employee_streams_live(world):
+async def test_open_employee_gets_open_profile(world):
     profile = await _resolve(world, OID_A)
 
     assert profile.kb_mode == "open"
-    assert profile.stream_live is True
 
 
 @pytest.mark.asyncio
@@ -310,7 +307,6 @@ async def test_retrieval_disabled_is_general(world):
 
     assert profile.kb_mode == "general"
     assert profile.user_id == "sub-a"
-    assert profile.stream_live is True
 
 
 @pytest.mark.asyncio
@@ -379,11 +375,12 @@ async def test_personal_kb_only_when_every_org_kb_is_off(world):
 @pytest.mark.asyncio
 async def test_internal_title_prompt_goes_to_passthrough_without_retrieval(world, monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     rows, events = world
     passthrough = AsyncMock(return_value={"choices": [{"message": {"content": "Title"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", passthrough)
-    monkeypatch.setattr(partner, "_enforce_openai_compatible_usage_limits", AsyncMock())
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", passthrough)
+    monkeypatch.setattr(partner_openai_compat, "_enforce_openai_compatible_usage_limits", AsyncMock())
     monkeypatch.setattr(partner, "chat_completions", AsyncMock(side_effect=AssertionError))
 
     result = await partner.canonical_chat_completions(

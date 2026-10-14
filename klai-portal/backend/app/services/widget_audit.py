@@ -87,7 +87,7 @@ async def find_conversation_id(*, widget_id: str, session_key: str) -> tuple[int
 
     DB failures are NOT swallowed here — unlike the audit writer, this
     helper is called by readers that decide what a missing provenance costs
-    them (see ``_schedule_gap_event`` in app.services.partner_chat).
+    them (see ``_schedule_gap_event`` in app.services.retrieval_context).
     """
     async with cross_org_session() as lookup_db:
         row = (

@@ -15,9 +15,8 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
-from app.services.partner_chat import (
-    KnowledgeTurn,
-    _appointment_escalation,
+from app.services.chat_safety import _appointment_escalation
+from app.services.chat_sse import (
     _sse_activity_delta,
     _sse_broad_mode_delta,
     _sse_content_delta,
@@ -27,6 +26,7 @@ from app.services.partner_chat import (
     _sse_sources_delta,
     _sse_tool_calls_delta,
 )
+from app.services.retrieval_context import KnowledgeTurn
 
 _DONE = b"data: [DONE]\n\n"
 

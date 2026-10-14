@@ -18,7 +18,7 @@ import jwt
 import pytest
 from fastapi import HTTPException
 
-from app.api.partner import public_bot_config, widget_config
+from app.api.partner_widget_config import public_bot_config, widget_config
 from app.services.widget_auth import session_token_key_id
 
 # ---------------------------------------------------------------------------
@@ -114,11 +114,11 @@ async def test_widget_config_returns_404_when_widgets_not_unlocked():
     request = _make_request()
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -137,11 +137,11 @@ async def test_widget_config_returns_200_when_widgets_unlocked():
     request = _make_request()
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -163,11 +163,11 @@ async def test_public_bot_config_returns_404_when_widgets_not_unlocked():
     db = _make_db(widget, org, [1])
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -185,11 +185,11 @@ async def test_public_bot_config_returns_200_when_widgets_unlocked():
     db = _make_db(widget, org, [1])
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
