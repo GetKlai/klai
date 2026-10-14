@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Awaitable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -581,7 +581,528 @@ def retrieval_upstream_errors(org_id: int) -> Iterator[None]:
         ) from exc
 
 
-async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches kept inline so the order stays readable
+_Result = tuple[list[dict], str, list[dict[str, Any]], bool]
+"""What ``retrieve_context`` returns: (chunks, system_prompt, trusted_sources, broad)."""
+
+
+@dataclass
+class _Turn:
+    """What one retrieval knows about its turn before it searches: the inputs, read once (step 1)."""
+
+    org_id: int
+    zitadel_org_id: str
+    kb_slugs: list[str]
+    messages: list[dict]
+    settings: Settings
+    profile: ChatProfile
+    turn: KnowledgeTurn
+    query: str
+    language: Any
+    internal: bool
+    page_context: PageContext | None
+    broad_consent: bool
+    pasted_correspondence: bool
+    partner_user_id: str | None
+    top_k: int
+    telemetry_level: str
+    is_preview: bool
+    audit_widget_id: str | None
+    audit_session_key: str | None
+    audit_write: asyncio.Future[Any] | None
+    answer_signals: dict[str, Any] | None
+    follow_up_variants: list[str] | None
+    prompt: Callable[..., str]
+
+
+@dataclass
+class _Found:
+    """What the search brought back (step 2), before the passages are chosen."""
+
+    result: dict
+    evidence_pack: Any
+    chunks: list[dict]
+    trusted_sources: list[dict[str, Any]]
+    retrieval_ms: int
+    retrieval_user_id: str | None
+    sub_queries: list[str]
+    unchecked_questions: list[str]
+
+
+def _read_turn(
+    org_id: int,
+    zitadel_org_id: str,
+    kb_slugs: list[str],
+    messages: list[dict],
+    settings: Settings,
+    *,
+    partner_user_id: str | None,
+    widget_system_prompt: str | None,
+    page_context: PageContext | None,
+    retrieval_query: str | None,
+    top_k: int,
+    broad_mode: bool,
+    tone_register: str,
+    pasted_correspondence: bool,
+    is_preview: bool,
+    audit_widget_id: str | None,
+    audit_session_key: str | None,
+    audit_write: asyncio.Future[Any] | None,
+    answer_signals: dict[str, Any] | None,
+    profile: ChatProfile,
+    templates_block: str,
+    telemetry_level: str,
+    web_search_available: bool,
+    knowledge_turn: KnowledgeTurn | None,
+    follow_up_variants: list[str] | None,
+) -> _Turn:
+    """Step 1: read the request once. The query, the page context, the language, the turn's sink and the prompt builder."""
+    cleaned_page_context = _clean_page_context(page_context)
+    # Extract original system message if present. It remains the generation
+    # instruction even when callers provide a separate retrieval query.
+    original_system = None
+    for msg in messages:
+        if msg.get("role") == "system":
+            original_system = msg.get("content", "")
+            break
+
+    # None and "" are the same turn here: nothing to search for.
+    query = (retrieval_query or "").strip() or _last_user_message(messages) or ""
+    if cleaned_page_context is not None:
+        page_context_text = _context_text_from_page_context(cleaned_page_context)
+        if safety_reason := context_safety_violation(page_context_text, query=query or ""):
+            logger.warning(
+                "partner_chat_page_context_blocked",
+                org_id=org_id,
+                reason=safety_reason,
+            )
+            cleaned_page_context = None
+
+    internal = profile.surface == "internal"
+    turn = knowledge_turn if knowledge_turn is not None else KnowledgeTurn()
+    turn.answer_mode = profile.kb_mode
+    language = _response_language(messages, pasted_correspondence=pasted_correspondence)
+    # Internal only: an attachment, a converted PDF, or an explicit question
+    # about the visible conversation is the employee's own input, readable in
+    # Strict even with zero knowledge-base evidence (plan §7.2; ported from
+    # the hook's has_user_provided_content_context). See
+    # app.services.user_provided_content.
+    turn.user_provided_content = internal and has_user_provided_content(messages, query)
+    turn.pasted_correspondence = pasted_correspondence
+
+    def prompt(prompt_chunks: list[dict], state: InternalPromptState = "no_retrieval", **extra: Any) -> str:
+        return _build_system_prompt(
+            prompt_chunks,
+            original_system,
+            widget_system_prompt=widget_system_prompt,
+            page_context=cleaned_page_context,
+            tone_register=tone_register,
+            pasted_correspondence=pasted_correspondence,
+            profile=profile,
+            internal_state=state,
+            templates_block=templates_block,
+            web_search_available=web_search_available,
+            images_base_url=settings.kb_images_base_url,
+            **extra,
+        )
+
+    return _Turn(
+        org_id=org_id,
+        zitadel_org_id=zitadel_org_id,
+        kb_slugs=kb_slugs,
+        messages=messages,
+        settings=settings,
+        profile=profile,
+        turn=turn,
+        query=query,
+        language=language,
+        internal=internal,
+        page_context=cleaned_page_context,
+        broad_consent=broad_mode,
+        pasted_correspondence=pasted_correspondence,
+        partner_user_id=partner_user_id,
+        top_k=top_k,
+        telemetry_level=telemetry_level,
+        is_preview=is_preview,
+        audit_widget_id=audit_widget_id,
+        audit_session_key=audit_session_key,
+        audit_write=audit_write,
+        answer_signals=answer_signals,
+        follow_up_variants=follow_up_variants,
+        prompt=prompt,
+    )
+
+
+def _without_search(t: _Turn, *, retrieval_enabled: bool) -> _Result | None:
+    """The turns that search nothing, with their reply; None when the turn searches.
+
+    General mode and questions about Klai itself have their own prompt
+    (internal only: the widget has neither). A trivial message ("bedankt",
+    "ok") skips retrieval on every surface, unless pasted correspondence is
+    still in the conversation: a short follow-up there is exactly where the
+    sender's claims get re-adopted as facts.
+    """
+    query, profile, turn = t.query, t.profile, t.turn
+    if t.internal and profile.kb_mode == "general":
+        return [], t.prompt([], "meta" if query and is_meta_query(query) else "general"), [], False
+    trivial = bool(query) and not t.pasted_correspondence and is_trivial_turn(t.messages, query or "")
+    if t.internal and (not query or trivial or is_meta_query(query)):
+        # What the hook never searched it never judged either: a missing source
+        # is no reason to refuse a thank-you or a question about Klai itself.
+        turn.answer_mode = "general"
+        return [], t.prompt([], "meta" if query and is_meta_query(query) else "no_retrieval"), [], False
+    if not retrieval_enabled or not query or trivial:
+        return [], t.prompt([]), [], False
+    if t.internal and profile.kb_mode == "strict" and profile.kb_slugs == ():
+        if not turn.user_provided_content:
+            # Strict with nothing to search refuses without a model call: a
+            # prompt that asks the model to refuse let a non-compliant model
+            # answer from general knowledge (the hook's strict_no_kb branch).
+            turn.refusal = _no_citable_sources_message(t.language, suggest_open_mode=True)
+            return [], "", [], False
+        # The user's own attachment is still readable even with no KB scope to
+        # search; answer as a zero-chunks Strict turn instead of refusing.
+        return [], t.prompt([], "zero_chunks"), [], False
+    return None
+
+
+def _search_plan(t: _Turn) -> tuple[list[str], list[str]]:
+    """The sub-questions to search for and the ones left unchecked; sets the turn's multi-question facts.
+
+    A multi-part message fans out into one retrieval per question, on every
+    surface. Not when the latest turn is pasted correspondence: its
+    '?'-terminated header and signature lines are noise legs, and the
+    distilled query is the question.
+    """
+    latest_correspondence = latest_user_turn_has_correspondence(t.messages)
+    all_sub_questions = [] if latest_correspondence else split_sub_questions(t.query)
+    sub_queries = t.turn.sub_queries = all_sub_questions[:MAX_SUB_QUESTIONS]
+    unchecked_questions = all_sub_questions[MAX_SUB_QUESTIONS:]
+    t.turn.multi_question = not latest_correspondence and (bool(sub_queries) or is_multi_question_query(t.query))
+    if unchecked_questions:
+        logger.warning(
+            "sub_questions_truncated",
+            org_id=t.org_id,
+            total_questions=len(all_sub_questions),
+            searched=len(sub_queries),
+        )
+    return sub_queries, unchecked_questions
+
+
+async def _retrieve_body(t: _Turn, sub_queries: list[str], retrieval_user_id: str | None) -> dict:
+    """The /retrieve request for this turn.
+
+    A first widget or partner question travels with two paraphrases, a
+    follow-up with the two queries of the conversation's case
+    (query_paraphrase.py and case_file.py have the numbers). A fanned-out
+    message gets none: retrieval-api would run the variants of the whole
+    message inside every sub-question's pass. The literal sentence stays the
+    query on every surface, and retrieval-api resolves its references from
+    the history: the internal chat's own rewrite went in step O4, the case
+    replaced it.
+    """
+    profile = t.profile
+    paraphrases = (
+        []
+        if sub_queries or t.internal
+        else await first_question_variants(t.messages, t.query, t.settings, delegated_org_id=t.zitadel_org_id)
+    )
+    query_variants = [] if sub_queries else paraphrases or list(t.follow_up_variants or [])
+    retrieve_body: dict = {
+        # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
+        # REQ-2.5) using the same helper as conversation_history entries. An
+        # unclipped query has no real bound short of the 128 KB request-body
+        # cap, sends garbage into coreference + BGE-M3 embedding (8192-token
+        # sequence limit), and can surface as an upstream 502 for partners.
+        "query": _clip_retrieval_history_content(t.query),
+        "org_id": t.zitadel_org_id,  # retrieval-api expects string org_id, from the key, never the profile
+        "scope": "org",
+        "top_k": t.top_k,
+        "conversation_history": _build_conversation_history(t.messages),
+        "query_variants": query_variants or None,
+        # The selection step (passage_selection.py) reads every passage before
+        # the writer sees one, so these turns ask the evidence pack for as
+        # many sources as passages: the default cap of three left the known
+        # article out of the pack in turns where retrieval had found it (plan
+        # §8, step J).
+        "max_sources": min(t.top_k, 8),
+    }
+    if t.kb_slugs:
+        retrieve_body["kb_slugs"] = t.kb_slugs
+    if t.internal:
+        retrieve_body.update(
+            user_id=retrieval_user_id,
+            scope=profile.kb_scope,
+            telemetry_level=t.telemetry_level,
+            kb_narrow=profile.kb_mode == "strict",
+        )
+        if not t.kb_slugs and profile.kb_scope == "both":
+            # Every org KB plus every private KB the employee owns.
+            retrieve_body["include_owned_private_kbs"] = True
+    else:
+        if t.partner_user_id is not None:
+            # F2: synthetic partner-level identity for product_events tagging.
+            retrieve_body["user_id"] = t.partner_user_id
+        if t.page_context is not None:
+            retrieve_body["page_context"] = t.page_context
+    if sub_queries:
+        retrieve_body["sub_queries"] = sub_queries
+    return retrieve_body
+
+
+async def _call_retrieval(t: _Turn, retrieve_body: dict) -> dict | _Result:
+    """POST the body to retrieval-api; the response, or the reply a failed search turns into.
+
+    SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
+    retrieval_api_internal_secret (separate from portal-api's mailer secret).
+    SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: X-Caller-Service is REQUIRED;
+    without it retrieval-api returns 400 missing_caller_service. Phase D
+    landed 2026-04-28 and silently broke partner chat for 7 days because
+    the header was never added here. See pitfalls →
+    retrieve-caller-service-header-mismatch.
+    """
+    settings, profile, turn = t.settings, t.profile, t.turn
+    retrieval_secret = settings.retrieval_api_internal_secret or settings.internal_secret
+    try:
+        async with httpx.AsyncClient(
+            timeout=_INTERNAL_RETRIEVE_TIMEOUT_S if t.internal else _RETRIEVE_TIMEOUT_S
+        ) as client:
+            resp = await client.post(
+                f"{settings.knowledge_retrieve_url}/retrieve",
+                json=retrieve_body,
+                headers={
+                    "X-Internal-Secret": retrieval_secret,
+                    "X-Caller-Service": "portal-api",
+                    **get_trace_headers(),
+                },
+            )
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # An employee's identity is real, so a failed assertion is a
+                # failure to surface, not a synthetic widget identity to drop.
+                if t.internal or not _is_retrieval_identity_assertion_error(exc):
+                    raise
+                logger.warning(
+                    "partner_chat_retrieval_identity_assertion_degraded",
+                    org_id=t.org_id,
+                    status_code=exc.response.status_code if exc.response is not None else None,
+                )
+                return [], t.prompt([]), [], False
+            return resp.json()
+    except httpx.HTTPError as exc:
+        # The widget and the partner API answer a failed retrieval with a 502
+        # (the caller maps it). The internal chat does what the hook did:
+        # Strict refuses, since it may only answer from the knowledge base;
+        # Open answers from general knowledge and says the KB was unreachable.
+        # A rejected identity is not unavailability: it means the employee's
+        # sub or org did not verify, so it surfaces as an error.
+        if not t.internal or (isinstance(exc, httpx.HTTPStatusError) and _is_retrieval_identity_assertion_error(exc)):
+            raise
+        failure = f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
+        logger.exception(
+            "partner_chat_internal_retrieval_failed", org_id=t.org_id, kb_mode=profile.kb_mode, failure=failure
+        )
+        if profile.kb_mode == "strict":
+            turn.refusal = strict_kb_unavailable_message(t.language)
+            return [], "", [], False
+        return [], t.prompt([], "retrieval_failure", retrieval_failure=failure), [], False
+
+
+def _usable_evidence(t: _Turn, result: dict, retrieve_body: dict) -> tuple[list[dict], list[dict[str, Any]]]:
+    """The chunks and sources the turn may read: below the Strict floor and unsafe context dropped, the band and the search trace recorded."""
+    evidence_pack = result.get("evidence_pack")
+    chunks = evidence_pack_items_as_chunks(evidence_pack)
+    trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
+    if t.internal and t.profile.kb_mode == "strict":
+        # Strict promises knowledge-base-only answers, so noise-level evidence
+        # would become fabricated authority. Open keeps weak chunks as
+        # labelled weak context, as the hook did.
+        relevant = [chunk for chunk in chunks if not _chunk_below_evidence_floor(chunk)]
+        if len(relevant) < len(chunks):
+            logger.warning(
+                "kb_evidence_below_score_floor_dropped",
+                org_id=t.org_id,
+                dropped=len(chunks) - len(relevant),
+                kept=len(relevant),
+                floor=_KB_MIN_EVIDENCE_SCORE,
+            )
+            chunks = relevant
+            trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
+    safe_chunks: list[dict] = []
+    blocked_chunk_count = 0
+    for chunk in chunks:
+        chunk_text = _context_text_from_chunk(chunk)
+        if safety_reason := context_safety_violation(chunk_text, query=t.query):
+            blocked_chunk_count += 1
+            logger.warning(
+                "partner_chat_retrieved_context_blocked",
+                org_id=t.org_id,
+                chunk_id=chunk.get("chunk_id"),
+                stage="retrieved_context",
+                reason=safety_reason,
+            )
+            continue
+        safe_chunks.append(chunk)
+    if blocked_chunk_count:
+        chunks = safe_chunks
+        trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
+    _record_retrieval_band(t.answer_signals, result, blocked_chunk_count=blocked_chunk_count)
+    if t.answer_signals is not None and not t.internal:
+        # The trace of this turn's search, kept with the turn so a wrong reply
+        # can be laid at the step where it went wrong without replaying it;
+        # until now that trace existed only in a private replay (plan §5, step 7).
+        t.answer_signals["search"] = {
+            "query": retrieve_body["query"][:300],
+            "variants": [variant[:300] for variant in (retrieve_body.get("query_variants") or [])],
+            "found": [
+                {
+                    "title": str(chunk.get("title") or "")[:120],
+                    "url": chunk.get("source_url"),
+                    "score": round(float(chunk["reranker_score"]), 3)
+                    if chunk.get("reranker_score") is not None
+                    else None,
+                }
+                for chunk in chunks
+            ],
+        }
+    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001: a low or unknown band without direct
+    # evidence for the question. Only the Strict-risk model choice reads it;
+    # what the writer may read is the selection step's decision.
+    t.turn.low_confidence = should_clarify(
+        result.get("confidence_band"), has_direct_evidence=has_direct_evidence_for_query(t.query, chunks)
+    )
+    return chunks, trusted_sources
+
+
+async def _search(t: _Turn) -> _Found | _Result:
+    """Step 2: search. The plan, the request, the call, and the evidence the turn may read; or the reply a search that could not run turns into."""
+    sub_queries, unchecked_questions = _search_plan(t)
+    retrieval_user_id = t.profile.user_id if t.internal else t.partner_user_id
+    retrieve_body = await _retrieve_body(t, sub_queries, retrieval_user_id)
+    if not t.settings.knowledge_retrieve_url:
+        logger.warning("partner_chat_no_retrieval_url")
+        return [], t.prompt([]), [], False
+    retrieval_started = time.perf_counter()
+    result = await _call_retrieval(t, retrieve_body)
+    if isinstance(result, tuple):
+        return result
+    retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
+    chunks, trusted_sources = _usable_evidence(t, result, retrieve_body)
+    return _Found(
+        result=result,
+        evidence_pack=result.get("evidence_pack"),
+        chunks=chunks,
+        trusted_sources=trusted_sources,
+        retrieval_ms=retrieval_ms,
+        retrieval_user_id=retrieval_user_id,
+        sub_queries=sub_queries,
+        unchecked_questions=unchecked_questions,
+    )
+
+
+async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
+    """Step 3: record the gap, choose the passages, build the prompt the writer reads."""
+    profile, turn = t.profile, t.turn
+    chunks, trusted_sources = found.chunks, found.trusted_sources
+    # --- Gap detection (KB-014) ---
+    # Classification runs on the chunks that actually entered the prompt
+    # (post safety-filter); registration is fire-and-forget and non-raising
+    # — see _schedule_gap_event.
+    _schedule_gap_event(
+        org_id=t.org_id,
+        zitadel_org_id=t.zitadel_org_id,
+        partner_user_id=found.retrieval_user_id,
+        query_text=t.query,
+        chunks=chunks,
+        retrieval_ms=found.retrieval_ms,
+        kb_slugs=t.kb_slugs,
+        is_preview=t.is_preview,
+        audit_widget_id=t.audit_widget_id,
+        audit_session_key=t.audit_session_key,
+        audit_write=t.audit_write,
+        # NULL is LibreChat traffic on the gaps dashboard (SPEC-MCP-RETRIEVAL-001 REQ-9).
+        caller_client_id=None if t.internal else _WIDGET_GAP_CALLER_CLIENT_ID,
+    )
+
+    if t.internal and profile.kb_mode == "strict" and not chunks:
+        if not isinstance(found.evidence_pack, dict):
+            logger.error("retrieval_response_missing_evidence_pack", org_id=t.org_id)
+        if not turn.user_provided_content:
+            # Strict with no evidence refuses without a model call, as the hook
+            # did for zero chunks and for a response without an evidence pack: a
+            # prompt that asks the model to refuse let a non-compliant model
+            # answer from general knowledge. The gap above is still recorded.
+            turn.refusal = _no_citable_sources_message(t.language, suggest_open_mode=True)
+            return [], "", [], False
+        # The user's own attachment is still readable with zero KB evidence;
+        # fall through to the zero_chunks prompt below instead of refusing.
+
+    # Every surface: the writer reads only the passages that answer the
+    # question (passage_selection.py has the numbers). Not on a turn that is
+    # answered broadly, which reads no articles, and not on a multi-part
+    # message, whose parts each need their own passages. "Not in the passages"
+    # narrows nothing here: the caller routes that turn (the widget's "not
+    # found", the internal Strict refusal), and an internal Open turn, which
+    # may answer from general knowledge, gets every passage.
+    selection_chunks: list[dict] = []
+    if (
+        chunks
+        and not turn.multi_question
+        and not turn.user_provided_content
+        and not turn.pasted_correspondence
+        and not _broad_mode_active(chunks, broad_consent=t.broad_consent)
+    ):
+        selection_chunks = chunks
+        turn.selection = await select_passages(t.messages, chunks, t.settings, delegated_org_id=t.zitadel_org_id)
+        if t.answer_signals is not None and not t.internal:
+            # Quotes and the question are text; the internal record keeps
+            # signals only (widget_audit.record_internal_turn).
+            t.answer_signals["selection"] = (
+                {
+                    "verdict": turn.selection.verdict,
+                    "evidence": [
+                        {"passage": item.passage, "quote": item.quote[:200]} for item in turn.selection.evidence
+                    ],
+                    "question": turn.selection.question[:200],
+                }
+                if turn.selection
+                else None
+            )
+        turn.not_in_passages = bool(turn.selection and turn.selection.not_in_passages(chunks))
+        chosen = turn.selection.chosen(chunks) if turn.selection else []
+        if chosen and not turn.not_in_passages:
+            turn.passages_chosen = True
+            chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
+            trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
+
+    # Consented general-knowledge fallback: decided here, on the same
+    # post-safety-filter chunks the gap event sees, and surfaced to the caller
+    # as the fourth tuple element so the prompt swap and the answer label can
+    # never disagree. On a broad turn no article context is injected and no
+    # sources can be cited, regardless of what the weak chunks might support.
+    broad = _broad_mode_active(chunks, broad_consent=t.broad_consent)
+    sub_query_results = [entry for entry in found.result.get("sub_results") or [] if isinstance(entry, dict)] or None
+    system_prompt = t.prompt(
+        [] if broad else chunks,
+        "chunks" if chunks else "zero_chunks",
+        broad_mode=broad,
+        multi_question=turn.multi_question,
+        sub_query_results=sub_query_results,
+        unchecked_questions=found.unchecked_questions or None,
+    )
+
+    if turn.passages_chosen and turn.selection is not None and not broad:
+        system_prompt += writer_brief(
+            turn.selection,
+            selection_chunks,
+            internal=t.internal,
+            source_only=not t.internal or profile.kb_mode == "strict",
+        )
+
+    return chunks, system_prompt, ([] if broad else trusted_sources), broad
+
+
+async def retrieve_context(
     org_id: int,
     zitadel_org_id: str,
     kb_slugs: list[str],
@@ -664,365 +1185,36 @@ async def retrieve_context(  # noqa: C901 - one retrieval, per-profile branches 
     Audit ref: retrieval-coupling-2026-05-06 finding F2
     (historical — audit removed in repo cleanup 2026-08-18).
     """
-    cleaned_page_context = _clean_page_context(page_context)
-    # Extract original system message if present. It remains the generation
-    # instruction even when callers provide a separate retrieval query.
-    original_system = None
-    for msg in messages:
-        if msg.get("role") == "system":
-            original_system = msg.get("content", "")
-            break
-
-    query = (retrieval_query or "").strip() or _last_user_message(messages)
-    if cleaned_page_context is not None:
-        page_context_text = _context_text_from_page_context(cleaned_page_context)
-        if safety_reason := context_safety_violation(page_context_text, query=query or ""):
-            logger.warning(
-                "partner_chat_page_context_blocked",
-                org_id=org_id,
-                reason=safety_reason,
-            )
-            cleaned_page_context = None
-
-    internal = profile.surface == "internal"
-    turn = knowledge_turn if knowledge_turn is not None else KnowledgeTurn()
-    turn.answer_mode = profile.kb_mode
-    language = _response_language(messages, pasted_correspondence=pasted_correspondence)
-    # Internal only: an attachment, a converted PDF, or an explicit question
-    # about the visible conversation is the employee's own input, readable in
-    # Strict even with zero knowledge-base evidence (plan §7.2; ported from
-    # the hook's has_user_provided_content_context). See
-    # app.services.user_provided_content.
-    turn.user_provided_content = internal and has_user_provided_content(messages, query)
-    turn.pasted_correspondence = pasted_correspondence
-
-    def prompt(prompt_chunks: list[dict], state: InternalPromptState = "no_retrieval", **extra: Any) -> str:
-        return _build_system_prompt(
-            prompt_chunks,
-            original_system,
-            widget_system_prompt=widget_system_prompt,
-            page_context=cleaned_page_context,
-            tone_register=tone_register,
-            pasted_correspondence=pasted_correspondence,
-            profile=profile,
-            internal_state=state,
-            templates_block=templates_block,
-            web_search_available=web_search_available,
-            images_base_url=settings.kb_images_base_url,
-            **extra,
-        )
-
-    # Turns that search nothing. General mode and questions about Klai itself
-    # have their own prompt (internal only: the widget has neither). A trivial
-    # message ("bedankt", "ok") skips retrieval on every surface, unless
-    # pasted correspondence is still in the conversation: a short follow-up
-    # there is exactly where the sender's claims get re-adopted as facts.
-    if internal and profile.kb_mode == "general":
-        return [], prompt([], "meta" if query and is_meta_query(query) else "general"), [], False
-    trivial = bool(query) and not pasted_correspondence and is_trivial_turn(messages, query or "")
-    if internal and (not query or trivial or is_meta_query(query)):
-        # What the hook never searched it never judged either: a missing source
-        # is no reason to refuse a thank-you or a question about Klai itself.
-        turn.answer_mode = "general"
-        return [], prompt([], "meta" if query and is_meta_query(query) else "no_retrieval"), [], False
-    if not retrieval_enabled or not query or trivial:
-        return [], prompt([]), [], False
-    if internal and profile.kb_mode == "strict" and profile.kb_slugs == ():
-        if not turn.user_provided_content:
-            # Strict with nothing to search refuses without a model call: a
-            # prompt that asks the model to refuse let a non-compliant model
-            # answer from general knowledge (the hook's strict_no_kb branch).
-            turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
-            return [], "", [], False
-        # The user's own attachment is still readable even with no KB scope to
-        # search; answer as a zero-chunks Strict turn instead of refusing.
-        return [], prompt([], "zero_chunks"), [], False
-
-    # A multi-part message fans out into one retrieval per question, on every
-    # surface. Not when the latest turn is pasted correspondence: its
-    # '?'-terminated header and signature lines are noise legs, and the
-    # distilled query is the question.
-    latest_correspondence = latest_user_turn_has_correspondence(messages)
-    all_sub_questions = [] if latest_correspondence else split_sub_questions(query)
-    sub_queries = turn.sub_queries = all_sub_questions[:MAX_SUB_QUESTIONS]
-    unchecked_questions = all_sub_questions[MAX_SUB_QUESTIONS:]
-    turn.multi_question = not latest_correspondence and (bool(sub_queries) or is_multi_question_query(query))
-    if unchecked_questions:
-        logger.warning(
-            "sub_questions_truncated",
-            org_id=org_id,
-            total_questions=len(all_sub_questions),
-            searched=len(sub_queries),
-        )
-
-    conversation_history = _build_conversation_history(messages)
-    retrieval_user_id = profile.user_id if internal else partner_user_id
-    # A first widget or partner question travels with two paraphrases, a
-    # follow-up with the two queries of the conversation's case
-    # (query_paraphrase.py and case_file.py have the numbers). A fanned-out
-    # message gets none: retrieval-api would run the variants of the whole
-    # message inside every sub-question's pass. The literal sentence stays the
-    # query on every surface, and retrieval-api resolves its references from
-    # the history: the internal chat's own rewrite went in step O4, the case
-    # replaced it.
-    paraphrases = (
-        []
-        if sub_queries or internal
-        else await first_question_variants(messages, query, settings, delegated_org_id=zitadel_org_id)
-    )
-    query_variants = [] if sub_queries else paraphrases or list(follow_up_variants or [])
-    retrieve_body: dict = {
-        # Clipped below the 8000-char retrieval-api hard limit (SPEC-SEC-010
-        # REQ-2.5) using the same helper as conversation_history entries. An
-        # unclipped query has no real bound short of the 128 KB request-body
-        # cap, sends garbage into coreference + BGE-M3 embedding (8192-token
-        # sequence limit), and can surface as an upstream 502 for partners.
-        "query": _clip_retrieval_history_content(query),
-        "org_id": zitadel_org_id,  # retrieval-api expects string org_id, from the key, never the profile
-        "scope": "org",
-        "top_k": top_k,
-        "conversation_history": conversation_history,
-        "query_variants": query_variants or None,
-        # The selection step (passage_selection.py) reads every passage before
-        # the writer sees one, so these turns ask the evidence pack for as
-        # many sources as passages: the default cap of three left the known
-        # article out of the pack in turns where retrieval had found it (plan
-        # §8, step J).
-        "max_sources": min(top_k, 8),
-    }
-    if kb_slugs:
-        retrieve_body["kb_slugs"] = kb_slugs
-    if internal:
-        retrieve_body.update(
-            user_id=retrieval_user_id,
-            scope=profile.kb_scope,
-            telemetry_level=telemetry_level,
-            kb_narrow=profile.kb_mode == "strict",
-        )
-        if not kb_slugs and profile.kb_scope == "both":
-            # Every org KB plus every private KB the employee owns.
-            retrieve_body["include_owned_private_kbs"] = True
-    else:
-        if partner_user_id is not None:
-            # F2: synthetic partner-level identity for product_events tagging.
-            retrieve_body["user_id"] = partner_user_id
-        if cleaned_page_context is not None:
-            retrieve_body["page_context"] = cleaned_page_context
-    if sub_queries:
-        retrieve_body["sub_queries"] = sub_queries
-
-    retrieval_url = settings.knowledge_retrieve_url
-    if not retrieval_url:
-        logger.warning("partner_chat_no_retrieval_url")
-        return [], prompt([]), [], False
-
-    # SPEC-SEC-010 REQ-6.1: authenticate to retrieval-api with the dedicated
-    # retrieval_api_internal_secret (separate from portal-api's mailer secret).
-    # SPEC-SEC-IDENTITY-ASSERT-001 REQ-4.2: X-Caller-Service is REQUIRED;
-    # without it retrieval-api returns 400 missing_caller_service. Phase D
-    # landed 2026-04-28 and silently broke partner chat for 7 days because
-    # the header was never added here. See pitfalls →
-    # retrieve-caller-service-header-mismatch.
-    retrieval_secret = settings.retrieval_api_internal_secret or settings.internal_secret
-    retrieval_started = time.perf_counter()
-    try:
-        async with httpx.AsyncClient(
-            timeout=_INTERNAL_RETRIEVE_TIMEOUT_S if internal else _RETRIEVE_TIMEOUT_S
-        ) as client:
-            resp = await client.post(
-                f"{retrieval_url}/retrieve",
-                json=retrieve_body,
-                headers={
-                    "X-Internal-Secret": retrieval_secret,
-                    "X-Caller-Service": "portal-api",
-                    **get_trace_headers(),
-                },
-            )
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                # An employee's identity is real, so a failed assertion is a
-                # failure to surface, not a synthetic widget identity to drop.
-                if internal or not _is_retrieval_identity_assertion_error(exc):
-                    raise
-                logger.warning(
-                    "partner_chat_retrieval_identity_assertion_degraded",
-                    org_id=org_id,
-                    status_code=exc.response.status_code if exc.response is not None else None,
-                )
-                return [], prompt([]), [], False
-            result = resp.json()
-    except httpx.HTTPError as exc:
-        # The widget and the partner API answer a failed retrieval with a 502
-        # (the caller maps it). The internal chat does what the hook did:
-        # Strict refuses, since it may only answer from the knowledge base;
-        # Open answers from general knowledge and says the KB was unreachable.
-        # A rejected identity is not unavailability: it means the employee's
-        # sub or org did not verify, so it surfaces as an error.
-        if not internal or (isinstance(exc, httpx.HTTPStatusError) and _is_retrieval_identity_assertion_error(exc)):
-            raise
-        failure = f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
-        logger.exception(
-            "partner_chat_internal_retrieval_failed", org_id=org_id, kb_mode=profile.kb_mode, failure=failure
-        )
-        if profile.kb_mode == "strict":
-            turn.refusal = strict_kb_unavailable_message(language)
-            return [], "", [], False
-        return [], prompt([], "retrieval_failure", retrieval_failure=failure), [], False
-    retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
-
-    evidence_pack = result.get("evidence_pack")
-    chunks = evidence_pack_items_as_chunks(evidence_pack)
-    trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
-    if internal and profile.kb_mode == "strict":
-        # Strict promises knowledge-base-only answers, so noise-level evidence
-        # would become fabricated authority. Open keeps weak chunks as
-        # labelled weak context, as the hook did.
-        relevant = [chunk for chunk in chunks if not _chunk_below_evidence_floor(chunk)]
-        if len(relevant) < len(chunks):
-            logger.warning(
-                "kb_evidence_below_score_floor_dropped",
-                org_id=org_id,
-                dropped=len(chunks) - len(relevant),
-                kept=len(relevant),
-                floor=_KB_MIN_EVIDENCE_SCORE,
-            )
-            chunks = relevant
-            trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
-    safe_chunks: list[dict] = []
-    blocked_chunk_count = 0
-    for chunk in chunks:
-        chunk_text = _context_text_from_chunk(chunk)
-        if safety_reason := context_safety_violation(chunk_text, query=query):
-            blocked_chunk_count += 1
-            logger.warning(
-                "partner_chat_retrieved_context_blocked",
-                org_id=org_id,
-                chunk_id=chunk.get("chunk_id"),
-                stage="retrieved_context",
-                reason=safety_reason,
-            )
-            continue
-        safe_chunks.append(chunk)
-    if blocked_chunk_count:
-        chunks = safe_chunks
-        trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
-    _record_retrieval_band(answer_signals, result, blocked_chunk_count=blocked_chunk_count)
-    if answer_signals is not None and not internal:
-        # The trace of this turn's search, kept with the turn so a wrong reply
-        # can be laid at the step where it went wrong without replaying it;
-        # until now that trace existed only in a private replay (plan §5, step 7).
-        answer_signals["search"] = {
-            "query": retrieve_body["query"][:300],
-            "variants": [variant[:300] for variant in (retrieve_body.get("query_variants") or [])],
-            "found": [
-                {
-                    "title": str(chunk.get("title") or "")[:120],
-                    "url": chunk.get("source_url"),
-                    "score": round(float(chunk["reranker_score"]), 3)
-                    if chunk.get("reranker_score") is not None
-                    else None,
-                }
-                for chunk in chunks
-            ],
-        }
-    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001: a low or unknown band without direct
-    # evidence for the question. Only the Strict-risk model choice reads it;
-    # what the writer may read is the selection step's decision.
-    turn.low_confidence = should_clarify(
-        result.get("confidence_band"), has_direct_evidence=has_direct_evidence_for_query(query, chunks)
-    )
-
-    # --- Gap detection (KB-014) ---
-    # Classification runs on the chunks that actually entered the prompt
-    # (post safety-filter); registration is fire-and-forget and non-raising
-    # — see _schedule_gap_event.
-    _schedule_gap_event(
-        org_id=org_id,
-        zitadel_org_id=zitadel_org_id,
-        partner_user_id=retrieval_user_id,
-        query_text=query,
-        chunks=chunks,
-        retrieval_ms=retrieval_ms,
-        kb_slugs=kb_slugs,
+    t = _read_turn(
+        org_id,
+        zitadel_org_id,
+        kb_slugs,
+        messages,
+        settings,
+        partner_user_id=partner_user_id,
+        widget_system_prompt=widget_system_prompt,
+        page_context=page_context,
+        retrieval_query=retrieval_query,
+        top_k=top_k,
+        broad_mode=broad_mode,
+        tone_register=tone_register,
+        pasted_correspondence=pasted_correspondence,
         is_preview=is_preview,
         audit_widget_id=audit_widget_id,
         audit_session_key=audit_session_key,
         audit_write=audit_write,
-        # NULL is LibreChat traffic on the gaps dashboard (SPEC-MCP-RETRIEVAL-001 REQ-9).
-        caller_client_id=None if internal else _WIDGET_GAP_CALLER_CLIENT_ID,
+        answer_signals=answer_signals,
+        profile=profile,
+        templates_block=templates_block,
+        telemetry_level=telemetry_level,
+        web_search_available=web_search_available,
+        knowledge_turn=knowledge_turn,
+        follow_up_variants=follow_up_variants,
     )
-
-    if internal and profile.kb_mode == "strict" and not chunks:
-        if not isinstance(evidence_pack, dict):
-            logger.error("retrieval_response_missing_evidence_pack", org_id=org_id)
-        if not turn.user_provided_content:
-            # Strict with no evidence refuses without a model call, as the hook
-            # did for zero chunks and for a response without an evidence pack: a
-            # prompt that asks the model to refuse let a non-compliant model
-            # answer from general knowledge. The gap above is still recorded.
-            turn.refusal = _no_citable_sources_message(language, suggest_open_mode=True)
-            return [], "", [], False
-        # The user's own attachment is still readable with zero KB evidence;
-        # fall through to the zero_chunks prompt below instead of refusing.
-
-    # Every surface: the writer reads only the passages that answer the
-    # question (passage_selection.py has the numbers). Not on a turn that is
-    # answered broadly, which reads no articles, and not on a multi-part
-    # message, whose parts each need their own passages. "Not in the passages"
-    # narrows nothing here: the caller routes that turn (the widget's "not
-    # found", the internal Strict refusal), and an internal Open turn, which
-    # may answer from general knowledge, gets every passage.
-    selection_chunks: list[dict] = []
-    if (
-        chunks
-        and not turn.multi_question
-        and not turn.user_provided_content
-        and not turn.pasted_correspondence
-        and not _broad_mode_active(chunks, broad_consent=broad_mode)
-    ):
-        selection_chunks = chunks
-        turn.selection = await select_passages(messages, chunks, settings, delegated_org_id=zitadel_org_id)
-        if answer_signals is not None and not internal:
-            # Quotes and the question are text; the internal record keeps
-            # signals only (widget_audit.record_internal_turn).
-            answer_signals["selection"] = (
-                {
-                    "verdict": turn.selection.verdict,
-                    "evidence": [
-                        {"passage": item.passage, "quote": item.quote[:200]} for item in turn.selection.evidence
-                    ],
-                    "question": turn.selection.question[:200],
-                }
-                if turn.selection
-                else None
-            )
-        turn.not_in_passages = bool(turn.selection and turn.selection.not_in_passages(chunks))
-        chosen = turn.selection.chosen(chunks) if turn.selection else []
-        if chosen and not turn.not_in_passages:
-            turn.passages_chosen = True
-            chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
-            trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
-
-    # Consented general-knowledge fallback: decided here, on the same
-    # post-safety-filter chunks the gap event sees, and surfaced to the caller
-    # as the fourth tuple element so the prompt swap and the answer label can
-    # never disagree. On a broad turn no article context is injected and no
-    # sources can be cited, regardless of what the weak chunks might support.
-    broad = _broad_mode_active(chunks, broad_consent=broad_mode)
-    sub_query_results = [entry for entry in result.get("sub_results") or [] if isinstance(entry, dict)] or None
-    system_prompt = prompt(
-        [] if broad else chunks,
-        "chunks" if chunks else "zero_chunks",
-        broad_mode=broad,
-        multi_question=turn.multi_question,
-        sub_query_results=sub_query_results,
-        unchecked_questions=unchecked_questions or None,
-    )
-
-    if turn.passages_chosen and turn.selection is not None and not broad:
-        system_prompt += writer_brief(
-            turn.selection, selection_chunks, internal=internal, source_only=not internal or profile.kb_mode == "strict"
-        )
-
-    return chunks, system_prompt, ([] if broad else trusted_sources), broad
+    without_search = _without_search(t, retrieval_enabled=retrieval_enabled)
+    if without_search is not None:
+        return without_search
+    found = await _search(t)
+    if isinstance(found, tuple):
+        return found
+    return await _choose_and_prompt(t, found)
