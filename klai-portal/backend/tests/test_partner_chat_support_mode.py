@@ -392,3 +392,22 @@ async def test_a_widget_without_the_support_toggle_gets_the_widget_turn_reply():
     body = await _one_path_body(auth)
 
     assert body["choices"][0]["message"]["content"] == "Via Instellingen."
+
+
+@pytest.mark.asyncio
+async def test_a_partner_key_sending_tools_is_refused_with_a_400():
+    from fastapi import HTTPException
+
+    from app.api.partner import ChatCompletionsRequest, chat_completions
+
+    req = ChatCompletionsRequest(
+        messages=[{"role": "user", "content": "q"}],
+        stream=False,
+        tools=[{"type": "function", "function": {"name": "lookup"}}],
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        await chat_completions(request=req, http_request=_http_request_stub(), auth=make_partner_auth(), db=AsyncMock())
+
+    assert raised.value.status_code == 400
+    assert "tools" in str(raised.value.detail)

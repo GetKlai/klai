@@ -1539,12 +1539,9 @@ async def _judge_composed_answer(
     as written and checked afterwards for the record only; a general turn is
     not checked at all, it had no articles. The internal Strict turn is held
     and judged in ``widget_write.write_reply``, like the help widget's.
-    Partner-API keys return the composer's result untouched and make no call.
 
     An empty result (the model wrote nothing) keeps the composer's refusal.
     """
-    if profile.surface != "internal":
-        return content, sources, decision
     answer_mode = knowledge_turn.answer_mode if knowledge_turn is not None else profile.kb_mode
     draft_text, _ = strip_appointment_offer_marker(draft)
     safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
@@ -1699,7 +1696,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
     incrementally, through :func:`_pop_live_stream_text`, instead of holding
     it for composition. Composition still runs once on the full text at the
     end for sources/signals, but its content is not re-sent: the caller
-    already saw it live. A held turn (the partner key) buffers everything.
+    already saw it live.
     The internal Strict turn is not streamed here: widget_write.write_reply
     holds and judges it.
 
@@ -1819,7 +1816,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
         web_chunks,
         web_query,
         response_language=response_language,
-        suggest_open_mode=profile.surface == "internal",
+        suggest_open_mode=True,
     )
     judge_started = time.perf_counter()
     if safety_reason := output_safety_violation(draft):
@@ -1925,7 +1922,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             ]
         )
     if not sources or not emit_sources:
-        if outgoing or not profile.stream_live:
+        if outgoing:
             yield _sse_content_delta(outgoing)
         yield b"data: [DONE]\n\n"
         _emit_language_correctness_log(
@@ -1947,7 +1944,7 @@ async def _chat_completion_streaming_with_composed_citations(  # noqa: C901 - ho
             }
         ]
     )
-    if outgoing or not profile.stream_live:
+    if outgoing:
         yield _sse_content_delta(outgoing)
     yield b"data: [DONE]\n\n"
     _emit_language_correctness_log(
@@ -2919,7 +2916,7 @@ async def chat_completion_non_streaming(
     source_query: str | None = None,
     answer_signals: dict[str, Any] | None = None,
     turn_timing: dict[str, float] | None = None,
-    profile: ChatProfile = ChatProfile(surface="widget"),
+    profile: ChatProfile,
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
     delegated_org_id: str | None = None,
@@ -3053,7 +3050,7 @@ async def chat_completion_non_streaming(
                 web_chunks,
                 web_query,
                 response_language=response_language,
-                suggest_open_mode=profile.surface == "internal",
+                suggest_open_mode=True,
             )
             judge_started = time.perf_counter()
             rendered_content, sources, decision = await _judge_composed_answer(
@@ -3143,7 +3140,7 @@ async def chat_completion_streaming(
     emit_sources: bool = True,
     answer_signals: dict[str, Any] | None = None,
     turn_timing: dict[str, float] | None = None,
-    profile: ChatProfile = ChatProfile(surface="widget"),
+    profile: ChatProfile,
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
     delegated_org_id: str | None = None,

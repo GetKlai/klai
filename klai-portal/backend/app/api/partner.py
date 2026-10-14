@@ -221,9 +221,8 @@ class ChatCompletionsRequest(BaseModel):
     knowledge: KnowledgeOptions | None = None
     # Opt-in live web search. When true, portal-api queries the same self-hosted
     # SearXNG instance the chat surfaces use, then injects the top results into
-    # the system prompt for this turn. Default off so existing callers are
-    # unaffected and search only runs when explicitly requested. Gated per key
-    # by the ``web_search`` permission; never runs for public widget keys.
+    # the system prompt for this turn. Default off. Honoured on the internal
+    # chat only (gated by the key's ``web_search`` permission); refused with a 400 elsewhere.
     web_search: bool = False
     # Optional explicit query for the web search. Integrations should pass a
     # concise, natural-language query here (e.g. the ticket subject) — it makes

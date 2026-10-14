@@ -426,9 +426,6 @@ async def _write(
     timing: dict[str, float],
 ) -> Reply:
     request, auth = inputs.request, inputs.auth
-    if request.web_search:
-        # Live web search never runs for a widget or partner key.
-        logger.debug("partner_web_search_ignored_widget", org_id=auth.org_id)
     knowledge = request.knowledge
     system_prompt = found.system_prompt
     if writing.escalation:

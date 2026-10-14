@@ -602,18 +602,8 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
     kwargs.setdefault("org_id", 42)
     kwargs.setdefault("messages", [{"role": "user", "content": "wat is dect?"}])
     kwargs.setdefault("source_query", "wat is dect?")
-    if kwargs.pop("widget", False):
-        reply = await write_reply(
-            model="klai-primary", temperature=0.7, system_prompt="sys", settings=settings, **kwargs
-        )
-        return reply_body(reply, model="klai-primary")
-    return await partner_chat.chat_completion_non_streaming(
-        model="klai-primary",
-        temperature=0.7,
-        system_prompt="sys",
-        settings=settings,
-        **kwargs,
-    )
+    reply = await write_reply(model="klai-primary", temperature=0.7, system_prompt="sys", settings=settings, **kwargs)
+    return reply_body(reply, model="klai-primary")
 
 
 @pytest.mark.asyncio
@@ -621,7 +611,6 @@ async def test_non_streaming_broad_answer_labels_message(monkeypatch):
     body = await _call_non_streaming(
         monkeypatch,
         "Een DECT-telefoon is een draadloze telefoon.",
-        widget=True,
         broad_mode=True,
     )
     message = body["choices"][0]["message"]
@@ -632,17 +621,10 @@ async def test_non_streaming_broad_answer_labels_message(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_streaming_refusal_without_consent_offers(monkeypatch):
-    body = await _call_non_streaming(monkeypatch, "Ik ken het antwoord niet.", widget=True)
+    body = await _call_non_streaming(monkeypatch, "Ik ken het antwoord niet.")
     message = body["choices"][0]["message"]
     assert message["broad_mode"] == "offer"
     assert message["content"] == no_citable_sources_message("nl", helpdesk=True)
-
-
-@pytest.mark.asyncio
-async def test_non_streaming_partner_has_no_broad_key(monkeypatch):
-    body = await _call_non_streaming(monkeypatch, "Partner answer.")
-    message = body["choices"][0]["message"]
-    assert "broad_mode" not in message
 
 
 # ─── refusal language: the visitor's words, not the rewritten query ───────
@@ -692,7 +674,6 @@ async def test_non_streaming_refusal_language_follows_visitor_not_source_query(m
         "I do not know the answer.",
         messages=[{"role": "user", "content": "Why does call transfer fail here?"}],
         source_query="doorverbinden foutmelding storing",
-        widget=True,
     )
     message = body["choices"][0]["message"]
     assert message["content"] == no_citable_sources_message("en", helpdesk=True)
@@ -796,7 +777,6 @@ async def test_non_streaming_refusal_speaks_the_conversation_language_not_the_la
         "I do not know the answer.",
         messages=_EN_SHORT_FOLLOW_UP,
         source_query="pricing plans small team",
-        widget=True,
     )
     message = body["choices"][0]["message"]
     assert message["content"] == no_citable_sources_message("en", helpdesk=True)
