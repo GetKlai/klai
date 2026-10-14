@@ -2084,6 +2084,11 @@ async def chat_completions(
     # which writes its reply without a tool step.
     if profile.surface != "internal" and (request.tools or request.tool_choice is not None):
         raise _openai_error(status.HTTP_400_BAD_REQUEST, "tools are not supported on widget and partner keys")
+    # The same holds for live web results: the widget's turn reads the help
+    # articles only, so a request that asks for the web gets an error, not a
+    # reply that quietly did without.
+    if profile.surface != "internal" and request.web_search:
+        raise _openai_error(status.HTTP_400_BAD_REQUEST, "web_search is not supported on widget and partner keys")
 
     # 3a. PDF attachments in the latest user turn become text before anything
     # reads the messages. Not for the widget: its visitors are anonymous and
