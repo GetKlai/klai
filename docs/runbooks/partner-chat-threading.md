@@ -123,8 +123,10 @@ Klai help widget (`docs/architecture/chat-system.md` §2). In practice:
 - `knowledge.query`, `knowledge.top_k`, `knowledge.include_sources` and
   `knowledge_base_ids` work as before. `broad_mode: true` lets a turn with
   nothing found answer from general knowledge, labelled as such.
-- `model` and `temperature` are ignored: the turn picks its own models.
-- `tools` and `tool_choice` are rejected with a 400. `web_search` still
-  routes to the knowledge path, but the turn does not search the web.
+- `model` and `temperature` go to the writer as they do for the widget;
+  the reading, selection and checking steps pick their own models.
+- `tools`, `tool_choice` and `web_search` are rejected with a 400: the turn
+  reads the help articles only, and a request that asks for more gets an
+  error rather than a reply that quietly did without.
 - Partner turns are not stored in widget conversation history; you own the
   thread, as above.
