@@ -25,7 +25,7 @@ def _make_auth(**kwargs):
 @pytest.mark.asyncio
 async def test_knowledge_append_permission_missing():
     """knowledge_append permission not set -> 403."""
-    from app.api.partner import PartnerKnowledgeRequest, append_knowledge
+    from app.api.partner_feedback import PartnerKnowledgeRequest, append_knowledge
 
     auth = _make_auth(
         permissions={"chat": True, "feedback": True, "knowledge_append": False},
@@ -41,7 +41,7 @@ async def test_knowledge_append_permission_missing():
 @pytest.mark.asyncio
 async def test_kb_not_in_scope():
     """KB not in key's scope -> 403."""
-    from app.api.partner import PartnerKnowledgeRequest, append_knowledge
+    from app.api.partner_feedback import PartnerKnowledgeRequest, append_knowledge
 
     req = PartnerKnowledgeRequest(kb_id=99, content="Some content")  # 99 not in scope
 
@@ -53,7 +53,7 @@ async def test_kb_not_in_scope():
 @pytest.mark.asyncio
 async def test_kb_read_only_returns_403():
     """KB in scope but only read level -> 403."""
-    from app.api.partner import PartnerKnowledgeRequest, append_knowledge
+    from app.api.partner_feedback import PartnerKnowledgeRequest, append_knowledge
 
     req = PartnerKnowledgeRequest(kb_id=10, content="Some content")
 
@@ -67,7 +67,7 @@ async def test_content_too_large_returns_validation_error():
     """Content > 10MB -> rejected by Pydantic max_length."""
     from pydantic import ValidationError
 
-    from app.api.partner import PartnerKnowledgeRequest
+    from app.api.partner_feedback import PartnerKnowledgeRequest
 
     with pytest.raises(ValidationError):
         PartnerKnowledgeRequest(
@@ -79,7 +79,7 @@ async def test_content_too_large_returns_validation_error():
 @pytest.mark.asyncio
 async def test_happy_path_proxies_to_ingest():
     """Happy path: proxies to ingest-api and returns mapped response."""
-    from app.api.partner import PartnerKnowledgeRequest, append_knowledge
+    from app.api.partner_feedback import PartnerKnowledgeRequest, append_knowledge
 
     fake_kb = FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)
     db = AsyncMock()

@@ -375,11 +375,12 @@ async def test_personal_kb_only_when_every_org_kb_is_off(world):
 @pytest.mark.asyncio
 async def test_internal_title_prompt_goes_to_passthrough_without_retrieval(world, monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     rows, events = world
     passthrough = AsyncMock(return_value={"choices": [{"message": {"content": "Title"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", passthrough)
-    monkeypatch.setattr(partner, "_enforce_openai_compatible_usage_limits", AsyncMock())
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", passthrough)
+    monkeypatch.setattr(partner_openai_compat, "_enforce_openai_compatible_usage_limits", AsyncMock())
     monkeypatch.setattr(partner, "chat_completions", AsyncMock(side_effect=AssertionError))
 
     result = await partner.canonical_chat_completions(

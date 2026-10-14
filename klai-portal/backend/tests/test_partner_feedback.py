@@ -20,7 +20,7 @@ async def test_rating_validation():
     """Rating must be thumbsUp or thumbsDown — Pydantic rejects other values."""
     from pydantic import ValidationError
 
-    from app.api.partner import PartnerFeedbackRequest
+    from app.api.partner_feedback import PartnerFeedbackRequest
 
     with pytest.raises(ValidationError):
         PartnerFeedbackRequest(
@@ -32,7 +32,7 @@ async def test_rating_validation():
 @pytest.mark.asyncio
 async def test_feedback_permission_denied():
     """No feedback permission -> 403."""
-    from app.api.partner import PartnerFeedbackRequest, submit_feedback
+    from app.api.partner_feedback import PartnerFeedbackRequest, submit_feedback
 
     auth = make_partner_auth(permissions={"chat": True, "feedback": False, "knowledge_append": False})
     req = PartnerFeedbackRequest(message_id="msg-1", rating="thumbsUp")
@@ -45,7 +45,7 @@ async def test_feedback_permission_denied():
 @pytest.mark.asyncio
 async def test_correlated_feedback_schedules_quality_update():
     """Correlated feedback: retrieval log found -> quality update scheduled."""
-    from app.api.partner import PartnerFeedbackRequest, submit_feedback
+    from app.api.partner_feedback import PartnerFeedbackRequest, submit_feedback
 
     auth = make_partner_auth()
     mock_redis = AsyncMock()
@@ -66,10 +66,10 @@ async def test_correlated_feedback_schedules_quality_update():
     req = PartnerFeedbackRequest(message_id="msg-1", rating="thumbsUp")
 
     with (
-        patch("app.api.partner.get_redis_pool", return_value=mock_redis),
-        patch("app.api.partner.find_correlated_log", return_value=correlated_log),
-        patch("app.api.partner.schedule_quality_update") as mock_schedule,
-        patch("app.api.partner.emit_event") as mock_emit,
+        patch("app.api.partner_feedback.get_redis_pool", return_value=mock_redis),
+        patch("app.api.partner_feedback.find_correlated_log", return_value=correlated_log),
+        patch("app.api.partner_feedback.schedule_quality_update") as mock_schedule,
+        patch("app.api.partner_feedback.emit_event") as mock_emit,
     ):
         result = await submit_feedback(request=req, auth=auth, db=db)
 
@@ -81,7 +81,7 @@ async def test_correlated_feedback_schedules_quality_update():
 @pytest.mark.asyncio
 async def test_uncorrelated_feedback_no_quality_update():
     """Uncorrelated: no retrieval log -> no quality update, event still emitted."""
-    from app.api.partner import PartnerFeedbackRequest, submit_feedback
+    from app.api.partner_feedback import PartnerFeedbackRequest, submit_feedback
 
     auth = make_partner_auth()
     mock_redis = AsyncMock()
@@ -95,10 +95,10 @@ async def test_uncorrelated_feedback_no_quality_update():
     req = PartnerFeedbackRequest(message_id="msg-2", rating="thumbsDown")
 
     with (
-        patch("app.api.partner.get_redis_pool", return_value=mock_redis),
-        patch("app.api.partner.find_correlated_log", return_value=None),
-        patch("app.api.partner.schedule_quality_update") as mock_schedule,
-        patch("app.api.partner.emit_event") as mock_emit,
+        patch("app.api.partner_feedback.get_redis_pool", return_value=mock_redis),
+        patch("app.api.partner_feedback.find_correlated_log", return_value=None),
+        patch("app.api.partner_feedback.schedule_quality_update") as mock_schedule,
+        patch("app.api.partner_feedback.emit_event") as mock_emit,
     ):
         result = await submit_feedback(request=req, auth=auth, db=db)
 
@@ -113,7 +113,7 @@ async def test_idempotent_duplicate_returns_200():
     """Duplicate message_id -> 200 without inserting new row."""
     from starlette.responses import Response as StarletteResponse
 
-    from app.api.partner import PartnerFeedbackRequest, submit_feedback
+    from app.api.partner_feedback import PartnerFeedbackRequest, submit_feedback
 
     auth = make_partner_auth()
     mock_redis = AsyncMock()
@@ -124,7 +124,7 @@ async def test_idempotent_duplicate_returns_200():
 
     req = PartnerFeedbackRequest(message_id="msg-1", rating="thumbsUp")
 
-    with patch("app.api.partner.get_redis_pool", return_value=mock_redis):
+    with patch("app.api.partner_feedback.get_redis_pool", return_value=mock_redis):
         result = await submit_feedback(request=req, auth=auth, db=db)
 
     assert isinstance(result, StarletteResponse)

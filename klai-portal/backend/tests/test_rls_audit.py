@@ -96,6 +96,17 @@ _ALLOWLIST: dict[str, str] = {
     "app/services/kb_offboarding.py": (
         "service layer — orchestrator called from admin/users.py routes after _get_caller_org sets tenant"
     ),
+    # The partner API was one module until it was split by concern; it passed
+    # this audit only because the widget-config routes in the same file call
+    # set_tenant. Every query in these three modules runs on the session that
+    # get_partner_key (Depends or called directly) already ran set_tenant on.
+    "app/api/partner.py": "partner routes — get_partner_key runs set_tenant on the request session before any query",
+    "app/api/partner_feedback.py": (
+        "partner routes — get_partner_key runs set_tenant on the request session before any query"
+    ),
+    "app/api/partner_hubspot.py": (
+        "partner routes — get_partner_key runs set_tenant on the request session before any query"
+    ),
 }
 
 

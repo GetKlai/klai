@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.api.partner import widget_config
+from app.api.partner_widget_config import widget_config
 
 
 @dataclass
@@ -102,11 +102,11 @@ async def test_widget_config_happy_path():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -134,11 +134,11 @@ async def test_widget_config_delivers_footer_links_in_widget():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -156,11 +156,11 @@ async def test_widget_config_returns_page_context_enabled():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -179,11 +179,11 @@ async def test_widget_config_delivers_https_booking_url():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -201,11 +201,11 @@ async def test_widget_config_stores_no_booking_url_key_and_delivers_empty():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -216,7 +216,7 @@ async def test_widget_config_stores_no_booking_url_key_and_delivers_empty():
 
 def test_widget_booking_url_scheme_policy():
     """Only absolute http(s) survives; the value lands in a visitor-facing href."""
-    from app.api.partner import _widget_booking_url
+    from app.api.partner_widget_config import _widget_booking_url
 
     def deliver(value: object) -> str:
         return _widget_booking_url({"booking_url": value})
@@ -242,7 +242,7 @@ def test_widget_booking_url_scheme_policy():
 @pytest.mark.asyncio
 async def test_public_bot_config_strips_non_http_booking_url():
     """The share-link endpoint runs the same scheme validation."""
-    from app.api.partner import public_bot_config
+    from app.api.partner_widget_config import public_bot_config
 
     org = FakeOrg()
     widget = FakeWidget(
@@ -259,11 +259,11 @@ async def test_public_bot_config_strips_non_http_booking_url():
     db = _make_db_chain(widget, org, [10])
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
@@ -278,7 +278,7 @@ def _nerds_config(nerds: object) -> dict:
 
 def test_widget_nerds_integration_scheme_policy():
     """The nerds booking_url becomes an iframe src: only absolute http(s) survives."""
-    from app.api.partner import _widget_nerds_integration
+    from app.api.partner_widget_config import _widget_nerds_integration
 
     delivered = _widget_nerds_integration(
         _nerds_config({"enabled": True, "booking_url": "https://support.voys.nl/book/x?t=1"})
@@ -323,11 +323,11 @@ async def test_widget_config_delivers_enabled_nerds_integration():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -347,11 +347,11 @@ async def test_widget_config_strips_javascript_nerds_booking_url():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -373,11 +373,11 @@ async def test_widget_config_without_nerds_integration_unchanged_for_widget():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -391,7 +391,7 @@ async def test_widget_config_without_nerds_integration_unchanged_for_widget():
 @pytest.mark.asyncio
 async def test_public_bot_config_strips_non_http_nerds_booking_url():
     """The share-link endpoint runs the same nerds scheme validation."""
-    from app.api.partner import public_bot_config
+    from app.api.partner_widget_config import public_bot_config
 
     org = FakeOrg()
     widget = FakeWidget(
@@ -408,11 +408,11 @@ async def test_public_bot_config_strips_non_http_nerds_booking_url():
     db = _make_db_chain(widget, org, [10])
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
@@ -423,7 +423,7 @@ async def test_public_bot_config_strips_non_http_nerds_booking_url():
 
 @pytest.mark.asyncio
 async def test_public_bot_config_delivers_enabled_nerds_integration():
-    from app.api.partner import public_bot_config
+    from app.api.partner_widget_config import public_bot_config
 
     org = FakeOrg()
     widget = FakeWidget(
@@ -442,11 +442,11 @@ async def test_public_bot_config_delivers_enabled_nerds_integration():
     db = _make_db_chain(widget, org, [10])
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
@@ -460,7 +460,7 @@ async def test_public_bot_config_delivers_enabled_nerds_integration():
 
 @pytest.mark.asyncio
 async def test_public_bot_config_delivers_footer_links_in_widget():
-    from app.api.partner import public_bot_config
+    from app.api.partner_widget_config import public_bot_config
 
     org = FakeOrg()
     widget = FakeWidget(
@@ -479,11 +479,11 @@ async def test_public_bot_config_delivers_footer_links_in_widget():
     db = _make_db_chain(widget, org, [10])
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
@@ -505,11 +505,11 @@ async def test_widget_config_truncates_conversation_starters_to_three():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -521,7 +521,7 @@ async def test_widget_config_truncates_conversation_starters_to_three():
 @pytest.mark.asyncio
 async def test_public_bot_config_truncates_conversation_starters_to_three():
     """The share-link endpoint runs the same conversation-starters truncation."""
-    from app.api.partner import public_bot_config
+    from app.api.partner_widget_config import public_bot_config
 
     org = FakeOrg()
     widget = FakeWidget(
@@ -538,11 +538,11 @@ async def test_public_bot_config_truncates_conversation_starters_to_three():
     db = _make_db_chain(widget, org, [10])
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
@@ -565,11 +565,11 @@ async def test_widget_config_hubspot_handoff_offered_to_the_platform_tenant():
     request = _make_request("https://getklai.getklai.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         mock_settings.platform_org_slug = "getklai"
@@ -603,11 +603,11 @@ async def test_widget_config_hubspot_handoff_refused_for_other_tenants():
     request = _make_request("https://getklai.getklai.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         mock_settings.platform_org_slug = "getklai"
@@ -626,11 +626,11 @@ async def test_widget_config_passes_valid_client_session_id_to_token():
     request.headers["x-klai-widget-session-id"] = "client-session_1234567890"
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token") as generate_token,
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token") as generate_token,
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -648,11 +648,11 @@ async def test_widget_config_keeps_legacy_query_session_id_fallback():
     request.query_params = {"session_id": "client-session_legacy123"}
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token") as generate_token,
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token") as generate_token,
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
 
@@ -667,7 +667,7 @@ async def test_widget_config_missing_jwt_secret():
     db = AsyncMock()
     request = _make_request()
 
-    with patch("app.api.partner.settings") as mock_settings:
+    with patch("app.api.partner_widget_config.settings") as mock_settings:
         mock_settings.widget_jwt_secret = ""
         response = await widget_config(id="wgt_any", request=request, db=db)
 
@@ -681,9 +681,9 @@ async def test_widget_config_unknown_widget_id():
     request = _make_request()
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         with pytest.raises(Exception) as exc_info:
@@ -700,9 +700,9 @@ async def test_widget_config_disallowed_origin():
     request = _make_request("https://evil.example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await widget_config(id=widget.widget_id, request=request, db=db)
@@ -735,11 +735,11 @@ async def test_widget_config_empty_allowed_origins_denied_by_default():
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await widget_config(id=widget.widget_id, request=request, db=db)
@@ -770,11 +770,11 @@ async def test_widget_config_empty_allowed_origins_allowed_when_allow_any_origin
     request = _make_request("https://example.com")
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="fake.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await widget_config(id=widget.widget_id, request=request, db=db)
@@ -855,15 +855,15 @@ def test_origin_allowed_rejects_scheme_and_port_mismatch():
 @pytest.mark.asyncio
 async def test_public_bot_config_rejects_when_share_disabled():
     """Public bot config is off by default, even if the widget exists."""
-    from app.api.partner import public_bot_config
+    from app.api.partner_widget_config import public_bot_config
 
     widget = FakeWidget()
     db = _make_db_chain(widget, None, [])
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         with pytest.raises(Exception) as exc_info:
@@ -875,7 +875,7 @@ async def test_public_bot_config_rejects_when_share_disabled():
 @pytest.mark.asyncio
 async def test_public_bot_config_returns_token_when_share_enabled():
     """Public bot config returns a session token only after explicit enablement."""
-    from app.api.partner import public_bot_config
+    from app.api.partner_widget_config import public_bot_config
 
     org = FakeOrg()
     org.widget_css_variables = {"--klai-content-padding": "20px"}
@@ -892,11 +892,11 @@ async def test_public_bot_config_returns_token_when_share_enabled():
     db = _make_db_chain(widget, org, [10])
 
     with (
-        patch("app.api.partner.settings") as mock_settings,
-        patch("app.api.partner.get_redis_pool"),
-        patch("app.api.partner.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner.set_tenant", new=AsyncMock()),
-        patch("app.api.partner.generate_session_token", return_value="public.jwt.token"),
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)

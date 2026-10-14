@@ -14,13 +14,15 @@ from app.api.partner_dependencies import PartnerAuthContext
 
 @pytest.fixture(autouse=True)
 def allow_openai_usage_limits(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
-    monkeypatch.setattr(partner, "get_redis_pool", AsyncMock(return_value=MagicMock()))
-    monkeypatch.setattr(partner, "check_rate_limit", AsyncMock(return_value=(True, 0)))
-    monkeypatch.setattr(partner, "check_weighted_rate_limit", AsyncMock(return_value=(True, 0)))
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", AsyncMock(return_value={"choices": []}))
-    monkeypatch.setattr(partner, "openai_chat_completion_streaming", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(partner_openai_compat, "get_redis_pool", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(partner_openai_compat, "check_rate_limit", AsyncMock(return_value=(True, 0)))
+    monkeypatch.setattr(partner_openai_compat, "check_weighted_rate_limit", AsyncMock(return_value=(True, 0)))
+    monkeypatch.setattr(
+        partner_openai_compat, "openai_chat_completion_non_streaming", AsyncMock(return_value={"choices": []})
+    )
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_streaming", AsyncMock(return_value=MagicMock()))
 
 
 def _auth(permissions: dict | None = None) -> PartnerAuthContext:
@@ -62,7 +64,7 @@ def test_openai_passthrough_metadata_strips_user_metadata():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_requires_general_chat_permission():
-    from app.api.partner import openai_compatible_chat_completions
+    from app.api.partner_openai_compat import openai_compatible_chat_completions
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_chat_completions(
@@ -75,10 +77,10 @@ async def test_openai_compatible_chat_requires_general_chat_permission():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_forwards_raw_openai_fields(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     body = {
         "model": "klai-large",
@@ -90,7 +92,7 @@ async def test_openai_compatible_chat_forwards_raw_openai_fields(monkeypatch):
         "max_tokens": 512,
     }
 
-    result = await partner.openai_compatible_chat_completions(http_request=_request(body), auth=_auth())
+    result = await partner_openai_compat.openai_compatible_chat_completions(http_request=_request(body), auth=_auth())
 
     assert result == {"choices": [{"message": {"content": "ok"}}]}
     sent = forwarded.await_args.args[0]
@@ -103,12 +105,12 @@ async def test_openai_compatible_chat_forwards_raw_openai_fields(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_strips_litellm_control_fields(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
-    await partner.openai_compatible_chat_completions(
+    await partner_openai_compat.openai_compatible_chat_completions(
         http_request=_request(
             {
                 "messages": [{"role": "user", "content": "hi"}],
@@ -132,12 +134,12 @@ async def test_openai_compatible_chat_strips_litellm_control_fields(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_defaults_output_cap(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
-    await partner.openai_compatible_chat_completions(
+    await partner_openai_compat.openai_compatible_chat_completions(
         http_request=_request({"messages": [{"role": "user", "content": "hi"}]}),
         auth=_auth(),
     )
@@ -350,12 +352,12 @@ async def test_openai_non_streaming_cache_usage_telemetry_defaults_zero_without_
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_forwards_prompt_cache_key(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
-    await partner.openai_compatible_chat_completions(
+    await partner_openai_compat.openai_compatible_chat_completions(
         http_request=_request(
             {
                 "messages": [{"role": "user", "content": "hi"}],
@@ -372,7 +374,7 @@ async def test_openai_compatible_chat_forwards_prompt_cache_key(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("value", ["", 123, "x" * 257])
 async def test_openai_compatible_chat_rejects_invalid_prompt_cache_key(value):
-    from app.api.partner import openai_compatible_chat_completions
+    from app.api.partner_openai_compat import openai_compatible_chat_completions
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_chat_completions(
@@ -391,12 +393,12 @@ async def test_openai_compatible_chat_rejects_invalid_prompt_cache_key(value):
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_absent_prompt_cache_key_sends_no_extra_body(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
-    await partner.openai_compatible_chat_completions(
+    await partner_openai_compat.openai_compatible_chat_completions(
         http_request=_request({"messages": [{"role": "user", "content": "hi"}]}),
         auth=_auth(),
     )
@@ -412,12 +414,12 @@ async def test_openai_compatible_chat_absent_prompt_cache_key_sends_no_extra_bod
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_drops_caller_extra_body(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
-    await partner.openai_compatible_chat_completions(
+    await partner_openai_compat.openai_compatible_chat_completions(
         http_request=_request(
             {
                 "messages": [{"role": "user", "content": "hi"}],
@@ -433,7 +435,7 @@ async def test_openai_compatible_chat_drops_caller_extra_body(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_rejects_invalid_json():
-    from app.api.partner import openai_compatible_chat_completions
+    from app.api.partner_openai_compat import openai_compatible_chat_completions
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_chat_completions(http_request=_request({}, raw=b"{not-json"), auth=_auth())
@@ -443,7 +445,7 @@ async def test_openai_compatible_chat_rejects_invalid_json():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_rejects_non_object_json():
-    from app.api.partner import openai_compatible_chat_completions
+    from app.api.partner_openai_compat import openai_compatible_chat_completions
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_chat_completions(http_request=_request(["not", "object"]), auth=_auth())
@@ -453,7 +455,7 @@ async def test_openai_compatible_chat_rejects_non_object_json():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_rejects_large_content_length():
-    from app.api.partner import openai_compatible_chat_completions
+    from app.api.partner_openai_compat import openai_compatible_chat_completions
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_chat_completions(
@@ -469,7 +471,7 @@ async def test_openai_compatible_chat_rejects_large_content_length():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_rejects_large_output_cap():
-    from app.api.partner import openai_compatible_chat_completions
+    from app.api.partner_openai_compat import openai_compatible_chat_completions
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_chat_completions(
@@ -488,7 +490,7 @@ async def test_openai_compatible_chat_rejects_large_output_cap():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_rejects_large_completion_output_cap():
-    from app.api.partner import openai_compatible_chat_completions
+    from app.api.partner_openai_compat import openai_compatible_chat_completions
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_chat_completions(
@@ -507,7 +509,7 @@ async def test_openai_compatible_chat_rejects_large_completion_output_cap():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_rejects_multiple_choices():
-    from app.api.partner import openai_compatible_chat_completions
+    from app.api.partner_openai_compat import openai_compatible_chat_completions
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_chat_completions(
@@ -522,11 +524,12 @@ async def test_openai_compatible_chat_rejects_multiple_choices():
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_rejects_large_estimated_input(monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     monkeypatch.setattr(partner.settings, "partner_openai_max_input_tokens", 10)
 
     with pytest.raises(HTTPException) as exc:
-        await partner.openai_compatible_chat_completions(
+        await partner_openai_compat.openai_compatible_chat_completions(
             http_request=_request({"messages": [{"role": "user", "content": "x" * 200}]}),
             auth=_auth(),
         )
@@ -537,30 +540,30 @@ async def test_openai_compatible_chat_rejects_large_estimated_input(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_enforces_route_rpm(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
-    monkeypatch.setattr(partner, "check_rate_limit", AsyncMock(return_value=(False, 17)))
+    monkeypatch.setattr(partner_openai_compat, "check_rate_limit", AsyncMock(return_value=(False, 17)))
 
     with pytest.raises(HTTPException) as exc:
-        await partner.openai_compatible_chat_completions(
+        await partner_openai_compat.openai_compatible_chat_completions(
             http_request=_request({"messages": [{"role": "user", "content": "hi"}]}),
             auth=_auth(),
         )
 
     assert exc.value.status_code == 429
     assert exc.value.headers["Retry-After"] == "17"
-    partner.check_rate_limit.assert_awaited_once()
-    assert partner.check_rate_limit.await_args.args[1] == "openai:key-1"
+    partner_openai_compat.check_rate_limit.assert_awaited_once()
+    assert partner_openai_compat.check_rate_limit.await_args.args[1] == "openai:key-1"
 
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_fails_closed_when_redis_pool_missing(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
-    monkeypatch.setattr(partner, "get_redis_pool", AsyncMock(return_value=None))
+    monkeypatch.setattr(partner_openai_compat, "get_redis_pool", AsyncMock(return_value=None))
 
     with pytest.raises(HTTPException) as exc:
-        await partner.openai_compatible_chat_completions(
+        await partner_openai_compat.openai_compatible_chat_completions(
             http_request=_request({"messages": [{"role": "user", "content": "hi"}]}),
             auth=_auth(),
         )
@@ -570,12 +573,14 @@ async def test_openai_compatible_chat_fails_closed_when_redis_pool_missing(monke
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_fails_closed_when_redis_errors(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
-    monkeypatch.setattr(partner, "check_rate_limit", AsyncMock(side_effect=RedisError("connection refused")))
+    monkeypatch.setattr(
+        partner_openai_compat, "check_rate_limit", AsyncMock(side_effect=RedisError("connection refused"))
+    )
 
     with pytest.raises(HTTPException) as exc:
-        await partner.openai_compatible_chat_completions(
+        await partner_openai_compat.openai_compatible_chat_completions(
             http_request=_request({"messages": [{"role": "user", "content": "hi"}]}),
             auth=_auth(),
         )
@@ -585,41 +590,41 @@ async def test_openai_compatible_chat_fails_closed_when_redis_errors(monkeypatch
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_enforces_route_tpm(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
-    monkeypatch.setattr(partner, "check_weighted_rate_limit", AsyncMock(return_value=(False, 23)))
+    monkeypatch.setattr(partner_openai_compat, "check_weighted_rate_limit", AsyncMock(return_value=(False, 23)))
 
     with pytest.raises(HTTPException) as exc:
-        await partner.openai_compatible_chat_completions(
+        await partner_openai_compat.openai_compatible_chat_completions(
             http_request=_request({"messages": [{"role": "user", "content": "hi"}]}),
             auth=_auth(),
         )
 
     assert exc.value.status_code == 429
     assert exc.value.headers["Retry-After"] == "23"
-    partner.check_weighted_rate_limit.assert_awaited_once()
-    assert partner.check_weighted_rate_limit.await_args.args[1] == "openai_tpm:key-1"
+    partner_openai_compat.check_weighted_rate_limit.assert_awaited_once()
+    assert partner_openai_compat.check_weighted_rate_limit.await_args.args[1] == "openai_tpm:key-1"
 
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_tpm_cost_includes_default_output(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
-    await partner.openai_compatible_chat_completions(
+    await partner_openai_compat.openai_compatible_chat_completions(
         http_request=_request({"messages": [{"role": "user", "content": "hi"}]}),
         auth=_auth(),
     )
 
-    sent_body = partner.openai_chat_completion_non_streaming.await_args.args[0]
-    expected_cost = partner._estimate_openai_input_tokens(sent_body) + 2048
-    assert partner.check_weighted_rate_limit.await_args.args[2] == expected_cost
+    sent_body = partner_openai_compat.openai_chat_completion_non_streaming.await_args.args[0]
+    expected_cost = partner_openai_compat._estimate_openai_input_tokens(sent_body) + 2048
+    assert partner_openai_compat.check_weighted_rate_limit.await_args.args[2] == expected_cost
 
 
 @pytest.mark.asyncio
 async def test_openai_compatible_chat_tpm_cost_uses_largest_output_field(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
-    await partner.openai_compatible_chat_completions(
+    await partner_openai_compat.openai_compatible_chat_completions(
         http_request=_request(
             {
                 "messages": [{"role": "user", "content": "hi"}],
@@ -630,9 +635,9 @@ async def test_openai_compatible_chat_tpm_cost_uses_largest_output_field(monkeyp
         auth=_auth(),
     )
 
-    sent_body = partner.openai_chat_completion_non_streaming.await_args.args[0]
-    expected_cost = partner._estimate_openai_input_tokens(sent_body) + 4096
-    assert partner.check_weighted_rate_limit.await_args.args[2] == expected_cost
+    sent_body = partner_openai_compat.openai_chat_completion_non_streaming.await_args.args[0]
+    expected_cost = partner_openai_compat._estimate_openai_input_tokens(sent_body) + 4096
+    assert partner_openai_compat.check_weighted_rate_limit.await_args.args[2] == expected_cost
 
 
 @pytest.mark.asyncio
@@ -777,7 +782,7 @@ async def test_openai_streaming_preserves_upstream_4xx_before_stream_start(monke
 
 @pytest.mark.asyncio
 async def test_openai_compatible_models_requires_general_chat_permission():
-    from app.api.partner import openai_compatible_models
+    from app.api.partner_openai_compat import openai_compatible_models
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_models(auth=_auth({"chat": True}))
@@ -787,7 +792,7 @@ async def test_openai_compatible_models_requires_general_chat_permission():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_models_lists_general_models():
-    from app.api.partner import openai_compatible_models
+    from app.api.partner_openai_compat import openai_compatible_models
 
     result = await openai_compatible_models(auth=_auth())
 
@@ -800,7 +805,7 @@ async def test_openai_compatible_models_lists_general_models():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_model_retrieves_canonical_and_alias_models():
-    from app.api.partner import openai_compatible_model
+    from app.api.partner_openai_compat import openai_compatible_model
 
     canonical = await openai_compatible_model(model="klai-fast", auth=_auth())
     alias = await openai_compatible_model(model="gpt-4o-mini", auth=_auth())
@@ -811,7 +816,7 @@ async def test_openai_compatible_model_retrieves_canonical_and_alias_models():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_model_rejects_unknown_model():
-    from app.api.partner import openai_compatible_model
+    from app.api.partner_openai_compat import openai_compatible_model
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_model(model="gpt-unknown", auth=_auth())
@@ -821,7 +826,7 @@ async def test_openai_compatible_model_rejects_unknown_model():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_requires_general_chat_permission():
-    from app.api.partner import openai_compatible_responses
+    from app.api.partner_openai_compat import openai_compatible_responses
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_responses(
@@ -834,7 +839,7 @@ async def test_openai_compatible_responses_requires_general_chat_permission():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_maps_text_request_to_chat(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(
         return_value={
@@ -844,9 +849,9 @@ async def test_openai_compatible_responses_maps_text_request_to_chat(monkeypatch
             "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
         }
     )
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
-    result = await partner.openai_compatible_responses(
+    result = await partner_openai_compat.openai_compatible_responses(
         http_request=_request(
             {
                 "model": "gpt-4o-mini",
@@ -890,12 +895,12 @@ async def test_openai_compatible_responses_maps_text_request_to_chat(monkeypatch
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_maps_safety_identifier_to_user(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
-    await partner.openai_compatible_responses(
+    await partner_openai_compat.openai_compatible_responses(
         http_request=_request(
             {
                 "model": "klai-fast",
@@ -911,7 +916,7 @@ async def test_openai_compatible_responses_maps_safety_identifier_to_user(monkey
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_maps_function_tools(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(
         return_value={
@@ -931,9 +936,9 @@ async def test_openai_compatible_responses_maps_function_tools(monkeypatch):
             ]
         }
     )
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
-    result = await partner.openai_compatible_responses(
+    result = await partner_openai_compat.openai_compatible_responses(
         http_request=_request(
             {
                 "model": "klai-primary",
@@ -978,7 +983,7 @@ async def test_openai_compatible_responses_maps_function_tools(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_rejects_unsupported_tool_choice():
-    from app.api.partner import openai_compatible_responses
+    from app.api.partner_openai_compat import openai_compatible_responses
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_responses(
@@ -1039,7 +1044,7 @@ async def test_canonical_knowledge_validation_error_uses_openai_error_envelope()
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_preserves_text_message_with_function_tool(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(
         return_value={
@@ -1059,9 +1064,9 @@ async def test_openai_compatible_responses_preserves_text_message_with_function_
             ]
         }
     )
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
-    result = await partner.openai_compatible_responses(
+    result = await partner_openai_compat.openai_compatible_responses(
         http_request=_request(
             {
                 "model": "klai-primary",
@@ -1086,7 +1091,7 @@ async def test_openai_compatible_responses_preserves_text_message_with_function_
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_rejects_hosted_tools():
-    from app.api.partner import openai_compatible_responses
+    from app.api.partner_openai_compat import openai_compatible_responses
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_responses(
@@ -1106,7 +1111,7 @@ async def test_openai_compatible_responses_rejects_hosted_tools():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_rejects_knowledge_extensions():
-    from app.api.partner import openai_compatible_responses
+    from app.api.partner_openai_compat import openai_compatible_responses
 
     with pytest.raises(HTTPException) as exc:
         await openai_compatible_responses(
@@ -1126,7 +1131,7 @@ async def test_openai_compatible_responses_rejects_knowledge_extensions():
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_rejects_unsupported_stateful_fields():
-    from app.api.partner import openai_compatible_responses
+    from app.api.partner_openai_compat import openai_compatible_responses
 
     for field, value in (
         ("conversation", "conv_123"),
@@ -1147,7 +1152,7 @@ async def test_openai_compatible_responses_rejects_unsupported_stateful_fields()
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_streams_text_events(monkeypatch):
-    import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     async def chat_events():
         yield b'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
@@ -1155,12 +1160,12 @@ async def test_openai_compatible_responses_streams_text_events(monkeypatch):
         yield b"data: [DONE]\n\n"
 
     monkeypatch.setattr(
-        partner,
+        partner_openai_compat,
         "openai_chat_completion_streaming",
         AsyncMock(return_value=StreamingResponse(chat_events(), media_type="text/event-stream")),
     )
 
-    response = await partner.openai_compatible_responses(
+    response = await partner_openai_compat.openai_compatible_responses(
         http_request=_request({"model": "gpt-4o-mini", "input": "hi", "stream": True}),
         auth=_auth(),
     )
@@ -1180,8 +1185,9 @@ async def test_openai_compatible_responses_streams_text_events(monkeypatch):
 
 def test_openai_compatible_routes_are_canonical_only():
     import app.api.partner as partner
+    from app.middleware.klai_cors import _collect_widget_cors_entries
 
-    route_paths = {route.path for route in partner.router.routes}
+    route_paths = {route.path for route, _ancestors, _mode in _collect_widget_cors_entries(partner.router.routes)}
 
     assert "/partner/v1/models" in route_paths
     assert "/partner/v1/models/{model}" in route_paths
@@ -1194,9 +1200,10 @@ def test_openai_compatible_routes_are_canonical_only():
 @pytest.mark.asyncio
 async def test_canonical_chat_without_knowledge_uses_general_passthrough(monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     result = await partner.canonical_chat_completions(
         http_request=_request(
@@ -1252,9 +1259,10 @@ async def test_canonical_chat_with_knowledge_uses_rag_flow(monkeypatch):
 @pytest.mark.asyncio
 async def test_canonical_chat_with_knowledge_disabled_uses_general_passthrough(monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "general"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     result = await partner.canonical_chat_completions(
         http_request=_request(
@@ -1389,9 +1397,10 @@ async def test_canonical_knowledge_path_without_passthrough_fields_still_works(m
 @pytest.mark.asyncio
 async def test_canonical_passthrough_with_response_format_is_unaffected_by_knowledge_guard(monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     result = await partner.canonical_chat_completions(
         http_request=_request(
@@ -1478,9 +1487,10 @@ def test_uses_knowledge_chat_routes_on_field_values(body, expected):
 async def test_canonical_chat_web_search_false_routes_to_passthrough(monkeypatch):
     """web_search: false PRESENT no longer routes to the knowledge path."""
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     result = await partner.canonical_chat_completions(
         http_request=_request(
@@ -1505,9 +1515,10 @@ async def test_canonical_chat_web_search_false_routes_to_passthrough(monkeypatch
 @pytest.mark.asyncio
 async def test_canonical_chat_web_search_query_null_routes_to_passthrough(monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     result = await partner.canonical_chat_completions(
         http_request=_request(
@@ -1528,9 +1539,10 @@ async def test_canonical_chat_web_search_query_null_routes_to_passthrough(monkey
 @pytest.mark.asyncio
 async def test_canonical_chat_page_context_null_routes_to_passthrough(monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     result = await partner.canonical_chat_completions(
         http_request=_request(
@@ -1551,9 +1563,10 @@ async def test_canonical_chat_page_context_null_routes_to_passthrough(monkeypatc
 @pytest.mark.asyncio
 async def test_canonical_chat_knowledge_null_routes_to_passthrough(monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     result = await partner.canonical_chat_completions(
         http_request=_request(
@@ -1574,9 +1587,10 @@ async def test_canonical_chat_knowledge_null_routes_to_passthrough(monkeypatch):
 @pytest.mark.asyncio
 async def test_canonical_chat_knowledge_base_ids_null_routes_to_passthrough(monkeypatch):
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     result = await partner.canonical_chat_completions(
         http_request=_request(
@@ -1651,9 +1665,10 @@ async def test_canonical_chat_web_search_false_with_response_format_forwards_it(
     """Integration-style: general_chat key sending web_search: false +
     response_format routes to passthrough and forwards response_format."""
     import app.api.partner as partner
+    from app.api import partner_openai_compat
 
     forwarded = AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})
-    monkeypatch.setattr(partner, "openai_chat_completion_non_streaming", forwarded)
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", forwarded)
 
     result = await partner.canonical_chat_completions(
         http_request=_request(

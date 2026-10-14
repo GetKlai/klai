@@ -21,7 +21,7 @@ import sys
 
 PLAN = "docs/architecture/chat-quality-history-and-plan.md"
 CHAT_PATH = re.compile(
-    r"^(klai-portal/backend/app/api/partner\.py"
+    r"^(klai-portal/backend/app/api/partner(_openai_compat|_support_sessions|_hubspot|_feedback|_widget_config)?\.py"
     r"|klai-portal/backend/app/services/"
     r"(partner_chat|answer_\w+|turn_judge|clarify_\w+|query_paraphrase|query_rewrite"
     r"|escalation_intent|gap_classification|off_topic_referral|chat_turn_rules)\.py"
