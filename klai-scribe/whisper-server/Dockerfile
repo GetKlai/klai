@@ -9,7 +9,7 @@
 # Major version stays at CUDA 12.x so cuDNN/runtime ABI compatibility with
 # faster-whisper / CTranslate2 is preserved. CUDA 13.x bump is out of scope
 # for SPEC-CI-TRIVY-POLICY-001 (separate effort, requires GPU smoke-test).
-FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu24.04
+FROM nvidia/cuda:12.9.2-cudnn-runtime-ubuntu24.04
 
 # `apt-get purge gnupg gnupg2` removes unused gpg attack surface. whisper-
 # server never invokes gpg during inference; gnupg only ships transitively
