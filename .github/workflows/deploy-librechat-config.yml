@@ -21,11 +21,6 @@ permissions:
 
 jobs:
   sync-librechat-config:
-    # Serialised with the klai-docker-authz deploy (same group): the
-    # regenerate below recreates tenant containers through that proxy.
-    concurrency:
-      group: core-01-containers
-      cancel-in-progress: false
     # Production sync over SSH. Guarded on main for the same reason as every
     # deploy job: workflow_dispatch accepts any ref, and without this a
     # dispatch from a feature branch would sync that branch's compose and
@@ -112,9 +107,9 @@ jobs:
             # the step and surfaces every printed line (including the errors list) in
             # the step output.
             # The regenerate endpoint recreates containers through
-            # klai-docker-authz. The concurrency group above keeps the proxy's
-            # own deploy from running at the same time; this poll covers a
-            # proxy that is restarting for any other reason.
+            # klai-docker-authz. The host lock below keeps the proxy's own
+            # deploy from running at the same time; this poll covers a proxy
+            # that is restarting for any other reason.
             authz_ready=no
             for attempt in $(seq 1 24); do
               if docker compose -f /opt/klai/docker-compose.yml exec -T portal-api python -c '
@@ -138,7 +133,11 @@ jobs:
             fi
 
             echo "Triggering tenant config regeneration via portal-api..."
-            docker compose -f /opt/klai/docker-compose.yml exec -T \
+            # The same host lock compose-up.sh takes: the regenerate recreates
+            # tenant containers through klai-docker-authz, and must not run
+            # while another deploy recreates that proxy.
+            flock -w 900 /opt/klai/.container-deploy.lock \
+              docker compose -f /opt/klai/docker-compose.yml exec -T \
               -e RECREATE_CONTAINERS="$RECREATE_CONTAINERS" \
               portal-api python -c '
             import json

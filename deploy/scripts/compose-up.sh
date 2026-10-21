@@ -62,6 +62,21 @@ KLAI_DIR="${KLAI_COMPOSE_DIR:-/opt/klai}"
 DOCKER="${KLAI_DOCKER_BIN:-docker}"
 VERIFY_POLLS="${KLAI_VERIFY_POLLS:-5}"
 VERIFY_INTERVAL="${KLAI_VERIFY_INTERVAL:-2}"
+
+# One container deploy on this host at a time. Two workflows recreated
+# klai-docker-authz in the same second (21 October 2026) and compose exited on
+# "removal of container is already in progress"; a GitHub concurrency group
+# cancels the third job that queues, so the lock lives on the host instead.
+# flock is a Linux facility; where it is absent (a developer's machine running
+# the tests) there is no other deploy to wait for.
+LOCK_FILE="${KLAI_CONTAINER_LOCK:-$KLAI_DIR/.container-deploy.lock}"
+if command -v flock >/dev/null 2>&1; then
+    exec 9>"$LOCK_FILE"
+    if ! flock -w "${KLAI_LOCK_WAIT_SECONDS:-900}" 9; then
+        echo "ERROR: another container deploy has held $LOCK_FILE for 15 minutes; not starting" >&2
+        exit 1
+    fi
+fi
 # A zero here would skip the status check entirely and make every deploy green.
 if (( VERIFY_POLLS < 1 )); then VERIFY_POLLS=1; fi
 
