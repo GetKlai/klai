@@ -12,13 +12,14 @@ Widgets are a first-class domain separate from partner API keys:
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,6 +85,9 @@ class WidgetIntegrations(BaseModel):
     nerds: WidgetNerdsIntegration = Field(default_factory=WidgetNerdsIntegration)
 
 
+_PHONE_SHAPE = re.compile(r"[0-9 +()\-]+")
+
+
 class WidgetConfig(BaseModel):
     allowed_origins: list[str] = Field(default_factory=list)
     title: str = ""
@@ -107,6 +111,21 @@ class WidgetConfig(BaseModel):
     # a tenant sentence in between.
     off_topic_subjects: str = Field(default="", max_length=500)
     off_topic_reply: str = Field(default="", max_length=500)
+    # Channels the fixed contact reply names beside the appointment button
+    # (a visitor who asked for an e-mail address or did not want to call got
+    # the appointment reply and nothing else). Unset → the reply is unchanged.
+    contact_email: EmailStr | None = None
+    contact_phone: str | None = Field(default=None, max_length=32)
+
+    @field_validator("contact_phone")
+    @classmethod
+    def _contact_phone_is_a_phone(cls, value: str | None) -> str | None:
+        # The number is rendered into the visitor's reply as Markdown, so a
+        # value like "[Bel](https://...)" must not be storable.
+        if value is not None and not (_PHONE_SHAPE.fullmatch(value) and sum(c.isdigit() for c in value) >= 6):
+            raise ValueError("contact_phone must be a phone number: digits, spaces and + - ( ), at least 6 digits")
+        return value
+
     # When true, the widget hides the AI introduction in the empty state.
     # The footer is configured independently through footer_text.
     hide_disclaimer: bool = False
@@ -238,6 +257,8 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             conversation_starters=(config.get("conversation_starters") or [])[:3],
             off_topic_subjects=config.get("off_topic_subjects", ""),
             off_topic_reply=config.get("off_topic_reply", ""),
+            contact_email=config.get("contact_email"),
+            contact_phone=config.get("contact_phone"),
             hide_disclaimer=config.get("hide_disclaimer", False),
             ai_disclosure_override=config.get("ai_disclosure_override"),
             footer_text=config.get("footer_text"),

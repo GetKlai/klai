@@ -23,6 +23,11 @@ const { MESSAGE_KEYS } = vi.hoisted(() => ({
     'admin_shared_field_name',
     'admin_shared_save',
     'admin_shared_success_updated',
+    'admin_widgets_contact_channels_help',
+    'admin_widgets_contact_email_label',
+    'admin_widgets_contact_email_placeholder',
+    'admin_widgets_contact_phone_label',
+    'admin_widgets_contact_phone_placeholder',
     'admin_widgets_details_role_scope_help',
     'admin_widgets_details_role_scope_label',
     'admin_widgets_details_section_ai',
@@ -174,5 +179,29 @@ describe('DetailsTab - subjects the widget does not answer', () => {
 
     expect(screen.getByText('admin_widgets_off_topic_incomplete')).toBeTruthy()
     expect(document.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true)
+  })
+})
+
+describe('DetailsTab - contact channels', () => {
+  it('saves the e-mail and phone trimmed, and an emptied field as null', async () => {
+    renderTab(makeWidget({ contact_phone: '000 000 0000' }))
+
+    fireEvent.change(document.getElementById('widget-contact-email')!, { target: { value: '  hallo@example.com ' } })
+    fireEvent.change(document.getElementById('widget-contact-phone')!, { target: { value: '' } })
+    fireEvent.click(screen.getByText('admin_shared_save'))
+
+    await waitFor(() => {
+      const request = apiFetchMock.mock.calls.find(([url]) => url === '/api/admin/widgets/widget-uuid-1')
+      const config = JSON.parse(String(request?.[1]?.body)).widget_config
+      expect(config.contact_email).toBe('hallo@example.com')
+      expect(config.contact_phone).toBeNull()
+    })
+  })
+
+  it('loads the saved channels into the fields', () => {
+    renderTab(makeWidget({ contact_email: 'hallo@example.com', contact_phone: '000 000 0000' }))
+
+    expect((document.getElementById('widget-contact-email') as HTMLInputElement).value).toBe('hallo@example.com')
+    expect((document.getElementById('widget-contact-phone') as HTMLInputElement).value).toBe('000 000 0000')
   })
 })

@@ -158,53 +158,53 @@ def test_compose_refusal_helpdesk_english_for_non_dutch_query():
     assert "appointment" in text.lower()
 
 
-# ─── _widget_tone_register flag reader ──────────────────────────────────
+# ─── tone_register in the widget settings ──────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_widget_tone_register_reads_expressive():
-    from app.api.partner import _widget_tone_register
+    from app.api.partner import _widget_settings
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeResult(rows=[{"tone_register": "expressive"}]))
     auth = make_partner_auth()
     auth.key_id = "wgt_abc123"
 
-    assert await _widget_tone_register(auth, db) == "expressive"
+    assert (await _widget_settings(auth, db)).tone_register == "expressive"
 
 
 @pytest.mark.asyncio
 async def test_widget_tone_register_defaults_restrained():
-    from app.api.partner import _widget_tone_register
+    from app.api.partner import _widget_settings
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeResult(rows=[{"show_sources": True}]))
     auth = make_partner_auth()
     auth.key_id = "wgt_abc123"
 
-    assert await _widget_tone_register(auth, db) == "restrained"
+    assert (await _widget_settings(auth, db)).tone_register == "restrained"
 
 
 @pytest.mark.asyncio
 async def test_widget_tone_register_falls_back_on_unrecognised_value():
     # A stale or hand-edited config can never switch a live widget to the
     # expressive voice by accident; only the exact value selects it.
-    from app.api.partner import _widget_tone_register
+    from app.api.partner import _widget_settings
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeResult(rows=[{"tone_register": "boisterous"}]))
     auth = make_partner_auth()
     auth.key_id = "wgt_abc123"
 
-    assert await _widget_tone_register(auth, db) == "restrained"
+    assert (await _widget_settings(auth, db)).tone_register == "restrained"
 
 
 @pytest.mark.asyncio
 async def test_widget_tone_register_ignored_for_partner_keys():
-    from app.api.partner import _widget_tone_register
+    from app.api.partner import _widget_settings
 
     db = AsyncMock()
-    assert await _widget_tone_register(make_partner_auth(), db) == "restrained"
+    assert (await _widget_settings(make_partner_auth(), db)).tone_register == "restrained"
     db.execute.assert_not_called()
 
 
@@ -213,7 +213,7 @@ async def test_widget_tone_register_ignored_for_partner_keys():
 
 async def _run_chat_completions(*, tone_register_flag: str = "restrained"):
     """Call chat_completions with a widget auth and the flag readers stubbed."""
-    from app.api.partner import ChatCompletionsRequest, chat_completions
+    from app.api.partner import ChatCompletionsRequest, WidgetSettings, chat_completions
 
     fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
     db = AsyncMock()
@@ -230,8 +230,10 @@ async def _run_chat_completions(*, tone_register_flag: str = "restrained"):
     written = Reply(text="", sources=[], signals={}, language=None, turn=KnowledgeTurn())
     with (
         patch("app.services.widget_turn.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
-        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value=tone_register_flag)),
+        patch(
+            "app.api.partner._widget_settings",
+            new=AsyncMock(return_value=WidgetSettings(tone_register=tone_register_flag)),
+        ),
         patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=written)) as write,
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
@@ -291,8 +293,6 @@ async def _run_with_scope(*, chunks, scope_result):
     classifier = AsyncMock(return_value=case)
     with (
         patch("app.services.widget_turn.retrieve_context", return_value=(chunks, "SUPPORT PROFILE", [], False)),
-        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value=None)),
         patch("app.api.partner.case_file.update_case", new=classifier),
         patch(
             "app.services.widget_turn.write_reply",
