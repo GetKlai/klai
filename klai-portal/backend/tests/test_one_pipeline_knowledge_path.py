@@ -432,9 +432,12 @@ async def test_internal_follow_up_searches_its_own_words_with_the_cases_queries_
         "product": "verlofsysteem",
         "variant": "",
         "tried": [],
+        "wants_quote": "",
         "wants": "knowledge",
+        "out_of_scope_quote": "",
         "out_of_scope": False,
         "sentiment": "neutral",
+        "language": "nl",
         "queries": ["verlof aanvragen verlofsysteem", "verlofaanvraag indienen verlofsysteem"],
     }
     internal_pipeline(recorder)

@@ -20,8 +20,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import structlog
-from klai_chat_prompts import contact_reply, no_citable_sources_message
-from klai_chat_prompts.language import resolve_conversation_language
+from klai_chat_prompts import contact_reply, contact_reply_again, no_citable_sources_message
+from klai_chat_prompts.language import TARGET_LANGUAGES, resolve_conversation_language
 
 from app.core.config import Settings
 from app.services import case_file, turn_judge
@@ -34,7 +34,13 @@ from app.services.gap_classification import classify_gap
 from app.services.off_topic_referral import off_topic_referral
 from app.services.passage_selection import plain_question
 from app.services.pasted_correspondence import latest_user_turn_has_correspondence
-from app.services.retrieval_context import KnowledgeTurn, retrieval_upstream_errors, retrieve_context, timed
+from app.services.retrieval_context import (
+    KnowledgeTurn,
+    kept_passages_of,
+    retrieval_upstream_errors,
+    retrieve_context,
+    timed,
+)
 from app.services.retrieval_log import write_retrieval_log
 from app.services.widget_reply import Reply
 from app.services.widget_write import write_reply
@@ -74,6 +80,10 @@ class TurnInputs:
     off_topic_subjects: str
     off_topic_reply: str
     previous_case: dict | None
+    # The passages the previous turn's selection chose (or kept), and how that
+    # turn was decided; both stored with its signals, empty on a first turn.
+    kept_passages: list[dict]
+    previous_decision: str | None
     audit_widget_id: str | None
     audit_session_key: str | None
     user_turn_write: asyncio.Task[int | None] | None
@@ -105,6 +115,10 @@ class Writing(NamedTuple):
 async def widget_turn(inputs: TurnInputs) -> Reply:
     turn = KnowledgeTurn()
     messages = inputs.request.messages
+    if inputs.kept_passages:
+        # A turn that chooses nothing (a contact request, "not found") keeps
+        # the conversation's evidence for the next one.
+        inputs.answer_signals["kept_passages"] = inputs.kept_passages
     with retrieval_upstream_errors(inputs.auth.org_id):
         if case_file.is_follow_up(messages):
             # 1. Read. The case's queries go into a follow-up's search, so the
@@ -134,6 +148,8 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
     # Feedback on a reply finds its retrieval under rl:{org}:{key}, so the log
     # is written before any route returns.
     log_retrieval(inputs.auth.org_id, f"partner:{inputs.auth.key_id}", found.chunks)
+    if turn.passages_chosen:
+        inputs.answer_signals["kept_passages"] = kept_passages_of(found.chunks)
     # 5. Route in code what the case and the selection decided.
     routed = await _route(inputs, turn, found, case)
     if isinstance(routed, Reply):
@@ -162,11 +178,24 @@ def _keep_case(inputs: TurnInputs, case: case_file.Case | None) -> None:
         inputs.answer_signals["case"] = case.model_dump()
 
 
+def _fixed_language(inputs: TurnInputs, case: case_file.Case | None) -> str | None:
+    """The language of a reply decided in code: the case's, judged on the whole conversation.
+
+    Detected per message, a two-word follow-up in a Dutch conversation got
+    an English refusal (week of 14 to 21 October). Without a case, or with a
+    code the detection does not know, the detection decides as before.
+    """
+    if case is not None and case.language in TARGET_LANGUAGES:
+        return case.language
+    return resolve_conversation_language(inputs.request.messages).language
+
+
 async def _search(inputs: TurnInputs, turn: KnowledgeTurn, follow_up_variants: list[str]) -> Found:
     request, auth = inputs.request, inputs.auth
     knowledge = request.knowledge
     chunks, system_prompt, trusted_sources, broad = await retrieve_context(
         follow_up_variants=follow_up_variants,
+        kept_passages=inputs.kept_passages,
         answer_signals=inputs.answer_signals,
         org_id=auth.org_id,
         zitadel_org_id=auth.zitadel_org_id,
@@ -223,7 +252,7 @@ async def _route(inputs: TurnInputs, turn: KnowledgeTurn, found: Found, case: ca
         return referral
     if wants_contact and case is not None:
         return _contact_request_reply(inputs, turn, case)
-    if not_found := _not_in_passages_reply(inputs, turn, found, escalation):
+    if not_found := _not_in_passages_reply(inputs, turn, found, escalation, case):
         return not_found
     if question := question_reply(inputs, turn, found, escalation, scope):
         return question
@@ -275,7 +304,7 @@ async def _off_topic_reply(
         # price question. Same fail direction as every other check here.
         return None
     messages = inputs.request.messages
-    language = resolve_conversation_language(messages).language
+    language = _fixed_language(inputs, case)
     referral = await off_topic_referral(
         _last_user_message(messages) or "", language, inputs.settings, delegated_org_id=inputs.auth.zitadel_org_id
     )
@@ -289,18 +318,28 @@ async def _off_topic_reply(
 
 
 def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_file.Case) -> Reply:
-    language = resolve_conversation_language(inputs.request.messages).language
+    language = _fixed_language(inputs, case)
+    # Never the same fixed reply twice in a row: a visitor who had said they
+    # did not want to call got the contact reply four times, word for word
+    # (week of 14 to 21 October). The second time says what this chat can
+    # arrange; the appointment button stays.
+    again = contact_reply_again(language)
+    repeated = inputs.previous_decision == "human_request" and (
+        case_file.last_assistant_message(inputs.request.messages) != again
+    )
     logger.info(
         "partner_chat_contact_request",
         org_id=inputs.auth.org_id,
         wgt_id=inputs.auth.key_id,
         wants=case.wants,
+        again=repeated,
     )
-    return fixed_reply(inputs, turn, contact_reply(language), language, decision="human_request", refused=False)
+    text = again if repeated else contact_reply(language)
+    return fixed_reply(inputs, turn, text, language, decision="human_request", refused=False)
 
 
 def _not_in_passages_reply(
-    inputs: TurnInputs, turn: KnowledgeTurn, found: Found, escalation: str | None
+    inputs: TurnInputs, turn: KnowledgeTurn, found: Found, escalation: str | None, case: case_file.Case | None
 ) -> Reply | None:
     # Retrieval found passages, and none of them answers this question
     # (passage_selection.py): the visitor gets the honest "not found" with the
@@ -316,7 +355,7 @@ def _not_in_passages_reply(
     # writer with passages that did not answer it.
     if not turn.not_in_passages or escalation == escalation_service.HUMAN_REQUEST:
         return None
-    language = resolve_conversation_language(inputs.request.messages).language
+    language = _fixed_language(inputs, case)
     logger.info(
         "partner_chat_not_in_passages",
         org_id=inputs.auth.org_id,

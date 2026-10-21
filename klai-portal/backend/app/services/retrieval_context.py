@@ -420,6 +420,10 @@ def _schedule_gap_event(
 
 
 _CHOSEN_PASSAGE_KEY = "chosen_by_selection"
+# What a widget turn keeps of its chosen passages for the next turn: the
+# selection reads at most 2500 characters of a passage (passage_selection.py).
+_KEPT_PASSAGES = 3
+_KEPT_PASSAGE_CHARS = 2500
 
 
 @dataclass
@@ -614,6 +618,7 @@ class _Turn:
     audit_write: asyncio.Future[Any] | None
     answer_signals: dict[str, Any] | None
     follow_up_variants: list[str] | None
+    kept_passages: list[dict]
     prompt: Callable[..., str]
 
 
@@ -657,6 +662,7 @@ def _read_turn(
     web_search_available: bool,
     knowledge_turn: KnowledgeTurn | None,
     follow_up_variants: list[str] | None,
+    kept_passages: list[dict],
 ) -> _Turn:
     """Step 1: read the request once. The query, the page context, the language, the turn's sink and the prompt builder."""
     cleaned_page_context = _clean_page_context(page_context)
@@ -731,6 +737,7 @@ def _read_turn(
         audit_write=audit_write,
         answer_signals=answer_signals,
         follow_up_variants=follow_up_variants,
+        kept_passages=kept_passages,
         prompt=prompt,
     )
 
@@ -1007,6 +1014,73 @@ async def _search(t: _Turn) -> _Found | _Result:
     )
 
 
+def kept_passages_of(chosen: list[dict]) -> list[dict]:
+    """What a widget turn stores of the passages its selection chose, for the next turn's selection.
+
+    The article that answered turn 1 was gone from the search in turn 4,
+    which then answered "not found" (week of 14 to 21 October): the
+    conversation had the evidence and the search threw it away.
+    """
+    return [
+        {
+            "chunk_id": chunk.get("chunk_id"),
+            "title": chunk.get("title"),
+            "source_url": chunk.get("source_url"),
+            "text": str(chunk.get("text") or "")[:_KEPT_PASSAGE_CHARS],
+        }
+        for chunk in chosen[:_KEPT_PASSAGES]
+    ]
+
+
+def _kept_text(chunk: dict) -> str:
+    return " ".join(str(chunk.get("text") or "")[:_KEPT_PASSAGE_CHARS].split())
+
+
+def _with_kept(t: _Turn, chunks: list[dict]) -> list[dict]:
+    """The kept passages the search did not bring back, in front of what it did, marked ``kept``."""
+    ids = {chunk.get("chunk_id") for chunk in chunks if chunk.get("chunk_id")}
+    texts = {_kept_text(chunk) for chunk in chunks}
+    kept: list[dict] = []
+    for passage in t.kept_passages:
+        text = _kept_text(passage)
+        if not text or passage.get("chunk_id") in ids or text in texts:
+            continue
+        ids.add(passage.get("chunk_id"))
+        texts.add(text)
+        kept.append({**passage, "kept": True})
+    search = (t.answer_signals or {}).get("search")
+    if kept and search is not None:
+        search["found"][:0] = [
+            {"title": str(chunk.get("title") or "")[:120], "url": chunk.get("source_url"), "score": None, "kept": True}
+            for chunk in kept
+        ]
+    return kept + chunks
+
+
+def _kept_sources(chosen: list[dict], trusted_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A source for each chosen kept passage this turn's evidence pack does not list.
+
+    Its URL came from the evidence pack of the turn that chose it; without a
+    source the writer's citation of it would be dropped and the reply refused.
+    """
+    sources: list[dict[str, Any]] = []
+    for chunk in chosen:
+        if (
+            chunk.get("kept")
+            and chunk.get("source_url")
+            and not _filter_trusted_sources_for_chunks(trusted_sources, [chunk])
+        ):
+            sources.append(
+                {
+                    "label": str(len(trusted_sources) + len(sources) + 1),
+                    "title": chunk.get("title") or "Source",
+                    "url": chunk["source_url"],
+                    "evidence_ids": [],
+                }
+            )
+    return sources
+
+
 async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     """Step 3: record the gap, choose the passages, build the prompt the writer reads."""
     profile, turn = t.profile, t.turn
@@ -1061,8 +1135,10 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         and not turn.pasted_correspondence
         and not _broad_mode_active(chunks, broad_consent=t.broad_consent)
     ):
-        selection_chunks = chunks
-        turn.selection = await select_passages(t.messages, chunks, t.settings, delegated_org_id=t.zitadel_org_id)
+        selection_chunks = _with_kept(t, chunks)
+        turn.selection = await select_passages(
+            t.messages, selection_chunks, t.settings, delegated_org_id=t.zitadel_org_id
+        )
         if turn.selection is None:
             # A failed selection fails closed where the reply may only come
             # from the source: a writer handed every passage after it is the
@@ -1088,12 +1164,14 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
                 else {"failed": "no_verdict_after_retry"}
             )
         if turn.selection is not None:
-            turn.not_in_passages = turn.selection.not_in_passages(chunks)
-        chosen = turn.selection.chosen(chunks) if turn.selection else []
+            turn.not_in_passages = turn.selection.not_in_passages(selection_chunks)
+        chosen = turn.selection.chosen(selection_chunks) if turn.selection else []
         if chosen and not turn.not_in_passages:
             turn.passages_chosen = True
             chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
-            trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
+            trusted_sources = _filter_trusted_sources_for_chunks(
+                trusted_sources + _kept_sources(chunks, trusted_sources), chunks
+            )
 
     # Consented general-knowledge fallback: decided here, on the same
     # post-safety-filter chunks the gap event sees, and surfaced to the caller
@@ -1172,6 +1250,9 @@ async def retrieve_context(
     # beside the visitor's own words: a help-widget follow-up, and an internal
     # follow-up or pasted mail.
     follow_up_variants: list[str] | None = None,
+    # Help widget: the passages the previous turn chose (kept_passages_of),
+    # offered to this turn's selection when the search lost them.
+    kept_passages: list[dict] | None = None,
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
@@ -1234,6 +1315,7 @@ async def retrieve_context(
         web_search_available=web_search_available,
         knowledge_turn=knowledge_turn,
         follow_up_variants=follow_up_variants,
+        kept_passages=kept_passages or [],
     )
     without_search = _without_search(t, retrieval_enabled=retrieval_enabled)
     if without_search is not None:

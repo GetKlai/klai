@@ -149,6 +149,7 @@ __all__ = [
     "chat_contract_article",
     "clarify_question_addendum",
     "contact_reply",
+    "contact_reply_again",
     "final_response_language_reminder",
     "grounding_check_response_format",
     "grounding_check_user_content",
@@ -201,6 +202,27 @@ _ENGLISH_CONTACT_REPLY: Final[str] = (
     "You can schedule an appointment with someone who will help you personally. Use the button under this "
     "message."
 )
+# The second contact request in a row gets this instead of the same reply
+# again: a visitor who had said they did not want to call got the contact
+# reply four times, word for word (week of 14 to 21 October).
+_CONTACT_REPLY_AGAIN: Final[dict[str, tuple[str, str, str]]] = {
+    "nl": (
+        "Via dit chatvenster kan ik alleen een afspraak voor je inplannen; iets anders kan ik hier niet regelen.",
+        "Mailen kan ook: {}.",
+        "Bellen kan ook: {}.",
+    ),
+    "en": (
+        "In this chat window I can only schedule an appointment for you; I can't arrange anything else here.",
+        "You can also send an email: {}.",
+        "You can also call: {}.",
+    ),
+    "de": (
+        "Über dieses Chatfenster kann ich nur einen Termin für dich einplanen; etwas anderes kann ich hier nicht "
+        "regeln.",
+        "Du kannst auch eine E-Mail schreiben: {}.",
+        "Du kannst auch anrufen: {}.",
+    ),
+}
 _DUTCH_HELPDESK_REFUSAL: Final[str] = "Dit vind ik niet terug in onze helpartikelen. " + _DUTCH_HELPDESK_OFFER
 _ENGLISH_HELPDESK_REFUSAL: Final[str] = "I can't find this in our help articles. " + _ENGLISH_HELPDESK_OFFER
 
@@ -336,6 +358,20 @@ def contact_reply(language: object) -> str:
     traffic after the selection step); the model has nothing to add here.
     """
     return _DUTCH_CONTACT_REPLY if _language_is_dutch(language) else _ENGLISH_CONTACT_REPLY
+
+
+def contact_reply_again(language: object, *, email: str | None = None, phone: str | None = None) -> str:
+    """The reply to a contact request that follows the contact reply, with the channels the caller knows."""
+    if language == "de":
+        sentence, mail, call = _CONTACT_REPLY_AGAIN["de"]
+    else:
+        sentence, mail, call = _CONTACT_REPLY_AGAIN["nl" if _language_is_dutch(language) else "en"]
+    lines = [sentence]
+    if email:
+        lines.append(mail.format(email))
+    if phone:
+        lines.append(call.format(phone))
+    return " ".join(lines)
 
 
 def appointment_offer_sentence(language: object) -> str:

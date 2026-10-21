@@ -18,10 +18,11 @@ import httpx
 import pytest
 import respx
 from helpers import FakeKB, FakeResult, make_partner_auth
-from klai_chat_prompts import appointment_offer_sentence, contact_reply, no_citable_sources_message
+from klai_chat_prompts import appointment_offer_sentence, contact_reply, contact_reply_again, no_citable_sources_message
 
 from app.services import case_file, chat_safety, partner_chat, query_paraphrase, turn_judge, widget_write
 from app.services.chat_profile import ChatProfile
+from app.services.quotes import words_stand_in
 from app.services.retrieval_context import KnowledgeTurn
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
@@ -98,15 +99,26 @@ def _selection(verdict: str, *evidence: tuple[int, str], question: str = "") -> 
     }
 
 
-def _case(wants: str = "knowledge", *queries: str, problem: str = "", out_of_scope: bool = False) -> dict:
+def _case(
+    wants: str = "knowledge",
+    *queries: str,
+    problem: str = "",
+    out_of_scope: bool = False,
+    wants_quote: str = "",
+    out_of_scope_quote: str = "",
+    language: str = "",
+) -> dict:
     return {
         "problem": problem,
         "product": "",
         "variant": "",
         "tried": [],
+        "wants_quote": wants_quote,
         "wants": wants,
+        "out_of_scope_quote": out_of_scope_quote,
         "out_of_scope": out_of_scope,
         "sentiment": "neutral",
+        "language": language,
         "queries": list(queries),
     }
 
@@ -721,7 +733,7 @@ async def _route_turn(
     items: list[dict] | None = None,
     litellm: _LiteLLM | None = None,
     messages: list[dict] | None = None,
-    previous_case: dict | None = None,
+    stored: case_file.StoredTurn | None = None,
 ):
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, chat_completions
@@ -740,7 +752,9 @@ async def _route_turn(
     auth = make_partner_auth(kb_access={10: "read"})
     auth.key_id = "wgt_901"
     request = ChatCompletionsRequest(messages=messages or [{"role": "user", "content": question}], stream=stream)
-    http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
+    # A session token makes the turn a recorded widget turn, the only kind that reads a stored one.
+    headers = {"authorization": "Bearer session-token"} if stored is not None else {}
+    http_request = MagicMock(headers=headers, client=MagicMock(host="127.0.0.1"))
 
     litellm = litellm or _LiteLLM(
         model_text=CLARIFYING_QUESTION,
@@ -755,7 +769,7 @@ async def _route_turn(
         patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
-        patch("app.api.partner.last_case", new=AsyncMock(return_value=previous_case)),
+        patch("app.api.partner.last_case", new=AsyncMock(return_value=stored)),
         patch("app.services.retrieval_context._schedule_gap_event"),
     ):
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
@@ -866,7 +880,12 @@ async def _off_topic_turn(
     )
     return await _route_turn(
         monkeypatch,
-        case=_case("human" if wants_human else "knowledge", out_of_scope=topic == "not_handled"),
+        case=_case(
+            "human" if wants_human else "knowledge",
+            out_of_scope=topic == "not_handled",
+            wants_quote=question if wants_human else "",
+            out_of_scope_quote=question if topic == "not_handled" else "",
+        ),
         question=question,
         stream=stream,
         referral=referral,
@@ -1173,7 +1192,9 @@ async def test_steps_that_differ_per_variant_get_the_one_question_as_the_reply(m
 
 async def test_a_visitor_who_asks_for_a_person_is_not_told_the_articles_lack_an_answer(monkeypatch):
     """A first turn: the case runs beside the search, and its want decides the route after it."""
-    litellm, text, extras = await _selected_turn(monkeypatch, _selection("not_in_passages"), case=_case("human"))
+    litellm, text, extras = await _selected_turn(
+        monkeypatch, _selection("not_in_passages"), case=_case("human", wants_quote="hoe kan ik die incasso storneren")
+    )
 
     assert text == contact_reply("nl")
     assert extras["escalation"] == [{"appointment": True}]
@@ -1354,7 +1375,11 @@ async def test_the_next_turn_s_case_starts_from_the_stored_one():
 async def test_a_visitor_who_wants_contact_is_not_told_the_articles_lack_an_answer(monkeypatch):
     """ "ik wil jullie mailen" got the not-found text: neither the phrase detector
     nor the turn judge called it a request for a person. The case does."""
-    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("contact"), selection=_selection("not_in_passages"))
+    litellm = _LiteLLM(
+        model_text=ANSWER_900,
+        case=_case("contact", wants_quote="ik wil jullie mailen"),
+        selection=_selection("not_in_passages"),
+    )
     messages = [*_FOLLOW_UP[:2], {"role": "user", "content": "ik wil jullie mailen"}]
     litellm, text, extras = await _route_turn(
         monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages
@@ -1387,13 +1412,16 @@ def test_a_stored_case_counts_only_when_it_belongs_to_this_conversation_s_last_a
     the stored case travels with the text of the turn it was stored with."""
     stored_case = _case("knowledge", "zoekvraag", problem="Een ander probleem.")
 
-    assert case_file.stored_case_for(_FOLLOW_UP, (stored_case, "Een antwoord uit gesprek A.")) is None
-    assert case_file.stored_case_for(_FOLLOW_UP, (stored_case, _FOLLOW_UP[1]["content"])) == stored_case
+    other = case_file.StoredTurn(stored_case, "Een antwoord uit gesprek A.", [], None)
+    this = case_file.StoredTurn(stored_case, _FOLLOW_UP[1]["content"], [], None)
+
+    assert case_file.stored_case_for(_FOLLOW_UP, other) is None
+    assert case_file.stored_case_for(_FOLLOW_UP, this) == this
     assert case_file.stored_case_for(_FOLLOW_UP, None) is None
 
 
 async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(monkeypatch):
-    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("contact"))
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("contact", wants_quote="ik wil jullie mailen"))
     messages = [*_FOLLOW_UP[:2], {"role": "user", "content": "ik wil jullie mailen"}]
     litellm, text, _ = await _route_turn(
         monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages
@@ -1401,6 +1429,101 @@ async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(m
 
     assert text == contact_reply("nl")
     assert litellm.retrieve_requests == []
+
+
+# ─── The case quotes its routes, remembers chosen passages, keeps one language ───
+
+
+_ABROAD = "Ik wil ook naar Duitse nummers kunnen bellen vanuit de app."
+
+
+@pytest.mark.parametrize(
+    ("message", "contact"),
+    [(_ABROAD, False), ("Ik wil ook naar Duitse nummers bellen, kan ik iemand van jullie spreken?", True)],
+)
+async def test_a_contact_wish_counts_only_when_its_quote_stands_in_the_latest_message(monkeypatch, message, contact):
+    """A message about calling numbers abroad was read as a request for a person
+    and got the contact reply instead of an answer. The case must quote the
+    visitor's words; a quote the message does not carry makes a knowledge turn."""
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("human", wants_quote="kan ik iemand van jullie spreken"))
+    messages = [*_FOLLOW_UP[:2], {"role": "user", "content": message}]
+    litellm, text, _ = await _route_turn(
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages
+    )
+
+    assert (text == contact_reply("nl")) is contact
+    assert bool(litellm.answer_requests) is not contact
+
+
+@pytest.mark.parametrize(("quote", "message", "stands"), [("bellen", "bellen", True), ("bellen", _ABROAD, False)])
+def test_a_quote_under_three_words_counts_only_as_the_whole_message(quote, message, stands):
+    assert words_stand_in(quote, message) is stands
+
+
+_KEPT = {
+    "chunk_id": "c7",
+    "title": "Uitgaand nummer in de app",
+    "source_url": "https://help.example.com/uitgaand-nummer",
+    "text": "Je kiest het uitgaande nummer in de app via Instellingen en dan Nummerweergave.",
+}
+
+
+async def test_a_follow_up_whose_search_lost_the_chosen_passage_still_offers_it_to_the_selection(monkeypatch):
+    """The article that answered turn 1 was gone from the search in turn 4,
+    and that turn said "not found". The passage the selection chose is kept
+    with the turn and offered again, and the reply written from it cites it."""
+    stored = case_file.StoredTurn(_case(), _FOLLOW_UP[1]["content"], [_KEPT], "answer")
+    litellm = _LiteLLM(model_text=_KEPT["text"], selection=_selection("answers", (1, _KEPT["text"])))
+    litellm, _, extras = await _route_turn(
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=_FOLLOW_UP, stored=stored
+    )
+
+    (selection_request,) = [
+        body
+        for body in litellm.requests
+        if body.get("response_format", {}).get("json_schema", {}).get("name") == "passage_selection"
+    ]
+    passages = selection_request["messages"][1]["content"].split("Passages:\n", 1)[1]
+    assert passages.startswith(f"[1] {_KEPT['title']}\n{_KEPT['text']}")
+    assert "[3] Incasso storneren" in passages
+    assert [source["url"] for batch in extras["sources"] for source in batch] == [_KEPT["source_url"]]
+
+
+async def test_a_short_follow_up_in_a_dutch_conversation_gets_the_dutch_not_found_text(monkeypatch):
+    """Detected per message, a two-word follow-up got an English refusal in a
+    Dutch conversation; the case judges the language on the whole conversation."""
+    messages = [
+        {"role": "user", "content": "Hoe stel ik een wachtrij in voor mijn team?"},
+        {"role": "assistant", "content": "Dat doe je in de belplanner."},
+        {"role": "user", "content": "Desk phone setup?"},
+    ]
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case(language="nl"), selection=_selection("not_in_passages"))
+    _, text, _ = await _route_turn(monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages)
+
+    assert text == REFUSAL_NL
+
+
+async def test_a_second_contact_request_in_a_row_gets_the_again_text(monkeypatch):
+    """The contact reply went out four times in a row, word for word, to a
+    visitor who had said they did not want to call."""
+    first = [{"role": "user", "content": "Kan ik iemand van jullie spreken?"}]
+    case = _case("human", wants_quote="kan ik iemand van jullie spreken")
+    _, first_text, _ = await _route_turn(
+        monkeypatch, litellm=_LiteLLM(model_text=ANSWER_900, case=case), messages=first
+    )
+    second = [
+        *first,
+        {"role": "assistant", "content": first_text},
+        {"role": "user", "content": "Ik wil niet bellen, kan ik iemand van jullie spreken?"},
+    ]
+    stored = case_file.StoredTurn(case, first_text, [], "human_request")
+    _, second_text, extras = await _route_turn(
+        monkeypatch, litellm=_LiteLLM(model_text=ANSWER_900, case=case), messages=second, stored=stored
+    )
+
+    assert first_text == contact_reply("nl")
+    assert second_text == contact_reply_again("nl")
+    assert extras["escalation"] == [{"appointment": True}]
 
 
 # ─── The provenance gate: addresses and numbers only from the passages ───

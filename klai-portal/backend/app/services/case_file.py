@@ -27,12 +27,14 @@ before this step existed.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import structlog
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.core.config import Settings
+from app.services.chat_safety import _last_user_message
+from app.services.quotes import words_stand_in
 from app.services.turn_judge import conversation_excerpt, structured_judge_call
 
 logger = structlog.get_logger()
@@ -50,15 +52,21 @@ CASE_SYSTEM_PROMPT = (
     "variant: direction or situation that decides the answer (inbound or outbound, import or export, "
     "temporary or permanent), as far as said; otherwise empty.\n"
     "tried: what the visitor says they already did or checked, as short items; keep earlier items.\n"
+    "wants_quote: the visitor's own words, copied verbatim from the LATEST message, that ask for a person, for "
+    "contact or for an appointment; empty when the latest message asks for none of these.\n"
     "wants: what the LATEST message asks for, never carried over from the previous case: knowledge (how "
     "something works or how to fix it), human (asks for a person), contact (asks how to reach the company: "
     "call, mail, ticket), appointment (asks to schedule or book), chat (greeting, thanks, remark about the "
     "chat), other. A visitor who gives their own number or details, or who says yes to something the "
     "assistant offered, is not asking for contact: that stays the earlier want.\n"
+    "out_of_scope_quote: the visitor's own words, copied verbatim from the LATEST message, that name one of the "
+    "subjects this help chat does not answer; empty when there are none.\n"
     "out_of_scope: true only when the LATEST message asks about one of the subjects this help chat does not "
     "answer, listed at the end; judge what the visitor wants, not which words they use. false otherwise, and "
     "always false when that list is empty.\n"
     "sentiment: the visitor's tone in the latest message.\n"
+    "language: the two-letter code (nl, en, de, fr, pt, es) of the language the visitor writes in, judged on the "
+    "whole conversation: a short latest message in another language or a product name does not change it.\n"
     "queries: two search queries for the help articles, in the language of the help articles ("
     "Dutch), each at most twelve words, each naming the product and the problem of the case. The first "
     "is the plain problem; the second adds the variant or what was tried. Never a question word, never "
@@ -83,9 +91,15 @@ class Case(BaseModel):
     product: str
     variant: str
     tried: list[str]
+    # Each route field follows the quote it rests on: the model writes the
+    # visitor's words first and judges after, and code checks the quote
+    # (_verified_routes).
+    wants_quote: str
     wants: Literal["knowledge", "human", "contact", "appointment", "chat", "other"]
+    out_of_scope_quote: str
     out_of_scope: bool
     sentiment: Literal["negative", "neutral", "positive"]
+    language: str
     queries: list[str]
 
     @property
@@ -113,16 +127,25 @@ def last_assistant_message(messages: list[dict]) -> str:
     return ""
 
 
-def stored_case_for(messages: list[dict], stored: tuple[dict, str] | None) -> dict | None:
-    """The stored case, when the turn it was stored with is this conversation's last answer.
+class StoredTurn(NamedTuple):
+    """What the previous assistant turn left for the next: its case and text, the passages it kept, its decision."""
+
+    case: dict
+    text: str
+    kept_passages: list[dict]
+    decision: str | None
+
+
+def stored_case_for(messages: list[dict], stored: StoredTurn | None) -> StoredTurn | None:
+    """The stored turn, when it is this conversation's last answer.
 
     One session token serves every conversation the widget starts in it, so a
     case read by session may belong to another conversation of the same
     visitor; the text of its turn tells the two apart.
     """
-    if stored is None or stored[1] != last_assistant_message(messages):
+    if stored is None or stored.text != last_assistant_message(messages):
         return None
-    return stored[0]
+    return stored
 
 
 def is_follow_up(messages: list[dict]) -> bool:
@@ -142,13 +165,16 @@ async def update_case(
     previous_text = "(none)"
     if previous:
         try:
-            # Stored before out_of_scope existed (12 October): the subject of
-            # the latest message is judged afresh anyway.
-            previous_text = Case.model_validate({"out_of_scope": False, **previous}).model_dump_json()
+            # Stored before out_of_scope (12 October) or the quotes and the
+            # language (21 October) existed: those are judged afresh on the
+            # latest message anyway.
+            previous_text = Case.model_validate(
+                {"out_of_scope": False, "wants_quote": "", "out_of_scope_quote": "", "language": "", **previous}
+            ).model_dump_json()
         except ValidationError:
             # A case stored under an older shape of this model: start afresh.
             logger.warning("case_previous_invalid", keys=sorted(previous)[:12])
-    return await structured_judge_call(
+    case = await structured_judge_call(
         name="case_update",
         system_prompt=f"{CASE_SYSTEM_PROMPT}\n\nSubjects this help chat does not answer:\n{subjects}",
         user_content=f"Case after the previous turn:\n{previous_text}\n\nConversation:\n{conversation_excerpt(messages)}",
@@ -157,3 +183,24 @@ async def update_case(
         settings=settings,
         delegated_org_id=delegated_org_id,
     )
+    return None if case is None else _verified_routes(case, _last_user_message(messages) or "")
+
+
+def _verified_routes(case: Case, latest: str) -> Case:
+    """The case with each route its quote does not carry taken back.
+
+    A route field is the model's judgement, and the model judged a message
+    about calling numbers abroad a request for a person, which sent that
+    visitor the contact reply instead of an answer (week of 14 to 21
+    October). The quote must stand in the latest message (quotes.py); an
+    unverified contact wish becomes a knowledge question, an unverified
+    out-of-scope subject an answered one.
+    """
+    update: dict[str, object] = {}
+    if case.wants in CONTACT_WANTS and not words_stand_in(case.wants_quote, latest):
+        update["wants"] = "knowledge"
+    if case.out_of_scope and not words_stand_in(case.out_of_scope_quote, latest):
+        update["out_of_scope"] = False
+    for field in update:
+        logger.info("case_route_unverified", field=field)
+    return case.model_copy(update=update) if update else case

@@ -792,12 +792,14 @@ def _record_user_turn(
     return task
 
 
-async def _previous_case(request: ChatCompletionsRequest, auth: PartnerAuthContext, audit: _WidgetAudit) -> dict | None:
-    # Help widget: the case stored with the previous assistant turn
-    # (case_file.py). A read that fails costs this turn its case and nothing
-    # else. Only on a follow-up, and only when the stored turn is this
-    # conversation's last answer: one session token serves every
-    # conversation the widget starts in it.
+async def _previous_turn(
+    request: ChatCompletionsRequest, auth: PartnerAuthContext, audit: _WidgetAudit
+) -> case_file.StoredTurn | None:
+    # Help widget: the case, the kept passages and the decision stored with
+    # the previous assistant turn (case_file.py). A read that fails costs this
+    # turn its memory and nothing else. Only on a follow-up, and only when the
+    # stored turn is this conversation's last answer: one session token serves
+    # every conversation the widget starts in it.
     if not audit.ready or not case_file.is_follow_up(request.messages):
         return None
     try:
@@ -921,6 +923,7 @@ async def _widget_or_partner_turn(
         "chat_completions: retrieve_context must not be called with empty kb_slugs while retrieval is enabled"
     )
 
+    previous = await _previous_turn(request, auth, audit)
     turn = TurnInputs(
         request=request,
         auth=auth,
@@ -934,7 +937,9 @@ async def _widget_or_partner_turn(
         tone_register=tone_register,
         off_topic_subjects=off_topic_subjects,
         off_topic_reply=off_topic_reply,
-        previous_case=await _previous_case(request, auth, audit),
+        previous_case=previous.case if previous else None,
+        kept_passages=previous.kept_passages if previous else [],
+        previous_decision=previous.decision if previous else None,
         audit_widget_id=audit.widget_id,
         audit_session_key=audit.session_key,
         user_turn_write=user_turn_write,

@@ -283,9 +283,12 @@ async def _run_with_scope(*, chunks, scope_result):
         product="",
         variant="",
         tried=[],
+        wants_quote="",
         wants="chat" if scope_result == "conversation" else "knowledge",
+        out_of_scope_quote="",
         out_of_scope=False,
         sentiment="neutral",
+        language="",
         queries=[],
     )
     classifier = AsyncMock(return_value=case)

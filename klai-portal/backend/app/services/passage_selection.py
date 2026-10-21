@@ -30,6 +30,9 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import Settings
+from app.services.quotes import QUOTE_WORD_SHARE as _QUOTE_WORD_SHARE
+from app.services.quotes import WORD as _WORD
+from app.services.quotes import words_stand_in
 from app.services.turn_judge import conversation_excerpt, structured_judge_call
 
 logger = structlog.get_logger()
@@ -62,11 +65,6 @@ SELECTION_SYSTEM_PROMPT = (
 # statement; this call reads the same passages and returns a few short fields.
 _TIMEOUT_SECONDS = 4.0
 _PASSAGE_CHARS = 2500
-# A copied sentence is accepted when four fifths of its words stand in the
-# passage: the model drops markup and mends a broken link text, and a looser
-# bar would let through a quote that was never there.
-_QUOTE_WORD_SHARE = 0.8
-_WORD = re.compile(r"\w+")
 # A passage line belongs to the quote when most of its words are in it; the
 # model often strings the items of a step list into one sentence.
 _LINE_END = re.compile(r"\n|(?<=[.!?])\s+")
@@ -98,31 +96,6 @@ def _share(quote: list[str], chunk: dict) -> float:
     """The share of the quote's words that stand in the passage."""
     words = set(_WORD.findall(str(chunk.get("text") or "").lower()))
     return sum(word in words for word in quote) / len(quote)
-
-
-def _as_a_sentence(quote: list[str], chunk: dict) -> bool:
-    """The quote's words stand in the passage in this order and close together.
-
-    The word-share check accepts a quote whose words lie scattered over three
-    sentences; a quote that outranks the verdict must be one sentence of the
-    passage, so its words must follow each other within twice the quote's
-    length (markup and a mended link text may sit in between).
-    """
-    words = _WORD.findall(str(chunk.get("text") or "").lower())
-    for start, word in enumerate(words):
-        if word != quote[0]:
-            continue
-        position, matched = start, 0
-        for needle in quote:
-            while position < len(words) and words[position] != needle:
-                position += 1
-            if position >= len(words) or position - start > 2 * len(quote):
-                break
-            matched += 1
-            position += 1
-        if matched >= _QUOTE_WORD_SHARE * len(quote):
-            return True
-    return False
 
 
 def _article(chunk: dict) -> str:
@@ -217,11 +190,13 @@ class PassageSelection(BaseModel):
         is the model's own finding, and the writer gets those passages with
         the brief to say what they do not cover. Only a quote of a sentence's
         length outranks the verdict: "Dat kan niet." stands in many passages.
+        And it must stand as one sentence of the passage (quotes.py), not as
+        words scattered over three.
         """
         if self.verdict == "not_in_passages":
             strong = [item for item in self.evidence if len(_WORD.findall(item.quote)) >= _OVERRIDE_MIN_WORDS]
             return not any(
-                _as_a_sentence(_WORD.findall(item.quote.lower()), chunk)
+                words_stand_in(item.quote, str(chunk.get("text") or ""))
                 for chunk, _ in self.model_copy(update={"evidence": strong}).found(chunks)
                 for item in strong
             )
