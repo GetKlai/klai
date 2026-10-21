@@ -253,6 +253,8 @@ async def _gap_topics(factory, org_id: int = 901) -> list:
 
 async def test_support_gap_provenance_counts_cases_once_and_orders_ties(pg) -> None:
     admin, factory, _cid, _analyzer = pg
+    # Relative to now so the rows stay inside _gap_topics' 30-day cutoff.
+    today = datetime.now(tz=UTC).replace(hour=10, minute=0, second=0, microsecond=0)
     async with admin.begin() as conn:
         case_ids = list(
             (
@@ -271,14 +273,20 @@ async def test_support_gap_provenance_counts_cases_once_and_orders_ties(pg) -> N
             text(
                 "INSERT INTO portal_retrieval_gaps "
                 "(org_id,user_id,query_text,gap_type,support_case_id,diagnosis,question_key,occurred_at) VALUES "
-                "(901,'u','Mixed','content',:a,'missing','mixed','2026-09-18T10:00:00Z'),"
-                "(901,'u','Mixed again','content',:a,'missing','mixed','2026-09-18T11:00:00Z'),"
-                "(901,'u','Mixed ticket','content',:h,'missing','mixed','2026-09-18T12:00:00Z'),"
-                "(901,'u','Older','content',:a,'missing','z-old','2026-09-17T10:00:00Z'),"
-                "(901,'u','New B','content',:a,'missing','b-new','2026-09-19T10:00:00Z'),"
-                "(901,'u','New A','content',:a,'missing','a-new','2026-09-19T10:00:00Z')"
+                "(901,'u','Mixed','content',:a,'missing','mixed',:d3),"
+                "(901,'u','Mixed again','content',:a,'missing','mixed',CAST(:d3 AS timestamptz) + interval '1 hour'),"
+                "(901,'u','Mixed ticket','content',:h,'missing','mixed',CAST(:d3 AS timestamptz) + interval '2 hours'),"
+                "(901,'u','Older','content',:a,'missing','z-old',:d4),"
+                "(901,'u','New B','content',:a,'missing','b-new',:d2),"
+                "(901,'u','New A','content',:a,'missing','a-new',:d2)"
             ),
-            {"a": case_ids[0], "h": case_ids[1]},
+            {
+                "a": case_ids[0],
+                "h": case_ids[1],
+                "d2": today - timedelta(days=2),
+                "d3": today - timedelta(days=3),
+                "d4": today - timedelta(days=4),
+            },
         )
 
     gaps = await _gap_topics(factory)
