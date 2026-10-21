@@ -41,16 +41,10 @@ def test_rewrite_env_replaces_only_the_named_lines():
     )
 
 
-@pytest.mark.parametrize(
-    "values",
-    [
-        {"KLAI_CHAT_API_KEY": ""},  # would expand to an empty API key
-        {"KLAI_CHAT_MODEL": "x"},  # not backfilled: never appended
-    ],
-)
-def test_rewrite_env_refuses_an_empty_value_or_a_missing_line(values):
+def test_rewrite_env_refuses_an_empty_value():
+    # librechat.yaml would expand it into an empty API key.
     with pytest.raises(ValueError):
-        switch_mod.rewrite_env(_ENV, values)
+        switch_mod.rewrite_env(_ENV, {"KLAI_CHAT_API_KEY": ""})
 
 
 @pytest.fixture()
@@ -81,7 +75,7 @@ async def test_switch_to_portal_mints_the_key_writes_it_and_recreates(tenant, mo
     monkeypatch.setattr(switch_mod, "holds_internal_chat_key", AsyncMock(return_value=False))
     monkeypatch.setattr(switch_mod, "mint_internal_chat_key", mint)
 
-    assert await switch_mod.switch("brightwater", "portal") == 0
+    assert await switch_mod.switch("brightwater") == 0
 
     mint.assert_awaited_once_with(tenant.db, 7, rotate=False)
     env = tenant.env_path.read_text()
@@ -94,20 +88,23 @@ async def test_switch_to_portal_mints_the_key_writes_it_and_recreates(tenant, mo
 
 
 @pytest.mark.asyncio
-async def test_switch_back_to_litellm_restores_the_team_key_and_revokes(tenant, monkeypatch):
+async def test_switch_of_an_env_without_the_chat_lines_adds_them_on_the_portal_path(tenant, monkeypatch):
     tenant.env_path.write_text(
-        switch_mod.rewrite_env(
-            _ENV, {"KLAI_CHAT_API_KEY": _PORTAL_KEY, "KLAI_CHAT_BASE_URL": switch_mod.PORTAL_CHAT_BASE_URL}
-        )
+        "# Tenant: brightwater\nCREDS_KEY=feedfacefeedfacefeedfacefeedface\nLITELLM_API_KEY=sk-team-brightwater-example"
     )
-    revoke = AsyncMock(return_value=1)
-    monkeypatch.setattr(switch_mod, "revoke_internal_chat_key", revoke)
+    monkeypatch.setattr(switch_mod, "holds_internal_chat_key", AsyncMock(return_value=False))
+    monkeypatch.setattr(switch_mod, "mint_internal_chat_key", AsyncMock(return_value=_PORTAL_KEY))
 
-    assert await switch_mod.switch("brightwater", "litellm") == 0
+    assert await switch_mod.switch("brightwater") == 0
 
-    assert tenant.env_path.read_text() == _ENV
+    assert tenant.env_path.read_text() == (
+        "# Tenant: brightwater\n"
+        "CREDS_KEY=feedfacefeedfacefeedfacefeedface\n"
+        "LITELLM_API_KEY=sk-team-brightwater-example\n"
+        f"KLAI_CHAT_API_KEY={_PORTAL_KEY}\n"
+        "KLAI_CHAT_BASE_URL=http://portal-api:8010/partner/v1\n"
+    )
     tenant.recreate.assert_called_once_with(tenant.org)
-    revoke.assert_awaited_once_with(tenant.db, 7)
 
 
 def test_write_env_is_owner_only_from_the_first_byte_and_leaves_no_temp_file(tmp_path):
@@ -123,26 +120,20 @@ def test_write_env_is_owner_only_from_the_first_byte_and_leaves_no_temp_file(tmp
 
 
 @pytest.mark.asyncio
-async def test_switch_back_of_a_compose_tenant_keeps_the_key_until_the_recreate(tenant, monkeypatch, capsys):
-    tenant.env_path.write_text(
-        switch_mod.rewrite_env(
-            _ENV, {"KLAI_CHAT_API_KEY": _PORTAL_KEY, "KLAI_CHAT_BASE_URL": switch_mod.PORTAL_CHAT_BASE_URL}
-        )
-    )
+async def test_switch_of_a_compose_tenant_writes_the_env_and_leaves_the_recreate_to_the_host(
+    tenant, monkeypatch, capsys
+):
+    monkeypatch.setattr(switch_mod, "holds_internal_chat_key", AsyncMock(return_value=False))
+    monkeypatch.setattr(switch_mod, "mint_internal_chat_key", AsyncMock(return_value=_PORTAL_KEY))
     monkeypatch.setattr(switch_mod, "_compose_managed", lambda _slug: True)
     monkeypatch.setattr(
         switch_mod,
         "validate_slug_for_provisioning",
         lambda slug, domain: SimpleNamespace(librechat_container=f"librechat-{slug}"),
     )
-    revoke = AsyncMock(return_value=1)
-    monkeypatch.setattr(switch_mod, "revoke_internal_chat_key", revoke)
 
-    assert await switch_mod.switch("brightwater", "litellm") == switch_mod.EXIT_COMPOSE_RECREATE_PENDING
+    assert await switch_mod.switch("brightwater") == switch_mod.EXIT_COMPOSE_RECREATE_PENDING
 
-    revoke.assert_not_awaited()
     tenant.recreate.assert_not_called()
-    assert "brightwater revoke" in capsys.readouterr().out
-
-    assert await switch_mod.revoke("brightwater") == 0
-    revoke.assert_awaited_once_with(tenant.db, 7)
+    assert f"KLAI_CHAT_API_KEY={_PORTAL_KEY}\n" in tenant.env_path.read_text()
+    assert "docker compose up -d --no-deps --force-recreate librechat-" in capsys.readouterr().out

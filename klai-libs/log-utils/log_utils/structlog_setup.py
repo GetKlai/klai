@@ -112,7 +112,7 @@ def _strip_query_fields_processor(logger_obj: Any, method_name: str, event_dict:
     """Defense-in-depth structlog processor that strips raw query content.
 
     SPEC-PRIVACY-QUERY-SHADOW-001 REQ-13: redundant safety net on top of
-    the explicit gating in retrieve.py + klai_knowledge.py. If a future
+    the explicit gating in retrieve.py. If a future
     code path emits a query-shaped field on a query-related event while
     ``telemetry_level != 'full'`` is in scope, this processor removes it
     before the JSON renderer serializes the event.

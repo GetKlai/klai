@@ -1,5 +1,7 @@
 # Knowledge Retrieval Flow: How Chat with Knowledge Works
 
+> Path A (LibreChat → LiteLLM hook) was removed on 21 October 2026; the text below describes it as history. The one-path description is [chat-system.md](chat-system.md).
+
 > **Out of date for the chat request path (checked against code on 2026-09-24).** The current, code-verified description of both chat paths is [chat-system.md](chat-system.md); use it instead of Part 1 of this document. Statements below that the code contradicts:
 > - The widget and partner API do **not** go through `KlaiKnowledgeHook`: the hook skips master-key requests without an org, and widget retrieval runs in portal-api (`partner_chat.py`).
 > - The support widget is not grounded-KB-only: with the visitor's consent it answers from general knowledge when retrieval finds nothing (broad mode).

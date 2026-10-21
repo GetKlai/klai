@@ -53,6 +53,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_id="cid-123",
             client_secret="csec-456",
             litellm_api_key="test-litellm-master",
+            chat_api_key="pk_test_chat",
             mongo_password="test-tenant-pw",
             meili_api_key="tenant-meili-key",
         )
@@ -107,15 +108,18 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="sk-team-key",
+            chat_api_key="pk_live_" + "c" * 40,
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )
 
         assert "LITELLM_API_KEY=sk-team-key" in result
         assert "test-litellm-master" not in result
-        # librechat.yaml's chat endpoint: a new tenant starts on LiteLLM with its team key.
-        assert "KLAI_CHAT_API_KEY=sk-team-key\n" in result
-        assert "KLAI_CHAT_BASE_URL=http://litellm:4000/v1\n" in result
+        # librechat.yaml's chat endpoint: a new tenant starts on the portal path
+        # with its internal-chat key, never on LiteLLM's endpoint with the team key.
+        assert "KLAI_CHAT_API_KEY=pk_live_" + "c" * 40 + "\n" in result
+        assert "KLAI_CHAT_BASE_URL=http://portal-api:8010/partner/v1\n" in result
+        assert "KLAI_CHAT_API_KEY=sk-team-key" not in result
 
     def test_meili_tenant_key_overrides_master_key_value(self):
         """Provisioning must write the tenant-scoped Meili key, not the master key."""
@@ -126,6 +130,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )
@@ -143,6 +148,7 @@ class TestCharacterizeGenerateLibrechatEnv:
                 client_id="cid",
                 client_secret="csec",
                 litellm_api_key="key",
+                chat_api_key="pk_test_chat",
                 mongo_password="pw",
             )
 
@@ -156,6 +162,7 @@ class TestCharacterizeGenerateLibrechatEnv:
                 client_id="cid",
                 client_secret="csec",
                 litellm_api_key="key",
+                chat_api_key="pk_test_chat",
                 mongo_password="pw",
                 meili_api_key=" ",
             )
@@ -169,6 +176,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )
@@ -185,6 +193,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )
@@ -202,6 +211,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )
@@ -223,6 +233,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )
@@ -247,6 +258,7 @@ class TestCharacterizeGenerateLibrechatEnv:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )
@@ -266,6 +278,7 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
             zitadel_org_id="200000000000000001",
@@ -282,6 +295,7 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
             zitadel_org_id="123",
@@ -298,6 +312,7 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )
@@ -314,6 +329,7 @@ class TestGenerateLibrechatEnvKnowledgeVars:
             client_id="cid-123",
             client_secret="csec-456",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
             zitadel_org_id="org-id-789",
@@ -340,6 +356,7 @@ class TestGenerateLibrechatEnvKnowledgeIngestSecret:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )
@@ -523,6 +540,7 @@ class TestGenerateLibrechatEnvUsesReconcileMapping:
             client_id="cid",
             client_secret="csec",
             litellm_api_key="key",
+            chat_api_key="pk_test_chat",
             mongo_password="pw",
             meili_api_key="tenant-meili-key",
         )

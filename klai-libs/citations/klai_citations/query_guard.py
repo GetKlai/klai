@@ -1,16 +1,12 @@
 """Destructive-rewrite guard for LLM-driven conversational query rewriting.
 
-Shared by two call sites that each run an LLM-based query rewrite ahead of
-retrieval, resolving pronouns/ellipsis from conversation history into a
-standalone search query:
+Used by the LLM-based query rewrite ahead of retrieval, which resolves
+pronouns/ellipsis from conversation history into a standalone search query:
+``klai-retrieval-api/retrieval_api/services/coreference.py``. It was shared
+with the LiteLLM pre-call hook's rewrite until that hook was removed on
+21 October 2026.
 
-- ``deploy/litellm/klai_kb_query_rewrite.py`` — the LiteLLM pre-call hook
-  (path A, LibreChat chat traffic).
-- ``klai-retrieval-api/retrieval_api/services/coreference.py`` — the
-  coreference resolver used by paths B/C and as retrieval-api's own
-  fallback when the litellm hook did not decide the rewrite.
-
-Both resolvers prompt their LLM to keep the current question's subject and
+The resolver prompts their LLM to keep the current question's subject and
 only use history to resolve pronouns, ellipsis, or follow-up phrases. A
 prompt instruction is not a guarantee — this module is the deterministic,
 LLM-free backstop shared by both: it rejects a rewrite that drops every

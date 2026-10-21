@@ -1,9 +1,8 @@
 """Tests for the shared destructive-rewrite guard.
 
-This logic was moved (not duplicated) out of
-``deploy/litellm/klai_kb_query_rewrite.py`` so both the LiteLLM pre-call hook
-and ``klai-retrieval-api``'s coreference resolver share one deterministic,
-LLM-free backstop against topic-hijacking rewrites.
+This logic was moved out of the removed LiteLLM pre-call hook so that
+``klai-retrieval-api``'s coreference resolver has a deterministic, LLM-free
+backstop against topic-hijacking rewrites.
 """
 
 from __future__ import annotations

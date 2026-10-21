@@ -1,9 +1,9 @@
 """Detect a turn that carries the user's own content: an attachment, a
 converted PDF, or an explicit question about the visible conversation.
 
-Ported from the LiteLLM hook's user-provided-content rule
-(``deploy/litellm/klai_kb_answer_policy.py``: ``USER_ATTACHMENT_PART_TYPES``,
-``_has_user_attachment_context``, ``has_user_provided_content_context``) for
+Ported from the removed LiteLLM hook's user-provided-content rule
+(``USER_ATTACHMENT_PART_TYPES``, ``_has_user_attachment_context``,
+``has_user_provided_content_context``) for
 the one-chat-pipeline plan (docs/architecture/chat-quality-history-and-plan.md
 §7, slice 5b): a Strict turn may always read what the user attached or
 pasted, even with zero knowledge-base evidence — Strict/Open governs KB
@@ -22,14 +22,13 @@ import re
 
 from app.services.chat_attachments import UPLOADED_PDF_CONTENT_MARKER
 
-# Mirrors klai_kb_answer_policy.USER_ATTACHMENT_PART_TYPES.
 USER_ATTACHMENT_PART_TYPES = frozenset({"file", "image", "image_url", "input_file", "input_image"})
 
-# Mirrors klai_kb_answer_policy.USER_VISIBLE_CONVERSATION_QUERY_RE: an explicit
+# An explicit
 # question about the conversation itself is user-provided content too — the
 # conversation is always available, unlike an attachment that may or may not
 # be there. An attachment WORD alone ("screenshot", "bijlage") is deliberately
-# NOT enough on its own (klai_kb_answer_policy.USER_ATTACHMENT_REFERENCE_QUERY_RE):
+# NOT enough on its own:
 # without a match below or an actual attachment, this returns False either way.
 USER_VISIBLE_CONVERSATION_QUERY_RE = re.compile(
     r"\b(wat\s+(zei|schreef)\s+ik|wat\s+staat\s+(hierboven|daarboven)|"

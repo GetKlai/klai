@@ -1,5 +1,7 @@
 # Product Gaps Backlog — where the docs describe more than the code does
 
+> Path A (LibreChat → LiteLLM hook) was removed on 21 October 2026; the text below describes it as history. The one-path description is [chat-system.md](chat-system.md).
+
 > Created 2026-06-08 from a doc-vs-code drift audit of `docs/architecture/`.
 > **Updated 2026-08-20** after the production experiment audit: `GAP-RETR-01` and
 > `GAP-EVID-01` are closed flags-off; `GAP-TEMPORAL-01` remains fixed;

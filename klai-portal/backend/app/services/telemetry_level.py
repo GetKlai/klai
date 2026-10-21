@@ -13,11 +13,6 @@ behaviour. They differ only in:
 - Default ``reason`` ("internal admin" vs "tenant self-service via admin UI")
 - ``operator_kind`` audit field
 
-Cache invalidation: deletes every ``kb_ver:{org_id}:*`` Redis key for the
-org so the LiteLLM hook picks up the new level on the next request. The
-version-keyed feature cache (``kb_feature:{org}:{user}:{version}``) becomes
-unreachable once the version pointer is gone, so it expires naturally on
-its own TTL. Failure is logged but never blocks the DB-write.
 """
 
 from __future__ import annotations
@@ -31,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.portal import PortalOrg
 from app.services.audit import log_event
-from app.services.litellm_cache import invalidate_kb_cache
 
 logger = structlog.get_logger()
 
@@ -101,11 +95,6 @@ async def set_telemetry_level(
         async with tenant_scoped_session(org_id) as purge_db:
             purged = await purge_support_cases_for_org(purge_db, org_id)
         logger.info("support_evidence_purged_on_downgrade", org_id=org_id, cases_removed=purged)
-
-    # Cache invalidation runs even on no-op so a stuck hook can be nudged
-    # by re-applying the same level (operator escape hatch). Org-wide
-    # (librechat_user_id=None) keyed on the Zitadel org-id string the hook uses.
-    await invalidate_kb_cache(org.zitadel_org_id)
 
     # Audit log uses raw SQL via log_event's own session — survives any
     # caller transaction rollback. action='telemetry_level_changed' is

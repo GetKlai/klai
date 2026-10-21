@@ -1,5 +1,5 @@
 # Klai Local Development — LiteLLM config
-# Simplified version without custom callbacks (klai_knowledge.py, custom_router.py)
+# Simplified version without custom callbacks (custom_router.py, the PII hooks)
 #
 # Set ANTHROPIC_API_KEY or MISTRAL_API_KEY in .env.dev to enable the models.
 

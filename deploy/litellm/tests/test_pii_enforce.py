@@ -2,8 +2,7 @@
 REQ-7 through REQ-11).
 
 litellm is not installed as the real proxy package for these tests (see
-test_klai_knowledge_hook.py / test_pii_observe.py's same rationale) — the
-import is mocked so KlaiPiiEnforcer's CustomLogger base class resolves.
+test_pii_observe.py's same rationale) — the import is mocked so KlaiPiiEnforcer's CustomLogger base class resolves.
 """
 
 from __future__ import annotations

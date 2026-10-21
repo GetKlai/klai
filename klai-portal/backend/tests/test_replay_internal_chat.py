@@ -61,7 +61,7 @@ async def test_pair_judge_reads_both_orders_and_a_disagreement_is_a_tie(
 
 _VISIBLE_ANSWER = "Je vraagt verlof aan via het formulier op het intranet."
 # The OLD path's footer: longer than NEW's, with lines NEW never renders
-# (deploy/litellm/klai_kb_citation_render.py's _format_visible_agent_activity).
+# (the removed LiteLLM hook's _format_visible_agent_activity).
 _OLD_FOOTER = (
     "\n\n**Bronnen**\n- [Verlofbeleid](https://example.com/docs/verlof)\n\n"
     "**Agent activiteit**\n"

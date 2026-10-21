@@ -1,5 +1,7 @@
 # Klai Platform: Technical Decisions
 
+> Path A (LibreChat → LiteLLM hook) was removed on 21 October 2026; the text below describes it as history. The one-path description is [chat-system.md](chat-system.md).
+
 *Last updated: 2026-06-08 (doc-vs-code drift audit; prior: 2026-04-19). For the Knowledge product specification, see [klai-knowledge-architecture.md](../klai-knowledge-architecture.md). Type-B gaps (documented richer than built — e.g. the "Complexity Router") are flagged inline and tracked in [product-gaps-backlog.md](product-gaps-backlog.md).*
 
 ## Stack

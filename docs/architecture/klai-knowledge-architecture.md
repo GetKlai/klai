@@ -1,5 +1,7 @@
 # Klai Knowledge — Platform Architecture
 
+> Path A (LibreChat → LiteLLM hook) was removed on 21 October 2026; the text below describes it as history. The one-path description is [chat-system.md](chat-system.md).
+
 > Status: Active reference. Research phases complete for §§ 1–12. §13.5 (cross-org federation) remains an open decision. Implementation tracking: `klai-claude/docs/specs/klai-knowledge-implementation.md`.
 >
 > Source synthesis: `helpdesk-extractie-pipeline.md` (2026-03-18) + `Sovereign Knowledge, Augmented` (2026-01-13). The helpdesk pipeline is now treated as one ingestion adapter, not the product goal. The product goal is Klai Knowledge.

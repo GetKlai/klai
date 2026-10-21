@@ -11,8 +11,8 @@ klai-libs/citations and the pinned-limitation test
 ``test_evidence_label_ids_does_not_model_max_chars_truncation``.
 
 No current caller combines the two (verified 2026-08-18: retrieval-api's
-synthesis.py truncates but never strips; litellm and partner_chat strip but
-never truncate). This test keeps it that way, same source-scan pattern as
+synthesis.py truncates but never strips; partner_chat strips but never
+truncates). This test keeps it that way, same source-scan pattern as
 ``test_direct_mistral_throttle_drift.py`` — a comment/docstring cannot stop
 the drift, a failing test can.
 """
@@ -26,7 +26,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Every directory that consumes klai_citations in production code.
 _CONSUMER_DIRS = [
-    _REPO_ROOT / "deploy" / "litellm",
     _REPO_ROOT / "klai-portal" / "backend" / "app",
     _REPO_ROOT / "klai-retrieval-api" / "retrieval_api",
 ]

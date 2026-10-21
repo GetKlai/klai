@@ -1,5 +1,7 @@
 # Knowledge Retrieval Improvements — Roadmap
 
+> Path A (LibreChat → LiteLLM hook) was removed on 21 October 2026; the text below describes it as history. The one-path description is [chat-system.md](chat-system.md).
+
 > Strategy doc for getting Klai's RAG stack from "industry-standard baseline" to "production-grade for paying customers".
 > Companion to [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md), which describes what runs today.
 > Created 2026-05-04 after holistic review of current code + 2026 RAG best-practice research.

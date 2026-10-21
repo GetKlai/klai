@@ -1,11 +1,8 @@
 """Prompt text of the internal chat's knowledge-base modes (Strict, Open,
 general) and of multi-part questions.
 
-Moved from the LiteLLM hook (one-chat-pipeline slice 4, klai_kb_answer_policy,
-klai_kb_context_prompt, klai_kb_confidence_policy, klai_kb_system_prompt) so
-this library stays the one home of chat prompt text. A submodule, not
-``__init__``: the hook's vendored copy mirrors ``__init__`` only and keeps its
-own copy of these blocks until slice 9 removes the hook.
+Moved from the removed LiteLLM hook (one-chat-pipeline slice 4) so this
+library stays the one home of chat prompt text.
 """
 
 from __future__ import annotations

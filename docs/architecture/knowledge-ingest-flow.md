@@ -1,5 +1,7 @@
 # Knowledge Ingestion & Retrieval: How It Works
 
+> Path A (LibreChat → LiteLLM hook) was removed on 21 October 2026; the text below describes it as history. The one-path description is [chat-system.md](chat-system.md).
+
 > Engineering reference for the running system on core-01.
 > Verified against `klai-knowledge-ingest/knowledge_ingest/` and `klai-retrieval-api/` — April 2026 (updated 2026-05-06 for SPEC-INGEST-RECONCILE-001 — discovery/fetch separation, fetch_outcomes JSONB, skip_reasons JSONB; updated 2026-06-08 for the doc-vs-code drift audit).
 >

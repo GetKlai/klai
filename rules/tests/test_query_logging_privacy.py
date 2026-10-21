@@ -9,7 +9,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 QUERY_LOG_SOURCES = (
-    REPO_ROOT / "deploy/litellm/klai_knowledge.py",
     REPO_ROOT / "klai-portal/backend/app/services/gap_rescorer.py",
 )
 LOG_METHODS = {"debug", "info", "warning", "error", "exception", "critical"}

@@ -97,6 +97,7 @@ class TestCharacterizeGenerateLibrechatEnvSnapshot:
                 client_id="cid-snap",
                 client_secret="csec-snap",
                 litellm_api_key="key-snap",
+                chat_api_key="chat-snap",
                 mongo_password="pw-snap",
                 meili_api_key="meili-tenant-snap",
                 zitadel_org_id="org-snap-123",

@@ -94,7 +94,6 @@ def _normalize_llm_message(
     return None
 
 
-# Mirrors RETRIEVE_HISTORY_MAX_CONTENT_CHARS in deploy/litellm/klai_kb_request_context.py:
 # retrieval-api hard-rejects conversation_history content > 8000 chars with 422
 # (SPEC-SEC-010 REQ-2.5) and deliberately never truncates server-side, so callers
 # must clip below that limit before sending.
@@ -103,9 +102,7 @@ _RETRIEVAL_HISTORY_OMISSION_MARKER = "\n\n[... content omitted from retrieval co
 
 
 def _clip_retrieval_history_content(content: str) -> str:
-    """Mirror of clip_retrieval_history_content in deploy/litellm/klai_kb_request_context.py.
-
-    Keeps the head and tail of oversized content with an omission marker in the
+    """Keep the head and tail of oversized content with an omission marker in the
     middle, so coreference resolution still sees how the turn started and ended.
     """
     max_chars = _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS
@@ -345,11 +342,7 @@ def _strip_web_search_tools(tools: list[dict] | None) -> list[dict] | None:
 
     Strict promises answers grounded only in the knowledge base; leaving a
     web-search tool callable would let the model fold live web results into
-    that answer regardless. Ported from
-    ``deploy/litellm/klai_kb_request_context.py:strip_web_search_tools``,
-    which keeps enforcing this for LibreChat traffic through the hook until
-    slice 9 removes it — this is the one implementation for the knowledge
-    path in portal.
+    that answer regardless.
     """
     if not tools:
         return tools

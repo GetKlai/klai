@@ -9,9 +9,9 @@ an appointment button; LibreChat renders only text, so
 ``profile.surface == "internal"`` gets this footer appended after the answer
 instead.
 
-Ported from ``deploy/litellm/klai_kb_citation_render.py``
-(``_append_visible_sources_section`` / ``_format_visible_agent_activity``,
-~530-800), with two deliberate differences:
+Ported from the removed LiteLLM hook's citation renderer
+(``_append_visible_sources_section`` / ``_format_visible_agent_activity``),
+with two deliberate differences:
 
 * The "Retrieval score: <band>" line is dropped entirely (product decision,
   2026-09-24 slice 6) — not ported.
@@ -168,9 +168,8 @@ def render_answer_footer(
 
 # --- History strip -----------------------------------------------------
 #
-# Ported from deploy/litellm/klai_kb_request_context.py:strip_klai_backend_footer_from_text
-# (and its heading regex at :77-83), minus the base64 sources-marker line the
-# hook also strips: portal never writes that marker into visible text (its
+# Ported from the removed LiteLLM hook's strip_klai_backend_footer_from_text,
+# minus the base64 sources-marker line the hook also stripped: portal never writes that marker into visible text (its
 # sources travel in the structured ``sources`` field instead of an HTML
 # comment for a client that ignores it).
 

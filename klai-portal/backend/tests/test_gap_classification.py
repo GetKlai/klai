@@ -1,6 +1,6 @@
 """Tests for gap classification logic (SPEC-KB-015).
 
-Pure unit tests -- no DB. Mirrors _classify_gap from deploy/litellm/klai_knowledge.py.
+Pure unit tests -- no DB.
 """
 
 from unittest.mock import patch

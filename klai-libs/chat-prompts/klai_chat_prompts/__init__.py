@@ -6,7 +6,7 @@ synthesis service and klai-portal's partner_chat service import
 the constant in either service — a CI lint at the monorepo level
 rejects copies elsewhere.
 
-:data:`GENERAL_CHAT_SYSTEM_PROMPT` is used by the LiteLLM hook (path A)
+:data:`GENERAL_CHAT_SYSTEM_PROMPT` is used by the internal chat (portal-api)
 when the user has explicitly opted out of every knowledge-base scope
 (``kb_personal_enabled=False`` AND ``kb_slugs_filter=[]``). Same
 language-detection contract as GROUNDED, but no KB-grounding rules and
@@ -14,7 +14,7 @@ no [n] citation pressure — the model behaves as a general-purpose
 assistant. Paths B and C never reach this prompt because they are
 server-to-server and always carry KB scope.
 
-:data:`META_CHAT_SYSTEM_PROMPT` is used by the LiteLLM hook (path A)
+:data:`META_CHAT_SYSTEM_PROMPT` is used by the internal chat (portal-api)
 when the user asks a META question about Klai itself — "what is Klai?",
 "what can I do here?", "how does this work?". Same language-detection
 contract as GROUNDED and GENERAL, but no retrieval and no KB-grounding
@@ -395,7 +395,7 @@ def no_citable_sources_message(language: object, *, suggest_open_mode: bool = Fa
     :func:`_language_is_dutch`).
 
     ``suggest_open_mode`` appends a hint to try Open mode. Default False:
-    only path A (the LiteLLM hook backing LibreChat) has a user-facing
+    only the internal chat (LibreChat) has a user-facing
     Strict/Open toggle the hint can point at. Callers without that toggle
     — partner_chat.py (path B, widget/partner API) and retrieval-api's
     ``/chat`` (path C) — must leave this False; the hint would reference a
@@ -1040,8 +1040,8 @@ SUPPORT_BROAD_CHAT_SYSTEM_PROMPT: Final[str] = _LANGUAGE_DETECTION_PREAMBLE + "\
 
 # ─── SPEC-RAG-CLARIFY-FLOW-001 REQ-1: clarify decision, shared building blocks ──
 #
-# Pure building blocks only — no HTTP calls live here. Both chat paths (A via
-# the LiteLLM hook, B via partner_chat.py) wire these into an actual model
+# Pure building blocks only — no HTTP calls live here. Both chat paths (the internal chat and
+# partner_chat.py) wire these into an actual model
 # call themselves (REQ-2 through REQ-5); this library only supplies the turn
 # addendum, the classification prompt/schema/parser, and the decision rule.
 
@@ -1200,7 +1200,7 @@ def has_direct_evidence_for_query(query: object, chunks: list[dict]) -> bool:
     A single shared token is not evidence: a question about webhooks always
     shares the token "webhook" with tangential webhook chunks, which let
     fabricated answers through the low-confidence guard on path A
-    (2026-08-17 Voys incident, deploy/litellm/klai_kb_confidence_policy.py).
+    (2026-08-17 Voys incident).
     Require the chunks to cover at least two salient query tokens (or all of
     them, for one-token queries) before treating the evidence as direct.
     """
@@ -1226,9 +1226,8 @@ def has_direct_evidence_for_query(query: object, chunks: list[dict]) -> bool:
 def should_clarify(confidence_band: object, *, has_direct_evidence: bool) -> bool:
     """Decision 1: does this turn get a clarifying question instead of an answer?
 
-    Exactly the condition that triggers path A's pre-generation refusal today
-    (``should_apply_low_confidence_injection`` in
-    ``deploy/litellm/klai_kb_confidence_policy.py``): confidence band ``low``
+    Exactly the condition that triggers the pre-generation refusal today:
+    confidence band ``low``
     or ``unknown`` and no direct evidence for the query. What is a refusal
     today becomes a clarifying question wherever a caller wires
     :data:`CLARIFY_TURN_ADDENDUM` in on this same condition.

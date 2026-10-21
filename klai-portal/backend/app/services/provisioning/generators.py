@@ -35,7 +35,9 @@ class EnvFileMissingError(RuntimeError):
     """
 
 
-LITELLM_CHAT_BASE_URL = "http://litellm:4000/v1"
+# The "Klai AI" endpoint of librechat.yaml: portal-api's partner API, reached with the org's
+# internal-chat key (app/services/internal_chat_keys.py).
+PORTAL_CHAT_BASE_URL = "http://portal-api:8010/partner/v1"
 
 
 def _reconcilable_env_vars() -> dict[str, str]:
@@ -60,24 +62,7 @@ def _reconcilable_env_vars() -> dict[str, str]:
     return {
         "PORTAL_INTERNAL_URL": "http://portal-api:8010",
         "PORTAL_INTERNAL_SECRET": settings.internal_secret,
-        # The "Klai AI" endpoint in librechat.yaml expands these two. Deploy
-        # order: this backfill reaches every tenant first (portal-api deploy,
-        # then one /internal/librechat/regenerate run), the yaml that reads them
-        # lands second, per-tenant switches (scripts/switch_internal_chat.py)
-        # come after. Before the backfill a tenant would expand the literal
-        # "${KLAI_CHAT_API_KEY}" and every chat turn would fail.
-        "KLAI_CHAT_BASE_URL": LITELLM_CHAT_BASE_URL,
     }
-
-
-def _reconcilable_env_copies() -> dict[str, str]:
-    """Per-tenant additive env vars whose default is another key of the same file: target -> source.
-
-    ``KLAI_CHAT_API_KEY`` defaults to the tenant's own LiteLLM team key, which
-    only that tenant's .env holds, so it cannot be a fleet-wide value in
-    ``_reconcilable_env_vars``.
-    """
-    return {"KLAI_CHAT_API_KEY": "LITELLM_API_KEY"}
 
 
 _ENV_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
@@ -97,9 +82,7 @@ def _env_values(content: str) -> dict[str, str]:
     return values
 
 
-def reconcile_librechat_env(
-    env_path: Path, required: Mapping[str, str], copies: Mapping[str, str] | None = None
-) -> list[str]:
+def reconcile_librechat_env(env_path: Path, required: Mapping[str, str]) -> list[str]:
     """Additively append missing keys to an existing tenant .env file.
 
     [HARD SAFETY INVARIANT] This function NEVER rewrites, reorders, or
@@ -121,12 +104,13 @@ def reconcile_librechat_env(
     per the house rule in ``.claude/rules/klai/infra/deploy.md`` "Atomic env
     writes".
 
-    ``copies`` maps a missing key to an existing key of the same file whose
-    value it takes. A source that is absent or empty raises: the copy feeds a
-    credential into librechat.yaml, and an empty one must not be written.
+    KLAI_CHAT_API_KEY and KLAI_CHAT_BASE_URL are deliberately not reconciled:
+    they carry the org's internal-chat key, which only provisioning and
+    scripts/switch_internal_chat.py can mint, so every environment gets them
+    from one of those two and this function never touches them.
 
     Returns the list of keys that were appended, in the order they appear
-    in ``required`` and then ``copies``. An empty list means the file was left
+    in ``required``. An empty list means the file was left
     completely untouched (no write, no mtime bump).
     """
     if not env_path.exists():
@@ -136,13 +120,6 @@ def reconcile_librechat_env(
     existing = _env_values(existing_content)
 
     missing = {key: value for key, value in required.items() if key not in existing}
-    for target, source in (copies or {}).items():
-        if target in existing:
-            continue
-        value = existing.get(source, "")
-        if not value:
-            raise RuntimeError(f"cannot default {target}: {source} is missing or empty in {env_path}")
-        missing[target] = value
     if not missing:
         return []
 
@@ -229,6 +206,7 @@ def _generate_librechat_env(
     client_id: str,
     client_secret: str,
     litellm_api_key: str,
+    chat_api_key: str,
     mongo_password: str,
     meili_api_key: str,
     zitadel_org_id: str = "",
@@ -347,10 +325,10 @@ REDIS_URI=redis://:{quote(settings.redis_password, safe="")}@redis:6379
 
 # AI routing via LiteLLM
 LITELLM_API_KEY={litellm_api_key}
-# The internal chat endpoint librechat.yaml expands. New tenants start on LiteLLM
-# until the one chat pipeline replaces the hook (plan step 9); until then
-# scripts/switch_internal_chat.py moves one tenant to portal-api and back.
-KLAI_CHAT_API_KEY={litellm_api_key}
+# The internal chat endpoint librechat.yaml expands: portal-api's partner API with
+# the org's internal-chat key, the same two lines scripts/switch_internal_chat.py writes.
+KLAI_CHAT_API_KEY={chat_api_key}
+KLAI_CHAT_BASE_URL={PORTAL_CHAT_BASE_URL}
 
 # Web search (shared services on klai-net)
 SEARXNG_INSTANCE_URL=http://searxng:8080

@@ -1,9 +1,7 @@
 """Prompt text for the internal chat's modes and for multi-part questions.
 
-Moved from the LiteLLM hook (one-chat-pipeline slice 4): the mode prefixes of
-``klai_kb_answer_policy``, the context block of ``klai_kb_context_prompt``,
-the guard texts of ``klai_kb_confidence_policy`` and the template block of
-``klai_kb_system_prompt``. The prompt text itself lives in
+Moved from the removed LiteLLM hook (one-chat-pipeline slice 4): the mode
+prefixes, the context block, the guard texts and the template block. The prompt text itself lives in
 ``klai_chat_prompts`` (foundations in ``__init__``, mode blocks in
 ``kb_modes``); this module renders evidence and composes the system message.
 

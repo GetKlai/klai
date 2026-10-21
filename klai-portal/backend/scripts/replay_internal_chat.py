@@ -422,7 +422,7 @@ async def _converse(
     return answers
 
 
-# The OLD path's hidden source marker (deploy/litellm/klai_kb_citation_render.py's
+# The OLD path's hidden source marker (the removed LiteLLM hook's
 # _format_sources_metadata_marker): LibreChat never renders it, so a judge handed
 # it is handed thousands of characters the employee never read.
 _SOURCES_COMMENT_RE = re.compile(r"<!--\s*klai_sources=.*?-->", re.DOTALL)

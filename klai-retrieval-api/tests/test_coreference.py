@@ -142,8 +142,8 @@ class TestCoreference:
     async def test_destructive_rewrite_hijacking_topic_returns_original(self, capsys):
         """Fix 1 (feedback-chat-context PR): retrieval-api's own coreference
         resolver did not have the destructive-rewrite guard that
-        ``deploy/litellm/klai_kb_query_rewrite.py`` already had — this is the
-        exact incident class the litellm-side guard was built for: a
+        the removed LiteLLM hook's rewrite already had — this is the
+        exact incident class that guard was built for: a
         self-contained question ("Wat weet je over klai?") rewritten by the
         LLM into an unrelated historical topic (Yealink phone configuration).
         The shared guard (``klai_citations.query_guard``) must reject this
@@ -179,8 +179,8 @@ class TestCoreference:
         """Privacy fix (semgrep python-logger-credential-disclosure):
         ``telemetry_level="full"`` is the ONLY level allowed to see the literal
         query text in the ``coreference_destructive_rewrite_blocked`` log,
-        mirroring the ``query_rewrite_destructive_blocked`` precedent in
-        ``deploy/litellm/klai_knowledge.py``."""
+        mirroring the ``query_rewrite_destructive_blocked`` precedent of the
+        removed LiteLLM hook."""
         from retrieval_api.logging_setup import setup_logging
 
         setup_logging()

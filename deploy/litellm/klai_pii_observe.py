@@ -2,8 +2,7 @@
 
 SPEC-PRIVACY-MISTRAL-PII-001 REQ-5/REQ-6. Registered as the LAST entry in
 ``config.yaml``'s ``litellm_settings.callbacks`` list, so it runs after
-``klai_knowledge.klai_knowledge_hook`` (KB context / attachment injection)
-and ``custom_router.token_router`` (model upgrade/downgrade) — it observes
+``custom_router.token_router`` (model upgrade/downgrade) — it observes
 the actual outbound payload, not the original request.
 
 Correction (SPEC 0.4.0): an earlier draft of REQ-5 specified the native
@@ -18,20 +17,18 @@ Contract (REQ-5):
   - Calls presidio-analyzer's ``/analyze`` with the outbound message text.
   - Returns ``data`` completely unchanged. Never calls the anonymizer.
   - Does NOT honour ``_klai_openai_passthrough`` or missing ``org_id`` —
-    the two blind spots in ``KlaiKnowledgeHook`` (``klai_knowledge.py``
-    :426-427, :481-483) that this phase exists to see (AC-7, AC-8).
+    the two blind spots of the removed KB hook that this phase exists to
+    see (AC-7, AC-8).
   - Inspects every ``content`` field of every message, not just the last
     user turn.
   - Runs OUT OF BAND: the analyzer call is scheduled via
     ``asyncio.create_task`` and never awaited by the hook itself, so it
     cannot add latency to the user's request. A timeout or error inside
     the scheduled task is caught, logged at ``warning``, and swallowed —
-    it can never fail or delay the request. This mirrors the existing
-    fire-and-forget pattern in ``klai_retrieval_telemetry.py``
-    (``fire_retrieval_log`` / ``fire_gap_event``): build the coroutine
-    only as the argument to ``create_task`` so a missing running loop
-    (test/sync context) raises before any coroutine object is created —
-    no "coroutine was never awaited" warning at GC.
+    it can never fail or delay the request. Build the coroutine only as the
+    argument to ``create_task`` so a missing running loop (test/sync
+    context) raises before any coroutine object is created — no
+    "coroutine was never awaited" warning at GC.
 
 Contract (REQ-6): the emitted event carries ``org_id``, ``call_type``,
 model alias, detected language, and a COUNT per entity type. It never
@@ -129,8 +126,7 @@ _MAX_ANALYZE_CHARS = 20_000
 def _payload_texts(messages: list[Any]) -> list[str]:
     """Every non-empty ``content`` field across every message.
 
-    Uses the same ``message_text`` helper klai_knowledge.py's own
-    request-context parsing already relies on, so both string content and
+    Uses ``klai_kb_request_context.message_text``, so both string content and
     multi-part (list-of-parts) content are handled identically — no
     reimplementation of that shape-handling here.
     """
@@ -209,13 +205,12 @@ async def _analyze_entity_counts(
 
 
 def _org_id_from_key(user_api_key_dict: Any) -> Any:
-    """Best-effort org_id, WITHOUT the KlaiKnowledgeHook early-return.
+    """Best-effort org_id; a missing one is reported as ``None``.
 
-    ``klai_knowledge.py`` treats a missing org_id as "master key usage,
-    skip silently" (:481-483) — every widget and partner request, since
-    ``partner_chat.py`` calls with the master key and no ``user`` field.
-    That is exactly the blind spot AC-8 tests: this observer reports
-    ``None`` for org_id rather than skipping the request.
+    Every widget and partner request has none, since ``partner_chat.py``
+    calls with the master key and no ``user`` field. That is exactly the
+    blind spot AC-8 tests: this observer reports ``None`` for org_id rather
+    than skipping the request.
     """
     metadata = getattr(user_api_key_dict, "metadata", {}) or {}
     return metadata.get("org_id")
@@ -297,19 +292,16 @@ class KlaiPiiObserver(CustomLogger):
                 # Build the coroutine only as create_task's argument: if
                 # get_running_loop() raises (no running loop — sync/test
                 # context), the coroutine is never constructed and no
-                # "never awaited" warning fires at GC. Mirrors
-                # klai_retrieval_telemetry.py's fire_retrieval_log /
-                # fire_gap_event.
+                # "never awaited" warning fires at GC.
                 # Snapshot the text SYNCHRONOUSLY, before scheduling. The
                 # background task must not read `messages` by reference:
-                # klai_knowledge.py mutates data["messages"] (history
-                # sanitisation, system prefixes, KB context injection), so a
+                # earlier callbacks mutate data["messages"] in place, so a
                 # deferred read would measure whatever the list happens to
                 # hold when the loop gets round to the task. Same list,
                 # different content, no error — the measurement would just
                 # quietly drift. An immutable string fixes the measurement
                 # point at this callback's position, which is deliberately
-                # last in `callbacks:` so it is the post-injection payload.
+                # late in `callbacks:` so it is the post-routing payload.
                 texts = _payload_texts(messages)
                 if texts:
                     language = identify_text_language(_user_text(messages))

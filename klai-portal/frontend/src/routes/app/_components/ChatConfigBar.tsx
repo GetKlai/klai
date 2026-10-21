@@ -254,9 +254,8 @@ export function ChatConfigBar() {
           user can compare side-by-side instead of opening a menu. The
           selected pill carries the dark fill (matches the page-header
           primary-button pattern); the other shows muted text. Backed by
-          the same kb_narrow boolean - the LiteLLM hook
-          (deploy/litellm/klai_knowledge.py) reads it per-request and
-          injects the corresponding system-prompt header. */}
+          the same kb_narrow boolean, read per-request by the
+          portal chat path. */}
       <div className="flex items-center gap-2 min-w-0">
         <span className="text-[0.8125rem] text-gray-600 whitespace-nowrap">
           {m.chatbar_mode_label()}:
