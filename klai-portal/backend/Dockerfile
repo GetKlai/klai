@@ -49,16 +49,16 @@ LABEL org.opencontainers.image.source="https://github.com/GetKlai/klai"
 # /repo/klai-portal/backend/.venv/bin/python3.13) stay valid.
 WORKDIR /repo/klai-portal/backend
 
-# Apply security patches to the base image: its OS packages, and the Python
-# packages that ship in its own site-packages (the app runs from the uv venv
-# copied below, but the image scan reads both). The layer is cached in CI,
+# Apply security patches to base image OS packages. The layer is cached in CI,
 # so the upgrade only reruns when this date changes: bump it when the image
-# scan reports a package with a fixed version (openssl 2026-09-30, certifi
-# 2026-10-21).
+# scan reports an OS package with a fixed version (openssl, 2026-09-30).
+# The runtime image also drops the base image's pip: the app runs from the
+# uv venv copied below and never installs anything, while pip's vendored
+# packages (certifi 2026.6.17 on 2026-10-21) are what the image scan flags.
 ARG OS_PATCH_DATE=2026-10-21
 RUN echo "OS patches as of ${OS_PATCH_DATE}" && apt-get update && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
-    && python -m pip install --no-cache-dir --upgrade --root-user-action=ignore certifi
+    && rm -rf /usr/local/lib/python3.13/site-packages/pip /usr/local/lib/python3.13/site-packages/pip-*.dist-info /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13
 
 # Venv (contains the editable klai-connector-credentials pointer) + the
 # shared lib source the editable install points at.
