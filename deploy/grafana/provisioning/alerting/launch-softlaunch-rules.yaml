@@ -126,7 +126,9 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:portal-api AND event:partner_chat_internal_retrieval_failed | stats count() as n'
+              # org 22 is the E2E organisation (slug e2e): its run hits the
+              # restart of every deploy and paged on the first one (21 October).
+              expr: 'service:portal-api AND event:partner_chat_internal_retrieval_failed AND NOT org_id:22 | stats count() as n'
               queryType: stats
           - refId: count
             datasourceUid: __expr__

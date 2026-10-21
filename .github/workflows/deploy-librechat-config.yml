@@ -106,6 +106,24 @@ jobs:
             # script (line 39), so a non-zero exit from the exec'd python process aborts
             # the step and surfaces every printed line (including the errors list) in
             # the step output.
+            # The regenerate endpoint recreates containers through
+            # klai-docker-authz. A push that also rebuilds that proxy left 24
+            # of 42 tenants on the old container with "Max retries exceeded"
+            # (21 October 2026); wait for the proxy before asking.
+            for attempt in $(seq 1 24); do
+              if docker compose -f /opt/klai/docker-compose.yml exec -T portal-api python -c '
+            import sys
+
+            import httpx
+
+            sys.exit(0 if httpx.get("http://klai-docker-authz:2375/health", timeout=5.0).status_code == 200 else 1)
+            ' 2>/dev/null; then
+                break
+              fi
+              echo "klai-docker-authz not answering yet (attempt $attempt of 24)"
+              sleep 5
+            done
+
             echo "Triggering tenant config regeneration via portal-api..."
             docker compose -f /opt/klai/docker-compose.yml exec -T \
               -e RECREATE_CONTAINERS="$RECREATE_CONTAINERS" \

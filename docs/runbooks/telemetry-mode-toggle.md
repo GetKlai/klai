@@ -44,8 +44,8 @@ curl -sS -X POST \
   -d '{"level":"shadow","reason":"Closing debug session for ticket #1234"}'
 ```
 
-Cache propagation: the LiteLLM hook picks up the new level within ~30s
-via the `kb_ver:{org_id}:*` Redis-key invalidation. No restart needed.
+Propagation: the chat path reads the level from the database on every
+turn, so the next turn uses it. No cache, no restart.
 
 ## How to toggle (tenant path — self-service)
 
@@ -65,10 +65,6 @@ non-emergency toggles.
 # 1. DB state
 ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai \
   -c \"SELECT slug, telemetry_level FROM portal_orgs WHERE id = <org_id>;\""
-
-# 2. Cache state (kb_ver pointer should be deleted)
-ssh core-01 "docker exec klai-core-redis-1 redis-cli \
-  KEYS 'kb_ver:<org_id>:*'"
 
 # 3. Audit row
 ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai \
@@ -93,20 +89,6 @@ ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai \
 
 ## Common failure modes
 
-### Cache doesn't invalidate
-
-The level changes in the DB but the LiteLLM hook keeps using the old
-level. Symptom: a /retrieve call >60s after the flip still emits
-content fields in `full` mode (or strips them in `shadow`).
-
-Cause: the SCAN+DEL of `kb_ver:{org_id}:*` failed (Redis blip mid-flip).
-
-Fix: manually delete the keys:
-```bash
-ssh core-01 "docker exec klai-core-redis-1 redis-cli \
-  --scan --pattern 'kb_ver:<org_id>:*' | \
-  xargs -r docker exec -i klai-core-redis-1 redis-cli DEL"
-```
 
 ### Tenant-admin gets 403 on the dropdown
 

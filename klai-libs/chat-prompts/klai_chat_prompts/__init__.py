@@ -171,6 +171,18 @@ _DUTCH_REFUSAL: Final[str] = "Ik kan dit niet betrouwbaar beantwoorden op basis 
 _ENGLISH_REFUSAL: Final[str] = "I cannot answer this reliably from the available knowledge sources."
 _DUTCH_OPEN_MODE_HINT: Final[str] = " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
 _ENGLISH_OPEN_MODE_HINT: Final[str] = " Try Open mode for an answer based on general knowledge."
+# The two other languages the internal chat is used in (21 October 2026: a
+# German conversation got the English refusal). Any other code stays English.
+_REFUSAL_BY_CODE: Final[dict[str, tuple[str, str]]] = {
+    "de": (
+        "Ich kann das anhand der verfügbaren Wissensquellen nicht zuverlässig beantworten.",
+        " Versuche es im Open-Modus für eine Antwort auf Basis von Allgemeinwissen.",
+    ),
+    "fr": (
+        "Je ne peux pas répondre de manière fiable à partir des sources de connaissances disponibles.",
+        " Essayez le mode Open pour une réponse basée sur des connaissances générales.",
+    ),
+}
 
 # Helpdesk variant of the strict-mode refusal, for the public help-page
 # widget. Same bilingual contract as the base refusal, but in customer
@@ -199,8 +211,7 @@ _DUTCH_CONTACT_REPLY: Final[str] = (
     "onder dit bericht."
 )
 _ENGLISH_CONTACT_REPLY: Final[str] = (
-    "You can schedule an appointment with someone who will help you personally. Use the button under this "
-    "message."
+    "You can schedule an appointment with someone who will help you personally. Use the button under this message."
 )
 # The second contact request in a row gets this instead of the same reply
 # again: a visitor who had said they did not want to call got the contact
@@ -389,8 +400,8 @@ def no_citable_sources_message(language: object, *, suggest_open_mode: bool = Fa
     conversation-level decision on every chat path. The single-text
     identifier (``identify_text_language``, next to this library) still
     feeds the separate output-safety refusal, which fires where no
-    conversation decision has been taken. Returns the Dutch refusal for ``"nl"``, otherwise
-    English; None/abstain fall through to DUTCH, other codes to English, so the
+    conversation decision has been taken. Returns the Dutch refusal for ``"nl"``, German and French
+    for ``"de"`` and ``"fr"``, otherwise English; None/abstain fall through to DUTCH, other codes to English, so the
     refusal is never empty (deliberate degradation, see
     :func:`_language_is_dutch`).
 
@@ -414,7 +425,8 @@ def no_citable_sources_message(language: object, *, suggest_open_mode: bool = Fa
     if is_dutch:
         base, hint = _DUTCH_REFUSAL, _DUTCH_OPEN_MODE_HINT
     else:
-        base, hint = _ENGLISH_REFUSAL, _ENGLISH_OPEN_MODE_HINT
+        code = language if isinstance(language, str) else ""
+        base, hint = _REFUSAL_BY_CODE.get(code, (_ENGLISH_REFUSAL, _ENGLISH_OPEN_MODE_HINT))
     return base + hint if suggest_open_mode else base
 
 
@@ -488,6 +500,7 @@ def final_response_language_reminder(target_lang: str | None) -> str:
         "templates, previous assistant answers, and rendered footers do not "
         "set the response language."
     )
+
 
 _GROUNDED_BODY: Final[str] = (
     "You are Klai AI, a knowledge assistant. You answer questions based on the knowledge base "
@@ -1261,7 +1274,7 @@ GROUNDING_CHECK_SYSTEM_PROMPT = (
     "which situation applies, a sentence that only introduces a list, an offer to book an appointment or "
     "contact support, saying something was not found, and a sentence that repeats back what the visitor said "
     "about their own situation, and a statement about this chat itself that an excerpt titled "
-    "\"This chat\" already covers. Judge everything else normally, including what an appointment or an "
+    '"This chat" already covers. Judge everything else normally, including what an appointment or an '
     "employee will DO for the visitor, any promise to transfer or connect them to a person now, and any "
     "effect a button has on their account or subscription. "
     "A question that also states something, such as a price or a step, is judged "
@@ -1300,9 +1313,7 @@ GROUNDING_REPAIR_SYSTEM_PROMPT = (
 # such contract and its reader IS an employee, so the same sentence would invent
 # a product promise. Same schema and same threshold on both paths; only this
 # clause differs.
-_REPAIR_HANDOFF_CLAUSE: Final[str] = (
-    "and that they can book an appointment with an employee for a definite answer"
-)
+_REPAIR_HANDOFF_CLAUSE: Final[str] = "and that they can book an appointment with an employee for a definite answer"
 
 
 def grounding_repair_system_prompt(*, appointment_offered: bool) -> str:
@@ -1383,9 +1394,7 @@ def render_grounding_articles(articles: Iterable[tuple[str, str]]) -> str:
     return "\n\n".join(f"### {title}\n{text}" for title, text in articles)
 
 
-def grounding_check_user_content(
-    *, question: str, articles: Iterable[tuple[str, str]], draft: str
-) -> str:
+def grounding_check_user_content(*, question: str, articles: Iterable[tuple[str, str]], draft: str) -> str:
     """The checker's whole user message.
 
     Both chat paths build this here rather than each writing the same three
@@ -1400,9 +1409,7 @@ def grounding_check_user_content(
     )
 
 
-def grounding_repair_user_content(
-    *, draft: str, unsupported: Iterable[GroundedStatement]
-) -> str:
+def grounding_repair_user_content(*, draft: str, unsupported: Iterable[GroundedStatement]) -> str:
     """The repair model's whole user message."""
     listed = "\n".join(f"- {item.statement}" for item in unsupported)
     return f"Unsupported statements:\n{listed}\n\nReply:\n{draft}"
@@ -1428,4 +1435,3 @@ def parse_grounding_check(content: str | None) -> GroundingCheck | None:
         return GroundingCheck.model_validate_json(content)
     except Exception:
         return None
-

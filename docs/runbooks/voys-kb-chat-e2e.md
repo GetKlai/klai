@@ -12,7 +12,7 @@ This validates the production Voys path:
 ```text
 voys.getklai.com/app/chat
   -> LibreChat
-  -> LiteLLM KlaiKnowledgeHook
+  -> portal-api partner endpoint (the one chat path)
   -> retrieval-api /retrieve
   -> evidence_pack citations
   -> visible Bronnen / Agent activiteit
@@ -393,8 +393,8 @@ Useful LogsQL probes:
 _time:15m service:retrieval-api "retrieval_decision_record"
 _time:15m service:retrieval-api "retrieval_personal_scope_canonical_filter_applied"
 _time:15m service:retrieval-api "knowledge.queried"
-_time:15m service:litellm "query_rewrite" OR "query_rewrite_metadata"
-_time:15m service:litellm "KlaiKnowledgeHook: retrieval"
+_time:15m service:portal-api "passage_selection"
+_time:15m service:portal-api "partner_chat_turn_timing"
 _time:15m "resource mismatch"
 _time:15m "requiresOAuth"
 _time:15m (" 429 " OR "status=429" OR "status\":429")

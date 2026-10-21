@@ -914,19 +914,25 @@ async def _call_retrieval(t: _Turn, retrieve_body: dict) -> dict | _Result:
                 )
                 return [], t.prompt([]), [], False
             return resp.json()
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         # The widget and the partner API answer a failed retrieval with a 502
         # (the caller maps it). The internal chat does what the hook did:
         # Strict refuses, since it may only answer from the knowledge base;
         # Open answers from general knowledge and says the KB was unreachable.
-        # A rejected identity is not unavailability: it means the employee's
-        # sub or org did not verify, so it surfaces as an error.
-        if not t.internal or (isinstance(exc, httpx.HTTPStatusError) and _is_retrieval_identity_assertion_error(exc)):
+        # A body that is not JSON (ValueError) is the same lost knowledge base.
+        if not t.internal:
             raise
         failure = f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
+        if isinstance(exc, httpx.HTTPStatusError) and _is_retrieval_identity_assertion_error(exc):
+            # A rejected identity is not unavailability: the employee's sub or
+            # org did not verify, so it surfaces as an error. It is still
+            # logged under the event the alert watches (R4).
+            failure = "identity_assertion"
         logger.exception(
             "partner_chat_internal_retrieval_failed", org_id=t.org_id, kb_mode=profile.kb_mode, failure=failure
         )
+        if failure == "identity_assertion":
+            raise
         if profile.kb_mode == "strict":
             turn.refusal = strict_kb_unavailable_message
             return [], "", [], False
