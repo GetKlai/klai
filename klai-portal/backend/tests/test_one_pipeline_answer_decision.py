@@ -94,9 +94,10 @@ class _LiteLLM:
         self.judge = judge or {"grounding": "all_in_articles", "verdict": "answered"}
         self.grounding = grounding or _supported(answer)
         self.repaired = repaired
-        # The selection step (passage_selection.py); without a reply it fails
-        # open and the turn runs on everything retrieved.
-        self.selection = selection
+        # The selection step (passage_selection.py). By default it points at no
+        # passage, which narrows nothing: the turn runs on everything retrieved.
+        # (Without a reply it fails, and a failed selection refuses a Strict turn.)
+        self.selection = selection or {"need": "", "evidence": [], "verdict": "answers", "question": ""}
         self.calls: list[dict] = []
 
     def of(self, kind: str) -> list[dict]:
@@ -122,9 +123,8 @@ class _LiteLLM:
             "grounding_check": self.grounding,
             "repair": self.repaired,
             "rewrite": "",
+            "passage_selection": self.selection,
         }
-        if self.selection is not None:
-            replies["passage_selection"] = self.selection
         if kind in replies:
             return _reply(replies[kind])
         if body.get("stream"):

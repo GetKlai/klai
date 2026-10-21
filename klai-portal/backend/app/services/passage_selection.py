@@ -16,7 +16,9 @@ chosen passages. No
 filter on product or passage length in code: both were tried in the same
 measurement and cost answers whose only source was such a passage.
 
-Fails open: no verdict means the turn runs as it did before this step existed.
+A failed call is tried once more; with still no verdict, a source-only turn
+(the widget, internal Strict) answers "not found" (retrieval_context), because
+a writer handed every passage is how an invented answer got through.
 """
 
 from __future__ import annotations
@@ -37,9 +39,10 @@ SELECTION_SYSTEM_PROMPT = (
     "Work in this order.\n"
     "need: in one sentence, what the visitor wants to know or do now. Use the earlier turns to understand a short "
     "latest message; an answer to the assistant's own question narrows the visitor's earlier question, it does not "
-    "replace it.\n"
+    "replace it. When the message asks several questions, the one sentence names each part.\n"
     "evidence: go through the passages and copy, word for word, the sentence or step that tells the visitor how to "
     "do it or gives the fact they asked for. At most three passages, one sentence each, with the passage number. "
+    "When the message asks several questions: one sentence for each part a passage answers, at most six in all. "
     "Copy only sentences that carry the how or the fact. A sentence that merely says something exists, is "
     "supported or is available does not tell how to do it and is not evidence. A sentence saying that what the "
     "visitor wants is not possible or no longer supported IS the fact they need. Leave the list empty when there "
@@ -232,25 +235,31 @@ async def select_passages(
         f"[{number}] {chunk.get('title') or ''}\n{str(chunk.get('text') or '')[:_PASSAGE_CHARS]}"
         for number, chunk in enumerate(chunks, 1)
     )
-    selection = await structured_judge_call(
-        name="passage_selection",
-        system_prompt=SELECTION_SYSTEM_PROMPT,
-        user_content=f"Conversation:\n{conversation_excerpt(messages)}\n\nPassages:\n{passages}",
-        schema=PassageSelection,
-        timeout_seconds=_TIMEOUT_SECONDS,
-        settings=settings,
-        model=settings.answer_grounding_model,
-        delegated_org_id=delegated_org_id,
-    )
-    if selection is not None:
-        # Counts and the closed verdict only; the missing fact is the visitor's words.
-        logger.info(
-            "passage_selection",
-            verdict=selection.verdict,
-            offered=len(chunks),
-            chosen=len(selection.chosen(chunks)),
+    # A timeout or a reply that is not the schema (six in the week of 14 to 21
+    # October) gets one more try with the same budget: without a verdict the
+    # turn now answers "not found" instead of writing from every passage.
+    for _ in range(2):
+        selection = await structured_judge_call(
+            name="passage_selection",
+            system_prompt=SELECTION_SYSTEM_PROMPT,
+            user_content=f"Conversation:\n{conversation_excerpt(messages)}\n\nPassages:\n{passages}",
+            schema=PassageSelection,
+            timeout_seconds=_TIMEOUT_SECONDS,
+            settings=settings,
+            model=settings.answer_grounding_model,
+            delegated_org_id=delegated_org_id,
         )
-    return selection
+        if selection is not None:
+            # Counts and the closed verdict only; the missing fact is the visitor's words.
+            logger.info(
+                "passage_selection",
+                verdict=selection.verdict,
+                offered=len(chunks),
+                chosen=len(selection.chosen(chunks)),
+            )
+            return selection
+    logger.warning("passage_selection_failed", attempt=2, offered=len(chunks))
+    return None
 
 
 def writer_brief(selection: PassageSelection, chunks: list[dict], *, internal: bool, source_only: bool) -> str:

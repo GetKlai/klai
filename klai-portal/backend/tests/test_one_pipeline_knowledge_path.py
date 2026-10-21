@@ -45,6 +45,9 @@ def _evidence_pack(n_items: int = 1, *, score: float = 0.82) -> dict:
     }
 
 
+_NARROWS_NOTHING = {"need": "", "evidence": [], "verdict": "answers", "question": ""}
+
+
 class _Resp:
     def __init__(self, payload: dict, status: int = 200) -> None:
         self._payload = payload
@@ -69,7 +72,9 @@ class _Recorder:
     The structured calls beside the answer (the case, the selection step) also
     post to LiteLLM, without a ``stream`` field; they are kept apart so
     ``model_bodies`` holds only the answer call. The case call gets ``case``
-    when one is set; every other such call gets an empty reply, so it fails open.
+    when one is set, the selection a verdict that points at no passage and so
+    narrows nothing (a failed selection now refuses a Strict turn); every
+    other such call gets an empty reply, so it fails open.
     """
 
     def __init__(self, retrieve_payload: dict | Exception, model_text: str = ANSWER) -> None:
@@ -98,7 +103,10 @@ class _Recorder:
         if "stream" not in json:
             self.side_bodies.append(json)
             schema = (json.get("response_format") or {}).get("json_schema", {}).get("name")
-            reply = _dumps(self.case) if schema == "case_update" and self.case is not None else ""
+            if schema == "passage_selection":
+                reply = _dumps(_NARROWS_NOTHING)
+            else:
+                reply = _dumps(self.case) if schema == "case_update" and self.case is not None else ""
             return _Resp({"choices": [{"message": {"content": reply}}]})
         self.model_bodies.append(json)
         return _Resp(

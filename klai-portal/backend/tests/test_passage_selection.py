@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from app.services import passage_selection
 from app.services.passage_selection import Evidence, PassageSelection, writer_brief
 
 _STEP = "Sluit het basisstation van de headset aan op je toestel met de meegeleverde USB-kabel."
@@ -136,3 +139,19 @@ def test_open_mode_is_not_held_to_the_source_s_own_words():
     assert "own order and its own words" in strict
     assert "own order and its own words" not in open_mode
     assert "Do not add a step, menu, cause or example that is not in the source." in open_mode
+
+
+async def test_a_selection_that_fails_once_is_tried_again_and_used():
+    """Without a verdict a source-only turn answers "not found", so one timeout
+    or bad reply gets a second try before it costs the visitor the answer."""
+    selection = PassageSelection(
+        need="aansluiten", evidence=[Evidence(passage=2, quote=_STEP)], verdict="answers", question=""
+    )
+    call = AsyncMock(side_effect=[None, selection])
+    with patch.object(passage_selection, "structured_judge_call", call):
+        result = await passage_selection.select_passages(
+            [{"role": "user", "content": "Hoe sluit ik de headset aan?"}], _SECTIONS, MagicMock()
+        )
+
+    assert result is selection
+    assert call.await_count == 2

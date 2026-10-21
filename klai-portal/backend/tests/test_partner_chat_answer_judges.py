@@ -1180,12 +1180,21 @@ async def test_a_visitor_who_asks_for_a_person_is_not_told_the_articles_lack_an_
     assert litellm.answer_requests == []
 
 
-async def test_a_failed_selection_leaves_the_turn_as_it_was(monkeypatch):
-    litellm, _, _ = await _selected_turn(monkeypatch, httpx.ConnectError("boom"))
+async def test_a_selection_that_fails_twice_gets_the_not_found_reply_and_no_written_one(monkeypatch):
+    """Six failed selections in the week of 14 to 21 October each handed the
+    writer every passage; the widget answers only from the source, so without
+    a verdict the visitor gets the honest "not found"."""
+    litellm, text, extras = await _selected_turn(monkeypatch, httpx.ConnectError("boom"))
 
-    prompt = _system_prompt_sent(litellm)
-    assert CHUNK_900["text"] in prompt
-    assert "storneer je binnen acht weken" in prompt
+    assert text == REFUSAL_NL
+    assert extras["escalation"] == [{"appointment": True}]
+    assert litellm.answer_requests == []
+    selection_calls = [
+        body
+        for body in litellm.requests
+        if (body.get("response_format") or {}).get("json_schema", {}).get("name") == "passage_selection"
+    ]
+    assert len(selection_calls) == 2
 
 
 async def test_a_frustrated_visitor_whose_passages_do_not_answer_gets_the_refusal_too(monkeypatch):

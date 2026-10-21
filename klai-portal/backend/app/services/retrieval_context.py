@@ -444,6 +444,9 @@ class KnowledgeTurn:
     # retrieved passages (app.services.passage_selection). None when it did
     # not run or failed.
     selection: PassageSelection | None = None
+    # The selection ran and gave no verdict, also on its retry; a source-only
+    # turn then counts as not in the passages.
+    selection_failed: bool = False
     # No retrieved passage answers the question; the widget and internal
     # Strict reply without a model, internal Open writes from every passage.
     not_in_passages: bool = False
@@ -965,6 +968,10 @@ def _usable_evidence(t: _Turn, result: dict, retrieve_body: dict) -> tuple[list[
                 for chunk in chunks
             ],
         }
+        t.answer_signals["sub_questions"] = [question[:120] for question in t.turn.sub_queries]
+    if t.answer_signals is not None:
+        # A flag, no text, so the internal record may keep it too.
+        t.answer_signals["multi_question"] = t.turn.multi_question
     # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001: a low or unknown band without direct
     # evidence for the question. Only the Strict-risk model choice reads it;
     # what the writer may read is the selection step's decision.
@@ -1038,22 +1045,34 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         # fall through to the zero_chunks prompt below instead of refusing.
 
     # Every surface: the writer reads only the passages that answer the
-    # question (passage_selection.py has the numbers). Not on a turn that is
-    # answered broadly, which reads no articles, and not on a multi-part
-    # message, whose parts each need their own passages. "Not in the passages"
-    # narrows nothing here: the caller routes that turn (the widget's "not
-    # found", the internal Strict refusal), and an internal Open turn, which
-    # may answer from general knowledge, gets every passage.
+    # question (passage_selection.py has the numbers), a multi-part message
+    # included, because in the week of 14 to 21 October every invented
+    # technical answer on the widget came through the multi-part branch that
+    # skipped this step. Not on a turn that is answered broadly, which reads
+    # no articles. "Not in the passages" narrows nothing here: the caller
+    # routes that turn (the widget's "not found", the internal Strict
+    # refusal), and an internal Open turn, which may answer from general
+    # knowledge, gets every passage.
     selection_chunks: list[dict] = []
+    source_only = not t.internal or profile.kb_mode == "strict"
     if (
         chunks
-        and not turn.multi_question
         and not turn.user_provided_content
         and not turn.pasted_correspondence
         and not _broad_mode_active(chunks, broad_consent=t.broad_consent)
     ):
         selection_chunks = chunks
         turn.selection = await select_passages(t.messages, chunks, t.settings, delegated_org_id=t.zitadel_org_id)
+        if turn.selection is None:
+            # A failed selection fails closed where the reply may only come
+            # from the source: a writer handed every passage after it is the
+            # second way an invented answer reached the visitor (six failed
+            # selections in that week). Internal Open may answer from general
+            # knowledge and keeps every passage.
+            turn.selection_failed = True
+            turn.not_in_passages = source_only
+            if not source_only:
+                logger.warning("passage_selection_failed_open_keeps_passages", org_id=t.org_id, passages=len(chunks))
         if t.answer_signals is not None and not t.internal:
             # Quotes and the question are text; the internal record keeps
             # signals only (widget_audit.record_internal_turn).
@@ -1066,9 +1085,10 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
                     "question": turn.selection.question[:200],
                 }
                 if turn.selection
-                else None
+                else {"failed": "no_verdict_after_retry"}
             )
-        turn.not_in_passages = bool(turn.selection and turn.selection.not_in_passages(chunks))
+        if turn.selection is not None:
+            turn.not_in_passages = turn.selection.not_in_passages(chunks)
         chosen = turn.selection.chosen(chunks) if turn.selection else []
         if chosen and not turn.not_in_passages:
             turn.passages_chosen = True
@@ -1081,14 +1101,18 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     # never disagree. On a broad turn no article context is injected and no
     # sources can be cited, regardless of what the weak chunks might support.
     broad = _broad_mode_active(chunks, broad_consent=t.broad_consent)
+    # Chosen passages are written from as one question: the brief lists every
+    # part's lines, and the grouped per-question layout would bring back the
+    # passages the selection left out.
+    grouped = turn.multi_question and not turn.passages_chosen
     sub_query_results = [entry for entry in found.result.get("sub_results") or [] if isinstance(entry, dict)] or None
     system_prompt = t.prompt(
         [] if broad else chunks,
         "chunks" if chunks else "zero_chunks",
         broad_mode=broad,
-        multi_question=turn.multi_question,
-        sub_query_results=sub_query_results,
-        unchecked_questions=found.unchecked_questions or None,
+        multi_question=grouped,
+        sub_query_results=sub_query_results if grouped else None,
+        unchecked_questions=(found.unchecked_questions or None) if grouped else None,
     )
 
     if turn.passages_chosen and turn.selection is not None and not broad:
@@ -1096,7 +1120,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             turn.selection,
             selection_chunks,
             internal=t.internal,
-            source_only=not t.internal or profile.kb_mode == "strict",
+            source_only=source_only,
         )
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
