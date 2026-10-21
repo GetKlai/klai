@@ -151,3 +151,15 @@ def make_request(
         "client": client,
     }
     return Request(scope)
+
+
+def selection_quoting_first_passage(body: dict) -> dict:
+    """A selection step reply that quotes the first line of passage 1 from the request it answers.
+
+    The default for an LLM double: a knowledge turn whose selection points at
+    no sentence is "not found" (widget_turn.mark_knowledge_turn_without_evidence),
+    so a test about what comes after the selection needs one that chose.
+    """
+    content = body["messages"][1]["content"]
+    first_line = content.split("Passages:\n[1] ", 1)[1].split("\n", 2)[1]
+    return {"need": "", "evidence": [{"passage": 1, "quote": first_line}], "verdict": "answers", "question": ""}

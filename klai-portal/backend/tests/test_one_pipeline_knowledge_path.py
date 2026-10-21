@@ -18,6 +18,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from helpers import selection_quoting_first_passage
 
 from app.api.partner_dependencies import PartnerAuthContext
 from app.services.chat_profile import ChatProfile
@@ -69,7 +70,9 @@ class _Recorder:
     The structured calls beside the answer (the case, the selection step) also
     post to LiteLLM, without a ``stream`` field; they are kept apart so
     ``model_bodies`` holds only the answer call. The case call gets ``case``
-    when one is set; every other such call gets an empty reply, so it fails open.
+    when one is set, the selection a verdict that quotes passage 1 (a failed
+    selection or one that points at nothing is "not found" on a source-only
+    turn); every other such call gets an empty reply, so it fails open.
     """
 
     def __init__(self, retrieve_payload: dict | Exception, model_text: str = ANSWER) -> None:
@@ -98,7 +101,10 @@ class _Recorder:
         if "stream" not in json:
             self.side_bodies.append(json)
             schema = (json.get("response_format") or {}).get("json_schema", {}).get("name")
-            reply = _dumps(self.case) if schema == "case_update" and self.case is not None else ""
+            if schema == "passage_selection":
+                reply = _dumps(selection_quoting_first_passage(json))
+            else:
+                reply = _dumps(self.case) if schema == "case_update" and self.case is not None else ""
             return _Resp({"choices": [{"message": {"content": reply}}]})
         self.model_bodies.append(json)
         return _Resp(
@@ -407,8 +413,14 @@ async def test_internal_prompt_is_foundation_then_templates_then_librechats_own_
     prompt = _system_prompt(recorder)
     assert prompt.startswith(GROUNDED_CHAT_SYSTEM_PROMPT)
     assert prompt.index("[Formeel]\nSchrijf formeel.") < prompt.index("Evidence E1")
-    # The date line follows the last instruction, so the agent's own text stays where it was.
-    assert "\n\nLIBRECHAT AGENT INSTRUCTIONS\n\nToday is " in prompt
+    # LibreChat's own system follows the evidence; only the selection's brief
+    # for this turn and then the date line come after it.
+    assert (
+        prompt.index("Evidence E1")
+        < prompt.index("\n\nLIBRECHAT AGENT INSTRUCTIONS")
+        < prompt.index("[This turn]")
+        < prompt.index("Today is ")
+    )
     assert recorder.retrieve_bodies[0]["telemetry_level"] == "full"
 
 
