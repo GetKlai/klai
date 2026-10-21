@@ -5,16 +5,11 @@
 #
 # Two anchor sets:
 #   1. Grounded chat prompt anchors — canonical home is
-#      klai-libs/chat-prompts. Imported by partner_chat.py + synthesis.py
-#      (and post-REQ-10, by deploy/litellm/klai_knowledge.py).
-#   2. LiteLLM-hook NL prefix anchors — canonical home is
-#      deploy/litellm/klai_knowledge.py. These prefix blocks (Klai
-#      Kennisbank header, ANTWOORDFORMAAT instructions, KB-unavailable
-#      notice, Klai Templates wrapper) used to be NL-only and v1.2 of
-#      SPEC-RAG-MULTILINGUAL-CHAT-001 either rewrites them in-place or
-#      moves them into klai-libs/chat-prompts as a second exported
-#      constant. Either way, exactly ONE file in the repo may contain
-#      them — never two.
+#      klai-libs/chat-prompts. Imported by partner_chat.py + synthesis.py.
+#   2. KB prefix anchors (Klai Knowledge Base header, ANSWER FORMAT
+#      instructions, KB-unavailable notice, Klai Templates wrapper) —
+#      canonical home is klai-libs/chat-prompts. The LiteLLM hook that used
+#      to carry them was removed on 2026-10-21.
 #
 # Failure mode this catches: a future PR adds a new chat surface or
 # duplicates a prefix block into a second place. CI rejects the PR.
@@ -32,10 +27,7 @@ GROUNDED_ANCHORS=(
     "Als de gebruiker Nederlands schrijft, antwoord je in het Nederlands"
 )
 
-# Set 2 — LiteLLM-hook prefix anchors (canonical homes:
-# deploy/litellm/klai_kb_answer_policy.py,
-# deploy/litellm/klai_kb_context_prompt.py, and
-# deploy/litellm/klai_kb_system_prompt.py).
+# Set 2 — KB prefix anchors (canonical home: klai-libs/chat-prompts).
 #
 # Phase 4 (REQ-10) rewrote these blocks from NL-only to English-prefixed
 # multilingual instructions. The model receives English instructions but
@@ -55,31 +47,16 @@ cd "$REPO_ROOT"
 
 # Allowed paths for the GROUNDED anchors (set 1):
 #   - the canonical library itself
-#   - the LiteLLM-vendored copy (Phase 4 REQ-10 — sync enforced by
-#     deploy/litellm/tests/test_klai_chat_prompts_drift.py, same pattern
-#     as klai_service_auth.py from SPEC-SEC-SERVICE-AUTH-001 Phase C-1)
 #   - the SPEC documentation
 #   - this script
 #   - klai .claude rules + docs
-#
-# NOT allowed: deploy/litellm/klai_knowledge.py — the hook imports
-# ``GROUNDED_CHAT_SYSTEM_PROMPT`` from the vendored copy, never inlines.
-# The 2026-05-07 inline-hotfix was reverted by the cleanup PR after the
-# deploy workflow was switched from ``docker compose restart litellm`` to
-# ``/opt/klai/scripts/compose-up.sh litellm`` (= ``docker compose up -d
-# --remove-orphans litellm``), which picks up new bind-mounts
-# automatically. Two canonical homes for this anchor: canonical library
-# and vendored copy. Drift between them is enforced by
-# test_klai_chat_prompts_drift.py.
-GROUNDED_ALLOWED='^(klai-libs/chat-prompts/|deploy/litellm/klai_chat_prompts\.py|deploy/litellm/tests/|docs/specs/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
+GROUNDED_ALLOWED='^(klai-libs/chat-prompts/|docs/specs/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
 
-# Allowed paths for the HOOK anchors (set 2):
-#   - the LiteLLM hook/policy/context-prompt files (canonical homes)
-#   - the shared library (if the v1.2 implementation moved the blocks there)
+# Allowed paths for the KB prefix anchors (set 2):
+#   - the shared library (canonical home)
 #   - this script
-#   - SPEC + klai rules + docs (they describe what the hook says)
-#   - LiteLLM hook tests
-HOOK_ALLOWED='^(deploy/litellm/klai_knowledge\.py|deploy/litellm/klai_kb_answer_policy\.py|deploy/litellm/klai_kb_context_prompt\.py|deploy/litellm/klai_kb_system_prompt\.py|deploy/litellm/test_|deploy/litellm/tests/|klai-libs/chat-prompts/|docs/specs/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
+#   - SPEC + klai rules + docs (they describe what the chat says)
+HOOK_ALLOWED='^(klai-libs/chat-prompts/|docs/specs/|scripts/lint-no-duplicate-chat-prompt\.sh|\.claude/rules/klai/|docs/architecture/|docs/runbooks/|docs/retros/|docs/audit-|docs/research/kb-chat-system-prompts\.md)'
 
 # Excludes for traversal speed + correctness. These are paths we never
 # want to scan (build artefacts, vendored deps).
@@ -132,17 +109,17 @@ check_anchor_set \
     "${GROUNDED_ANCHORS[@]}" || violations=$((violations + $?))
 
 check_anchor_set \
-    "LiteLLM-hook NL prefix" \
+    "KB prefix" \
     "$HOOK_ALLOWED" \
-    "deploy/litellm/klai_knowledge.py (or klai-libs/chat-prompts if v1.2 migrated the blocks there)" \
+    "klai-libs/chat-prompts" \
     "${HOOK_ANCHORS[@]}" || violations=$((violations + $?))
 
 if (( violations > 0 )); then
     echo
     echo "SPEC-RAG-MULTILINGUAL-CHAT-001 REQ-02 / REQ-11.2 violation."
     echo "Each system-prompt anchor must live in exactly one canonical location."
-    echo "If the v1.2 LiteLLM-hook rework moved a NL prefix block into the shared"
-    echo "library, update HOOK_ALLOWED at the top of this script accordingly."
+    echo "If a prefix block moved to a new canonical home, update HOOK_ALLOWED"
+    echo "at the top of this script accordingly."
     exit 1
 fi
 

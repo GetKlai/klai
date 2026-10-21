@@ -681,8 +681,7 @@ async def _run_coreference(state: RetrievalPipelineState) -> None:
     # coreference — signalled by a distinct ``raw_query`` (the pre-rewrite
     # original) alongside an already-rewritten ``query``. Re-resolving a
     # caller-rewritten query is a redundant second LLM rewrite that only
-    # compounds drift and adds a round-trip. Path A (litellm hook) pre-resolves
-    # via klai_kb_query_rewrite; knowledge-mcp sends raw_query==query and
+    # compounds drift and adds a round-trip. Knowledge-mcp sends raw_query==query and
     # partner/focus omit raw_query, so both still resolve here.
     if _caller_pre_resolved(req):
         state.query_resolved = req.query

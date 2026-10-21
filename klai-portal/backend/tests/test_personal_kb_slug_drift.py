@@ -37,7 +37,6 @@ def test_personal_kb_slug_matches_legacy_inline_pattern() -> None:
     constructed the slug inline:
 
       - ``app.services.default_knowledge_bases.personal_kb_slug`` (pre-SPEC inline)
-      - ``deploy/litellm/klai_knowledge.py`` (PR #705 inline)
       - ``klai-knowledge-ingest`` chunk-stamping code (search the repo grep)
 
     A drift here breaks server-side narrowing silently. Loud failure here

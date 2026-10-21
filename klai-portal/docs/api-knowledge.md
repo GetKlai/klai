@@ -1,12 +1,12 @@
 # Knowledge Integration
 
-Klai Knowledge provides per-tenant document retrieval. The portal is responsible for provisioning the knowledge infrastructure when a tenant is created. At query time, retrieval is fully automatic via a LiteLLM hook — the portal makes no API call.
+Klai Knowledge provides per-tenant document retrieval. The portal is responsible for provisioning the knowledge infrastructure when a tenant is created. At query time, retrieval runs inside the portal's own chat path (the LiteLLM hook that used to do it was removed on 21 October 2026).
 
 ## How it works
 
 1. **Provisioning** (tenant creation): portal-api creates the LiteLLM team, scoped API key, and personal knowledge base.
 2. **Ingest** (ongoing): the klai-docs personal KB has a Gitea push webhook registered to `knowledge-ingest`. Pushing a document triggers automatic chunking, embedding, and storage in Qdrant.
-3. **Retrieval** (query time): `KlaiKnowledgeHook` in LiteLLM intercepts every request, reads `org_id` from the key metadata, retrieves relevant chunks from `knowledge-ingest`, and injects them into the prompt context. No portal involvement.
+3. **Retrieval** (query time): the portal chat path resolves the caller's `org_id`, retrieves relevant chunks through `klai-retrieval-api`, and puts them in the prompt context.
 
 ---
 
@@ -48,10 +48,10 @@ klai-docs responds by:
 | Metadata key | `org_id` |
 | Value | Zitadel org ID of the tenant |
 | Stored in | `portal_orgs.litellm_team_key` |
-| Used by | `KlaiKnowledgeHook` inside LiteLLM |
+| Used by | LiteLLM, to attribute model calls to the tenant |
 | Set as | `LITELLM_API_KEY` in the tenant's LibreChat container |
 
-**Master key behaviour:** Calls made with the LiteLLM master key have no `org_id` in metadata. The hook detects this and skips retrieval — graceful degradation rather than an error.
+**Master key behaviour:** Calls made with the LiteLLM master key have no `org_id` in metadata, so the PII hooks cannot attribute them to a tenant.
 
 ---
 

@@ -73,12 +73,3 @@ async def mint_internal_chat_key(db: AsyncSession, org_id: int, *, rotate: bool 
 async def holds_internal_chat_key(db: AsyncSession, org_id: int, plaintext: str) -> bool:
     """True when ``plaintext`` is the org's current internal-chat key."""
     return any(verify_partner_key(plaintext, key.key_hash) for key in await _internal_chat_keys(db, org_id))
-
-
-async def revoke_internal_chat_key(db: AsyncSession, org_id: int) -> int:
-    """Delete the org's internal-chat keys, so no unheld copy stays valid; returns how many."""
-    existing = await _internal_chat_keys(db, org_id)
-    for key in existing:
-        await db.delete(key)
-    await db.commit()
-    return len(existing)

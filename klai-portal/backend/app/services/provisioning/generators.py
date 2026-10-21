@@ -347,9 +347,9 @@ REDIS_URI=redis://:{quote(settings.redis_password, safe="")}@redis:6379
 
 # AI routing via LiteLLM
 LITELLM_API_KEY={litellm_api_key}
-# The internal chat endpoint librechat.yaml expands. New tenants start on LiteLLM
-# until the one chat pipeline replaces the hook (plan step 9); until then
-# scripts/switch_internal_chat.py moves one tenant to portal-api and back.
+# The internal chat endpoint librechat.yaml expands. New tenants start on LiteLLM's
+# endpoint (no retrieval, no chat prompt) until scripts/switch_internal_chat.py
+# moves them to portal-api.
 KLAI_CHAT_API_KEY={litellm_api_key}
 
 # Web search (shared services on klai-net)

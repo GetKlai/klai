@@ -1,8 +1,7 @@
 """Tests for klai_pii_observe.py (SPEC-PRIVACY-MISTRAL-PII-001 Phase 2).
 
-litellm is not installed as the real proxy package for these tests (see
-test_klai_knowledge_hook.py's same rationale) — we mock the import so
-KlaiPiiObserver's CustomLogger base class resolves.
+litellm is not installed as the real proxy package for these tests — we mock
+the import so KlaiPiiObserver's CustomLogger base class resolves.
 """
 
 from __future__ import annotations
@@ -139,7 +138,7 @@ async def test_payload_returned_byte_identical(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# AC-7 / AC-8 — the two KlaiKnowledgeHook blind spots do NOT suppress this
+# AC-7 / AC-8 — passthrough requests and missing org ids do NOT suppress this
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_openai_passthrough_flag_does_not_suppress_observation(monkeypatch):

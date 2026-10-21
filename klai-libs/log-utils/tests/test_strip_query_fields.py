@@ -1,7 +1,7 @@
 """SPEC-PRIVACY-QUERY-SHADOW-001 REQ-13 — anti-leakage processor tests.
 
 The processor is a defense-in-depth net behind the explicit gating in
-retrieve.py / klai_knowledge.py. Tests cover both the positive path (event
+retrieve.py. Tests cover both the positive path (event
 fields survive in 'full' mode) and the negative path (fields are stripped
 when telemetry_level is anything else).
 """

@@ -1,9 +1,4 @@
-"""Gap classification logic shared between the re-scorer and the LiteLLM hook.
-
-# @MX:NOTE: [AUTO] Mirror of _classify_gap in deploy/litellm/klai_knowledge.py (SPEC-KB-015).
-# @MX:NOTE: Threshold env vars KLAI_GAP_SOFT_THRESHOLD / KLAI_GAP_DENSE_THRESHOLD must match
-# @MX:NOTE: in both places. Update both files when thresholds change.
-"""
+"""Gap classification logic shared between the re-scorer and the chat path (SPEC-KB-015)."""
 
 from typing import cast
 
@@ -13,7 +8,6 @@ from app.core.config import settings
 def classify_gap(chunks: list[dict]) -> str | None:
     """Classify retrieval result. Returns 'hard', 'soft', or None (not a gap).
 
-    Mirrors _classify_gap in deploy/litellm/klai_knowledge.py.
     Reads thresholds from settings (env vars KLAI_GAP_SOFT_THRESHOLD / KLAI_GAP_DENSE_THRESHOLD).
     """
     if not chunks:

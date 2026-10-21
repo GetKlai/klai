@@ -127,7 +127,6 @@ jobs:
               deploy/grafana/provisioning \
               deploy/scripts \
               deploy/systemd \
-              klai-libs/citations/klai_citations \
               scripts
             # Write-then-rename, not `cp` in place. cp truncates the target and
             # then writes it, and portal-api.yml and litellm-hook-deploy.yml run
@@ -141,13 +140,6 @@ jobs:
               cp "deploy/$f" "/opt/klai/$f.tmp"
               mv -f "/opt/klai/$f.tmp" "/opt/klai/$f"
             done
-
-            # LiteLLM uses the canonical citations package via bind mount.
-            # Keep it present before compose can recreate litellm with the
-            # directory mount; the LiteLLM hook workflow also syncs this path
-            # for citations-only changes.
-            mkdir -p /opt/klai/litellm/klai_citations
-            rsync -a --delete klai-libs/citations/klai_citations/ /opt/klai/litellm/klai_citations/
 
             # Sync public-safe deploy scripts to /opt/klai/scripts/ for
             # service-deploy workflows and systemd timers. Operator health

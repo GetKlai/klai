@@ -1,11 +1,9 @@
 """Deterministic rules about the user's latest turn, shared by every chat surface.
 
-Moved from the LiteLLM hook (one-chat-pipeline slice 4):
-``klai_kb_request_context.is_trivial`` / ``is_meta_query`` and
-``klai_kb_confidence_policy.is_multi_question_query`` /
+Moved from the removed LiteLLM hook (one-chat-pipeline slice 4):
+``is_trivial`` / ``is_meta_query`` and ``is_multi_question_query`` /
 ``split_sub_questions``. The widget, the partner API and the internal chat all
-decide these with the same code; the hook keeps its own copy only until slice
-9 removes it.
+decide these with the same code.
 """
 
 from __future__ import annotations

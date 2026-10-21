@@ -2,10 +2,10 @@
 
 The helper exists so the canned strict-mode refusal speaks the language the
 conversation was DECIDED in. It takes a language code, never raw user text:
-path A (LiteLLM hook) passes the conversation decision, paths B (partner_chat)
-and C (synthesis) pass the output of the single-text identifier
+the internal chat passes the conversation decision, partner_chat and
+synthesis pass the output of the single-text identifier
 ``klai_chat_prompts.language.identify_text_language``. Same source of truth
-for all three; a drift test in deploy/litellm/tests/ guards the vendored copy.
+for all of them.
 """
 
 from __future__ import annotations

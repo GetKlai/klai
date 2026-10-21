@@ -8,13 +8,11 @@ backend until the 30s TTL lapsed.
 
 These tests lock:
 1. invalidate_kb_cache single/org-wide DEL behaviour + fire-and-forget.
-2. The key SHAPES the portal builds match the literal f-strings in
-   deploy/litellm/klai_kb_portal_client.py (url-shape-multi-file-drift guard).
+2. The key SHAPES the portal builds.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,16 +20,8 @@ import pytest
 from app.services.litellm_cache import (
     _kb_version_org_pattern,
     _kb_version_user_key,
-    _templates_org_pattern,
-    _templates_user_key,
     invalidate_kb_cache,
 )
-
-# klai_kb_portal_client.py lives at <repo-root>/deploy/litellm/ — three parents up
-# from this test file (tests -> backend -> klai-portal -> repo-root).
-_PORTAL_CLIENT_SOURCE = (
-    Path(__file__).resolve().parents[3] / "deploy" / "litellm" / "klai_kb_portal_client.py"
-).read_text(encoding="utf-8")
 
 
 @pytest.fixture
@@ -56,23 +46,6 @@ def test_kb_version_user_key_shape() -> None:
 
 def test_kb_version_org_pattern_shape() -> None:
     assert _kb_version_org_pattern("300000000000000002") == "kb_ver:300000000000000002:*"
-
-
-def test_portal_key_shapes_match_hook_literals() -> None:
-    """The portal builders MUST mirror the hook's f-string key format.
-
-    If klai_kb_portal_client.py changes its cache-key shape, this fails loudly
-    so the two homes can't drift (the bug was: hook used the Zitadel string,
-    portal used the int).
-    """
-    # LiteLLM portal client constructs these verbatim (get_kb_feature / get_templates).
-    assert 'f"kb_ver:{org_id}:{user_id}"' in _PORTAL_CLIENT_SOURCE
-    assert 'f"templates:{org_id}:{user_id}"' in _PORTAL_CLIENT_SOURCE
-    # And the hook's org_id is the Zitadel string (query param resolved via
-    # PortalOrg.zitadel_org_id), so the portal builders take the same string.
-    assert _kb_version_user_key("Z", "U") == "kb_ver:Z:U"
-    assert _templates_user_key("Z", "U") == "templates:Z:U"
-    assert _templates_org_pattern("Z") == "templates:Z:*"
 
 
 # -- Behaviour ----------------------------------------------------------------

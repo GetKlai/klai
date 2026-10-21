@@ -5,7 +5,7 @@ Every other hook test in this directory replaces
 accept ``*args, **kwargs``. CI does install the real ``litellm==1.96.2``, but
 no test touches it — so a LiteLLM bump that changes a hook signature, or that
 makes one of our overrides stop being an override, passes CI unnoticed and
-lands in every LibreChat chat turn. LiteLLM went from v1.83.7 to v1.96.2 in
+lands in every model call. LiteLLM went from v1.83.7 to v1.96.2 in
 three months.
 
 Read in a subprocess, like ``test_pii_delegation_role_drift.py`` and for the
@@ -41,7 +41,6 @@ _LITELLM_DIR = Path(__file__).resolve().parents[1]
 # only inherits the base method is skipped entirely rather than called.
 _PROBE = """
 import inspect, json, os, sys
-os.environ.setdefault("KNOWLEDGE_RETRIEVE_URL", "http://retrieval-api:8040/retrieve")
 sys.path.insert(0, %r)
 
 import litellm
@@ -49,14 +48,12 @@ from importlib.metadata import version
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.proxy.utils import ProxyLogging
 
-import klai_knowledge
 import klai_pii_enforce
 
 STREAM = "async_post_call_streaming_iterator_hook"
 HOOKS = ["async_pre_call_hook", "async_post_call_success_hook", STREAM,
          "async_post_call_failure_hook"]
-CLASSES = {"KlaiKnowledgeHook": klai_knowledge.KlaiKnowledgeHook,
-           "KlaiPiiEnforcer": klai_pii_enforce.KlaiPiiEnforcer}
+CLASSES = {"KlaiPiiEnforcer": klai_pii_enforce.KlaiPiiEnforcer}
 
 out = {"litellm": version("litellm"), "signatures": {}, "overrides": {}}
 
@@ -117,9 +114,9 @@ def contract() -> dict:
 def test_hook_overrides_accept_the_real_customlogger_parameters(contract: dict) -> None:
     """Each override binds the base class's parameter names as keywords.
 
-    Deliberately not a positional name comparison: klai_knowledge declares
-    ``async_post_call_failure_hook(self, *args, **kwargs)``, which is
-    call-compatible but has no matching names. Binding is what LiteLLM does.
+    Deliberately not a positional name comparison: an override declared as
+    ``(self, *args, **kwargs)`` is call-compatible but has no matching names.
+    Binding is what LiteLLM does.
     """
     version = contract["litellm"]
     for hook, detail in contract["signatures"].items():

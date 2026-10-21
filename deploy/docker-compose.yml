@@ -381,25 +381,8 @@ services:
       # litellm_settings.callbacks): see klai_mistral_pool.py's module
       # docstring.
       - ./litellm/klai_mistral_pool.py:/app/klai_mistral_pool.py:ro
-      - ./litellm/klai_knowledge.py:/app/klai_knowledge.py:ro
       - ./litellm/klai_context.py:/app/klai_context.py:ro
-      - ./litellm/klai_answer_epistemics.py:/app/klai_answer_epistemics.py:ro
-      - ./litellm/klai_answer_grounding.py:/app/klai_answer_grounding.py:ro
-      - ./litellm/klai_kb_answer_policy.py:/app/klai_kb_answer_policy.py:ro
-      - ./litellm/klai_kb_chat_mode.py:/app/klai_kb_chat_mode.py:ro
-      - ./litellm/klai_kb_citation_render.py:/app/klai_kb_citation_render.py:ro
-      - ./litellm/klai_kb_confidence_policy.py:/app/klai_kb_confidence_policy.py:ro
-      - ./litellm/klai_kb_context_prompt.py:/app/klai_kb_context_prompt.py:ro
-      - ./litellm/klai_kb_llm_safety.py:/app/klai_kb_llm_safety.py:ro
-      - ./litellm/klai_kb_portal_client.py:/app/klai_kb_portal_client.py:ro
-      - ./litellm/klai_kb_query_rewrite.py:/app/klai_kb_query_rewrite.py:ro
-      - ./litellm/klai_kb_render_policy.py:/app/klai_kb_render_policy.py:ro
       - ./litellm/klai_kb_request_context.py:/app/klai_kb_request_context.py:ro
-      - ./litellm/klai_kb_safety_filter.py:/app/klai_kb_safety_filter.py:ro
-      - ./litellm/klai_kb_scope_policy.py:/app/klai_kb_scope_policy.py:ro
-      - ./litellm/klai_kb_system_prompt.py:/app/klai_kb_system_prompt.py:ro
-      - ./litellm/klai_kb_traceability.py:/app/klai_kb_traceability.py:ro
-      - ./litellm/klai_kb_urls.py:/app/klai_kb_urls.py:ro
       # Conversation-level language decision module — the single language
       # mechanism for every surface (canonical: klai-libs/chat-prompts/
       # klai_chat_prompts/language.py, kept byte-identical via
@@ -412,18 +395,7 @@ services:
       # Vendored langid 1.1.6 (BSD-2-Clause, model embedded in langid.py,
       # see NOTICES.md): this stock upstream image has no pip-install step,
       # so the package rides as a directory mount next to the flat modules.
-      # Same rationale as klai_llm_safety above.
       - ./litellm/langid:/app/langid:ro
-      - ./litellm/klai_litellm_response.py:/app/klai_litellm_response.py:ro
-      - ./litellm/klai_chat_attachments.py:/app/klai_chat_attachments.py:ro
-      - ./litellm/klai_pasted_correspondence.py:/app/klai_pasted_correspondence.py:ro
-      # SPEC-RAG-CORRESPONDENCE-DISTILL-001 REQ-6: pure eval-harness core
-      # (canary loading + chunk matching + pass-rate aggregation), imported
-      # by scripts/eval_pasted_correspondence_live.py. Not on any request
-      # path, but test_all_litellm_top_level_python_modules_are_mounted_in_compose
-      # requires every top-level module to be mounted so it can run inside
-      # the actual container (docker exec ... python scripts/eval_....py).
-      - ./litellm/klai_correspondence_eval.py:/app/klai_correspondence_eval.py:ro
       # SPEC-PRIVACY-MISTRAL-PII-001 Phase 0 (REQ-0a/REQ-0b): pure eval-
       # harness core (restore-outcome + token-survival classification,
       # Dutch drafting-prompt corpus), imported by
@@ -434,8 +406,8 @@ services:
       - ./litellm/klai_pii_restore_eval.py:/app/klai_pii_restore_eval.py:ro
       # SPEC-PRIVACY-MISTRAL-PII-001 Phase 2 (REQ-5, REQ-6): read-only PII
       # observer, registered as the last entry in config.yaml's
-      # litellm_settings.callbacks. On the request path (unlike the two
-      # eval-harness mounts above), but never blocks or fails it — see
+      # litellm_settings.callbacks. On the request path (unlike the
+      # eval-harness mount above), but never blocks or fails it — see
       # klai_pii_observe.py's module docstring.
       - ./litellm/klai_pii_observe.py:/app/klai_pii_observe.py:ro
       # SPEC-PRIVACY-MISTRAL-PII-001 Phase 3 (REQ-7 through REQ-11): mask/
@@ -458,46 +430,10 @@ services:
       # config.yaml's litellm_settings.callbacks. See klai_prompt_cache.py's
       # module docstring for the caching mechanism.
       - ./litellm/klai_prompt_cache.py:/app/klai_prompt_cache.py:ro
-      # SPEC-CHAT-GUARDRAILS-001: vendored package copy of klai-libs/llm-safety
-      # (kept byte-identical via deploy/litellm/tests/test_klai_llm_safety_drift.py).
-      # Directory mount at /app/klai_llm_safety puts the package on PYTHONPATH
-      # next to klai_knowledge.py so ``import klai_llm_safety`` resolves
-      # without a custom Dockerfile. Phase D plan: pip install in custom image.
-      - ./litellm/klai_llm_safety:/app/klai_llm_safety:ro
-      # SPEC-RAG-MULTILINGUAL-CHAT-001 Phase 4 (REQ-10): vendored single-file
-      # copy of klai-libs/chat-prompts (kept in sync via deploy/litellm/tests/
-      # test_klai_chat_prompts_drift.py). Stock upstream image, no pip-install
-      # hook, so the file is mounted onto PYTHONPATH at /app/. Phase D plan:
-      # replace the vendored files with a proper pip install in a custom image.
-      - ./litellm/klai_chat_prompts.py:/app/klai_chat_prompts.py:ro
-      # SPEC-MCP-RETRIEVAL-001 Phase 1: vendored single-file copy of
-      # klai-libs/retrieval-telemetry (kept in sync via deploy/litellm/tests/
-      # test_klai_retrieval_telemetry_drift.py). klai_knowledge.py imports
-      # `from klai_retrieval_telemetry import ...` at module load — without
-      # this mount the litellm container hits ModuleNotFoundError →
-      # ImportError on `klai_knowledge.klai_knowledge_hook` → restart loop
-      # → all chat traffic 500s with "Connection error". Same vendoring
-      # rationale as klai_chat_prompts.py.
-      - ./litellm/klai_retrieval_telemetry.py:/app/klai_retrieval_telemetry.py:ro
-      # Shared deterministic citation rendering used by klai_knowledge.py.
-      # The LiteLLM deploy workflow syncs klai-libs/citations/klai_citations/
-      # here so this stock upstream image imports the canonical package
-      # without a custom Dockerfile.
-      - ./litellm/klai_citations:/app/klai_citations:ro
-      # SPEC-RAG-CORRESPONDENCE-DISTILL-001 REQ-6: manually-invoked live eval
-      # script (docker exec klai-core-litellm-1 python scripts/eval_pasted_correspondence_live.py).
-      # Not on any request path — see klai_correspondence_eval.py mount above.
+      # Manually-invoked live eval script (docker exec klai-core-litellm-1
+      # python scripts/eval_pii_restore_live.py). Not on any request path, see
+      # the klai_pii_restore_eval.py mount above.
       - ./litellm/scripts:/app/scripts:ro
-      # The canonical eval suite lives in klai-knowledge-ingest's tree — a
-      # different service, never rsynced to the host filesystem (that service
-      # deploys as a built image only, no source-tree sync). Vendored copy at
-      # deploy/litellm/eval_suites/chat.yaml (kept byte-identical via
-      # deploy/litellm/tests/test_chat_yaml_eval_suite_drift.py) is what this
-      # litellm-hook-deploy.yml already rsyncs wholesale, same vendoring
-      # pattern as klai_chat_prompts.py. Mounted
-      # read-only at the path PASTED_CORRESPONDENCE_EVAL_SUITE / --suite
-      # defaults to.
-      - ./litellm/eval_suites/chat.yaml:/app/eval_suites/chat.yaml:ro
     environment:
       PYTHONPATH: /app
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
@@ -516,31 +452,9 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       SEARXNG_API_BASE: ${SEARXNG_INSTANCE_URL}
       DISABLE_ADMIN_UI: "True"
-      KNOWLEDGE_RETRIEVE_URL: http://retrieval-api:8040/retrieve
-      KNOWLEDGE_RETRIEVE_TIMEOUT: "60.0"
-      KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
-      DOCLING_URL: http://docling-serve:5001
-      KLAI_CHAT_PDF_MAX_BYTES: "20971520"
-      KLAI_CHAT_PDF_MAX_EXTRACTED_TOKENS: "120000"
-      KLAI_CHAT_PDF_CONVERSION_TIMEOUT_S: "45.0"
       PORTAL_API_URL: http://portal-api:8010
-      # Two DIFFERENT secrets — one per receiver. portal-api validates the first
-      # (entitlement check + templates fetch) against PORTAL_API_INTERNAL_SECRET;
-      # retrieval-api validates the second (/retrieve call) against its own
-      # INTERNAL_SECRET env var (sourced from RETRIEVAL_API_INTERNAL_SECRET in
-      # SOPS). Until 2026-05-02 the hook used PORTAL_INTERNAL_SECRET for both,
-      # which 401'd retrieve calls every time the two secrets diverged.
+      # Bearer for portal-api's internal PII-policy endpoint (klai_pii_org_policy).
       PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
-      RETRIEVAL_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
-      # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-CIT — citation-rescue flag +
-      # thresholds for klai_citations (path A). Portal-api carries the SAME
-      # three vars for path B; parity is enforced by
-      # deploy/litellm/tests/test_citation_rescue_compose_parity.py, not by
-      # this comment.
-      # Graduated 2026-08-20 after 25 unique production shadow cases over 23 days.
-      CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-active}
-      RESCUE_ANSWER_SCORE_THRESHOLD: ${RESCUE_ANSWER_SCORE_THRESHOLD:-19}
-      RESCUE_RETRIEVAL_RATIO: ${RESCUE_RETRIEVAL_RATIO:-0.4}
       # SPEC-PRIVACY-MISTRAL-PII-001 Phase 0 — where the native Presidio
       # guardrail (see litellm/config.yaml `guardrails:` block) reaches the
       # two stock containers below. Internal service names + port 3000,
@@ -2180,8 +2094,7 @@ services:
       PORTAL_URL: http://portal-api:8010
       PORTAL_INTERNAL_TOKEN: ${PORTAL_API_INTERNAL_SECRET}
       # SPEC-RAG-EVAL-001 — RAGAS evaluation harness calls /retrieve on
-      # klai-retrieval-api. Same secret as the litellm-hook uses for
-      # /retrieve auth (see deploy/litellm/klai_knowledge.py).
+      # klai-retrieval-api. Same secret the portal uses for /retrieve auth.
       RETRIEVAL_API_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
       # SPEC-CRAWLER-004 Fase A — shared Garage S3 image pipeline.
       # Empty GARAGE_S3_ENDPOINT disables image extraction silently.

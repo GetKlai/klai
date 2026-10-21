@@ -62,7 +62,7 @@ def test_strip_removes_the_footer_from_an_earlier_assistant_turn():
 
 def test_strip_removes_the_old_paths_extra_activity_lines_too():
     """The OLD (LiteLLM hook) footer carries lines this module's own
-    render_answer_footer never writes (deploy/litellm/klai_kb_citation_render.py's
+    render_answer_footer never writes (the removed hook's
     _format_visible_agent_activity): scope, retrieval score, citability. They are
     still footer-shaped bullets under the last "Agent activiteit" heading, so the
     strip removes them the same way."""
@@ -91,10 +91,9 @@ def test_strip_is_a_no_op_without_a_footer():
 
 
 def test_footer_is_stripped_from_retrieval_history_and_model_history():
-    """The hook strips its own footer from earlier assistant turns before
-    retrieval (deploy/litellm/klai_kb_request_context.py:77-83); this is the
-    same strip, ported into portal's history builders, so a footer never
-    enters a search query or the model's history.
+    """The removed LiteLLM hook stripped its own footer from earlier assistant
+    turns before retrieval; this is the same strip, ported into portal's history
+    builders, so a footer never enters a search query or the model's history.
     """
     from app.services.chat_prompting import _augment_messages_with_system_prompt, _build_conversation_history
 

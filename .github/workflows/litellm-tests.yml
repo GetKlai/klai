@@ -1,10 +1,9 @@
 name: litellm hook tests
 
-# deploy/litellm (the path-A LiteLLM KB chat hook) had NO automated test gate:
-# its 400+ pytest tests only ran locally, so changes merged without CI ever
-# running them. This workflow closes that gap. It does not gate on `quality`
-# (that required check is path-scoped to klai-portal/backend); it provides the
-# missing litellm pytest gate directly.
+# Tests for the LiteLLM gateway's own callbacks in deploy/litellm (Mistral
+# failover pool, router, PII observe/enforce, prompt cache) against the
+# litellm version the production image runs. They run here and not in a
+# service workflow because deploy/litellm has no pyproject.
 
 on:
   push:
@@ -14,13 +13,6 @@ on:
       # The behavioral failover tests execute against the LiteLLM version
       # pinned by the production image in this Compose file.
       - 'deploy/docker-compose.yml'
-      - 'klai-libs/citations/**'
-      - 'klai-libs/service-auth/**'
-      # chat-prompts is compared byte-for-byte against the vendored
-      # deploy/litellm/klai_chat_prompts.py by test_klai_chat_prompts_drift.py.
-      # Without this trigger a canonical-only edit lands without ever running
-      # the drift gate, and the NEXT unrelated litellm PR fails on it.
-      - 'klai-libs/chat-prompts/**'
       # This workflow file itself: a change to the job's dependency list or
       # command must be verified by running it. Without this path the fix for
       # a red run silently never executes, and main stays red.
@@ -29,9 +21,6 @@ on:
     paths:
       - 'deploy/litellm/**'
       - 'deploy/docker-compose.yml'
-      - 'klai-libs/citations/**'
-      - 'klai-libs/service-auth/**'
-      - 'klai-libs/chat-prompts/**'
       - '.github/workflows/litellm-tests.yml'
 
 jobs:
@@ -42,9 +31,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.13"
-      # deploy/litellm has no pyproject; the hook's deps + the klai-libs
-      # path-deps are supplied ad-hoc (klai-libs referenced by repo-relative
-      # path). The tests import `from tests.klai_module_reset import …`, so they
+      # deploy/litellm has no pyproject; the hooks' deps are supplied ad-hoc.
+      # The tests import `from tests.klai_module_reset import …`, so they
       # must run from the deploy/litellm working directory.
       - name: Test (pytest)
         working-directory: deploy/litellm
@@ -56,6 +44,4 @@ jobs:
           --with pyyaml --with litellm==1.96.2 --with numpy
           --with "backoff>=2.2.1,<3.0" --with "fastapi>=0.136.3,<1.0"
           --with "orjson>=3.11.6,<4.0"
-          --with ../../klai-libs/citations
-          --with ../../klai-libs/service-auth
           python -m pytest tests/ -q --tb=short

@@ -26,7 +26,7 @@ CHAT_PATH = re.compile(
     r"(partner_chat|retrieval_context|chat_safety|chat_prompting|chat_sources|chat_sse|openai_passthrough|answer_\w+|turn_judge|clarify_\w+|query_paraphrase|query_rewrite"
     r"|escalation_intent|gap_classification|off_topic_referral|chat_turn_rules)\.py"
     r"|klai-libs/chat-prompts/klai_chat_prompts/.*\.py"
-    r"|deploy/litellm/(klai_knowledge|klai_kb_\w+|klai_chat_prompts|klai_answer_grounding|custom_router)\.py"
+    r"|deploy/litellm/custom_router\.py"
     r"|klai-retrieval-api/retrieval_api/api/retrieve\.py)$"
 )
 

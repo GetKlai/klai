@@ -1,25 +1,22 @@
 """Cross-deployable drift guard for the retrieval conversation/query content
 character limit.
 
-The 7800-vs-8000 contract lives in three separate deployables with no shared
+The 7800-vs-8000 contract lives in two separate deployables with no shared
 import path between them:
 
 - ``klai-portal/backend/app/services/partner_chat.py``
   (``_RETRIEVAL_HISTORY_CONTENT_MAX_CHARS = 7800``) — clips conversation
   history entries and the retrieval query before calling retrieval-api.
-- ``deploy/litellm/klai_kb_request_context.py``
-  (``RETRIEVE_HISTORY_MAX_CONTENT_CHARS``, env-overridable, default 7800) —
-  the LiteLLM-hook mirror of the same clipping logic for LibreChat traffic.
 - ``klai-retrieval-api/retrieval_api/models.py``
   (``_CONVERSATION_CONTENT_MAX_CHARS = 8_000``) — the hard 422-reject limit
   enforced server-side on every ``conversation_history`` entry.
 
 Per the repo pitfall "url-shape-multi-file-drift": any contract defined in
 more than one file will silently drift unless a mechanical guard exists. This
-test reads the two OTHER deployables' source directly (they are not Python
-packages importable from portal-api's venv — different services, different
-dependency sets) and regex-extracts their constants, anchored to the exact
-assignment lines so a rename or reshape fails this test loudly instead of
+test reads the OTHER deployable's source directly (it is not a Python
+package importable from portal-api's venv — different service, different
+dependency set) and regex-extracts its constant, anchored to the exact
+assignment line so a rename or reshape fails this test loudly instead of
 silently passing.
 """
 
@@ -33,7 +30,6 @@ import pytest
 from app.services.chat_prompting import _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS
 
 _RETRIEVAL_API_RELATIVE_PATH = "klai-retrieval-api/retrieval_api/models.py"
-_LITELLM_HOOK_RELATIVE_PATH = "deploy/litellm/klai_kb_request_context.py"
 
 # Anchored to the exact assignment line in klai-retrieval-api/retrieval_api/models.py:
 #   _CONVERSATION_CONTENT_MAX_CHARS = 8_000
@@ -42,16 +38,9 @@ _RETRIEVAL_API_HARD_LIMIT_RE = re.compile(
     re.MULTILINE,
 )
 
-# Anchored to the exact os.getenv default in deploy/litellm/klai_kb_request_context.py:
-#   RETRIEVE_HISTORY_MAX_CONTENT_CHARS = min(
-#       int(os.getenv("KNOWLEDGE_RETRIEVE_HISTORY_MAX_CONTENT_CHARS", "7800")),
-_LITELLM_DEFAULT_RE = re.compile(
-    r'int\(os\.getenv\("KNOWLEDGE_RETRIEVE_HISTORY_MAX_CONTENT_CHARS",\s*"(\d+)"\)\)',
-)
-
 
 def _find_monorepo_root() -> Path | None:
-    """Walk up from this test file until both sibling deployables are found.
+    """Walk up from this test file until the sibling deployable is found.
 
     Returns None (rather than raising) when only a partial checkout is
     present, so the test can skip with a clear reason instead of failing
@@ -59,7 +48,7 @@ def _find_monorepo_root() -> Path | None:
     """
     current = Path(__file__).resolve()
     for candidate in [current, *current.parents]:
-        if (candidate / _RETRIEVAL_API_RELATIVE_PATH).is_file() and (candidate / _LITELLM_HOOK_RELATIVE_PATH).is_file():
+        if (candidate / _RETRIEVAL_API_RELATIVE_PATH).is_file():
             return candidate
     return None
 
@@ -81,9 +70,8 @@ def monorepo_root() -> Path:
     root = _find_monorepo_root()
     if root is None:
         pytest.skip(
-            "klai-retrieval-api and/or deploy/litellm not present in this "
-            "checkout (partial checkout) — skipping cross-deployable drift "
-            "contract test."
+            "klai-retrieval-api not present in this checkout (partial "
+            "checkout) — skipping cross-deployable drift contract test."
         )
     return root
 
@@ -103,23 +91,4 @@ def test_portal_clip_stays_below_retrieval_api_hard_limit(monorepo_root: Path) -
         f"({_RETRIEVAL_HISTORY_CONTENT_MAX_CHARS}) must stay strictly below "
         f"retrieval-api's _CONVERSATION_CONTENT_MAX_CHARS "
         f"({retrieval_api_hard_limit}), or clipped content would still 422."
-    )
-
-
-def test_litellm_default_matches_portal_constant(monorepo_root: Path) -> None:
-    """The LiteLLM-hook default (env-overridable, used for LibreChat traffic)
-    must equal portal's constant (used for partner-API traffic), so both
-    paths through retrieval-api clip at the same threshold."""
-    litellm_default = _read_int_constant(
-        _LITELLM_DEFAULT_RE,
-        monorepo_root / _LITELLM_HOOK_RELATIVE_PATH,
-        description="KNOWLEDGE_RETRIEVE_HISTORY_MAX_CONTENT_CHARS default",
-    )
-
-    assert litellm_default == _RETRIEVAL_HISTORY_CONTENT_MAX_CHARS, (
-        f"deploy/litellm/klai_kb_request_context.py default "
-        f"({litellm_default}) has drifted from portal's "
-        f"_RETRIEVAL_HISTORY_CONTENT_MAX_CHARS "
-        f"({_RETRIEVAL_HISTORY_CONTENT_MAX_CHARS}) — update one to match "
-        "the other."
     )

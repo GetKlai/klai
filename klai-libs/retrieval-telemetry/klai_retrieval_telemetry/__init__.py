@@ -7,7 +7,7 @@ Public surface:
     RetrievalTelemetryConfig         (override default env-driven config)
 
 Behaviour preservation: the three helpers are byte-identical in observable
-behaviour to the inline implementations in deploy/litellm/klai_knowledge.py
+behaviour to the inline implementations in the LiteLLM hook (since removed)
 prior to SPEC-MCP-RETRIEVAL-001 Phase 1 extraction. The optional
 ``caller_client_id`` keyword is the only contract addition.
 """

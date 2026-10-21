@@ -309,7 +309,7 @@ def _schedule_gap_event(
     additionally has its own handler in ``_write``).
 
     Payload derivation mirrors ``fire_gap_event`` in
-    deploy/litellm/klai_retrieval_telemetry.py (top_score, nearest_kb_slug
+    klai-libs/retrieval-telemetry (top_score, nearest_kb_slug
     only for 'soft', chunks_retrieved) but writes through the shared
     in-process service instead of an HTTP POST to portal-api — this module
     runs inside portal-api itself, so a loopback call would be pointless.
@@ -1276,8 +1276,6 @@ async def retrieve_context(
     Strict turn that cannot search sets ``knowledge_turn.refusal`` and returns
     an empty prompt, and the caller answers with that text without calling a
     model.
-
-    Follows the pattern from deploy/litellm/klai_knowledge.py.
 
     ``broad_mode`` is the widget or partner turn's per-turn visitor consent.
     When it combines with a real retrieval attempt that produced a hard gap,

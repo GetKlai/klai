@@ -25,9 +25,7 @@ uses the native guardrail's restore. It calls presidio-analyzer's
 ``/analyze`` directly, does its own typed/numbered placeholder substitution
 (``klai_pii_text_masking.py``), and restores from its own process-local map
 (``klai_pii_map_store.py``) in ``async_post_call_success_hook`` /
-``async_post_call_streaming_iterator_hook`` — the same buffered
-chunk-rewrite family of hook already working at
-``klai_knowledge.py:1667-1703`` for the citation footer.
+``async_post_call_streaming_iterator_hook``.
 
 Callback registration order (config.yaml): registered as the LAST entry in
 ``litellm_settings.callbacks``, after ``klai_pii_observe.klai_pii_observer``.
@@ -47,14 +45,13 @@ Verified directly against the installed ``litellm==1.96.2`` package
 - ``async_post_call_success_hook``: callbacks are split into
   ``guardrail_callbacks`` (``CustomGuardrail`` instances) and
   ``other_callbacks`` (plain ``CustomLogger`` instances, which is what this
-  module and ``klai_knowledge_hook`` both are); all guardrails run before
+  module is); all guardrails run before
   all other_callbacks regardless of interleaved registration position, but
   WITHIN ``other_callbacks`` the relative registration order is preserved,
   and each callback's non-``None`` return value replaces ``response`` for
   the next one in line. Registering this module last among the
-  ``CustomLogger`` entries means it restores the FINAL rendered text (after
-  ``klai_knowledge_hook``'s own citation rendering), which is what the user
-  actually receives.
+  ``CustomLogger`` entries means it restores the FINAL rendered text, which
+  is what the user actually receives.
 
 Registering this module's pre-call masking AFTER
 ``klai_pii_observe.klai_pii_observer`` (rather than before) is also
@@ -158,8 +155,7 @@ def _org_is_enforced(org_id: Any) -> bool:
        the first org is therefore a deliberate TWO-variable action --
        flip KLAI_PII_ENFORCE AND name that org -- never a one-flag flip
        that silently waits on a second variable nobody remembered.
-    2. A request with NO org_id (the widget/partner master-key path --
-       `klai_knowledge.py:481-483` skips it for the identical reason) is
+    2. A request with NO org_id (the widget/partner master-key path) is
        NEVER enforced, regardless of the flag or the allowlist's
        contents. The allowlist matches org IDENTITIES; a request that
        carries none has nothing to match, and treating "no identity" as
@@ -298,20 +294,19 @@ class PiiAnalyzerUnavailable(RuntimeError):
 # tenant grants nothing it could not do anyway.
 _PROXY_ADMIN_ROLE = "proxy_admin"
 
-# Written by klai_kb_query_rewrite._rewrite_call_metadata on the loopback
-# self-call. See that module for why the field exists.
+# Written by portal-api (litellm_delegation.py) and scribe-api
+# (summarizer.py) on their calls through the proxy.
 _DELEGATED_ORG_ID_KEY = "_klai_delegated_org_id"
 
 
 def _delegated_org_id(user_api_key_dict: Any, data: dict[str, Any]) -> Any:
     """Tenant identity asserted by the proxy about a call it makes to itself.
 
-    Klai's own internal calls -- today the query rewrite -- re-enter the proxy
-    over loopback authenticated with the master key. The master key belongs to
-    no tenant, so ``_org_id_from_key`` finds nothing and enforcement skips the
-    request. That is how the user's own question reached Mistral unmasked on
-    the very call that rewrites it, while the same text was masked on the main
-    call. The org is known at that call site; it just was not travelling.
+    Klai's own internal calls (portal-api's background model work, scribe-api's
+    summaries) reach the proxy authenticated with the master key. The master
+    key belongs to no tenant, so ``_org_id_from_key`` finds nothing and
+    enforcement skips the request, so the user's text would reach Mistral
+    unmasked. The org is known at the call site; it just was not travelling.
 
     The assertion is honoured ONLY for ``proxy_admin``. A tenant key that puts
     this field in its request body is ignored, because a body is not
@@ -803,8 +798,7 @@ class KlaiPiiEnforcer(CustomLogger):
             return
 
         # Per-choice-index buffers -- REQ-8's tail holdback, sized in
-        # klai_pii_text_masking.TAIL_LEN. One-item lookahead (same shape as
-        # klai_knowledge.py:1667-1703's citation-footer pattern): every item
+        # klai_pii_text_masking.TAIL_LEN. One-item lookahead: every item
         # is yielded exactly once, after we know whether a later item (or
         # stream end) follows it, so the truly-last item can absorb
         # whatever text is still held back at stream end.
