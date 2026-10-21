@@ -181,6 +181,7 @@ async def _turn(
     key_id: str = "key-internal",
     history: tuple[dict, ...] = (),
     include_sources: bool = True,
+    retrieval_response: httpx.Response | None = None,
 ) -> _Turn:
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
@@ -227,7 +228,9 @@ async def _turn(
 
     with respx.mock(assert_all_called=False) as router:
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=llm)
-        router.post(f"{RETRIEVAL}/retrieve").mock(return_value=httpx.Response(200, json=retrieval or {}))
+        router.post(f"{RETRIEVAL}/retrieve").mock(
+            return_value=retrieval_response or httpx.Response(200, json=retrieval or {})
+        )
         router.get(url__startswith=f"{RETRIEVAL}/internal/v1/taxonomy").mock(return_value=httpx.Response(200, json={}))
         response = await chat_completions(request=request, http_request=http_request, auth=auth, db=db, profile=profile)
         frames: list[dict] = []
@@ -401,6 +404,30 @@ async def test_open_turn_whose_selection_chose_nothing_keeps_the_passages_with_t
     assert NO_PASSAGE_ANSWERS_NOTE in prompt
     assert "zero results for this query" not in prompt
     assert turn.text.startswith(ANSWER)
+
+
+@pytest.mark.parametrize(
+    ("kb_mode", "expected"),
+    [("strict", "tijdelijk niet bereikbaar"), ("open", UNRELATED)],
+    ids=["strict_refuses", "open_answers_with_notice"],
+)
+@pytest.mark.asyncio
+async def test_a_retrieve_body_that_is_not_json_counts_as_a_lost_knowledge_base(monkeypatch, kb_mode, expected):
+    """Only an http error was treated as unavailability; a 200 with a body
+    that is not JSON raised through the turn and never reached the alert."""
+    llm = _LiteLLM(UNRELATED)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode=kb_mode),
+        retrieval_response=httpx.Response(200, text="<html>upstream</html>"),
+        stream=False,
+    )
+
+    assert expected.lower() in turn.text.lower()
+    (record,) = turn.records
+    assert record["decision"] in ("refusal", "general_knowledge", "answer")
 
 
 # --- Open and general never refuse for a missing source ---------------------------

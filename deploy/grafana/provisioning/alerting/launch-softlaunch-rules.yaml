@@ -126,7 +126,9 @@ groups:
               datasource:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
-              expr: 'service:portal-api AND event:partner_chat_internal_retrieval_failed | stats count() as n'
+              # org 22 is the E2E organisation (slug e2e): its run hits the
+              # restart of every deploy and paged on the first one (21 October).
+              expr: 'service:portal-api AND event:partner_chat_internal_retrieval_failed AND NOT org_id:22 | stats count() as n'
               queryType: stats
           - refId: count
             datasourceUid: __expr__
@@ -168,7 +170,10 @@ groups:
             internal chat turn in the last 15 minutes. In Strict mode the user
             got a refusal; in Open mode an answer from general knowledge with a
             note that the knowledge base was unreachable. The `failure` field
-            holds the HTTP status or the exception class.
+            holds the HTTP status or the exception class; `identity_assertion`
+            means retrieval-api rejected the employee's identity (the turn
+            then errors instead of degrading), and `JSONDecodeError` a body
+            that was not JSON.
 
             Investigate (Grafana → Explore → VictoriaLogs):
               service:portal-api AND event:partner_chat_internal_retrieval_failed

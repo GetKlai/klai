@@ -80,24 +80,24 @@ test.describe('SPEC-CHAT-TEMPLATES-002 - Prompt Templates frontend CRUD', () => 
   })
 
   /**
-   * SCEN-E2E-4 - Chat-integration: template injection reaches LiteLLM.
+   * SCEN-E2E-4 - Chat-integration: template injection reaches portal-api.
    *
-   * End-to-end smoke: frontend activation flows into the LiteLLM hook.
+   * End-to-end smoke: frontend activation flows into portal-api's system prompt.
    *
    * Steps:
    *  1. goto('/app/templates/new'); create "Formeel proef" template.
    *  2. goto('/app') → ChatConfigBar visible
    *  3. Open template picker; tick "Formeel proef"
    *  4. Type a chat message in the embedded LibreChat iframe
-   *  5. Poll VictoriaLogs (or the service-level LiteLLM log) for the next
+   *  5. Poll VictoriaLogs (or the service-level portal-api log) for the next
    *     `_klai_kb_meta` entry tied to this user session; expect the system
-   *     message portion of the LiteLLM request to include the template's
+   *     message portion of the portal-api prompt to include the template's
    *     prompt_text prepended before the KB-context block.
    *
    * This step validates REQ-TEMPLATES-HOOK E1 end-to-end and closes the
    * product promise of the feature.
    */
-  test('SCEN-E2E-4 activated template reaches LiteLLM system prompt', async ({ page }) => {
+  test('SCEN-E2E-4 activated template reaches portal-api system prompt', async ({ page }) => {
     // TODO
     expect(page).toBeDefined()
   })
