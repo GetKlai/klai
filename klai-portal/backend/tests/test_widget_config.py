@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.partner_widget_config import widget_config
 
@@ -56,6 +57,7 @@ class FakeOrg:
     # generate_session_token directly, so the actual value here is not
     # signature-relevant — but it must exist to satisfy the call site.
     slug: str = "test"
+    deleted_at: object = None
     # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1 (Finding B-1): partner endpoints
     # call assert_platform_unlocked(org, "widgets"). Default the fake to
     # "widgets unlocked" so happy-path tests still pass; tests that exercise
@@ -88,6 +90,27 @@ def _make_db_chain(widget: FakeWidget | None, org: FakeOrg | None, kb_ids: list[
 
     db.execute = AsyncMock(side_effect=[widget_result, org_result, kb_result])
     return db
+
+
+@pytest.mark.asyncio
+async def test_widget_config_of_a_deleted_org_is_not_found():
+    """The org row stays after a soft delete; its widget used to answer with
+    a config and a session token that partner auth refuses on every turn."""
+    widget = FakeWidget()
+    db = _make_db_chain(widget, FakeOrg(deleted_at="2026-10-21T00:00:00Z"), [1, 2])
+
+    with (
+        patch("app.api.partner_widget_config.settings") as mock_settings,
+        patch("app.api.partner_widget_config.get_redis_pool"),
+        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
+        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
+    ):
+        mock_settings.widget_jwt_secret = "shared-secret"
+        with pytest.raises(HTTPException) as exc:
+            await widget_config(id=widget.widget_id, request=_make_request("https://example.com"), db=db)
+
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
