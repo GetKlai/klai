@@ -106,7 +106,7 @@ details in the private infra repo.
 | `REDIS_PASSWORD` | portal-api | Redis password; interpolated into `REDIS_URL` for the BFF session store + rate limiter + LibreChat provisioning. |
 | `REDIS_PASSWORD` | retrieval-api | Interpolated into `REDIS_URL` for the rate-limiter (SPEC-SEC-010). |
 | `RETRIEVAL_API_INTERNAL_SECRET` | portal-api | Shared secret portal-api → retrieval-api for `/retrieve` calls. Kept separate from `INTERNAL_SECRET` so the two trust boundaries can rotate independently (SPEC-SEC-010 REQ-6.1). |
-| `RETRIEVAL_API_INTERNAL_SECRET` | retrieval-api | Shared secret for internal callers (portal-api, LiteLLM hook). Mapped to `INTERNAL_SECRET` in-container (SPEC-SEC-010). |
+| `RETRIEVAL_API_INTERNAL_SECRET` | retrieval-api | Shared secret for internal callers (portal-api). Mapped to `INTERNAL_SECRET` in-container (SPEC-SEC-010). |
 | `RETRIEVAL_API_RATE_LIMIT_RPM` | retrieval-api | Sliding-window rate-limit threshold per caller identity (SPEC-SEC-010). |
 | `RETRIEVAL_API_ZITADEL_AUDIENCE` | retrieval-api | Zitadel audience for JWT validation. Mapped to `ZITADEL_API_AUDIENCE` in-container. |
 | `VEXA_ADMIN_TOKEN` | portal-api | Reserved for Vexa admin-API calls (tenant provisioning, quota inspection). @MX:NOTE in config.py — no runtime reader yet; declared to preserve pre-migration env-shape. |

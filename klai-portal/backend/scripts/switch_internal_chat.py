@@ -1,16 +1,12 @@
-"""Switch one tenant's internal chat (LibreChat) between the LiteLLM hook and portal-api.
+"""Switch one tenant's internal chat (LibreChat) to portal-api.
 
-docs/architecture/chat-quality-history-and-plan.md §7.3: the internal chat moves
-to the one chat pipeline tenant by tenant. The "Klai AI" endpoint in
+docs/architecture/chat-quality-history-and-plan.md §7.3: the internal chat runs
+on the one chat pipeline. The "Klai AI" endpoint in
 deploy/librechat/librechat.yaml reads its key and base URL from two variables in
-the tenant's LibreChat .env, so a switch rewrites exactly those two lines and
-recreates the container:
-
-- ``portal``: KLAI_CHAT_API_KEY becomes the org's internal-chat partner key
-  (reused when the .env already holds it, minted otherwise) and
-  KLAI_CHAT_BASE_URL becomes portal-api's partner endpoint.
-- ``litellm``: both go back to LITELLM_API_KEY from the same file and LiteLLM's
-  URL, and the internal-chat key is revoked, so no copy nobody holds stays valid.
+the tenant's LibreChat .env, so the switch writes exactly those two lines and
+recreates the container: KLAI_CHAT_API_KEY becomes the org's internal-chat
+partner key (reused when the .env already holds it, minted otherwise) and
+KLAI_CHAT_BASE_URL becomes portal-api's partner endpoint.
 
 Recreate, not restart: Docker bakes the .env into the container's environment
 at create time and LibreChat's dotenv does not override it, so a restart would
@@ -20,8 +16,8 @@ writes its .env, prints the host command and exits 3.
 
 Run inside portal-api, or in a throwaway clone of it:
 
-    docker exec klai-core-portal-api-1 python scripts/switch_internal_chat.py <slug> portal|litellm [--rotate]
-    deploy/scripts/portal-api-oneoff.sh -- python scripts/switch_internal_chat.py <slug> portal|litellm
+    docker exec klai-core-portal-api-1 python scripts/switch_internal_chat.py <slug> portal [--rotate]
+    deploy/scripts/portal-api-oneoff.sh -- python scripts/switch_internal_chat.py <slug> portal
 
 ``--rotate`` replaces an internal-chat key that exists in the database but not in
 this .env (e.g. after an interrupted run). The key is never printed.
@@ -51,29 +47,24 @@ from app.core.config import settings  # noqa: E402
 from app.core.database import cross_org_session, tenant_scoped_session  # noqa: E402
 from app.core.provisioning_names import validate_slug_for_provisioning  # noqa: E402
 from app.models.portal import PortalOrg  # noqa: E402
-from app.services.internal_chat_keys import (  # noqa: E402
-    holds_internal_chat_key,
-    mint_internal_chat_key,
-    revoke_internal_chat_key,
-)
-from app.services.provisioning.generators import _ENV_KEY_RE, LITELLM_CHAT_BASE_URL  # noqa: E402
+from app.services.internal_chat_keys import holds_internal_chat_key, mint_internal_chat_key  # noqa: E402
+from app.services.provisioning.generators import _ENV_KEY_RE, PORTAL_CHAT_BASE_URL  # noqa: E402
 from app.services.provisioning.infrastructure import (  # noqa: E402
     _invalidate_librechat_config_cache,
     _read_dotenv_file,
     _start_librechat_container,
 )
 
-PORTAL_CHAT_BASE_URL = "http://portal-api:8010/partner/v1"
 EXIT_COMPOSE_RECREATE_PENDING = 3
 
 
 def rewrite_env(content: str, values: Mapping[str, str]) -> str:
-    """Replace the ``KEY=`` lines named in ``values``; every other byte stays as it was.
+    """Replace the ``KEY=`` lines named in ``values`` and append the ones the file lacks; every other byte stays.
 
-    A key that is not in the file raises instead of being appended: the fleet
-    backfill (/internal/librechat/regenerate) writes both chat variables, and a
-    tenant without them has not had it. An empty value raises too, because
-    librechat.yaml would expand it into an empty API key.
+    A missing key is appended because the fleet reconcile no longer writes the
+    chat variables, so an env provisioned before they existed, or cut short,
+    only gets them here. An empty value raises, because librechat.yaml would
+    expand it into an empty API key.
     """
     empty = sorted(key for key, value in values.items() if not value)
     if empty:
@@ -86,9 +77,10 @@ def rewrite_env(content: str, values: Mapping[str, str]) -> str:
             key = match.group(1)
             lines[index] = f"{key}={values[key]}" + ("\n" if line.endswith("\n") else "")
             seen.add(key)
-    missing = sorted(set(values) - seen)
-    if missing:
-        raise ValueError(f"{missing} not in the tenant .env; run the LibreChat env backfill first")
+    missing = [key for key in values if key not in seen]
+    if missing and lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    lines.extend(f"{key}={values[key]}\n" for key in missing)
     return "".join(lines)
 
 
@@ -132,40 +124,25 @@ def _recreate(org: PortalOrg) -> None:
     )
 
 
-async def revoke(slug: str) -> int:
-    """Delete the org's internal-chat key once its LibreChat no longer holds it (compose tenants, after the recreate)."""
-    org = await _load_org(slug)
-    async with tenant_scoped_session(org.id) as db:
-        revoked = await revoke_internal_chat_key(db, org.id)
-    print(f"{org.slug}: revoked {revoked} internal-chat key(s)")
-    return 0
-
-
-async def switch(slug: str, target: str, *, rotate: bool = False) -> int:
+async def switch(slug: str, *, rotate: bool = False) -> int:
     org = await _load_org(slug)
     env_path = Path(settings.librechat_container_data_path) / org.slug / ".env"
     env = _read_dotenv_file(env_path)
-    if not {"KLAI_CHAT_API_KEY", "KLAI_CHAT_BASE_URL"} <= env.keys():
-        raise SystemExit(f"{env_path} lacks the chat variables; run the LibreChat env backfill first.")
     compose_managed = await asyncio.to_thread(_compose_managed, org.slug)
 
-    if target == "portal":
-        current = env.get("KLAI_CHAT_API_KEY", "")
-        async with tenant_scoped_session(org.id) as db:
-            if await holds_internal_chat_key(db, org.id, current):
-                key, key_action = current, "reused the internal-chat key this .env already holds"
-            else:
-                key = await mint_internal_chat_key(db, org.id, rotate=rotate)
-                if key is None:
-                    raise SystemExit(
-                        f"{org.slug} has an internal-chat key this .env does not hold; "
-                        "rerun with --rotate to replace it. Nothing was changed."
-                    )
-                key_action = "minted a new internal-chat key" + (" (old one deleted)" if rotate else "")
-        values = {"KLAI_CHAT_API_KEY": key, "KLAI_CHAT_BASE_URL": PORTAL_CHAT_BASE_URL}
-    else:
-        values = {"KLAI_CHAT_API_KEY": env.get("LITELLM_API_KEY", ""), "KLAI_CHAT_BASE_URL": LITELLM_CHAT_BASE_URL}
-        key_action = "KLAI_CHAT_API_KEY set to this tenant's LITELLM_API_KEY"
+    current = env.get("KLAI_CHAT_API_KEY", "")
+    async with tenant_scoped_session(org.id) as db:
+        if await holds_internal_chat_key(db, org.id, current):
+            key, key_action = current, "reused the internal-chat key this .env already holds"
+        else:
+            key = await mint_internal_chat_key(db, org.id, rotate=rotate)
+            if key is None:
+                raise SystemExit(
+                    f"{org.slug} has an internal-chat key this .env does not hold; "
+                    "rerun with --rotate to replace it. Nothing was changed."
+                )
+            key_action = "minted a new internal-chat key" + (" (old one deleted)" if rotate else "")
+    values = {"KLAI_CHAT_API_KEY": key, "KLAI_CHAT_BASE_URL": PORTAL_CHAT_BASE_URL}
 
     _write_env(env_path, rewrite_env(env_path.read_text(), values))
     print(f"{org.slug}: {key_action}; KLAI_CHAT_BASE_URL={values['KLAI_CHAT_BASE_URL']} written to {env_path}")
@@ -174,25 +151,17 @@ async def switch(slug: str, target: str, *, rotate: bool = False) -> int:
         container = validate_slug_for_provisioning(org.slug, domain=settings.domain).librechat_container
         print(f"{container} is compose-managed and was NOT recreated. On the host run:")
         print(f"  cd /opt/klai && docker compose up -d --no-deps --force-recreate {container}")
-        if target == "litellm":
-            # The running container still authenticates with the internal key
-            # until the recreate; revoking it now would give every turn a 401.
-            print(f"  then: python scripts/switch_internal_chat.py {org.slug} revoke")
         return EXIT_COMPOSE_RECREATE_PENDING
 
     await asyncio.to_thread(_recreate, org)
-    print(f"{org.slug}: LibreChat container recreated and healthy on {target}")
-    if target == "litellm":
-        await revoke(org.slug)
+    print(f"{org.slug}: LibreChat container recreated and healthy on portal")
     return 0
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("slug")
-    parser.add_argument("target", choices=["portal", "litellm", "revoke"])
+    parser.add_argument("target", choices=["portal"])
     parser.add_argument("--rotate", action="store_true")
     args = parser.parse_args()
-    if args.target == "revoke":
-        sys.exit(asyncio.run(revoke(args.slug)))
-    sys.exit(asyncio.run(switch(args.slug, args.target, rotate=args.rotate)))
+    sys.exit(asyncio.run(switch(args.slug, rotate=args.rotate)))

@@ -42,37 +42,33 @@ SPEC-RAG-MULTILINGUAL-CHAT-001.
 
 | Location | What lives here | Used by |
 |---|---|---|
-| `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` (`GROUNDED_CHAT_SYSTEM_PROMPT`) | The shared multilingual base prompt: detect substantive language, three guards, no translator disclaimers, [n] citation rules | imported by paths B (`partner_chat.py`) and C (`synthesis.py`); imported by path A as the foundation in v1.2 |
-| `deploy/litellm/klai_knowledge.py` | The LiteLLM pre-call hook prefix builder: Klai Kennisbank header (narrow + broad), ANTWOORDFORMAAT instructions, Klai Templates wrapper, KB-unavailable notice | path A only — LibreChat user-facing chat traffic |
+| `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` (`GROUNDED_CHAT_SYSTEM_PROMPT`) | The shared multilingual base prompt: detect substantive language, three guards, no translator disclaimers, [n] citation rules | imported by paths B (`partner_chat.py`) and C (`synthesis.py`) |
 | `klai-portal/backend/app/services/partner_chat.py::_build_system_prompt` | Adds the chunks-as-context block to the shared base | path B — Widget + Partner API |
 
-**Why three:** chat traffic in Klai takes three concurrent paths. (A)
-LibreChat → LiteLLM hook → Mistral; (B) portal-api
-`/partner/v1/chat/completions` → LiteLLM (no `user` field, hook skips)
-→ Mistral; (C) retrieval-api `POST /chat` (dormant). The hook fires
-only for path A (it filters on `data["user"]`). v1.0/v1.1 of the SPEC
-landed multilingual on B + C only, leaving A still hardcoded NL —
-that mistake cost a full audit cycle to detect.
+**Why more than one:** chat traffic in Klai takes concurrent paths. (B)
+portal-api `/partner/v1/chat/completions` → LiteLLM → Mistral, which
+also serves the internal chat (LibreChat) since 13 October 2026; (C)
+retrieval-api `POST /chat` (dormant). Path A (LibreChat → LiteLLM hook)
+was removed on 21 October 2026. v1.0/v1.1 of the SPEC landed
+multilingual on B + C only, leaving A still hardcoded NL — that
+mistake cost a full audit cycle to detect.
 
 **Prevention:**
-- Before changing chat behaviour: ask which of the three paths you're
+- Before changing chat behaviour: ask which of the paths you're
   touching. If the answer isn't immediately obvious from the file
   name, you don't yet understand the change — re-read this entry.
 - Never inline a copy of `GROUNDED_CHAT_SYSTEM_PROMPT` content in a
   new chat surface. Import `from klai_chat_prompts import
   GROUNDED_CHAT_SYSTEM_PROMPT`.
 - Never duplicate a Klai Kennisbank / ANTWOORDFORMAAT / Klai Templates
-  / KB-unavailable block outside `deploy/litellm/klai_knowledge.py`
-  unless you migrated it into `klai-libs/chat-prompts` and updated
-  every other consumer in the same PR.
+  / KB-unavailable block outside `klai-libs/chat-prompts`.
 - A module lives where its only consumer is. Move it to `klai-libs/chat-prompts`
   only in the PR that adds the second consumer: the vendored-copy pattern doubles
   every line, never pay that for a speculative consumer. A new dependency in the
   LiteLLM container is class L (needs Mark's yes).
 - The CI lint `scripts/lint-no-duplicate-chat-prompt.sh` enforces both
-  rules. It checks two anchor sets — the GROUNDED prompt anchors
-  (canonical: `klai-libs/chat-prompts`) and the LiteLLM-hook NL prefix
-  anchors (canonical: `deploy/litellm/klai_knowledge.py`).
+  rules. It checks two anchor sets — the GROUNDED prompt anchors and the
+  KB prefix anchors (both canonical: `klai-libs/chat-prompts`).
 - Do NOT re-introduce explicit language allow-lists in any of the
   three locations ("if the user writes Dutch", "if the user writes
   English"). The base prompt detects any language the LLM

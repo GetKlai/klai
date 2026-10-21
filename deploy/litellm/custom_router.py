@@ -7,8 +7,6 @@ conversation context:
   Tool call history detected         →  klai-large    (mistral-large, agentic/MCP flows)
   Long user message detected         →  klai-large    (complex analytical request)
   Web search content detected        →  klai-fast     (mistral-small, speed for synthesis)
-  Strict KB + risk signals           →  klai-medium   (multi-part question or low-confidence
-                                                       evidence: stronger instruction-following)
   Default                            →  klai-primary  (mistral-small, normal chat)
 
 Scope: klai-primary is routed for LibreChat/chat traffic. Explicit klai-fast,
@@ -20,8 +18,8 @@ metadata and bypass provider context assembly.
 Detection:
   - Tool calls: any message with role="tool" → agentic flow, needs strong reasoning
   - Long user message: last user message > USER_MESSAGE_THRESHOLD tokens → complex
-    analytical request. Counts only role="user" messages so KB chunks and system
-    prompts injected by klai_knowledge_hook do not trigger false positives.
+    analytical request. Counts only role="user" messages so system prompts
+    and injected context do not trigger false positives.
   - Web search: any message with >= MIN_SEARCH_URLS URLs → scraped content injection
   - Hard ceiling: token count > SEARCH_TOKEN_THRESHOLD → fast (safety net)
 
@@ -86,26 +84,11 @@ def _context_meta_has_tool_history(metadata: dict) -> bool:
     )
 
 
-def _kb_risk_upgrade(kb_meta: object) -> bool:
-    """Strict-mode KB answers with known hallucination-risk signals get a
-    stronger model. Risk = the model actually answers (chunks_present) while
-    the message is multi-part or the low-confidence guard fired — the exact
-    conditions of the 2026-08-17 fabricated-webhook-timeout incident. Cost
-    stays bounded: this is a small fraction of KB chat traffic.
-    """
-    if not isinstance(kb_meta, dict) or not kb_meta.get("kb_narrow"):
-        return False
-    if kb_meta.get("answer_policy_state") != "chunks_present":
-        return False
-    return bool(kb_meta.get("multi_question") or kb_meta.get("low_confidence_inject"))
-
-
 def _is_chat_context_request(requested_model: object, data: dict, metadata: dict) -> bool:
     if requested_model == "klai-primary":
         return True
     return bool(
         data.get("user")
-        or metadata.get("_klai_kb_meta")
         or metadata.get("_klai_context_meta")
         or metadata.get("_klai_router_meta")
     )
@@ -127,8 +110,8 @@ def _merge_context_meta(
     merged["omitted_tool_content_parts"] = int(
         previous.get("omitted_tool_content_parts") or 0
     ) + int(next_context_meta.get("omitted_tool_content_parts") or 0)
-    # The knowledge hook and router can both see the same active tool turn.
-    # Keep the observed count without double-counting a single provider request.
+    # Keep the observed count without double-counting a single provider
+    # request that already carries context meta.
     for counter in (
         "active_tool_results_converted",
         "active_tool_results_preserved",
@@ -197,16 +180,16 @@ class TokenRouter(CustomLogger):
         total_tokens: int | None = None
         try:
             if requested_model == "klai-primary":
-                # Agentic/MCP flow: tool call history → mistral-large. The
-                # knowledge hook may already have stripped provider-unsafe tool
-                # roles, so also honor its retained context metadata.
+                # Agentic/MCP flow: tool call history → mistral-large. Tool
+                # roles may already have been stripped as provider-unsafe, so
+                # also honor the retained context metadata.
                 if _has_tool_calls(messages) or _context_meta_has_tool_history(metadata):
                     final_model = "klai-large"
                     route_reason = "tool_history"
                 else:
                     # Long user message → complex analytical request → klai-large.
-                    # Only the last user message is counted so KB chunks injected by
-                    # klai_knowledge_hook (role=system/assistant) don't trigger this.
+                    # Only the last user message is counted so injected
+                    # system/assistant context doesn't trigger this.
                     last_user = next(
                         (m for m in reversed(messages) if m.get("role") == "user"), None
                     )
@@ -221,13 +204,6 @@ class TokenRouter(CustomLogger):
                     elif _looks_like_search(messages):
                         final_model = "klai-fast"
                         route_reason = "web_search_content"
-                    elif metadata.get("_klai_kb_meta"):
-                        if _kb_risk_upgrade(metadata["_klai_kb_meta"]):
-                            final_model = "klai-medium"
-                            route_reason = "strict_kb_risk"
-                        else:
-                            final_model = requested_model
-                            route_reason = "kb_context"
                     else:
                         # Safety net: very long context without tool calls → klai-fast
                         total_tokens = litellm.token_counter(
@@ -269,9 +245,8 @@ class TokenRouter(CustomLogger):
                 metadata.get("_klai_context_meta"),
                 context_result.meta,
             )
-            # WARNING: the container only ships WARNING+ to VictoriaLogs (see
-            # kb_clarify_decision in klai_knowledge.py), and this line is the
-            # only place the router's model choice is visible.
+            # WARNING: the container only ships WARNING+ to VictoriaLogs, and
+            # this line is the only place the router's model choice is visible.
             logger.warning(
                 "klai_router_final_model requested_model=%s final_model=%s "
                 "route_reason=%s model_profile=%s token_budget_applied=%s "

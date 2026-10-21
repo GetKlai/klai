@@ -532,9 +532,8 @@ class MistralProviderAdapter:
 class KlaiContextOrchestrator:
     """Build the Mistral/retrieval context view for one LiteLLM request.
 
-    The knowledge hook uses this before routing for provider-safe normalization
-    only. The custom router calls it again after final model selection so
-    history budgeting can use the actual Mistral-backed model profile.
+    The custom router calls it after final model selection so history
+    budgeting can use the actual Mistral-backed model profile.
     """
 
     def __init__(

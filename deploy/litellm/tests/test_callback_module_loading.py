@@ -99,7 +99,7 @@ def _run_load(module_name: str, module_path: Path, *, register: bool):
 def test_callbacks_are_discovered_from_config():
     """Guard against the parser silently yielding nothing."""
     assert _CALLBACK_MODULES, "no callbacks parsed from config.yaml"
-    assert "klai_knowledge" in _CALLBACK_MODULES
+    assert "klai_pii_enforce" in _CALLBACK_MODULES
 
 
 @pytest.mark.parametrize("module_name", _CALLBACK_MODULES)

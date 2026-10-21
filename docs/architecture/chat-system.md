@@ -8,7 +8,7 @@ Dit is de kaart van het chatpad. Lees hem vóór je een voorstel doet of code ve
 
 ## 0. In één scherm
 
-Sinds 13 oktober 2026 is er **één chatpad**: `POST /partner/v1/chat/completions` in portal-api, dat de helpwidget, de interne chat (LibreChat-medewerkers) en de partner-API bedient. Sinds 14 oktober loopt elke kennisbeurt die niet van de interne chat is door dezelfde drager, `widget_turn()`: elke widget en elke partner-key op het kennispad, zonder supportschakelaar en zonder generieke generatie ernaast (een partner-key met `general_chat` en een verzoek zonder kennisvelden blijft de algemene doorgeefroute, `canonical_chat_completions`). Het oude pad A (LibreChat → LiteLLM-hook) staat nog in de LiteLLM-container als terugweg, maar geen omgeving gebruikt het (§1).
+Sinds 13 oktober 2026 is er **één chatpad**: `POST /partner/v1/chat/completions` in portal-api, dat de helpwidget, de interne chat (LibreChat-medewerkers) en de partner-API bedient. Sinds 14 oktober loopt elke kennisbeurt die niet van de interne chat is door dezelfde drager, `widget_turn()`: elke widget en elke partner-key op het kennispad, zonder supportschakelaar en zonder generieke generatie ernaast (een partner-key met `general_chat` en een verzoek zonder kennisvelden blijft de algemene doorgeefroute, `canonical_chat_completions`). Het oude pad A (LibreChat → LiteLLM-hook) bestaat niet meer (§1).
 
 | | Widget en partner-API | Interne chat (Strict, Open, general) |
 |---|---|---|
@@ -25,61 +25,9 @@ Modelaliassen (`deploy/litellm/config.yaml`): `klai-primary` en `klai-fast` zijn
 
 ---
 
-## 1. Pad A: interne chat (LibreChat → LiteLLM), sinds 13 oktober niet meer in gebruik
+## 1. Pad A: interne chat (LibreChat → LiteLLM), verwijderd op 21 oktober 2026
 
-**Op 13 oktober 2026 is elke tenant op het portalpad gezet** (`scripts/switch_internal_chat.py <slug> portal`): het endpoint "Klai AI" van elke LibreChat wijst naar `portal-api:8010/partner/v1`, dus elk LibreChat-gesprek loopt door §2.2. De hook hieronder is de terugweg (`switch_internal_chat.py <slug> litellm`) tot het portalpad zich op echt verkeer heeft bewezen; daarna gaat hij uit de LiteLLM-container. De beschrijving blijft staan tot dan.
-
-LibreChat vraagt altijd `klai-primary` aan, ook voor titels (`deploy/librechat/librechat.yaml:176-202`). LiteLLM draait de callbacks in deze volgorde (`deploy/litellm/config.yaml:126-158`): `klai_knowledge.klai_knowledge_hook`, `custom_router.token_router`, `klai_pii_observe`, `klai_pii_enforce`. "Mock" hieronder betekent: het model wordt overgeslagen en de gebruiker krijgt een vaste tekst (`data["mock_response"]`). Alle ankers in deze sectie zijn in `deploy/litellm/` tenzij anders vermeld.
-
-**Per tenant omzetten naar portal-api.** Het endpoint "Klai AI" in `librechat.yaml` leest zijn sleutel en adres uit twee variabelen in de `.env` van de tenant, `KLAI_CHAT_API_KEY` en `KLAI_CHAT_BASE_URL`. Provisioning zet ze voor een nieuwe tenant op LiteLLM (de teamkey en `http://litellm:4000/v1`, `klai-portal/backend/app/services/provisioning/generators.py`), en dezelfde generator vult ze bij bestaande tenants aan via `/internal/librechat/regenerate`. Daarom komt de variabelen-backfill vóór de yaml die ze leest: eerst portal-api uitrollen en één keer regenereren, dan de yaml, daarna pas omzetten per tenant. Omzetten doet `klai-portal/backend/scripts/switch_internal_chat.py <slug> portal|litellm`, dat alleen die twee regels herschrijft en de container opnieuw aanmaakt, omdat Docker de `.env` bij het aanmaken in de omgeving bakt en een herstart dus het oude endpoint houdt. Op `portal` wijst het naar `http://portal-api:8010/partner/v1` met de interne-chatkey van de org (`app/services/internal_chat_keys.py`: één per org, alleen provisioning maakt hem, zonder kennisbankrijen omdat het profiel van de medewerker de scope bepaalt); terug naar `litellm` zet het de teamkey terug en trekt die interne key in. Tot stap 9 van het plan de hook weghaalt, blijft LiteLLM de standaard voor nieuwe tenants.
-
-### 1.1 Vóór het model (`klai_knowledge.py`)
-
-| # | Stap | Beslist op basis van | LLM | Bij falen | Vastgelegd als |
-|---|---|---|---|---|---|
-| A1 | Taal van het antwoord, per beurt afgeleid uit alle user-beurten, met een drempel tegen wisselen (`:443-444`) | alle user-beurten, deterministisch (`klai_conversation_language.py:1058-1073`) | nee | model kiest zelf | in `_klai_kb_meta` |
-| A2 | PDF-bijlagen via docling (`:446-478`) | bijlagen | nee | mock-fouttekst (`:458-460`) | `chat_pdf_attachment_processed` |
-| A3 | Geplakte correspondentie herkennen (`:486-498`) | tekstpatronen (`klai_pasted_correspondence.py`) | nee | – | `pasted_correspondence_detected` |
-| A4 | Triviale berichten slaan de kennisbank over: korter dan 8 tekens zonder `?` en geen meta-vraag (`:499-500`, `klai_kb_request_context.py:87-98`) | tekst | nee | – | – |
-| A5 | Geen `org_id` of geen LibreChat-gebruiker: hook doet niets (`:503-517`) | key-metadata | nee | – | – |
-| A6 | Invoerveiligheid op de laatste user-beurt en op tool-resultaten (`:559-594`); deterministische regels, geen externe provider (`klai_llm_safety/policy.py:185-191`) | tekst | nee | mock-weigering | `llm_safety_litellm_decision` |
-| A7 | Titelverzoek of meta-vraag ("wat kan ik hier?"): geen retrieval (`:596-639`) | promptvorm, regex | nee | – | info, niet zichtbaar (§6) |
-| A8 | KB-instellingen ophalen (`:661`); portal onbereikbaar én geen cache geeft in beide modi een mock-weigering (`:663-674`) | portal + Redis | nee | **fail-closed** | `kb_settings_unavailable_refusal` |
-| A9 | Modus: `general`, `open_kb`, `strict_kb`, `strict_no_kb` of `*_unavailable` (identiteit ontbreekt) (`klai_kb_scope_policy.py:80-122`). Strict haalt web search weg (`:685-693`), `strict_no_kb` en `strict_unavailable` geven een mock-weigering (`:695-712,740-795`) | KB-voorkeuren | nee | – | deels info |
-| A10 | Taxonomiebomen en dekking ophalen, parallel, 0,8 s (`:843-847`, `klai_kb_query_rewrite.py:66`) | – | nee | fail-open | `taxonomy_trees_fetch_failed` |
-| A11 | **Herschrijven van de zoekvraag**, gecombineerd met taxonomieclassificatie en distillatie van geplakte correspondentie in één aanroep, op elke niet-triviale beurt, ook de eerste (`:875-889`, `klai_kb_query_rewrite.py:710-719`). Een herschrijving die het onderwerp laat vallen wordt teruggedraaid (`klai_kb_query_rewrite.py:235-241`) | vraag + laatste 6 berichten (`klai_kb_request_context.py:373-390`) | `klai-fast`, 1,5 s | fail-open: ruwe vraag | `query_rewrite`, `query_rewrite_destructive_blocked` |
-| A12 | Meerdere vragen splitsen in maximaal 6 deelvragen, deterministisch (`klai_kb_confidence_policy.py:187-244`); niet bij geplakte correspondentie (`:992-1012`) | `?`-regels, lijstjes | nee | – | `sub_questions_truncated` |
-| A13 | **`/retrieve`** met herschreven vraag, `raw_query`, `coreference_resolved`, `top_k=20`, `sub_queries` (`:1013-1026`, `:292`). Timeout in code 3 s (`:286`), in productie 60 s (`deploy/docker-compose.yml:486`) | – | zie §3 | Strict: mock-weigering; Open: waarschuwing in de prompt (`:1063-1122`) | error-regel |
-| A14 | Geen evidence pack in het antwoord: Strict mock-weigering (`:1227-1276`) | – | nee | fail-closed | `retrieval_response_missing_evidence_pack` |
-| A15 | Alleen Strict: chunks met score < 0,15 vallen weg (`:297,1283-1320`) | score | nee | – | `kb_evidence_below_score_floor_dropped` |
-| A16 | Veiligheidscheck per chunk (`:1323-1373`) | chunktekst | nee | alles geblokkeerd: mock-weigering | `llm_safety_litellm_context_chunks_dropped` |
-| A17 | **Lage-zekerheidsvlag** = band `low`/`unknown` **én** geen direct bewijs, dat wil zeggen minder dan 2 salient woorden van de vraag in de chunks (`:1376-1381`, `klai_chat_prompts.py:1097-1136`) | band + woordoverlap | nee | geen band: geen vlag | – |
-| A18 | Meervoudige-vraagvlag = deelvragen gevonden of de regel `is_multi_question_query` (vraagtekens plus met en/and/or verbonden vragen) (`:1394-1396`, `klai_kb_confidence_policy.py:164-184`) | tekst | nee | – | in kb_meta |
-| A19 | Gat-event en retrieval-log, fire-and-forget (`:1434-1450`) | reranker < 0,4, dense < 0,35 | nee | – | `portal_retrieval_gaps`, Redis |
-| A20 | **Verduidelijken**: in aanmerking bij chunks + band + geen meervoudige vraag + geen eigen content + geen geplakte correspondentie; verduidelijkt als ook A17 geldt (`:1451-1482`) | A17, A18 | nee | – | `kb_clarify_decision clarify_decision=clarify\|answer` |
-| A21 | Strict + lage zekerheid + geplakte correspondentie: mock-weigering (`:1484-1544`) | – | nee | – | `strict_low_confidence_deterministic_refusal` |
-| A22 | Nul chunks: Strict mock-weigering; Open een prompt "niet in je kennisbank, dit is een algemeen antwoord" (`:1546-1647`) | – | nee | – | – |
-| A23 | Contextprompt bouwen (`:1652-1684`). Bij verduidelijken komt `CLARIFY_TURN_ADDENDUM["internal"]` erin (in Strict én Open, `:1665-1674`): "stel precies één korte vraag, gok geen antwoord" (`klai_chat_prompts.py:1000-1008`). Anders bij lage zekerheid de low-relevance-tekst, bij een meervoudige vraag de per-vraag-instructie (`:1675-1681`) | A17-A20 | nee | – | `low_confidence_injection_applied` |
-
-### 1.2 Modelkeuze en generatie
-
-| # | Stap | Beslist op basis van | LLM | Bij falen | Vastgelegd als |
-|---|---|---|---|---|---|
-| A24 | **Router**, alleen als `klai-primary` is aangevraagd (`custom_router.py:199-241`): tool-historie → `klai-large`; laatste user-bericht > 300 tokens → `klai-large`; ≥ 3 URL's in één bericht → `klai-fast`; Strict-KB met chunks en (meervoudige vraag of lage zekerheid) → `klai-medium`; andere KB-beurt → `klai-primary`; zonder KB en > 3000 tokens → `klai-fast` | berichten + kb_meta | nee | aangevraagde model | `klai_router_final_model` op info: **niet zichtbaar** (§6) |
-| A25 | Generatie op het gekozen model; LibreChat streamt | – | ja | LiteLLM-fallback naar medium | – |
-
-### 1.3 Na het model (`klai_kb_citation_render.py`)
-
-| # | Stap | Beslist op basis van | LLM | Bij falen | Vastgelegd als |
-|---|---|---|---|---|---|
-| A26 | Een **Strict-stream wordt helemaal vastgehouden** tot het eindoordeel; de gebruiker ziet tot dan niets (`:1540-1547,1559-1584`). Een Open-stream loopt direct door (`:1669-1716`) | modus | nee | – | – |
-| A27 | Bronselectie per zin (`:156-330`). Zonder ondersteunde bron: Strict vervangt de tekst door een vaste weigering, Open laat hem staan (`:199-254`). Bij een lage band is de lat per bron lager (`klai-libs/citations/klai_citations/__init__.py:919-932`) | antwoord vs bronnen, band | nee | – | `kb_citations_rendered_structured` |
-| A28 | Claims-check, alleen Strict en alleen als de weigering zou volgen: een concept dat geen bedrijfsfeiten beweert (bijvoorbeeld een verduidelijkingsvraag) mag toch door (`:1286-1366`) | concept + artikeltitels | `klai-fast`, 4 s | weigering blijft | `kb_answer_claims` |
-| A29 | **Grounding-check en reparatie**, alleen Strict met citeerbare bronnen en niet op geplakte of bijgevoegde content (`:1164-1259`). Reparatie bij ≥ 2 niet-onderbouwde uitspraken of 1 tegenspraak (`klai_chat_prompts.py:1237-1244`). Weigert nooit: blijft er niets over, dan blijft het antwoord staan (`klai_answer_grounding.py:230-241`) | antwoord + chunks | `klai-medium`, check 12 s, reparatie 8 s | antwoord ongewijzigd | `kb_answer_grounding`, `kb_answer_repaired` |
-| A30 | **Open wordt niet gecontroleerd en ook niet gemeten**: `_measure_answer_grounding` stopt bij niet-Strict (`:1266-1267`) | – | – | – | – |
-| A31 | Voettekst met bronnen en "Agent activiteit", inclusief de band als "Retrieval score: low" zichtbaar voor de gebruiker (`:776-785`), deelvragen en niet-doorzochte vragen (`:663-703`) | kb_meta | nee | – | – |
-
-LibreChat geeft het model ook de MCP-tool `klai-knowledge` (`deploy/librechat/librechat.yaml:194-195`), waarmee het zelf kan zoeken. Dat pad is hier niet beschreven.
+Tot 13 oktober 2026 liep de interne chat ook via LibreChat → LiteLLM, waar een hook in de LiteLLM-container de zoekopdracht, de prompt en de bronnen deed; sinds die dag staat elke omgeving op het portalpad (§2.2) en op 21 oktober 2026 is de hook uit de repository en uit de container gehaald. LiteLLM zelf blijft de modelgateway voor elke modelaanroep, en de beschrijving van de hook staat in de git-geschiedenis vóór dat commit.
 
 ---
 
@@ -105,14 +53,16 @@ LibreChat geeft het model ook de MCP-tool `klai-knowledge` (`deploy/librechat/li
 
 Dezelfde stappen op dezelfde functies, met deze verschillen. **W1:** de zaak leest elke beurt zonder vorige zaak (LibreChat stuurt het hele gesprek mee) en zonder ingestelde onderwerpen; in de general-modus geen zaak. **W2 en W5:** geen contactroute en geen doorverwijzing (er is geen knop); **staat er niet in** geldt alleen in Strict en geeft de vaste Strict-weigering met de suggestie van de open modus; de vraag van de keuzestap is de reactie in Strict én Open. **W3:** geen parafrasen; een vervolgbeurt zoekt op de letterlijke zin plus de zaak-zoekvragen (de herschrijving `query_rewrite` is weg); een geplakte mail op een eerste beurt laat de zaak vóór het zoeken lopen. **W4:** de keuzestap draait op elke beurt met passages; in Open en general kiest ze de passages en schrijft de opdracht maar weigert nooit (zonder keuze krijgt de schrijver alle passages, ook als de keuzestap twee keer uitviel); in Strict is een uitgevallen keuzestap "staat er niet in"; niet bij meegestuurde inhoud of geplakte correspondentie. **W6:** Strict schrijft via `write_reply` (vastgehouden tot geschreven en beoordeeld, zonder knop, met de Strict-weigeringstekst, de voettekst met bronnen en activiteit, webzoektools gestript); Open en general streamen live (`chat_completion_streaming`) met de controle erna. **W8:** `record_internal_turn` bewaart alleen signalen, nooit tekst, geen citaten en geen zaaktekst.
 
+**Per omgeving omzetten.** Het endpoint "Klai AI" in `librechat.yaml` leest zijn sleutel en adres uit twee variabelen in de `.env` van de omgeving, `KLAI_CHAT_API_KEY` en `KLAI_CHAT_BASE_URL`. Provisioning schrijft ze voor een nieuwe omgeving meteen op het portalpad: `http://portal-api:8010/partner/v1` met de interne-chatkey van de org, die `provision_tenant` mint met dezelfde functie als het omzetscript (`app/services/internal_chat_keys.py`: één per org, zonder kennisbankrijen omdat het profiel van de medewerker de scope bepaalt). De fleet-reconcile (`/internal/librechat/regenerate`) raakt deze twee regels niet aan. Een bestaande omgeving die nog op LiteLLM wijst, zet je om met `klai-portal/backend/scripts/switch_internal_chat.py <slug> portal`; dat herschrijft alleen die twee regels en maakt de container opnieuw aan, omdat Docker de `.env` bij het aanmaken in de omgeving bakt en een herstart dus het oude endpoint houdt.
+
 ### 2.3 De partner-key
 
 Een partner-key loopt dezelfde stappen als de widget in §2.1, met deze verschillen, die er allemaal uit volgen dat er geen widget is. **W0:** geen widgetinstellingen (geen eigen instructie, paginacontext, onderwerpen buiten de widget of toonkeuze, dus het ingetogen supportprofiel, tenzij de partner een eigen systeembericht meestuurt, dat het profiel vervangt), geen user-beurt naar `widget_messages` en geen vorige zaak, zodat de zaak elke beurt zonder vorige leest; een pdf in de laatste beurt wordt wel tekst, omdat de key een geauthenticeerde integratie is en geen anonieme bezoeker. **W8:** geen assistent-beurt in `widget_messages`; alleen het retrievallog voor feedback blijft, net als bij de widget. `knowledge.query`, `knowledge.top_k`, `knowledge.include_sources`, `knowledge_base_ids` en `broad_mode` werken zoals bij de widget; `model` en `temperature` gaan naar de schrijver zoals bij de widget; `web_search` en `tools` geven een 400, omdat de beurt alleen de helpartikelen leest. De generieke generatie die partner-keys en widgets zonder supportschakelaar tot 14 oktober kregen, is weg (plan §8, "Eén pad voor partners"); `chat_completion_streaming` en `chat_completion_non_streaming` bedienen alleen nog de live leg van de interne chat (§2.2).
 
 ## 3. De zoekdienst `/retrieve` (klai-retrieval-api)
 
-- **Coreferentie** draait alleen als de aanroeper het niet zelf deed (`klai-retrieval-api/retrieval_api/api/retrieve.py:138-154`), met `klai-fast` en 3 s (`retrieval_api/config.py:38-39`). Pad A doet het zelf in A11; pad B niet, dus elke widget-vervolgvraag met geschiedenis krijgt deze aanroep.
-- **Zoeken**: dense + sparse embeddings, hybride RRF in Qdrant met een letterlijke leg als de vraag herschreven is (`retrieve.py:700-712`), graph-search (Graphiti, fail-open) en link-expansie; dan herrangschikken (Infinity, fail-open naar Qdrant-volgorde), kwaliteitsvloer, maximaal 2 chunks per bron. Varianten (pad B) krijgen elk een eigen pass en worden na het herrangschikken samengevoegd; deelvragen (pad A) krijgen elk een eigen retrieve.
+- **Coreferentie** draait alleen als de aanroeper het niet zelf deed (`klai-retrieval-api/retrieval_api/api/retrieve.py:138-154`), met `klai-fast` en 3 s (`retrieval_api/config.py:38-39`). Pad B doet het niet zelf, dus elke widget-vervolgvraag met geschiedenis krijgt deze aanroep.
+- **Zoeken**: dense + sparse embeddings, hybride RRF in Qdrant met een letterlijke leg als de vraag herschreven is (`retrieve.py:700-712`), graph-search (Graphiti, fail-open) en link-expansie; dan herrangschikken (Infinity, fail-open naar Qdrant-volgorde), kwaliteitsvloer, maximaal 2 chunks per bron. Varianten (pad B) krijgen elk een eigen pass en worden na het herrangschikken samengevoegd.
 - **Zekerheidsband** (`retrieval_api/api/ranking.py:20-64`): de hoogste `final_rank_score` over de geserveerde chunks, alleen als er een rerankerscore is. ≥ 0,60 `high`, < 0,30 `low`, daartussen `medium`, anders `unknown` (`retrieval_api/config.py:84-91`). Eén berekening voor beide paden (`retrieve.py:1250`). `answer_signals.top_score` op pad B is de score vóór de boosts en dus níet de score waarop de band beslist.
 - **Evidence pack**: maximaal 3 bronnen, of 5 bij meerdere kennisbanken (`retrieve.py:1264-1268`); beide paden bouwen hun context daaruit.
 - **Telemetrie**: bij niveau `shadow`/`full` een rij in `telemetry.query_shadow` met band, chunk-ids en rerankerscore, zonder vraagtekst (`retrieve.py:1338-1354`).
@@ -121,8 +71,6 @@ Een partner-key loopt dezelfde stappen als de widget in §2.1, met deze verschil
 
 ## 4. Alle LLM-aanroepen per beurt
 
-**Pad A** (in volgorde): herschrijven (`klai-fast`, 1,5 s, A11) → coreferentie in `/retrieve` alleen als A11 om infrastructuurredenen oversloeg (`klai-fast`, 3 s) → generatie (primary, via de router naar large, medium of fast) → claims-check (`klai-fast`, 4 s, alleen Strict bij dreigende weigering) → grounding-check (`klai-medium`, 12 s, alleen Strict) → reparatie (`klai-medium`, 8 s, alleen boven de drempel). **Open-modus: alleen herschrijven en generatie.**
-
 **Pad B, widget en partner-API** (in volgorde): de zaak (`klai-fast`, 3 s; op een eerste beurt ∥ het zoeken) → parafrasen op een eerste beurt (`klai-medium`, 2,5 s) → de keuzestap (`klai-medium`, 4 s) → de schrijver (`klai-primary`) → de lichte beoordelaar (`klai-fast`, 2,5 s); de controle per zin (`klai-medium`) loopt ná het antwoord als de passages gekozen en geciteerd zijn, anders op het pad; een doorverwijzing buiten het onderwerp kost één aanroep extra (`klai-fast`, 2,5 s) en geen schrijver. Vier aanroepen op het pad van een geschreven vervolgbeurt, vijf op een eerste beurt, plus één meting erna. **Intern:** hetzelfde zonder parafrasen; Strict wordt vastgehouden, Open en general streamen live met de controle erna.
 
 ---
@@ -130,28 +78,25 @@ Een partner-key loopt dezelfde stappen als de widget in §2.1, met deze verschil
 ## 5. De beslissingen waar het om draait
 
 **Antwoorden, weigeren, verduidelijken of een mens aanbieden**
-- *Pad A.* Weigeren gebeurt vóór het model (instellingen onbereikbaar, veiligheid, en in Strict: geen kennisbank, retrieval faalt, nul chunks, lage zekerheid bij geplakte mail) of erna (Strict zonder ondersteunde bron, tenzij de claims-check niets bedenkelijks ziet). Verduidelijken is een instructie aan het antwoordmodel bij A20; of het model daarna echt een vraag stelt, wordt niet vastgelegd. Een mens aanbieden bestaat niet.
 - *Pad B.* Verduidelijken via de vraag van de keuzestap (W5, vóór het schrijven), op de widget en intern. Weigeren als de keuzestap zegt dat het er niet in staat (widget en intern Strict), of bij geen bron plus onbewezen uitspraken. Intern bij zwakke bronnen eerlijk "staat er niet" (B13). Afspraakknop bij weigering, deelantwoord, escalatie en buiten het onderwerp.
 
 **Wordt de zekerheidsband gebruikt?**
-- *Pad A: ja*, voor verduidelijken (A20), de Strict-weigering bij geplakte mail (A21), de upgrade naar `klai-medium` (A24) en een lagere bronlat (A27). De gebruiker ziet de band in de voettekst (A31).
 - *Pad B: nee.* Opgeslagen, niet gebruikt. Zwakke resultaten worden herkend met "alle rerankerscores < 0,4" (W3); sinds oktober beslist de keuzestap (W4) of een passage antwoordt, niet de score.
 
 **Meerdere vragen in één bericht**
-- *Pad A*: deelvragen krijgen een eigen zoekpass, de rest verschijnt als "niet doorzocht"; zet de per-vraag-instructie in de prompt, schakelt verduidelijken uit en geeft in Strict een upgrade naar `klai-medium`.
 - *Pad B*: sinds #1663 wordt een bericht met meerdere vragen ook hier in deelvragen gesplitst, elk met een eigen zoekpass; zo'n bericht krijgt geen parafrasen. Het effect op antwoorden van de widget is niet gemeten.
 
-**Modelkeuze**: de router van A24, ook op pad B. Geen van de regels is tegen antwoordkwaliteit gemeten.
+**Modelkeuze**: de router in `custom_router.py`, alleen als `klai-primary` is aangevraagd: tool-historie of een laatste user-bericht van meer dan 300 tokens geeft `klai-large`, drie of meer URL's in één bericht of meer dan 3000 tokens in totaal geeft `klai-fast`, de rest blijft `klai-primary`. Geen van de regels is tegen antwoordkwaliteit gemeten.
 
-**Onbewezen uitspraken**: pad A Strict controleert en repareert en weigert nooit op dit signaal; pad A Open doet niets; pad B (widget, partner-API en interne chat) kiest vóór het schrijven wat de schrijver leest, en de controle achteraf meet alleen.
+**Onbewezen uitspraken**: het pad (widget, partner-API en interne chat) kiest vóór het schrijven wat de schrijver leest, en de controle achteraf meet alleen.
 
-**Wat de eerste vraag extra krijgt**: pad A niets (herschrijven draait altijd); pad B twee parafrasen, vervolgvragen krijgen coreferentie.
+**Wat de eerste vraag extra krijgt**: twee parafrasen; vervolgvragen krijgen coreferentie.
 
 ---
 
 ## 6. Wat er vandaag gemeten wordt
 
-**Logregels van pad A** (`service:litellm` in VictoriaLogs). Alleen **warning en hoger** komt aan (`klai_kb_citation_render.py:1016-1022`). Zichtbaar zijn onder meer `query_rewrite*`, `kb_clarify_decision`, `low_confidence_injection_applied`, `kb_answer_claims`, `kb_answer_grounding`, `kb_answer_repaired`, `kb_citations_*`, `chat_synthesis_complete`, `llm_safety_litellm_*`. **Niet zichtbaar** (info): de routerbeslissing (`custom_router.py:272`), taxonomie, meta-vragen, titelverzoeken en de Strict-weigeringen zonder kennisbank. Welk model een interne beurt kreeg, is daardoor niet terug te vinden.
+**Logregels van de router** (`service:litellm` in VictoriaLogs): alleen warning en hoger komt aan, en `klai_router_final_model` (`custom_router.py`) is de enige regel die laat zien welk model een beurt kreeg.
 
 **Logregels van pad B** (`service:portal-api`, structlog, info komt wel aan): `partner_chat_turn_judge` (velden uit de zaak), `partner_chat_answer_judge`, `partner_chat_query_paraphrase`, `case_update_failed`, `passage_selection`, `partner_chat_contact_request`, `partner_chat_not_in_passages`, `clarify_decision`, `partner_chat_turn_timing`, `answer_grounding_late`, `partner_chat_off_topic`.
 

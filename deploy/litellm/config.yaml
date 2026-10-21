@@ -310,13 +310,12 @@ litellm_settings:
     # request/response payload those mutate. See klai_mistral_pool.py's
     # module docstring. Tests: tests/test_litellm_mistral_failover.py.
     - klai_mistral_pool.klai_mistral_pool_hook
-    - klai_knowledge.klai_knowledge_hook
     - custom_router.token_router
     # SPEC-PRIVACY-MISTRAL-PII-001 Phase 2 (REQ-5, REQ-6): read-only PII
-    # observer. Registered LAST so it sees the outbound payload after KB
-    # context injection and router upgrade/downgrade, not the original
-    # request. Calls presidio-analyzer's /analyze out of band (never
-    # awaited by any hook), returns the payload unchanged, never calls
+    # observer. Registered LAST so it sees the outbound payload after the
+    # router upgrade/downgrade, not the original request. Calls
+    # presidio-analyzer's /analyze out of band (never awaited by any hook),
+    # returns the payload unchanged, never calls
     # the anonymizer, and emits org_id/call_type/model/language/entity
     # counts only — no matched values, offsets, or hashes (REQ-6). Does
     # NOT honour `_klai_openai_passthrough` or missing org_id — see
@@ -376,7 +375,7 @@ litellm_settings:
 # MUST NOT be left enabled by default after the Phase 0 experiment
 # concludes. If REQ-0a's answer is negative (restore does not survive on
 # this version), delete this block rather than leave it dangling —
-# REQ-8's fallback is the KlaiKnowledgeHook streaming-iterator path, not
+# REQ-8's fallback is the custom streaming-iterator path, not
 # this guardrail.
 guardrails:
   - guardrail_name: "presidio-pii-phase0"

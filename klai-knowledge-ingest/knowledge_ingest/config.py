@@ -516,8 +516,7 @@ class Settings(BaseSettings):
     # retrieval_internal_secret: X-Internal-Secret for /retrieve auth.
     #   Accepts both RETRIEVAL_INTERNAL_SECRET (knowledge-ingest convention)
     #   AND RETRIEVAL_API_INTERNAL_SECRET (production SOPS convention, same name
-    #   as portal-api and litellm-hook). Pydantic AliasChoices picks whichever
-    #   is set — same fall-through pattern as deploy/litellm/klai_knowledge.py.
+    #   as portal-api). Pydantic AliasChoices picks whichever is set.
     #   Warn-on-empty at startup (fail-open: harness skips retrieval auth when absent
     #   in dev; production must set the secret via SOPS).
     # rag_eval_retrieval_timeout: seconds before a /retrieve call is declared failed (REQ-3).

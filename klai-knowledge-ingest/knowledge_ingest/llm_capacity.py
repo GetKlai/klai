@@ -8,7 +8,7 @@ Retrying within minutes cannot succeed, so the affected jobs are deferred
 instead of failed.
 
 What the proxy answers, verified against litellm==1.96.2 (the version pinned
-by ``.github/workflows/litellm-tests.yml``) by reading the installed source
+by ``deploy/docker-compose.yml``) by reading the installed source
 and by driving a ``litellm.Router`` configured like klai-ingest:
 
 * Key full: Mistral answers 402 and the proxy passes the status through

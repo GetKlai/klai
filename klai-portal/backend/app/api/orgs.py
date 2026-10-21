@@ -81,8 +81,6 @@ async def set_my_org_telemetry_level(
     - Audit row records ``operator_kind='tenant_admin'``,
       ``reason='tenant self-service via admin UI'``,
       ``operator_user_id=<zitadel sub>``
-    - Cache invalidation runs so the next chat completion picks up the
-      new level within ~30s (kb_ver Redis pointer expiry)
     """
     try:
         _, new_level = await set_telemetry_level(

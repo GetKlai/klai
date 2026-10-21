@@ -5,23 +5,21 @@ REQ-7's optional set (``IBAN_CODE``, ``CREDIT_CARD``, ``EMAIL_ADDRESS``,
 2026-09-03, on by default for every tenant
 (SPEC-PRIVACY-PII-POLICY-ADMIN-001 D2). The NFR says that policy "is resolved
 through the existing settings path and cached per org" — this module is that
-path, following the same shape as ``klai_kb_portal_client.py``'s
-``get_kb_feature`` (a portal-api GET, Bearer-authenticated with
-``PORTAL_INTERNAL_SECRET``, short-TTL cache) without importing or modifying that
-file. It deliberately does NOT copy that module's fail-closed-on-any-error
-behaviour — see ``_degraded`` for what an unreachable portal-api resolves to,
-and why that answer had to change when the default flipped to on.
+path: a portal-api GET, Bearer-authenticated with
+``PORTAL_INTERNAL_SECRET``, with a short-TTL cache. It deliberately does NOT
+fail closed on any error — see ``_degraded`` for what an unreachable
+portal-api resolves to, and why that answer had to change when the default
+flipped to on.
 
 ``GET /internal/v1/orgs/{org_id}/pii-entities`` exists (``app/api/internal.py``)
 and also carries the tenant's ``telemetry_level``, so this module resolves both
 halves in one fetch — see ``OrgPiiContext``.
 
-Caching here is a small in-process TTL dict, not Redis. ``get_kb_feature``
-uses Redis so a shared cache survives across LiteLLM worker processes and
-portal-api can push invalidations; neither concern applies yet to a policy
-this module is the only caller of. A Redis-backed cache mirroring
-``get_kb_feature`` is a reasonable follow-up — this is a deliberate scope
-decision, not an oversight.
+Caching here is a small in-process TTL dict, not Redis. A Redis cache would
+survive across LiteLLM worker processes and let portal-api push
+invalidations; neither concern applies yet to a policy this module is the
+only caller of. A Redis-backed cache is a reasonable follow-up — this is a
+deliberate scope decision, not an oversight.
 """
 
 from __future__ import annotations
@@ -168,8 +166,7 @@ def _degraded(org_id: Any, reason: str) -> OrgPiiContext:
 async def resolve_org_pii_context(org_id: Any) -> OrgPiiContext:
     """Return this org's masked-entity set and its telemetry mode.
 
-    A missing ``org_id`` (master-key / widget calls, the same shape
-    ``klai_pii_observe.py`` names as a KlaiKnowledgeHook blind spot) returns
+    A missing ``org_id`` (master-key / widget calls) returns
     ``EMPTY_CONTEXT``: there is no org to look a policy up for, so none of the
     optional entities can be enabled and no tenant has authorised telemetry.
 

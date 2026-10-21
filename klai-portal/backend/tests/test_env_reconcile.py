@@ -233,28 +233,17 @@ class TestSecretRotationSafetyInvariant:
         assert "3" * 64 not in final_content
 
 
-class TestChatEndpointKeyDefaultsToTenantLiteLLMKey:
-    """librechat.yaml expands ${KLAI_CHAT_API_KEY}; an existing tenant's default is its own LiteLLM team key."""
+class TestChatEndpointIsNeverReconciled:
+    """KLAI_CHAT_* carry the org's internal-chat key, which only provisioning and the switch script mint."""
 
-    def test_missing_chat_key_takes_the_tenants_litellm_key(self, existing_env_file: Path):
-        existing_env_file.write_text(EXISTING_ENV + "LITELLM_API_KEY=sk-team-acme-example\n")
+    def test_an_environment_on_the_portal_path_is_left_byte_identical(self, existing_env_file: Path):
+        from app.services.provisioning.generators import PORTAL_CHAT_BASE_URL, _reconcilable_env_vars
 
-        added = reconcile_librechat_env(
-            existing_env_file,
-            {"KLAI_CHAT_BASE_URL": "http://litellm:4000/v1"},
-            {"KLAI_CHAT_API_KEY": "LITELLM_API_KEY"},
-        )
-
-        assert added == ["KLAI_CHAT_BASE_URL", "KLAI_CHAT_API_KEY"]
-        content = existing_env_file.read_text()
-        assert "KLAI_CHAT_API_KEY=sk-team-acme-example\n" in content
-        assert content.startswith(EXISTING_ENV + "LITELLM_API_KEY=sk-team-acme-example\n")
-
-    def test_empty_source_key_raises_and_leaves_the_file_untouched(self, existing_env_file: Path):
-        existing_env_file.write_text(EXISTING_ENV + "LITELLM_API_KEY=\n")
+        required = _reconcilable_env_vars()
+        assert not {"KLAI_CHAT_API_KEY", "KLAI_CHAT_BASE_URL"} & required.keys()
+        chat = f"KLAI_CHAT_API_KEY=pk_live_example\nKLAI_CHAT_BASE_URL={PORTAL_CHAT_BASE_URL}\n"
+        existing_env_file.write_text(EXISTING_ENV + "".join(f"{k}={v}\n" for k, v in required.items()) + chat)
         before = existing_env_file.read_text()
 
-        with pytest.raises(RuntimeError, match="LITELLM_API_KEY"):
-            reconcile_librechat_env(existing_env_file, {}, {"KLAI_CHAT_API_KEY": "LITELLM_API_KEY"})
-
+        assert reconcile_librechat_env(existing_env_file, required) == []
         assert existing_env_file.read_text() == before

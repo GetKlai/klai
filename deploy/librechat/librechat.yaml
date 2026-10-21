@@ -174,8 +174,8 @@ endpoints:
     disabled: true
   custom:
     - name: "Klai AI"
-      # Both come from the tenant .env: LiteLLM by default, portal-api after
-      # klai-portal/backend/scripts/switch_internal_chat.py <slug> portal.
+      # Both come from the tenant .env, written by provisioning: portal-api's
+      # partner endpoint and the org's internal-chat key.
       apiKey: "${KLAI_CHAT_API_KEY}"
       baseURL: "${KLAI_CHAT_BASE_URL}"
       models:
