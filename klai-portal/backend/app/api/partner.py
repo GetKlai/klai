@@ -51,7 +51,7 @@ from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.widgets import Widget
 from app.services import case_file
-from app.services.chat_attachments import process_chat_attachments
+from app.services.chat_attachments import drop_unreadable_file_parts, process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
 from app.services.chat_safety import (
     _last_user_message,
@@ -676,31 +676,26 @@ async def _attachment_error_reply(request: ChatCompletionsRequest) -> tuple[Any,
     The second value is a notice for before the answer. A question typed
     beside a file that is not a PDF used to get only the fixed sentence about
     PDF files and stayed unanswered (internal chat, 14 to 21 October); now the
-    turn runs on the text without the file, and that sentence goes first.
+    turn runs on the text without that file, and the sentence goes first. A
+    PDF uploaded beside it is still read, on a second pass without the file.
     """
     attachment_language = resolve_conversation_language(request.messages).language
     attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
+    notice = ""
+    if (
+        attachment_result.meta["chat_pdf_error_reason"] == "unsupported_attachment"
+        and len((_last_user_message(request.messages) or "").strip()) >= _TEXT_BESIDE_ATTACHMENT_MIN_CHARS
+    ):
+        notice = attachment_result.user_visible_error or ""
+        drop_unreadable_file_parts(request.messages)
+        attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
     if (error := attachment_result.user_visible_error) is not None:
-        text = (_last_user_message(request.messages) or "").strip()
-        if (
-            attachment_result.meta["chat_pdf_error_reason"] == "unsupported_attachment"
-            and len(text) >= _TEXT_BESIDE_ATTACHMENT_MIN_CHARS
-        ):
-            _drop_latest_file_parts(request.messages)
-            return None, error
         if request.stream:
             return StreamingResponse(content=fixed_reply_stream(error), media_type="text/event-stream"), ""
         return fixed_reply_response(model=request.model, message=error), ""
     if attachment_result.processed_count:
         request.messages = attachment_result.messages
-    return None, ""
-
-
-def _drop_latest_file_parts(messages: list[dict]) -> None:
-    for message in reversed(messages):
-        if message.get("role") == "user":
-            message["content"] = [part for part in message["content"] if part.get("type") != "file"]
-            return
+    return None, notice
 
 
 async def _notice_first(notice: str, frames: AsyncIterable[Any]) -> AsyncGenerator[Any]:

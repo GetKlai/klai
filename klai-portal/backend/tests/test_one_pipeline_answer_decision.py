@@ -180,9 +180,10 @@ async def _turn(
     stream: bool = False,
     key_id: str = "key-internal",
     history: tuple[dict, ...] = (),
+    include_sources: bool = True,
 ) -> _Turn:
     from app.api import partner
-    from app.api.partner import ChatCompletionsRequest, chat_completions
+    from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
     from app.services import partner_chat, retrieval_context, widget_turn
 
     for name, value in {
@@ -217,7 +218,11 @@ async def _turn(
         kb_access={10: "read"},
         rate_limit_rpm=60,
     )
-    request = ChatCompletionsRequest(messages=[*history, {"role": "user", "content": question}], stream=stream)
+    request = ChatCompletionsRequest(
+        messages=[*history, {"role": "user", "content": question}],
+        stream=stream,
+        knowledge=KnowledgeOptions(include_sources=include_sources),
+    )
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
     with respx.mock(assert_all_called=False) as router:
@@ -394,6 +399,29 @@ async def test_open_turn_whose_selection_chose_nothing_writes_from_general_knowl
     assert turn.text.startswith(ANSWER)
     assert "**Bronnen**" not in turn.text
     assert "- Antwoord: algemene kennis, niet uit je kennisbank." in turn.text
+
+
+@pytest.mark.asyncio
+async def test_open_turn_without_chosen_passages_still_names_the_questions_never_searched(monkeypatch):
+    """The prompt without passages dropped the per-question layout, and with
+    it the marker for a part beyond the search limit, so the writer could
+    answer that part from general knowledge."""
+    llm = _LiteLLM(selection=NOT_IN_PASSAGES)
+    questions = [f"Hoe stel ik optie nummer {n} in voor mijn team?" for n in range(1, 9)]
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        question="\n".join(questions),
+        retrieval={"evidence_pack": _pack(items=2), "confidence_band": "high"},
+        stream=True,
+    )
+
+    prompt = _system_prompt(llm)
+    assert ARTICLE not in prompt
+    assert "[Question 7: Hoe stel ik optie nummer 7 in voor mijn team?]" in prompt
+    assert "NOT separately searched" in prompt
 
 
 # --- Open and general never refuse for a missing source ---------------------------
@@ -613,6 +641,43 @@ async def test_an_open_reply_with_an_email_address_no_passage_holds_is_flagged_i
     assert "- Let op: e-mailadres in dit antwoord staat niet in de kennisbank." in turn.text
     (record,) = turn.records
     assert record["hard_facts_outside_kb"] == {"email": 1}
+
+
+@pytest.mark.asyncio
+async def test_the_warning_stays_when_the_caller_asked_for_no_sources(monkeypatch):
+    """Without sources the live footer was skipped as a whole, warning included."""
+    extra = " Mail je aanvraag naar verlof@example.com."
+    llm = _LiteLLM(ANSWER + extra)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+        include_sources=False,
+    )
+
+    assert "**Bronnen**" not in turn.text
+    assert "- Let op: e-mailadres in dit antwoord staat niet in de kennisbank." in turn.text
+
+
+@pytest.mark.asyncio
+async def test_a_held_open_reply_is_not_warned_for_a_link_the_source_gate_removed(monkeypatch):
+    """The held path counted the draft's links, so the footer warned for an
+    address the employee never saw."""
+    llm = _LiteLLM(UNRELATED + " Zie https://elders.example.com/handleiding.", grounding=_unsupported(UNRELATED))
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": {"items": [], "sources": []}, "confidence_band": "high"},
+        stream=False,
+    )
+
+    assert "elders.example.com" not in turn.text
+    assert "Let op:" not in turn.text
 
 
 @pytest.mark.asyncio
@@ -869,3 +934,35 @@ async def test_text_beside_an_unsupported_attachment_is_still_answered(monkeypat
         if isinstance(m["content"], list)
         for part in m["content"]
     )
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_beside_an_unreadable_file_is_still_read(monkeypatch):
+    """Dropping every file part of the turn lost the PDF next to the file
+    Klai cannot read, and the answer silently went without it."""
+    import base64
+
+    from app.services import chat_attachments
+
+    monkeypatch.setattr(chat_attachments, "_convert_pdf_with_docling", AsyncMock(return_value="Rooster: maandag vrij."))
+    llm = _LiteLLM()
+    question = [
+        {"type": "text", "text": QUESTION + " Het rooster zit erbij."},
+        {"type": "file", "file": {"filename": "rooster.docx", "file_data": base64.b64encode(b"PK\x03\x04").decode()}},
+        {"type": "file", "file": {"filename": "rooster.pdf", "file_data": base64.b64encode(b"%PDF-1.7 x").decode()}},
+    ]
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        question=question,
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    assert turn.text.startswith("Klai kan nu alleen PDF-bestanden direct in chat verwerken.\n\n" + ANSWER)
+    (answer,) = llm.of("answer")
+    latest = next(m for m in reversed(answer["messages"]) if m["role"] == "user")
+    assert "Rooster: maandag vrij." in str(latest["content"])
+    assert "rooster.docx" not in str(latest["content"])

@@ -74,6 +74,7 @@ from app.services.knowledge_prompts import (
     multi_question_guard,
     sub_query_grouped_context,
     unchecked_question_blocks,
+    unsearched_question_blocks,
 )
 from app.services.passage_selection import PassageSelection, select_passages, writer_brief
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
@@ -459,6 +460,8 @@ class KnowledgeTurn:
     not_in_passages: bool = False
     # The writer's passages are the selection's, not everything retrieval found.
     passages_chosen: bool = False
+    # Internal Open whose selection chose nothing: the writer gets no passage.
+    passages_emptied: bool = False
     # The grounding check that runs after the reply (an Open turn, or a reply
     # written from chosen passages); the per-turn record waits for it.
     grounding_check: asyncio.Task[None] | None = None
@@ -1181,6 +1184,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             # two questions from another product's articles, with those as
             # sources (internal chat, 14 to 21 October).
             chunks, trusted_sources = [], []
+            turn.passages_emptied = True
     if not (turn.passages_chosen and any(chunk.get("kept") for chunk in chunks)):
         # A kept passage answered: the knowledge base had the answer.
         _register_gap(t, found)
@@ -1219,6 +1223,14 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         # must still see them so it does not answer them from other lines.
         if unchecked := unchecked_question_blocks(found.unchecked_questions, start_index=len(found.sub_queries) + 1):
             system_prompt += "\n\n" + "\n\n".join(unchecked)
+    elif turn.passages_emptied:
+        # The prompt without passages dropped the per-question layout, and
+        # with it the parts the writer may not answer: the ones whose search
+        # failed or was skipped, and the ones never searched.
+        if unsearched := unsearched_question_blocks(
+            sub_query_results, found.unchecked_questions, start_index=len(found.sub_queries) + 1
+        ):
+            system_prompt += "\n\n" + "\n\n".join(unsearched)
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
 

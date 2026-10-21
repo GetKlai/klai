@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncGenerator
+from decimal import Decimal
 from typing import Any
 
 from klai_chat_prompts.language import (
@@ -94,13 +95,18 @@ _ORPHAN_MARKER_RE = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s*$")
 _NUMBER_TAIL = 9
 
 
-# An amount: a number beside a currency sign or word. Compared without its
-# separators and without a trailing ",00" or ",-", so "€ 1.250" and "1250 euro"
-# are the same amount.
+# An amount: a number beside a currency sign or word. Compared as currency
+# plus value, so "€ 1.250,00" and "1250 euro" are the same amount and "€ 12,50"
+# is not. A last separator followed by exactly three digits groups thousands
+# ("1.250", "1,250,000"); any other count of digits after it is a fraction
+# ("12,50", "16.95", "0,00576").
 _AMOUNT_RE = re.compile(
-    r"(?:[€$£]|\beur\b)\s?(\d(?:[\d.,]*\d)?)|(\d(?:[\d.,]*\d)?)\s?(?:[€$£]|\beuro?\b)", re.IGNORECASE
+    r"(?P<pre>[€$£]|\beur\b)\s?(?P<pre_number>\d(?:[\d.,]*\d)?)"
+    r"|(?P<post_number>\d(?:[\d.,]*\d)?)\s?(?P<post>[€$£]|\beuro?\b)",
+    re.IGNORECASE,
 )
-_AMOUNT_ZERO_CENTS_RE = re.compile(r"[.,](?:00|-)$")
+_AMOUNT_FRACTION_RE = re.compile(r"[.,](\d+)$")
+_CURRENCIES = {"€": "EUR", "eur": "EUR", "euro": "EUR", "$": "USD", "£": "GBP"}
 
 
 def _phone_numbers(text: str) -> set[str]:
@@ -121,9 +127,19 @@ def _contact_details(text: str) -> set[str]:
 
 def _amounts(text: str) -> set[str]:
     return {
-        re.sub(r"\D", "", _AMOUNT_ZERO_CENTS_RE.sub("", match.group(1) or match.group(2)))
+        _amount_key(match["pre"] or match["post"], match["pre_number"] or match["post_number"])
         for match in _AMOUNT_RE.finditer(text)
     }
+
+
+def _amount_key(currency: str, number: str) -> str:
+    fraction = _AMOUNT_FRACTION_RE.search(number)
+    if fraction and len(fraction.group(1)) != 3:
+        integer, decimals = number[: fraction.start()], fraction.group(1)
+    else:
+        integer, decimals = number, "0"
+    value = Decimal(f"{re.sub(r'[^0-9]', '', integer) or '0'}.{decimals}").normalize()
+    return f"{_CURRENCIES[currency.lower()]} {value:f}"
 
 
 def _links(texts: list[str]) -> set[str]:
