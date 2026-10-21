@@ -3,7 +3,7 @@
 docs/architecture/chat-quality-history-and-plan.md §7.3: the internal chat runs
 on the one chat pipeline. The "Klai AI" endpoint in
 deploy/librechat/librechat.yaml reads its key and base URL from two variables in
-the tenant's LibreChat .env, so the switch rewrites exactly those two lines and
+the tenant's LibreChat .env, so the switch writes exactly those two lines and
 recreates the container: KLAI_CHAT_API_KEY becomes the org's internal-chat
 partner key (reused when the .env already holds it, minted otherwise) and
 KLAI_CHAT_BASE_URL becomes portal-api's partner endpoint.
@@ -59,12 +59,12 @@ EXIT_COMPOSE_RECREATE_PENDING = 3
 
 
 def rewrite_env(content: str, values: Mapping[str, str]) -> str:
-    """Replace the ``KEY=`` lines named in ``values``; every other byte stays as it was.
+    """Replace the ``KEY=`` lines named in ``values`` and append the ones the file lacks; every other byte stays.
 
-    A key that is not in the file raises instead of being appended: the fleet
-    backfill (/internal/librechat/regenerate) writes both chat variables, and a
-    tenant without them has not had it. An empty value raises too, because
-    librechat.yaml would expand it into an empty API key.
+    A missing key is appended because the fleet reconcile no longer writes the
+    chat variables, so an env provisioned before they existed, or cut short,
+    only gets them here. An empty value raises, because librechat.yaml would
+    expand it into an empty API key.
     """
     empty = sorted(key for key, value in values.items() if not value)
     if empty:
@@ -77,9 +77,10 @@ def rewrite_env(content: str, values: Mapping[str, str]) -> str:
             key = match.group(1)
             lines[index] = f"{key}={values[key]}" + ("\n" if line.endswith("\n") else "")
             seen.add(key)
-    missing = sorted(set(values) - seen)
-    if missing:
-        raise ValueError(f"{missing} not in the tenant .env; run the LibreChat env backfill first")
+    missing = [key for key in values if key not in seen]
+    if missing and lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    lines.extend(f"{key}={values[key]}\n" for key in missing)
     return "".join(lines)
 
 
@@ -127,8 +128,6 @@ async def switch(slug: str, *, rotate: bool = False) -> int:
     org = await _load_org(slug)
     env_path = Path(settings.librechat_container_data_path) / org.slug / ".env"
     env = _read_dotenv_file(env_path)
-    if not {"KLAI_CHAT_API_KEY", "KLAI_CHAT_BASE_URL"} <= env.keys():
-        raise SystemExit(f"{env_path} lacks the chat variables; run the LibreChat env backfill first.")
     compose_managed = await asyncio.to_thread(_compose_managed, org.slug)
 
     current = env.get("KLAI_CHAT_API_KEY", "")

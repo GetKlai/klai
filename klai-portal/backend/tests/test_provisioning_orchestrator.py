@@ -8,7 +8,7 @@ are mocked. The focus is on control-flow correctness, not on the individual
 side-effect calls themselves (which are exercised by infrastructure.py tests).
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -476,3 +476,23 @@ async def test_compensator_exception_is_swallowed(mock_orchestrator_env) -> None
     # LiteLLM compensator still ran despite Zitadel one raising — best-effort
     # rollback lets the stack keep unwinding.
     assert litellm_called, "LiteLLM compensator must still run when Zitadel compensator raises"
+
+
+@pytest.mark.asyncio
+async def test_failure_after_the_chat_key_is_minted_leaves_no_valid_chat_key(
+    mock_orchestrator_env, monkeypatch
+) -> None:
+    """The rollback removes the .env that held the internal-chat key, so the key is revoked with it."""
+    from app.services.provisioning import orchestrator
+
+    db, _org = _make_db_and_org(org_id=7)
+    mock_orchestrator_env["start_container"].side_effect = RuntimeError("docker down")
+    revoke = AsyncMock(return_value=1)
+    monkeypatch.setattr(orchestrator, "revoke_internal_chat_key", revoke)
+
+    with patch("app.services.provisioning.state_machine.emit_event"):
+        with pytest.raises(RuntimeError, match="docker down"):
+            await orchestrator._provision(7, db)
+
+    mock_orchestrator_env["mint_chat_key"].assert_awaited_once()
+    revoke.assert_awaited_once_with(ANY, 7)

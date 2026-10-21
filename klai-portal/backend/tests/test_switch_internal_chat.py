@@ -41,16 +41,10 @@ def test_rewrite_env_replaces_only_the_named_lines():
     )
 
 
-@pytest.mark.parametrize(
-    "values",
-    [
-        {"KLAI_CHAT_API_KEY": ""},  # would expand to an empty API key
-        {"KLAI_CHAT_MODEL": "x"},  # not backfilled: never appended
-    ],
-)
-def test_rewrite_env_refuses_an_empty_value_or_a_missing_line(values):
+def test_rewrite_env_refuses_an_empty_value():
+    # librechat.yaml would expand it into an empty API key.
     with pytest.raises(ValueError):
-        switch_mod.rewrite_env(_ENV, values)
+        switch_mod.rewrite_env(_ENV, {"KLAI_CHAT_API_KEY": ""})
 
 
 @pytest.fixture()
@@ -91,6 +85,26 @@ async def test_switch_to_portal_mints_the_key_writes_it_and_recreates(tenant, mo
     assert tenant.env_path.stat().st_mode & 0o777 == 0o600
     tenant.recreate.assert_called_once_with(tenant.org)
     assert _PORTAL_KEY not in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_switch_of_an_env_without_the_chat_lines_adds_them_on_the_portal_path(tenant, monkeypatch):
+    tenant.env_path.write_text(
+        "# Tenant: brightwater\nCREDS_KEY=feedfacefeedfacefeedfacefeedface\nLITELLM_API_KEY=sk-team-brightwater-example"
+    )
+    monkeypatch.setattr(switch_mod, "holds_internal_chat_key", AsyncMock(return_value=False))
+    monkeypatch.setattr(switch_mod, "mint_internal_chat_key", AsyncMock(return_value=_PORTAL_KEY))
+
+    assert await switch_mod.switch("brightwater") == 0
+
+    assert tenant.env_path.read_text() == (
+        "# Tenant: brightwater\n"
+        "CREDS_KEY=feedfacefeedfacefeedfacefeedface\n"
+        "LITELLM_API_KEY=sk-team-brightwater-example\n"
+        f"KLAI_CHAT_API_KEY={_PORTAL_KEY}\n"
+        "KLAI_CHAT_BASE_URL=http://portal-api:8010/partner/v1\n"
+    )
+    tenant.recreate.assert_called_once_with(tenant.org)
 
 
 def test_write_env_is_owner_only_from_the_first_byte_and_leaves_no_temp_file(tmp_path):

@@ -35,7 +35,7 @@ from app.core.database import AsyncSessionLocal, tenant_scoped_session
 from app.core.provisioning_names import validate_slug_for_provisioning
 from app.core.system_groups import create_system_groups
 from app.models.portal import PortalOrg, PortalUser
-from app.services.internal_chat_keys import mint_internal_chat_key
+from app.services.internal_chat_keys import mint_internal_chat_key, revoke_internal_chat_key
 from app.services.provisioning.generators import _generate_librechat_env
 from app.services.provisioning.infrastructure import (
     _caddy_lock,
@@ -83,6 +83,7 @@ class _ProvisionState:
     mongo_user_created: bool = False
     mongo_user_slug: str = ""
     meili_key_created: bool = False
+    chat_key_org_id: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +129,18 @@ async def _compensate_mongo_user(state: _ProvisionState) -> None:
         await loop.run_in_executor(None, _sync_drop_mongodb_tenant_user, state.mongo_user_slug)
     except Exception as exc:
         logger.warning("rollback_mongodb_user_failed", slug=state.mongo_user_slug, error=str(exc), exc_info=True)
+
+
+async def _compensate_internal_chat_key(state: _ProvisionState) -> None:
+    # The rolled-back .env was the only holder of the plaintext, so a key left
+    # behind would stay valid for a caller nobody provisioned.
+    if not state.chat_key_org_id:
+        return
+    try:
+        async with tenant_scoped_session(state.chat_key_org_id) as db:
+            await revoke_internal_chat_key(db, state.chat_key_org_id)
+    except Exception as exc:
+        logger.warning("rollback_internal_chat_key_failed", slug=state.slug, error=str(exc), exc_info=True)
 
 
 async def _compensate_env_file(state: _ProvisionState) -> None:
@@ -486,6 +499,8 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             # failed attempt belongs to an env that no longer exists.
             async with tenant_scoped_session(org_id) as key_db:
                 chat_api_key = await mint_internal_chat_key(key_db, org_id, rotate=True)
+            state.chat_key_org_id = org_id
+            stack.push_async_callback(_compensate_internal_chat_key, state)
             assert chat_api_key is not None  # rotate=True always mints
             env_content = _generate_librechat_env(
                 slug,
