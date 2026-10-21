@@ -61,6 +61,8 @@ class FakeOrg:
     # call assert_platform_unlocked(org, "widgets"); default to unlocked so
     # CORS tests focus on origin gating, not the platform-unlock surface.
     platform_unlocked_features: list = field(default_factory=lambda: ["widgets"])
+    deleted_at: object = None
+    provisioning_status: str = "ready"
 
 
 def _make_request(

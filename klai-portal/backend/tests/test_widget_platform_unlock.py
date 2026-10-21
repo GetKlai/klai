@@ -58,6 +58,8 @@ class FakeOrgUnlocked:
     zitadel_org_id: str = "zitadel-org-123"
     slug: str = "test"
     platform_unlocked_features: list = field(default_factory=lambda: ["widgets"])
+    deleted_at: object = None
+    provisioning_status: str = "ready"
 
 
 @dataclass
@@ -68,6 +70,8 @@ class FakeOrgLocked:
     zitadel_org_id: str = "zitadel-org-123"
     slug: str = "test"
     platform_unlocked_features: list = field(default_factory=list)
+    deleted_at: object = None
+    provisioning_status: str = "ready"
 
 
 def _make_request(origin: str = "https://example.com") -> MagicMock:

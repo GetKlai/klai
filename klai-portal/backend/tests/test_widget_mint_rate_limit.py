@@ -64,6 +64,8 @@ class FakeOrg:
     zitadel_org_id: str = "zitadel-org-123"
     slug: str = "test"
     platform_unlocked_features: list = field(default_factory=lambda: ["widgets"])
+    deleted_at: object = None
+    provisioning_status: str = "ready"
     enabled_addons: list = field(default_factory=list)
 
 

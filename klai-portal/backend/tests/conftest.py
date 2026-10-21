@@ -223,6 +223,7 @@ def make_org(
     org.enabled_addons = enabled_addons or []
     org.platform_unlocked_features = platform_unlocked_features or []
     org.provisioning_status = provisioning_status
+    org.deleted_at = None
     org.name = name or slug.capitalize()
     org.moneybird_subscription_id = "ms-test-123"
     org.moneybird_contact_id = "mc-test-123"
