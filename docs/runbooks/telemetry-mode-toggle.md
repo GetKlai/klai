@@ -44,8 +44,10 @@ curl -sS -X POST \
   -d '{"level":"shadow","reason":"Closing debug session for ticket #1234"}'
 ```
 
-Propagation: the chat path reads the level from the database on every
-turn, so the next turn uses it. No cache, no restart.
+Propagation: portal-api reads the level from the database on every turn;
+retrieval-api caches it per process for up to 5 minutes
+(`tenant_telemetry.CACHE_TTL_SECONDS`), so the change lands within 5 minutes.
+No restart.
 
 ## How to toggle (tenant path — self-service)
 

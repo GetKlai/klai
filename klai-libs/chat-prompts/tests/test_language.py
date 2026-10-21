@@ -34,7 +34,9 @@ ES_1 = "¿Cómo puedo invitar a un nuevo usuario a mi equipo y cambiar sus permi
 PT_1 = "Como posso convidar um novo usuário para a minha equipe e alterar as permissões dele?"
 
 FENCED = "```\nprint('this English text inside a fenced block must never vote at all')\n```"
-JSON_STIMULUS = '{"status": "error", "code": 500, "detail": "internal server failure on the primary host"}'
+JSON_STIMULUS = (
+    '{"status": "error", "code": 500, "detail": "internal server failure on the primary host"}'
+)
 MAIL_HEADERS = (
     "From: jan@example.nl\n"
     "To: admin@klai.nl\n"
@@ -231,11 +233,13 @@ def test_gate_rescues_one_substantive_prose_line_under_machine_majority() -> Non
     # Boundary of MIN_PROSE_SENTENCE_WORDS (9): a header-dominated turn
     # votes only when a full-length user sentence survives intact.
     rescued = clm.classify_turn_evidence(
-        "From: jan@example.nl\nTo: admin@klai.nl\n\nWaarom is het bedrag op deze factuur zo hoog"  # exactly 9 words
+        "From: jan@example.nl\nTo: admin@klai.nl\n\n"
+        "Waarom is het bedrag op deze factuur zo hoog"  # exactly 9 words
     )
     assert rescued.classification == clm.EVIDENCE_PROSE
     too_fragmentary = clm.classify_turn_evidence(
-        "From: jan@example.nl\nTo: admin@klai.nl\n\nWaarom is het bedrag op deze factuur zo"  # 8 words
+        "From: jan@example.nl\nTo: admin@klai.nl\n\n"
+        "Waarom is het bedrag op deze factuur zo"  # 8 words
     )
     assert too_fragmentary.classification == clm.EVIDENCE_MACHINE
 
@@ -244,7 +248,12 @@ def test_gate_needs_a_majority_of_machine_lines_not_just_any_of_them() -> None:
     # Several short prose lines (every one under MIN_PROSE_SENTENCE_WORDS)
     # plus one machine line: no majority, so the proportional rule must not
     # fire — short real sentences still vote (the floor alone judges them).
-    turn = "Factuur-nummer: 2024-0081\nIk begrijp dit bedrag niet.\nKunt u dat uitleggen?\nHet klopt met niets."
+    turn = (
+        "Factuur-nummer: 2024-0081\n"
+        "Ik begrijp dit bedrag niet.\n"
+        "Kunt u dat uitleggen?\n"
+        "Het klopt met niets."
+    )
     ev = clm.classify_turn_evidence(turn)
     assert ev.classification == clm.EVIDENCE_PROSE
 
@@ -467,7 +476,9 @@ def test_weak_votes_never_switch_after_the_lock_either() -> None:
 def test_post_window_switch_costs_a_strong_turn_plus_the_streak() -> None:
     # The weak vote is skipped; the first post-lock switch still happens on
     # ONE strong clean turn (FIRST_SWITCH_CONFIRMATIONS = 1).
-    decision = clm.resolve_conversation_language(user_turns(NL_1, NL_2, NL_3, WEAK_SWITCH_STIMULUS, EN_1))
+    decision = clm.resolve_conversation_language(
+        user_turns(NL_1, NL_2, NL_3, WEAK_SWITCH_STIMULUS, EN_1)
+    )
     assert decision.language == "en"
     assert decision.switches == 1
     assert decision.reason == clm.REASON_SWITCHED
@@ -477,7 +488,9 @@ def test_post_window_switch_costs_a_strong_turn_plus_the_streak() -> None:
 def test_explicit_request_switches_regardless_of_weak_votes() -> None:
     # Step 2 is unaffected by strength: even after a refused weak vote, an
     # explicit request switches immediately.
-    decision = clm.resolve_conversation_language(user_turns(NL_1, WEAK_SWITCH_STIMULUS, "Please reply in English"))
+    decision = clm.resolve_conversation_language(
+        user_turns(NL_1, WEAK_SWITCH_STIMULUS, "Please reply in English")
+    )
     assert decision.language == "en"
     assert decision.reason == clm.REASON_EXPLICIT_REQUEST
 
@@ -495,7 +508,9 @@ def test_subsequent_switch_needs_two_consecutive_turns() -> None:
     assert refused.language == "de"  # single unconfirmed French stimulus is refused
     assert refused.reason == clm.REASON_SWITCHED
 
-    confirmed = clm.resolve_conversation_language(user_turns(NL_1, NL_2, NL_3, DE_1, FR_1, FR_1))
+    confirmed = clm.resolve_conversation_language(
+        user_turns(NL_1, NL_2, NL_3, DE_1, FR_1, FR_1)
+    )
     assert confirmed.language == "fr"
     assert confirmed.switches == 2
     assert confirmed.reason == clm.REASON_SWITCHED
@@ -503,7 +518,9 @@ def test_subsequent_switch_needs_two_consecutive_turns() -> None:
 
 def test_switch_back_costs_the_same_as_a_new_switch() -> None:
     # No cheap ping-pong: after nl -> de, coming back needs two consecutive turns.
-    decision = clm.resolve_conversation_language(user_turns(NL_1, NL_2, NL_3, DE_1, NL_1, NL_2))
+    decision = clm.resolve_conversation_language(
+        user_turns(NL_1, NL_2, NL_3, DE_1, NL_1, NL_2)
+    )
     assert decision.language == "nl"
     assert decision.switches == 2
     assert decision.reason == clm.REASON_SWITCHED
@@ -522,7 +539,9 @@ def test_weak_stimulus_quoted_foreign_sentence_does_not_switch() -> None:
 
 
 def test_weak_stimulus_pasted_machine_text_does_not_switch() -> None:
-    decision = clm.resolve_conversation_language(user_turns(NL_1, NL_2, NL_3, JSON_STIMULUS, FENCED, MAIL_HEADERS))
+    decision = clm.resolve_conversation_language(
+        user_turns(NL_1, NL_2, NL_3, JSON_STIMULUS, FENCED, MAIL_HEADERS)
+    )
     assert decision.language == "nl"
     assert decision.reason == clm.REASON_LOCKED
     assert decision.abstentions == 3
@@ -550,7 +569,10 @@ def test_quoted_span_turn_fails_to_switch() -> None:
     # talking: it votes (the surrounding prose is long enough) but is too weak
     # to overturn the established Dutch. Tested inside the window so only
     # strength — not the confirmation streak — can be what blocks the switch.
-    turn = 'Please refund the full amount, the order note says "damaged on arrival" and I want my money back today'
+    turn = (
+        'Please refund the full amount, the order note says "damaged on arrival" '
+        "and I want my money back today"
+    )
     assert not clm._turn_is_strong_switch(turn)
     decision = clm.resolve_conversation_language(user_turns(NL_1, turn))
     assert decision.language == "nl"
@@ -602,7 +624,9 @@ def test_weak_turn_still_confirms_the_current_language() -> None:
 def test_abstaining_turn_never_sets_or_resets_state() -> None:
     # An established English conversation with a Dutch acknowledgement that
     # is below the short-text confidence tier must stay English.
-    decision = clm.resolve_conversation_language(user_turns(EN_1, EN_2, EN_3, "Dank je wel", EN_1))
+    decision = clm.resolve_conversation_language(
+        user_turns(EN_1, EN_2, EN_3, "Dank je wel", EN_1)
+    )
     assert decision.language == "en"
     assert decision.abstentions == 1
     assert decision.switches == 0
@@ -611,7 +635,9 @@ def test_abstaining_turn_never_sets_or_resets_state() -> None:
 def test_abstentions_do_not_break_the_confirmation_streak() -> None:
     # Spec: subsequent switches need 2 CONSECUTIVE NON-ABSTAINING turns;
     # abstaining turns are skipped entirely, not treated as breaks.
-    decision = clm.resolve_conversation_language(user_turns(NL_1, NL_2, NL_3, DE_1, FR_1, "Ja", FR_1))
+    decision = clm.resolve_conversation_language(
+        user_turns(NL_1, NL_2, NL_3, DE_1, FR_1, "Ja", FR_1)
+    )
     assert decision.language == "fr"
     assert decision.switches == 2
 
@@ -635,7 +661,9 @@ def test_explicit_request_works_despite_brevity_gate() -> None:
 def test_explicit_request_resets_confirmation_cost() -> None:
     # After an explicit request the next switch again costs a single turn,
     # while it would have cost two without the request.
-    without = clm.resolve_conversation_language(user_turns(NL_1, NL_2, NL_3, DE_1, FR_1, EN_1))
+    without = clm.resolve_conversation_language(
+        user_turns(NL_1, NL_2, NL_3, DE_1, FR_1, EN_1)
+    )
     assert without.language == "de"  # FR was never confirmed (cost 2)
 
     with_request = clm.resolve_conversation_language(
@@ -758,7 +786,9 @@ def test_decision_method_reports_the_identification_mechanism() -> None:
     assert function_words.language == "nl"
     assert function_words.method == clm.METHOD_FUNCTION_WORDS
 
-    langid = clm.resolve_conversation_language(user_turns("Kun je uitleggen waarom dit gesprek faalt bij de carrier?"))
+    langid = clm.resolve_conversation_language(
+        user_turns("Kun je uitleggen waarom dit gesprek faalt bij de carrier?")
+    )
     assert langid.language == "nl"
     assert langid.method == clm.METHOD_LANGID
 
@@ -878,7 +908,9 @@ def test_detector_unavailable_machine_text_still_no_evidence() -> None:
     # normal classification even without a detector. The proportional dumps
     # are included: the gate must do its job with no identifier present at
     # all — its abstentions can never depend on the identifier's uncertainty.
-    decision = clm.resolve_conversation_language(user_turns(FENCED, JSON_STIMULUS, PROTOCOL_DUMP, PACKET_DUMP))
+    decision = clm.resolve_conversation_language(
+        user_turns(FENCED, JSON_STIMULUS, PROTOCOL_DUMP, PACKET_DUMP)
+    )
     assert decision.language is None
     assert decision.reason == clm.REASON_NO_EVIDENCE
     assert decision.abstentions == 4
@@ -924,7 +956,9 @@ def test_identify_text_language_matches_the_conversation_decision() -> None:
     # One implementation: the single-text answer for a lone turn must equal
     # what the full replay decides for a conversation of exactly that turn.
     for text in (NL_1, EN_1, DE_1, "Antwoord in het Nederlands", JSON_STIMULUS):
-        assert clm.identify_text_language(text) == clm.resolve_conversation_language(user_turns(text)).language
+        assert clm.identify_text_language(text) == clm.resolve_conversation_language(
+            user_turns(text)
+        ).language
 
 
 def test_short_german_question_is_not_hijacked_by_the_dutch_function_word_table() -> None:

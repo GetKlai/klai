@@ -21,6 +21,11 @@ permissions:
 
 jobs:
   sync-librechat-config:
+    # Serialised with the klai-docker-authz deploy (same group): the
+    # regenerate below recreates tenant containers through that proxy.
+    concurrency:
+      group: core-01-tenant-containers
+      cancel-in-progress: false
     # Production sync over SSH. Guarded on main for the same reason as every
     # deploy job: workflow_dispatch accepts any ref, and without this a
     # dispatch from a feature branch would sync that branch's compose and
@@ -107,9 +112,9 @@ jobs:
             # the step and surfaces every printed line (including the errors list) in
             # the step output.
             # The regenerate endpoint recreates containers through
-            # klai-docker-authz. A push that also rebuilds that proxy left 24
-            # of 42 tenants on the old container with "Max retries exceeded"
-            # (21 October 2026); wait for the proxy before asking.
+            # klai-docker-authz. The concurrency group above keeps the proxy's
+            # own deploy from running at the same time; this poll covers a
+            # proxy that is restarting for any other reason.
             for attempt in $(seq 1 24); do
               if docker compose -f /opt/klai/docker-compose.yml exec -T portal-api python -c '
             import sys
