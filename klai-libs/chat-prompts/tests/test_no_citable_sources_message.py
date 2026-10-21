@@ -24,7 +24,29 @@ def test_dutch_code_returns_dutch_refusal() -> None:
     assert no_citable_sources_message("nl") == _DUTCH
 
 
-@pytest.mark.parametrize("code", ["en", "nl-NL", "DE", "de"])
+@pytest.mark.parametrize(
+    ("code", "refusal", "hint"),
+    [
+        (
+            "de",
+            "Ich kann das anhand der verfügbaren Wissensquellen nicht zuverlässig beantworten.",
+            " Versuche es im Open-Modus",
+        ),
+        (
+            "fr",
+            "Je ne peux pas répondre de manière fiable à partir des sources de connaissances disponibles.",
+            " Essayez le mode Open",
+        ),
+    ],
+)
+def test_german_and_french_codes_get_their_own_refusal_and_hint(code: str, refusal: str, hint: str) -> None:
+    # A German Strict conversation got the English refusal (internal chat,
+    # 21 October 2026); the internal chat is used in these two languages too.
+    assert no_citable_sources_message(code) == refusal
+    assert no_citable_sources_message(code, suggest_open_mode=True).startswith(refusal + hint)
+
+
+@pytest.mark.parametrize("code", ["en", "nl-NL", "DE", "es"])
 def test_exact_code_match_is_case_and_locale_strict(code: str) -> None:
     # Only the bare lowercase decision code selects Dutch; a locale variant
     # or uppercase slip is a caller bug we refuse to paper over — it renders

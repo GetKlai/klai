@@ -345,16 +345,6 @@
             },
             "targets": [
                 {
-                    "refId": "A",
-                    "datasource": {
-                        "type": "victoriametrics-logs-datasource",
-                        "uid": "victorialogs"
-                    },
-                    "expr": "service:litellm AND _msg:\"citation_rescue_applied\"",
-                    "queryType": "stats",
-                    "legendFormat": "LiteLLM"
-                },
-                {
                     "refId": "B",
                     "datasource": {
                         "type": "victoriametrics-logs-datasource",

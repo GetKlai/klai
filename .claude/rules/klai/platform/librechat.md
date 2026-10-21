@@ -83,10 +83,10 @@ See `klai-portal/backend/app/api/app_chat.py` for the reference probe.
 ## addParams limitations
 - `addParams` values are literal — no `${ENV_VAR}` or `{{USER_VAR}}` interpolation.
 - Only `apiKey` and `baseURL` support env var syntax.
-- For dynamic context: use LiteLLM pre-call hook or MCP server headers.
+- For dynamic context: portal-api builds the system prompt per turn (the chat path); MCP server headers for tools.
 
 ## Dual system message
-- `promptPrefix` in librechat.yaml + LiteLLM pre-call hook = two system messages.
+- `promptPrefix` in librechat.yaml + portal-api's system prompt = two system messages.
 - Extend existing system message content instead of prepending a new one.
 
 ## npx in container

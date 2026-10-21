@@ -21,6 +21,11 @@ permissions:
 
 jobs:
   sync-librechat-config:
+    # Serialised with the klai-docker-authz deploy (same group): the
+    # regenerate below recreates tenant containers through that proxy.
+    concurrency:
+      group: core-01-containers
+      cancel-in-progress: false
     # Production sync over SSH. Guarded on main for the same reason as every
     # deploy job: workflow_dispatch accepts any ref, and without this a
     # dispatch from a feature branch would sync that branch's compose and
@@ -106,6 +111,32 @@ jobs:
             # script (line 39), so a non-zero exit from the exec'd python process aborts
             # the step and surfaces every printed line (including the errors list) in
             # the step output.
+            # The regenerate endpoint recreates containers through
+            # klai-docker-authz. The concurrency group above keeps the proxy's
+            # own deploy from running at the same time; this poll covers a
+            # proxy that is restarting for any other reason.
+            authz_ready=no
+            for attempt in $(seq 1 24); do
+              if docker compose -f /opt/klai/docker-compose.yml exec -T portal-api python -c '
+            import sys
+
+            import httpx
+
+            sys.exit(0 if httpx.get("http://klai-docker-authz:2375/health", timeout=5.0).status_code == 200 else 1)
+            ' 2>/dev/null; then
+                authz_ready=yes
+                break
+              fi
+              echo "klai-docker-authz not answering yet (attempt $attempt of 24)"
+              sleep 5
+            done
+            if [ "$authz_ready" != yes ]; then
+              # Regenerating now would write every tenant's config and then
+              # fail each container action; better to fail before writing.
+              echo "ERROR: klai-docker-authz did not answer within 2 minutes; not regenerating." >&2
+              exit 1
+            fi
+
             echo "Triggering tenant config regeneration via portal-api..."
             docker compose -f /opt/klai/docker-compose.yml exec -T \
               -e RECREATE_CONTAINERS="$RECREATE_CONTAINERS" \
