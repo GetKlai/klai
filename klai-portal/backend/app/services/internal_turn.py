@@ -6,9 +6,11 @@ write. The steps that are the same come from widget_turn.py. What differs is
 the end of the flow (§5, "Punt in de stroom"): the internal chat has no
 appointment button, so there is no contact route and no off-topic referral;
 the escalation, frustration and conversational addenda are help-widget prompt
-concepts; and "not in the passages" is the Strict refusal that suggests the
-open mode, while Open writes from every passage because it may answer from
-general knowledge. ``app.api.partner.chat_completions`` resolves the
+concepts; "not in the passages" is the Strict refusal that suggests the open
+mode, while Open writes from general knowledge without passages; and the
+selection's variant question is never asked, because an employee often relays
+someone else's question and cannot answer it, so the writer gives the steps
+per variant (passage_selection.writer_brief). ``app.api.partner.chat_completions`` resolves the
 employee's profile and prompt settings before the turn and records and sends
 what it returns.
 """
@@ -27,7 +29,7 @@ from app.core.config import Settings
 from app.services import case_file
 from app.services.answer_footer import render_answer_footer
 from app.services.chat_profile import ChatProfile
-from app.services.chat_prompting import _is_web_search_tool, _response_language
+from app.services.chat_prompting import _is_web_search_tool
 from app.services.chat_safety import _last_user_message
 from app.services.retrieval_context import (
     INTERNAL_RETRIEVE_TOP_K,
@@ -40,10 +42,10 @@ from app.services.retrieval_context import (
 from app.services.widget_reply import Reply
 from app.services.widget_turn import (
     Found,
+    fixed_language,
     fixed_reply,
     log_retrieval,
     mark_knowledge_turn_without_evidence,
-    question_reply,
 )
 from app.services.widget_write import write_reply
 
@@ -164,21 +166,19 @@ async def _search(inputs: InternalInputs, turn: KnowledgeTurn, follow_up_variant
 
 
 def _route(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, case: case_file.Case | None) -> Reply | None:
-    language = _response_language(inputs.request.messages, pasted_correspondence=inputs.pasted_correspondence)
+    language = fixed_language(inputs.request.messages, case, pasted_correspondence=inputs.pasted_correspondence)
     if turn.refusal is not None:
         # Strict with nothing to search, no evidence, or the knowledge base
         # unreachable (retrieve_context): the fixed text, no model call.
-        return _refusal(inputs, turn, turn.refusal, language)
+        return _refusal(inputs, turn, turn.refusal(language), language)
     mark_knowledge_turn_without_evidence(turn, case)
     if turn.not_in_passages and inputs.profile.kb_mode == "strict":
         # Strict promised knowledge-base-only answers, and no passage answers
         # this question: the same fixed refusal as with zero passages, decided
-        # before any model writes (step N). Open writes from every passage.
+        # before any model writes (step N). Open writes from general knowledge.
         logger.info("partner_chat_not_in_passages", org_id=inputs.auth.org_id, passages=len(found.chunks))
         return _refusal(inputs, turn, no_citable_sources_message(language, suggest_open_mode=True), language)
-    # The selection step's one question, once per conversation, in Strict and
-    # Open alike. No escalation: that is the widget's appointment concept.
-    return question_reply(inputs, turn, found, None, case.scope if case else None)
+    return None
 
 
 def _refusal(inputs: InternalInputs, turn: KnowledgeTurn, text: str, language: str | None) -> Reply:

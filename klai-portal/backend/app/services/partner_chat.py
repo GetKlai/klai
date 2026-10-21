@@ -65,6 +65,7 @@ from app.services.chat_safety import (
     _helpdesk_refusal_offers,
     _last_user_message,
     _text_offers_appointment,
+    hard_facts_outside,
     output_safety_violation,
     safety_refusal_message,
     without_unsourced_contact_details,
@@ -558,6 +559,7 @@ async def _finish_live_answer(
     profile: ChatProfile,
     knowledge_turn: KnowledgeTurn | None = None,
     delegated_org_id: str | None = None,
+    live: bool = True,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """Settle an internal Open or general turn after composition: record the one decision, start the check.
 
@@ -568,12 +570,23 @@ async def _finish_live_answer(
     and judged in ``widget_write.write_reply``, like the help widget's.
 
     An empty result (the model wrote nothing) keeps the composer's refusal.
+
+    An Open reply's e-mail addresses, links, phone numbers and amounts that
+    stand in no passage are counted per kind: the employee already saw them,
+    so they go into the decision for the footer's warning and into the record.
+    Counted on the text the employee sees: the streamed draft on a ``live``
+    turn, and otherwise the final text, which no longer holds the links the
+    source gate removed.
     """
     answer_mode = knowledge_turn.answer_mode if knowledge_turn is not None else profile.kb_mode
     draft_text, _ = strip_appointment_offer_marker(draft)
     safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
     if not safe_text:
         return content, sources, decision
+    shown = draft_text if live else (content if sources else safe_text)
+    hard_facts = hard_facts_outside(shown, citation_chunks, messages) if answer_mode == "open" else {}
+    if hard_facts and answer_signals is not None:
+        answer_signals["hard_facts_outside_kb"] = hard_facts
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
     outcome = decide_answer(
         kb_mode=answer_mode,
@@ -600,8 +613,11 @@ async def _finish_live_answer(
     # labelled general knowledge in the footer.
     # A general turn searched nothing, so its links (web search, file
     # names) are the model's or the user's own and stay as the hook left them.
-    uncited = draft_text if answer_mode == "general" else safe_text
-    return (content, sources, decision) if sources else (uncited, [], {"reason": outcome})
+    if not sources:
+        content, decision = (draft_text if answer_mode == "general" else safe_text), {"reason": outcome}
+    if hard_facts:
+        decision["hard_facts_outside_kb"] = hard_facts
+    return content, sources, decision
 
 
 def _grounding_label(grounding: GroundingCheck) -> str:
@@ -876,14 +892,17 @@ async def _settle_live_answer(
         reply=content,
     )
     footer_text = ""
-    if profile.surface == "internal" and emit_sources:
+    if profile.surface == "internal":
+        # A caller that asked for no sources still gets the warning about a
+        # hard fact outside the knowledge base: the text is already on screen.
         footer_text = render_answer_footer(
-            sources=sources,
+            sources=sources if emit_sources else [],
             kb_mode=profile.kb_mode,
             chunks_injected=len(citation_chunks or []),
             sub_queries=knowledge_turn.sub_queries if knowledge_turn is not None else [],
             language=response_language,
-            general_knowledge=decision.get("reason") == "general_knowledge",
+            general_knowledge=emit_sources and decision.get("reason") == "general_knowledge",
+            hard_facts=decision.get("hard_facts_outside_kb"),
         )
     if decision.pop("output_blocked", False):
         # The streamed part cannot be taken back; the rest of the draft is
@@ -1224,6 +1243,7 @@ async def chat_completion_non_streaming(
                 profile=profile,
                 knowledge_turn=knowledge_turn,
                 delegated_org_id=delegated_org_id,
+                live=False,
             )
             answer_judge_ms = _elapsed_ms(judge_started)
             # Popped before the log so that event keeps its exact payload;
@@ -1259,6 +1279,7 @@ async def chat_completion_non_streaming(
                     sub_queries=sub_queries,
                     language=response_language,
                     general_knowledge=decision.get("reason") == "general_knowledge",
+                    hard_facts=decision.get("hard_facts_outside_kb"),
                 )
                 if footer_text:
                     message["content"] = f"{rendered_content.rstrip()}\n\n{footer_text}"

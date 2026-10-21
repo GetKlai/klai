@@ -10,7 +10,7 @@ import asyncio
 import re
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,7 +51,7 @@ from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.widgets import Widget
 from app.services import case_file
-from app.services.chat_attachments import process_chat_attachments
+from app.services.chat_attachments import drop_unreadable_file_parts, process_chat_attachments
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
 from app.services.chat_safety import (
     _last_user_message,
@@ -62,6 +62,7 @@ from app.services.chat_safety import (
     safety_refusal_stream,
     widget_input_safety_violation,
 )
+from app.services.chat_sse import _sse_content_delta
 from app.services.internal_turn import InternalInputs, Live, internal_turn
 from app.services.partner_chat import chat_completion_non_streaming, chat_completion_streaming
 from app.services.pasted_correspondence import detect_pasted_correspondence
@@ -664,20 +665,54 @@ def _partner_user_id(auth: PartnerAuthContext) -> str | None:
     return f"partner:{auth.key_id}"
 
 
-async def _attachment_error_reply(request: ChatCompletionsRequest) -> Any:
-    """Turn the latest user turn's PDF attachments into text, or return the reply that says why one failed."""
+# Text beside a file Klai cannot read is a question of its own from this
+# length on; shorter, it is a caption of the file ("zie bijlage").
+_TEXT_BESIDE_ATTACHMENT_MIN_CHARS = 20
+
+
+async def _attachment_error_reply(request: ChatCompletionsRequest) -> tuple[Any, str]:
+    """Turn the latest user turn's PDF attachments into text, or return the reply that says why one failed.
+
+    The second value is a notice for before the answer. A question typed
+    beside a file that is not a PDF used to get only the fixed sentence about
+    PDF files and stayed unanswered (internal chat, 14 to 21 October); now the
+    turn runs on the text without that file, and the sentence goes first. A
+    PDF uploaded beside it is still read, on a second pass without the file.
+    """
     attachment_language = resolve_conversation_language(request.messages).language
     attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
-    if attachment_result.user_visible_error is not None:
+    notice = ""
+    if (
+        attachment_result.meta["chat_pdf_error_reason"] == "unsupported_attachment"
+        and len((_last_user_message(request.messages) or "").strip()) >= _TEXT_BESIDE_ATTACHMENT_MIN_CHARS
+    ):
+        notice = attachment_result.user_visible_error or ""
+        drop_unreadable_file_parts(request.messages)
+        attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
+    if (error := attachment_result.user_visible_error) is not None:
         if request.stream:
-            return StreamingResponse(
-                content=fixed_reply_stream(attachment_result.user_visible_error),
-                media_type="text/event-stream",
-            )
-        return fixed_reply_response(model=request.model, message=attachment_result.user_visible_error)
+            return StreamingResponse(content=fixed_reply_stream(error), media_type="text/event-stream"), ""
+        return fixed_reply_response(model=request.model, message=error), ""
     if attachment_result.processed_count:
         request.messages = attachment_result.messages
-    return None
+    return None, notice
+
+
+async def _notice_first(notice: str, frames: AsyncIterable[Any]) -> AsyncGenerator[Any]:
+    yield _sse_content_delta(f"{notice}\n\n")
+    async for frame in frames:
+        yield frame
+
+
+def _with_notice_first(response: Any, notice: str) -> Any:
+    """The turn's response with ``notice`` as its first paragraph, streamed or not."""
+    if isinstance(response, StreamingResponse):
+        return StreamingResponse(content=_notice_first(notice, response.body_iterator), media_type=response.media_type)
+    for choice in response.get("choices") or []:
+        message = choice.get("message")
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            message["content"] = f"{notice}\n\n{message['content']}"
+    return response
 
 
 @dataclass
@@ -1046,8 +1081,11 @@ async def chat_completions(
     # its UI has no upload, so a widget key must not be a public route into
     # docling. The language is decided on the unmodified messages, so a Dutch
     # PDF never overrules an English question.
-    if profile.surface != "widget" and (attachment_reply := await _attachment_error_reply(request)):
-        return attachment_reply
+    notice = ""
+    if profile.surface != "widget":
+        attachment_reply, notice = await _attachment_error_reply(request)
+        if attachment_reply is not None:
+            return attachment_reply
     if safety_response := _input_safety_block_response(request, auth, profile):
         return safety_response
     # Pasted third-party correspondence is conversation-wide by design, so a
@@ -1055,7 +1093,7 @@ async def chat_completions(
     # correspondence stays in context; every prompt of the turn is built on it.
     pasted_correspondence = detect_pasted_correspondence(request.messages)
     if profile.surface != "internal":
-        return await _widget_or_partner_turn(
+        response = await _widget_or_partner_turn(
             request,
             http_request,
             auth,
@@ -1064,9 +1102,11 @@ async def chat_completions(
             pasted_correspondence=pasted_correspondence,
             turn_started=turn_started,
         )
-    return await _internal_chat_turn(
-        request, auth, db, profile, pasted_correspondence=pasted_correspondence, turn_started=turn_started
-    )
+    else:
+        response = await _internal_chat_turn(
+            request, auth, db, profile, pasted_correspondence=pasted_correspondence, turn_started=turn_started
+        )
+    return _with_notice_first(response, notice) if notice else response
 
 
 router.include_router(support_sessions_router)

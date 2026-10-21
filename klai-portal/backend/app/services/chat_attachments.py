@@ -205,6 +205,29 @@ def _active_pdf_attachments(messages: list[dict[str, Any]]) -> list[_Attachment]
     return attachments
 
 
+def drop_unreadable_file_parts(messages: list[dict[str, Any]]) -> None:
+    """Remove the file parts of the latest user turn that are not PDFs, in place.
+
+    A question beside a file Klai cannot read is answered without that file
+    (``partner._attachment_error_reply``); a PDF uploaded in the same turn
+    stays, so the second pass converts it.
+    """
+    latest_index = _latest_user_message_index(messages)
+    if latest_index is None or not isinstance(content := messages[latest_index].get("content"), list):
+        return
+    messages[latest_index]["content"] = [
+        part for part in content if not isinstance(part, dict) or part.get("type") != "file" or _is_pdf_part(part)
+    ]
+
+
+def _is_pdf_part(part: dict[str, Any]) -> bool:
+    file_info = part.get("file")
+    try:
+        return isinstance(file_info, dict) and _extract_data_url_bytes(file_info.get("file_data")).startswith(b"%PDF")
+    except ChatAttachmentError:
+        return False
+
+
 def _strip_embedded_images(markdown: str) -> str:
     return _EMBEDDED_DATA_IMAGE_RE.sub(_IMAGE_PLACEHOLDER, markdown)
 

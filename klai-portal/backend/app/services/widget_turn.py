@@ -27,6 +27,7 @@ from app.core.config import Settings
 from app.services import case_file, turn_judge
 from app.services import escalation_intent as escalation_service
 from app.services.chat_profile import ChatProfile
+from app.services.chat_prompting import _response_language
 from app.services.chat_safety import _last_user_message, output_safety_violation
 from app.services.chat_sources import PageContext
 from app.services.clarify_gate import already_asked
@@ -182,16 +183,19 @@ def _keep_case(inputs: TurnInputs, case: case_file.Case | None) -> None:
         inputs.answer_signals["case"] = case.model_dump()
 
 
-def _fixed_language(inputs: TurnInputs, case: case_file.Case | None) -> str | None:
+def fixed_language(
+    messages: list[dict], case: case_file.Case | None, *, pasted_correspondence: bool = False
+) -> str | None:
     """The language of a reply decided in code: the case's, judged on the whole conversation.
 
     Detected per message, a two-word follow-up in a Dutch conversation got
-    an English refusal (week of 14 to 21 October). Without a case, or with a
-    code the detection does not know, the detection decides as before.
+    an English refusal, and a German employee's Strict refusal came in
+    English (week of 14 to 21 October). Without a case, or with a code the
+    detection does not know, the detection decides as before.
     """
     if case is not None and case.language in TARGET_LANGUAGES:
         return case.language
-    return resolve_conversation_language(inputs.request.messages).language
+    return _response_language(messages, pasted_correspondence=pasted_correspondence)
 
 
 async def _search(inputs: TurnInputs, turn: KnowledgeTurn, follow_up_variants: list[str]) -> Found:
@@ -309,7 +313,7 @@ async def _off_topic_reply(
         # price question. Same fail direction as every other check here.
         return None
     messages = inputs.request.messages
-    language = _fixed_language(inputs, case)
+    language = fixed_language(messages, case)
     referral = await off_topic_referral(
         _last_user_message(messages) or "", language, inputs.settings, delegated_org_id=inputs.auth.zitadel_org_id
     )
@@ -323,7 +327,7 @@ async def _off_topic_reply(
 
 
 def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_file.Case) -> Reply:
-    language = _fixed_language(inputs, case)
+    language = fixed_language(inputs.request.messages, case)
     # Never the same fixed reply twice in a row: a visitor who had said they
     # did not want to call got the contact reply four times, word for word
     # (week of 14 to 21 October). The second time says what this chat can
@@ -373,7 +377,7 @@ def _not_in_passages_reply(
     # writer with passages that did not answer it.
     if not turn.not_in_passages:
         return None
-    language = _fixed_language(inputs, case)
+    language = fixed_language(inputs.request.messages, case)
     if escalation == escalation_service.HUMAN_REQUEST:
         if not turn.selection_failed:
             return None

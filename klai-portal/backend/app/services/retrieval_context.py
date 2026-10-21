@@ -11,6 +11,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 import httpx
@@ -41,7 +42,6 @@ from app.services.chat_prompting import (
     _build_conversation_history,
     _clean_page_context,
     _clip_retrieval_history_content,
-    _response_language,
 )
 from app.services.chat_safety import (
     _last_user_message,
@@ -83,6 +83,18 @@ from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
+
+# For an internal Open turn whose selection found no passage that answers (or
+# could not decide): the passages stay, the writer is told. Handed every
+# passage without this, the writer answered two questions from another
+# product's articles, with those as sources (internal chat, 14 to 21 October).
+NO_PASSAGE_ANSWERS_NOTE = (
+    "[The selection step read these passages and found none that answers the "
+    "question, or could not decide. Use a passage only for what it literally "
+    "says about this question, and never present an article about another "
+    "product or feature as the answer. What the passages do not cover, write "
+    "from general knowledge and say so.]"
+)
 
 
 def _top_chunk_score(chunks: list[dict]) -> tuple[dict | None, float | None]:
@@ -432,10 +444,12 @@ class KnowledgeTurn:
     """What retrieve_context decided for this turn besides the prompt.
 
     A caller-owned sink, like ``answer_signals``, so the four-tuple return
-    stays as it is. ``refusal`` set means: answer with this text, call no model.
+    stays as it is. ``refusal`` set means: answer with the text it renders for
+    the turn's language, call no model. The caller picks that language from
+    the case, which reads the whole conversation and finishes after this step.
     """
 
-    refusal: str | None = None
+    refusal: Callable[[str | None], str] | None = None
     multi_question: bool = False
     # Band-based; only the Strict-risk model choice reads it. What the answer
     # says on weak evidence follows the article scores (classify_gap), not the band.
@@ -453,10 +467,13 @@ class KnowledgeTurn:
     # turn then counts as not in the passages.
     selection_failed: bool = False
     # No retrieved passage answers the question; the widget and internal
-    # Strict reply without a model, internal Open writes from every passage.
+    # Strict reply without a model, internal Open writes from general knowledge.
     not_in_passages: bool = False
     # The writer's passages are the selection's, not everything retrieval found.
     passages_chosen: bool = False
+    # Internal Open whose selection chose nothing: the writer keeps every
+    # passage and is told that none was found to answer.
+    no_passage_answers: bool = False
     # The grounding check that runs after the reply (an Open turn, or a reply
     # written from chosen passages); the per-turn record waits for it.
     grounding_check: asyncio.Task[None] | None = None
@@ -605,7 +622,6 @@ class _Turn:
     profile: ChatProfile
     turn: KnowledgeTurn
     query: str
-    language: Any
     internal: bool
     page_context: PageContext | None
     broad_consent: bool
@@ -665,7 +681,7 @@ def _read_turn(
     follow_up_variants: list[str] | None,
     kept_passages: list[dict],
 ) -> _Turn:
-    """Step 1: read the request once. The query, the page context, the language, the turn's sink and the prompt builder."""
+    """Step 1: read the request once. The query, the page context, the turn's sink and the prompt builder."""
     cleaned_page_context = _clean_page_context(page_context)
     # Extract original system message if present. It remains the generation
     # instruction even when callers provide a separate retrieval query.
@@ -690,7 +706,6 @@ def _read_turn(
     internal = profile.surface == "internal"
     turn = knowledge_turn if knowledge_turn is not None else KnowledgeTurn()
     turn.answer_mode = profile.kb_mode
-    language = _response_language(messages, pasted_correspondence=pasted_correspondence)
     # Internal only: an attachment, a converted PDF, or an explicit question
     # about the visible conversation is the employee's own input, readable in
     # Strict even with zero knowledge-base evidence (plan §7.2; ported from
@@ -724,7 +739,6 @@ def _read_turn(
         profile=profile,
         turn=turn,
         query=query,
-        language=language,
         internal=internal,
         page_context=cleaned_page_context,
         broad_consent=broad_mode,
@@ -768,7 +782,7 @@ def _without_search(t: _Turn, *, retrieval_enabled: bool) -> _Result | None:
             # Strict with nothing to search refuses without a model call: a
             # prompt that asks the model to refuse let a non-compliant model
             # answer from general knowledge (the hook's strict_no_kb branch).
-            turn.refusal = _no_citable_sources_message(t.language, suggest_open_mode=True)
+            turn.refusal = partial(_no_citable_sources_message, suggest_open_mode=True)
             return [], "", [], False
         # The user's own attachment is still readable even with no KB scope to
         # search; answer as a zero-chunks Strict turn instead of refusing.
@@ -914,7 +928,7 @@ async def _call_retrieval(t: _Turn, retrieve_body: dict) -> dict | _Result:
             "partner_chat_internal_retrieval_failed", org_id=t.org_id, kb_mode=profile.kb_mode, failure=failure
         )
         if profile.kb_mode == "strict":
-            turn.refusal = strict_kb_unavailable_message(t.language)
+            turn.refusal = strict_kb_unavailable_message
             return [], "", [], False
         return [], t.prompt([], "retrieval_failure", retrieval_failure=failure), [], False
 
@@ -1120,7 +1134,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             # prompt that asks the model to refuse let a non-compliant model
             # answer from general knowledge. The gap is still recorded.
             _register_gap(t, found)
-            turn.refusal = _no_citable_sources_message(t.language, suggest_open_mode=True)
+            turn.refusal = partial(_no_citable_sources_message, suggest_open_mode=True)
             return [], "", [], False
         # The user's own attachment is still readable with zero KB evidence;
         # fall through to the zero_chunks prompt below instead of refusing.
@@ -1130,10 +1144,9 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     # included, because in the week of 14 to 21 October every invented
     # technical answer on the widget came through the multi-part branch that
     # skipped this step. Not on a turn that is answered broadly, which reads
-    # no articles. "Not in the passages" narrows nothing here: the caller
-    # routes that turn (the widget's "not found", the internal Strict
-    # refusal), and an internal Open turn, which may answer from general
-    # knowledge, gets every passage.
+    # no articles. "Not in the passages" is routed by the caller (the
+    # widget's "not found", the internal Strict refusal); an internal Open
+    # turn without chosen passages is written from general knowledge below.
     # The kept passages of a widget conversation (kept_passages_of) join the
     # candidates, also when the search found nothing; broad mode and the gap
     # read the search's own chunks.
@@ -1152,12 +1165,9 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             # A failed selection fails closed where the reply may only come
             # from the source: a writer handed every passage after it is the
             # second way an invented answer reached the visitor (six failed
-            # selections in that week). Internal Open may answer from general
-            # knowledge and keeps every passage.
+            # selections in that week).
             turn.selection_failed = True
             turn.not_in_passages = source_only
-            if not source_only:
-                logger.warning("passage_selection_failed_open_keeps_passages", org_id=t.org_id, passages=len(chunks))
         if t.answer_signals is not None and not t.internal:
             # Quotes and the question are text; the internal record keeps
             # signals only (widget_audit.record_internal_turn).
@@ -1179,6 +1189,15 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             turn.passages_chosen = True
             chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
             trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
+        elif not source_only:
+            # Internal Open with nothing chosen (not in the passages, no
+            # sentence pointed at, or no verdict) keeps every passage, with a
+            # note that none was found to answer. Withholding them was measured
+            # on the internal meetlat (21 October): the writer lost 5 to 7 of
+            # 21 answers the owner expected from the knowledge base, because
+            # the selection's "not in the passages" is wrong more often on an
+            # employee's long, relayed question than on a visitor's.
+            turn.no_passage_answers = True
     if not (turn.passages_chosen and any(chunk.get("kept") for chunk in chunks)):
         # A kept passage answered: the knowledge base had the answer.
         _register_gap(t, found)
@@ -1209,12 +1228,16 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             selection_chunks,
             internal=t.internal,
             source_only=source_only,
-            question=turn.selection.question if turn.multi_question and turn.selection.verdict == "depends" else "",
+            question=turn.selection.question
+            if not t.internal and turn.multi_question and turn.selection.verdict == "depends"
+            else "",
         )
         # The parts beyond the search limit were never searched; the writer
         # must still see them so it does not answer them from other lines.
         if unchecked := unchecked_question_blocks(found.unchecked_questions, start_index=len(found.sub_queries) + 1):
             system_prompt += "\n\n" + "\n\n".join(unchecked)
+    elif turn.no_passage_answers and chunks and not broad:
+        system_prompt += "\n\n" + NO_PASSAGE_ANSWERS_NOTE
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
 

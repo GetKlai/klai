@@ -77,21 +77,9 @@ def sub_query_grouped_context(
     blocks: list[str] = []
     for entry in entries:
         index = entry.get("index")
-        header = f"[Question {index}: {_sanitize_question_echo(str(entry.get('query') or '').strip())}]"
-        if entry.get("error"):
-            blocks.append(
-                f"{header}\n[Retrieval FAILED for this question — tell the "
-                "user you could not check the knowledge base for it. Do NOT "
-                "answer it and do NOT say it is not in the knowledge base.]"
-            )
-            continue
-        if entry.get("retrieval_bypassed"):
-            blocks.append(
-                f"{header}\n[Retrieval was skipped for this question (the "
-                "gate decided no knowledge-base lookup was needed) — answer "
-                "it per the current mode's rules; do NOT say it is not in "
-                "the knowledge base.]"
-            )
+        header = _question_header(entry)
+        if unsearched := _unsearched_block(entry):
+            blocks.append(unsearched)
             continue
         question_chunks = chunks_by_index.get(index) if isinstance(index, int) else None
         if question_chunks:
@@ -115,6 +103,28 @@ def sub_query_grouped_context(
         if rendered:
             blocks.append(f"[Additional evidence, not tied to one question]\n{rendered}")
     return "\n\n".join(blocks)
+
+
+def _question_header(entry: dict) -> str:
+    return f"[Question {entry.get('index')}: {_sanitize_question_echo(str(entry.get('query') or '').strip())}]"
+
+
+def _unsearched_block(entry: dict) -> str:
+    """The marker of a question whose retrieval failed or was skipped, or "" when it was searched."""
+    if entry.get("error"):
+        return (
+            f"{_question_header(entry)}\n[Retrieval FAILED for this question — tell the "
+            "user you could not check the knowledge base for it. Do NOT "
+            "answer it and do NOT say it is not in the knowledge base.]"
+        )
+    if entry.get("retrieval_bypassed"):
+        return (
+            f"{_question_header(entry)}\n[Retrieval was skipped for this question (the "
+            "gate decided no knowledge-base lookup was needed) — answer "
+            "it per the current mode's rules; do NOT say it is not in "
+            "the knowledge base.]"
+        )
+    return ""
 
 
 def unchecked_question_blocks(unchecked_questions: list[str], *, start_index: int) -> list[str]:

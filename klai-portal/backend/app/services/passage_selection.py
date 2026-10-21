@@ -64,7 +64,11 @@ SELECTION_SYSTEM_PROMPT = (
 
 # The checker's own budget on the widget is 4 s for a reply that lists every
 # statement; this call reads the same passages and returns a few short fields.
+# The budget grows with what is offered: an internal turn offers 13 to 22
+# passages, and at a flat 4 s the call timed out twice on 7 of 48 turns of the
+# internal meetlat (21 October), handing the writer nothing chosen.
 _TIMEOUT_SECONDS = 4.0
+_TIMEOUT_SECONDS_PER_PASSAGE = 0.25
 _PASSAGE_CHARS = 2500
 _LATEST_CHARS = 4000
 # A passage line belongs to the quote when most of its words are in it; the
@@ -227,7 +231,7 @@ async def select_passages(
             user_content=f"Conversation:\n{conversation_excerpt(messages, latest_chars=_LATEST_CHARS)}\n\n"
             f"Passages:\n{passages}",
             schema=PassageSelection,
-            timeout_seconds=_TIMEOUT_SECONDS,
+            timeout_seconds=_TIMEOUT_SECONDS + _TIMEOUT_SECONDS_PER_PASSAGE * len(chunks),
             settings=settings,
             model=settings.answer_grounding_model,
             delegated_org_id=delegated_org_id,
@@ -269,7 +273,15 @@ def writer_brief(
 
     ``question`` is the selection's variant question on a message with several
     questions: sent as the whole reply it would drop the parts that were
-    answered, so the writer answers those and asks it for the rest.
+    answered, so the writer answers those and asks it for the rest. The
+    internal chat never asks it: an employee relaying a customer's question
+    was asked "iPhone or Android?", which only the customer could answer, so
+    a ``depends`` verdict there gets the steps for every variant instead.
+
+    An Open reply may add general knowledge, but an e-mail address, a link, a
+    phone number or a price it adds is invented: in the internal chat of 14 to
+    21 October one gave an address and a menu path for a data-processing
+    agreement and another a product price, none of them in the knowledge base.
     """
     lines = list(dict.fromkeys(own for _, own in selection.found(chunks) if own))
     if not lines:
@@ -290,7 +302,15 @@ def writer_brief(
             if source_only
             else f"\nBuild the reply on these lines and the steps that stand with them in the source. If they cover "
             f"only part of what the {who} needs, give that part and say in one sentence what the {what} does not "
-            "cover. Do not add a step, menu, cause or example that is not in the source."
+            "cover. Do not add a step, menu, cause or example that is not in the source. An e-mail address, a link, "
+            "a phone number, a price or an amount appears in the reply only when it stands in the lines above; "
+            f"otherwise say that the {what} does not give it."
+        )
+        + (
+            "\nThe employee relays this for someone else; give the steps for each variant the lines name, each "
+            "under its own heading, instead of asking which applies."
+            if internal and selection.verdict == "depends"
+            else ""
         )
         + (f"\nFor the part that depends on it, ask: {' '.join(question.split())}" if question else "")
     )
