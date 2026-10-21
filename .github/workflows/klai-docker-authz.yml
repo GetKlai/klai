@@ -162,7 +162,7 @@ jobs:
     # tenant containers through this proxy, and a push that triggered both
     # left 24 of 42 tenants on the old container (21 October 2026).
     concurrency:
-      group: core-01-tenant-containers
+      group: core-01-containers
       cancel-in-progress: false
     if: github.ref == 'refs/heads/main'
     # `needs: scan` ensures the Trivy gate from SPEC-CI-TRIVY-POLICY-001 REQ-2

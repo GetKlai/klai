@@ -24,7 +24,7 @@ jobs:
     # Serialised with the klai-docker-authz deploy (same group): the
     # regenerate below recreates tenant containers through that proxy.
     concurrency:
-      group: core-01-tenant-containers
+      group: core-01-containers
       cancel-in-progress: false
     # Production sync over SSH. Guarded on main for the same reason as every
     # deploy job: workflow_dispatch accepts any ref, and without this a
