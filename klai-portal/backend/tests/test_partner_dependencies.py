@@ -51,6 +51,7 @@ class FakeOrg:
     # the row. Hard-coded value mirrors the populated allowlist set in
     # conftest.py so any downstream callback validation passes too.
     slug: str = "acme"
+    deleted_at: object = None
     # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C: partner_api must be unlocked
     # for happy-path tests that exercise the full get_partner_key flow.
     platform_unlocked_features: list = None  # type: ignore[assignment]
@@ -678,6 +679,38 @@ async def test_session_token_disjoint_kbs_returns_401():
             FakeResult(rows=[99, 100]),  # DB has different kb_ids
         ],
     )
+
+    patches = _session_patches()
+    with patches[0], patches[1], patches[2]:
+        with pytest.raises(HTTPException) as exc:
+            await get_partner_key(request=_make_request(token=token), db=db)
+
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_partner_key_of_a_soft_deleted_org_returns_401():
+    """The org row stays after deletion (slug release); its keys must not."""
+    from app.api.partner_dependencies import get_partner_key
+
+    db = AsyncMock()
+    setup_db(db, [FakeResult([FakeKeyRow()]), FakeResult([FakeOrg(deleted_at="2026-10-21T00:00:00Z")])])
+
+    patches = _partner_patches()
+    with patches[0], patches[1], patches[2], patches[3]:
+        with pytest.raises(HTTPException) as exc:
+            await get_partner_key(request=_make_request(token="pk_live_" + "a" * 40), db=db)
+
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_session_token_of_a_soft_deleted_org_returns_401():
+    from app.api.partner_dependencies import get_partner_key
+
+    token = _make_jwt()
+    db = AsyncMock()
+    setup_db(db, [FakeResult([FakeOrg(deleted_at="2026-10-21T00:00:00Z")])])
 
     patches = _session_patches()
     with patches[0], patches[1], patches[2]:

@@ -131,7 +131,9 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     # state until the signature verifies and the payload matches this org.
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id_for_key))
     org = org_result.scalar_one_or_none()
-    if org is None:
+    # A soft-deleted org keeps its row for the slug release; its tokens and
+    # keys must stop working the moment it is deleted, not when the row goes.
+    if org is None or org.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
     # Verified decode using the per-tenant derived key.
@@ -270,7 +272,7 @@ async def get_partner_key(
     # Step 5: Resolve org_id -> zitadel_org_id and set tenant for downstream ORM queries.
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == key_row.org_id))
     org = org_result.scalar_one_or_none()
-    if org is None:
+    if org is None or org.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
     await set_tenant(db, org.id)
 
