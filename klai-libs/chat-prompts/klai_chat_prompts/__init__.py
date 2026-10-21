@@ -201,6 +201,10 @@ _ENGLISH_CONTACT_REPLY: Final[str] = (
     "You can schedule an appointment with someone who will help you personally. Use the button under this "
     "message."
 )
+_DUTCH_CONTACT_EMAIL: Final[str] = "Mailen kan ook: {email}."
+_ENGLISH_CONTACT_EMAIL: Final[str] = "You can also email us: {email}."
+_DUTCH_CONTACT_PHONE: Final[str] = "Bellen kan ook: {phone}."
+_ENGLISH_CONTACT_PHONE: Final[str] = "You can also call us: {phone}."
 _DUTCH_HELPDESK_REFUSAL: Final[str] = "Dit vind ik niet terug in onze helpartikelen. " + _DUTCH_HELPDESK_OFFER
 _ENGLISH_HELPDESK_REFUSAL: Final[str] = "I can't find this in our help articles. " + _ENGLISH_HELPDESK_OFFER
 
@@ -328,14 +332,24 @@ def is_broad_knowledge_answer(content: object) -> bool:
     return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
 
 
-def contact_reply(language: object) -> str:
+def contact_reply(language: object, *, email: str | None = None, phone: str | None = None) -> str:
     """The whole reply to a visitor who asks for a person, for contact or for an appointment.
 
     Written by the model, this reply came out as "Laat het gerust weten als je
     vastloopt" or as a ticket button of another product (first week of real
     traffic after the selection step); the model has nothing to add here.
+
+    ``email`` and ``phone`` are the widget's own contact channels; each adds
+    one sentence after the appointment sentence, and without them the text is
+    the constant above.
     """
-    return _DUTCH_CONTACT_REPLY if _language_is_dutch(language) else _ENGLISH_CONTACT_REPLY
+    dutch = _language_is_dutch(language)
+    parts = [_DUTCH_CONTACT_REPLY if dutch else _ENGLISH_CONTACT_REPLY]
+    if email:
+        parts.append((_DUTCH_CONTACT_EMAIL if dutch else _ENGLISH_CONTACT_EMAIL).format(email=email))
+    if phone:
+        parts.append((_DUTCH_CONTACT_PHONE if dutch else _ENGLISH_CONTACT_PHONE).format(phone=phone))
+    return " ".join(parts)
 
 
 def appointment_offer_sentence(language: object) -> str:

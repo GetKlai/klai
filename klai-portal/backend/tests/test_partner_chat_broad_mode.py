@@ -680,7 +680,6 @@ async def test_api_threads_consent_and_clears_chunks_on_broad_turn(consent: bool
             "app.services.widget_turn.retrieve_context",
             return_value=(weak if not broad_flag else [], "prompt", [], broad_flag),
         ),
-        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=written)) as chat_stream,
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),

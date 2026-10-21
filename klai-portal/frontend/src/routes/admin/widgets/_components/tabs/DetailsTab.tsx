@@ -34,6 +34,8 @@ export function DetailsTab({ widget }: Props) {
   const [toneRegister, setToneRegister] = useState<'restrained' | 'expressive'>(config.tone_register ?? 'restrained')
   const [offTopicSubjects, setOffTopicSubjects] = useState(config.off_topic_subjects ?? '')
   const [offTopicReply, setOffTopicReply] = useState(config.off_topic_reply ?? '')
+  const [contactEmail, setContactEmail] = useState(config.contact_email ?? '')
+  const [contactPhone, setContactPhone] = useState(config.contact_phone ?? '')
 
   // The preview panel follows name and description live. Instructions,
   // template, register, off-topic subjects and the page-context toggle only
@@ -51,6 +53,8 @@ export function DetailsTab({ widget }: Props) {
       toneRegister !== (config.tone_register ?? 'restrained') ||
       offTopicSubjects.trim() !== (config.off_topic_subjects ?? '') ||
       offTopicReply.trim() !== (config.off_topic_reply ?? '') ||
+      contactEmail.trim() !== (config.contact_email ?? '') ||
+      contactPhone.trim() !== (config.contact_phone ?? '') ||
       pageContextEnabled !== (config.page_context_enabled ?? false),
   })
 
@@ -68,7 +72,9 @@ export function DetailsTab({ widget }: Props) {
     setToneRegister(config.tone_register ?? 'restrained')
     setOffTopicSubjects(config.off_topic_subjects ?? '')
     setOffTopicReply(config.off_topic_reply ?? '')
-  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled, config.tone_register, config.off_topic_subjects, config.off_topic_reply])
+    setContactEmail(config.contact_email ?? '')
+    setContactPhone(config.contact_phone ?? '')
+  }, [widget.name, widget.description, config.system_prompt, config.template_slug, config.page_context_enabled, config.tone_register, config.off_topic_subjects, config.off_topic_reply, config.contact_email, config.contact_phone])
 
   const isDirty =
     name.trim() !== widget.name ||
@@ -78,7 +84,9 @@ export function DetailsTab({ widget }: Props) {
     pageContextEnabled !== (config.page_context_enabled ?? false) ||
     toneRegister !== (config.tone_register ?? 'restrained') ||
     offTopicSubjects.trim() !== (config.off_topic_subjects ?? '') ||
-    offTopicReply.trim() !== (config.off_topic_reply ?? '')
+    offTopicReply.trim() !== (config.off_topic_reply ?? '') ||
+    contactEmail.trim() !== (config.contact_email ?? '') ||
+    contactPhone.trim() !== (config.contact_phone ?? '')
 
   // The backend only hands a turn off when subjects AND reply are both set,
   // so saving one of them would show a success toast for a setting that does
@@ -100,6 +108,8 @@ export function DetailsTab({ widget }: Props) {
       tone_register: toneRegister,
       off_topic_subjects: offTopicSubjects.trim(),
       off_topic_reply: offTopicReply.trim(),
+      contact_email: contactEmail.trim() || null,
+      contact_phone: contactPhone.trim() || null,
     }
     updateMutation.mutate(
       {
@@ -238,6 +248,31 @@ export function DetailsTab({ widget }: Props) {
                 {m.admin_widgets_off_topic_incomplete()}
               </p>
             )}
+          </div>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="widget-contact-email">{m.admin_widgets_contact_email_label()}</Label>
+              <p className="text-xs text-gray-600">{m.admin_widgets_contact_channels_help()}</p>
+              <Input
+                id="widget-contact-email"
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                maxLength={254}
+                placeholder={m.admin_widgets_contact_email_placeholder()}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="widget-contact-phone">{m.admin_widgets_contact_phone_label()}</Label>
+              <Input
+                id="widget-contact-phone"
+                type="tel"
+                value={contactPhone}
+                onChange={(e) => setContactPhone(e.target.value)}
+                maxLength={32}
+                placeholder={m.admin_widgets_contact_phone_placeholder()}
+              />
+            </div>
           </div>
         </div>
       </section>
