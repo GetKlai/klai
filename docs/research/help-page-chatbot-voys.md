@@ -1,5 +1,7 @@
 # Klai als chatbot op de Nederlandse helppagina's — research Voys-pilot
 
+> Pad A (LibreChat → LiteLLM-hook) is op 21 oktober 2026 verwijderd; de tekst hieronder beschrijft hem als geschiedenis. De beschrijving van het ene pad staat in [chat-system.md](../architecture/chat-system.md).
+
 > Last updated: 2026-09-03
 > Status: Active research — basis voor development-verbeteringen (chat-/widget-infrastructuur)
 > Herkomst: samengevoegd uit twee onafhankelijke onderzoeksrondes op dezelfde

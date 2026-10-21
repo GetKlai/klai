@@ -1,5 +1,7 @@
 # Regular chat: knowledge retrieval en citations
 
+> Pad A (LibreChat → LiteLLM-hook) is op 21 oktober 2026 verwijderd; de tekst hieronder beschrijft hem als geschiedenis. De beschrijving van het ene pad staat in [chat-system.md](chat-system.md).
+
 > **Verouderd (gecontroleerd tegen de code op 2026-09-24).** De actuele beschrijving van het chatpad staat in [chat-system.md](chat-system.md). Belangrijkste afwijking: Strict vervangt tekst zonder ondersteunde bron niet meer altijd door een weigering; een claims-check (`klai-fast`) laat tekst door die niets over de organisatie beweert, zoals een verduidelijkingsvraag. Daarnaast draaien sinds september een grounding-check en reparatie op Strict-antwoorden.
 
 > **Let op — regelnummers verouderd (2026-06-08).** Dit document is geschreven tegen

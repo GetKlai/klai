@@ -1,5 +1,7 @@
 # Multilingual chat observability
 
+> Path A (LibreChat → LiteLLM hook) was removed on 21 October 2026; the text below describes it as history. The one-path description is [chat-system.md](../architecture/chat-system.md).
+
 > Operator runbook for the `language_correctness` telemetry that ships
 > with SPEC-RAG-MULTILINGUAL-CHAT-001 (Phase 2 + Phase 4).
 

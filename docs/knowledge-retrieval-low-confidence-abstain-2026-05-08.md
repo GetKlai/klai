@@ -1,5 +1,7 @@
 # Knowledge-retrieval improvements — Low-Confidence Abstain + Brand-Bridging (2026-05-07/08)
 
+> Path A (LibreChat → LiteLLM hook) was removed on 21 October 2026; the text below describes it as history. The one-path description is [chat-system.md](architecture/chat-system.md).
+
 > Historical provenance note (2026-08-20): `.moai` paths in this capture are
 > retained verbatim; the `.moai` tree was removed in the 2026-08-18 repo cleanup.
 
