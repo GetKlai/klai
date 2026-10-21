@@ -149,6 +149,7 @@ __all__ = [
     "chat_contract_article",
     "clarify_question_addendum",
     "contact_reply",
+    "contact_reply_again",
     "final_response_language_reminder",
     "grounding_check_response_format",
     "grounding_check_user_content",
@@ -200,6 +201,15 @@ _DUTCH_CONTACT_REPLY: Final[str] = (
 _ENGLISH_CONTACT_REPLY: Final[str] = (
     "You can schedule an appointment with someone who will help you personally. Use the button under this "
     "message."
+)
+# The second contact request in a row gets this instead of the same reply
+# again: a visitor who had said they did not want to call got the contact
+# reply four times, word for word (week of 14 to 21 October).
+_DUTCH_CONTACT_REPLY_AGAIN: Final[str] = (
+    "Via dit chatvenster kan ik alleen een afspraak voor je inplannen; iets anders kan ik hier niet regelen."
+)
+_ENGLISH_CONTACT_REPLY_AGAIN: Final[str] = (
+    "In this chat window I can only schedule an appointment for you; I can't arrange anything else here."
 )
 _DUTCH_CONTACT_EMAIL: Final[str] = "Mailen kan ook: {email}."
 _ENGLISH_CONTACT_EMAIL: Final[str] = "You can also email us: {email}."
@@ -344,7 +354,17 @@ def contact_reply(language: object, *, email: str | None = None, phone: str | No
     the constant above.
     """
     dutch = _language_is_dutch(language)
-    parts = [_DUTCH_CONTACT_REPLY if dutch else _ENGLISH_CONTACT_REPLY]
+    return _with_channels(_DUTCH_CONTACT_REPLY if dutch else _ENGLISH_CONTACT_REPLY, dutch, email, phone)
+
+
+def contact_reply_again(language: object, *, email: str | None = None, phone: str | None = None) -> str:
+    """The reply to a contact request after the contact reply: same language rule, same channel sentences."""
+    dutch = _language_is_dutch(language)
+    return _with_channels(_DUTCH_CONTACT_REPLY_AGAIN if dutch else _ENGLISH_CONTACT_REPLY_AGAIN, dutch, email, phone)
+
+
+def _with_channels(sentence: str, dutch: bool, email: str | None, phone: str | None) -> str:
+    parts = [sentence]
     if email:
         parts.append((_DUTCH_CONTACT_EMAIL if dutch else _ENGLISH_CONTACT_EMAIL).format(email=email))
     if phone:
