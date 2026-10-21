@@ -106,6 +106,8 @@ _AMOUNT_RE = re.compile(
     re.IGNORECASE,
 )
 _AMOUNT_FRACTION_RE = re.compile(r"[.,](\d+)$")
+# A markdown image: its target is a picture the writer was told to show, not a link it made up.
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _CURRENCIES = {"€": "EUR", "eur": "EUR", "euro": "EUR", "$": "USD", "£": "GBP"}
 
 
@@ -168,14 +170,15 @@ def hard_facts_outside(text: str, chunks: list[dict] | None, messages: list[dict
     data-processing agreement and another a product price, neither in the
     knowledge base. A chunk's own source address counts as standing in it, and
     so does whatever the user wrote or pasted in any turn of ``messages``: a
-    reply that repeats it did not invent it.
+    reply that repeats it did not invent it. A markdown image is not a link:
+    the prompt hands the writer the passages' images to show.
     """
     passages = [str(chunk.get("text") or "") for chunk in chunks or []] + _user_texts(messages)
     known = "\n".join(passages)
     sources = {key for chunk in chunks or [] if (key := source_url_key(chunk.get("source_url")))}
     outside = {
         "email": _emails(text) - _emails(known),
-        "link": _links([text]) - _links(passages) - sources,
+        "link": _links([_MARKDOWN_IMAGE_RE.sub("", text)]) - _links(passages) - sources,
         "phone": _phone_numbers(text) - _phone_numbers(known),
         "amount": _amounts(text) - _amounts(known),
     }

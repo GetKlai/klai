@@ -662,22 +662,44 @@ async def test_the_warning_stays_when_the_caller_asked_for_no_sources(monkeypatc
     assert "- Let op: e-mailadres in dit antwoord staat niet in de kennisbank." in turn.text
 
 
+@pytest.mark.parametrize("pack", [_pack(), {"items": [], "sources": []}], ids=["with_sources", "zero"])
 @pytest.mark.asyncio
-async def test_a_held_open_reply_is_not_warned_for_a_link_the_source_gate_removed(monkeypatch):
+async def test_a_held_open_reply_is_not_warned_for_a_link_the_source_gate_removed(monkeypatch, pack):
     """The held path counted the draft's links, so the footer warned for an
     address the employee never saw."""
-    llm = _LiteLLM(UNRELATED + " Zie https://elders.example.com/handleiding.", grounding=_unsupported(UNRELATED))
+    llm = _LiteLLM(ANSWER + " Zie https://elders.example.com/handleiding.", grounding=_unsupported(UNRELATED))
 
     turn = await _turn(
         monkeypatch,
         llm,
         profile=_internal(kb_mode="open"),
-        retrieval={"evidence_pack": {"items": [], "sources": []}, "confidence_band": "high"},
+        retrieval={"evidence_pack": pack, "confidence_band": "high"},
         stream=False,
     )
 
     assert "elders.example.com" not in turn.text
     assert "Let op:" not in turn.text
+
+
+@pytest.mark.asyncio
+async def test_an_open_reply_showing_a_passages_image_is_not_warned_for_a_link(monkeypatch):
+    """The prompt hands the writer the passage's images to show; the image's
+    address stands in no passage text and was counted as an invented link."""
+    pack = _pack()
+    pack["items"][0]["image_urls"] = ["https://kb.example.com/images/stap1.png"]
+    llm = _LiteLLM(ANSWER + "\n\n![afbeelding 1](https://kb.example.com/images/stap1.png)")
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": pack, "confidence_band": "high"},
+        stream=True,
+    )
+
+    assert "Let op:" not in turn.text
+    (record,) = turn.records
+    assert "hard_facts_outside_kb" not in record
 
 
 @pytest.mark.asyncio

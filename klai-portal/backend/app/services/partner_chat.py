@@ -583,7 +583,7 @@ async def _finish_live_answer(
     safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
     if not safe_text:
         return content, sources, decision
-    shown = draft_text if live or sources else safe_text
+    shown = draft_text if live else (content if sources else safe_text)
     hard_facts = hard_facts_outside(shown, citation_chunks, messages) if answer_mode == "open" else {}
     if hard_facts and answer_signals is not None:
         answer_signals["hard_facts_outside_kb"] = hard_facts
