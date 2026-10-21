@@ -579,7 +579,7 @@ async def _finish_live_answer(
     safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
     if not safe_text:
         return content, sources, decision
-    hard_facts = hard_facts_outside(draft_text, citation_chunks) if answer_mode == "open" else {}
+    hard_facts = hard_facts_outside(draft_text, citation_chunks, messages) if answer_mode == "open" else {}
     if hard_facts and answer_signals is not None:
         answer_signals["hard_facts_outside_kb"] = hard_facts
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]

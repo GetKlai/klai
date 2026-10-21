@@ -1757,7 +1757,7 @@ def test_a_hard_fact_counts_as_outside_only_when_no_passage_holds_it_in_any_nota
         {"text": "De prijs is 1250 euro per jaar. Bel +31 50 700 9999.", "source_url": "https://kb.example.com/prijzen"}
     ]
 
-    assert chat_safety.hard_facts_outside(text, passages) == {"email": 1, "link": 1, "amount": 1}
+    assert chat_safety.hard_facts_outside(text, passages, []) == {"email": 1, "link": 1, "amount": 1}
 
 
 async def test_the_judges_cannot_hand_the_visitor_the_ungated_draft(monkeypatch):

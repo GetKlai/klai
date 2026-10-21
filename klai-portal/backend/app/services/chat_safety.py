@@ -130,16 +130,31 @@ def _links(texts: list[str]) -> set[str]:
     return {key for url in urls_in_passages([{"text": text} for text in texts]) if (key := source_url_key(url))}
 
 
-def hard_facts_outside(text: str, chunks: list[dict] | None) -> dict[str, int]:
+def _user_texts(messages: list[dict]) -> list[str]:
+    texts = []
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            texts.extend(part["text"] for part in content if part.get("type") == "text" and "text" in part)
+    return texts
+
+
+def hard_facts_outside(text: str, chunks: list[dict] | None, messages: list[dict]) -> dict[str, int]:
     """Per kind, how many e-mail addresses, links, phone numbers and amounts in ``text`` stand in no chunk.
 
     The same provenance rule as :func:`without_unsourced_contact_details`, for
     a reply that is already on screen and can only be flagged: in the internal
     chat of 14 to 21 October an Open reply gave an e-mail address for a
     data-processing agreement and another a product price, neither in the
-    knowledge base. A chunk's own source address counts as standing in it.
+    knowledge base. A chunk's own source address counts as standing in it, and
+    so does whatever the user wrote or pasted in any turn of ``messages``: a
+    reply that repeats it did not invent it.
     """
-    passages = [str(chunk.get("text") or "") for chunk in chunks or []]
+    passages = [str(chunk.get("text") or "") for chunk in chunks or []] + _user_texts(messages)
     known = "\n".join(passages)
     sources = {key for chunk in chunks or [] if (key := source_url_key(chunk.get("source_url")))}
     outside = {

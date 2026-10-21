@@ -615,6 +615,28 @@ async def test_an_open_reply_with_an_email_address_no_passage_holds_is_flagged_i
     assert record["hard_facts_outside_kb"] == {"email": 1}
 
 
+@pytest.mark.asyncio
+async def test_an_open_reply_repeating_an_address_the_employee_pasted_gets_no_warning(monkeypatch):
+    """The address came from the employee's own message, not from the model."""
+    llm = _LiteLLM(ANSWER + " Mail je aanvraag naar verlof@example.com.")
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        history=(
+            {"role": "user", "content": "Een collega vraagt via verlof@example.com hoe verlof werkt."},
+            {"role": "assistant", "content": "Wat wil je weten?"},
+        ),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    assert "Let op:" not in turn.text
+    (record,) = turn.records
+    assert "hard_facts_outside_kb" not in record
+
+
 # --- Pasted correspondence --------------------------------------------------------
 
 PASTED = (
