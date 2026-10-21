@@ -17,8 +17,6 @@ class _FakeOrg:
 
     def __init__(self, level: str = "shadow") -> None:
         self.id = 42
-        # The LiteLLM hook keys kb_ver:{zitadel_org_id}:* on the Zitadel
-        # string, so the service must invalidate using THIS, not self.id.
         self.zitadel_org_id = "zitadel-org-42"
         self.telemetry_level = level
 
@@ -40,12 +38,7 @@ async def test_set_telemetry_level_happy_path(monkeypatch):
     db.execute = AsyncMock(return_value=_scalar_result(org))
     db.commit = AsyncMock()
 
-    invalidate_mock = AsyncMock()
     audit_mock = AsyncMock()
-    monkeypatch.setattr(
-        "app.services.telemetry_level.invalidate_kb_cache",
-        invalidate_mock,
-    )
     monkeypatch.setattr(
         "app.services.telemetry_level.log_event",
         audit_mock,
@@ -64,7 +57,6 @@ async def test_set_telemetry_level_happy_path(monkeypatch):
     assert new == "full"
     assert org.telemetry_level == "full"
     db.commit.assert_awaited_once()
-    invalidate_mock.assert_awaited_once_with("zitadel-org-42")
     audit_mock.assert_awaited_once()
     audit_call = audit_mock.await_args
     assert audit_call.kwargs["action"] == "telemetry_level_changed"
@@ -84,12 +76,7 @@ async def test_set_telemetry_level_idempotent_noop(monkeypatch, support_purge):
     db.execute = AsyncMock(return_value=_scalar_result(org))
     db.commit = AsyncMock()
 
-    invalidate_mock = AsyncMock()
     audit_mock = AsyncMock()
-    monkeypatch.setattr(
-        "app.services.telemetry_level.invalidate_kb_cache",
-        invalidate_mock,
-    )
     monkeypatch.setattr(
         "app.services.telemetry_level.log_event",
         audit_mock,
@@ -106,7 +93,6 @@ async def test_set_telemetry_level_idempotent_noop(monkeypatch, support_purge):
 
     assert (old, new) == ("shadow", "shadow")
     db.commit.assert_not_awaited()  # no-op skip
-    invalidate_mock.assert_awaited_once()  # always invalidates (escape hatch)
     audit_mock.assert_awaited_once()
 
 
@@ -173,10 +159,6 @@ async def test_set_telemetry_level_org_not_found(monkeypatch):
     db.execute = AsyncMock(return_value=_scalar_result(None))
 
     monkeypatch.setattr(
-        "app.services.telemetry_level.invalidate_kb_cache",
-        AsyncMock(),
-    )
-    monkeypatch.setattr(
         "app.services.telemetry_level.log_event",
         AsyncMock(),
     )
@@ -209,7 +191,6 @@ async def test_failed_opt_out_cleanup_runs_again_on_retry(monkeypatch, support_p
     org = _FakeOrg(level="full")
     db = AsyncMock()
     db.execute.return_value = _scalar_result(org)
-    monkeypatch.setattr("app.services.telemetry_level.invalidate_kb_cache", AsyncMock())
     monkeypatch.setattr("app.services.telemetry_level.log_event", AsyncMock())
     support_purge.side_effect = [RuntimeError("cleanup unavailable"), 0]
     kwargs = dict(

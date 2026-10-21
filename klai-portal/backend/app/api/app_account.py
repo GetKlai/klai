@@ -8,7 +8,6 @@ increments kb_pref_version, and immediately invalidates the LiteLLM Redis cache 
 so the next LLM call picks up the new settings without delay.
 """
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -31,13 +30,10 @@ from app.platform_messaging.service import (
     mark_platform_message_thread_read,
     user_can_access_thread,
 )
-from app.services.litellm_cache import invalidate_kb_cache, invalidate_templates
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/app/account", tags=["app-account"])
-
-KB_PREF_CACHE_INVALIDATION_TIMEOUT_SECONDS = 1.0
 
 
 async def _load_caller_user(perms: UserPermissions, db: AsyncSession) -> PortalUser:
@@ -59,48 +55,6 @@ async def _load_caller_user(perms: UserPermissions, db: AsyncSession) -> PortalU
             detail="Caller user not found",
         )
     return user
-
-
-async def _invalidate_kb_preference_cache(
-    *,
-    zitadel_org_id: str,
-    librechat_user_id: str | None,
-    active_templates_changed: bool,
-) -> None:
-    """Best-effort LiteLLM cache invalidation with a bounded request-path wait."""
-    if not librechat_user_id:
-        return
-
-    invalidations = [invalidate_kb_cache(zitadel_org_id, librechat_user_id)]
-    if active_templates_changed:
-        invalidations.append(invalidate_templates(zitadel_org_id, librechat_user_id))
-
-    try:
-        results = await asyncio.wait_for(
-            asyncio.gather(*invalidations, return_exceptions=True),
-            timeout=KB_PREF_CACHE_INVALIDATION_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        logger.warning(
-            "kb_preference_cache_invalidation_timeout",
-            extra={
-                "zitadel_org_id": zitadel_org_id,
-                "librechat_user_id": librechat_user_id,
-                "timeout_seconds": KB_PREF_CACHE_INVALIDATION_TIMEOUT_SECONDS,
-            },
-        )
-        return
-
-    for result in results:
-        if isinstance(result, BaseException):
-            logger.warning(
-                "kb_preference_cache_invalidation_failed",
-                extra={
-                    "zitadel_org_id": zitadel_org_id,
-                    "librechat_user_id": librechat_user_id,
-                    "error": repr(result),
-                },
-            )
 
 
 # -- Pydantic schemas ---------------------------------------------------------
@@ -883,21 +837,13 @@ async def patch_kb_preference(
         user.kb_slugs_filter = slugs
 
     # SPEC-CHAT-TEMPLATES-001 REQ-TEMPLATES-CRUD-E5
-    active_templates_changed = False
     if "active_template_ids" in body.model_fields_set:
-        active_templates_changed = True
         user.active_template_ids = await _validate_and_normalize_template_ids(
             body.active_template_ids, org_id=perms.org_id, db=db
         )
 
     user.kb_pref_version += 1
     await db.commit()
-
-    await _invalidate_kb_preference_cache(
-        zitadel_org_id=perms.zitadel_org_id,
-        librechat_user_id=user.librechat_user_id,
-        active_templates_changed=active_templates_changed,
-    )
 
     return KBPreferenceOut(
         kb_retrieval_enabled=user.kb_retrieval_enabled,

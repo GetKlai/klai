@@ -31,10 +31,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.permissions import ProfileRole, UserPermissions, get_caller
 from app.core.profiles import Capability
-from app.models.portal import PortalUser
 from app.models.templates import PortalTemplate
 from app.services.default_templates import ensure_default_templates
-from app.services.litellm_cache import invalidate_templates
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.redis_client import get_redis_pool
 from app.utils.slug import slugify
@@ -131,24 +129,6 @@ async def _get_template_or_404(slug: str, org_id: int, db: AsyncSession) -> Port
     if not template:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template niet gevonden")
     return template
-
-
-async def _load_portal_user_or_none(db: AsyncSession, user_id: str, org_id: int) -> PortalUser | None:
-    """Load PortalUser by zitadel_user_id + org_id, or None if not found."""
-    result = await db.execute(
-        select(PortalUser).where(
-            PortalUser.zitadel_user_id == user_id,
-            PortalUser.org_id == org_id,
-        )
-    )
-    return result.scalar_one_or_none()
-
-
-def _librechat_user_id_or_none(user: PortalUser | None) -> str | None:
-    """PortalUser.librechat_user_id may be None until the user's first chat call."""
-    if user is None:
-        return None
-    return getattr(user, "librechat_user_id", None)
 
 
 def _can_manage_org_templates(perms: UserPermissions) -> bool:
@@ -271,16 +251,6 @@ async def create_template(
         org_id=perms.org_id,
     )
 
-    # Cache invalidation.
-    if template.scope == "org":
-        await invalidate_templates(perms.zitadel_org_id)
-    else:
-        # Personal: only the creator's cache needs dropping.
-        portal_user = await _load_portal_user_or_none(db, perms.user_id, perms.org_id)
-        lc_uid = _librechat_user_id_or_none(portal_user)
-        if lc_uid:
-            await invalidate_templates(perms.zitadel_org_id, lc_uid)
-
     return _template_out(template)
 
 
@@ -314,8 +284,6 @@ async def update_template(
 
     # Capability gate still applies when promoting a personal template to org-scope.
     _require_can_create_template(body.scope or template.scope, perms)
-
-    previous_scope = template.scope
 
     if body.name is not None:
         template.name = body.name
@@ -369,15 +337,6 @@ async def update_template(
         org_id=perms.org_id,
     )
 
-    # Any scope change, or an org-scope write, affects the whole org.
-    if template.scope == "org" or previous_scope == "org":
-        await invalidate_templates(perms.zitadel_org_id)
-    else:
-        portal_user = await _load_portal_user_or_none(db, perms.user_id, perms.org_id)
-        lc_uid = _librechat_user_id_or_none(portal_user)
-        if lc_uid:
-            await invalidate_templates(perms.zitadel_org_id, lc_uid)
-
     return _template_out(template)
 
 
@@ -404,11 +363,3 @@ async def delete_template(
         scope=scope,
         org_id=perms.org_id,
     )
-
-    if scope == "org":
-        await invalidate_templates(perms.zitadel_org_id)
-    else:
-        portal_user = await _load_portal_user_or_none(db, perms.user_id, perms.org_id)
-        lc_uid = _librechat_user_id_or_none(portal_user)
-        if lc_uid:
-            await invalidate_templates(perms.zitadel_org_id, lc_uid)

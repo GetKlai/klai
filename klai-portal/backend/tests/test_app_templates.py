@@ -23,13 +23,6 @@ from fastapi import HTTPException
 from tests.conftest import make_perms
 
 
-def _portal_user_with_lc(lc_uid: str = "lc-1") -> MagicMock:
-    """Mock PortalUser carrying a librechat_user_id."""
-    pu = MagicMock()
-    pu.librechat_user_id = lc_uid
-    return pu
-
-
 def _mock_template(
     id: int = 1,
     slug: str = "test",
@@ -81,7 +74,6 @@ async def test_post_scope_org_as_kb_manager_allowed(monkeypatch):
     from app.api import app_templates
 
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
-    monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
 
     db = MagicMock()
     db.add = MagicMock()
@@ -104,7 +96,6 @@ async def test_post_scope_org_as_kb_manager_allowed(monkeypatch):
     out = await app_templates.create_template(body=body, perms=perms, db=db)
 
     assert out.scope == "org"
-    app_templates.invalidate_templates.assert_awaited_once_with("zitadel-org-42")
 
 
 @pytest.mark.asyncio
@@ -113,12 +104,6 @@ async def test_post_scope_personal_as_non_admin_allowed(monkeypatch):
     from app.api import app_templates
 
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
-    monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
-    monkeypatch.setattr(
-        app_templates,
-        "_load_portal_user_or_none",
-        AsyncMock(return_value=_portal_user_with_lc("lc-1")),
-    )
 
     db = MagicMock()
     db.add = MagicMock()
@@ -147,45 +132,6 @@ async def test_post_scope_personal_as_non_admin_allowed(monkeypatch):
     assert db.flush.await_count == 1
     assert db.refresh.await_count == 1
     assert db.commit.await_count == 1
-    # Personal write → single-user invalidation, not org-wide.
-    app_templates.invalidate_templates.assert_awaited_once_with("zitadel-org-42", "lc-1")
-
-
-@pytest.mark.asyncio
-async def test_post_scope_org_as_admin_triggers_org_wide_invalidate(monkeypatch):
-    """Admin creates scope='org' → invalidate_templates called with ONLY org_id (org-wide SCAN+DEL)."""
-    from app.api import app_templates
-
-    monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
-    monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
-
-    db = MagicMock()
-    db.add = MagicMock()
-    db.flush = AsyncMock()
-    db.commit = AsyncMock()
-
-    async def _refresh(obj):
-        obj.id = 1
-        obj.slug = "x"
-        obj.scope = "org"
-        obj.created_by = "user-1"
-        obj.is_active = True
-        obj.created_at = datetime(2026, 4, 23, 12, 0, 0)
-        obj.updated_at = datetime(2026, 4, 23, 12, 0, 0)
-
-    db.refresh = AsyncMock(side_effect=_refresh)
-
-    perms = make_perms(role="admin", user_id="user-1", org_id=42)
-    body = app_templates.TemplateCreate(name="X", prompt_text="y", scope="org")
-    await app_templates.create_template(body=body, perms=perms, db=db)
-
-    # Org-wide invalidation: called with just the Zitadel org-id string (second arg defaults to None).
-    app_templates.invalidate_templates.assert_awaited_once_with("zitadel-org-42")
-
-
-# ---------------------------------------------------------------------------
-# Slug derivation
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -286,7 +232,6 @@ async def test_patch_happy_path_flushes_and_refreshes_before_commit(monkeypatch)
     from app.api import app_templates
 
     monkeypatch.setattr(app_templates, "_enforce_rate_limit", AsyncMock())
-    monkeypatch.setattr(app_templates, "invalidate_templates", AsyncMock())
     template = _mock_template(created_by="user-1", scope="org", slug="klantenservice")
     monkeypatch.setattr(app_templates, "_get_template_or_404", AsyncMock(return_value=template))
 
