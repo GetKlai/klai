@@ -1455,6 +1455,26 @@ async def test_a_contact_wish_counts_only_when_its_quote_stands_in_the_latest_me
     assert bool(litellm.answer_requests) is not contact
 
 
+async def test_a_yes_to_an_offered_appointment_keeps_the_contact_route_the_previous_case_held(monkeypatch):
+    """ "ja graag" carries no contact words of its own; the want it confirms
+    was verified on the turn before and is stored with that turn's case."""
+    offer = "Wil je een afspraak maken met een medewerker?"
+    messages = [
+        {"role": "user", "content": "Kan ik een afspraak maken met iemand van jullie?"},
+        {"role": "assistant", "content": offer},
+        {"role": "user", "content": "ja graag"},
+    ]
+    previous = _case("appointment", wants_quote="kan ik een afspraak maken met iemand van jullie")
+    stored = case_file.StoredTurn(previous, offer, [], "answer")
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("appointment"))
+    litellm, text, _ = await _route_turn(
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages, stored=stored
+    )
+
+    assert text == contact_reply("nl")
+    assert litellm.answer_requests == []
+
+
 @pytest.mark.parametrize(("quote", "message", "stands"), [("bellen", "bellen", True), ("bellen", _ABROAD, False)])
 def test_a_quote_under_three_words_counts_only_as_the_whole_message(quote, message, stands):
     assert words_stand_in(quote, message) is stands

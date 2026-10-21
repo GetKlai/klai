@@ -183,10 +183,10 @@ async def update_case(
         settings=settings,
         delegated_org_id=delegated_org_id,
     )
-    return None if case is None else _verified_routes(case, _last_user_message(messages) or "")
+    return None if case is None else _verified_routes(case, _last_user_message(messages) or "", previous)
 
 
-def _verified_routes(case: Case, latest: str) -> Case:
+def _verified_routes(case: Case, latest: str, previous: dict | None) -> Case:
     """The case with each route its quote does not carry taken back.
 
     A route field is the model's judgement, and the model judged a message
@@ -194,10 +194,13 @@ def _verified_routes(case: Case, latest: str) -> Case:
     visitor the contact reply instead of an answer (week of 14 to 21
     October). The quote must stand in the latest message (quotes.py); an
     unverified contact wish becomes a knowledge question, an unverified
-    out-of-scope subject an answered one.
+    out-of-scope subject an answered one. A contact wish the previous case
+    already held stays: "ja graag" to an offered appointment, or only a
+    phone number, carries no contact words of its own.
     """
     update: dict[str, object] = {}
-    if case.wants in CONTACT_WANTS and not words_stand_in(case.wants_quote, latest):
+    carried = previous is not None and previous.get("wants") in CONTACT_WANTS
+    if case.wants in CONTACT_WANTS and not carried and not words_stand_in(case.wants_quote, latest):
         update["wants"] = "knowledge"
     if case.out_of_scope and not words_stand_in(case.out_of_scope_quote, latest):
         update["out_of_scope"] = False
