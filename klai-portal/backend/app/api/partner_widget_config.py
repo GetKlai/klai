@@ -339,7 +339,9 @@ async def widget_config(
     # Load org and set tenant BEFORE KB access query (ensures RLS context is active)
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == widget_row.org_id))
     org = org_result.scalar_one_or_none()
-    if org is None:
+    # A deleted org's widget would otherwise hand out a session token that
+    # partner auth refuses on every turn.
+    if org is None or org.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
 
     # REQ-1 (Finding B-1): existence-non-disclosure — surface as 404 not 403.
@@ -499,7 +501,9 @@ async def public_bot_config(
 
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == widget_row.org_id))
     org = org_result.scalar_one_or_none()
-    if org is None:
+    # A deleted org's widget would otherwise hand out a session token that
+    # partner auth refuses on every turn.
+    if org is None or org.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
 
     # REQ-1 (Finding B-1): existence-non-disclosure — surface as 404 not 403.

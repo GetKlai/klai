@@ -68,6 +68,16 @@ class PartnerAuthContext:
     session_key: str | None = None
 
 
+# The states in which an org's row still exists but its keys and tokens must
+# not work: a soft delete keeps the row to release the slug, and a deletion
+# in progress (or one that failed) only drops the keys in its final step.
+_ORG_STATES_WITHOUT_CREDENTIALS = frozenset({"deprovisioning", "failed_deprovisioning"})
+
+
+def _org_accepts_credentials(org: PortalOrg) -> bool:
+    return org.deleted_at is None and org.provisioning_status not in _ORG_STATES_WITHOUT_CREDENTIALS
+
+
 async def _update_last_used(key_id: str, org_id: int) -> None:
     """Update last_used_at timestamp (fire-and-forget, independent session).
 
@@ -131,9 +141,7 @@ async def _auth_via_session_token(token: str, db: AsyncSession) -> PartnerAuthCo
     # state until the signature verifies and the payload matches this org.
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == org_id_for_key))
     org = org_result.scalar_one_or_none()
-    # A soft-deleted org keeps its row for the slug release; its tokens and
-    # keys must stop working the moment it is deleted, not when the row goes.
-    if org is None or org.deleted_at is not None:
+    if org is None or not _org_accepts_credentials(org):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
 
     # Verified decode using the per-tenant derived key.
@@ -272,7 +280,7 @@ async def get_partner_key(
     # Step 5: Resolve org_id -> zitadel_org_id and set tenant for downstream ORM queries.
     org_result = await db.execute(select(PortalOrg).where(PortalOrg.id == key_row.org_id))
     org = org_result.scalar_one_or_none()
-    if org is None or org.deleted_at is not None:
+    if org is None or not _org_accepts_credentials(org):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_AUTH_ERROR)
     await set_tenant(db, org.id)
 

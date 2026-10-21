@@ -52,6 +52,7 @@ class FakeOrg:
     # conftest.py so any downstream callback validation passes too.
     slug: str = "acme"
     deleted_at: object = None
+    provisioning_status: str = "ready"
     # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C: partner_api must be unlocked
     # for happy-path tests that exercise the full get_partner_key flow.
     platform_unlocked_features: list = None  # type: ignore[assignment]
@@ -688,13 +689,29 @@ async def test_session_token_disjoint_kbs_returns_401():
     assert exc.value.status_code == 401
 
 
+@pytest.mark.parametrize(
+    "org",
+    [FakeOrg(deleted_at="2026-10-21T00:00:00Z"), FakeOrg(provisioning_status="failed_deprovisioning")],
+    ids=["soft_deleted", "failed_deprovisioning"],
+)
 @pytest.mark.asyncio
-async def test_partner_key_of_a_soft_deleted_org_returns_401():
-    """The org row stays after deletion (slug release); its keys must not."""
+async def test_partner_key_of_a_deleted_or_deprovisioning_org_returns_401(org):
+    """The org row stays after a soft delete (slug release) and while a
+    deletion runs or failed; its keys must not. The result sequence is the
+    valid-key one, so without the check the call returns a context."""
     from app.api.partner_dependencies import get_partner_key
 
     db = AsyncMock()
-    setup_db(db, [FakeResult([FakeKeyRow()]), FakeResult([FakeOrg(deleted_at="2026-10-21T00:00:00Z")])])
+    setup_db(
+        db,
+        [
+            FakeResult([FakeKeyRow()]),
+            FakeResult([org]),
+            FakeResult(),
+            FakeResult([(FakeKbAccessRow(), SimpleNamespace(id=10, owner_type="org", owner_user_id=None))]),
+            FakeResult(),
+        ],
+    )
 
     patches = _partner_patches()
     with patches[0], patches[1], patches[2], patches[3]:
@@ -704,13 +721,18 @@ async def test_partner_key_of_a_soft_deleted_org_returns_401():
     assert exc.value.status_code == 401
 
 
+@pytest.mark.parametrize(
+    "org",
+    [FakeOrg(deleted_at="2026-10-21T00:00:00Z"), FakeOrg(provisioning_status="deprovisioning")],
+    ids=["soft_deleted", "deprovisioning"],
+)
 @pytest.mark.asyncio
-async def test_session_token_of_a_soft_deleted_org_returns_401():
+async def test_session_token_of_a_deleted_or_deprovisioning_org_returns_401(org):
     from app.api.partner_dependencies import get_partner_key
 
-    token = _make_jwt()
+    token = _make_jwt(kb_ids=[1, 2, 3])
     db = AsyncMock()
-    setup_db(db, [FakeResult([FakeOrg(deleted_at="2026-10-21T00:00:00Z")])])
+    setup_db(db, [FakeResult([org]), FakeResult([FakeWidget()]), FakeResult(rows=[1, 2, 3])])
 
     patches = _session_patches()
     with patches[0], patches[1], patches[2]:
