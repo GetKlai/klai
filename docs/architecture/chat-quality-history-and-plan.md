@@ -263,6 +263,7 @@ De stappen H tot en met N en O1 tot en met O6 en J uit §7 zijn gedaan (§8). Wa
 | Elke week tien tot twintig echte gesprekken lezen; elke nieuwe fout wordt een vast geval in de meetlat | Zo valt een daling binnen een week op |
 | Meetruns draaien op het Vibe-tegoed (`klai-judge`, `klai-ingest`), nooit op de sleutels van echte bezoekers | Een eerdere meting putte het gedeelde tegoed uit en gaf een bezoeker een foutmelding |
 | Echte gesprekken en de meetlat staan buiten deze repository; tests gebruiken verzonnen gevallen | De repository is publiek |
+| De E2E-organisatie (slug `e2e`, org 22) telt in geen enkele kwaliteitslezing of -telling mee; de alerts sluiten haar al op slug uit | De E2E-run van 21 oktober leverde 227 van de 236 interne beurten van die week, zodat een weeklezing zonder die uitsluiting het gedrag van een testscript meet |
 | Dit document en chat-system.md worden in dezelfde PR bijgewerkt als de code | De documenten liepen achter |
 
 ## 7. Plan
