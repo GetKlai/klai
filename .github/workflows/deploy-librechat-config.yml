@@ -115,6 +115,7 @@ jobs:
             # klai-docker-authz. The concurrency group above keeps the proxy's
             # own deploy from running at the same time; this poll covers a
             # proxy that is restarting for any other reason.
+            authz_ready=no
             for attempt in $(seq 1 24); do
               if docker compose -f /opt/klai/docker-compose.yml exec -T portal-api python -c '
             import sys
@@ -123,11 +124,18 @@ jobs:
 
             sys.exit(0 if httpx.get("http://klai-docker-authz:2375/health", timeout=5.0).status_code == 200 else 1)
             ' 2>/dev/null; then
+                authz_ready=yes
                 break
               fi
               echo "klai-docker-authz not answering yet (attempt $attempt of 24)"
               sleep 5
             done
+            if [ "$authz_ready" != yes ]; then
+              # Regenerating now would write every tenant's config and then
+              # fail each container action; better to fail before writing.
+              echo "ERROR: klai-docker-authz did not answer within 2 minutes; not regenerating." >&2
+              exit 1
+            fi
 
             echo "Triggering tenant config regeneration via portal-api..."
             docker compose -f /opt/klai/docker-compose.yml exec -T \

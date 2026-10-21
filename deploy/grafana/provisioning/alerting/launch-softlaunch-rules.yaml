@@ -170,7 +170,10 @@ groups:
             internal chat turn in the last 15 minutes. In Strict mode the user
             got a refusal; in Open mode an answer from general knowledge with a
             note that the knowledge base was unreachable. The `failure` field
-            holds the HTTP status or the exception class.
+            holds the HTTP status or the exception class; `identity_assertion`
+            means retrieval-api rejected the employee's identity (the turn
+            then errors instead of degrading), and `JSONDecodeError` a body
+            that was not JSON.
 
             Investigate (Grafana → Explore → VictoriaLogs):
               service:portal-api AND event:partner_chat_internal_retrieval_failed
