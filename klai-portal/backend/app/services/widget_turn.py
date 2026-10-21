@@ -151,7 +151,7 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
     # is written before any route returns.
     log_retrieval(inputs.auth.org_id, f"partner:{inputs.auth.key_id}", found.chunks)
     if turn.passages_chosen:
-        inputs.answer_signals["kept_passages"] = kept_passages_of(found.chunks)
+        inputs.answer_signals["kept_passages"] = kept_passages_of(found.chunks, inputs.kept_passages)
     # 5. Route in code what the case and the selection decided.
     routed = await _route(inputs, turn, found, case)
     if isinstance(routed, Reply):

@@ -410,7 +410,7 @@ async def last_case(*, widget_id: str, session_key: str) -> StoredTurn | None:
                 {"widget_id": widget_id, "session_key": session_key},
             )
         ).first()
-    if stored is None or not isinstance(stored[0], dict):
+    if stored is None:
         return None
     kept = stored[2] if isinstance(stored[2], list) else []
-    return StoredTurn(stored[0], str(stored[1] or ""), kept, stored[3])
+    return StoredTurn(stored[0] if isinstance(stored[0], dict) else None, str(stored[1] or ""), kept, stored[3])

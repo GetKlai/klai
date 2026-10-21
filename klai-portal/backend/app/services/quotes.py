@@ -15,8 +15,8 @@ WORD = re.compile(r"\w+")
 # text: the model drops markup and mends a broken link text, and a looser bar
 # would let through a quote that was never there.
 QUOTE_WORD_SHARE = 0.8
-# Below three words a quote matches almost any message ("ja", "bellen"), so it
-# counts only when the whole message is that short.
+# A quote of one or two words ("ja graag", "medewerker", a phone number) has no
+# room for a dropped or mended word, so it must stand as one phrase.
 _SHORT_QUOTE_WORDS = 3
 
 
@@ -29,8 +29,10 @@ def words_stand_in(quote: str, text: str) -> bool:
     """
     needles = WORD.findall(quote.lower())
     words = WORD.findall(text.lower())
-    if not needles or (len(needles) < _SHORT_QUOTE_WORDS and len(words) >= _SHORT_QUOTE_WORDS):
+    if not needles:
         return False
+    if len(needles) < _SHORT_QUOTE_WORDS:
+        return any(words[start : start + len(needles)] == needles for start in range(len(words)))
     for start, word in enumerate(words):
         if word != needles[0]:
             continue

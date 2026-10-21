@@ -53,7 +53,9 @@ CASE_SYSTEM_PROMPT = (
     "temporary or permanent), as far as said; otherwise empty.\n"
     "tried: what the visitor says they already did or checked, as short items; keep earlier items.\n"
     "wants_quote: the visitor's own words, copied verbatim from the LATEST message, that ask for a person, for "
-    "contact or for an appointment; empty when the latest message asks for none of these.\n"
+    "contact or for an appointment. A yes to an appointment or contact the assistant offered, or a message that "
+    "is only a phone number or e-mail address, IS that wish, and the quote is those words. Empty when the latest "
+    "message asks for none of these.\n"
     "wants: what the LATEST message asks for, never carried over from the previous case: knowledge (how "
     "something works or how to fix it), human (asks for a person), contact (asks how to reach the company: "
     "call, mail, ticket), appointment (asks to schedule or book), chat (greeting, thanks, remark about the "
@@ -130,7 +132,8 @@ def last_assistant_message(messages: list[dict]) -> str:
 class StoredTurn(NamedTuple):
     """What the previous assistant turn left for the next: its case and text, the passages it kept, its decision."""
 
-    case: dict
+    # None when that turn's case call failed; the rest still holds.
+    case: dict | None
     text: str
     kept_passages: list[dict]
     decision: str | None
@@ -183,10 +186,10 @@ async def update_case(
         settings=settings,
         delegated_org_id=delegated_org_id,
     )
-    return None if case is None else _verified_routes(case, _last_user_message(messages) or "", previous)
+    return None if case is None else _verified_routes(case, _last_user_message(messages) or "")
 
 
-def _verified_routes(case: Case, latest: str, previous: dict | None) -> Case:
+def _verified_routes(case: Case, latest: str) -> Case:
     """The case with each route its quote does not carry taken back.
 
     A route field is the model's judgement, and the model judged a message
@@ -194,13 +197,10 @@ def _verified_routes(case: Case, latest: str, previous: dict | None) -> Case:
     visitor the contact reply instead of an answer (week of 14 to 21
     October). The quote must stand in the latest message (quotes.py); an
     unverified contact wish becomes a knowledge question, an unverified
-    out-of-scope subject an answered one. A contact wish the previous case
-    already held stays: "ja graag" to an offered appointment, or only a
-    phone number, carries no contact words of its own.
+    out-of-scope subject an answered one.
     """
     update: dict[str, object] = {}
-    carried = previous is not None and previous.get("wants") in CONTACT_WANTS
-    if case.wants in CONTACT_WANTS and not carried and not words_stand_in(case.wants_quote, latest):
+    if case.wants in CONTACT_WANTS and not words_stand_in(case.wants_quote, latest):
         update["wants"] = "knowledge"
     if case.out_of_scope and not words_stand_in(case.out_of_scope_quote, latest):
         update["out_of_scope"] = False

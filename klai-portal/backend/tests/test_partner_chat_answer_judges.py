@@ -22,8 +22,7 @@ from klai_chat_prompts import appointment_offer_sentence, contact_reply, contact
 
 from app.services import case_file, chat_safety, partner_chat, query_paraphrase, turn_judge, widget_write
 from app.services.chat_profile import ChatProfile
-from app.services.quotes import words_stand_in
-from app.services.retrieval_context import KnowledgeTurn
+from app.services.retrieval_context import KnowledgeTurn, kept_passages_of
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
 
@@ -1512,58 +1511,104 @@ async def test_a_contact_wish_counts_only_when_its_quote_stands_in_the_latest_me
     assert bool(litellm.answer_requests) is not contact
 
 
-async def test_a_yes_to_an_offered_appointment_keeps_the_contact_route_the_previous_case_held(monkeypatch):
-    """ "ja graag" carries no contact words of its own; the want it confirms
-    was verified on the turn before and is stored with that turn's case."""
+async def test_a_yes_to_an_offered_appointment_keeps_the_contact_route(monkeypatch):
+    """ "ja graag" to an offered appointment is the contact wish, and those words are its quote."""
     offer = "Wil je een afspraak maken met een medewerker?"
     messages = [
         {"role": "user", "content": "Kan ik een afspraak maken met iemand van jullie?"},
         {"role": "assistant", "content": offer},
         {"role": "user", "content": "ja graag"},
     ]
-    previous = _case("appointment", wants_quote="kan ik een afspraak maken met iemand van jullie")
-    stored = case_file.StoredTurn(previous, offer, [], "answer")
-    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("appointment"))
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case("appointment", wants_quote="ja graag"))
     litellm, text, _ = await _route_turn(
-        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages, stored=stored
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages
     )
 
     assert text == contact_reply("nl")
     assert litellm.answer_requests == []
 
 
-@pytest.mark.parametrize(("quote", "message", "stands"), [("bellen", "bellen", True), ("bellen", _ABROAD, False)])
-def test_a_quote_under_three_words_counts_only_as_the_whole_message(quote, message, stands):
-    assert words_stand_in(quote, message) is stands
+@pytest.mark.parametrize(
+    ("message", "field", "quote"),
+    [
+        ("wat zijn jullie prijzen voor 5 gebruikers", "out_of_scope", "prijzen"),
+        ("ik wil graag een medewerker spreken", "wants", "medewerker"),
+        ("Ik wil jullie mailen", "wants", "jullie mailen"),
+    ],
+)
+async def test_a_quote_of_one_or_two_words_holds_its_route_when_it_stands_as_a_phrase(message, field, quote):
+    answer = (
+        _case(out_of_scope=True, out_of_scope_quote=quote)
+        if field == "out_of_scope"
+        else _case("human", wants_quote=quote)
+    )
+    with patch.object(
+        case_file, "structured_judge_call", AsyncMock(return_value=case_file.Case.model_validate(answer))
+    ):
+        case = await case_file.update_case([{"role": "user", "content": message}], None, _settings())
+
+    assert case is not None
+    assert getattr(case, field) == answer[field]
 
 
 _KEPT = {
     "chunk_id": "c7",
+    "kb_slug": "kb-a",
     "title": "Uitgaand nummer in de app",
     "source_url": "https://help.example.com/uitgaand-nummer",
     "text": "Je kiest het uitgaande nummer in de app via Instellingen en dan Nummerweergave.",
 }
 
 
-async def test_a_follow_up_whose_search_lost_the_chosen_passage_still_offers_it_to_the_selection(monkeypatch):
-    """The article that answered turn 1 was gone from the search in turn 4,
-    and that turn said "not found". The passage the selection chose is kept
-    with the turn and offered again, and the reply written from it cites it."""
-    stored = case_file.StoredTurn(_case(), _FOLLOW_UP[1]["content"], [_KEPT], "answer")
-    litellm = _LiteLLM(model_text=_KEPT["text"], selection=_selection("answers", (1, _KEPT["text"])))
-    litellm, _, extras = await _route_turn(
-        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=_FOLLOW_UP, stored=stored
-    )
-
+def _selection_passages(litellm: _LiteLLM) -> str:
     (selection_request,) = [
         body
         for body in litellm.requests
         if body.get("response_format", {}).get("json_schema", {}).get("name") == "passage_selection"
     ]
-    passages = selection_request["messages"][1]["content"].split("Passages:\n", 1)[1]
+    return selection_request["messages"][1]["content"].split("Passages:\n", 1)[1]
+
+
+async def _kept_turn(monkeypatch, kept: dict, items: list[dict]):
+    stored = case_file.StoredTurn(_case(), _FOLLOW_UP[1]["content"], [kept], "answer")
+    litellm = _LiteLLM(model_text=_KEPT["text"], selection=_selection("answers", (1, _KEPT["text"])))
+    return await _route_turn(monkeypatch, band="high", items=items, litellm=litellm, messages=_FOLLOW_UP, stored=stored)
+
+
+async def test_a_follow_up_whose_search_lost_the_chosen_passage_still_offers_it_to_the_selection(monkeypatch):
+    """The article that answered turn 1 was gone from the search in turn 4,
+    and that turn said "not found". The passage the selection chose is kept
+    with the turn and offered again, and the reply written from it cites it."""
+    litellm, _, extras = await _kept_turn(monkeypatch, _KEPT, _two_articles())
+
+    passages = _selection_passages(litellm)
     assert passages.startswith(f"[1] {_KEPT['title']}\n{_KEPT['text']}")
     assert "[3] Incasso storneren" in passages
     assert [source["url"] for batch in extras["sources"] for source in batch] == [_KEPT["source_url"]]
+
+
+async def test_a_follow_up_whose_search_finds_nothing_is_written_from_the_kept_passage(monkeypatch):
+    litellm, text, extras = await _kept_turn(monkeypatch, _KEPT, [])
+
+    assert _selection_passages(litellm).startswith(f"[1] {_KEPT['title']}")
+    assert litellm.answer_requests
+    assert text.startswith(_KEPT["text"])
+    assert [source["url"] for batch in extras["sources"] for source in batch] == [_KEPT["source_url"]]
+
+
+async def test_a_kept_passage_from_a_knowledge_base_out_of_scope_is_not_offered(monkeypatch):
+    litellm, _, _ = await _kept_turn(monkeypatch, {**_KEPT, "kb_slug": "kb-other"}, _two_articles())
+
+    assert _KEPT["text"] not in _selection_passages(litellm)
+
+
+def test_the_kept_passages_are_a_rolling_window_of_three():
+    def passage(n: int) -> dict:
+        return {**_KEPT, "chunk_id": f"c{n}", "text": f"Passage {n}."}
+
+    kept = kept_passages_of([passage(2)], [passage(1), passage(2), passage(3), passage(4)])
+
+    assert [item["chunk_id"] for item in kept] == ["c2", "c1", "c3"]
 
 
 async def test_a_short_follow_up_in_a_dutch_conversation_gets_the_dutch_not_found_text(monkeypatch):

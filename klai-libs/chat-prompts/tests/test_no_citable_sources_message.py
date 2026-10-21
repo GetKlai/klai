@@ -141,10 +141,11 @@ def test_helpdesk_default_leaves_existing_callers_untouched() -> None:
             "nl",
             "Via dit chatvenster kan ik alleen een afspraak voor je inplannen; iets anders kan ik hier niet regelen.",
         ),
+        # Every other code gets English, like contact_reply.
         (
             "de",
-            "Über dieses Chatfenster kann ich nur einen Termin für dich einplanen; etwas anderes kann ich hier nicht "
-            "regeln. Du kannst auch eine E-Mail schreiben: help@example.com. Du kannst auch anrufen: 010 123 4567.",
+            "In this chat window I can only schedule an appointment for you; I can't arrange anything else here. "
+            "You can also send an email: help@example.com. You can also call: 010 123 4567.",
         ),
     ],
 )
