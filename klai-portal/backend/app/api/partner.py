@@ -322,6 +322,30 @@ async def _widget_off_topic(auth: PartnerAuthContext, db: AsyncSession) -> tuple
     )
 
 
+async def _widget_contact_channels(auth: PartnerAuthContext, db: AsyncSession) -> tuple[str | None, str | None]:
+    """Return this widget's (contact e-mail, contact phone), each ``None`` when unset.
+
+    Same shape and same widget-JWT restriction as :func:`_widget_off_topic`.
+    """
+    if not str(auth.key_id).startswith("wgt_"):
+        return None, None
+    result = await db.execute(
+        select(Widget.widget_config).where(
+            Widget.widget_id == auth.key_id,
+            Widget.org_id == auth.org_id,
+        )
+    )
+    config = result.scalar_one_or_none() or {}
+    if not isinstance(config, dict):
+        return None, None
+    email = config.get("contact_email")
+    phone = config.get("contact_phone")
+    return (
+        email.strip() or None if isinstance(email, str) else None,
+        phone.strip() or None if isinstance(phone, str) else None,
+    )
+
+
 async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> str:
     """Return this widget's customer-facing register: ``"restrained"`` (default)
     or ``"expressive"``.
@@ -901,6 +925,7 @@ async def _widget_or_partner_turn(
     widget_system_prompt = await _widget_system_prompt(auth, db)
     page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
     off_topic_subjects, off_topic_reply = await _widget_off_topic(auth, db) if is_widget_chat else ("", "")
+    contact_email, contact_phone = await _widget_contact_channels(auth, db) if is_widget_chat else (None, None)
     tone_register = await _widget_tone_register(auth, db) if is_widget_chat else "restrained"
     page_context = (
         request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
@@ -934,6 +959,8 @@ async def _widget_or_partner_turn(
         tone_register=tone_register,
         off_topic_subjects=off_topic_subjects,
         off_topic_reply=off_topic_reply,
+        contact_email=contact_email,
+        contact_phone=contact_phone,
         previous_case=await _previous_case(request, auth, audit),
         audit_widget_id=audit.widget_id,
         audit_session_key=audit.session_key,

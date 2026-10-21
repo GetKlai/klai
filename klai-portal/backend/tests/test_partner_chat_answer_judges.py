@@ -1180,6 +1180,32 @@ async def test_a_visitor_who_asks_for_a_person_is_not_told_the_articles_lack_an_
     assert litellm.answer_requests == []
 
 
+async def test_the_contact_reply_names_the_channels_the_widget_has(monkeypatch):
+    """Four visitors asked for an e-mail address or did not want to call and got the appointment reply each time."""
+    from app.api import partner
+
+    monkeypatch.setattr(
+        partner, "_widget_contact_channels", AsyncMock(return_value=("hallo@example.com", "000-0000000"))
+    )
+    litellm, text, extras = await _selected_turn(monkeypatch, _selection("not_in_passages"), case=_case("human"))
+
+    assert text == f"{contact_reply('nl')} Mailen kan ook: hallo@example.com. Bellen kan ook: 000-0000000."
+    assert extras["escalation"] == [{"appointment": True}]
+    assert litellm.answer_requests == []
+
+
+async def test_a_widget_without_channels_gets_the_contact_reply_unchanged(monkeypatch):
+    from app.api import partner
+
+    monkeypatch.setattr(partner, "_widget_contact_channels", AsyncMock(return_value=(None, None)))
+    _, text, _ = await _selected_turn(monkeypatch, _selection("not_in_passages"), case=_case("human"))
+
+    assert text == (
+        "Je kunt een afspraak maken met een medewerker, die helpt je persoonlijk verder. Gebruik daarvoor de knop "
+        "onder dit bericht."
+    )
+
+
 async def test_a_failed_selection_leaves_the_turn_as_it_was(monkeypatch):
     litellm, _, _ = await _selected_turn(monkeypatch, httpx.ConnectError("boom"))
 

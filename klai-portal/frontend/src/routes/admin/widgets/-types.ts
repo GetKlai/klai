@@ -34,6 +34,9 @@ export interface WidgetConfig {
   // both are filled.
   off_topic_subjects?: string
   off_topic_reply?: string
+  // Channels the fixed contact reply names beside the appointment button.
+  contact_email?: string | null
+  contact_phone?: string | null
   // INTERIM appointment redirect — a plain URL until the booking API
   // integration replaces it. null/absent → visitor sees no button.
   booking_url?: string | null

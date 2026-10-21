@@ -409,7 +409,8 @@ async def test_internal_prompt_is_foundation_then_templates_then_librechats_own_
     prompt = _system_prompt(recorder)
     assert prompt.startswith(GROUNDED_CHAT_SYSTEM_PROMPT)
     assert prompt.index("[Formeel]\nSchrijf formeel.") < prompt.index("Evidence E1")
-    assert prompt.endswith("\n\nLIBRECHAT AGENT INSTRUCTIONS")
+    # The date line follows the last instruction, so the agent's own text stays where it was.
+    assert "\n\nLIBRECHAT AGENT INSTRUCTIONS\n\nToday is " in prompt
     assert recorder.retrieve_bodies[0]["telemetry_level"] == "full"
 
 

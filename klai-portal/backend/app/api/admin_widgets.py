@@ -18,7 +18,7 @@ from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,6 +107,11 @@ class WidgetConfig(BaseModel):
     # a tenant sentence in between.
     off_topic_subjects: str = Field(default="", max_length=500)
     off_topic_reply: str = Field(default="", max_length=500)
+    # Channels the fixed contact reply names beside the appointment button
+    # (a visitor who asked for an e-mail address or did not want to call got
+    # the appointment reply and nothing else). Unset → the reply is unchanged.
+    contact_email: EmailStr | None = None
+    contact_phone: str | None = Field(default=None, max_length=32)
     # When true, the widget hides the AI introduction in the empty state.
     # The footer is configured independently through footer_text.
     hide_disclaimer: bool = False
@@ -238,6 +243,8 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             conversation_starters=(config.get("conversation_starters") or [])[:3],
             off_topic_subjects=config.get("off_topic_subjects", ""),
             off_topic_reply=config.get("off_topic_reply", ""),
+            contact_email=config.get("contact_email"),
+            contact_phone=config.get("contact_phone"),
             hide_disclaimer=config.get("hide_disclaimer", False),
             ai_disclosure_override=config.get("ai_disclosure_override"),
             footer_text=config.get("footer_text"),

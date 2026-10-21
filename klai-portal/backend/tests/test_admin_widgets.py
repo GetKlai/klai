@@ -277,6 +277,36 @@ def test_widget_to_response_keeps_the_subjects_the_widget_does_not_answer():
     assert result.widget_config.off_topic_reply == "Daarvoor kun je contact opnemen met Voys."
 
 
+def test_widget_config_contact_channels_are_optional_and_validated():
+    import pytest
+
+    from app.api.admin_widgets import WidgetConfig, _widget_to_response
+
+    assert WidgetConfig().contact_email is None
+    assert WidgetConfig().contact_phone is None
+    config = WidgetConfig(contact_email="hallo@example.com", contact_phone="000-0000000")
+    assert config.model_dump()["contact_email"] == "hallo@example.com"
+    with pytest.raises(ValueError):
+        WidgetConfig(contact_email="not an address")
+    with pytest.raises(ValueError):
+        WidgetConfig(contact_phone="0" * 33)
+
+    widget = MagicMock()
+    widget.id = "uuid-contact"
+    widget.name = "Help Bot"
+    widget.description = None
+    widget.widget_id = "wgt_contact"
+    widget.widget_config = config.model_dump()
+    widget.public_share_enabled = False
+    widget.rate_limit_rpm = 60
+    widget.last_used_at = None
+    widget.created_at = "2026-01-01"
+    widget.created_by = "user-1"
+    result = _widget_to_response(widget, kb_access_count=0)
+    assert result.widget_config.contact_email == "hallo@example.com"
+    assert result.widget_config.contact_phone == "000-0000000"
+
+
 def test_widget_to_response_truncates_legacy_conversation_starters():
     """A widget saved before the cap dropped from 6 to 3 still has up to 6
     stored starters. Reading it back must truncate to 3, not raise — the
