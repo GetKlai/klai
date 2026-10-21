@@ -33,6 +33,7 @@ from sqlalchemy import text
 
 from app.core.config import settings as _global_settings
 from app.core.database import cross_org_session, tenant_scoped_session
+from app.services.case_file import StoredTurn
 
 logger = structlog.get_logger()
 
@@ -369,8 +370,9 @@ async def record_internal_turn(*, org_id: int, answer_signals: dict[str, Any]) -
         logger.exception("internal_chat_turn_record_failed", org_id=org_id)
 
 
-async def last_case(*, widget_id: str, session_key: str) -> tuple[dict, str] | None:
-    """The case (app.services.case_file) stored with this session's latest assistant turn, and that turn's text.
+async def last_case(*, widget_id: str, session_key: str) -> StoredTurn | None:
+    """The case (app.services.case_file) stored with this session's latest assistant turn, with that turn's text,
+    the passages it kept and its decision.
 
     Same identification and tenant scoping as :func:`find_conversation_id`.
     ``None`` when the session or the turn does not exist yet, and when the
@@ -394,7 +396,8 @@ async def last_case(*, widget_id: str, session_key: str) -> tuple[dict, str] | N
             await db.execute(
                 text(
                     """
-                    SELECT m.answer_signals -> 'case', m.content
+                    SELECT m.answer_signals -> 'case', m.content,
+                           m.answer_signals -> 'kept_passages', m.answer_signals ->> 'decision'
                       FROM widget_messages m
                       JOIN widget_conversations c ON c.id = m.conversation_id
                      WHERE c.widget_id = CAST(:widget_id AS uuid)
@@ -407,6 +410,7 @@ async def last_case(*, widget_id: str, session_key: str) -> tuple[dict, str] | N
                 {"widget_id": widget_id, "session_key": session_key},
             )
         ).first()
-    if stored is None or not isinstance(stored[0], dict):
+    if stored is None:
         return None
-    return stored[0], str(stored[1] or "")
+    kept = stored[2] if isinstance(stored[2], list) else []
+    return StoredTurn(stored[0] if isinstance(stored[0], dict) else None, str(stored[1] or ""), kept, stored[3])

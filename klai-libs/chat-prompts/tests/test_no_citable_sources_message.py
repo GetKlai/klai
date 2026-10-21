@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import contact_reply_again, no_citable_sources_message
 
 _DUTCH = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 _ENGLISH = "I cannot answer this reliably from the available knowledge sources."
@@ -132,3 +132,23 @@ def test_helpdesk_default_leaves_existing_callers_untouched() -> None:
     # refusal text is byte-for-byte unchanged when the flag is not passed.
     assert no_citable_sources_message("nl") == _DUTCH
     assert no_citable_sources_message("en") == _ENGLISH
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (
+            "nl",
+            "Via dit chatvenster kan ik alleen een afspraak voor je inplannen; iets anders kan ik hier niet regelen.",
+        ),
+        # Every other code gets English, like contact_reply.
+        (
+            "de",
+            "In this chat window I can only schedule an appointment for you; I can't arrange anything else here. "
+            "You can also email us: help@example.com. You can also call us: 010 123 4567.",
+        ),
+    ],
+)
+def test_contact_reply_again_names_only_the_channels_it_is_given(code: str, expected: str) -> None:
+    email, phone = ("help@example.com", "010 123 4567") if code == "de" else (None, None)
+    assert contact_reply_again(code, email=email, phone=phone) == expected
