@@ -31,10 +31,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, tenant_scoped_session
 from app.core.provisioning_names import validate_slug_for_provisioning
 from app.core.system_groups import create_system_groups
 from app.models.portal import PortalOrg, PortalUser
+from app.services.internal_chat_keys import mint_internal_chat_key
 from app.services.provisioning.generators import _generate_librechat_env
 from app.services.provisioning.infrastructure import (
     _caddy_lock,
@@ -479,11 +480,19 @@ async def _provision(org_id: int, db: AsyncSession) -> None:
             )
             last_state = "writing_env_file"
 
+            # The environment starts on the portal path: the same internal-chat
+            # key scripts/switch_internal_chat.py mints. rotate=True because this
+            # .env is the only holder of the plaintext: a key left by an earlier
+            # failed attempt belongs to an env that no longer exists.
+            async with tenant_scoped_session(org_id) as key_db:
+                chat_api_key = await mint_internal_chat_key(key_db, org_id, rotate=True)
+            assert chat_api_key is not None  # rotate=True always mints
             env_content = _generate_librechat_env(
                 slug,
                 client_id,
                 client_secret,
                 litellm_api_key=litellm_team_key,
+                chat_api_key=chat_api_key,
                 mongo_password=mongo_tenant_password,
                 meili_api_key=meili_runtime_key,
                 zitadel_org_id=zitadel_org_id,

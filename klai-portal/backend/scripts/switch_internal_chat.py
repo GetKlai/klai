@@ -48,14 +48,13 @@ from app.core.database import cross_org_session, tenant_scoped_session  # noqa: 
 from app.core.provisioning_names import validate_slug_for_provisioning  # noqa: E402
 from app.models.portal import PortalOrg  # noqa: E402
 from app.services.internal_chat_keys import holds_internal_chat_key, mint_internal_chat_key  # noqa: E402
-from app.services.provisioning.generators import _ENV_KEY_RE  # noqa: E402
+from app.services.provisioning.generators import _ENV_KEY_RE, PORTAL_CHAT_BASE_URL  # noqa: E402
 from app.services.provisioning.infrastructure import (  # noqa: E402
     _invalidate_librechat_config_cache,
     _read_dotenv_file,
     _start_librechat_container,
 )
 
-PORTAL_CHAT_BASE_URL = "http://portal-api:8010/partner/v1"
 EXIT_COMPOSE_RECREATE_PENDING = 3
 
 
