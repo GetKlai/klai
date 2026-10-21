@@ -3,9 +3,9 @@
 GET  /api/app/account/kb-preference  — read current KB scope preference
 PATCH /api/app/account/kb-preference — update KB scope preference
 
-The PATCH endpoint validates that all submitted kb_slugs belong to the caller's org,
-increments kb_pref_version, and immediately invalidates the LiteLLM Redis cache key
-so the next LLM call picks up the new settings without delay.
+The PATCH endpoint validates that all submitted kb_slugs belong to the caller's org
+and increments kb_pref_version; the chat path reads the preference on every turn,
+so the next call picks up the new settings without delay.
 """
 
 import logging

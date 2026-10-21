@@ -19,6 +19,11 @@
 
 apiVersion: 1
 
+# File provisioning never removes a rule it stops listing.
+deleteRules:
+  - orgId: 1
+    uid: obs-001-litellm-kb-retrieval-failed
+
 groups:
   - orgId: 1
     name: litellm-knowledge-hook

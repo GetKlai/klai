@@ -1022,10 +1022,8 @@ services:
       KNOWLEDGE_INGEST_SECRET: ${KNOWLEDGE_INGEST_SECRET}
       RETRIEVAL_API_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
       # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-CIT — citation-rescue config
-      # for klai_citations on path B (widget/partner chat). Mirrors the
-      # litellm block (path A); parity is enforced by
-      # deploy/litellm/tests/test_citation_rescue_compose_parity.py, not by
-      # this comment.
+      # for klai_citations on the one chat path (widget, partner and
+      # internal chat).
       CITATION_RESCUE_MODE: ${CITATION_RESCUE_MODE:-active}
       RESCUE_ANSWER_SCORE_THRESHOLD: ${RESCUE_ANSWER_SCORE_THRESHOLD:-19}
       RESCUE_RETRIEVAL_RATIO: ${RESCUE_RETRIEVAL_RATIO:-0.4}

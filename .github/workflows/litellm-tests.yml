@@ -17,11 +17,15 @@ on:
       # command must be verified by running it. Without this path the fix for
       # a red run silently never executes, and main stays red.
       - '.github/workflows/litellm-tests.yml'
+      # The language module is a byte-for-byte copy of this file; the drift
+      # test must run when the canonical side changes, not only the copy.
+      - 'klai-libs/chat-prompts/klai_chat_prompts/language.py'
   pull_request:
     paths:
       - 'deploy/litellm/**'
       - 'deploy/docker-compose.yml'
       - '.github/workflows/litellm-tests.yml'
+      - 'klai-libs/chat-prompts/klai_chat_prompts/language.py'
 
 jobs:
   litellm-tests:

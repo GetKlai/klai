@@ -17,6 +17,15 @@
 
 apiVersion: 1
 
+# File provisioning never removes a rule it stops listing; the hook's two
+# rules would stay live, and R2's query matched any litellm error line that
+# mentions "retrieval".
+deleteRules:
+  - orgId: 1
+    uid: spec-launch-001-retrieve-fail-rate
+  - orgId: 1
+    uid: spec-launch-001-kb-fallback-fired
+
 groups:
   - orgId: 1
     name: spec-launch-001-readiness
