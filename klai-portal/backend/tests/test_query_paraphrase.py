@@ -183,6 +183,65 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
     }
 
 
+@pytest.mark.asyncio
+async def test_a_message_with_two_questions_is_written_from_the_chosen_passages_only(monkeypatch):
+    """Every invented answer of the week of 14 to 21 October came through the
+    multi-part branch, which skipped the selection and handed the writer every
+    passage grouped per sub-question."""
+    _capture_retrieve(monkeypatch, {})
+    chosen = {
+        "chunk_id": "c1",
+        "evidence_id": "ev1",
+        "title": "Belplan",
+        "text": "Klik op Belplan wijzigen.",
+        "source_url": "https://help.example.com/belplan",
+        "reranker_score": 0.9,
+        "sub_query_index": 1,
+    }
+    other = {
+        "chunk_id": "c2",
+        "evidence_id": "ev2",
+        "title": "Nummers",
+        "text": "Een extra nummer bestel je bij de verkoopafdeling.",
+        "source_url": "https://help.example.com/nummers",
+        "reranker_score": 0.8,
+        "sub_query_index": 2,
+    }
+    question = "Hoe wijzig ik mijn belplan? Hoe kom ik aan een tweede telefoonnummer?"
+    monkeypatch.setattr(
+        "app.services.retrieval_context.httpx.AsyncClient",
+        lambda timeout: _ClientWith(
+            {
+                "chunks": [],
+                "evidence_pack": {"items": [chosen, other], "sources": []},
+                "confidence_band": "high",
+                "sub_results": [
+                    {"index": 1, "query": "Hoe wijzig ik mijn belplan?"},
+                    {"index": 2, "query": "Hoe kom ik aan een tweede telefoonnummer?"},
+                ],
+            }
+        ),
+    )
+    from app.services.passage_selection import Evidence, PassageSelection
+
+    selection = PassageSelection(
+        need="belplan wijzigen; een tweede nummer",
+        evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")],
+        verdict="answers",
+        question="",
+    )
+    signals: dict[str, Any] = {}
+    with patch.object(retrieval_context, "select_passages", AsyncMock(return_value=selection)) as select:
+        _, prompt, _, _ = await _retrieve([{"role": "user", "content": question}], _settings(), answer_signals=signals)
+
+    select.assert_awaited_once()
+    assert "Klik op Belplan wijzigen." in prompt
+    assert other["text"] not in prompt
+    assert "[Question" not in prompt
+    assert signals["multi_question"] is True
+    assert signals["sub_questions"] == ["Hoe wijzig ik mijn belplan?", "Hoe kom ik aan een tweede telefoonnummer?"]
+
+
 class _ClientWith:
     def __init__(self, payload: dict) -> None:
         self.payload = payload

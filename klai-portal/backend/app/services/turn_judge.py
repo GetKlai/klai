@@ -103,12 +103,16 @@ async def structured_judge_call[J: BaseModel](
     return None
 
 
-def _clip(text: str) -> str:
-    return text if len(text) <= _EXCERPT_TURN_CHARS else text[:_EXCERPT_TURN_CHARS].rstrip() + " […]"
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit].rstrip() + " […]"
 
 
-def conversation_excerpt(messages: list[dict]) -> str:
-    """The last few user/assistant turns, clipped, with the latest visitor message marked."""
+def conversation_excerpt(messages: list[dict], *, latest_chars: int = _EXCERPT_TURN_CHARS) -> str:
+    """The last few user/assistant turns, clipped, with the latest visitor message marked.
+
+    ``latest_chars`` clips the latest visitor message alone; every other turn
+    keeps the per-turn limit.
+    """
     turns: list[tuple[str, str]] = []
     for message in messages:
         role = message.get("role")
@@ -122,9 +126,11 @@ def conversation_excerpt(messages: list[dict]) -> str:
     lines = []
     for index, (role, content) in enumerate(turns):
         label = "Assistant" if role == "assistant" else "Visitor"
+        limit = _EXCERPT_TURN_CHARS
         if index == latest_visitor:
             label = "Visitor (LATEST message)"
-        lines.append(f"{label}: {_clip(content)}")
+            limit = latest_chars
+        lines.append(f"{label}: {_clip(content, limit)}")
     return "\n\n".join(lines)
 
 
