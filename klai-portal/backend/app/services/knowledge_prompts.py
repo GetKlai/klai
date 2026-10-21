@@ -210,7 +210,8 @@ def internal_system_prompt(
 
     The hook prepended a prefix to LibreChat's own system message, so that
     message (agent instructions, LibreChat's defaults) still closes the
-    prompt. The pasted-correspondence contract sits between the two, where
+    composed text; ``_augment_messages_with_system_prompt`` then appends the
+    one-line date after it. The pasted-correspondence contract sits between the two, where
     the hook's first prepend left it; a meta question never gets it, because
     the hook answered those before that prepend.
     """

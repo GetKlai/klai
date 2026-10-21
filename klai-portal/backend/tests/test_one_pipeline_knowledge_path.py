@@ -141,8 +141,6 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(partner.settings, "knowledge_retrieve_url", "http://retrieval.example.com")
     monkeypatch.setattr(partner.settings, "litellm_base_url", "http://litellm.example.com")
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["handboek"]))
-    monkeypatch.setattr(partner, "_widget_system_prompt", AsyncMock(return_value=None))
-    monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
     monkeypatch.setattr(retrieval_context, "_schedule_gap_event", MagicMock())
     monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
 
@@ -416,8 +414,13 @@ async def test_internal_prompt_is_foundation_then_templates_then_librechats_own_
     assert prompt.startswith(GROUNDED_CHAT_SYSTEM_PROMPT)
     assert prompt.index("[Formeel]\nSchrijf formeel.") < prompt.index("Evidence E1")
     # LibreChat's own system follows the evidence; only the selection's brief
-    # for this turn comes after it.
-    assert prompt.index("Evidence E1") < prompt.index("\n\nLIBRECHAT AGENT INSTRUCTIONS") < prompt.index("[This turn]")
+    # for this turn and then the date line come after it.
+    assert (
+        prompt.index("Evidence E1")
+        < prompt.index("\n\nLIBRECHAT AGENT INSTRUCTIONS")
+        < prompt.index("[This turn]")
+        < prompt.index("Today is ")
+    )
     assert recorder.retrieve_bodies[0]["telemetry_level"] == "full"
 
 

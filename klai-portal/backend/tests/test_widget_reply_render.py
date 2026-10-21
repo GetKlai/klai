@@ -204,8 +204,6 @@ async def _chat_completions_failing(*, stream: bool):
     )
     http_request = MagicMock(headers={}, client=None)
     with (
-        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
         patch(
             "app.api.partner.widget_turn",
             new=AsyncMock(side_effect=AnswerUpstreamError("Chat service error", "nl")),

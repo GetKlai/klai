@@ -205,16 +205,16 @@ _ENGLISH_CONTACT_REPLY: Final[str] = (
 # The second contact request in a row gets this instead of the same reply
 # again: a visitor who had said they did not want to call got the contact
 # reply four times, word for word (week of 14 to 21 October).
-_DUTCH_CONTACT_REPLY_AGAIN: Final[tuple[str, str, str]] = (
-    "Via dit chatvenster kan ik alleen een afspraak voor je inplannen; iets anders kan ik hier niet regelen.",
-    "Mailen kan ook: {}.",
-    "Bellen kan ook: {}.",
+_DUTCH_CONTACT_REPLY_AGAIN: Final[str] = (
+    "Via dit chatvenster kan ik alleen een afspraak voor je inplannen; iets anders kan ik hier niet regelen."
 )
-_ENGLISH_CONTACT_REPLY_AGAIN: Final[tuple[str, str, str]] = (
-    "In this chat window I can only schedule an appointment for you; I can't arrange anything else here.",
-    "You can also send an email: {}.",
-    "You can also call: {}.",
+_ENGLISH_CONTACT_REPLY_AGAIN: Final[str] = (
+    "In this chat window I can only schedule an appointment for you; I can't arrange anything else here."
 )
+_DUTCH_CONTACT_EMAIL: Final[str] = "Mailen kan ook: {email}."
+_ENGLISH_CONTACT_EMAIL: Final[str] = "You can also email us: {email}."
+_DUTCH_CONTACT_PHONE: Final[str] = "Bellen kan ook: {phone}."
+_ENGLISH_CONTACT_PHONE: Final[str] = "You can also call us: {phone}."
 _DUTCH_HELPDESK_REFUSAL: Final[str] = "Dit vind ik niet terug in onze helpartikelen. " + _DUTCH_HELPDESK_OFFER
 _ENGLISH_HELPDESK_REFUSAL: Final[str] = "I can't find this in our help articles. " + _ENGLISH_HELPDESK_OFFER
 
@@ -342,27 +342,34 @@ def is_broad_knowledge_answer(content: object) -> bool:
     return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
 
 
-def contact_reply(language: object) -> str:
+def contact_reply(language: object, *, email: str | None = None, phone: str | None = None) -> str:
     """The whole reply to a visitor who asks for a person, for contact or for an appointment.
 
     Written by the model, this reply came out as "Laat het gerust weten als je
     vastloopt" or as a ticket button of another product (first week of real
     traffic after the selection step); the model has nothing to add here.
+
+    ``email`` and ``phone`` are the widget's own contact channels; each adds
+    one sentence after the appointment sentence, and without them the text is
+    the constant above.
     """
-    return _DUTCH_CONTACT_REPLY if _language_is_dutch(language) else _ENGLISH_CONTACT_REPLY
+    dutch = _language_is_dutch(language)
+    return _with_channels(_DUTCH_CONTACT_REPLY if dutch else _ENGLISH_CONTACT_REPLY, dutch, email, phone)
 
 
 def contact_reply_again(language: object, *, email: str | None = None, phone: str | None = None) -> str:
-    """The reply to a contact request after the contact reply: same language rule, with the channels given."""
-    sentence, mail, call = (
-        _DUTCH_CONTACT_REPLY_AGAIN if _language_is_dutch(language) else _ENGLISH_CONTACT_REPLY_AGAIN
-    )
-    lines = [sentence]
+    """The reply to a contact request after the contact reply: same language rule, same channel sentences."""
+    dutch = _language_is_dutch(language)
+    return _with_channels(_DUTCH_CONTACT_REPLY_AGAIN if dutch else _ENGLISH_CONTACT_REPLY_AGAIN, dutch, email, phone)
+
+
+def _with_channels(sentence: str, dutch: bool, email: str | None, phone: str | None) -> str:
+    parts = [sentence]
     if email:
-        lines.append(mail.format(email))
+        parts.append((_DUTCH_CONTACT_EMAIL if dutch else _ENGLISH_CONTACT_EMAIL).format(email=email))
     if phone:
-        lines.append(call.format(phone))
-    return " ".join(lines)
+        parts.append((_DUTCH_CONTACT_PHONE if dutch else _ENGLISH_CONTACT_PHONE).format(phone=phone))
+    return " ".join(parts)
 
 
 def appointment_offer_sentence(language: object) -> str:

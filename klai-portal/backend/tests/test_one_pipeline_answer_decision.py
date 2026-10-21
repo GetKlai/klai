@@ -191,9 +191,6 @@ async def _turn(
         monkeypatch.setattr(partner.settings, name, value)
     monkeypatch.setattr(partner, "internal_turn_settings", AsyncMock(return_value=([], "shadow")))
     monkeypatch.setattr(partner, "_resolve_kb_slugs", AsyncMock(return_value=["handboek"]))
-    monkeypatch.setattr(partner, "_widget_system_prompt", AsyncMock(return_value=None))
-    monkeypatch.setattr(partner, "_widget_page_context_enabled", AsyncMock(return_value=False))
-    monkeypatch.setattr(partner, "_widget_tone_register", AsyncMock(return_value="restrained"))
     monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
     monkeypatch.setattr(retrieval_context, "_schedule_gap_event", MagicMock())
     records: list[dict] = []

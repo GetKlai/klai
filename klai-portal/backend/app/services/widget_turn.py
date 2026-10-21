@@ -81,6 +81,8 @@ class TurnInputs:
     tone_register: str
     off_topic_subjects: str
     off_topic_reply: str
+    contact_email: str | None
+    contact_phone: str | None
     previous_case: dict | None
     # The passages the previous turn's selection chose (or kept), and how that
     # turn was decided; both stored with its signals, empty on a first turn.
@@ -326,7 +328,7 @@ def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_f
     # did not want to call got the contact reply four times, word for word
     # (week of 14 to 21 October). The second time says what this chat can
     # arrange; the appointment button stays.
-    again = contact_reply_again(language)
+    again = contact_reply_again(language, email=inputs.contact_email, phone=inputs.contact_phone)
     repeated = inputs.previous_decision == "human_request" and (
         case_file.last_assistant_message(inputs.request.messages) != again
     )
@@ -337,7 +339,7 @@ def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_f
         wants=case.wants,
         again=repeated,
     )
-    text = again if repeated else contact_reply(language)
+    text = again if repeated else contact_reply(language, email=inputs.contact_email, phone=inputs.contact_phone)
     return fixed_reply(inputs, turn, text, language, decision="human_request", refused=False)
 
 

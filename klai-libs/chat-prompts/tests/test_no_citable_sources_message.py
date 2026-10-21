@@ -145,7 +145,7 @@ def test_helpdesk_default_leaves_existing_callers_untouched() -> None:
         (
             "de",
             "In this chat window I can only schedule an appointment for you; I can't arrange anything else here. "
-            "You can also send an email: help@example.com. You can also call: 010 123 4567.",
+            "You can also email us: help@example.com. You can also call us: 010 123 4567.",
         ),
     ],
 )
