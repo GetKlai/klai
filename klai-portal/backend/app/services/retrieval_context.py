@@ -73,6 +73,7 @@ from app.services.knowledge_prompts import (
     kb_context_block,
     multi_question_guard,
     sub_query_grouped_context,
+    unchecked_question_blocks,
 )
 from app.services.passage_selection import PassageSelection, select_passages, writer_brief
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
@@ -1112,7 +1113,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         broad_mode=broad,
         multi_question=grouped,
         sub_query_results=sub_query_results if grouped else None,
-        unchecked_questions=(found.unchecked_questions or None) if grouped else None,
+        unchecked_questions=found.unchecked_questions or None,
     )
 
     if turn.passages_chosen and turn.selection is not None and not broad:
@@ -1121,7 +1122,12 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             selection_chunks,
             internal=t.internal,
             source_only=source_only,
+            question=turn.selection.question if turn.multi_question and turn.selection.verdict == "depends" else "",
         )
+        # The parts beyond the search limit were never searched; the writer
+        # must still see them so it does not answer them from other lines.
+        if unchecked := unchecked_question_blocks(found.unchecked_questions, start_index=len(found.sub_queries) + 1):
+            system_prompt += "\n\n" + "\n\n".join(unchecked)
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
 

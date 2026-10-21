@@ -18,6 +18,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from helpers import selection_quoting_first_passage
 
 from app.api.partner_dependencies import PartnerAuthContext
 from app.services.chat_profile import ChatProfile
@@ -45,9 +46,6 @@ def _evidence_pack(n_items: int = 1, *, score: float = 0.82) -> dict:
     }
 
 
-_NARROWS_NOTHING = {"need": "", "evidence": [], "verdict": "answers", "question": ""}
-
-
 class _Resp:
     def __init__(self, payload: dict, status: int = 200) -> None:
         self._payload = payload
@@ -72,9 +70,9 @@ class _Recorder:
     The structured calls beside the answer (the case, the selection step) also
     post to LiteLLM, without a ``stream`` field; they are kept apart so
     ``model_bodies`` holds only the answer call. The case call gets ``case``
-    when one is set, the selection a verdict that points at no passage and so
-    narrows nothing (a failed selection now refuses a Strict turn); every
-    other such call gets an empty reply, so it fails open.
+    when one is set, the selection a verdict that quotes passage 1 (a failed
+    selection or one that points at nothing is "not found" on a source-only
+    turn); every other such call gets an empty reply, so it fails open.
     """
 
     def __init__(self, retrieve_payload: dict | Exception, model_text: str = ANSWER) -> None:
@@ -104,7 +102,7 @@ class _Recorder:
             self.side_bodies.append(json)
             schema = (json.get("response_format") or {}).get("json_schema", {}).get("name")
             if schema == "passage_selection":
-                reply = _dumps(_NARROWS_NOTHING)
+                reply = _dumps(selection_quoting_first_passage(json))
             else:
                 reply = _dumps(self.case) if schema == "case_update" and self.case is not None else ""
             return _Resp({"choices": [{"message": {"content": reply}}]})
@@ -417,7 +415,9 @@ async def test_internal_prompt_is_foundation_then_templates_then_librechats_own_
     prompt = _system_prompt(recorder)
     assert prompt.startswith(GROUNDED_CHAT_SYSTEM_PROMPT)
     assert prompt.index("[Formeel]\nSchrijf formeel.") < prompt.index("Evidence E1")
-    assert prompt.endswith("\n\nLIBRECHAT AGENT INSTRUCTIONS")
+    # LibreChat's own system follows the evidence; only the selection's brief
+    # for this turn comes after it.
+    assert prompt.index("Evidence E1") < prompt.index("\n\nLIBRECHAT AGENT INSTRUCTIONS") < prompt.index("[This turn]")
     assert recorder.retrieve_bodies[0]["telemetry_level"] == "full"
 
 
