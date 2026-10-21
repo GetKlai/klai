@@ -17,6 +17,14 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+class _FakeSession:
+    async def __aenter__(self):
+        return AsyncMock()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 @pytest.fixture
 def mock_orchestrator_env(tmp_path, monkeypatch):
     """Patch everything the orchestrator touches so `_provision` becomes pure
@@ -93,11 +101,18 @@ def mock_orchestrator_env(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "_sync_drop_mongodb_tenant_user", patches["drop_mongo"])
 
     # env generator (matches real signature: slug, client_id, client_secret, **kw)
-    monkeypatch.setattr(
-        orchestrator,
-        "_generate_librechat_env",
-        lambda *args, **kw: "ENV=content",
-    )
+    patches["env_kwargs"] = {}
+
+    def _fake_env(*args, **kw):
+        patches["env_kwargs"].update(kw)
+        return "ENV=content"
+
+    monkeypatch.setattr(orchestrator, "_generate_librechat_env", _fake_env)
+
+    # The environment's internal-chat key (the same mint scripts/switch_internal_chat.py uses)
+    patches["mint_chat_key"] = AsyncMock(return_value="pk_live_example")
+    monkeypatch.setattr(orchestrator, "mint_internal_chat_key", patches["mint_chat_key"])
+    monkeypatch.setattr(orchestrator, "tenant_scoped_session", lambda _org_id: _FakeSession())
 
     # docs_client
     fake_docs = MagicMock()
@@ -215,6 +230,11 @@ async def test_happy_path_transitions_to_ready(mock_orchestrator_env, monkeypatc
     assert org.provisioning_status == "ready"
     terminal = [e for e in recorded if e["properties"]["to_state"] == "ready"]
     assert len(terminal) == 1, f"Expected exactly one `ready` transition, got {recorded}"
+
+    # The new environment starts on the portal path with a freshly minted internal-chat key.
+    mock_orchestrator_env["mint_chat_key"].assert_awaited_once()
+    assert mock_orchestrator_env["mint_chat_key"].await_args.kwargs == {"rotate": True}
+    assert mock_orchestrator_env["env_kwargs"]["chat_api_key"] == "pk_live_example"
 
     # Compensators must NOT have been called on happy path
     assert not mock_orchestrator_env["zitadel"].delete_librechat_oidc_app.called
