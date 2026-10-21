@@ -74,7 +74,6 @@ from app.services.knowledge_prompts import (
     multi_question_guard,
     sub_query_grouped_context,
     unchecked_question_blocks,
-    unsearched_question_blocks,
 )
 from app.services.passage_selection import PassageSelection, select_passages, writer_brief
 from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
@@ -84,6 +83,18 @@ from app.services.widget_audit import find_conversation_id
 from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
+
+# For an internal Open turn whose selection found no passage that answers (or
+# could not decide): the passages stay, the writer is told. Handed every
+# passage without this, the writer answered two questions from another
+# product's articles, with those as sources (internal chat, 14 to 21 October).
+NO_PASSAGE_ANSWERS_NOTE = (
+    "[The selection step read these passages and found none that answers the "
+    "question, or could not decide. Use a passage only for what it literally "
+    "says about this question, and never present an article about another "
+    "product or feature as the answer. What the passages do not cover, write "
+    "from general knowledge and say so.]"
+)
 
 
 def _top_chunk_score(chunks: list[dict]) -> tuple[dict | None, float | None]:
@@ -460,8 +471,9 @@ class KnowledgeTurn:
     not_in_passages: bool = False
     # The writer's passages are the selection's, not everything retrieval found.
     passages_chosen: bool = False
-    # Internal Open whose selection chose nothing: the writer gets no passage.
-    passages_emptied: bool = False
+    # Internal Open whose selection chose nothing: the writer keeps every
+    # passage and is told that none was found to answer.
+    no_passage_answers: bool = False
     # The grounding check that runs after the reply (an Open turn, or a reply
     # written from chosen passages); the per-turn record waits for it.
     grounding_check: asyncio.Task[None] | None = None
@@ -1179,12 +1191,13 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
         elif not source_only:
             # Internal Open with nothing chosen (not in the passages, no
-            # sentence pointed at, or no verdict) writes from general knowledge
-            # with no passage to cite. Handed every passage, the writer answered
-            # two questions from another product's articles, with those as
-            # sources (internal chat, 14 to 21 October).
-            chunks, trusted_sources = [], []
-            turn.passages_emptied = True
+            # sentence pointed at, or no verdict) keeps every passage, with a
+            # note that none was found to answer. Withholding them was measured
+            # on the internal meetlat (21 October): the writer lost 5 to 7 of
+            # 21 answers the owner expected from the knowledge base, because
+            # the selection's "not in the passages" is wrong more often on an
+            # employee's long, relayed question than on a visitor's.
+            turn.no_passage_answers = True
     if not (turn.passages_chosen and any(chunk.get("kept") for chunk in chunks)):
         # A kept passage answered: the knowledge base had the answer.
         _register_gap(t, found)
@@ -1223,14 +1236,8 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         # must still see them so it does not answer them from other lines.
         if unchecked := unchecked_question_blocks(found.unchecked_questions, start_index=len(found.sub_queries) + 1):
             system_prompt += "\n\n" + "\n\n".join(unchecked)
-    elif turn.passages_emptied:
-        # The prompt without passages dropped the per-question layout, and
-        # with it the parts the writer may not answer: the ones whose search
-        # failed or was skipped, and the ones never searched.
-        if unsearched := unsearched_question_blocks(
-            sub_query_results, found.unchecked_questions, start_index=len(found.sub_queries) + 1
-        ):
-            system_prompt += "\n\n" + "\n\n".join(unsearched)
+    elif turn.no_passage_answers and chunks and not broad:
+        system_prompt += "\n\n" + NO_PASSAGE_ANSWERS_NOTE
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
 

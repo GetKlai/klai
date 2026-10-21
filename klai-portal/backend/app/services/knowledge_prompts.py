@@ -127,21 +127,6 @@ def _unsearched_block(entry: dict) -> str:
     return ""
 
 
-def unsearched_question_blocks(
-    sub_query_results: list[dict] | None, unchecked_questions: list[str], *, start_index: int
-) -> list[str]:
-    """The markers of the questions the writer must not answer from elsewhere, without any evidence.
-
-    For a prompt that carries no passages (an internal Open turn whose
-    selection chose none): the questions whose retrieval failed or was
-    skipped, and the ones beyond the fan-out cap, numbered from
-    ``start_index`` on.
-    """
-    entries = [entry for entry in sub_query_results or [] if isinstance(entry, dict)]
-    blocks = [block for entry in entries if (block := _unsearched_block(entry))]
-    return blocks + unchecked_question_blocks(unchecked_questions, start_index=start_index)
-
-
 def unchecked_question_blocks(unchecked_questions: list[str], *, start_index: int) -> list[str]:
     """One marker per question beyond the fan-out cap, numbered on from the searched ones."""
     shown = unchecked_questions[:MAX_UNCHECKED_QUESTIONS_SHOWN]

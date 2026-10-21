@@ -64,7 +64,11 @@ SELECTION_SYSTEM_PROMPT = (
 
 # The checker's own budget on the widget is 4 s for a reply that lists every
 # statement; this call reads the same passages and returns a few short fields.
+# The budget grows with what is offered: an internal turn offers 13 to 22
+# passages, and at a flat 4 s the call timed out twice on 7 of 48 turns of the
+# internal meetlat (21 October), handing the writer nothing chosen.
 _TIMEOUT_SECONDS = 4.0
+_TIMEOUT_SECONDS_PER_PASSAGE = 0.25
 _PASSAGE_CHARS = 2500
 _LATEST_CHARS = 4000
 # A passage line belongs to the quote when most of its words are in it; the
@@ -227,7 +231,7 @@ async def select_passages(
             user_content=f"Conversation:\n{conversation_excerpt(messages, latest_chars=_LATEST_CHARS)}\n\n"
             f"Passages:\n{passages}",
             schema=PassageSelection,
-            timeout_seconds=_TIMEOUT_SECONDS,
+            timeout_seconds=_TIMEOUT_SECONDS + _TIMEOUT_SECONDS_PER_PASSAGE * len(chunks),
             settings=settings,
             model=settings.answer_grounding_model,
             delegated_org_id=delegated_org_id,

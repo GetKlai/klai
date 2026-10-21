@@ -376,13 +376,16 @@ async def test_strict_turn_whose_selection_fails_twice_gets_the_strict_refusal_w
 
 @pytest.mark.parametrize("selection", [NOT_IN_PASSAGES, ""], ids=["not_in_passages", "failed_twice"])
 @pytest.mark.asyncio
-async def test_open_turn_whose_selection_chose_nothing_writes_from_general_knowledge_without_passages(
+async def test_open_turn_whose_selection_chose_nothing_keeps_the_passages_with_the_no_answer_note(
     monkeypatch, selection
 ):
     """A writer handed every passage after the selection chose none wrote a
-    confident answer from another product's article, with that article as its
-    source. Open may answer from general knowledge, so it does that, and says
-    so, with no passage to cite."""
+    confident answer from another product's article; withholding the passages
+    instead lost a third of the knowledge-base answers on the internal
+    meetlat. So the passages stay, and the writer is told none was found to
+    answer."""
+    from app.services.retrieval_context import NO_PASSAGE_ANSWERS_NOTE
+
     llm = _LiteLLM(selection=selection)
 
     turn = await _turn(
@@ -394,34 +397,10 @@ async def test_open_turn_whose_selection_chose_nothing_writes_from_general_knowl
     )
 
     prompt = _system_prompt(llm)
-    assert "Evidence E" not in prompt and ARTICLE not in prompt
-    assert "zero results for this query" in prompt
+    assert ARTICLE in prompt
+    assert NO_PASSAGE_ANSWERS_NOTE in prompt
+    assert "zero results for this query" not in prompt
     assert turn.text.startswith(ANSWER)
-    assert "**Bronnen**" not in turn.text
-    assert "- Antwoord: algemene kennis, niet uit je kennisbank." in turn.text
-
-
-@pytest.mark.asyncio
-async def test_open_turn_without_chosen_passages_still_names_the_questions_never_searched(monkeypatch):
-    """The prompt without passages dropped the per-question layout, and with
-    it the marker for a part beyond the search limit, so the writer could
-    answer that part from general knowledge."""
-    llm = _LiteLLM(selection=NOT_IN_PASSAGES)
-    questions = [f"Hoe stel ik optie nummer {n} in voor mijn team?" for n in range(1, 9)]
-
-    await _turn(
-        monkeypatch,
-        llm,
-        profile=_internal(kb_mode="open"),
-        question="\n".join(questions),
-        retrieval={"evidence_pack": _pack(items=2), "confidence_band": "high"},
-        stream=True,
-    )
-
-    prompt = _system_prompt(llm)
-    assert ARTICLE not in prompt
-    assert "[Question 7: Hoe stel ik optie nummer 7 in voor mijn team?]" in prompt
-    assert "NOT separately searched" in prompt
 
 
 # --- Open and general never refuse for a missing source ---------------------------
