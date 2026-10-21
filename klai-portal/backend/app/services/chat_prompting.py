@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse, urlunparse
+from zoneinfo import ZoneInfo
 
 import structlog
 from klai_chat_prompts import (
@@ -24,6 +26,11 @@ from app.services.chat_sources import _PAGE_CONTEXT_MAX_CHARS, PageContext
 from app.services.litellm_delegation import with_delegated_org, with_feature_tag
 
 logger = structlog.get_logger()
+
+
+def _now() -> datetime:
+    """The clock the writer's date line reads; tests replace it."""
+    return datetime.now(ZoneInfo("Europe/Amsterdam"))
 
 
 def _normalize_llm_message(
@@ -234,6 +241,10 @@ def _augment_messages_with_system_prompt(
     chunks that reminder is not in the prompt at all.
     """
     keep_attachment_parts = profile.surface != "widget"
+    # No prompt carried the date, so a visitor asking for "januari 2026" was told
+    # 2026 lay outside the retention window. The date is data, not an instruction.
+    today = _now()
+    system_prompt = f"{system_prompt}\n\nToday is {today:%Y-%m-%d} ({today:%A}, Europe/Amsterdam)."
     normalized = [
         msg
         for m in messages

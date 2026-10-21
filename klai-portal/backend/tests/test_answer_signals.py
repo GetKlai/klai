@@ -221,7 +221,6 @@ async def _widget_chat(monkeypatch, *, model_text: str, chunks: list[dict], stre
         patch("app.api.partner._resolve_kb_slugs", new=AsyncMock(return_value=["kb-test"])),
         patch("app.services.widget_turn.retrieve_context", side_effect=_fake_retrieval(chunks, band)),
         patch("app.services.case_file.update_case", new=AsyncMock(return_value=None)),
-        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.api.partner.record_widget_turn", new=AsyncMock()) as record,
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
     ):

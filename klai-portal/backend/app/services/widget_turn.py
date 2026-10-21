@@ -75,6 +75,8 @@ class TurnInputs:
     tone_register: str
     off_topic_subjects: str
     off_topic_reply: str
+    contact_email: str | None
+    contact_phone: str | None
     previous_case: dict | None
     audit_widget_id: str | None
     audit_session_key: str | None
@@ -299,7 +301,14 @@ def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_f
         wgt_id=inputs.auth.key_id,
         wants=case.wants,
     )
-    return fixed_reply(inputs, turn, contact_reply(language), language, decision="human_request", refused=False)
+    return fixed_reply(
+        inputs,
+        turn,
+        contact_reply(language, email=inputs.contact_email, phone=inputs.contact_phone),
+        language,
+        decision="human_request",
+        refused=False,
+    )
 
 
 def mark_knowledge_turn_without_evidence(turn: KnowledgeTurn, case: case_file.Case | None) -> None:
