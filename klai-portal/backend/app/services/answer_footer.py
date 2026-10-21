@@ -59,12 +59,41 @@ _GENERAL_KNOWLEDGE_LINE = {
 }
 
 
+# The kinds partner_chat._finish_live_answer counts (chat_safety.hard_facts_outside).
+_HARD_FACT_LABEL = {
+    "nl": {"email": "e-mailadres", "link": "link", "phone": "telefoonnummer", "amount": "bedrag"},
+    "en": {"email": "e-mail address", "link": "link", "phone": "phone number", "amount": "amount"},
+}
+
+
+def _hard_facts_line(hard_facts: dict[str, int], language: str) -> str:
+    """The warning under a live reply that gave a hard fact the knowledge base does not hold.
+
+    Written by code and not by the model, for the same reason as the
+    general-knowledge line: the reply was already streamed when this is known.
+    """
+    labels = [_HARD_FACT_LABEL[language][kind] for kind in hard_facts]
+    joiner = " en " if language == "nl" else " and "
+    named = labels[0] if len(labels) == 1 else f"{', '.join(labels[:-1])}{joiner}{labels[-1]}"
+    if language == "nl":
+        return f"- Let op: {named} in dit antwoord {'staat' if len(labels) == 1 else 'staan'} niet in de kennisbank."
+    return f"- Note: the {named} in this answer {'is' if len(labels) == 1 else 'are'} not in the knowledge base."
+
+
 def _format_agent_activity(
-    *, kb_mode: str, chunks_injected: int, sub_queries: list[str], language: str, general_knowledge: bool
+    *,
+    kb_mode: str,
+    chunks_injected: int,
+    sub_queries: list[str],
+    language: str,
+    general_knowledge: bool,
+    hard_facts: dict[str, int],
 ) -> str:
     lines = [("- Modus: " if language == "nl" else "- Mode: ") + _MODE_LABEL[language][kb_mode]]
     if general_knowledge:
         lines.append(_GENERAL_KNOWLEDGE_LINE[language])
+    if hard_facts:
+        lines.append(_hard_facts_line(hard_facts, language))
     if chunks_injected:
         if language == "nl":
             chunk_label = _plural(chunks_injected, "fragment", "fragmenten")
@@ -88,11 +117,14 @@ def render_answer_footer(
     sub_queries: list[str] | None = None,
     language: object = None,
     general_knowledge: bool = False,
+    hard_facts: dict[str, int] | None = None,
 ) -> str:
     """Render the "Bronnen"/"Agent activiteit" footer, or "" without sources.
 
     ``general_knowledge`` (an Open answer without a supporting source) renders
     the activity section with its general-knowledge line even without sources.
+    ``hard_facts`` (kind to count, from ``chat_safety.hard_facts_outside``)
+    adds one line naming the kinds the knowledge base does not hold.
 
     ``sources`` must be the same labelled list the answer's inline citation
     markers were composed against (``_compose_answer``'s
@@ -113,7 +145,7 @@ def render_answer_footer(
     ``response_language`` / ``language_decision.language`` so the footer never
     disagrees with the answer it is attached to.
     """
-    if not sources and not general_knowledge:
+    if not sources and not general_knowledge and not hard_facts:
         return ""
     language_code = "nl" if _language_is_dutch(language) else "en"
     sections: list[str] = []
@@ -127,6 +159,7 @@ def render_answer_footer(
         sub_queries=sub_queries or [],
         language=language_code,
         general_knowledge=general_knowledge,
+        hard_facts=hard_facts or {},
     )
     heading = "Agent activiteit" if language_code == "nl" else "Agent activity"
     sections.append(f"**{heading}**\n{activity}")

@@ -1,4 +1,4 @@
-"""Safety refusals, fixed replies and the contact-detail provenance gate of the chat path.
+"""Safety refusals, fixed replies and the provenance checks for contact details and other hard facts of the chat path.
 
 Also the appointment escalation signal, which decides from the answer text in code.
 """
@@ -14,6 +14,7 @@ from klai_chat_prompts.language import (
 )
 
 from app.services.chat_sse import _sse_content_delta
+from app.services.citations import source_url_key, urls_in_passages
 from app.services.llm_safety_adapter import (
     check_context_text,
     check_model_output,
@@ -93,13 +94,61 @@ _ORPHAN_MARKER_RE = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s*$")
 _NUMBER_TAIL = 9
 
 
-def _contact_details(text: str) -> set[str]:
-    numbers = {
+# An amount: a number beside a currency sign or word. Compared without its
+# separators and without a trailing ",00" or ",-", so "€ 1.250" and "1250 euro"
+# are the same amount.
+_AMOUNT_RE = re.compile(
+    r"(?:[€$£]|\beur\b)\s?(\d(?:[\d.,]*\d)?)|(\d(?:[\d.,]*\d)?)\s?(?:[€$£]|\beuro?\b)", re.IGNORECASE
+)
+_AMOUNT_ZERO_CENTS_RE = re.compile(r"[.,](?:00|-)$")
+
+
+def _phone_numbers(text: str) -> set[str]:
+    return {
         re.sub(r"\D", "", m)[-_NUMBER_TAIL:]
         for m in _PHONE_RE.findall(text)
         if len(re.sub(r"\D", "", m)) >= _NUMBER_TAIL and not _DATE_RE.search(m)
     }
-    return numbers | {m.lower() for m in _EMAIL_RE.findall(text)}
+
+
+def _emails(text: str) -> set[str]:
+    return {m.lower() for m in _EMAIL_RE.findall(text)}
+
+
+def _contact_details(text: str) -> set[str]:
+    return _phone_numbers(text) | _emails(text)
+
+
+def _amounts(text: str) -> set[str]:
+    return {
+        re.sub(r"\D", "", _AMOUNT_ZERO_CENTS_RE.sub("", match.group(1) or match.group(2)))
+        for match in _AMOUNT_RE.finditer(text)
+    }
+
+
+def _links(texts: list[str]) -> set[str]:
+    return {key for url in urls_in_passages([{"text": text} for text in texts]) if (key := source_url_key(url))}
+
+
+def hard_facts_outside(text: str, chunks: list[dict] | None) -> dict[str, int]:
+    """Per kind, how many e-mail addresses, links, phone numbers and amounts in ``text`` stand in no chunk.
+
+    The same provenance rule as :func:`without_unsourced_contact_details`, for
+    a reply that is already on screen and can only be flagged: in the internal
+    chat of 14 to 21 October an Open reply gave an e-mail address for a
+    data-processing agreement and another a product price, neither in the
+    knowledge base. A chunk's own source address counts as standing in it.
+    """
+    passages = [str(chunk.get("text") or "") for chunk in chunks or []]
+    known = "\n".join(passages)
+    sources = {key for chunk in chunks or [] if (key := source_url_key(chunk.get("source_url")))}
+    outside = {
+        "email": _emails(text) - _emails(known),
+        "link": _links([text]) - _links(passages) - sources,
+        "phone": _phone_numbers(text) - _phone_numbers(known),
+        "amount": _amounts(text) - _amounts(known),
+    }
+    return {kind: len(values) for kind, values in outside.items() if values}
 
 
 def without_unsourced_contact_details(text: str, chunks: list[dict] | None) -> str:

@@ -65,6 +65,7 @@ from app.services.chat_safety import (
     _helpdesk_refusal_offers,
     _last_user_message,
     _text_offers_appointment,
+    hard_facts_outside,
     output_safety_violation,
     safety_refusal_message,
     without_unsourced_contact_details,
@@ -568,12 +569,19 @@ async def _finish_live_answer(
     and judged in ``widget_write.write_reply``, like the help widget's.
 
     An empty result (the model wrote nothing) keeps the composer's refusal.
+
+    An Open reply's e-mail addresses, links, phone numbers and amounts that
+    stand in no passage are counted per kind: the employee already saw them,
+    so they go into the decision for the footer's warning and into the record.
     """
     answer_mode = knowledge_turn.answer_mode if knowledge_turn is not None else profile.kb_mode
     draft_text, _ = strip_appointment_offer_marker(draft)
     safe_text = _answer_without_retrieved_sources(draft_text, citation_chunks)
     if not safe_text:
         return content, sources, decision
+    hard_facts = hard_facts_outside(draft_text, citation_chunks) if answer_mode == "open" else {}
+    if hard_facts and answer_signals is not None:
+        answer_signals["hard_facts_outside_kb"] = hard_facts
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
     outcome = decide_answer(
         kb_mode=answer_mode,
@@ -600,8 +608,11 @@ async def _finish_live_answer(
     # labelled general knowledge in the footer.
     # A general turn searched nothing, so its links (web search, file
     # names) are the model's or the user's own and stay as the hook left them.
-    uncited = draft_text if answer_mode == "general" else safe_text
-    return (content, sources, decision) if sources else (uncited, [], {"reason": outcome})
+    if not sources:
+        content, decision = (draft_text if answer_mode == "general" else safe_text), {"reason": outcome}
+    if hard_facts:
+        decision["hard_facts_outside_kb"] = hard_facts
+    return content, sources, decision
 
 
 def _grounding_label(grounding: GroundingCheck) -> str:
@@ -884,6 +895,7 @@ async def _settle_live_answer(
             sub_queries=knowledge_turn.sub_queries if knowledge_turn is not None else [],
             language=response_language,
             general_knowledge=decision.get("reason") == "general_knowledge",
+            hard_facts=decision.get("hard_facts_outside_kb"),
         )
     if decision.pop("output_blocked", False):
         # The streamed part cannot be taken back; the rest of the draft is
@@ -1259,6 +1271,7 @@ async def chat_completion_non_streaming(
                     sub_queries=sub_queries,
                     language=response_language,
                     general_knowledge=decision.get("reason") == "general_knowledge",
+                    hard_facts=decision.get("hard_facts_outside_kb"),
                 )
                 if footer_text:
                     message["content"] = f"{rendered_content.rstrip()}\n\n{footer_text}"

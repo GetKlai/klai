@@ -269,7 +269,15 @@ def writer_brief(
 
     ``question`` is the selection's variant question on a message with several
     questions: sent as the whole reply it would drop the parts that were
-    answered, so the writer answers those and asks it for the rest.
+    answered, so the writer answers those and asks it for the rest. The
+    internal chat never asks it: an employee relaying a customer's question
+    was asked "iPhone or Android?", which only the customer could answer, so
+    a ``depends`` verdict there gets the steps for every variant instead.
+
+    An Open reply may add general knowledge, but an e-mail address, a link, a
+    phone number or a price it adds is invented: in the internal chat of 14 to
+    21 October one gave an address and a menu path for a data-processing
+    agreement and another a product price, none of them in the knowledge base.
     """
     lines = list(dict.fromkeys(own for _, own in selection.found(chunks) if own))
     if not lines:
@@ -290,7 +298,15 @@ def writer_brief(
             if source_only
             else f"\nBuild the reply on these lines and the steps that stand with them in the source. If they cover "
             f"only part of what the {who} needs, give that part and say in one sentence what the {what} does not "
-            "cover. Do not add a step, menu, cause or example that is not in the source."
+            "cover. Do not add a step, menu, cause or example that is not in the source. An e-mail address, a link, "
+            "a phone number, a price or an amount appears in the reply only when it stands in the lines above; "
+            f"otherwise say that the {what} does not give it."
+        )
+        + (
+            "\nThe employee relays this for someone else; give the steps for each variant the lines name, each "
+            "under its own heading, instead of asking which applies."
+            if internal and selection.verdict == "depends"
+            else ""
         )
         + (f"\nFor the part that depends on it, ask: {' '.join(question.split())}" if question else "")
     )

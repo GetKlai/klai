@@ -89,6 +89,7 @@ class _LiteLLM:
         grounding: dict | None = None,
         repaired: str = "",
         selection: dict | str | None = None,
+        case: dict | None = None,
     ) -> None:
         self.answer = answer
         self.question = question
@@ -98,6 +99,8 @@ class _LiteLLM:
         # The selection step (passage_selection.py). By default it quotes
         # passage 1; a string is sent as the raw reply, so "" makes it fail.
         self.selection = selection
+        # The case (case_file.py); without one the call fails and the turn runs without a case.
+        self.case = case
         self.calls: list[dict] = []
 
     def of(self, kind: str) -> list[dict]:
@@ -126,6 +129,8 @@ class _LiteLLM:
         }
         if kind == "passage_selection":
             replies[kind] = selection_quoting_first_passage(body) if self.selection is None else self.selection
+        if kind == "case_update" and self.case is not None:
+            replies[kind] = self.case
         if kind in replies:
             return _reply(replies[kind])
         if body.get("stream"):
@@ -171,7 +176,7 @@ async def _turn(
     *,
     profile: ChatProfile,
     retrieval: dict | None = None,
-    question: str = QUESTION,
+    question: str | list[dict] = QUESTION,
     stream: bool = False,
     key_id: str = "key-internal",
     history: tuple[dict, ...] = (),
@@ -251,6 +256,37 @@ async def test_strict_turn_without_evidence_gets_the_fixed_refusal_without_a_mod
 
     assert turn.text == STRICT_REFUSAL
     assert llm.of("answer") == [] and llm.of("answer_judge") == [] and llm.of("grounding_check") == []
+
+
+@pytest.mark.asyncio
+async def test_a_strict_refusal_speaks_the_conversations_language_not_the_short_messages(monkeypatch):
+    """A German employee got the fixed refusal in another language because the
+    detection reads too little in a short message; the case judges the whole
+    conversation, so the fixed reply takes its language."""
+    case = {
+        "problem": "",
+        "product": "",
+        "variant": "",
+        "tried": [],
+        "wants_quote": "",
+        "wants": "knowledge",
+        "out_of_scope_quote": "",
+        "out_of_scope": False,
+        "sentiment": "neutral",
+        "language": "de",
+        "queries": [],
+    }
+    llm = _LiteLLM(case=case)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        question="Rufumleitung einrichten?",
+        retrieval={"evidence_pack": {"items": [], "sources": []}, "confidence_band": "unknown"},
+    )
+
+    assert turn.text == no_citable_sources_message("de", suggest_open_mode=True)
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -333,30 +369,16 @@ async def test_strict_turn_whose_selection_fails_twice_gets_the_strict_refusal_w
     assert llm.of("answer") == []
 
 
+@pytest.mark.parametrize("selection", [NOT_IN_PASSAGES, ""], ids=["not_in_passages", "failed_twice"])
 @pytest.mark.asyncio
-async def test_open_turn_whose_selection_fails_twice_writes_from_every_passage(monkeypatch):
-    """Open may answer from general knowledge, so a failed selection narrows nothing there."""
-    llm = _LiteLLM(selection="")
-
-    await _turn(
-        monkeypatch,
-        llm,
-        profile=_internal(kb_mode="open"),
-        retrieval={"evidence_pack": _pack(items=2), "confidence_band": "high"},
-        stream=True,
-    )
-
-    prompt = _system_prompt(llm)
-    assert "Evidence E1" in prompt and "Evidence E2" in prompt
-    assert "[This turn]" not in prompt
-
-
-@pytest.mark.asyncio
-async def test_open_turn_whose_passages_do_not_answer_still_writes_from_every_passage(monkeypatch):
-    """Step O4: the selection step reads an Open turn's passages too, but Open may
-    answer from general knowledge by design, so "not in the passages" refuses
-    nothing there: the writer gets every passage, live, without a brief."""
-    llm = _LiteLLM(selection=NOT_IN_PASSAGES)
+async def test_open_turn_whose_selection_chose_nothing_writes_from_general_knowledge_without_passages(
+    monkeypatch, selection
+):
+    """A writer handed every passage after the selection chose none wrote a
+    confident answer from another product's article, with that article as its
+    source. Open may answer from general knowledge, so it does that, and says
+    so, with no passage to cite."""
+    llm = _LiteLLM(selection=selection)
 
     turn = await _turn(
         monkeypatch,
@@ -366,11 +388,12 @@ async def test_open_turn_whose_passages_do_not_answer_still_writes_from_every_pa
         stream=True,
     )
 
-    assert len(llm.of("passage_selection")) == 1
+    prompt = _system_prompt(llm)
+    assert "Evidence E" not in prompt and ARTICLE not in prompt
+    assert "zero results for this query" in prompt
     assert turn.text.startswith(ANSWER)
-    activity = [a for f in turn.frames for c in f["choices"] for a in c["delta"].get("activity") or []]
-    assert {"step": "knowledge_retrieved", "count": 2} in [{"step": a["step"], "count": a["count"]} for a in activity]
-    assert "[This turn]" not in _system_prompt(llm)
+    assert "**Bronnen**" not in turn.text
+    assert "- Antwoord: algemene kennis, niet uit je kennisbank." in turn.text
 
 
 # --- Open and general never refuse for a missing source ---------------------------
@@ -413,7 +436,7 @@ async def test_a_turn_that_searched_nothing_is_never_refused_for_a_missing_sourc
     assert llm.of("answer_judge") == [] and llm.of("grounding_check") == []
 
 
-# --- One question when the articles differ in a variant; weak sources by the gap ---
+# --- Variants: steps per variant internally; weak sources by the gap ---
 
 
 def _variant_pack(score: float = 0.82) -> dict:
@@ -437,33 +460,61 @@ def _variant_pack(score: float = 0.82) -> dict:
 VARIANT_QUESTION = "Heb je een vast contract of een oproepcontract?"
 
 
-DEPENDS = {
-    "need": "verlof aanvragen",
-    "evidence": [{"passage": 1, "quote": "Je vraagt verlof aan in het HR-portaal onder Verlof."}],
-    "verdict": "depends",
-    "question": VARIANT_QUESTION,
-}
+IPHONE_STEP = "Op de iPhone zet je gemiste oproepen aan onder Instellingen en dan Meldingen."
+ANDROID_STEP = "Op Android zet je gemiste oproepen aan onder Instellingen en dan Apps en meldingen."
+
+
+def _per_variant_pack() -> dict:
+    items = [
+        {
+            "chunk_id": f"chunk-{kind}",
+            "evidence_id": f"ev-{kind}",
+            "text": step,
+            "title": f"Gemiste oproepen {kind}",
+            "source_url": f"https://kb.example.com/gemiste-oproepen-{kind.lower()}",
+            "reranker_score": 0.82,
+            "final_score": 0.82,
+        }
+        for kind, step in (("iPhone", IPHONE_STEP), ("Android", ANDROID_STEP))
+    ]
+    return {"items": items, "sources": [{"url": i["source_url"], "title": i["title"]} for i in items]}
 
 
 @pytest.mark.parametrize("kb_mode", ["strict", "open"])
 @pytest.mark.asyncio
-async def test_the_selections_question_is_the_whole_reply_in_strict_and_open(monkeypatch, kb_mode):
-    """Step O4: the question the selection step wrote replaces the clarify step on
-    article titles; no writer runs, and no question-writer call is made."""
-    llm = _LiteLLM(selection=DEPENDS)
+async def test_a_relayed_question_gets_the_steps_per_variant_instead_of_a_question_back(monkeypatch, kb_mode):
+    """An employee passing on someone else's question cannot say which phone
+    that person has; asking "iPhone or Android?" left them with nothing to
+    pass back. The internal chat writes the steps for each variant."""
+    answer = f"## iPhone\n{IPHONE_STEP}\n\n## Android\n{ANDROID_STEP}"
+    llm = _LiteLLM(
+        answer,
+        grounding=_supported(answer),
+        selection={
+            "need": "gemiste oproepen zien",
+            "evidence": [{"passage": 1, "quote": IPHONE_STEP}, {"passage": 2, "quote": ANDROID_STEP}],
+            "verdict": "depends",
+            "question": "Heeft de klant een iPhone of een Android-telefoon?",
+        },
+    )
 
     turn = await _turn(
         monkeypatch,
         llm,
         profile=_internal(kb_mode=kb_mode),
-        retrieval={"evidence_pack": _variant_pack(), "confidence_band": "high"},
+        question="Een klant ziet zijn gemiste oproepen niet, hoe zet hij dat aan?",
+        retrieval={"evidence_pack": _per_variant_pack(), "confidence_band": "high"},
+        stream=kb_mode == "open",
     )
 
-    assert turn.text == VARIANT_QUESTION
-    assert llm.of("answer") == [] and llm.of("clarify_question") == []
+    prompt = _system_prompt(llm)
+    assert "give the steps for each variant the lines name, each under its own heading" in prompt
+    assert IPHONE_STEP in prompt and ANDROID_STEP in prompt
+    assert "iPhone" in turn.text and "Android" in turn.text
+    assert "Heeft de klant" not in turn.text
     (record,) = turn.records
-    assert record["decision"] == "clarifying_question"
-    assert record["question_asked"] is True
+    assert record["decision"] != "clarifying_question"
+    assert "question_asked" not in record
 
 
 @pytest.mark.asyncio
@@ -540,6 +591,28 @@ async def test_open_answer_is_checked_and_recorded_but_left_as_written(monkeypat
     (record,) = turn.records
     assert record["unsupported"] == 2
     assert record["grounding"] == "some_not_in_articles"
+
+
+@pytest.mark.parametrize("stream", [True, False], ids=["live", "held"])
+@pytest.mark.asyncio
+async def test_an_open_reply_with_an_email_address_no_passage_holds_is_flagged_in_its_footer(monkeypatch, stream):
+    """An Open reply gave an e-mail address and a menu path that stand in no
+    article; the streamed text cannot be taken back, so the footer says it."""
+    extra = " Mail je aanvraag naar verlof@example.com."
+    llm = _LiteLLM(ANSWER + extra)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=stream,
+    )
+
+    assert turn.text.startswith(ANSWER + extra)
+    assert "- Let op: e-mailadres in dit antwoord staat niet in de kennisbank." in turn.text
+    (record,) = turn.records
+    assert record["hard_facts_outside_kb"] == {"email": 1}
 
 
 # --- Pasted correspondence --------------------------------------------------------
@@ -740,3 +813,37 @@ async def test_a_rejected_employee_identity_is_an_error_not_a_general_answer(mon
 
     assert exc.value.response.status_code == 403
     assert llm.of("answer") == []
+
+
+@pytest.mark.asyncio
+async def test_text_beside_an_unsupported_attachment_is_still_answered(monkeypatch):
+    """A question typed beside a file Klai cannot read got only the fixed
+    sentence about PDF files; the question itself went unanswered."""
+    import base64
+
+    llm = _LiteLLM()
+    question = [
+        {"type": "text", "text": QUESTION + " Het rooster zit erbij."},
+        {
+            "type": "file",
+            "file": {"filename": "rooster.docx", "file_data": base64.b64encode(b"PK\x03\x04 rooster").decode()},
+        },
+    ]
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        question=question,
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    assert turn.text.startswith("Klai kan nu alleen PDF-bestanden direct in chat verwerken.\n\n" + ANSWER)
+    (answer,) = llm.of("answer")
+    assert all(
+        part.get("type") != "file"
+        for m in answer["messages"]
+        if isinstance(m["content"], list)
+        for part in m["content"]
+    )
