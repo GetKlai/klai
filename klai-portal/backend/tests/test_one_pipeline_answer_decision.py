@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 import respx
+from helpers import selection_quoting_first_passage
 from klai_chat_prompts import no_citable_sources_message
 
 from app.api.partner_dependencies import PartnerAuthContext
@@ -87,17 +88,16 @@ class _LiteLLM:
         judge: dict | None = None,
         grounding: dict | None = None,
         repaired: str = "",
-        selection: dict | None = None,
+        selection: dict | str | None = None,
     ) -> None:
         self.answer = answer
         self.question = question
         self.judge = judge or {"grounding": "all_in_articles", "verdict": "answered"}
         self.grounding = grounding or _supported(answer)
         self.repaired = repaired
-        # The selection step (passage_selection.py). By default it points at no
-        # passage, which narrows nothing: the turn runs on everything retrieved.
-        # (Without a reply it fails, and a failed selection refuses a Strict turn.)
-        self.selection = selection or {"need": "", "evidence": [], "verdict": "answers", "question": ""}
+        # The selection step (passage_selection.py). By default it quotes
+        # passage 1; a string is sent as the raw reply, so "" makes it fail.
+        self.selection = selection
         self.calls: list[dict] = []
 
     def of(self, kind: str) -> list[dict]:
@@ -123,8 +123,9 @@ class _LiteLLM:
             "grounding_check": self.grounding,
             "repair": self.repaired,
             "rewrite": "",
-            "passage_selection": self.selection,
         }
+        if kind == "passage_selection":
+            replies[kind] = selection_quoting_first_passage(body) if self.selection is None else self.selection
         if kind in replies:
             return _reply(replies[kind])
         if body.get("stream"):
@@ -298,12 +299,14 @@ async def test_strict_turn_whose_passages_do_not_answer_gets_the_strict_refusal_
 
 
 @pytest.mark.asyncio
-async def test_strict_answer_nobody_supports_over_unchosen_passages_is_refused(monkeypatch):
-    """The widget's one guard after writing now holds on internal Strict too:
-    the selection did not choose (it failed open here), the writer read every
-    passage, and the check supports none of the two statements."""
+async def test_strict_knowledge_turn_whose_selection_chose_nothing_is_refused_before_the_writer(monkeypatch):
+    """A selection that points at no sentence used to hand the writer every
+    passage, with only the check after writing as a net. On a Strict
+    knowledge question it is now the fixed refusal, and no writer runs."""
     llm = _LiteLLM(
-        UNRELATED + " Parkeren is gratis op zondag.", grounding=_unsupported(UNRELATED, "Parkeren is gratis op zondag.")
+        UNRELATED + " Parkeren is gratis op zondag.",
+        grounding=_unsupported(UNRELATED, "Parkeren is gratis op zondag."),
+        selection={"need": "verlof aanvragen", "evidence": [], "verdict": "answers", "question": ""},
     )
 
     turn = await _turn(
@@ -314,7 +317,41 @@ async def test_strict_answer_nobody_supports_over_unchosen_passages_is_refused(m
     )
 
     assert turn.text == STRICT_REFUSAL
-    assert llm.of("repair") == []
+    assert llm.of("answer") == [] and llm.of("repair") == []
+
+
+@pytest.mark.asyncio
+async def test_strict_turn_whose_selection_fails_twice_gets_the_strict_refusal_without_a_writer(monkeypatch):
+    llm = _LiteLLM(selection="")
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+    )
+
+    assert turn.text == STRICT_REFUSAL
+    assert len(llm.of("passage_selection")) == 2
+    assert llm.of("answer") == []
+
+
+@pytest.mark.asyncio
+async def test_open_turn_whose_selection_fails_twice_writes_from_every_passage(monkeypatch):
+    """Open may answer from general knowledge, so a failed selection narrows nothing there."""
+    llm = _LiteLLM(selection="")
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(items=2), "confidence_band": "high"},
+        stream=True,
+    )
+
+    prompt = _system_prompt(llm)
+    assert "Evidence E1" in prompt and "Evidence E2" in prompt
+    assert "[This turn]" not in prompt
 
 
 @pytest.mark.asyncio

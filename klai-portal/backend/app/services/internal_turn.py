@@ -38,7 +38,13 @@ from app.services.retrieval_context import (
     timed,
 )
 from app.services.widget_reply import Reply
-from app.services.widget_turn import Found, fixed_reply, log_retrieval, question_reply
+from app.services.widget_turn import (
+    Found,
+    fixed_reply,
+    log_retrieval,
+    mark_knowledge_turn_without_evidence,
+    question_reply,
+)
 from app.services.widget_write import write_reply
 
 if TYPE_CHECKING:
@@ -163,6 +169,7 @@ def _route(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, case: case
         # Strict with nothing to search, no evidence, or the knowledge base
         # unreachable (retrieve_context): the fixed text, no model call.
         return _refusal(inputs, turn, turn.refusal, language)
+    mark_knowledge_turn_without_evidence(turn, case)
     if turn.not_in_passages and inputs.profile.kb_mode == "strict":
         # Strict promised knowledge-base-only answers, and no passage answers
         # this question: the same fixed refusal as with zero passages, decided

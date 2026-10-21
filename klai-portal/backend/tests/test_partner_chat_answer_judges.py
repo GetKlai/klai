@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 import respx
-from helpers import FakeKB, FakeResult, make_partner_auth
+from helpers import FakeKB, FakeResult, make_partner_auth, selection_quoting_first_passage
 from klai_chat_prompts import appointment_offer_sentence, contact_reply, contact_reply_again, no_citable_sources_message
 
 from app.services import case_file, chat_safety, partner_chat, query_paraphrase, turn_judge, widget_write
@@ -144,9 +144,9 @@ class _LiteLLM:
         self.case = case or _case()
         self.case_requests: list[dict] = []
         self.retrieve_requests: list[dict] = []
-        # The selection step (passage_selection.py). By default it lists no
-        # passage, which narrows nothing: the turn runs on everything retrieved.
-        self.selection = selection or _selection("answers")
+        # The selection step (passage_selection.py). By default it quotes
+        # passage 1, so the writer reads that passage with the brief.
+        self.selection = selection
         self.referral = referral
         self.question = question
         self.answer_judge = answer_judge if answer_judge is not None else _answer_verdict()
@@ -206,7 +206,7 @@ class _LiteLLM:
         if schema == "passage_selection":
             if isinstance(self.selection, Exception):
                 raise self.selection
-            return _json_reply(self.selection)
+            return _json_reply(selection_quoting_first_passage(body) if self.selection is None else self.selection)
         if schema == "query_paraphrase":
             # Retrieval input only (query_paraphrase.py); the judges under test
             # never see it, and it is not the answer request.
@@ -1216,6 +1216,63 @@ async def test_a_selection_that_fails_twice_gets_the_not_found_reply_and_no_writ
         if (body.get("response_format") or {}).get("json_schema", {}).get("name") == "passage_selection"
     ]
     assert len(selection_calls) == 2
+
+
+async def test_a_request_for_a_person_after_two_failed_selections_gets_the_contact_reply_not_a_written_one(
+    monkeypatch,
+):
+    """The case failed too, so only the regex knows the visitor asked for a
+    person; that exemption from "not found" used to send the turn to the
+    writer with every passage."""
+    litellm = _LiteLLM(model_text=ANSWER_900, selection=httpx.ConnectError("boom"), case=httpx.ConnectError("boom"))
+
+    _, text, extras = await _route_turn(
+        monkeypatch,
+        question="Kan ik iemand spreken over het storneren van mijn incasso?",
+        band="high",
+        items=_two_articles(),
+        litellm=litellm,
+    )
+
+    assert text == contact_reply("nl")
+    assert extras["escalation"] == [{"appointment": True}]
+    assert litellm.answer_requests == []
+
+
+async def test_a_two_part_message_that_depends_on_a_variant_is_written_with_the_question_in_it(monkeypatch):
+    """Sent as the whole reply, the variant question dropped the part the
+    passages did answer."""
+    question = "Gaat het om een zakelijke of een particuliere rekening?"
+    litellm = _LiteLLM(
+        model_text=ANSWER_900,
+        selection=_selection(
+            "depends", (2, "Een incasso storneer je binnen acht weken via je eigen bank."), question=question
+        ),
+    )
+
+    _, text, _ = await _route_turn(
+        monkeypatch,
+        question="Hoe storneer ik een incasso? En kan ik mijn factuur ook per post krijgen?",
+        band="high",
+        items=_two_articles(),
+        litellm=litellm,
+    )
+
+    prompt = _system_prompt_sent(litellm)
+    assert "- Een incasso storneer je binnen acht weken via je eigen bank." in prompt
+    assert f"For the part that depends on it, ask: {question}" in prompt
+    assert text != question
+
+
+async def test_a_knowledge_question_whose_selection_points_at_no_sentence_gets_the_not_found_reply(monkeypatch):
+    """ "answers" with empty evidence is meant for a thank-you or a request for
+    a person, which the case routes; on a knowledge question it handed the
+    writer every passage."""
+    litellm, text, extras = await _selected_turn(monkeypatch, _selection("answers"))
+
+    assert text == REFUSAL_NL
+    assert extras["escalation"] == [{"appointment": True}]
+    assert litellm.answer_requests == []
 
 
 async def test_a_frustrated_visitor_whose_passages_do_not_answer_gets_the_refusal_too(monkeypatch):

@@ -44,8 +44,9 @@ SELECTION_SYSTEM_PROMPT = (
     "latest message; an answer to the assistant's own question narrows the visitor's earlier question, it does not "
     "replace it. When the message asks several questions, the one sentence names each part.\n"
     "evidence: go through the passages and copy, word for word, the sentence or step that tells the visitor how to "
-    "do it or gives the fact they asked for. At most three passages, one sentence each, with the passage number. "
-    "When the message asks several questions: one sentence for each part a passage answers, at most six in all. "
+    "do it or gives the fact they asked for, with the passage number: for one question at most three passages, "
+    "one sentence each; for a message with several questions one sentence per answered part, at most six lines in "
+    "total. "
     "Copy only sentences that carry the how or the fact. A sentence that merely says something exists, is "
     "supported or is available does not tell how to do it and is not evidence. A sentence saying that what the "
     "visitor wants is not possible or no longer supported IS the fact they need. Leave the list empty when there "
@@ -65,6 +66,7 @@ SELECTION_SYSTEM_PROMPT = (
 # statement; this call reads the same passages and returns a few short fields.
 _TIMEOUT_SECONDS = 4.0
 _PASSAGE_CHARS = 2500
+_LATEST_CHARS = 4000
 # A passage line belongs to the quote when most of its words are in it; the
 # model often strings the items of a step list into one sentence.
 _LINE_END = re.compile(r"\n|(?<=[.!?])\s+")
@@ -210,14 +212,20 @@ async def select_passages(
         f"[{number}] {chunk.get('title') or ''}\n{str(chunk.get('text') or '')[:_PASSAGE_CHARS]}"
         for number, chunk in enumerate(chunks, 1)
     )
-    # A timeout or a reply that is not the schema (six in the week of 14 to 21
-    # October) gets one more try with the same budget: without a verdict the
-    # turn now answers "not found" instead of writing from every passage.
+    # Six calls failed in the week of 14 to 21 October, and without a verdict
+    # a source-only turn now answers "not found", so a failed call gets one
+    # more try with the same budget. The retry is for a timeout or a dropped
+    # connection: at temperature 0 a reply that is not the schema comes back
+    # the same.
     for _ in range(2):
         selection = await structured_judge_call(
             name="passage_selection",
             system_prompt=SELECTION_SYSTEM_PROMPT,
-            user_content=f"Conversation:\n{conversation_excerpt(messages)}\n\nPassages:\n{passages}",
+            # The latest message whole: the week's multi-part messages ran
+            # 1,100 to 2,600 characters, and at the excerpt's 800 the later
+            # questions never reached this step.
+            user_content=f"Conversation:\n{conversation_excerpt(messages, latest_chars=_LATEST_CHARS)}\n\n"
+            f"Passages:\n{passages}",
             schema=PassageSelection,
             timeout_seconds=_TIMEOUT_SECONDS,
             settings=settings,
@@ -237,7 +245,9 @@ async def select_passages(
     return None
 
 
-def writer_brief(selection: PassageSelection, chunks: list[dict], *, internal: bool, source_only: bool) -> str:
+def writer_brief(
+    selection: PassageSelection, chunks: list[dict], *, internal: bool, source_only: bool, question: str = ""
+) -> str:
     """Tell the writer what the chosen passages were chosen for, and how closely to keep to them.
 
     Handed only the passage, the writer still built a complete-looking
@@ -256,6 +266,10 @@ def writer_brief(selection: PassageSelection, chunks: list[dict], *, internal: b
     3.7 to 4.4 per answer), so Open keeps the lines and the shorter rule. The
     internal chat gets the brief in its own words: its user is an employee
     and the passages are the knowledge base, not help articles.
+
+    ``question`` is the selection's variant question on a message with several
+    questions: sent as the whole reply it would drop the parts that were
+    answered, so the writer answers those and asks it for the rest.
     """
     lines = list(dict.fromkeys(own for _, own in selection.found(chunks) if own))
     if not lines:
@@ -278,4 +292,5 @@ def writer_brief(selection: PassageSelection, chunks: list[dict], *, internal: b
             f"only part of what the {who} needs, give that part and say in one sentence what the {what} does not "
             "cover. Do not add a step, menu, cause or example that is not in the source."
         )
+        + (f"\nFor the part that depends on it, ask: {' '.join(question.split())}" if question else "")
     )

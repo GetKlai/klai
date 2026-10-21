@@ -111,29 +111,33 @@ def sub_query_grouped_context(
                 "question — say plainly, in the user's language, that it is "
                 "not in the knowledge base.]"
             )
-    if unchecked_questions:
-        start_index = len(entries) + 1
-        shown = unchecked_questions[:MAX_UNCHECKED_QUESTIONS_SHOWN]
-        for offset, question in enumerate(shown):
-            blocks.append(
-                f"[Question {start_index + offset}: {_sanitize_question_echo(question)}]\n"
-                "[This question was NOT separately searched — do "
-                "not attempt to answer it from general knowledge or from "
-                "other questions' evidence. The application will inform the "
-                "user separately that this question could not be checked.]"
-            )
-        remainder = len(unchecked_questions) - len(shown)
-        if remainder > 0:
-            blocks.append(
-                f"[Plus {remainder} more questions were not separately "
-                "searched — tell the user you could not check them all and "
-                "suggest splitting the message into smaller parts.]"
-            )
+    blocks.extend(unchecked_question_blocks(unchecked_questions or [], start_index=len(entries) + 1))
     if ungrouped:
         rendered = render_evidence_context(ungrouped)
         if rendered:
             blocks.append(f"[Additional evidence, not tied to one question]\n{rendered}")
     return "\n\n".join(blocks)
+
+
+def unchecked_question_blocks(unchecked_questions: list[str], *, start_index: int) -> list[str]:
+    """One marker per question beyond the fan-out cap, numbered on from the searched ones."""
+    shown = unchecked_questions[:MAX_UNCHECKED_QUESTIONS_SHOWN]
+    blocks = [
+        f"[Question {start_index + offset}: {_sanitize_question_echo(question)}]\n"
+        "[This question was NOT separately searched — do "
+        "not attempt to answer it from general knowledge or from "
+        "other questions' evidence. The application will inform the "
+        "user separately that this question could not be checked.]"
+        for offset, question in enumerate(shown)
+    ]
+    remainder = len(unchecked_questions) - len(shown)
+    if remainder > 0:
+        blocks.append(
+            f"[Plus {remainder} more questions were not separately "
+            "searched — tell the user you could not check them all and "
+            "suggest splitting the message into smaller parts.]"
+        )
+    return blocks
 
 
 def multi_question_guard(*, multi_question: bool, sub_query_results: list[dict] | None) -> str:

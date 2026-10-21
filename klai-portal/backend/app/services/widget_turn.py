@@ -51,6 +51,8 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
+_NOT_A_KNOWLEDGE_QUESTION = frozenset({"chat", *case_file.CONTACT_WANTS})
+
 # Hold references to fire-and-forget tasks to prevent GC (same pattern as partner_dependencies)
 _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
 
@@ -252,6 +254,7 @@ async def _route(inputs: TurnInputs, turn: KnowledgeTurn, found: Found, case: ca
         return referral
     if wants_contact and case is not None:
         return _contact_request_reply(inputs, turn, case)
+    mark_knowledge_turn_without_evidence(turn, case)
     if not_found := _not_in_passages_reply(inputs, turn, found, escalation, case):
         return not_found
     if question := question_reply(inputs, turn, found, escalation, scope):
@@ -338,6 +341,19 @@ def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_f
     return fixed_reply(inputs, turn, text, language, decision="human_request", refused=False)
 
 
+def mark_knowledge_turn_without_evidence(turn: KnowledgeTurn, case: case_file.Case | None) -> None:
+    # A selection that points at no sentence ("answers" with empty evidence)
+    # is meant for a thank-you, a remark about the chat or a request for a
+    # person, which the case routes. On a knowledge question it handed the
+    # writer every passage, so on a source-only turn that is "not found".
+    if (
+        turn.selection is not None
+        and not turn.passages_chosen
+        and (case is None or case.wants not in _NOT_A_KNOWLEDGE_QUESTION)
+    ):
+        turn.not_in_passages = True
+
+
 def _not_in_passages_reply(
     inputs: TurnInputs, turn: KnowledgeTurn, found: Found, escalation: str | None, case: case_file.Case | None
 ) -> Reply | None:
@@ -353,9 +369,15 @@ def _not_in_passages_reply(
     # remark an answer that needs no passage, and the smaller judge labelled
     # "how do I put this on my laptop" conversational, which sent it to the
     # writer with passages that did not answer it.
-    if not turn.not_in_passages or escalation == escalation_service.HUMAN_REQUEST:
+    if not turn.not_in_passages:
         return None
     language = _fixed_language(inputs, case)
+    if escalation == escalation_service.HUMAN_REQUEST:
+        if not turn.selection_failed:
+            return None
+        # No selection to write from: the request for a person is the reply,
+        # not a writer handed every passage.
+        return fixed_reply(inputs, turn, contact_reply(language), language, decision="human_request", refused=False)
     logger.info(
         "partner_chat_not_in_passages",
         org_id=inputs.auth.org_id,
@@ -392,11 +414,14 @@ def question_reply(
     # plain line ending on a question mark (which is also how "already asked"
     # recognises it next turn), and the output safety check. It needs passages
     # to have been chosen: a question about variants nobody found is a guess.
+    # Not on a message with several questions: there the writer answers the
+    # parts the lines cover and asks the question for the rest (writer_brief).
     selection = turn.selection
     asks = (
         selection is not None
         and selection.verdict == "depends"
         and turn.passages_chosen
+        and not turn.multi_question
         and plain_question(selection.question)
         and output_safety_violation(selection.question) is None
         and not already_asked(messages)
