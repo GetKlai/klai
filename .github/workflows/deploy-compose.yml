@@ -32,6 +32,13 @@ env:
 
 jobs:
   sync-compose:
+    # One group with the klai-docker-authz deploy and the LibreChat config
+    # sync: all three recreate containers on core-01, and two of them
+    # recreating klai-docker-authz in the same second ended in "removal of
+    # container is already in progress" (21 October 2026).
+    concurrency:
+      group: core-01-containers
+      cancel-in-progress: false
     # Production sync over SSH. Guarded on main for the same reason as every
     # deploy job: workflow_dispatch accepts any ref, and without this a
     # dispatch from a feature branch would sync that branch's compose and
