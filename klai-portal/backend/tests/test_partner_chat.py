@@ -695,7 +695,7 @@ async def test_knowledge_options_validate_kb_access():
 @pytest.mark.asyncio
 async def test_widget_system_prompt_loaded_for_widget_auth():
     """Widget JWT calls load private behaviour instructions from widget_config."""
-    from app.api.partner import _widget_system_prompt
+    from app.api.partner import _widget_settings
     from app.api.partner_dependencies import PartnerAuthContext
 
     db = AsyncMock()
@@ -713,17 +713,17 @@ async def test_widget_system_prompt_loaded_for_widget_auth():
         rate_limit_rpm=60,
     )
 
-    assert await _widget_system_prompt(auth, db) == "Be brief and friendly."
+    assert (await _widget_settings(auth, db)).system_prompt == "Be brief and friendly."
 
 
 @pytest.mark.asyncio
 async def test_widget_system_prompt_ignored_for_partner_keys():
     """Partner API keys do not read widget_config behaviour instructions."""
-    from app.api.partner import _widget_system_prompt
+    from app.api.partner import _widget_settings
 
     db = AsyncMock()
 
-    assert await _widget_system_prompt(make_partner_auth(), db) is None
+    assert (await _widget_settings(make_partner_auth(), db)).system_prompt is None
     db.execute.assert_not_called()
 
 
@@ -766,7 +766,7 @@ async def test_streaming_returns_event_stream_content_type():
 @pytest.mark.asyncio
 async def test_widget_streaming_uses_structured_citation_mode():
     """Widget calls render sources from backend metadata, not model-authored URLs."""
-    from app.api.partner import ChatCompletionsRequest, chat_completions
+    from app.api.partner import ChatCompletionsRequest, WidgetSettings, chat_completions
 
     fake_kbs = [FakeKB(id=10, name="KB Alpha", slug="kb-alpha", org_id=42)]
     db = AsyncMock()
@@ -809,7 +809,10 @@ async def test_widget_streaming_uses_structured_citation_mode():
                 False,  # broad-turn flag (4-tuple from retrieve_context)
             ),
         ) as mock_retrieve,
-        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=True)),
+        patch(
+            "app.api.partner._widget_settings",
+            new=AsyncMock(return_value=WidgetSettings(page_context_enabled=True)),
+        ),
         patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())) as write,
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
@@ -856,7 +859,6 @@ async def test_widget_page_context_ignored_when_disabled():
 
     with (
         patch("app.services.widget_turn.retrieve_context", return_value=([], "prompt", [], False)) as mock_retrieve,
-        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
         patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written())),
     ):
         await chat_completions(request=req, http_request=_http_request_stub(), auth=auth, db=db)
@@ -1195,7 +1197,10 @@ def test_the_writer_prompt_carries_todays_date(monkeypatch):
         [{"role": "user", "content": "Gesprekken van januari 2026?"}], "System rules", response_language="nl"
     )
 
-    assert messages[0] == {"role": "system", "content": "System rules\n\nToday is 2026-10-21 (Wednesday)."}
+    assert messages[0] == {
+        "role": "system",
+        "content": "System rules\n\nToday is 2026-10-21 (Wednesday, Europe/Amsterdam).",
+    }
 
 
 def test_augment_messages_ends_with_the_response_language_contract():

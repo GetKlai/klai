@@ -290,6 +290,10 @@ def test_widget_config_contact_channels_are_optional_and_validated():
         WidgetConfig(contact_email="not an address")
     with pytest.raises(ValueError):
         WidgetConfig(contact_phone="0" * 33)
+    for bad in ("[Bel](https://evil.test)", "12345", "call me 0000000"):
+        with pytest.raises(ValueError, match="contact_phone"):
+            WidgetConfig(contact_phone=bad)
+    assert WidgetConfig(contact_phone="+31 (0)20 000 0000").contact_phone == "+31 (0)20 000 0000"
 
     widget = MagicMock()
     widget.id = "uuid-contact"

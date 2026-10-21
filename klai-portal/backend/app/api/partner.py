@@ -240,15 +240,36 @@ async def _resolve_kb_slugs(kb_ids: list[int], org_id: int, db: AsyncSession) ->
     return [kb.slug for kb in kbs]
 
 
-async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> str | None:
-    """Return the admin-configured widget prompt for widget JWT calls.
+@dataclass(frozen=True)
+class WidgetSettings:
+    """What a widget's ``widget_config`` says about one chat turn; every default is the off state."""
 
-    When ``widget_config.template_slug`` is set, the linked Template's
-    ``prompt_text`` is appended after the widget-local system_prompt.
-    Lets admins reuse named prompts across widgets without copying.
+    system_prompt: str | None = None
+    page_context_enabled: bool = False
+    off_topic_subjects: str = ""
+    off_topic_reply: str = ""
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    tone_register: str = "restrained"
+
+
+def _stripped(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+async def _widget_settings(auth: PartnerAuthContext, db: AsyncSession) -> WidgetSettings:
+    """Read this widget's per-turn settings from one ``widget_config`` query.
+
+    Only widget JWT callers have settings; a partner key gets the defaults.
+    The instruction is the widget-local ``system_prompt`` followed by the
+    linked template's ``prompt_text`` (``template_slug``), which is one more
+    query on a different table, so admins can reuse named prompts across
+    widgets without copying. ``tone_register`` accepts only the exact value
+    ``"expressive"``: a stale or hand-edited config can never switch a live
+    widget to the expressive voice by accident.
     """
     if not str(auth.key_id).startswith("wgt_"):
-        return None
+        return WidgetSettings()
     result = await db.execute(
         select(Widget.widget_config).where(
             Widget.widget_id == auth.key_id,
@@ -257,12 +278,10 @@ async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> s
     )
     config = result.scalar_one_or_none() or {}
     if not isinstance(config, dict):
-        return None
-    base = config.get("system_prompt")
-    base_str = base.strip() if isinstance(base, str) else ""
+        return WidgetSettings()
 
-    template_slug = config.get("template_slug")
     template_text = ""
+    template_slug = config.get("template_slug")
     if isinstance(template_slug, str) and template_slug:
         # Local import to avoid a top-level dependency between partner.py
         # (widget runtime) and the templates module (admin domain).
@@ -274,99 +293,18 @@ async def _widget_system_prompt(auth: PartnerAuthContext, db: AsyncSession) -> s
                 PortalTemplate.org_id == auth.org_id,
             )
         )
-        t_text = t_result.scalar_one_or_none()
-        if isinstance(t_text, str):
-            template_text = t_text.strip()
+        template_text = _stripped(t_result.scalar_one_or_none())
 
-    parts = [p for p in (base_str, template_text) if p]
-    return "\n\n".join(parts) if parts else None
-
-
-async def _widget_page_context_enabled(auth: PartnerAuthContext, db: AsyncSession) -> bool:
-    """Return whether this widget may send current-page context."""
-    if not str(auth.key_id).startswith("wgt_"):
-        return False
-    result = await db.execute(
-        select(Widget.widget_config).where(
-            Widget.widget_id == auth.key_id,
-            Widget.org_id == auth.org_id,
-        )
+    parts = [p for p in (_stripped(config.get("system_prompt")), template_text) if p]
+    return WidgetSettings(
+        system_prompt="\n\n".join(parts) if parts else None,
+        page_context_enabled=bool(config.get("page_context_enabled")),
+        off_topic_subjects=_stripped(config.get("off_topic_subjects")),
+        off_topic_reply=_stripped(config.get("off_topic_reply")),
+        contact_email=_stripped(config.get("contact_email")) or None,
+        contact_phone=_stripped(config.get("contact_phone")) or None,
+        tone_register="expressive" if config.get("tone_register") == "expressive" else "restrained",
     )
-    config = result.scalar_one_or_none() or {}
-    return bool(config.get("page_context_enabled")) if isinstance(config, dict) else False
-
-
-async def _widget_off_topic(auth: PartnerAuthContext, db: AsyncSession) -> tuple[str, str]:
-    """Return this widget's (subjects it does not answer, reply to give instead).
-
-    Both empty means the feature is off, which is every widget until an admin
-    fills them in. Same shape and same widget-JWT restriction as
-    :func:`_widget_page_context_enabled`.
-    """
-    if not str(auth.key_id).startswith("wgt_"):
-        return "", ""
-    result = await db.execute(
-        select(Widget.widget_config).where(
-            Widget.widget_id == auth.key_id,
-            Widget.org_id == auth.org_id,
-        )
-    )
-    config = result.scalar_one_or_none() or {}
-    if not isinstance(config, dict):
-        return "", ""
-    subjects = config.get("off_topic_subjects")
-    reply = config.get("off_topic_reply")
-    return (
-        subjects.strip() if isinstance(subjects, str) else "",
-        reply.strip() if isinstance(reply, str) else "",
-    )
-
-
-async def _widget_contact_channels(auth: PartnerAuthContext, db: AsyncSession) -> tuple[str | None, str | None]:
-    """Return this widget's (contact e-mail, contact phone), each ``None`` when unset.
-
-    Same shape and same widget-JWT restriction as :func:`_widget_off_topic`.
-    """
-    if not str(auth.key_id).startswith("wgt_"):
-        return None, None
-    result = await db.execute(
-        select(Widget.widget_config).where(
-            Widget.widget_id == auth.key_id,
-            Widget.org_id == auth.org_id,
-        )
-    )
-    config = result.scalar_one_or_none() or {}
-    if not isinstance(config, dict):
-        return None, None
-    email = config.get("contact_email")
-    phone = config.get("contact_phone")
-    return (
-        email.strip() or None if isinstance(email, str) else None,
-        phone.strip() or None if isinstance(phone, str) else None,
-    )
-
-
-async def _widget_tone_register(auth: PartnerAuthContext, db: AsyncSession) -> str:
-    """Return this widget's customer-facing register: ``"restrained"`` (default)
-    or ``"expressive"``.
-
-    Same shape as :func:`_widget_page_context_enabled`, same restriction to
-    widget JWT callers. The value selects between the two SUPPORT profiles;
-    anything unrecognised falls back to
-    ``"restrained"``, so a hand-edited or stale widget_config can never
-    silently switch a live widget to the expressive voice.
-    """
-    if not str(auth.key_id).startswith("wgt_"):
-        return "restrained"
-    result = await db.execute(
-        select(Widget.widget_config).where(
-            Widget.widget_id == auth.key_id,
-            Widget.org_id == auth.org_id,
-        )
-    )
-    config = result.scalar_one_or_none() or {}
-    register = config.get("tone_register") if isinstance(config, dict) else None
-    return register if register == "expressive" else "restrained"
 
 
 def _write_widget_record(turn: KnowledgeTurn | None, **fields: Any) -> None:
@@ -922,13 +860,11 @@ async def _widget_or_partner_turn(
     """
     is_widget_chat = str(auth.key_id).startswith("wgt_")
     retrieval_enabled, kb_slugs = await _partner_kb_scope(request, auth, db)
-    widget_system_prompt = await _widget_system_prompt(auth, db)
-    page_context_enabled = await _widget_page_context_enabled(auth, db) if is_widget_chat else False
-    off_topic_subjects, off_topic_reply = await _widget_off_topic(auth, db) if is_widget_chat else ("", "")
-    contact_email, contact_phone = await _widget_contact_channels(auth, db) if is_widget_chat else (None, None)
-    tone_register = await _widget_tone_register(auth, db) if is_widget_chat else "restrained"
+    widget = await _widget_settings(auth, db)
     page_context = (
-        request.page_context.model_dump(exclude_none=True) if page_context_enabled and request.page_context else None
+        request.page_context.model_dump(exclude_none=True)
+        if widget.page_context_enabled and request.page_context
+        else None
     )
 
     audit = await _widget_audit(auth, http_request, db) if is_widget_chat else _WidgetAudit()
@@ -954,13 +890,13 @@ async def _widget_or_partner_turn(
         kb_slugs=kb_slugs,
         retrieval_enabled=retrieval_enabled,
         partner_user_id=_partner_user_id(auth),
-        widget_system_prompt=widget_system_prompt,
+        widget_system_prompt=widget.system_prompt,
         page_context=page_context,
-        tone_register=tone_register,
-        off_topic_subjects=off_topic_subjects,
-        off_topic_reply=off_topic_reply,
-        contact_email=contact_email,
-        contact_phone=contact_phone,
+        tone_register=widget.tone_register,
+        off_topic_subjects=widget.off_topic_subjects,
+        off_topic_reply=widget.off_topic_reply,
+        contact_email=widget.contact_email,
+        contact_phone=widget.contact_phone,
         previous_case=await _previous_case(request, auth, audit),
         audit_widget_id=audit.widget_id,
         audit_session_key=audit.session_key,

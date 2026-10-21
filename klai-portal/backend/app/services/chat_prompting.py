@@ -244,7 +244,7 @@ def _augment_messages_with_system_prompt(
     # No prompt carried the date, so a visitor asking for "januari 2026" was told
     # 2026 lay outside the retention window. The date is data, not an instruction.
     today = _now()
-    system_prompt = f"{system_prompt}\n\nToday is {today:%Y-%m-%d} ({today:%A})."
+    system_prompt = f"{system_prompt}\n\nToday is {today:%Y-%m-%d} ({today:%A}, Europe/Amsterdam)."
     normalized = [
         msg
         for m in messages

@@ -751,8 +751,6 @@ async def _route_turn(
     )
     with (
         respx.mock(assert_all_called=False) as router,
-        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
         patch("app.api.partner.last_case", new=AsyncMock(return_value=previous_case)),
@@ -861,8 +859,12 @@ async def _off_topic_turn(
 
     monkeypatch.setattr(
         partner,
-        "_widget_off_topic",
-        AsyncMock(return_value=("prijzen, tarieven, offertes, uitstel van betaling", reply)),
+        "_widget_settings",
+        AsyncMock(
+            return_value=partner.WidgetSettings(
+                off_topic_subjects="prijzen, tarieven, offertes, uitstel van betaling", off_topic_reply=reply
+            )
+        ),
     )
     return await _route_turn(
         monkeypatch,
@@ -1006,8 +1008,6 @@ async def test_the_case_runs_concurrently_with_retrieval_on_a_first_turn():
     with (
         patch("app.services.widget_turn.retrieve_context", new=retrieve),
         patch("app.api.partner.case_file.update_case", new=update_case),
-        patch("app.api.partner._widget_page_context_enabled", new=AsyncMock(return_value=False)),
-        patch("app.api.partner._widget_tone_register", new=AsyncMock(return_value="restrained")),
         patch("app.services.widget_turn.write_reply", new=AsyncMock(return_value=_written_reply())) as chat,
         patch("app.api.partner.asyncio"),
         patch("app.services.widget_turn.write_retrieval_log", new=AsyncMock()),
@@ -1185,7 +1185,9 @@ async def test_the_contact_reply_names_the_channels_the_widget_has(monkeypatch):
     from app.api import partner
 
     monkeypatch.setattr(
-        partner, "_widget_contact_channels", AsyncMock(return_value=("hallo@example.com", "000-0000000"))
+        partner,
+        "_widget_settings",
+        AsyncMock(return_value=partner.WidgetSettings(contact_email="hallo@example.com", contact_phone="000-0000000")),
     )
     litellm, text, extras = await _selected_turn(monkeypatch, _selection("not_in_passages"), case=_case("human"))
 
@@ -1195,9 +1197,6 @@ async def test_the_contact_reply_names_the_channels_the_widget_has(monkeypatch):
 
 
 async def test_a_widget_without_channels_gets_the_contact_reply_unchanged(monkeypatch):
-    from app.api import partner
-
-    monkeypatch.setattr(partner, "_widget_contact_channels", AsyncMock(return_value=(None, None)))
     _, text, _ = await _selected_turn(monkeypatch, _selection("not_in_passages"), case=_case("human"))
 
     assert text == (
