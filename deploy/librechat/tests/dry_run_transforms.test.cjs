@@ -296,6 +296,39 @@ function createStreamServices(config = {}) {
   assert.match(r.stderr, /DRY-RUN FAIL \[stream-cleanup\]/);
 }
 
+// --- Baked stream-cleanup: the image carries the server/index.js patch, so the
+// runtime transform stands down and the dry run asserts the baked default
+// instead. A marker comment without the "keep" default must fail -- that is the
+// v0.8.8 shape where the explicit key after the spread silently wins. ---
+for (const [label, line, shouldPass] of [
+  ['keeps completed jobs', "cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS ?? 'true'),", true],
+  ['upstream default', 'cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS),', false],
+]) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dry-run-baked-stream-'));
+  const klaiPath = writeFakeEntrypoint(dir, 'klai-entrypoint.sh', {
+    meiliBlock: realMeiliBlock,
+    feedbackBlock: realFeedbackBlock,
+  });
+  const getklaiPath = writeFakeEntrypoint(dir, 'getklai-entrypoint.sh', {
+    meiliBlock: realMeiliBlock,
+    feedbackBlock: realFeedbackBlock,
+  });
+  const extractedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dry-run-extract-'));
+  writeExtractedFixtures(extractedRoot);
+  fs.writeFileSync(
+    path.join(extractedRoot, 'app/api/server/index.js'),
+    `GenerationJobManager.configure({\n  ...streamServices,\n  // SPEC-STREAM-CLEANUP-001\n  ${line}\n});\n`,
+  );
+
+  const r = runDryRun(extractedRoot, klaiPath, getklaiPath);
+  if (shouldPass) {
+    assert.match(r.stdout, /DRY-RUN OK \[stream-cleanup\]: baked into server\/index\.js/, label);
+  } else {
+    assert.notEqual(r.status, 0, label);
+    assert.match(r.stderr, /DRY-RUN FAIL \[stream-cleanup\]/, label);
+  }
+}
+
 // --- Missing extraction: no runtime files at all. ---
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dry-run-missing-'));

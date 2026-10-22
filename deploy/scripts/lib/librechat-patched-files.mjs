@@ -48,9 +48,12 @@ export const PATCHED_FILES = [
     lane: 'librechat',
   },
   {
-    key: 'index.cjs',
-    containerPath: '/app/packages/api/dist/index.cjs',
-    patch: 'createStreamServices.ts.patch',
+    // SPEC-STREAM-CLEANUP-001. Plain runtime JS like share.js: the comment
+    // survives, so klai-entrypoint.sh greps this file for the marker and
+    // stands down its own dist/index.cjs transform.
+    key: 'server-index.js',
+    containerPath: '/app/api/server/index.js',
+    patch: 'server-index.js.patch',
     lane: 'librechat',
   },
   {

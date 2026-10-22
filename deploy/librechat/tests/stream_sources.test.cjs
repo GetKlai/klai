@@ -1,7 +1,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const streamPatch = fs.readFileSync(
@@ -9,89 +8,11 @@ const streamPatch = fs.readFileSync(
   'utf8',
 );
 
-const sandbox = {
-  Buffer,
-  require: (id) => {
-    if (id === './common/enum.cjs') {
-      return {
-        ContentTypes: {
-          TEXT: 'text',
-          THINK: 'think',
-          THINKING: 'thinking',
-          REASONING: 'reasoning',
-          REASONING_CONTENT: 'reasoning_content',
-          TOOL_CALL: 'tool_call',
-          AGENT_UPDATE: 'agent_update',
-          IMAGE_URL: 'image_url',
-          ERROR: 'error',
-          SUMMARY: 'summary',
-        },
-        GraphEvents: {
-          ON_RUN_STEP: 'on_run_step',
-          ON_MESSAGE_DELTA: 'on_message_delta',
-          ON_AGENT_UPDATE: 'on_agent_update',
-          ON_REASONING_DELTA: 'on_reasoning_delta',
-          ON_RUN_STEP_DELTA: 'on_run_step_delta',
-          ON_RUN_STEP_COMPLETED: 'on_run_step_completed',
-        },
-        Providers: {
-          OPENAI: 'openai',
-          AZURE: 'azure',
-          OPENROUTER: 'openrouter',
-        },
-        StepTypes: {
-          MESSAGE_CREATION: 'message_creation',
-          TOOL_CALLS: 'tool_calls',
-        },
-        ToolCallTypes: {
-          TOOL_CALL: 'tool_call',
-        },
-        LOCAL_CODING_BUNDLE_NAMES: [],
-      };
-    }
-    if (id === './common/index.cjs' || id === './messages/index.cjs') {
-      return {};
-    }
-    if (id === './tools/handlers.cjs') {
-      return {};
-    }
-    if (
-      id === './messages/core.cjs' ||
-      id === './messages/ids.cjs' ||
-      id === '@langchain/core/messages'
-    ) {
-      return {};
-    }
-    if (id === './utils/truncation.cjs') {
-      return {};
-    }
-    if (id === './utils/llm.cjs') {
-      return { isGoogleLike: () => false };
-    }
-    if (id === './utils/events.cjs') {
-      return { emitAgentLog() {} };
-    }
-    if (id === 'uuid') {
-      return {};
-    }
-    if (id === './tools/eagerEventExecution.cjs') {
-      return {};
-    }
-    if (id === './tools/streamedToolCallSeals.cjs') {
-      return {};
-    }
-    if (id === './tools/toolOutputReferences.cjs') {
-      return { TOOL_OUTPUT_REF_PATTERN: /\{\{tool_output:[^}]+\}\}/ };
-    }
-    throw new Error(`Unexpected require: ${id}`);
-  },
-  console,
-  exports: {},
-};
+const { loadStreamBundle } = require('./_stream-sandbox.cjs');
 
-vm.runInNewContext(streamPatch, sandbox);
+const klaiStream = loadStreamBundle(streamPatch);
 
-const { createContentAggregator, extractKlaiSourcesFromText, getChunkSources } = sandbox.exports;
+const { createContentAggregator, extractKlaiSourcesFromText, getChunkSources } = klaiStream;
 const sources = [
   {
     label: '1',
@@ -227,7 +148,7 @@ console.log('OK: LibreChat stream aggregator preserves Klai source metadata.');
 // klai_sources marker divided across stream chunks must neither leak marker
 // text into the answer nor lose the sources.
 // ---------------------------------------------------------------------------
-const { createKlaiSourcesFramer, findPartialKlaiMarkerStart } = sandbox.exports;
+const { createKlaiSourcesFramer, findPartialKlaiMarkerStart } = klaiStream;
 assert.equal(typeof createKlaiSourcesFramer, 'function');
 assert.equal(typeof findPartialKlaiMarkerStart, 'function');
 

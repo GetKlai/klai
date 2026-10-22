@@ -11,6 +11,9 @@ const formatPatch = fs.readFileSync(
 
 class BaseMessage {
   constructor(fields = {}) {
+    // LangChain messages always carry additional_kwargs; v0.8.8 reads it
+    // unguarded when it inspects the last formatted message.
+    this.additional_kwargs = {};
     Object.assign(this, fields);
   }
 }
@@ -20,12 +23,20 @@ class HumanMessage extends BaseMessage {
     super(fields);
     this.role = 'user';
   }
+
+  getType() {
+    return 'human';
+  }
 }
 
 class AIMessage extends BaseMessage {
   constructor(fields = {}) {
     super(fields);
     this.role = 'assistant';
+  }
+
+  getType() {
+    return 'ai';
   }
 }
 
@@ -36,12 +47,20 @@ class SystemMessage extends BaseMessage {
     super(fields);
     this.role = 'system';
   }
+
+  getType() {
+    return 'system';
+  }
 }
 
 class ToolMessage extends BaseMessage {
   constructor(fields = {}) {
     super(fields);
     this.role = 'tool';
+  }
+
+  getType() {
+    return 'tool';
   }
 }
 
@@ -70,8 +89,75 @@ const sandbox = {
         },
       };
     }
+    if (id === '../common/constants.cjs') {
+      // Read at load time only to derive head/tail limits; the values are
+      // irrelevant to the guards under test.
+      return {
+        COMPACTION_SEMANTIC_INDEX_LIMITS: {
+          maxInputEntries: 64,
+          maxInputTextChars: 1024,
+          maxIdentityChars: 256,
+          maxSourceContentIndex: 1024,
+        },
+      };
+    }
     if (id === '../common/index.cjs') {
       return {};
+    }
+    // Sibling modules the v0.8.8 bundle requires. The guards under test only
+    // see malformed entries, so every helper behaves as "nothing special about
+    // this message": no provenance, no provider tool parts, no legacy content.
+    if (id === '../utils/truncation.cjs') {
+      return { HARD_MAX_TOOL_RESULT_CHARS: 1_000_000 };
+    }
+    if (id === '../utils/toolContent.cjs') {
+      return {
+        compactToolContent: (content) => ({ content }),
+        getToolContentCharLength: (content) => String(content).length,
+        isAtomicToolContentBlock: () => false,
+        serializeStructuredValueBounded: (value) => ({ content: JSON.stringify(value) }),
+      };
+    }
+    if (id === './provenance.cjs') {
+      return {
+        hasBijectiveProviderContentPartMapping: () => false,
+        inspectProviderMessageProvenance: () => ({ status: 'absent' }),
+        inspectProviderSourceMessageIds: () => ({ status: 'absent' }),
+        setFreshProviderMessageProvenance() {},
+        setInvalidProviderMessageProvenance() {},
+        setProviderMessageProvenance() {},
+      };
+    }
+    if (id === './reasoningTypes.cjs') {
+      return { isReasoningContentBlock: () => false };
+    }
+    if (id === './toolResultTypes.cjs') {
+      return {
+        appendProviderToolCallDescriptor() {},
+        consumeProviderToolResultPair: () => false,
+        getBoundedProviderPairingArrayProperty: (message, key) => message[key],
+        getProviderToolCallPartDescriptor: () => undefined,
+        getProviderToolResultPartDescriptor: () => undefined,
+        hasStructurallyValidAnthropicWebSearchResultContent: () => false,
+        isProviderToolContentPart: () => false,
+      };
+    }
+    if (id === './toolHistoryProjection.cjs') {
+      return {
+        createToolHistoryPreparation: () => ({ get: () => undefined }),
+        isToolHistoryCallMirror: () => false,
+        recordToolHistoryCallMirror() {},
+      };
+    }
+    if (id === '../summarization/semanticIndex.cjs') {
+      return {
+        snapshotCompactionSemanticIndex: (entries) => entries,
+        getCompactionSemanticIndexProvidedEntryCount: () => 0,
+        setCompactionSemanticIndexProvidedEntryCount() {},
+      };
+    }
+    if (id === './content.cjs') {
+      return { isLegacyConvertible: () => false, flattenLegacyContent: (content) => content };
     }
     if (id === '../utils/events.cjs') {
       return { emitAgentLog() {} };
@@ -128,9 +214,9 @@ assert.equal(messages[0].role, 'user');
 const guarded = ensureThinkingBlockInMessages(
   [
     undefined,
-    { role: 'user', content: 'first' },
-    { role: 'assistant', content: [{ type: 'tool_use', name: 'lookup', input: {} }] },
-    { role: 'tool', content: 'result' },
+    new HumanMessage({ content: 'first' }),
+    new AIMessage({ content: [{ type: 'tool_use', name: 'lookup', input: {} }] }),
+    new ToolMessage({ content: 'result' }),
   ],
   'openai',
 );

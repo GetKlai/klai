@@ -1,13 +1,13 @@
 /**
- * Coverage for the two built artifacts nothing else tests: search.cjs and
- * packages/api's index.cjs.
+ * Coverage for the built artifacts nothing else tests: search.cjs,
+ * server/index.js and messages.js.
  *
  * Adversarial review 2026-08-14, finding 3: the image-build workflow claimed to
  * "run patch behaviour tests against the built image" while loading only three
  * of five artifacts. The reviewer changed `topResults` from 3 to 999 in a built
- * search.cjs and all three suites stayed green. index.cjs was not even copied,
- * and stream_services.test.cjs asserts the old entrypoint transform against a
- * synthetic fixture — not the artifact the runtime loads.
+ * search.cjs and all three suites stayed green. The stream-cleanup artifact was
+ * not even copied, and stream_services.test.cjs asserts the entrypoint
+ * transform against a synthetic fixture — not the artifact the runtime loads.
  *
  * Runs against a directory of artifacts extracted from a built image
  * (KLAI_BUILT_ARTIFACTS_DIR). Under CI a missing directory is a FAILURE, not a
@@ -110,29 +110,31 @@ assert.ok(
 );
 
 // ---------------------------------------------------------------------------
-// index.cjs — the artifact the runtime actually loads
+// server/index.js — where the stream-cleanup default is actually decided
 // ---------------------------------------------------------------------------
-// This is the file whose bind-mounted .ts counterpart was inert for months:
-// the runtime loads packages/api/dist/index.cjs, and mounting the source did
-// nothing. The source-diff model is supposed to make that impossible, so the
-// check is "did the patch reach the built bundle".
-const apiSource = fs.readFileSync(path.join(artifactsDir, 'index.cjs'), 'utf8');
+// v0.8.8 builds the GenerationJobManager config in api/server/index.js as
+// `{ ...streamServices, cleanupOnComplete: !isEnabled(STREAM_KEEP_COMPLETED_JOBS) }`.
+// The explicit key follows the spread, so a value returned by
+// createStreamServices() (where the v0.8.7 patch put it) never reaches the
+// manager. The patch therefore has to live here, and this check is the "did it
+// reach the file the runtime loads" test for it.
+const serverIndexSource = fs.readFileSync(path.join(artifactsDir, 'server-index.js'), 'utf8');
 
 assert.ok(
-  apiSource.includes('cleanupOnComplete: CLEANUP_ON_COMPLETE'),
-  'createStreamServices.ts.patch did not reach packages/api/dist/index.cjs — ' +
-    'the exact inert-patch failure this SPEC exists to eliminate'
+  serverIndexSource.includes('SPEC-STREAM-CLEANUP-001'),
+  'server-index.js.patch did not reach /app/api/server/index.js'
 );
 assert.ok(
-  !/cleanupOnComplete:\s*true/.test(apiSource),
-  'a hardcoded cleanupOnComplete: true survives in the built bundle'
+  serverIndexSource.includes(
+    "cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS ?? 'true')"
+  ),
+  'the cleanupOnComplete default is not "keep completed jobs" in the built server/index.js'
 );
-// Both call sites (the services object and the manager config) must be wired,
-// or completed jobs are still reaped on one of the two paths.
-const wiredSites = apiSource.split('cleanupOnComplete: CLEANUP_ON_COMPLETE').length - 1;
-assert.ok(
-  wiredSites >= 2,
-  `expected cleanupOnComplete wired at both call sites, found ${wiredSites}`
+const cleanupKeys = serverIndexSource.match(/cleanupOnComplete:/g) || [];
+assert.equal(
+  cleanupKeys.length,
+  1,
+  `expected exactly one cleanupOnComplete key in server/index.js, found ${cleanupKeys.length}`
 );
 
 
@@ -298,6 +300,6 @@ assert.ok(
 
 console.log(
   'OK: built artifacts verified — search topResults + surrogate guards, ' +
-    'index.cjs cleanupOnComplete at every call site, stream marker edge cases, ' +
+    'server/index.js cleanupOnComplete default, stream marker edge cases, ' +
     'messages.js kb-feedback forward.'
 );

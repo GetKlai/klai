@@ -298,31 +298,35 @@ if (klaiFeedback) {
   }
 }
 
-// --- Stream-cleanup dry run: execute the extracted transform against the
-// real, image-extracted packages/api bundle (dist/index.cjs). ---
+// --- Stream-cleanup dry run: either the baked server/index.js patch is
+// present, or execute the extracted transform against the real,
+// image-extracted packages/api bundle (dist/index.cjs). ---
 if (klaiStreamCleanup) {
   const streamBundlePath = extractedPath('/app/packages/api/dist/index.cjs');
+  const serverIndexPath = extractedPath('/app/api/server/index.js');
   if (!existsSync(streamBundlePath)) {
     fail('stream-cleanup', `dist/index.cjs was not extracted from the image: ${streamBundlePath}`);
-  } else if (readFileSync(streamBundlePath, 'utf8').includes('CLEANUP_ON_COMPLETE')) {
+  } else if (
+    existsSync(serverIndexPath) &&
+    readFileSync(serverIndexPath, 'utf8').includes('SPEC-STREAM-CLEANUP-001')
+  ) {
     // Same reasoning as the feedback block above: the image was built from
-    // createStreamServices.ts.patch, the entrypoint greps for
-    // CLEANUP_ON_COMPLETE and stands down, so dry-running the transform tests
-    // a path that never runs at boot. Unlike feedback the anchors happen to
-    // survive here, so it would "pass" while proving nothing -- assert the
-    // behaviour is present instead.
-    const content = readFileSync(streamBundlePath, 'utf8');
-    const wired = content.split('cleanupOnComplete: CLEANUP_ON_COMPLETE').length - 1;
-    if (wired < 2) {
+    // server-index.js.patch, the entrypoint greps for the marker and stands
+    // down, so dry-running the transform tests a path that never runs at boot.
+    // Assert the baked behaviour instead: the one cleanupOnComplete key the
+    // manager config reads defaults to "keep completed jobs".
+    const content = readFileSync(serverIndexPath, 'utf8');
+    if (
+      !content.includes(
+        "cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS ?? 'true')",
+      )
+    ) {
       fail(
         'stream-cleanup',
-        `image carries CLEANUP_ON_COMPLETE but wires it at only ${wired} call site(s); expected both`,
+        `image carries SPEC-STREAM-CLEANUP-001 but ${serverIndexPath} does not default cleanupOnComplete to keeping completed jobs`,
       );
     } else {
-      ok(
-        'stream-cleanup',
-        'baked into the image; runtime transform correctly stands down (wired at both call sites)',
-      );
+      ok('stream-cleanup', 'baked into server/index.js; runtime transform correctly stands down');
     }
   } else {
     const script = remapPaths(klaiStreamCleanup);

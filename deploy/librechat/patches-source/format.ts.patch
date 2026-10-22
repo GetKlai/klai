@@ -1,10 +1,10 @@
 diff --git a/src/messages/format.ts b/src/messages/format.ts
-index 3d690a3..fd47d89 100644
+index 75f2f70a..297a109e 100644
 --- a/src/messages/format.ts
 +++ b/src/messages/format.ts
-@@ -31,6 +31,30 @@ import { toLangChainContent, toLangChainMessageFields } from './langchain';
- import { Providers, ContentTypes, Constants } from '@/common';
- import { emitAgentLog } from '@/utils/events';
+@@ -88,6 +88,30 @@ import {
+   recordToolHistoryCallMirror,
+ } from './toolHistoryProjection';
  
 +/**
 + * Klai patch — defensive guards against malformed message payloads.
@@ -33,7 +33,7 @@ index 3d690a3..fd47d89 100644
  interface MediaMessageParams {
    message: {
      role: string;
-@@ -154,6 +178,14 @@ export const formatMessage = ({
+@@ -211,6 +235,14 @@ export const formatMessage = ({
    | RoleBearingMessage<HumanMessage>
    | RoleBearingMessage<AIMessage>
    | RoleBearingMessage<SystemMessage> => {
@@ -48,7 +48,7 @@ index 3d690a3..fd47d89 100644
    // eslint-disable-next-line prefer-const
    let { role: _role, _name, sender, text, content: _content, lc_id } = message;
    if (lc_id && lc_id[2] && !langChain) {
-@@ -284,7 +316,17 @@ export const formatLangChainMessages = (
+@@ -349,7 +381,17 @@ export const formatLangChainMessages = (
    | RoleBearingMessage<AIMessage>
    | RoleBearingMessage<SystemMessage>
  > => {
@@ -67,21 +67,22 @@ index 3d690a3..fd47d89 100644
      const formatted = formatMessage({
        ...formatOptions,
        message: msg,
-@@ -1053,6 +1095,13 @@ function getLatestSummaryBoundary(
+@@ -2583,6 +2625,14 @@ function scanSummaryBlocks(payload: TPayload): SummaryScan {
  
    for (let i = 0; i < payload.length; i++) {
      const message = payload[i];
-+    /* Klai patch: `message.content` on a non-object throws. */
++    /* Klai patch: `message.content` on a non-object throws, and so does
++       getSourceMessageId on null. */
 +    if (!isRecord(message)) {
 +      console.warn(
-+        '[klai-patch] format.getLatestSummaryBoundary guard skipped non-object message entry'
++        '[klai-patch] format.scanSummaryBlocks guard skipped non-object message entry'
 +      );
 +      continue;
 +    }
-     if (!Array.isArray(message.content)) {
-       continue;
-     }
-@@ -1115,8 +1164,16 @@ function applySummaryBoundary(
+     const sourceMessageId = getSourceMessageId(message);
+     if (sourceMessageId != null) {
+       indexBySourceId.set(sourceMessageId, i);
+@@ -2674,8 +2724,16 @@ function applySummaryBoundary(
  
    if (
      messageIndex !== summaryBoundary.messageIndex ||
@@ -98,7 +99,7 @@ index 3d690a3..fd47d89 100644
      return message;
    }
  
-@@ -1234,6 +1291,16 @@ export const formatAgentMessages = (
+@@ -2906,6 +2964,16 @@ export const formatAgentMessages = (
    // Process messages with tool conversion if tools set is provided
    for (let i = 0; i < payload.length; i++) {
      const rawMessage = payload[i];
@@ -115,22 +116,25 @@ index 3d690a3..fd47d89 100644
      const sourceMessageId = getSourceMessageId(rawMessage);
      let message = applySummaryBoundary(rawMessage, i, summaryBoundary);
      if (!message) {
-@@ -1292,6 +1359,14 @@ export const formatAgentMessages = (
-         const invalidToolStrings: string[] = [];
- 
-         for (const part of content) {
-+          /* Klai patch: `part.type` on a non-object throws before any of the
-+             upstream malformed-tool_call handling below can run. */
-+          if (!isRecord(part)) {
-+            console.warn(
-+              '[klai-patch] format.formatAgentMessages guard dropped non-object content part'
-+            );
-+            continue;
-+          }
-           if (part.type !== ContentTypes.TOOL_CALL) {
-             filteredContent.push(part);
-             continue;
-@@ -1790,6 +1865,12 @@ export function ensureThinkingBlockInMessages(
+@@ -4165,7 +4233,7 @@ function appendToolCalls(
+   let complete = true;
+   const aiMsg = msg as AIMessage;
+   if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
+-    const rawToolCalls = aiMsg.additional_kwargs.tool_calls;
++    const rawToolCalls = aiMsg.additional_kwargs?.tool_calls;
+     if (Array.isArray(rawToolCalls)) {
+       if (rawToolCalls.length !== aiMsg.tool_calls.length) {
+         complete = false;
+@@ -4214,7 +4282,7 @@ function appendToolCalls(
+     };
+   }
+   // Fall back to raw provider tool calls kept only in additional_kwargs.
+-  const rawToolCalls = aiMsg.additional_kwargs.tool_calls;
++  const rawToolCalls = aiMsg.additional_kwargs?.tool_calls;
+   if (!Array.isArray(rawToolCalls)) {
+     return { contributed: false, complete: true };
+   }
+@@ -4284,6 +4352,12 @@ export function ensureThinkingBlockInMessages(
    let lastHumanIndex = -1;
    for (let k = messages.length - 1; k >= 0; k--) {
      const m = messages[k];
@@ -143,7 +147,7 @@ index 3d690a3..fd47d89 100644
      if (
        m instanceof HumanMessage ||
        ('role' in m && (m as any).role === 'user')
-@@ -1809,6 +1890,15 @@ export function ensureThinkingBlockInMessages(
+@@ -4304,6 +4378,15 @@ export function ensureThinkingBlockInMessages(
  
    while (i < messages.length) {
      const msg = messages[i];
@@ -159,7 +163,7 @@ index 3d690a3..fd47d89 100644
      /** Detect AI messages by instanceof OR by role, in case cache-control cloning
       produced a plain object that lost the LangChain prototype. */
      const isAI =
-@@ -1854,7 +1944,7 @@ export function ensureThinkingBlockInMessages(
+@@ -4345,7 +4428,7 @@ export function ensureThinkingBlockInMessages(
      // Bedrock also stores reasoning in additional_kwargs (may not be in content array)
      if (
        !hasThinkingBlock &&
@@ -168,7 +172,16 @@ index 3d690a3..fd47d89 100644
      ) {
        hasThinkingBlock = true;
      }
-@@ -1983,7 +2073,7 @@ function chainHasThinkingBlock(
+@@ -4467,7 +4550,7 @@ function messageHasToolContent(
+   if (aiMsg.tool_calls != null && aiMsg.tool_calls.length > 0) {
+     return true;
+   }
+-  const rawToolCalls = aiMsg.additional_kwargs.tool_calls;
++  const rawToolCalls = aiMsg.additional_kwargs?.tool_calls;
+   if (Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
+     return true;
+   }
+@@ -4681,7 +4764,7 @@ function chainHasThinkingBlock(
        }
  
        // Bedrock also stores reasoning in additional_kwargs

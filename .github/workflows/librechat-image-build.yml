@@ -32,7 +32,7 @@ on:
       librechat_tag:
         description: 'Upstream LibreChat tag to build from'
         type: string
-        default: 'v0.8.7'
+        default: 'v0.8.8'
       patch_revision:
         description: 'Klai patch revision suffix (the <n> in -klai.<n>)'
         type: string
@@ -43,7 +43,7 @@ permissions:
   packages: write
 
 env:
-  DEFAULT_LIBRECHAT_TAG: v0.8.7
+  DEFAULT_LIBRECHAT_TAG: v0.8.8
   DEFAULT_PATCH_REVISION: '1'
 
 jobs:
@@ -94,7 +94,7 @@ jobs:
         id: agents
         run: |
           set -euo pipefail
-          base="ghcr.io/danny-avila/librechat:${{ steps.params.outputs.librechat_tag }}"
+          base="ghcr.io/librechat-ai/librechat:${{ steps.params.outputs.librechat_tag }}"
           docker pull -q "$base"
           cid=$(docker create "$base")
           trap 'docker rm -f "$cid" >/dev/null' EXIT
@@ -177,10 +177,11 @@ jobs:
           node --test deploy/librechat/tests/format_guard.test.cjs
           node --test deploy/librechat/tests/stream_sources.test.cjs
           node --test deploy/librechat/tests/share_sanitizer.test.cjs
-          # search.cjs and index.cjs have no suite of their own above -- the
-          # step used to copy search.cjs without ever loading it and skip
-          # index.cjs entirely, so "behaviour tests against the built image"
-          # covered 3 of 5 artifacts (finding 3). This suite closes that.
+          # search.cjs, server-index.js and messages.js have no suite of their
+          # own above -- the step used to copy search.cjs without ever loading
+          # it and skip the rest entirely, so "behaviour tests against the
+          # built image" covered 3 of 6 artifacts (finding 3). This suite
+          # closes that.
           KLAI_BUILT_ARTIFACTS_DIR=/tmp/built-patches \
             node --test deploy/librechat/tests/built_artifacts.test.cjs
           git checkout -- deploy/librechat/patches/
