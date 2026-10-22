@@ -210,6 +210,14 @@ async def write_reply(
         return reply
     generation_started = time.perf_counter()
     completion, draft, tool_calls = await _generate(augmented, **generation)
+    if strict:
+        # The widget, a partner key and internal Strict have sent only these
+        # since the held writer replaced their two generation paths.
+        completion = {key: completion[key] for key in ("id", "model", "usage", "finish_reason") if key in completion}
+    else:
+        # An Open or general body was LiteLLM's own response, so it keeps every
+        # top-level field LiteLLM sent; OpenAI clients expect `created`.
+        completion.setdefault("created", int(time.time()))
     await settle(
         draft, generation_ms=_elapsed_ms(generation_started), completion=completion, tool_calls=tool_calls, shown=None
     )
@@ -488,7 +496,7 @@ async def _generate(
     choices = body.get("choices") or []
     message = (choices[0].get("message") or {}) if choices else {}
     text = message.get("content") or ""
-    completion = {key: body[key] for key in ("id", "model", "usage") if key in body}
+    completion = {key: value for key, value in body.items() if key != "choices"}
     if choices and choices[0].get("finish_reason"):
         # A truncated answer keeps saying so ("length"), as the plain body always did.
         completion["finish_reason"] = choices[0]["finish_reason"]

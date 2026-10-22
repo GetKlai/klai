@@ -707,6 +707,51 @@ async def test_only_an_open_turn_reads_the_web_results_the_employee_asked_for(mo
         assert searched == []
 
 
+class _UpstreamBody(_LiteLLM):
+    """The answer call as LiteLLM really returns it: id, created, fingerprint, usage and fields of its own."""
+
+    def __init__(self, extra: dict) -> None:
+        super().__init__()
+        self.extra = extra
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        response = super().__call__(request)
+        if self._kind(json.loads(request.content)) != "answer":
+            return response
+        return httpx.Response(200, json={**self.extra, **response.json()})
+
+
+_UPSTREAM = {
+    "id": "chatcmpl-upstream",
+    "object": "chat.completion",
+    "created": 1761120000,
+    "model": "mistral-small-2603",
+    "system_fingerprint": "fp_example",
+    "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20},
+    "service_tier": "default",
+}
+
+
+@pytest.mark.parametrize("kb_mode", ["open", "general"])
+@pytest.mark.parametrize("upstream", [_UPSTREAM, {}], ids=["full", "bare"])
+@pytest.mark.asyncio
+async def test_a_held_open_or_general_body_keeps_every_top_level_field_litellm_sent(monkeypatch, kb_mode, upstream):
+    """The removed live writer returned LiteLLM's own response; the one writer must not drop `created` from it."""
+    turn = await _turn(
+        monkeypatch,
+        _UpstreamBody(upstream),
+        profile=_internal(kb_mode=kb_mode),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+    )
+
+    top_level = {key: value for key, value in turn.sent.items() if key != "choices"}
+    if upstream:
+        assert top_level == _UPSTREAM
+    else:
+        assert top_level.keys() == {"id", "object", "model", "created"}
+        assert isinstance(top_level["created"], int)
+
+
 @pytest.mark.parametrize("pack", [_pack(), {"items": [], "sources": []}], ids=["with_sources", "zero"])
 @pytest.mark.asyncio
 async def test_a_held_open_reply_is_not_warned_for_a_link_the_source_gate_removed(monkeypatch, pack):

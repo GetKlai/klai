@@ -4,6 +4,7 @@ paths:
   - "klai-connector/**"
   - "klai-retrieval-api/**"
   - "klai-portal/backend/app/services/answer_compose.py"
+  - "klai-portal/backend/app/services/widget_write.py"
   - "klai-libs/chat-prompts/**"
 ---
 # Knowledge Domain Patterns
