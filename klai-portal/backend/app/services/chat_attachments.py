@@ -18,7 +18,7 @@ import base64
 import binascii
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from klai_chat_prompts import _language_is_dutch as language_is_dutch
@@ -42,6 +42,10 @@ class ChatAttachmentResult:
     processed_count: int
     meta: dict[str, Any]
     user_visible_error: str | None = None
+    # Filenames of the file parts that are not PDFs. They are already removed
+    # from ``messages``; whether that is worth a notice or a refusal is the
+    # caller's call.
+    unreadable: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -163,7 +167,8 @@ def _attachment_from_part(
     message_index: int,
     user_text: str,
     part: dict[str, Any],
-) -> _Attachment:
+) -> _Attachment | str:
+    """The PDF in ``part``, or the filename of a file that is not a PDF."""
     file_info = part.get("file")
     if not isinstance(file_info, dict):
         raise ChatAttachmentError("invalid_file_payload")
@@ -172,7 +177,7 @@ def _attachment_from_part(
     if len(content) > settings.chat_pdf_max_bytes:
         raise ChatAttachmentError("file_too_large")
     if not content.startswith(b"%PDF"):
-        raise ChatAttachmentError("unsupported_attachment")
+        return filename
     return _Attachment(
         message_index=message_index,
         filename=filename,
@@ -181,51 +186,35 @@ def _attachment_from_part(
     )
 
 
-def _active_pdf_attachments(messages: list[dict[str, Any]]) -> list[_Attachment]:
+def _split_file_parts(messages: list[dict[str, Any]]) -> tuple[list[_Attachment], list[str], list[dict[str, Any]]]:
+    """The PDFs of the latest user turn, the filenames of its other files, and the messages without those files."""
     latest_index = _latest_user_message_index(messages)
     if latest_index is None:
-        return []
+        return [], [], messages
     latest = messages[latest_index]
     content = latest.get("content")
     if not isinstance(content, list):
-        return []
+        return [], [], messages
 
     user_text = _text_from_parts(content)
     attachments: list[_Attachment] = []
+    unreadable: list[str] = []
+    kept: list[Any] = []
     for part in content:
-        if not isinstance(part, dict) or part.get("type") != "file":
-            continue
-        attachments.append(
-            _attachment_from_part(
-                message_index=latest_index,
-                user_text=user_text,
-                part=part,
-            )
-        )
-    return attachments
-
-
-def drop_unreadable_file_parts(messages: list[dict[str, Any]]) -> None:
-    """Remove the file parts of the latest user turn that are not PDFs, in place.
-
-    A question beside a file Klai cannot read is answered without that file
-    (``partner._attachment_error_reply``); a PDF uploaded in the same turn
-    stays, so the second pass converts it.
-    """
-    latest_index = _latest_user_message_index(messages)
-    if latest_index is None or not isinstance(content := messages[latest_index].get("content"), list):
-        return
-    messages[latest_index]["content"] = [
-        part for part in content if not isinstance(part, dict) or part.get("type") != "file" or _is_pdf_part(part)
-    ]
-
-
-def _is_pdf_part(part: dict[str, Any]) -> bool:
-    file_info = part.get("file")
-    try:
-        return isinstance(file_info, dict) and _extract_data_url_bytes(file_info.get("file_data")).startswith(b"%PDF")
-    except ChatAttachmentError:
-        return False
+        if isinstance(part, dict) and part.get("type") == "file":
+            found = _attachment_from_part(message_index=latest_index, user_text=user_text, part=part)
+            if isinstance(found, str):
+                unreadable.append(found)
+                continue
+            attachments.append(found)
+        kept.append(part)
+    if not unreadable:
+        return attachments, [], messages
+    return (
+        attachments,
+        unreadable,
+        [*messages[:latest_index], {**latest, "content": kept}, *messages[latest_index + 1 :]],
+    )
 
 
 def _strip_embedded_images(markdown: str) -> str:
@@ -318,7 +307,9 @@ def _replace_latest_user_content(
 async def process_chat_attachments(messages: object, *, language: object) -> ChatAttachmentResult:
     """Convert the active PDF file part in the latest user turn to text.
 
-    No-op (processed_count=0) when there is no PDF file part. ``language``
+    No-op (processed_count=0) when there is no PDF file part. File parts that
+    are not PDFs are dropped from the returned messages and named in
+    ``unreadable``; they are no error by themselves. ``language``
     is the already-decided response-language CODE (computed on the
     unmodified messages, before this call) — used only to render
     ``user_visible_error`` text, never to decide anything about the PDF
@@ -332,11 +323,12 @@ async def process_chat_attachments(messages: object, *, language: object) -> Cha
 
     meta = _default_meta()
     start = time.monotonic()
+    unreadable: list[str] = []
     try:
-        attachments = _active_pdf_attachments(typed_messages)
+        attachments, unreadable, typed_messages = _split_file_parts(typed_messages)
         meta["chat_pdf_attachments_seen"] = len(attachments)
         if not attachments:
-            return ChatAttachmentResult(messages=typed_messages, processed_count=0, meta=meta)
+            return ChatAttachmentResult(messages=typed_messages, processed_count=0, meta=meta, unreadable=unreadable)
         if len(attachments) > 1:
             raise ChatAttachmentError("too_many_attachments")
 
@@ -361,6 +353,7 @@ async def process_chat_attachments(messages: object, *, language: object) -> Cha
             ),
             processed_count=1,
             meta=meta,
+            unreadable=unreadable,
         )
     except ChatAttachmentError as exc:
         meta["chat_pdf_error_reason"] = exc.reason
@@ -370,4 +363,5 @@ async def process_chat_attachments(messages: object, *, language: object) -> Cha
             processed_count=0,
             meta=meta,
             user_visible_error=user_visible_error(exc.reason, language),
+            unreadable=unreadable,
         )

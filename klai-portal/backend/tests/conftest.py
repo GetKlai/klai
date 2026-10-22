@@ -93,6 +93,36 @@ os.environ.setdefault(
 # ---------------------------------------------------------------------------
 from auth_test_helpers import respx_zitadel  # noqa: E402, F401
 
+_FAKE_ORG_DEFAULTS: dict[str, Any] = {
+    "id": lambda: 42,
+    "zitadel_org_id": lambda: "zit-org-42",
+    "slug": lambda: "acme",
+    "platform_unlocked_features": lambda: ["partner_api", "widgets"],
+    "widget_css_variables": dict,
+    "provisioning_status": lambda: "ready",
+}
+
+
+class FakeOrg:
+    """A ``PortalOrg`` row for tests that do not need a database.
+
+    The attributes are the model's own columns, ``None`` unless a default is
+    listed here, so a column the code under test starts reading never needs
+    adding to six copies of this class. An unknown keyword raises, which
+    keeps the fake from outliving a dropped column.
+    """
+
+    def __init__(self, **values: Any) -> None:
+        from app.models.portal import PortalOrg
+
+        columns = {column.name for column in PortalOrg.__table__.columns}
+        if unknown := values.keys() - columns:
+            raise TypeError(f"FakeOrg got columns PortalOrg does not have: {sorted(unknown)}")
+        for name in columns:
+            default = _FAKE_ORG_DEFAULTS.get(name)
+            setattr(self, name, values[name] if name in values else default() if default else None)
+
+
 # ---------------------------------------------------------------------------
 # Shared fakeredis fixture for SPEC-SEC-SESSION-001 + future Redis-backed code
 # ---------------------------------------------------------------------------

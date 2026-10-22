@@ -13,6 +13,8 @@ import pytest
 from fastapi import HTTPException
 from helpers import FakeResult, setup_db
 
+from tests.conftest import FakeOrg
+
 # ---------------------------------------------------------------------------
 # Domain fakes (specific to this module's tests)
 # ---------------------------------------------------------------------------
@@ -40,31 +42,6 @@ class FakeKbAccessRow:
     partner_api_key_id: str = "key-uuid-1"
     kb_id: int = 10
     access_level: str = "read"
-
-
-@dataclass
-class FakeOrg:
-    id: int = 42
-    zitadel_org_id: str = "zit-org-42"
-    # SPEC-SEC-HYGIENE-001 REQ-24: per-tenant widget JWT key derives from
-    # tenant slug, so partner_dependencies needs `org.slug` available on
-    # the row. Hard-coded value mirrors the populated allowlist set in
-    # conftest.py so any downstream callback validation passes too.
-    slug: str = "acme"
-    deleted_at: object = None
-    provisioning_status: str = "ready"
-    # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C: partner_api must be unlocked
-    # for happy-path tests that exercise the full get_partner_key flow.
-    platform_unlocked_features: list = None  # type: ignore[assignment]
-
-    def __post_init__(self):
-        if self.platform_unlocked_features is None:
-            # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1 (Finding B-1): chat-path
-            # `_auth_via_session_token` calls assert_platform_unlocked(org, "widgets").
-            # Default both features unlocked so partner_api + widget chat-flow
-            # happy-paths pass; tests that exercise the locked-tenant path
-            # override per-instance.
-            self.platform_unlocked_features = ["partner_api", "widgets"]
 
 
 def _make_request(token: str | None = None) -> MagicMock:

@@ -473,7 +473,7 @@ async def test_internal_knowledge_feature_is_disabled_for_another_orgs_user(worl
 async def test_pdf_attachments_are_not_converted_for_the_widget(monkeypatch, profile, reads_attachments):
     import app.api.partner as partner
 
-    convert = AsyncMock(return_value=MagicMock(user_visible_error=None, processed_count=0))
+    convert = AsyncMock(return_value=MagicMock(user_visible_error=None, processed_count=0, unreadable=[]))
     monkeypatch.setattr(partner, "process_chat_attachments", convert)
     stop = {"stopped": True}
     monkeypatch.setattr(partner, "_input_safety_block_response", lambda *_: stop)

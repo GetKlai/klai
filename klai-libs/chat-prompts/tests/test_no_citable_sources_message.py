@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from klai_chat_prompts import contact_reply_again, no_citable_sources_message
+from klai_chat_prompts import FIXED_TEXTS, contact_reply_again, fixed_text, no_citable_sources_message
 
 _DUTCH = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 _ENGLISH = "I cannot answer this reliably from the available knowledge sources."
@@ -174,3 +174,15 @@ def test_helpdesk_default_leaves_existing_callers_untouched() -> None:
 def test_contact_reply_again_names_only_the_channels_it_is_given(code: str, expected: str) -> None:
     email, phone = ("help@example.com", "010 123 4567") if code == "de" else (None, None)
     assert contact_reply_again(code, email=email, phone=phone) == expected
+
+
+@pytest.mark.parametrize("language", [None, "und", "", "  ", 42])
+def test_fixed_text_without_a_language_decision_is_dutch(language: object) -> None:
+    assert fixed_text("contact_reply", language) == FIXED_TEXTS["contact_reply"]["nl"]
+
+
+def test_fixed_text_uses_an_exact_code_in_the_table_and_english_for_anything_else() -> None:
+    assert fixed_text("strict_refusal", "de") == FIXED_TEXTS["strict_refusal"]["de"]
+    assert fixed_text("contact_reply", "de") == FIXED_TEXTS["contact_reply"]["en"]
+    assert fixed_text("strict_refusal", "DE") == FIXED_TEXTS["strict_refusal"]["en"]
+    assert fixed_text("strict_refusal", "nl-NL") == FIXED_TEXTS["strict_refusal"]["en"]
