@@ -1183,7 +1183,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         and not _broad_mode_active(chunks, broad_consent=t.broad_consent)
     ):
         turn.selection = await select_passages(
-            t.messages, selection_chunks, t.settings, delegated_org_id=t.zitadel_org_id
+            t.messages, selection_chunks, t.settings, delegated_org_id=t.zitadel_org_id, internal=t.internal
         )
         if turn.selection is None:
             # A failed selection fails closed where the reply may only come
@@ -1201,14 +1201,16 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             turn.passages_chosen = True
             chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
             trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
-        elif not source_only:
+        elif not source_only and (turn.selection is None or turn.not_in_passages):
             # Internal Open with nothing chosen (not in the passages, no
             # sentence pointed at, or no verdict) keeps every passage, with a
             # note that none was found to answer. Withholding them was measured
             # on the internal meetlat (21 October): the writer lost 5 to 7 of
             # 21 answers the owner expected from the knowledge base, because
             # the selection's "not in the passages" is wrong more often on an
-            # employee's long, relayed question than on a visitor's.
+            # employee's long, relayed question than on a visitor's. A verdict
+            # "answers" with empty evidence (a rewrite of text already in the
+            # conversation) needs no passage and gets no note.
             turn.no_passage_answers = True
     if not (turn.passages_chosen and any(chunk.get("kept") for chunk in chunks)):
         # A kept passage answered: the knowledge base had the answer.

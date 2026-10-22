@@ -458,6 +458,64 @@ async def test_an_internal_record_carries_the_selection_verdict_without_its_quot
     assert "quote" not in str(record["selection"]) and "question" not in record["selection"]
 
 
+@pytest.mark.asyncio
+async def test_an_internal_turn_runs_the_selection_in_the_internal_words(monkeypatch):
+    """The widget's selection rule ("how to do it") called 13 of 48 internal
+    turns not in the passages while the owner expected an answer; the
+    internal chat gets its own words for the same step."""
+    from app.services.passage_selection import SELECTION_SYSTEM_PROMPT, SELECTION_SYSTEM_PROMPT_INTERNAL
+
+    llm = _LiteLLM()
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    (selection,) = llm.of("passage_selection")
+    system = next(m["content"] for m in selection["messages"] if m["role"] == "system")
+    assert system == SELECTION_SYSTEM_PROMPT_INTERNAL and system != SELECTION_SYSTEM_PROMPT
+    assert "rewrite, review, translate or shorten" in system
+
+    widget_llm = _LiteLLM()
+    await _turn(
+        monkeypatch,
+        widget_llm,
+        profile=ChatProfile(surface="partner", kb_mode="strict", kb_slugs=("handboek",)),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        key_id="key-partner",
+    )
+    (widget_selection,) = widget_llm.of("passage_selection")
+    assert next(m["content"] for m in widget_selection["messages"] if m["role"] == "system") == SELECTION_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_an_internal_rewrite_request_keeps_the_passages_without_the_no_answer_note(monkeypatch):
+    """ "Answers with empty evidence" is the selection's word for a request
+    that needs no passage (rewrite text already in the conversation); the
+    note that no passage answers would make the writer say "not in the
+    knowledge base" over a mail written from the previous answer."""
+    from app.services.retrieval_context import NO_PASSAGE_ANSWERS_NOTE
+
+    llm = _LiteLLM(
+        selection={"need": "een mail van het vorige antwoord", "evidence": [], "verdict": "answers", "question": ""}
+    )
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    prompt = _system_prompt(llm)
+    assert ARTICLE in prompt and NO_PASSAGE_ANSWERS_NOTE not in prompt
+
+
 # --- Open and general never refuse for a missing source ---------------------------
 
 
