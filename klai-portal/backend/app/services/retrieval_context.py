@@ -1139,7 +1139,11 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     profile, turn = t.profile, t.turn
     chunks, trusted_sources = found.chunks, found.trusted_sources
 
-    if t.internal and profile.kb_mode == "strict" and not chunks:
+    # The kept passages of the conversation (kept_passages_of) join the
+    # candidates, also when the search found nothing; broad mode and the gap
+    # read the search's own chunks.
+    selection_chunks = _with_kept(t, chunks)
+    if t.internal and profile.kb_mode == "strict" and not selection_chunks:
         if not isinstance(found.evidence_pack, dict):
             logger.error("retrieval_response_missing_evidence_pack", org_id=t.org_id)
         if not turn.user_provided_content:
@@ -1161,10 +1165,6 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     # no articles. "Not in the passages" is routed by the caller (the
     # widget's "not found", the internal Strict refusal); an internal Open
     # turn without chosen passages keeps every passage (see below).
-    # The kept passages of a widget conversation (kept_passages_of) join the
-    # candidates, also when the search found nothing; broad mode and the gap
-    # read the search's own chunks.
-    selection_chunks = _with_kept(t, chunks)
     source_only = not t.internal or profile.kb_mode == "strict"
     if (
         selection_chunks

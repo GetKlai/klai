@@ -352,6 +352,16 @@ async def _capture_internal_turn(*, answer_signals: dict[str, Any], **_: object)
     _captured_signals.append(dict(answer_signals))
 
 
+async def _no_internal_case(**_: object) -> None:
+    """Stands in for ``last_internal_case``: the employee's own conversation may have stored a case for this turn."""
+    return None
+
+
+async def _skip_internal_case(**_: object) -> None:
+    """Stands in for ``keep_internal_case``: a replayed turn leaves nothing for the employee's next turn."""
+    return None
+
+
 async def _new_answer(org: PortalOrg, profile: ChatProfile, messages: list[dict]) -> dict:
     # A context, not a key: chat_completions only checks "chat", and the profile
     # passed in decides surface and scope. is_preview keeps the turn out of the
@@ -667,6 +677,8 @@ async def main(org_slug: str, count: int, max_turns: int) -> None:
     org = await _load_org(org_slug)
     tenant_key = _tenant_litellm_key(org.slug)
     partner.record_internal_turn = _capture_internal_turn  # type: ignore[assignment]
+    partner.last_internal_case = _no_internal_case  # type: ignore[assignment]
+    partner.keep_internal_case = _skip_internal_case  # type: ignore[assignment]
     # The retrieval log keys feedback to the chunks of the employee's latest
     # turn; a replayed turn written there would be mistaken for theirs.
     widget_turn.write_retrieval_log = _skip_retrieval_log  # type: ignore[assignment]

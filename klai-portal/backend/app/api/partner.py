@@ -7,12 +7,13 @@ Authenticated via partner API keys (Bearer pk_live_...).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -70,7 +71,9 @@ from app.services.retrieval_context import KnowledgeTurn
 from app.services.web_search import build_web_results_block, search_web, web_results_as_chunks
 from app.services.widget_audit import (
     hash_audit_value,
+    keep_internal_case,
     last_case,
+    last_internal_case,
     patch_answer_signals,
     record_internal_turn,
     record_widget_turn,
@@ -813,6 +816,78 @@ async def _previous_turn(
     return case_file.stored_case_for(request.messages, stored)
 
 
+class _InternalConversation(NamedTuple):
+    """How an internal turn finds its conversation's stored case: digests only, no text."""
+
+    # The employee and the conversation's first message: one row per conversation.
+    key: str
+    # The employee's messages before the latest one: what the previous turn stored as ``current``.
+    previous: str
+    # Every message of the employee's, up to this turn.
+    current: str
+
+
+def _digest(*parts: str) -> str:
+    return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
+
+
+def _internal_conversation(sent: list[dict], profile: ChatProfile) -> _InternalConversation | None:
+    """The conversation of an internal turn, from the messages as LibreChat sent them.
+
+    LibreChat sends no conversation id: the "Klai AI" endpoint in
+    deploy/librechat/librechat.yaml has no headers, and the body is the plain
+    OpenAI request with ``user``. The employee and their first message identify
+    the conversation instead. Read before a PDF in the latest message becomes
+    text, so the digests rest on what LibreChat sent and not on the conversion.
+    General mode reads no case, so it keeps none.
+    """
+    said = [_message_text(message.get("content")) for message in sent if message.get("role") == "user"]
+    if profile.user_id is None or profile.kb_mode == "general" or not said:
+        return None
+    return _InternalConversation(_digest(profile.user_id, said[0]), _digest(*said[:-1]), _digest(*said))
+
+
+async def _previous_internal_turn(
+    request: ChatCompletionsRequest, auth: PartnerAuthContext, conversation: _InternalConversation | None
+) -> case_file.StoredTurn | None:
+    # The internal chat's _previous_turn: a read that fails costs this turn its memory and nothing else.
+    if conversation is None or not case_file.is_follow_up(request.messages):
+        return None
+    try:
+        stored = await last_internal_case(
+            org_id=auth.org_id, conversation_key=conversation.key, turn_digest=conversation.previous
+        )
+    except Exception:
+        logger.warning("internal_chat_previous_case_unavailable", org_id=auth.org_id, exc_info=True)
+        return None
+    if stored is not None:
+        logger.info(
+            "internal_chat_case_remembered",
+            org_id=auth.org_id,
+            case=stored.case is not None,
+            kept_passages=len(stored.kept_passages),
+        )
+    return stored
+
+
+def _keep_internal_case(org_id: int, conversation: _InternalConversation, inputs: InternalInputs) -> None:
+    """Store the turn's case and kept passages for the next turn, beside the reply; nothing when it has neither."""
+    case = inputs.case.model_dump() if inputs.case is not None else None
+    if case is None and not inputs.kept_passages:
+        return
+    task = asyncio.create_task(
+        keep_internal_case(
+            org_id=org_id,
+            conversation_key=conversation.key,
+            turn_digest=conversation.current,
+            case=case,
+            kept_passages=inputs.kept_passages,
+        )
+    )
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
+
+
 def _record_fields(
     audit: _WidgetAudit, request: ChatCompletionsRequest, http_request: Request, auth: PartnerAuthContext
 ) -> dict[str, Any]:
@@ -958,6 +1033,7 @@ async def _internal_chat_turn(
     db: AsyncSession,
     profile: ChatProfile,
     *,
+    sent: list[dict],
     pasted_correspondence: bool,
     turn_started: float,
 ) -> Any:
@@ -969,25 +1045,30 @@ async def _internal_chat_turn(
     if profile.user_id is not None:
         instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
         templates_block = build_template_instructions_block(instructions)
+    conversation = _internal_conversation(sent, profile)
+    previous = await _previous_internal_turn(request, auth, conversation)
+    inputs = InternalInputs(
+        request=request,
+        auth=auth,
+        settings=settings,
+        profile=profile,
+        templates_block=templates_block,
+        telemetry_level=telemetry_level,
+        pasted_correspondence=pasted_correspondence,
+        previous_case=previous.case if previous else None,
+        kept_passages=previous.kept_passages if previous else [],
+        answer_signals={"case_remembered": previous is not None},
+        turn_started=turn_started,
+        web_search=lambda system_prompt: _maybe_apply_web_search(
+            request=request, auth=auth, system_prompt=system_prompt
+        ),
+    )
     try:
-        reply = await internal_turn(
-            InternalInputs(
-                request=request,
-                auth=auth,
-                settings=settings,
-                profile=profile,
-                templates_block=templates_block,
-                telemetry_level=telemetry_level,
-                pasted_correspondence=pasted_correspondence,
-                answer_signals={},
-                turn_started=turn_started,
-                web_search=lambda system_prompt: _maybe_apply_web_search(
-                    request=request, auth=auth, system_prompt=system_prompt
-                ),
-            )
-        )
+        reply = await internal_turn(inputs)
     except AnswerUpstreamError as error:
         return _upstream_error_response(error, request)
+    if conversation is not None:
+        _keep_internal_case(auth.org_id, conversation, inputs)
     if reply.deltas is not None:
         knowledge = request.knowledge
         frames = _streamed_then_recorded(
@@ -1011,6 +1092,8 @@ async def chat_completions(
     ``internal_turn``, whose Open and general replies stream as they are written.
     """
     turn_started = time.perf_counter()
+    # The messages as the client sent them; the attachment step below may replace the list.
+    sent = request.messages
     require_permission(auth, "chat")
     # canonical_chat_completions always passes the profile; direct callers get
     # the one their key resolves to. From here on the profile, not the key, is
@@ -1047,7 +1130,13 @@ async def chat_completions(
         )
     else:
         response = await _internal_chat_turn(
-            request, auth, db, profile, pasted_correspondence=pasted_correspondence, turn_started=turn_started
+            request,
+            auth,
+            db,
+            profile,
+            sent=sent,
+            pasted_correspondence=pasted_correspondence,
+            turn_started=turn_started,
         )
     return _with_notice_first(response, notice) if notice else response
 
