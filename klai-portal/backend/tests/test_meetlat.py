@@ -15,6 +15,7 @@ import sys
 import types
 from pathlib import Path
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -256,6 +257,102 @@ def test_run_replays_only_the_cases_of_its_org_and_those_without_an_org(monkeypa
     assert answered == ["first", "no org field"]
     assert "2 of 3 cases are for this org" in capsys.readouterr().out
     assert json.loads((tmp_path / "r.jsonl.meta.json").read_text())["cases"] == 2
+
+
+# --- a restart during the round --------------------------------------------------------------------------------
+
+
+def _answer(text="answer after the restart", signals=None):
+    return {"text": text, "ttft_ms": 5, "total_ms": 900, "signals": signals or {"decision": "answer"}}
+
+
+def _gateway_error(status_code: int) -> Exception:
+    """What the pipeline raises when LiteLLM answers ``status_code``: the httpx error, wrapped as the turn's 502."""
+    from app.services.widget_reply import AnswerUpstreamError
+
+    request = httpx.Request("POST", "http://litellm.example.com/v1/chat/completions")
+    cause = httpx.HTTPStatusError("upstream", request=request, response=httpx.Response(status_code, request=request))
+    error = AnswerUpstreamError("Chat service error", "nl")
+    error.__cause__ = cause
+    return error
+
+
+def _replay_with_outcomes(monkeypatch, tmp_path, outcomes):
+    """One case whose replay attempts give ``outcomes`` in turn (an exception is raised); the row and the pauses."""
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa-1", ["first"])}, [])
+    remaining = list(outcomes)
+    pauses: list[float] = []
+
+    async def new_answer(_org, _profile, _messages):
+        outcome = remaining.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def sleep(seconds):
+        pauses.append(seconds)
+
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+    monkeypatch.setattr(meetlat.asyncio, "sleep", sleep)
+    assert _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}], overlay) == 0
+    (row,) = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    return row, pauses, remaining
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        httpx.ConnectError("connection refused"),
+        httpx.ReadTimeout("timed out"),
+        _gateway_error(503),
+    ],
+    ids=["connection_error", "timeout", "gateway_503_behind_the_turns_502"],
+)
+def test_a_turn_that_meets_a_restart_is_replayed_after_growing_pauses(monkeypatch, tmp_path, capsys, failure):
+    row, pauses, _ = _replay_with_outcomes(monkeypatch, tmp_path, [failure, failure, _answer()])
+
+    assert row["text"] == "answer after the restart"
+    assert "error" not in row
+    assert pauses == [10, 30]
+    out = capsys.readouterr().out
+    assert "attempt 1 of 4" in out
+    assert "attempt 2 of 4" in out
+
+
+def test_an_empty_answer_counts_as_a_restart_and_is_replayed(monkeypatch, tmp_path):
+    row, pauses, _ = _replay_with_outcomes(monkeypatch, tmp_path, [_answer(text="  "), _answer()])
+
+    assert row["text"] == "answer after the restart"
+    assert pauses == [10]
+
+
+def test_a_refusal_behind_a_retrieval_outage_is_replayed(monkeypatch, tmp_path):
+    outage = _answer(text="De kennisbank is tijdelijk niet bereikbaar.", signals={"retrieval_failure": "HTTP 503"})
+
+    row, pauses, _ = _replay_with_outcomes(monkeypatch, tmp_path, [outage, _answer()])
+
+    assert row["text"] == "answer after the restart"
+    assert pauses == [10]
+
+
+@pytest.mark.parametrize(
+    "failure", [KeyError("decision"), _gateway_error(500)], ids=["bug_in_the_pipeline", "gateway_500"]
+)
+def test_a_failure_that_is_not_a_restart_is_an_error_row_at_once(monkeypatch, tmp_path, failure):
+    row, pauses, remaining = _replay_with_outcomes(monkeypatch, tmp_path, [failure, _answer()])
+
+    assert row["error"] == type(failure).__name__
+    assert pauses == []
+    assert len(remaining) == 1
+
+
+def test_a_turn_that_keeps_failing_becomes_an_error_row_after_three_retries(monkeypatch, tmp_path, capsys):
+    row, pauses, remaining = _replay_with_outcomes(monkeypatch, tmp_path, [httpx.ConnectError("down")] * 4)
+
+    assert row["error"] == "ConnectError"
+    assert pauses == [10, 30, 60]
+    assert remaining == []
+    assert "1 error row(s)" in capsys.readouterr().out
 
 
 def test_run_refuses_to_resume_rows_that_another_code_tree_produced(monkeypatch, tmp_path, capsys):

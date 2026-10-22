@@ -440,6 +440,23 @@ async def test_a_retrieve_body_that_is_not_json_counts_as_a_lost_knowledge_base(
 
 
 @pytest.mark.asyncio
+async def test_an_internal_record_names_the_retrieval_failure_behind_the_refusal(monkeypatch):
+    """A retrieval-api restart turned into an ordinary-looking Strict refusal,
+    so a measurement round scored the outage as a correct refusal."""
+    turn = await _turn(
+        monkeypatch,
+        _LiteLLM(UNRELATED),
+        profile=_internal(kb_mode="strict"),
+        retrieval_response=httpx.Response(503, text="restarting"),
+        stream=False,
+    )
+
+    assert "tijdelijk niet bereikbaar" in turn.text.lower()
+    (record,) = turn.records
+    assert record["retrieval_failure"] == "HTTP 503"
+
+
+@pytest.mark.asyncio
 async def test_an_internal_record_carries_the_selection_verdict_without_its_quotes(monkeypatch):
     """The internal meetlat tunes the selection on its verdict, which the
     record never carried: it was skipped whole because quotes are text."""

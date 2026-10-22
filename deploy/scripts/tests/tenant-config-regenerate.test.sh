@@ -24,16 +24,24 @@ mkdir -p "$work/bin" "$work/py"
 # Every call the script makes lands in $FIXTURES/calls, in order, so a case can
 # assert that the lock came before the health poll and the poll before the
 # regenerate. The script refuses to run without flock; this stub also records
-# the file behind fd 9 (/proc on Linux, F_GETPATH on macOS), so a case can prove
-# which lock was taken.
+# the file behind the fd it is given (/proc on Linux, F_GETPATH on macOS), so a
+# case can prove which lock was taken, and in which order.
 cat > "$work/bin/flock" <<'STUB'
 #!/usr/bin/env bash
-if [[ -e "/proc/$$/fd/9" ]]; then
-  lock="$(readlink "/proc/$$/fd/9")"
+fd="${*: -1}"
+if [[ -e "/proc/$$/fd/$fd" ]]; then
+  lock="$(readlink "/proc/$$/fd/$fd")"
 else
-  lock="$(python3 -c 'import fcntl; print(fcntl.fcntl(9, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode())')"
+  lock="$(python3 -c 'import fcntl, sys; print(fcntl.fcntl(int(sys.argv[1]), fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode())' "$fd")"
 fi
 echo "flock $* lock=$lock" >> "$FIXTURES/calls"
+# A case makes a measurement round hold its lock for the first N attempts, or
+# for every attempt with "always".
+if [[ "$lock" == */.measurement.lock && -f "$FIXTURES/measurement_busy_for" ]]; then
+  busy="$(cat "$FIXTURES/measurement_busy_for")"
+  attempts="$(grep -c '/\.measurement\.lock$' "$FIXTURES/calls")"
+  if [[ "$busy" == always ]] || (( attempts <= busy )); then exit 1; fi
+fi
 exit 0
 STUB
 
@@ -164,9 +172,39 @@ check_calls "  calls the regenerate endpoint with the internal secret" \
     "^regenerate http://localhost:8010/internal/librechat/regenerate auth=Bearer test-secret$"
 # The same host lock compose-up.sh takes, held before the proxy is polled, so a
 # klai-docker-authz deploy cannot start between "proxy answers" and the regenerate.
-check "  takes the host lock compose-up.sh takes, first" \
-    "flock -w 900 9 lock=$(cd "$case_dir" && pwd -P)/.container-deploy.lock" \
-    "$(head -n1 "$case_dir/fixtures/calls")"
+# Before that, the measurement lock, in the same order compose-up.sh takes the
+# two, so two deploys cannot each hold the lock the other waits for.
+check "  takes the measurement lock, then the host lock compose-up.sh takes, first" \
+    "flock -x -n 8 lock=$(cd "$case_dir" && pwd -P)/.measurement.lock
+flock -w 900 9 lock=$(cd "$case_dir" && pwd -P)/.container-deploy.lock" \
+    "$(head -n2 "$case_dir/fixtures/calls")"
+
+# A measurement round (portal-api-oneoff.sh --measurement) is running: the
+# regenerate restarts tenant containers, so it waits for the round, saying so
+# once a minute.
+new_case measurement_finishes
+fx measurement_busy_for 1
+run_target KLAI_MEASUREMENT_WAIT_SECONDS=1200
+check "a measurement round that finishes within the wait -> 0" 0 "$rc"
+check "  waited one minute, said so once" 1 "$(grep -c 'Waiting for a measurement round' "$case_dir/out")"
+check "  did not go ahead without the lock" 0 "$(grep -c 'regenerating anyway' "$case_dir/out")"
+check "  measurement lock, then host lock, then the health poll" \
+    "flock -x -n 8|flock -x -w 60 8|flock -w 900 9|health" \
+    "$(head -n4 "$case_dir/fixtures/calls" | sed 's/ lock=.*//; s/ http.*//' | paste -sd '|' -)"
+
+# A hotfix must not wait an hour for a measurement: after the bounded wait the
+# regenerate goes ahead and says that it did.
+new_case measurement_outlasts_the_wait
+fx measurement_busy_for always
+run_target KLAI_MEASUREMENT_WAIT_SECONDS=90
+check "a round still running after the wait -> the regenerate goes ahead, 0" 0 "$rc"
+check "  said it was waiting once per minute" 2 "$(grep -c 'Waiting for a measurement round' "$case_dir/out")"
+check_output "  says it goes ahead anyway, and why" "::warning::"
+check_output "  names the wait" "still held after 90 s; regenerating anyway"
+check "  waited in steps of at most a minute, then took the host lock" \
+    "flock -x -n 8|flock -x -w 60 8|flock -x -w 30 8|flock -w 900 9" \
+    "$(grep '^flock ' "$case_dir/fixtures/calls" | sed 's/ lock=.*//' | paste -sd '|' -)"
+check_calls "  the regenerate still ran" "^regenerate "
 
 # Finding 3D (2026-08-13): the endpoint reports per-tenant failures in its errors
 # array on a 200, so the status code alone would call a partial failure green.

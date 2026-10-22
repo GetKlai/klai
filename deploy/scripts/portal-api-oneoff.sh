@@ -15,20 +15,34 @@
 # touch it, and writes output to a host directory that survives the container
 # too.
 #
-# Usage: portal-api-oneoff.sh [--out DIR] -- COMMAND [ARGS...]
+# --measurement marks the run as a chat quality round (scripts/meetlat.py run,
+# docs/runbooks/meetlat.md). Moving the round out of the service container did
+# not move it away from the services it calls: on 22 October 2026 three deploys
+# recreated the LiteLLM gateway or portal-api in the middle of a round. A round
+# therefore holds a shared lock on /opt/klai/.measurement.lock for as long as
+# its container runs; compose-up.sh and tenant-config-regenerate.sh ask for the
+# same file exclusively and wait up to 20 minutes for running rounds before
+# they recreate anything. Shared, so several rounds can run at once.
+#
+# Usage: portal-api-oneoff.sh [--measurement] [--out DIR] -- COMMAND [ARGS...]
 
 set -euo pipefail
 
 PORTAL_CONTAINER="${KLAI_PORTAL_CONTAINER:-klai-core-portal-api-1}"
 
 usage() {
-    echo "Usage: $0 [--out DIR] -- COMMAND [ARGS...]" >&2
+    echo "Usage: $0 [--measurement] [--out DIR] -- COMMAND [ARGS...]" >&2
     exit 1
 }
 
 out_dir=""
+measurement=no
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --measurement)
+            measurement=yes
+            shift
+            ;;
         --out)
             [[ $# -ge 2 ]] || usage
             out_dir="$2"
@@ -44,6 +58,28 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ $# -gt 0 ]] || usage
+
+# Taken before the service is inspected: a round that waited for a deploy has to
+# clone the container that deploy left behind, not the one it replaced. The
+# descriptor stays open in this shell and in `docker run` below, so the lock is
+# held until the container has exited. Without flock a round would run
+# unannounced, so a missing binary is an error, as in the deploy scripts.
+# A round usually runs as root and a deploy as klai, so the file is opened
+# read-only (enough for flock(2)) and created world-readable: whoever made it,
+# the other side can still lock it.
+if [[ "$measurement" == yes ]]; then
+    MEASUREMENT_LOCK="${KLAI_MEASUREMENT_LOCK:-/opt/klai/.measurement.lock}"
+    if ! command -v flock >/dev/null 2>&1; then
+        echo "ERROR: flock not found; refusing to start a measurement round without the lock $MEASUREMENT_LOCK" >&2
+        exit 1
+    fi
+    [[ -e "$MEASUREMENT_LOCK" ]] || install -m 644 /dev/null "$MEASUREMENT_LOCK"
+    exec 8<"$MEASUREMENT_LOCK"
+    if ! flock -s -n 8; then
+        echo "A deploy holds $MEASUREMENT_LOCK; the round starts once it is done."
+        flock -s 8
+    fi
+fi
 
 if [[ "$(docker inspect --format '{{.State.Running}}' "$PORTAL_CONTAINER" 2>/dev/null || echo false)" != "true" ]]; then
     echo "ERROR: $PORTAL_CONTAINER is not running; refusing to clone a stopped service." >&2

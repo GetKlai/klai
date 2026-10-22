@@ -39,6 +39,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import replay_internal_chat as replay
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -65,6 +66,13 @@ _ASK_CHARS = 400
 _READING_CHARS = 260
 # An answer that is only a clarifying question is no answer from the knowledge base.
 _SHORT_QUESTION_CHARS = 200
+# On 22 October 2026 three deploys restarted the LiteLLM gateway or portal-api in
+# the middle of a round, and the turns they hit came back empty or as errors. A
+# turn that meets a restart is replayed after each of these pauses before it
+# becomes an error row; any other failure is a bug and becomes one at once.
+_RETRY_PAUSES_SECONDS = (10, 30, 60)
+_RESTART_ERRORS = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, ConnectionError, TimeoutError)
+_RESTART_STATUSES = (502, 503, 504)
 
 _CLASS_FIELDS = ("class", "klasse", "expect")
 _AUTOMATIC_CLASSES = ("weigering", "antwoord_kb", "dekkend_antwoord", "antwoord_algemeen_gelabeld")
@@ -290,6 +298,42 @@ def _guard_meta(meta_path: Path, modules: dict[str, str], fingerprint: dict[str,
         )
 
 
+def _is_restart(exc: BaseException) -> bool:
+    """Whether the exception, or one it was raised from, is a service that was gone or answered 502/503/504.
+
+    The pipeline wraps every gateway failure in its own 502 (AnswerUpstreamError),
+    so the status that counts is the one of the httpx error underneath.
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, _RESTART_ERRORS) or (
+            isinstance(current, httpx.HTTPStatusError) and current.response.status_code in _RESTART_STATUSES
+        ):
+            return True
+        current = current.__cause__
+    return False
+
+
+def _restart_behind(answer: dict) -> str | None:
+    """Why an answer that did come back measured a restart instead of the pipeline, or None.
+
+    The internal chat turns a lost knowledge base into a refusal or a general
+    answer and names the failure in ``retrieval_failure``: ``HTTP <status>`` or
+    the httpx error's class name.
+    """
+    if not (answer.get("text") or "").strip():
+        return "empty_answer"
+    failure = (answer.get("signals") or {}).get("retrieval_failure")
+    if not failure:
+        return None
+    if failure.startswith("HTTP "):
+        restart = int(failure.removeprefix("HTTP ")) in _RESTART_STATUSES
+    else:
+        error = getattr(httpx, failure, None)
+        restart = isinstance(error, type) and issubclass(error, _RESTART_ERRORS)
+    return f"retrieval {failure}" if restart else None
+
+
 async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
     """One row. Index k is the position in the readable turns, u the position among the employee's turns."""
     user_turns = [k for k, turn in enumerate(thread.turns) if turn["role"] == "user"]
@@ -299,11 +343,29 @@ async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
     k = user_turns[u]
     messages = [{"role": t["role"], "content": t["content"]} for t in thread.turns[: k + 1]]
     row = {"cid": case["cid"], "k": k, "u": u, "mode": thread.mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
-    try:
-        answer = await replay._new_answer(org, thread.profile, messages)  # type: ignore[arg-type]
-    except Exception as exc:  # one broken turn may not stop the round
-        return {**row, "error": type(exc).__name__}
-    return {**row, "text": answer["text"], "signals": answer["signals"], "total_ms": answer["total_ms"]}
+    attempts = len(_RETRY_PAUSES_SECONDS) + 1
+    failure = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            answer = await replay._new_answer(org, thread.profile, messages)  # type: ignore[arg-type]
+        except Exception as exc:  # one broken turn may not stop the round
+            if not _is_restart(exc):
+                return {**row, "error": type(exc).__name__}
+            failure = type(exc).__name__
+        else:
+            restart = _restart_behind(answer)
+            if restart is None:
+                return {**row, "text": answer["text"], "signals": answer["signals"], "total_ms": answer["total_ms"]}
+            failure = restart
+        if attempt == attempts:
+            break
+        pause = _RETRY_PAUSES_SECONDS[attempt - 1]
+        print(
+            f"  {case['cid']} turn {u}: {failure} on attempt {attempt} of {attempts}, replaying in {pause} s",
+            flush=True,
+        )
+        await asyncio.sleep(pause)
+    return {**row, "error": failure}
 
 
 def _rows_inside_checkout(out: Path) -> bool:

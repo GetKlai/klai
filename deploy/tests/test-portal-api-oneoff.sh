@@ -3,7 +3,9 @@
 # throwaway one-off container. This pins the parts a wrong clone would get
 # silently wrong: the networks and bind mounts the live service depends on,
 # the Sentry/GlitchTip variables a scratch container must not page on, and the
-# refusal to clone a stopped service.
+# refusal to clone a stopped service. With --measurement it also holds the
+# shared lock compose-up.sh and tenant-config-regenerate.sh wait on, for as
+# long as the container runs.
 
 set -euo pipefail
 
@@ -14,8 +16,11 @@ FAIL=0
 run_oneoff() {
     # $1 = "true"/"false" — what docker inspect reports for .State.Running
     # $2 = "abs" (default; --out <tmp>/out), "rel" (--out out, run from <tmp>/work)
+    # $3 = an extra option before --out (--measurement)
     local running="$1"
     local out_mode="${2:-abs}"
+    local extra=()
+    if [ -n "${3:-}" ]; then extra=("$3"); fi
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/bin" "$tmp/out" "$tmp/work"
 
@@ -24,6 +29,25 @@ run_oneoff() {
     # `docker exec ... id -u` reports the uid the real container runs as; the
     # stub reports our own uid so the script's `chown` needs no privilege.
     export ONEOFF_TEST_UID="$(id -u)"
+    export KLAI_MEASUREMENT_LOCK="$tmp/.measurement.lock"
+
+    # A real flock(2) on the descriptor the script hands over, so the lock
+    # outlives this stub exactly as it outlives flock(1): it belongs to the
+    # script's open file, not to this process. Python, because macOS ships no
+    # flock binary.
+    cat >"$tmp/bin/flock" <<'STUB'
+#!/usr/bin/env python3
+import fcntl, os, sys
+args = sys.argv[1:]
+with open(os.path.join(os.environ["ONEOFF_TEST_TMP"], "flock.log"), "a") as log:
+    log.write(" ".join(args) + "\n")
+mode = fcntl.LOCK_SH if "-s" in args else fcntl.LOCK_EX
+try:
+    fcntl.flock(int(args[-1]), mode | (fcntl.LOCK_NB if "-n" in args else 0))
+except BlockingIOError:
+    sys.exit(1)
+STUB
+    chmod +x "$tmp/bin/flock"
 
     cat >"$tmp/bin/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -53,6 +77,17 @@ case "$1" in
         ;;
     run)
         echo "$*" >> "$ONEOFF_TEST_TMP/run.log"
+        # What a deploy asking for the lock would find while the container runs.
+        python3 -c '
+import fcntl, os, sys
+if not os.path.exists(sys.argv[1]):
+    print("no lock file")
+    sys.exit()
+try:
+    fcntl.flock(open(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    print("free")
+except BlockingIOError:
+    print("held")' "$KLAI_MEASUREMENT_LOCK" > "$ONEOFF_TEST_TMP/lock-during-run"
         args=("$@")
         for ((i = 0; i < ${#args[@]}; i++)); do
             if [ "${args[$i]}" = "--env-file" ]; then
@@ -69,9 +104,9 @@ STUB
     if [ "$out_mode" = "rel" ]; then
         # A relative --out has to resolve against the cwd the operator ran
         # the script from, not against $tmp.
-        (cd "$tmp/work" && PATH="$tmp/bin:$PATH" bash "$SCRIPT" --out out -- echo hello >"$tmp/out.log" 2>"$tmp/err.log")
+        (cd "$tmp/work" && PATH="$tmp/bin:$PATH" bash "$SCRIPT" ${extra[@]+"${extra[@]}"} --out out -- echo hello >"$tmp/out.log" 2>"$tmp/err.log")
     else
-        PATH="$tmp/bin:$PATH" bash "$SCRIPT" --out "$tmp/out" -- echo hello >"$tmp/out.log" 2>"$tmp/err.log"
+        PATH="$tmp/bin:$PATH" bash "$SCRIPT" ${extra[@]+"${extra[@]}"} --out "$tmp/out" -- echo hello >"$tmp/out.log" 2>"$tmp/err.log"
     fi
     LAST_RC=$?
     set -e
@@ -81,8 +116,10 @@ STUB
     LAST_ENV_FILE="$tmp/run-env-file"
     LAST_ERR="$(cat "$tmp/err.log" 2>/dev/null || true)"
     LAST_TMP="$tmp"
+    LAST_FLOCK="$(cat "$tmp/flock.log" 2>/dev/null || true)"
+    LAST_LOCK_DURING_RUN="$(cat "$tmp/lock-during-run" 2>/dev/null || true)"
 
-    unset ONEOFF_TEST_TMP ONEOFF_TEST_RUNNING ONEOFF_TEST_UID
+    unset ONEOFF_TEST_TMP ONEOFF_TEST_RUNNING ONEOFF_TEST_UID KLAI_MEASUREMENT_LOCK
 }
 
 check() {
@@ -138,6 +175,26 @@ check "an unrelated variable survives the clone" \
 
 check "the output dir is chowned to the uid the image's process actually runs as" \
     bash -c 'echo "$0" | grep -q -- "exec klai-core-portal-api-1 id -u"' "$LAST_CALLS"
+
+check "without --measurement no lock is taken" \
+    bash -c 'test -z "$0" && test "$1" = "no lock file"' "$LAST_FLOCK" "$LAST_LOCK_DURING_RUN"
+
+run_oneoff true abs --measurement
+
+check "--measurement takes a shared lock, so rounds can run side by side" \
+    bash -c 'echo "$0" | grep -Eq -- "(^| )-s( |$)"' "$LAST_FLOCK"
+
+# A round runs as root, a deploy as klai: a 0600 file would lock the deploy out.
+check "--measurement creates the lock file when it is missing, readable by a deploy of another user" \
+    python3 -c 'import os, sys; sys.exit(os.stat(sys.argv[1]).st_mode & 0o777 != 0o644)' \
+    "$LAST_TMP/.measurement.lock"
+
+check "--measurement holds the lock against a deploy while the container runs" \
+    test "$LAST_LOCK_DURING_RUN" = "held"
+
+check "the lock is released once the container has exited" \
+    python3 -c 'import fcntl, sys; fcntl.flock(open(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)' \
+    "$LAST_TMP/.measurement.lock"
 
 run_oneoff true rel
 

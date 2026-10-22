@@ -933,6 +933,11 @@ async def _call_retrieval(t: _Turn, retrieve_body: dict) -> dict | _Result:
         )
         if failure == "identity_assertion":
             raise
+        # The refusal or the general answer below reads like any other turn; the
+        # record names the outage behind it, and a measurement round
+        # (scripts/meetlat.py) retries the turn when the failure was transient.
+        if t.answer_signals is not None:
+            t.answer_signals["retrieval_failure"] = failure
         if profile.kb_mode == "strict":
             turn.refusal = strict_kb_unavailable_message
             return [], "", [], False

@@ -39,7 +39,7 @@ loaded from before it replays anything.
 2. Run it through the one-off, with the overlay first on `PYTHONPATH` and the backend root after it:
 
    ```bash
-   deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
+   deploy/scripts/portal-api-oneoff.sh --measurement --out /opt/klai/oneoff/meetlat -- \
      env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend \
      python /out/ov-candidate/scripts/meetlat.py run --surface internal --org <org-slug> \
        --cases /out/cases.jsonl --out /out/round-candidate-1.jsonl --overlay /out/ov-candidate
@@ -47,6 +47,19 @@ loaded from before it replays anything.
 
    `--days` (default 365) bounds how far back the conversations are looked up. Only `--surface internal` is built.
    Leave out `--overlay` to measure the image as it is; the banner then says that nothing is checked.
+
+   `--measurement` tells the host a round is running. The one-off holds a shared lock on `/opt/klai/.measurement.lock`
+   for as long as its container runs, so several rounds can run at once. `compose-up.sh` and
+   `tenant-config-regenerate.sh` want that file to themselves before they recreate or restart anything: a deploy that
+   lands during a round waits for it, printing once a minute that it is waiting, for at most 20 minutes
+   (`KLAI_MEASUREMENT_WAIT_SECONDS`). After that it goes ahead with a warning in the workflow log, because a hotfix must
+   not sit behind a measurement, and the round meets the restart. A round started while a deploy holds the file waits
+   for that deploy, then clones the portal-api it left behind.
+
+   A turn that meets a restart anyway is replayed: a connection error, a timeout, a 502/503/504 from the gateway or from
+   retrieval (including the internal chat's refusal when it lost the knowledge base), or an empty answer is tried again
+   after 10, 30 and 60 seconds, each attempt logged with its number, and only then written as an error row. Any other
+   failure is written as an error row at once.
 
 3. Read the banner. It is the first output and the first key of `round-candidate-1.jsonl.meta.json`:
 

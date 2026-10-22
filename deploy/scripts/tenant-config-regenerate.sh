@@ -7,6 +7,12 @@
 # Push-triggered config/catalog/patch changes use restart-only. Full recreate is
 # reserved for explicit workflow_dispatch image rollouts.
 #
+# Like compose-up.sh it first takes the measurement lock
+# /opt/klai/.measurement.lock, waiting up to 20 minutes
+# (KLAI_MEASUREMENT_WAIT_SECONDS) for running chat quality rounds before it
+# restarts tenant containers, and then the container lock
+# /opt/klai/.container-deploy.lock.
+#
 # Usage: RECREATE_CONTAINERS=true|false tenant-config-regenerate.sh
 #
 # deploy-librechat-config.yml runs this from its own sparse checkout, so the
@@ -39,6 +45,37 @@ if ! command -v flock >/dev/null 2>&1; then
     echo "ERROR: flock not found; refusing to regenerate without the host lock $LOCK_FILE" >&2
     exit 1
 fi
+
+# Chat quality rounds (portal-api-oneoff.sh --measurement) hold the
+# measurement lock shared for as long as their container runs; on 22 October
+# 2026 three deploys recreated a service in the middle of a 25 to 45 minute
+# round and cost it its turns. A deploy asks for that lock exclusively before
+# the container lock, in this order in compose-up.sh and
+# tenant-config-regenerate.sh alike, so two deploys never each hold the lock
+# the other waits for. It keeps the lock until it exits, so no round starts
+# halfway through. The wait is bounded: a hotfix must not sit behind a
+# measurement for an hour, so after KLAI_MEASUREMENT_WAIT_SECONDS (20 minutes)
+# it goes ahead and says so. A round usually runs as root and a deploy as klai,
+# so the file is opened read-only (enough for flock(2)) and created
+# world-readable.
+MEASUREMENT_LOCK="${KLAI_MEASUREMENT_LOCK:-$KLAI_DIR/.measurement.lock}"
+MEASUREMENT_WAIT="${KLAI_MEASUREMENT_WAIT_SECONDS:-1200}"
+[[ -e "$MEASUREMENT_LOCK" ]] || install -m 644 /dev/null "$MEASUREMENT_LOCK"
+exec 8<"$MEASUREMENT_LOCK"
+if ! flock -x -n 8; then
+    waited=0
+    while (( waited < MEASUREMENT_WAIT )); do
+        echo "Waiting for a measurement round (or another deploy) to finish: $MEASUREMENT_LOCK is held (${waited} of ${MEASUREMENT_WAIT} s)"
+        step=$(( MEASUREMENT_WAIT - waited < 60 ? MEASUREMENT_WAIT - waited : 60 ))
+        if flock -x -w "$step" 8; then break; fi
+        waited=$(( waited + step ))
+    done
+    if (( waited >= MEASUREMENT_WAIT )); then
+        echo "::warning::$MEASUREMENT_LOCK still held after ${MEASUREMENT_WAIT} s; regenerating anyway, a running measurement round will see this restart"
+    fi
+fi
+
+# Then the container lock.
 exec 9>"$LOCK_FILE"
 if ! flock -w "${KLAI_LOCK_WAIT_SECONDS:-900}" 9; then
     echo "ERROR: another container deploy has held $LOCK_FILE for 15 minutes; not regenerating" >&2

@@ -98,18 +98,26 @@ STUB
     chmod +x "$work/docker"
 
     # compose-up.sh refuses to run without flock, so the stub is what lets the
-    # suite run on macOS. It records its arguments and the file behind fd 9
-    # (/proc on Linux, F_GETPATH on macOS) so a case can prove which lock was
-    # taken.
+    # suite run on macOS. It records its arguments and the file behind the fd it
+    # is given (/proc on Linux, F_GETPATH on macOS) so a case can prove which lock
+    # was taken, and in which order.
     mkdir -p "$work/bin"
     cat > "$work/bin/flock" <<'STUB'
 #!/usr/bin/env bash
-if [[ -e "/proc/$$/fd/9" ]]; then
-  lock="$(readlink "/proc/$$/fd/9")"
+fd="${*: -1}"
+if [[ -e "/proc/$$/fd/$fd" ]]; then
+  lock="$(readlink "/proc/$$/fd/$fd")"
 else
-  lock="$(python3 -c 'import fcntl; print(fcntl.fcntl(9, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode())')"
+  lock="$(python3 -c 'import fcntl, sys; print(fcntl.fcntl(int(sys.argv[1]), fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode())' "$fd")"
 fi
 echo "flock $* lock=$lock" >> "$FIXTURES/flock_calls"
+# A case makes a measurement round hold its lock for the first N attempts, or
+# for every attempt with "always".
+if [[ "$lock" == */.measurement.lock && -f "$FIXTURES/measurement_busy_for" ]]; then
+  busy="$(cat "$FIXTURES/measurement_busy_for")"
+  attempts="$(grep -c '/\.measurement\.lock$' "$FIXTURES/flock_calls")"
+  if [[ "$busy" == always ]] || (( attempts <= busy )); then exit 1; fi
+fi
 exit 0
 STUB
     chmod +x "$work/bin/flock"
@@ -148,6 +156,13 @@ run_target() {
     set -e
 }
 
+# $1 = KLAI_MEASUREMENT_WAIT_SECONDS, the rest are compose-up.sh's arguments.
+run_target_waiting() {
+    local wait="$1"
+    shift
+    KLAI_MEASUREMENT_WAIT_SECONDS="$wait" run_target "$@"
+}
+
 check() {
     if [[ "$2" == "$3" ]]; then
         echo "  ok   $1"
@@ -176,10 +191,41 @@ new_case happy
 run_target demo
 check "green compose + running container -> 0" 0 "$rc"
 check_output "  reports no healthcheck" "no healthcheck defined"
-# The host lock tenant-config-regenerate.sh shares, taken with a bounded wait.
-check "  takes the host lock" \
-    "flock -w 900 9 lock=$(cd "$case_dir" && pwd -P)/.container-deploy.lock" \
+# The measurement lock first, then the host lock tenant-config-regenerate.sh
+# shares, in the order that script takes them too, so two deploys cannot each
+# hold the lock the other waits for.
+check "  takes the measurement lock, then the host lock" \
+    "flock -x -n 8 lock=$(cd "$case_dir" && pwd -P)/.measurement.lock
+flock -w 900 9 lock=$(cd "$case_dir" && pwd -P)/.container-deploy.lock" \
     "$(cat "$case_dir/fixtures/flock_calls")"
+check "  says nothing about waiting when no round runs" 0 "$(grep -c 'Waiting for a measurement round' "$case_dir/out")"
+
+# A measurement round (portal-api-oneoff.sh --measurement) is running: the
+# deploy waits for it, saying so once a minute, and only then recreates.
+new_case measurement_finishes
+fx measurement_busy_for 1
+run_target_waiting 1200 demo
+check "a measurement round that finishes within the wait -> 0" 0 "$rc"
+check "  waited one minute, said so once" 1 "$(grep -c 'Waiting for a measurement round' "$case_dir/out")"
+check_output "  names the lock it waits on" "$case_dir/.measurement.lock is held"
+check "  did not go ahead without the lock" 0 "$(grep -c 'deploying anyway' "$case_dir/out")"
+check "  the container lock comes after the measurement lock was held" \
+    "flock -x -n 8|flock -x -w 60 8|flock -w 900 9" \
+    "$(sed 's/ lock=.*//' "$case_dir/fixtures/flock_calls" | paste -sd '|' -)"
+
+# A hotfix must not wait an hour for a measurement: after the bounded wait the
+# deploy goes ahead and says that it did.
+new_case measurement_outlasts_the_wait
+fx measurement_busy_for always
+run_target_waiting 150 demo
+check "a round still running after the wait -> the deploy goes ahead, 0" 0 "$rc"
+check "  said it was waiting once per minute" 3 "$(grep -c 'Waiting for a measurement round' "$case_dir/out")"
+check_output "  says it deploys anyway" "::warning::"
+check_output "  and why" "still held after 150 s; deploying anyway"
+check "  waited in steps of at most a minute, then took the container lock" \
+    "flock -x -n 8|flock -x -w 60 8|flock -x -w 60 8|flock -x -w 30 8|flock -w 900 9" \
+    "$(sed 's/ lock=.*//' "$case_dir/fixtures/flock_calls" | paste -sd '|' -)"
+check "  the container was still recreated" 1 "$(wc -l < "$case_dir/fixtures/up_argv" | tr -d ' ')"
 
 # The knowledge-ingest case: stop_grace_period 90s + a busy procrastinate queue
 # makes compose abort on the removal race, but the replacement IS there.
