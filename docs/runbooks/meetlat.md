@@ -45,8 +45,24 @@ loaded from before it replays anything.
        --cases /out/cases.jsonl --out /out/round-candidate-1.jsonl --overlay /out/ov-candidate
    ```
 
-   `--days` (default 365) bounds how far back the conversations are looked up. Only `--surface internal` is built.
+   `--days` (default 365) bounds how far back the conversations are looked up.
    Leave out `--overlay` to measure the image as it is; the banner then says that nothing is checked.
+
+   A widget round replays as one widget, through the route itself (a preview session token, the answer held), so the
+   widget's own settings and articles apply and nothing is recorded. Its cases carry their own conversation: `id`,
+   `messages` (the visitor's turns and the earlier replies, ending in the turn to replay) and `expect` (`antwoord`,
+   `vraag`, `niet_gevonden` or `doorverwijzing`). `--widget` names a JSON file with `wgt_id`, `org_id`, `kb_ids`,
+   `slug` and `origin`, kept next to the cases, outside the repository:
+
+   ```bash
+   deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
+     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend \
+     python /out/ov-candidate/scripts/meetlat.py run --surface widget --org <org-slug> --widget /out/widget.json \
+       --cases /out/widget-cases.jsonl --out /out/widget-candidate-1.jsonl --overlay /out/ov-candidate
+   ```
+
+   A widget row has `text`, `sources`, `appointment` (the button was shown), `signals` and `total_ms`; `compare` reads
+   the same file for both surfaces.
 
    A deploy that lands during a round restarts the gateway or portal-api under it; the round is not protected
    against that, a turn that meets a restart is replayed: a connection error or a timeout before the stream starts, a stream

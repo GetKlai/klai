@@ -1,17 +1,25 @@
 """The chat quality measuring stick (docs/architecture/chat-quality-history-and-plan.md §6, §8) as one CLI.
 
     meetlat run     --surface internal --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>] [--days <n>]
+    meetlat run     --surface widget --org <slug> --widget <widget.json> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>]
     meetlat compare --cases <cases.jsonl> [--json] <round.jsonl>...
 
-The script holds no case data. A case file has one JSON object per line with
-``cid`` (the first 8 characters of a conversation id) and ``turn`` (the index of
-the employee's turn in that conversation); ``run`` ignores every other field.
-``compare`` also reads ``class`` (the expectation class) and, for
+The script holds no case data. An internal case is one JSON object per line
+with ``cid`` (the first 8 characters of a conversation id) and ``turn`` (the
+index of the employee's turn in that conversation); the conversation itself is
+read from the tenant's LibreChat database. A widget case carries its own
+conversation: ``id`` and ``messages`` (the visitor's turns and the earlier
+replies, ending in the turn to replay). ``run`` ignores every other field.
+``compare`` also reads ``class`` or ``expect`` (the expectation class) and, for
 ``dekkend_antwoord``, ``variants`` (regexes that must all appear in the answer;
-default android and iphone|ios).
+default android and iphone|ios). Internal classes: weigering, antwoord_kb,
+dekkend_antwoord, antwoord_algemeen_gelabeld and weigering_feiten (read by
+hand). Widget classes: antwoord, vraag, niet_gevonden and doorverwijzing.
 
-``run`` replays those turns through the one chat pipeline the way
-replay_internal_chat.py does and writes one row per turn. Before the first turn
+``run`` replays those turns through the one chat pipeline (the internal
+surface the way replay_internal_chat.py does, the widget surface through the
+route itself with a preview session token, so the widget's own settings and
+articles apply) and writes one row per turn. Before the first turn
 it prints which files the pipeline's own modules were loaded from: in October
 2026 three rounds ran the code of main instead of the candidate because a module
 put its own root at the front of sys.path and shadowed the candidate overlay.
@@ -28,12 +36,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import importlib
 import json
 import re
 import statistics
 import subprocess
 import sys
+import time
+import uuid
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -44,7 +56,7 @@ import replay_internal_chat as replay
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core import database
-from app.services import answer_grounding, retrieval_context
+from app.services import answer_compose, answer_grounding, retrieval_context
 from app.services.chat_profile import ChatProfile
 
 # The modules whose provenance decides what a round measured.
@@ -73,9 +85,23 @@ _SHORT_QUESTION_CHARS = 200
 _RETRY_PAUSES_SECONDS = (10, 30, 60)
 _RESTART_ERRORS = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, ConnectionError, TimeoutError)
 _RESTART_STATUSES = (502, 503, 504)
+# A held widget answer waits for the writer and the checks; the route's own
+# budgets are far below this.
+_WIDGET_TIMEOUT_SECONDS = 120.0
+_WIDGET_FIELDS = ("wgt_id", "org_id", "kb_ids", "slug", "origin")
 
 _CLASS_FIELDS = ("class", "klasse", "expect")
-_AUTOMATIC_CLASSES = ("weigering", "antwoord_kb", "dekkend_antwoord", "antwoord_algemeen_gelabeld")
+_AUTOMATIC_CLASSES = (
+    "weigering",
+    "antwoord_kb",
+    "dekkend_antwoord",
+    "antwoord_algemeen_gelabeld",
+    # The widget's classes: the kind of reply the visitor got.
+    "antwoord",
+    "vraag",
+    "niet_gevonden",
+    "doorverwijzing",
+)
 _READ_CLASSES = ("weigering_feiten",)
 _DEFAULT_VARIANTS = ("android", "iphone|ios")
 _ANSWERS = ("answer", "partial_answer")
@@ -180,10 +206,25 @@ def _make_database_read_only(db: Any) -> None:
     db.AsyncSessionLocal.configure(bind=db.engine)
 
 
+_captured_widget_signals: list[dict | None] = []
+
+
+async def _capture_widget_turn(**fields: Any) -> None:
+    """Stands in for ``record_widget_turn``: a replayed turn is not a visitor's turn.
+
+    The signals dict is kept by reference, not copied: the check that runs
+    after the reply completes it in place, and the row is written once the
+    pending tasks are done.
+    """
+    if fields.get("role") == "assistant":
+        _captured_widget_signals.append(fields.get("answer_signals"))
+
+
 def _apply_measurement_patches() -> None:
-    """Turn the production pipeline into a measuring one: nothing it does may reach an employee's data."""
+    """Turn the production pipeline into a measuring one: nothing it does may reach an employee's or visitor's data."""
     _make_database_read_only(database)
     replay.partner.record_internal_turn = replay._capture_internal_turn  # type: ignore[assignment]
+    replay.partner.record_widget_turn = _capture_widget_turn  # type: ignore[assignment]
     # The retrieval log keys feedback to the chunks of the employee's latest turn,
     # and the gap event feeds the knowledge-gap backlog: neither may see a replay.
     replay.widget_turn.write_retrieval_log = replay._skip_retrieval_log  # type: ignore[assignment]
@@ -240,7 +281,14 @@ def _read_cases(path: Path) -> list[dict]:
     except (OSError, ValueError) as exc:
         raise UsageError(f"cannot read the cases file {path}: {exc}") from exc
     for number, case in enumerate(cases, 1):
-        if not (
+        if isinstance(case.get("messages"), list):
+            # A widget case: the row is keyed like an internal one, by case id
+            # and the index of the replayed turn among the visitor's turns.
+            user_turns = [m for m in case["messages"] if isinstance(m, dict) and m.get("role") == "user"]
+            if not (isinstance(case.get("id"), str) and case["id"] and user_turns):
+                raise UsageError(f"{path} line {number}: a widget case needs an id and messages with a user turn")
+            case["cid"], case["turn"] = case["id"], len(user_turns) - 1
+        elif not (
             isinstance(case.get("cid"), str)
             and len(case["cid"]) == 8
             and isinstance(case.get("turn"), int)
@@ -324,6 +372,10 @@ def _restart_behind(answer: dict) -> str | None:
     """
     if answer.get("stream_error"):
         return f"stream error {answer['stream_error']}"
+    if answer.get("status", 200) in _RESTART_STATUSES:
+        return f"HTTP {answer['status']}"
+    if answer.get("status", 200) != 200:
+        return None
     if not (answer.get("text") or "").strip():
         return "empty_answer"
     signals = answer.get("signals") or {}
@@ -341,20 +393,13 @@ def _restart_behind(answer: dict) -> str | None:
     return f"retrieval {failure}" if restart else None
 
 
-async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
-    """One row. Index k is the position in the readable turns, u the position among the employee's turns."""
-    user_turns = [k for k, turn in enumerate(thread.turns) if turn["role"] == "user"]
-    u = case["turn"]
-    if u >= len(user_turns):
-        return {"cid": case["cid"], "u": u, "error": "turn_out_of_range"}
-    k = user_turns[u]
-    messages = [{"role": t["role"], "content": t["content"]} for t in thread.turns[: k + 1]]
-    row = {"cid": case["cid"], "k": k, "u": u, "mode": thread.mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
+async def _replayed(row: dict, attempt_turn: Callable[[], Awaitable[dict]], keep: tuple[str, ...]) -> dict:
+    """The row with the answer's ``keep`` fields, after replaying a turn that met a restart; else an error row."""
     attempts = len(_RETRY_PAUSES_SECONDS) + 1
     failure = ""
     for attempt in range(1, attempts + 1):
         try:
-            answer = await replay._new_answer(org, thread.profile, messages)  # type: ignore[arg-type]
+            answer = await attempt_turn()
         except Exception as exc:  # one broken turn may not stop the round
             if not _is_restart(exc):
                 return {**row, "error": type(exc).__name__}
@@ -362,17 +407,99 @@ async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
         else:
             restart = _restart_behind(answer)
             if restart is None:
-                return {**row, "text": answer["text"], "signals": answer["signals"], "total_ms": answer["total_ms"]}
+                if answer.get("status", 200) != 200:
+                    return {**row, "error": f"HTTP {answer['status']}"}
+                return {**row, **{field: answer[field] for field in keep}}
             failure = restart
         if attempt == attempts:
             break
         pause = _RETRY_PAUSES_SECONDS[attempt - 1]
         print(
-            f"  {case['cid']} turn {u}: {failure} on attempt {attempt} of {attempts}, replaying in {pause} s",
+            f"  {row['cid']} turn {row['u']}: {failure} on attempt {attempt} of {attempts}, replaying in {pause} s",
             flush=True,
         )
         await asyncio.sleep(pause)
     return {**row, "error": failure}
+
+
+async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
+    """One internal row. Index k is the position in the readable turns, u the position among the employee's turns."""
+    user_turns = [k for k, turn in enumerate(thread.turns) if turn["role"] == "user"]
+    u = case["turn"]
+    if u >= len(user_turns):
+        return {"cid": case["cid"], "u": u, "error": "turn_out_of_range"}
+    k = user_turns[u]
+    messages = [{"role": t["role"], "content": t["content"]} for t in thread.turns[: k + 1]]
+    row = {"cid": case["cid"], "k": k, "u": u, "mode": thread.mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
+    return await _replayed(
+        row,
+        lambda: replay._new_answer(org, thread.profile, messages),  # type: ignore[arg-type]
+        ("text", "signals", "total_ms"),
+    )
+
+
+def _read_widget(path: Path) -> dict:
+    """The widget a round replays as: its id, org, knowledge bases, tenant slug and allowed origin."""
+    try:
+        widget = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise UsageError(f"cannot read the widget file {path}: {exc}") from exc
+    if not isinstance(widget, dict) or any(field not in widget for field in _WIDGET_FIELDS):
+        raise UsageError(f"{path}: needs the fields {', '.join(_WIDGET_FIELDS)}")
+    return widget
+
+
+async def _widget_answer(widget: dict, messages: list[dict]) -> dict:
+    """One widget turn through the route itself, as the browser sends it: a preview session token, the answer held.
+
+    Held (not streamed) so the reply is complete when the response is; the
+    signals are read after the tasks the route left behind (the record and
+    the check after the reply) are done.
+    """
+    from app.main import app
+    from app.services.widget_auth import generate_session_token
+
+    token = generate_session_token(
+        widget["wgt_id"],
+        widget["org_id"],
+        widget["kb_ids"],
+        replay.settings.widget_jwt_secret,
+        widget["slug"],
+        is_preview=True,
+        session_id=uuid.uuid4().hex,
+    )
+    _captured_widget_signals.clear()
+    started = time.perf_counter()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://meetlat", timeout=_WIDGET_TIMEOUT_SECONDS
+    ) as client:
+        response = await client.post(
+            "/partner/v1/chat/completions",
+            json={"model": "klai-primary", "stream": False, "messages": messages},
+            headers={"Authorization": f"Bearer {token}", "Origin": widget["origin"]},
+        )
+    total_ms = round((time.perf_counter() - started) * 1000)
+    pending = {*replay.partner._pending, *answer_compose._pending_turn_tasks}
+    if pending:
+        await asyncio.wait(pending, timeout=replay._SIGNAL_WAIT_SECONDS)
+    message = response.json()["choices"][0]["message"] if response.status_code == 200 else {}
+    return {
+        "status": response.status_code,
+        "text": message.get("content") or "",
+        "sources": [source.get("url") for source in message.get("sources") or []],
+        "appointment": bool(message.get("escalation")),
+        "signals": _captured_widget_signals[-1] if _captured_widget_signals else None,
+        "total_ms": total_ms,
+    }
+
+
+async def _replay_widget_turn(widget: dict, case: dict) -> dict:
+    """One widget row: the case's own conversation, replayed as the visitor's latest turn."""
+    messages = [{"role": m["role"], "content": m["content"]} for m in case["messages"]]
+    row = {"cid": case["cid"], "u": case["turn"], "ask": messages[-1]["content"][:_ASK_CHARS]}
+    return await _replayed(
+        row, lambda: _widget_answer(widget, messages), ("text", "sources", "appointment", "signals", "total_ms")
+    )
 
 
 def _rows_inside_checkout(out: Path) -> bool:
@@ -385,9 +512,28 @@ def _rows_inside_checkout(out: Path) -> bool:
     return (root / ".git").exists() and (out == root or root in out.parents)
 
 
+async def _replayer(
+    args: argparse.Namespace, widget: dict | None, todo: list[dict]
+) -> Callable[[dict], Awaitable[dict]]:
+    """How one case of this surface is replayed: a widget case as the widget, an internal case as its employee."""
+    if widget is not None:
+        return lambda case: _replay_widget_turn(widget, case)
+    org = await replay._load_org(args.org)
+    threads = await _fetch_threads(org, sorted({c["cid"] for c in todo}), args.days)
+
+    async def replay_internal(case: dict) -> dict:
+        thread = threads.get(case["cid"])
+        if thread is None or thread.profile is None:
+            return {"cid": case["cid"], "u": case["turn"], "error": "conversation_or_profile_not_found"}
+        return await _replay_turn(org, thread, case)
+
+    return replay_internal
+
+
 async def _run(args: argparse.Namespace) -> int:
-    if args.surface != "internal":
-        raise UsageError(f"--surface {args.surface} is not built yet: only internal is supported")
+    if args.surface == "widget" and args.widget is None:
+        raise UsageError("--surface widget needs --widget <json> with " + ", ".join(_WIDGET_FIELDS))
+    widget = _read_widget(args.widget) if args.surface == "widget" else None
     all_cases = _read_cases(args.cases)
     # A cases file may span organisations; a case without an org field is for every org.
     cases = [c for c in all_cases if c.get("org", args.org) == args.org]
@@ -429,17 +575,15 @@ async def _run(args: argparse.Namespace) -> int:
         return 0
 
     _apply_measurement_patches()
+    if widget is not None:
+        # Importing the app configures logging; done here so the routing below is what stays.
+        importlib.import_module("app.main")
     replay._route_logs_to(out.with_name(out.name + ".pipeline.log"))
-    org = await replay._load_org(args.org)
-    threads = await _fetch_threads(org, sorted({c["cid"] for c in todo}), args.days)
+    replay_case = await _replayer(args, widget, todo)
     errors = 0
     with out.open("a") as handle:
         for number, case in enumerate(todo, 1):
-            thread = threads.get(case["cid"])
-            if thread is None or thread.profile is None:
-                row = {"cid": case["cid"], "u": case["turn"], "error": "conversation_or_profile_not_found"}
-            else:
-                row = await _replay_turn(org, thread, case)
+            row = await replay_case(case)
             errors += "error" in row
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
             handle.flush()
@@ -484,6 +628,16 @@ def _verdict(klass: str, case: dict, row: dict | None) -> bool:
             and not _is_short_question(text)
             and _names_variants(text, case.get("variants") or list(_DEFAULT_VARIANTS))
         )
+    # The widget's classes, as the earlier private comparison counted them: a
+    # reply that is not a referral, not a question and not a refusal answered.
+    if klass == "doorverwijzing":
+        return decision == "off_topic"
+    if klass == "vraag":
+        return _is_short_question(text)
+    if klass == "niet_gevonden":
+        return decision == "refusal" or bool(signals.get("refused"))
+    if klass == "antwoord":
+        return decision not in ("off_topic", "refusal") and not signals.get("refused") and not _is_short_question(text)
     return decision == "general_knowledge" or (decision in _ANSWERS and bool(_GENERAL_KNOWLEDGE.search(text)))
 
 
@@ -640,6 +794,11 @@ def _parser() -> argparse.ArgumentParser:
         "--overlay", type=Path, help="directory with the candidate code; every pipeline module must load from it"
     )
     run.add_argument("--days", type=int, default=_DEFAULT_DAYS, help="only conversations updated within this many days")
+    run.add_argument(
+        "--widget",
+        type=Path,
+        help="json with " + ", ".join(_WIDGET_FIELDS) + "; the widget a --surface widget round replays as",
+    )
     compare = commands.add_parser("compare", help="classify and compare rounds")
     compare.add_argument("--cases", type=Path, required=True)
     compare.add_argument("--json", action="store_true")
