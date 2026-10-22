@@ -280,7 +280,9 @@ def _rows_inside_checkout(out: Path) -> bool:
 async def _run(args: argparse.Namespace) -> int:
     if args.surface != "internal":
         raise UsageError(f"--surface {args.surface} is not built yet: only internal is supported")
-    cases = _read_cases(args.cases)
+    all_cases = _read_cases(args.cases)
+    # A cases file may span organisations; a case without an org field is for every org.
+    cases = [c for c in all_cases if c.get("org", args.org) == args.org]
     overlay: Path | None = args.overlay
     modules = code_under_test()
     banner = _banner(modules, overlay)
@@ -311,7 +313,10 @@ async def _run(args: argparse.Namespace) -> int:
 
     done = {(r["cid"], r["u"]) for r in _read_jsonl(out)} if out.exists() else set()
     todo = [c for c in cases if (c["cid"], c["turn"]) not in done]
-    print(f"{len(cases)} cases, {len(done)} already in {out}, replaying {len(todo)}", flush=True)
+    print(
+        f"{len(cases)} of {len(all_cases)} cases are for this org, {len(done)} already in {out}, replaying {len(todo)}",
+        flush=True,
+    )
     if not todo:
         return 0
 

@@ -233,6 +233,30 @@ def test_run_records_an_error_row_for_a_conversation_that_cannot_be_found_and_go
     assert rows[1]["text"] == "answer to other"
 
 
+def test_run_replays_only_the_cases_of_its_org_and_those_without_an_org(monkeypatch, tmp_path, capsys):
+    answered: list[str] = []
+    threads = {
+        "aaaaaaaa": _thread("aaaaaaaa-1", ["first"]),
+        "bbbbbbbb": _thread("bbbbbbbb-2", ["other org"]),
+        "cccccccc": _thread("cccccccc-3", ["no org field"]),
+    }
+    overlay = _stub_run_environment(monkeypatch, tmp_path, threads, answered)
+    cases = [
+        {"cid": "aaaaaaaa", "turn": 0, "org": "brightwater"},
+        {"cid": "bbbbbbbb", "turn": 0, "org": "otherorg"},
+        {"cid": "cccccccc", "turn": 0},
+    ]
+
+    code = _run(tmp_path, cases, overlay)
+
+    rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert code == 0
+    assert [r["cid"] for r in rows] == ["aaaaaaaa", "cccccccc"]
+    assert answered == ["first", "no org field"]
+    assert "2 of 3 cases are for this org" in capsys.readouterr().out
+    assert json.loads((tmp_path / "r.jsonl.meta.json").read_text())["cases"] == 2
+
+
 def test_run_refuses_to_resume_rows_that_another_code_tree_produced(monkeypatch, tmp_path, capsys):
     answered: list[str] = []
     overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa-1", ["first"])}, answered)
