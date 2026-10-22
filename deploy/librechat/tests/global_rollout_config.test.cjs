@@ -8,6 +8,8 @@ const entrypoint = fs.readFileSync(path.join(repoRoot, 'deploy/librechat/klai-en
 const drift = fs.readFileSync(path.join(repoRoot, 'deploy/librechat/check-patch-drift.sh'), 'utf8');
 const portalConfig = fs.readFileSync(path.join(repoRoot, 'klai-portal/backend/app/core/config.py'), 'utf8');
 const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/deploy-librechat-config.yml'), 'utf8');
+// The regenerate call moved out of the workflow into a host script (22 October 2026).
+const regenerate = fs.readFileSync(path.join(repoRoot, 'deploy/scripts/tenant-config-regenerate.sh'), 'utf8');
 
 assert.match(config, /^version: 1\.3\.13$/m);
 // 2026-08-13: endpointsMenu/sidePanel are confirmed stripped from 0.8.7's
@@ -39,8 +41,8 @@ assert.match(workflow, /deploy\/librechat\/klai-entrypoint\.sh/);
 assert.match(workflow, /cp deploy\/librechat\/klai-entrypoint\.sh \/opt\/klai\/librechat\/klai-entrypoint\.sh/);
 assert.match(workflow, /recreate_containers:/);
 assert.match(workflow, /RECREATE_CONTAINERS=/);
-assert.doesNotMatch(workflow, /regenerate\?recreate_containers=true/);
-assert.match(workflow, /timeout=600\.0/);
+assert.doesNotMatch(regenerate, /regenerate\?recreate_containers=true/);
+assert.match(regenerate, /timeout=600\.0/);
 // The drift guard used to hardcode the fleet image as upstream. It now
 // resolves it the same way portal-api does -- compose LIBRECHAT_IMAGE first,
 // config.py default as fallback -- because Phase 5 moved the fleet and a
@@ -64,13 +66,13 @@ assert.match(portalConfig, /librechat_image: str = "ghcr\.io\/danny-avila\/libre
 // of the non-200 status check. Pin both halves of that contract so a future
 // edit can't silently drop the errors-array check and go back to trusting
 // the status code alone.
-assert.match(workflow, /r\.status_code != 200/);
-assert.match(workflow, /errors = body\.get\("errors"\) or \[\]/);
-assert.match(workflow, /if errors:\s*\n\s*# Belt and braces/);
-assert.match(workflow, /sys\.exit\(1\)/);
+assert.match(regenerate, /r\.status_code != 200/);
+assert.match(regenerate, /errors = body\.get\("errors"\) or \[\]/);
+assert.match(regenerate, /if errors:\s*\n\s*# Belt and braces/);
+assert.match(regenerate, /sys\.exit\(1\)/);
 // The old bare bash-side "$HTTP_CODE" = "200" check must be gone -- that was
 // exactly the class of check that let a 200-with-errors response go green.
-assert.doesNotMatch(workflow, /HTTP_CODE.*=.*"200"/);
+assert.doesNotMatch(regenerate, /HTTP_CODE.*=.*"200"/);
 
 console.log('OK: global LibreChat rollout config enables OCR/artifacts and keeps risky capabilities disabled.');
 console.log('OK: LibreChat regenerate deploy step fails loud on non-200 and on a non-empty errors array.');

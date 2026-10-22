@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.api.partner_widget_config import widget_config, widget_config_preflight
+from tests.conftest import FakeOrg
 
 # ---------------------------------------------------------------------------
 # Shared fixtures (mirror test_widget_config.py)
@@ -46,23 +47,6 @@ class FakeWidget:
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
     created_by: str = "test-user"
-
-
-@dataclass
-class FakeOrg:
-    id: int = 42
-    zitadel_org_id: str = "zitadel-org-123"
-    # SPEC-SEC-HYGIENE-001 REQ-24.4: slug needed by widget_config to derive
-    # the per-tenant HKDF signing key. generate_session_token is patched in
-    # this test so the actual signing never happens — the field just needs
-    # to satisfy the call site.
-    slug: str = "test"
-    # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1 (Finding B-1): partner endpoints
-    # call assert_platform_unlocked(org, "widgets"); default to unlocked so
-    # CORS tests focus on origin gating, not the platform-unlock surface.
-    platform_unlocked_features: list = field(default_factory=lambda: ["widgets"])
-    deleted_at: object = None
-    provisioning_status: str = "ready"
 
 
 def _make_request(

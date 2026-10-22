@@ -15,7 +15,11 @@
   // single PR. A silent no-op for 28 weeks, which is why transitive pins
   // (h2, idna, cryptography, pypdf) drifted until a manual audit caught them.
 
+  // custom.regex has to be listed for the customManagers below to run at all.
+  // It was missing, so the litellm-tests.yml and vexa-bot regex managers had
+  // never run: #1732 moved the LiteLLM image and left the PyPI pin behind.
   enabledManagers: [
+    'custom.regex',
     'docker-compose',
     'dockerfile',
     'github-actions',
@@ -80,6 +84,24 @@
   // generating the lockfile, producing a PR that cannot build. Keep the two
   // numbers in sync; the npm one also applies to every manual install.
   minimumReleaseAge: '7 days',
+  // Since Renovate 42 an update WITHOUT a release timestamp counts as never
+  // aged, and is held forever. GHCR, Quay, MCR and every other non-Docker-Hub
+  // registry publish no timestamp, and neither does a lock file refresh. From
+  // 2026-09-25 to 2026-10-22 that held the Docker images group (22 images,
+  // among them Zitadel, Grafana, Caddy and Redis, behind five GHCR members),
+  // LiteLLM and the lock file refresh on a `renovate/stability-days` check
+  // that could never turn green. 'timestamp-optional' still ages everything
+  // that HAS a timestamp (npm, PyPI, Docker Hub); only an update that can
+  // never be aged goes through without the cooldown, which beats never.
+  minimumReleaseAgeBehaviour: 'timestamp-optional',
+  // Renovate otherwise installs the newest npm to regenerate lock files. npm
+  // 12 defaults allow-remote to 'none' and refused the tarball of
+  // @tailwindcss/oxide-wasm32-wasi, so every lock file refresh and thirteen
+  // npm updates ended in EALLOWREMOTE (2026-10-21). CI and the Dockerfiles
+  // run Node 24, which ships npm 11: generate locks with what installs them.
+  constraints: {
+    npm: '^11',
+  },
   // With the default 'strict', a grouped update waits until EVERY member's
   // newest release is 7 days old. Ollama and LiteLLM release weekly, so the
   // Docker images group never aged: on 2026-09-25 Grafana 13.2.2 (out since
@@ -141,6 +163,25 @@
       customType: 'regex',
       managerFilePatterns: ['/^\\.github/workflows/litellm-tests\\.yml$/'],
       matchStrings: ['litellm==(?<currentValue>[0-9][0-9.]*)'],
+      depNameTemplate: 'litellm',
+      datasourceTemplate: 'pypi',
+    },
+    {
+      // The proxy image is versioned from the same PyPI release, not looked up
+      // on GHCR. GHCR publishes no release timestamps, so the image would skip
+      // the 7-day cooldown while the PyPI pin above waits it out: the two could
+      // never agree (#1732: image 1.106.2, PyPI pin 1.96.2, check-version-pin-
+      // agreement.py red for four weeks). One PyPI dependency moves both, and
+      // keeps the cooldown on LiteLLM, whose PyPI release was hijacked in
+      // March 2026 (1.82.7/1.82.8). Every PyPI release has a matching vX.Y.Z
+      // tag on GHCR (checked 1.104.5 through 1.106.2); a release without one
+      // fails the core-01 deploy on the image pull, loudly.
+      customType: 'regex',
+      managerFilePatterns: [
+        '/^deploy/docker-compose\\.yml$/',
+        '/^docker-compose\\.dev\\.yml$/',
+      ],
+      matchStrings: ['ghcr\\.io/berriai/litellm:v(?<currentValue>[0-9][0-9.]*)'],
       depNameTemplate: 'litellm',
       datasourceTemplate: 'pypi',
     },
@@ -210,7 +251,6 @@
       matchPackageNames: ['aquasecurity/setup-trivy'],
       overrideDatasource: 'git-tags',
       overridePackageName: 'https://github.com/aquasecurity/setup-trivy.git',
-      minimumReleaseAge: '0 days',
     },
     {
       description:
@@ -220,7 +260,6 @@
       matchPackageNames: ['aquasecurity/trivy'],
       overrideDatasource: 'git-tags',
       overridePackageName: 'https://github.com/aquasecurity/trivy.git',
-      minimumReleaseAge: '0 days',
     },
     {
       description: 'Auto-merge patch and minor updates once CI is green',
@@ -459,8 +498,16 @@
         'LiteLLM image and the litellm PyPI pin the hook tests run against \
         move together, so the tests exercise the version the proxy will run. \
         Its own group so a LiteLLM change never holds back the other images.',
-      matchPackageNames: ['ghcr.io/berriai/litellm', 'litellm'],
+      matchPackageNames: ['litellm'],
       groupName: 'LiteLLM',
+    },
+    {
+      description:
+        'The LiteLLM image tag comes from the PyPI-backed custom manager, so \
+        the docker-compose manager must not also propose a GHCR tag for it.',
+      matchManagers: ['docker-compose'],
+      matchPackageNames: ['ghcr.io/berriai/litellm'],
+      enabled: false,
     },
     {
       description:

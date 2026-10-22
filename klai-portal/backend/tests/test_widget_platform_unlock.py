@@ -20,6 +20,7 @@ from fastapi import HTTPException
 
 from app.api.partner_widget_config import public_bot_config, widget_config
 from app.services.widget_auth import session_token_key_id
+from tests.conftest import FakeOrg
 
 # ---------------------------------------------------------------------------
 # Shared fakes
@@ -48,30 +49,6 @@ class FakeWidget:
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
     created_by: str = "test-user"
-
-
-@dataclass
-class FakeOrgUnlocked:
-    """Org with 'widgets' in platform_unlocked_features."""
-
-    id: int = 42
-    zitadel_org_id: str = "zitadel-org-123"
-    slug: str = "test"
-    platform_unlocked_features: list = field(default_factory=lambda: ["widgets"])
-    deleted_at: object = None
-    provisioning_status: str = "ready"
-
-
-@dataclass
-class FakeOrgLocked:
-    """Org WITHOUT 'widgets' in platform_unlocked_features."""
-
-    id: int = 42
-    zitadel_org_id: str = "zitadel-org-123"
-    slug: str = "test"
-    platform_unlocked_features: list = field(default_factory=list)
-    deleted_at: object = None
-    provisioning_status: str = "ready"
 
 
 def _make_request(origin: str = "https://example.com") -> MagicMock:
@@ -113,7 +90,7 @@ async def test_widget_config_returns_404_when_widgets_not_unlocked():
     Existence-non-disclosure: do not leak that the widget exists for a locked tenant.
     """
     widget = FakeWidget()
-    org = FakeOrgLocked()
+    org = FakeOrg(platform_unlocked_features=[])
     db = _make_db(widget, org, [1])
     request = _make_request()
 
@@ -136,7 +113,7 @@ async def test_widget_config_returns_404_when_widgets_not_unlocked():
 async def test_widget_config_returns_200_when_widgets_unlocked():
     """AC1.1 — widget_config must still return 200 when 'widgets' IS unlocked."""
     widget = FakeWidget()
-    org = FakeOrgUnlocked()
+    org = FakeOrg()
     db = _make_db(widget, org, [1])
     request = _make_request()
 
@@ -163,7 +140,7 @@ async def test_widget_config_returns_200_when_widgets_unlocked():
 async def test_public_bot_config_returns_404_when_widgets_not_unlocked():
     """AC1.3 — public_bot_config must 404 when 'widgets' not in org's enabled features."""
     widget = FakeWidget()
-    org = FakeOrgLocked()
+    org = FakeOrg(platform_unlocked_features=[])
     db = _make_db(widget, org, [1])
 
     with (
@@ -185,7 +162,7 @@ async def test_public_bot_config_returns_404_when_widgets_not_unlocked():
 async def test_public_bot_config_returns_200_when_widgets_unlocked():
     """Happy path — public_bot_config 200 when 'widgets' IS unlocked."""
     widget = FakeWidget()
-    org = FakeOrgUnlocked()
+    org = FakeOrg()
     db = _make_db(widget, org, [1])
 
     with (
@@ -219,7 +196,7 @@ async def test_chat_completion_returns_403_when_widgets_not_unlocked():
     """
     from app.api.partner_dependencies import _auth_via_session_token
 
-    org = FakeOrgLocked()
+    org = FakeOrg(platform_unlocked_features=[])
 
     db = AsyncMock()
     db.add = MagicMock()

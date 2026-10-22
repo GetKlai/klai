@@ -19,6 +19,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.partner_widget_config import widget_config
+from tests.conftest import FakeOrg
 
 
 @dataclass
@@ -45,24 +46,6 @@ class FakeWidget:
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
     created_by: str = "test-user"
-
-
-@dataclass
-class FakeOrg:
-    id: int = 42
-    widget_css_variables: dict = field(default_factory=dict)
-    zitadel_org_id: str = "zitadel-org-123"
-    # SPEC-SEC-HYGIENE-001 REQ-24.4: slug is read by partner.py to derive
-    # the per-tenant widget JWT signing key (HKDF). Test patches
-    # generate_session_token directly, so the actual value here is not
-    # signature-relevant — but it must exist to satisfy the call site.
-    slug: str = "test"
-    deleted_at: object = None
-    # SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-1 (Finding B-1): partner endpoints
-    # call assert_platform_unlocked(org, "widgets"). Default the fake to
-    # "widgets unlocked" so happy-path tests still pass; tests that exercise
-    # the locked-tenant path override this field per-instance.
-    platform_unlocked_features: list = field(default_factory=lambda: ["widgets"])
 
 
 def _make_request(origin: str | None = "https://example.com") -> MagicMock:
