@@ -59,7 +59,9 @@ Click **Offboard**. The backend:
    target) and soft-revokes MCP tokens (UPDATE `portal_mcp_tokens` SET
    revoked_at = NOW() WHERE user_id = target's portal_users.id AND revoked_at
    IS NULL).
-4. Deletes group memberships (org-scoped, SEC-TENANT-001 invariant).
+4. Deletes group memberships (org-scoped, SEC-TENANT-001 invariant) and the
+   cases the internal chat kept for the user's conversations
+   (`internal_chat_cases`, also on a hard user delete).
 5. Flips `portal_users.status = 'offboarded'`, emits `user.offboarded` audit.
 6. Commits the transaction.
 7. Post-commit: deactivates the user in Zitadel, removes them from the GitHub

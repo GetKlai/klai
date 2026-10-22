@@ -1,7 +1,8 @@
 """SPEC-PRIVACY-QUERY-SHADOW-001 Unit 7 — daily 7-day TTL purge.
 
 Background loop that runs every 24 hours and deletes rows older than
-7 days from the three privacy-sensitive stores:
+7 days from the privacy-sensitive stores, and the internal chat's stored
+cases older than 30 days:
 
 1. ``telemetry.query_shadow``       — every row > 7d (REQ-7 retention)
 2. ``portal_retrieval_gaps``         — raw search telemetry > 7d: no redaction
@@ -10,6 +11,9 @@ Background loop that runs every 24 hours and deletes rows older than
                                         (EXPIRED_RAW_TELEMETRY_GAPS_SQL)
 3. portal-side mirror of the Redis
    retrieval-log already has its own 1h TTL, so no DB sweep here
+4. ``internal_chat_cases``           — the case and kept passages an internal
+                                        conversation carries to its next turn,
+                                        30 days (widget_audit.INTERNAL_CASE_DAYS)
 
 The job is scheduled via ``asyncio.create_task`` from the FastAPI
 lifespan, mirroring ``recording_cleanup_loop`` (SPEC-GDPR-002-R5). It
@@ -30,6 +34,7 @@ import structlog
 from sqlalchemy import text
 
 from app.core.database import cross_org_session
+from app.services.widget_audit import prune_internal_cases
 
 logger = structlog.get_logger()
 
@@ -62,9 +67,9 @@ EXPIRED_RAW_TELEMETRY_GAPS_SQL = """
 
 
 async def _purge_once() -> dict[str, int]:
-    """Run the three DELETEs in one pass and return per-store counts."""
+    """Run the DELETEs in one pass and return per-store counts."""
     cutoff = datetime.now(UTC) - timedelta(days=RETENTION_DAYS)
-    counts: dict[str, int] = {"query_shadow": 0, "retrieval_gaps": 0}
+    counts: dict[str, int] = {"query_shadow": 0, "retrieval_gaps": 0, "internal_chat_cases": 0}
 
     async with cross_org_session() as db:
         # 1. telemetry.query_shadow — fully ephemeral, every row > 7d.
@@ -113,11 +118,19 @@ async def _purge_once() -> dict[str, int]:
 
         await db.commit()
 
+    # 4. internal_chat_cases, in its own transaction, so a failure here cannot
+    #    roll back the deletes above.
+    try:
+        counts["internal_chat_cases"] = await prune_internal_cases()
+    except Exception:
+        logger.warning("telemetry_purge_internal_chat_cases_failed", exc_info=True)
+
     logger.info(
         "telemetry_purge_complete",
         cutoff=cutoff.isoformat(),
         purged_query_shadow=counts["query_shadow"],
         purged_retrieval_gaps=counts["retrieval_gaps"],
+        purged_internal_chat_cases=counts["internal_chat_cases"],
     )
     return counts
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 import time
 import uuid
@@ -19,6 +20,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from klai_chat_prompts.kb_modes import build_template_instructions_block
 from klai_chat_prompts.language import identify_text_language, resolve_conversation_language
+from klai_kb_slugs import personal_kb_slug
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,8 +52,10 @@ from app.api.widget_public import WIDGET_PUBLIC_CORS
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
+from app.models.portal import PortalUser
 from app.models.widgets import Widget
 from app.services import case_file
+from app.services.access import get_accessible_kb_slugs
 from app.services.chat_attachments import process_chat_attachments, user_visible_error
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
 from app.services.chat_safety import (
@@ -819,6 +823,8 @@ async def _previous_turn(
 class _InternalConversation(NamedTuple):
     """How an internal turn finds its conversation's stored case: digests only, no text."""
 
+    # The employee (Zitadel subject), so offboarding can forget their cases.
+    user_id: str
     # The employee and the conversation's first message: one row per conversation.
     key: str
     # The employee's messages before the latest one: what the previous turn stored as ``current``.
@@ -837,18 +843,30 @@ def _internal_conversation(sent: list[dict], profile: ChatProfile) -> _InternalC
     LibreChat sends no conversation id: the "Klai AI" endpoint in
     deploy/librechat/librechat.yaml has no headers, and the body is the plain
     OpenAI request with ``user``. The employee and their first message identify
-    the conversation instead. Read before a PDF in the latest message becomes
+    the conversation instead, each message as its whole content, attachments
+    included, so two conversations that open with the same sentence beside
+    different files stay two. Read before a PDF in the latest message becomes
     text, so the digests rest on what LibreChat sent and not on the conversion.
     General mode reads no case, so it keeps none.
     """
-    said = [_message_text(message.get("content")) for message in sent if message.get("role") == "user"]
+    said = [
+        json.dumps(message.get("content"), sort_keys=True, ensure_ascii=False)
+        for message in sent
+        if message.get("role") == "user"
+    ]
     if profile.user_id is None or profile.kb_mode == "general" or not said:
         return None
-    return _InternalConversation(_digest(profile.user_id, said[0]), _digest(*said[:-1]), _digest(*said))
+    return _InternalConversation(
+        profile.user_id, _digest(profile.user_id, said[0]), _digest(*said[:-1]), _digest(*said)
+    )
 
 
 async def _previous_internal_turn(
-    request: ChatCompletionsRequest, auth: PartnerAuthContext, conversation: _InternalConversation | None
+    request: ChatCompletionsRequest,
+    auth: PartnerAuthContext,
+    db: AsyncSession,
+    profile: ChatProfile,
+    conversation: _InternalConversation | None,
 ) -> case_file.StoredTurn | None:
     # The internal chat's _previous_turn: a read that fails costs this turn its memory and nothing else.
     if conversation is None or not case_file.is_follow_up(request.messages):
@@ -857,17 +875,41 @@ async def _previous_internal_turn(
         stored = await last_internal_case(
             org_id=auth.org_id, conversation_key=conversation.key, turn_digest=conversation.previous
         )
+        if stored is None:
+            return None
+        searchable = await _searchable_kb_slugs(db, auth.org_id, profile)
     except Exception:
         logger.warning("internal_chat_previous_case_unavailable", org_id=auth.org_id, exc_info=True)
         return None
-    if stored is not None:
-        logger.info(
-            "internal_chat_case_remembered",
-            org_id=auth.org_id,
-            case=stored.case is not None,
-            kept_passages=len(stored.kept_passages),
+    kept = [passage for passage in stored.kept_passages if passage.get("kb_slug") in searchable]
+    logger.info(
+        "internal_chat_case_remembered",
+        org_id=auth.org_id,
+        case=stored.case is not None,
+        kept_passages=len(kept),
+        dropped_passages=len(stored.kept_passages) - len(kept),
+    )
+    return stored._replace(kept_passages=kept)
+
+
+async def _searchable_kb_slugs(db: AsyncSession, org_id: int, profile: ChatProfile) -> set[str]:
+    """The knowledge bases an internal turn may still offer a kept passage from.
+
+    A kept passage was chosen under the access of an earlier turn; the
+    employee may have lost a knowledge base since, or it may be gone. The
+    turn's own scope narrows a personal-only profile to the employee's own
+    knowledge base, ``get_accessible_kb_slugs`` decides the rest, and
+    ``retrieval_context._with_kept`` still applies a profile's slug subset.
+    """
+    assert profile.user_id is not None, "an internal conversation always has an employee"
+    if profile.kb_scope == "personal":
+        return {personal_kb_slug(profile.user_id)}
+    role = (
+        await db.execute(
+            select(PortalUser.role).where(PortalUser.org_id == org_id, PortalUser.zitadel_user_id == profile.user_id)
         )
-    return stored
+    ).scalar_one_or_none()
+    return set(await get_accessible_kb_slugs(profile.user_id, db, user_role=role))
 
 
 def _keep_internal_case(org_id: int, conversation: _InternalConversation, inputs: InternalInputs) -> None:
@@ -878,6 +920,7 @@ def _keep_internal_case(org_id: int, conversation: _InternalConversation, inputs
     task = asyncio.create_task(
         keep_internal_case(
             org_id=org_id,
+            user_id=conversation.user_id,
             conversation_key=conversation.key,
             turn_digest=conversation.current,
             case=case,
@@ -1046,7 +1089,19 @@ async def _internal_chat_turn(
         instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
         templates_block = build_template_instructions_block(instructions)
     conversation = _internal_conversation(sent, profile)
-    previous = await _previous_internal_turn(request, auth, conversation)
+    if conversation is not None:
+        # Digest prefixes only: whether two turns LibreChat sends land in the
+        # same conversation can only be read here, never from the text.
+        logger.info(
+            "internal_chat_conversation",
+            org_id=auth.org_id,
+            key=conversation.key[:8],
+            previous=conversation.previous[:8],
+            current=conversation.current[:8],
+            turns=len(sent),
+            follow_up=case_file.is_follow_up(request.messages),
+        )
+    previous = await _previous_internal_turn(request, auth, db, profile, conversation)
     inputs = InternalInputs(
         request=request,
         auth=auth,

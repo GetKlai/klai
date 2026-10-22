@@ -21,7 +21,8 @@ Layout:
   row in ``internal_chat_turns``, same failure contract.
 - ``last_internal_case(...)`` / ``keep_internal_case(...)``: the case an
   internal conversation carries to its next turn, one row per conversation
-  in ``internal_chat_cases``.
+  in ``internal_chat_cases``; ``forget_internal_cases`` and
+  ``prune_internal_cases`` delete them on offboarding and after 30 days.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from typing import Any, Literal
 import structlog
 from sqlalchemy import text
 from sqlalchemy.exc import StatementError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings as _global_settings
 from app.core.database import cross_org_session, tenant_scoped_session
@@ -420,11 +422,9 @@ async def last_case(*, widget_id: str, session_key: str) -> StoredTurn | None:
     return StoredTurn(stored[0] if isinstance(stored[0], dict) else None, str(stored[1] or ""), kept, stored[3])
 
 
-# How long an internal conversation's case is kept, and how many expired rows
-# one write deletes: the table holds one row per conversation and would
-# otherwise only grow.
-_INTERNAL_CASE_DAYS = 30
-_INTERNAL_CASE_PRUNE_ROWS = 100
+# How long an internal conversation's case is kept: a read ignores an older row
+# and the nightly purge (telemetry_purge.py) deletes it.
+INTERNAL_CASE_DAYS = 30
 
 
 async def last_internal_case(*, org_id: int, conversation_key: str, turn_digest: str) -> StoredTurn | None:
@@ -453,7 +453,7 @@ async def last_internal_case(*, org_id: int, conversation_key: str, turn_digest:
                     "org_id": org_id,
                     "conversation_key": conversation_key,
                     "turn_digest": turn_digest,
-                    "days": _INTERNAL_CASE_DAYS,
+                    "days": INTERNAL_CASE_DAYS,
                 },
             )
         ).first()
@@ -464,9 +464,15 @@ async def last_internal_case(*, org_id: int, conversation_key: str, turn_digest:
 
 
 async def keep_internal_case(
-    *, org_id: int, conversation_key: str, turn_digest: str, case: dict | None, kept_passages: list[dict]
+    *,
+    org_id: int,
+    user_id: str,
+    conversation_key: str,
+    turn_digest: str,
+    case: dict | None,
+    kept_passages: list[dict],
 ) -> None:
-    """Store what the next turn of an internal conversation reads, one row per conversation, and prune expired rows.
+    """Store what the next turn of an internal conversation reads, one row per conversation, with its employee.
 
     The case and the passages are text, so they live in ``internal_chat_cases``,
     never in ``internal_chat_turns`` or a log line: a failure is logged with
@@ -478,11 +484,12 @@ async def keep_internal_case(
                 text(
                     """
                     INSERT INTO internal_chat_cases
-                           (org_id, conversation_key, turn_digest, case_file, kept_passages, updated_at)
-                    VALUES (:org_id, :conversation_key, :turn_digest,
+                           (org_id, user_id, conversation_key, turn_digest, case_file, kept_passages, updated_at)
+                    VALUES (:org_id, :user_id, :conversation_key, :turn_digest,
                             CAST(:case_file AS jsonb), CAST(:kept_passages AS jsonb), now())
                     ON CONFLICT (org_id, conversation_key) DO UPDATE
-                       SET turn_digest = EXCLUDED.turn_digest,
+                       SET user_id = EXCLUDED.user_id,
+                           turn_digest = EXCLUDED.turn_digest,
                            case_file = EXCLUDED.case_file,
                            kept_passages = EXCLUDED.kept_passages,
                            updated_at = EXCLUDED.updated_at
@@ -490,26 +497,50 @@ async def keep_internal_case(
                 ),
                 {
                     "org_id": org_id,
+                    "user_id": user_id,
                     "conversation_key": conversation_key,
                     "turn_digest": turn_digest,
                     "case_file": json.dumps(case),
                     "kept_passages": json.dumps(kept_passages),
                 },
             )
-            await db.execute(
-                text(
-                    """
-                    DELETE FROM internal_chat_cases
-                     WHERE id IN (SELECT id FROM internal_chat_cases
-                                   WHERE org_id = :org_id
-                                     AND updated_at < now() - make_interval(days => :days)
-                                   LIMIT :rows)
-                    """
-                ),
-                {"org_id": org_id, "days": _INTERNAL_CASE_DAYS, "rows": _INTERNAL_CASE_PRUNE_ROWS},
-            )
             await db.commit()
     except Exception as exc:
         if isinstance(exc, StatementError):
             exc.hide_parameters = True
         logger.warning("internal_chat_case_keep_failed", org_id=org_id, exc_info=True)
+
+
+async def forget_internal_cases(db: AsyncSession, *, org_id: int, user_id: str) -> int:
+    """Delete one employee's stored cases in the caller's transaction (offboarding, user deletion); the row count.
+
+    Rows stored before the column existed were deleted by its post-deploy SQL, so every row has an employee.
+    """
+    result = await db.execute(
+        text("DELETE FROM internal_chat_cases WHERE org_id = :org_id AND user_id = :user_id"),
+        {"org_id": org_id, "user_id": user_id},
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]
+
+
+async def prune_internal_cases() -> int:
+    """Delete every org's stored cases older than INTERNAL_CASE_DAYS, and those of employees no longer active; the row count.
+
+    Run by the nightly purge. The second delete covers a store that finished
+    after the employee was offboarded or removed (the turn's write runs in the
+    background), which forget_internal_cases could not see.
+    """
+    async with cross_org_session() as db:
+        expired = await db.execute(
+            text("DELETE FROM internal_chat_cases WHERE updated_at < now() - make_interval(days => :days)"),
+            {"days": INTERNAL_CASE_DAYS},
+        )
+        orphaned = await db.execute(
+            text(
+                "DELETE FROM internal_chat_cases c WHERE NOT EXISTS ("
+                "SELECT 1 FROM portal_users u WHERE u.org_id = c.org_id "
+                "AND u.zitadel_user_id = c.user_id AND u.status = 'active')"
+            )
+        )
+        await db.commit()
+    return (expired.rowcount or 0) + (orphaned.rowcount or 0)  # type: ignore[attr-defined]

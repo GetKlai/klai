@@ -882,7 +882,7 @@ async def test_a_replayed_internal_turn_stores_no_case(monkeypatch):
     monkeypatch.setattr(meetlat, "_make_database_read_only", lambda _db: None)
 
     meetlat._apply_measurement_patches()
-    conversation = partner._InternalConversation("key", "previous", "current")
+    conversation = partner._InternalConversation("sub-employee", "key", "previous", "current")
     turn = types.SimpleNamespace(case=None, kept_passages=[{"chunk_id": "c1", "text": "Synthetic passage."}])
     partner._keep_internal_case(7, conversation, turn)  # type: ignore[arg-type]
     await asyncio.gather(*partner._pending)
