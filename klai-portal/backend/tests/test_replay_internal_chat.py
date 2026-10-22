@@ -289,6 +289,32 @@ async def test_new_call_runs_with_the_internal_profile_resolved_for_the_sampled_
     assert answer["signals"] == {"decision": "answer"}
 
 
+async def test_new_answer_names_the_error_frame_a_stream_ends_with_after_partial_text(monkeypatch):
+    """A gateway restart after the first tokens ends the stream with an error
+    frame; the partial text alone read as an ordinary answer."""
+
+    @asynccontextmanager
+    async def session(_org_id):
+        yield object()
+
+    async def chat_completions(**_kwargs):
+        async def body():
+            yield b'data: {"choices": [{"delta": {"content": "Zie het "}}]}\n\n'
+            yield b'data: {"choices": [{"delta": {"content": "handboek"}}]}\n\n'
+            yield b'data: {"error": {"type": "upstream_error", "message": "Chat service unavailable"}}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return StreamingResponse(body(), media_type="text/event-stream")
+
+    monkeypatch.setattr(replay, "tenant_scoped_session", session)
+    monkeypatch.setattr(partner, "chat_completions", chat_completions)
+
+    answer = await replay._new_answer(_ORG, _profile("sub-1"), [{"role": "user", "content": "Vraag 1"}])
+
+    assert answer["text"] == "Zie het handboek"
+    assert answer["stream_error"] == "Chat service unavailable"
+
+
 def _resume_samples() -> list[replay.Sample]:
     return [
         replay.Sample("c-1", "u-1", _profile("sub-1"), ["Vraag 1"]),

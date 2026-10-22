@@ -379,11 +379,14 @@ async def _new_answer(org: PortalOrg, profile: ChatProfile, messages: list[dict]
         )
         if not isinstance(response, StreamingResponse):
             raise TypeError("the new path answered a streaming request without a stream")
+        stream_error: str | None = None
         async for chunk in response.body_iterator:
-            text = _chat_sse_delta_text(chunk if isinstance(chunk, bytes) else str(chunk).encode())
+            raw = chunk if isinstance(chunk, bytes) else str(chunk).encode()
+            text = _chat_sse_delta_text(raw)
             if text:
                 first_token_ms = first_token_ms or _ms_since(started)
                 parts.append(text)
+            stream_error = stream_error or _sse_error_message(raw)
     total_ms = _ms_since(started)
     if partner._pending:
         await asyncio.wait(set(partner._pending), timeout=_SIGNAL_WAIT_SECONDS)
@@ -392,7 +395,26 @@ async def _new_answer(org: PortalOrg, profile: ChatProfile, messages: list[dict]
         "ttft_ms": first_token_ms,
         "total_ms": total_ms,
         "signals": _captured_signals[-1] if _captured_signals else None,
+        "stream_error": stream_error,
     }
+
+
+def _sse_error_message(chunk: bytes) -> str | None:
+    """The message of an error frame (chat_sse._sse_error_frame), or None.
+
+    Once a stream has started, a failure of the answer model can no longer be an
+    HTTP error, so it arrives as this frame, often after part of the text.
+    """
+    for line in chunk.decode("utf-8", errors="ignore").splitlines():
+        if not line.startswith("data:"):
+            continue
+        try:
+            payload = json.loads(line.removeprefix("data:"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+            return str(payload["error"].get("message") or "error")
+    return None
 
 
 def _ms_since(started: float) -> int:

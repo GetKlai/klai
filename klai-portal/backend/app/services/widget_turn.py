@@ -1,6 +1,6 @@
 """Every widget and partner-key turn, step by step in the order of the flow.
 
-The flow is chat-quality-history-and-plan.md §5a: read the case, route in code
+The flow is chat-quality-history-and-plan.md §5: read the case, route in code
 what needs no articles, search, select, route in code what the selection
 decided, write. ``app.api.partner.chat_completions`` resolves the request, the
 widget's settings and the previous case before the turn, and records and sends
@@ -131,7 +131,7 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
             case, case_ms = await timed(_read_case(inputs))
             _keep_case(inputs, case)
             # 2. Route in code. A person, contact or an appointment needs no
-            # articles, so that route is decided before the search (plan §5a,
+            # articles, so that route is decided before the search (plan §5,
             # step 2); a first turn takes it after the search, in step 5.
             if case is not None and case.wants in case_file.CONTACT_WANTS:
                 return _contact_request_reply(inputs, turn, case)

@@ -48,6 +48,13 @@ loaded from before it replays anything.
    `--days` (default 365) bounds how far back the conversations are looked up. Only `--surface internal` is built.
    Leave out `--overlay` to measure the image as it is; the banner then says that nothing is checked.
 
+   A deploy that lands during a round restarts the gateway or portal-api under it; the round is not protected
+   against that, a turn that meets a restart is replayed: a connection error or a timeout before the stream starts, a stream
+   that ends in an error frame (the gateway went away, also after part of the text), an empty answer, a selection step
+   that got no verdict, or a retrieval 502/503/504, connection error or timeout behind the internal chat's refusal is
+   tried again after 10, 30 and 60 seconds, each attempt logged with its number, and only then written as an error
+   row. Any other failure is written as an error row at once.
+
 3. Read the banner. It is the first output and the first key of `round-candidate-1.jsonl.meta.json`:
 
    ```
