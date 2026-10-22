@@ -17,7 +17,7 @@ Covered seams:
 * ``write_reply`` and ``reply_frames`` — the widget's ``delta.broad_mode``
   frames ("offer" / "answer"), including suppression on safety-blocked
   output.
-* ``chat_completion_non_streaming`` — ``message.broad_mode`` on the marker
+* ``reply_body`` — ``message.broad_mode`` on the marker
   path.
 * ``partner.py`` plumbing — the request-level consent flag and the
   no-chunks handoff on a broad turn.
@@ -42,7 +42,7 @@ from klai_chat_prompts import (
 )
 
 from app.services import retrieval_context, widget_write
-from app.services.partner_chat import (
+from app.services.answer_compose import (
     _compose_answer,
 )
 from app.services.retrieval_context import KnowledgeTurn, _broad_mode_active
@@ -435,7 +435,7 @@ def _stream_patches(monkeypatch, model_text: str):
         async def post(self, *_, **__):
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _MockClient())
 
 
 async def _collect(**kwargs) -> list[bytes]:
@@ -563,7 +563,7 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
         async def post(self, *_, **__):
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _MockClient())
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"

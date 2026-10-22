@@ -59,7 +59,7 @@ _GENERAL_KNOWLEDGE_LINE = {
 }
 
 
-# The kinds partner_chat._finish_live_answer counts (chat_safety.hard_facts_outside).
+# The kinds widget_write._flag_hard_facts counts (chat_safety.hard_facts_outside).
 _HARD_FACT_LABEL = {
     "nl": {"email": "e-mailadres", "link": "link", "phone": "telefoonnummer", "amount": "bedrag"},
     "en": {"email": "e-mail address", "link": "link", "phone": "phone number", "amount": "amount"},
@@ -129,10 +129,9 @@ def render_answer_footer(
     ``sources`` must be the same labelled list the answer's inline citation
     markers were composed against (``_compose_answer``'s
     return value) — that is what keeps the footer's source order in step with
-    the numbers the employee already saw, on both a held and a live turn: both
+    the numbers the employee already saw, on both a held and a streamed reply: both
     compose that list from the same accumulated text (see
-    ``_chat_completion_streaming_with_composed_citations``'s docstring on why
-    a live turn is not re-rendered).
+    ``widget_write._streamed`` on why a streamed reply is not re-rendered).
 
     No sources means no footer at all — an internal turn without anything to
     disclose gets no "Agent activiteit" section either, unlike the hook (which

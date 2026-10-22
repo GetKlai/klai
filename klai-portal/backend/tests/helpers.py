@@ -163,3 +163,21 @@ def selection_quoting_first_passage(body: dict) -> dict:
     content = body["messages"][1]["content"]
     first_line = content.split("Passages:\n[1] ", 1)[1].split("\n", 2)[1]
     return {"need": "", "evidence": [{"passage": 1, "quote": first_line}], "verdict": "answers", "question": ""}
+
+
+async def streamed_reply_frames(*, include_sources: bool = True, **kwargs: Any) -> list[bytes]:
+    """Every SSE frame of a reply the one writer streams, as an internal Open or general turn sends it."""
+    from app.services.widget_reply import streamed_frames
+    from app.services.widget_write import write_reply
+
+    reply = await write_reply(stream=True, include_sources=include_sources, **kwargs)
+    return [frame async for frame in streamed_frames(reply, include_sources=include_sources)]
+
+
+async def held_reply_body(*, include_sources: bool = True, **kwargs: Any) -> dict:
+    """The completion body of a reply the one writer holds, as a non-streaming request gets it."""
+    from app.services.widget_reply import reply_body
+    from app.services.widget_write import write_reply
+
+    reply = await write_reply(include_sources=include_sources, **kwargs)
+    return reply_body(reply, model=kwargs["model"], include_sources=include_sources)

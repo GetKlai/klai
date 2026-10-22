@@ -26,15 +26,15 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from helpers import FakeResult, make_partner_auth
+from helpers import FakeResult, held_reply_body, make_partner_auth, streamed_reply_frames
 from klai_chat_prompts import appointment_offer_marker, no_citable_sources_message
 
 from app.api import partner
-from app.services import partner_chat, widget_turn, widget_write
+from app.services import widget_turn, widget_write
+from app.services.answer_compose import _compose_answer
 from app.services.case_file import Case
 from app.services.chat_profile import ChatProfile
 from app.services.escalation_intent import escalation_intent
-from app.services.partner_chat import _compose_answer
 from app.services.retrieval_context import KnowledgeTurn
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
@@ -320,7 +320,7 @@ def _model_says(monkeypatch, model_text: str) -> None:
         async def post(self, *_, **__):
             return _MockResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _MockClient())
 
 
 async def _written(monkeypatch, model_text: str, **kwargs) -> Reply:
@@ -400,21 +400,18 @@ async def test_stream_grounded_answer_emits_no_escalation_frame(monkeypatch):
 async def test_stream_partner_path_has_no_escalation_frames(monkeypatch):
     _stream_patches(monkeypatch, f"Some partner answer. {MARKER}")
 
-    frames = [
-        frame
-        async for frame in partner_chat.chat_completion_streaming(
-            profile=ChatProfile(surface="internal", kb_mode="open"),
-            messages=[{"role": "user", "content": "hello"}],
-            model="klai-primary",
-            temperature=0.7,
-            system_prompt="sys",
-            settings=_settings(),
-            org_id=42,
-            source_query="hello",
-            trusted_sources=_grounded_sources(),
-            citation_chunks=[_good_chunk()],
-        )
-    ]
+    frames = await streamed_reply_frames(
+        profile=ChatProfile(surface="internal", kb_mode="open"),
+        messages=[{"role": "user", "content": "hello"}],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="sys",
+        settings=_settings(),
+        org_id=42,
+        source_query="hello",
+        trusted_sources=_grounded_sources(),
+        citation_chunks=[_good_chunk()],
+    )
 
     parsed = _parse_frames(frames)
     assert _delta_values(parsed, "escalation") == []
@@ -448,7 +445,7 @@ def _stream_patches(monkeypatch, model_text: str) -> None:
         def stream(self, *_, **__):
             return _StreamCtx()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _MockClient())
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _MockClient())
 
 
 @pytest.mark.asyncio
@@ -510,7 +507,7 @@ async def test_non_streaming_grounded_answer_has_no_escalation_key(monkeypatch):
 @pytest.mark.asyncio
 async def test_non_streaming_partner_has_no_escalation_key(monkeypatch):
     _model_says(monkeypatch, f"Partner answer. {MARKER}")
-    body = await partner_chat.chat_completion_non_streaming(
+    body = await held_reply_body(
         profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": "ik kom er niet uit"}],
         model="klai-primary",

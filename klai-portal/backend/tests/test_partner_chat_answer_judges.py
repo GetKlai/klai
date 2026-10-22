@@ -20,8 +20,7 @@ import respx
 from helpers import FakeKB, FakeResult, make_partner_auth, selection_quoting_first_passage
 from klai_chat_prompts import appointment_offer_sentence, contact_reply, contact_reply_again, no_citable_sources_message
 
-from app.services import case_file, chat_safety, partner_chat, query_paraphrase, turn_judge, widget_write
-from app.services.chat_profile import ChatProfile
+from app.services import case_file, chat_safety, query_paraphrase, turn_judge, widget_write
 from app.services.retrieval_context import KnowledgeTurn, kept_passages_of
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
@@ -239,8 +238,7 @@ def _delta(frames: list[dict], key: str) -> list[Any]:
 async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str, dict, dict]:
     """Run one widget turn; return (visible text, signals, extras). No citable source unless overridden.
 
-    A widget or partner turn is written once and rendered as frames or as a body; the
-    internal chat's live leg (``live_leg=True``) still runs on the generation functions.
+    A widget or partner turn is written once and rendered as frames or as a body.
     """
     signals: dict[str, Any] = {}
     kwargs: dict[str, Any] = {
@@ -256,17 +254,11 @@ async def _answer(litellm: _LiteLLM, *, stream: bool, **overrides) -> tuple[str,
         "answer_signals": signals,
         **overrides,
     }
-    generic = kwargs.pop("live_leg", False)
     with respx.mock(assert_all_called=False) as router:
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=litellm)
-        if generic and stream:
-            frames = _frames([c async for c in partner_chat.chat_completion_streaming(**kwargs)])
-        elif generic:
-            message = (await partner_chat.chat_completion_non_streaming(**kwargs))["choices"][0]["message"]
-        else:
-            reply = await write_reply(**kwargs)
-            frames = _frames(reply_frames(reply))
-            message = reply_body(reply, model=kwargs["model"])["choices"][0]["message"]
+        reply = await write_reply(**kwargs)
+        frames = _frames(reply_frames(reply))
+        message = reply_body(reply, model=kwargs["model"])["choices"][0]["message"]
         if stream:
             text = "".join(_delta(frames, "content"))
             extras = {
@@ -433,9 +425,6 @@ async def test_a_single_flag_leaves_the_answer_alone():
     assert text == ANSWER_900
     assert extras["sources"]
     assert litellm.repair_requests == []
-
-
-_INTERNAL_STRICT: dict[str, Any] = {"profile": ChatProfile(surface="internal", kb_mode="strict"), "live_leg": True}
 
 
 async def test_a_failed_grounding_check_leaves_the_answer_alone():
@@ -1758,6 +1747,15 @@ def test_a_hard_fact_counts_as_outside_only_when_no_passage_holds_it_in_any_nota
     ]
 
     assert chat_safety.hard_facts_outside(text, passages, []) == {"email": 1, "link": 1, "amount": 1}
+
+
+def test_a_malformed_link_in_the_reply_is_not_a_hard_fact_and_does_not_fail_the_turn():
+    """The normaliser raises "Invalid IPv6 URL" on "http://[stap 1]"; the
+    reply must settle, and the token is neither a link nor an error."""
+    text = "Open http://[stap 1] en kijk dan op https://kb.example.com/verlof."
+    passages = [{"text": "Zie https://kb.example.com/verlof.", "source_url": "https://kb.example.com/verlof"}]
+
+    assert chat_safety.hard_facts_outside(text, passages, []) == {}
 
 
 @pytest.mark.parametrize(

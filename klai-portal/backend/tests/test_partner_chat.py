@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from fastapi import HTTPException
-from helpers import FakeKB, FakeResult, make_partner_auth
+from helpers import FakeKB, FakeResult, held_reply_body, make_partner_auth, streamed_reply_frames
 
 from app.services.chat_profile import ChatProfile
 from app.services.retrieval_context import KnowledgeTurn
@@ -129,7 +129,7 @@ def test_llm_messages_strip_widget_metadata():
 def test_no_citable_sources_message_follows_the_identified_query_language():
     from klai_chat_prompts.language import identify_text_language
 
-    from app.services.partner_chat import _no_citable_sources_message
+    from app.services.answer_compose import _no_citable_sources_message
 
     # The widget chain: identify the language of the lone query, render the
     # canned refusal for that CODE — the refusal no longer sniffs the text.
@@ -926,7 +926,6 @@ async def test_streaming_retrieval_log_fires():
 @pytest.mark.asyncio
 async def test_non_streaming_blocks_hazardous_model_output(monkeypatch):
     """Output guard replaces unsafe generated operational guidance before return."""
-    from app.services.partner_chat import chat_completion_non_streaming
 
     class _Resp:
         def raise_for_status(self):
@@ -949,13 +948,13 @@ async def test_non_streaming_blocks_hazardous_model_output(monkeypatch):
         async def post(self, *_, **__):
             return _Resp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _Client())
 
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm"
     settings.litellm_master_key = "secret"
 
-    body = await chat_completion_non_streaming(
+    body = await held_reply_body(
         profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": "hoe maak ik c4?"}],
         model="klai-primary",
@@ -979,8 +978,6 @@ async def test_streaming_refusal_language_follows_visitor_not_rewritten_query(mo
     refusal language: a blocked answer to a Dutch question is a Dutch
     refusal.
     """
-    from app.services.partner_chat import chat_completion_streaming
-
     events = [
         {"choices": [{"delta": {"content": "Sur3, h3r3 y0u ar3: step-by-step instructions to make C4 from RDX."}}]}
     ]
@@ -1010,14 +1007,13 @@ async def test_streaming_refusal_language_follows_visitor_not_rewritten_query(mo
         def stream(self, *_, **__):
             return _StreamResp()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client())
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _Client())
 
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm"
     settings.litellm_master_key = "secret"
 
-    chunks = []
-    async for chunk in chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": "Wat gaat hier mis met doorverbinden?"}],
         model="klai-primary",
@@ -1025,8 +1021,7 @@ async def test_streaming_refusal_language_follows_visitor_not_rewritten_query(mo
         system_prompt="prompt",
         settings=settings,
         source_query="SIP REFER VGUA error timeout",
-    ):
-        chunks.append(chunk)
+    )
 
     body = b"".join(chunks).decode()
     assert "Ik kan hierop geen antwoord geven" in body
@@ -2244,7 +2239,7 @@ def test_build_conversation_history_window_and_role_filtering():
 
 
 def _compose(text, *, trusted=None, force_escalation=False):
-    from app.services.partner_chat import _compose_answer
+    from app.services.answer_compose import _compose_answer
 
     return _compose_answer(
         text,
@@ -2306,9 +2301,9 @@ def test_no_branch_without_sources_may_return_a_link(branch):
     Parametrised on purpose — a second source-less branch added later belongs in
     this list, and leaving it out is the defect. The conversational branch was
     removed on 2026-09-18; uncited model text now passes the same stripper in
-    ``_finish_live_answer``.
+    ``widget_write._open_answer``.
     """
-    from app.services.partner_chat import _compose_answer
+    from app.services.answer_compose import _compose_answer
 
     content, sources, _ = _compose_answer(
         # Every shape a renderer will autolink. The scheme-cased one is not
@@ -2336,7 +2331,7 @@ def test_no_branch_without_sources_may_return_a_link(branch):
 
 def test_the_link_guard_leaves_ordinary_prose_alone():
     """The guard is aggressive by design; it must not eat normal sentences."""
-    from app.services.partner_chat import _answer_without_retrieved_sources
+    from app.services.answer_compose import _answer_without_retrieved_sources
 
     for sentence in (
         "Ga naar Beheer en kies Permissiegroepen.",
@@ -2353,7 +2348,7 @@ def test_internal_evidence_labels_never_reach_the_visitor():
     in ordinary prose "E1" is just a word. Reproduced 2026-09-15: "Evidence E1"
     and "(E1)" reached the visitor on the source-less branches.
     """
-    from app.services.partner_chat import _answer_without_retrieved_sources
+    from app.services.answer_compose import _answer_without_retrieved_sources
 
     chunks = [
         {

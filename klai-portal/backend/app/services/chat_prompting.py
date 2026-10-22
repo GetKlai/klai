@@ -43,7 +43,7 @@ def _normalize_llm_message(
     not something the visitor said, so they must not enter the search
     query. It is on for the model-facing caller
     (:func:`_augment_messages_with_system_prompt`): once ``tools`` is
-    forwarded to the model (see :func:`chat_completion_streaming`), the
+    forwarded to the model (see :func:`app.services.widget_write.write_reply`), the
     model's own prior ``tool_calls`` and the ``tool`` role results answering
     them must survive, or a second turn in a tool-calling conversation loses
     the call the model is waiting on a result for.

@@ -7,7 +7,7 @@ _spec = importlib.util.spec_from_file_location(
 gate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gate)
 
-CHAT_FILE = "klai-portal/backend/app/services/partner_chat.py"
+CHAT_FILE = "klai-portal/backend/app/services/widget_write.py"
 ROW = "+| 9 | 3 okt | fewer damaged answers | 12 of 40 damaged became 3 | live |"
 
 

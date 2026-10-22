@@ -11,7 +11,7 @@ grounding, never whether the model may look at the user's own input.
 
 Used by :func:`app.services.retrieval_context.retrieve_context` (the Strict
 zero-chunk refusal exception, internal surface only) and
-:func:`app.services.partner_chat._finish_live_answer` (skip the grounding
+:func:`app.services.widget_write._judge` (skip the grounding
 check/repair, which has no articles to check a screenshot description
 against).
 """

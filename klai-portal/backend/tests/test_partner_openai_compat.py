@@ -1312,7 +1312,7 @@ async def test_canonical_knowledge_path_forwards_tools(monkeypatch):
 
     They used to 400 on the knowledge path (see the old
     test_canonical_knowledge_path_rejects_tools); the knowledge path now
-    forwards them to LiteLLM (see chat_completion_streaming), so they must
+    forwards them to LiteLLM (see widget_write.write_reply), so they must
     reach ChatCompletionsRequest instead of being rejected.
     """
     import app.api.partner as partner

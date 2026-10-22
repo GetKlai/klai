@@ -9,10 +9,10 @@ Dutch answer because a second detector call disagreed with the first.
 
 Covered seams:
 
-* ``chat_completion_streaming`` — one ``delta.language`` frame per turn,
+* the one writer streaming an internal Open turn — one ``delta.language`` frame per turn,
   before any content, for both an established switch and an abstained
   decision (field absent).
-* ``chat_completion_non_streaming`` — ``message.language`` alongside the
+* the same turn held for a non-streaming request — ``message.language`` alongside the
   existing ``message.broad_mode`` / ``message.escalation`` fields.
 * An ORDINARY, non-refused, non-broad-mode turn carries the signal too — this
   is the case that breaks if the language frame reuses the broad_mode
@@ -25,8 +25,8 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+from helpers import held_reply_body, streamed_reply_frames
 
-from app.services import partner_chat
 from app.services.chat_profile import ChatProfile
 
 # A single unambiguous English sentence establishes "en" on the very first
@@ -119,19 +119,17 @@ def _sse_deltas(body: bytes) -> list[dict]:
 async def test_streaming_conversation_switching_to_english_emits_one_language_frame_before_content(monkeypatch):
     """A turn that decides English carries exactly one delta.language == 'en' frame, before the content."""
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient", lambda timeout: _streaming_client("Sure, here you go.")
+        "app.services.widget_write.httpx.AsyncClient", lambda timeout: _streaming_client("Sure, here you go.")
     )
 
-    chunks = []
-    async for chunk in partner_chat.chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": EN_1}],
         model="klai-primary",
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-    ):
-        chunks.append(chunk)
+    )
 
     deltas = _sse_deltas(b"".join(chunks))
     language_deltas = [d for d in deltas if "language" in d]
@@ -146,10 +144,10 @@ async def test_streaming_conversation_switching_to_english_emits_one_language_fr
 async def test_non_streaming_conversation_switching_to_english_sets_message_language(monkeypatch):
     """The non-streaming twin of the above: message.language == 'en'."""
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient", lambda timeout: _non_streaming_client("Sure, here you go.")
+        "app.services.widget_write.httpx.AsyncClient", lambda timeout: _non_streaming_client("Sure, here you go.")
     )
 
-    body = await partner_chat.chat_completion_non_streaming(
+    body = await held_reply_body(
         profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": EN_1}],
         model="klai-primary",
@@ -164,18 +162,16 @@ async def test_non_streaming_conversation_switching_to_english_sets_message_lang
 @pytest.mark.asyncio
 async def test_streaming_abstained_language_decision_omits_the_field(monkeypatch):
     """No user turns -> no.evidence -> the language field is entirely absent, not null."""
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _streaming_client("Antwoord."))
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _streaming_client("Antwoord."))
 
-    chunks = []
-    async for chunk in partner_chat.chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[],
         model="klai-primary",
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
-    ):
-        chunks.append(chunk)
+    )
 
     deltas = _sse_deltas(b"".join(chunks))
     assert not any("language" in d for d in deltas)
@@ -185,10 +181,10 @@ async def test_streaming_abstained_language_decision_omits_the_field(monkeypatch
 async def test_non_streaming_abstained_language_decision_omits_the_field(monkeypatch):
     """Non-streaming twin: no 'language' key anywhere in the message, not None."""
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient", lambda timeout: _non_streaming_client("Antwoord.")
+        "app.services.widget_write.httpx.AsyncClient", lambda timeout: _non_streaming_client("Antwoord.")
     )
 
-    body = await partner_chat.chat_completion_non_streaming(
+    body = await held_reply_body(
         profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[],
         model="klai-primary",
@@ -210,12 +206,11 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
     a normal cited answer, not a refusal.
     """
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.widget_write.httpx.AsyncClient",
         lambda timeout: _streaming_client("Klai is steward-owned and mission-led."),
     )
 
-    chunks = []
-    async for chunk in partner_chat.chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         profile=ChatProfile(surface="internal", kb_mode="open"),
         # The language decision is taken on `messages` (English -> "en");
         # `source_query` is the separate KB-matching query the citation
@@ -236,8 +231,7 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
         trusted_sources=[
             {"label": "1", "title": "Steward ownership", "url": "https://getklai.com/docs/company/steward-ownership"}
         ],
-    ):
-        chunks.append(chunk)
+    )
 
     body = b"".join(chunks)
     deltas = _sse_deltas(body)
@@ -251,11 +245,11 @@ async def test_streaming_ordinary_answered_turn_also_carries_the_language_signal
 async def test_non_streaming_ordinary_answered_turn_also_carries_the_language_signal(monkeypatch):
     """Non-streaming twin of the ordinary-turn regression above."""
     monkeypatch.setattr(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.widget_write.httpx.AsyncClient",
         lambda timeout: _non_streaming_client("Klai is steward-owned and mission-led."),
     )
 
-    body = await partner_chat.chat_completion_non_streaming(
+    body = await held_reply_body(
         profile=ChatProfile(surface="internal", kb_mode="open"),
         messages=[{"role": "user", "content": EN_1}],
         source_query="Wat is Klai precies en hoe werkt het?",

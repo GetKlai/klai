@@ -268,7 +268,7 @@ def test_web_chunks_become_citable_sources_without_kb():
 def test_compose_keeps_kb_and_web_as_separate_tiers():
     # KB and web are distinct trust tiers: each source is tagged with its origin
     # and the merged list gets one contiguous label sequence.
-    from app.services.partner_chat import _compose_answer
+    from app.services.answer_compose import _compose_answer
 
     answer = "Disable SIP-ALG on the router for the Yealink phone. Dutch GDP grew 2 percent in 2026."
     kb_chunks = [
@@ -296,7 +296,7 @@ def test_compose_keeps_kb_and_web_as_separate_tiers():
 
 
 def test_count_citation_rescues_includes_web_tier() -> None:
-    from app.services.partner_chat import _count_citation_rescues
+    from app.services.answer_compose import _count_citation_rescues
 
     decision = {
         "selected": [{"reason": "rescued"}, {"reason": "supported"}],
@@ -307,15 +307,15 @@ def test_count_citation_rescues_includes_web_tier() -> None:
 
 
 def test_log_citation_rescues_emits_one_actionable_event() -> None:
-    from app.services import partner_chat
+    from app.services import answer_compose
 
     decision = {
         "selected": [{"reason": "rescued"}],
         "web": {"selected": [{"reason": "rescued"}]},
     }
 
-    with patch.object(partner_chat.logger, "info") as log_info:
-        partner_chat._log_citation_rescues(decision, org_id="org-42")
+    with patch.object(answer_compose.logger, "info") as log_info:
+        answer_compose._log_citation_rescues(decision, org_id="org-42")
 
     log_info.assert_called_once_with(
         "citation_rescue_applied",
@@ -325,7 +325,7 @@ def test_log_citation_rescues_emits_one_actionable_event() -> None:
 
 
 def test_compose_web_only_not_refused():
-    from app.services.partner_chat import _compose_answer
+    from app.services.answer_compose import _compose_answer
 
     answer = "Dutch GDP grew 2 percent in 2026 according to recent data."
     web_chunks = web_results_as_chunks(
@@ -339,7 +339,7 @@ def test_compose_web_only_not_refused():
 
 
 def test_compose_refuses_when_no_kb_and_no_web():
-    from app.services.partner_chat import _compose_answer
+    from app.services.answer_compose import _compose_answer
 
     _content, sources, _decision = _compose_answer(
         "Some ungrounded statement.", [], [], "unrelated query", None, response_language=None
@@ -352,7 +352,7 @@ def test_compose_validates_web_against_web_query_not_kb_blob():
     # query, NOT the long KB-retrieval blob (user_query). A tangential web result
     # that shares blob tokens otherwise dominates query_support_tokens and the
     # relevant web source gets rejected as query_not_supported -> refusal.
-    from app.services.partner_chat import _compose_answer
+    from app.services.answer_compose import _compose_answer
 
     answer = "There is an outage at provider X affecting calls right now."
     web_chunks = web_results_as_chunks(
@@ -385,7 +385,7 @@ def test_compose_validates_web_against_web_query_not_kb_blob():
 
 def test_compose_dedupes_same_url_across_kb_and_web():
     # If the KB and the web both surface the same URL, emit it once (KB wins).
-    from app.services.partner_chat import _compose_answer
+    from app.services.answer_compose import _compose_answer
 
     answer = "Disable SIP-ALG on the router for the Yealink phone."
     same = "https://help.test/sip-alg"

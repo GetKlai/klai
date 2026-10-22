@@ -163,11 +163,13 @@ def _frames(chunks: list[bytes]) -> list[dict]:
 
 
 class _Turn:
-    def __init__(self, text: str, frames: list[dict], message: dict, records: list[dict]) -> None:
+    def __init__(self, text: str, frames: list[dict], message: dict, records: list[dict], sent: Any) -> None:
         self.text = text
         self.frames = frames
         self.message = message
         self.records = records
+        # The bytes of a streamed turn, or the whole body of a plain one, as they left portal-api.
+        self.sent = sent
 
 
 async def _turn(
@@ -182,10 +184,11 @@ async def _turn(
     history: tuple[dict, ...] = (),
     include_sources: bool = True,
     retrieval_response: httpx.Response | None = None,
+    web_search: bool = False,
 ) -> _Turn:
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
-    from app.services import partner_chat, retrieval_context, widget_turn
+    from app.services import answer_compose, retrieval_context, widget_turn
 
     for name, value in {
         "litellm_base_url": LITELLM,
@@ -215,7 +218,7 @@ async def _turn(
         key_id=key_id,
         org_id=7,
         zitadel_org_id="zorg-acme",
-        permissions=INTERNAL_KEY if profile.surface == "internal" else {"chat": True},
+        permissions={**INTERNAL_KEY, "web_search": web_search} if profile.surface == "internal" else {"chat": True},
         kb_access={10: "read"},
         rate_limit_rpm=60,
     )
@@ -223,6 +226,7 @@ async def _turn(
         messages=[*history, {"role": "user", "content": question}],
         stream=stream,
         knowledge=KnowledgeOptions(include_sources=include_sources),
+        web_search=web_search,
     )
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
@@ -236,15 +240,17 @@ async def _turn(
         frames: list[dict] = []
         message: dict = {}
         if stream:
-            frames = _frames([chunk async for chunk in response.body_iterator])
+            sent = b"".join([chunk async for chunk in response.body_iterator])
+            frames = _frames([sent])
             text = "".join(c["delta"].get("content") or "" for f in frames for c in f.get("choices") or [])
         else:
+            sent = response
             message = response["choices"][0]["message"]
             text = message["content"]
         # The record and an Open turn's check are written after the reply.
-        while pending := [task for task in (partner._pending | partner_chat._pending_turn_tasks) if not task.done()]:
+        while pending := [task for task in (partner._pending | answer_compose._pending_turn_tasks) if not task.done()]:
             await asyncio.gather(*pending)
-    return _Turn(text, frames, message, records)
+    return _Turn(text, frames, message, records, sent)
 
 
 def _system_prompt(llm: _LiteLLM) -> str:
@@ -668,6 +674,84 @@ async def test_the_warning_stays_when_the_caller_asked_for_no_sources(monkeypatc
     assert "- Let op: e-mailadres in dit antwoord staat niet in de kennisbank." in turn.text
 
 
+@pytest.mark.parametrize("kb_mode", ["open", "strict"])
+@pytest.mark.asyncio
+async def test_only_an_open_turn_reads_the_web_results_the_employee_asked_for(monkeypatch, kb_mode):
+    """The web step moved from the endpoint into the internal turn with the one writer; Strict never searches the web."""
+    from app.api import partner
+
+    result = {"title": "Verlof 2026", "url": "https://news.example.com/verlof", "content": "Verlof gaat via HR."}
+    search = AsyncMock(return_value=[result])
+    monkeypatch.setattr(partner, "search_web", search)
+    llm = _LiteLLM()
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode=kb_mode),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+        web_search=True,
+    )
+
+    activity = [a for f in turn.frames for c in f.get("choices") or [] for a in c["delta"].get("activity") or []]
+    searched = [a for a in activity if a["step"] == "web_searched"]
+    if kb_mode == "open":
+        search.assert_awaited_once()
+        assert "[Untrusted web search results]" in _system_prompt(llm)
+        assert searched == [
+            {"step": "web_searched", "label": "Web doorzocht", "detail": "1 resultaten gevonden", "count": 1}
+        ]
+    else:
+        search.assert_not_awaited()
+        assert searched == []
+
+
+class _UpstreamBody(_LiteLLM):
+    """The answer call as LiteLLM really returns it: id, created, fingerprint, usage and fields of its own."""
+
+    def __init__(self, extra: dict) -> None:
+        super().__init__()
+        self.extra = extra
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        response = super().__call__(request)
+        if self._kind(json.loads(request.content)) != "answer":
+            return response
+        return httpx.Response(200, json={**self.extra, **response.json()})
+
+
+_UPSTREAM = {
+    "id": "chatcmpl-upstream",
+    "object": "chat.completion",
+    "created": 1761120000,
+    "model": "mistral-small-2603",
+    "system_fingerprint": "fp_example",
+    "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20},
+    "service_tier": "default",
+}
+
+
+@pytest.mark.parametrize("kb_mode", ["open", "general"])
+@pytest.mark.parametrize("upstream", [_UPSTREAM, {}], ids=["full", "bare"])
+@pytest.mark.asyncio
+async def test_a_held_open_or_general_body_keeps_every_top_level_field_litellm_sent(monkeypatch, kb_mode, upstream):
+    """The removed live writer returned LiteLLM's own response; the one writer must not drop `created` from it."""
+    turn = await _turn(
+        monkeypatch,
+        _UpstreamBody(upstream),
+        profile=_internal(kb_mode=kb_mode),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+    )
+
+    top_level = {key: value for key, value in turn.sent.items() if key != "choices"}
+    if upstream:
+        assert top_level == _UPSTREAM
+    else:
+        assert top_level.keys() == {"id", "object", "model", "created"}
+        assert isinstance(top_level["created"], int)
+
+
 @pytest.mark.parametrize("pack", [_pack(), {"items": [], "sources": []}], ids=["with_sources", "zero"])
 @pytest.mark.asyncio
 async def test_a_held_open_reply_is_not_warned_for_a_link_the_source_gate_removed(monkeypatch, pack):
@@ -994,6 +1078,83 @@ async def test_a_pdf_beside_an_unreadable_file_is_still_read(monkeypatch):
     latest = next(m for m in reversed(answer["messages"]) if m["role"] == "user")
     assert "Rooster: maandag vrij." in str(latest["content"])
     assert "rooster.docx" not in str(latest["content"])
+
+
+# --- held delivery: what a widget and an internal Strict turn send, byte for byte ---------
+#
+# Captured on main before the internal Open and general modes moved onto the
+# one writer (widget_write.write_reply), so a change to how a held reply is
+# written or rendered shows up here as a diff of what left portal-api.
+
+_GOLDEN_SOURCE = {"label": "1", "title": "Verlof aanvragen", "url": "https://kb.example.com/verlof-0", "origin": "kb"}
+_GOLDEN_STRICT_TEXT = (
+    "Je vraagt verlof aan in het HR-portaal onder Verlof. Je leidinggevende keurt de aanvraag goed."
+    "\n\n**Bronnen**\n- [Verlof aanvragen](https://kb.example.com/verlof-0)"
+    "\n\n**Agent activiteit**\n- Modus: Strict, alleen kennisbank.\n- Kennisbank geraadpleegd: 1 fragment opgehaald."
+)
+_GOLDEN_FRAMES = (
+    b'data: {"choices": [{"delta": {"language": "nl"}}]}\n\n'
+    b'data: {"choices": [{"delta": {"activity": [{"step": "knowledge_retrieved", "label": "Kennisbank geraadpleegd",'
+    b' "detail": "1 passages gevonden", "count": 1}]}}]}\n\n'
+    b'data: {"choices": [{"delta": {"sources": [{"label": "1", "title": "Verlof aanvragen",'
+    b' "url": "https://kb.example.com/verlof-0", "origin": "kb"}]}}]}\n\n'
+    b'data: {"choices": [{"delta": {"activity": [{"step": "sources_attached", "label": "Bronnen gekoppeld",'
+    b' "detail": "1 bronnen beschikbaar", "count": 1}]}}]}\n\n'
+    b'data: {"choices": [{"delta": {"content": "%s"}}]}\n\n'
+    b"data: [DONE]\n\n"
+)
+_GOLDEN_STRICT_RECORD = {
+    "org_id": 7,
+    "band": "high",
+    "multi_question": False,
+    "judge_failed": ["case"],
+    "grounding": "all_in_articles",
+    "verdict": "answered",
+    "decision": "answer",
+    "top_score": 0.82,
+    "gap_type": None,
+    "sources_count": 1,
+    "refused": False,
+    "broad_mode": False,
+    "language": "nl",
+    "model": "klai-primary",
+    "appointment": False,
+    "sub_questions": 0,
+    "unsupported": 0,
+}
+
+
+def _golden_body(content: str) -> dict:
+    message = {"role": "assistant", "content": content, "language": "nl", "sources": [_GOLDEN_SOURCE]}
+    return {
+        "id": "chatcmpl-off-topic",
+        "object": "chat.completion",
+        "model": "klai-primary",
+        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+    }
+
+
+@pytest.mark.parametrize("stream", [True, False], ids=["frames", "body"])
+@pytest.mark.parametrize("surface", ["widget", "internal_strict"])
+@pytest.mark.asyncio
+async def test_a_held_reply_leaves_portal_api_byte_for_byte_as_before_the_one_writer(monkeypatch, surface, stream):
+    widget = surface == "widget"
+    turn = await _turn(
+        monkeypatch,
+        _LiteLLM(),
+        profile=ChatProfile(surface="widget") if widget else _internal(),
+        retrieval={"evidence_pack": _pack(items=2), "confidence_band": "high"},
+        stream=stream,
+        key_id="wgt_acme" if widget else "key-internal",
+    )
+
+    text = ANSWER if widget else _GOLDEN_STRICT_TEXT
+    if stream:
+        assert turn.sent == _GOLDEN_FRAMES % json.dumps(text, ensure_ascii=False)[1:-1].encode()
+    else:
+        assert turn.sent == _golden_body(text)
+    records = [{key: value for key, value in record.items() if key != "timings"} for record in turn.records]
+    assert records == ([] if widget else [_GOLDEN_STRICT_RECORD])
 
 
 @pytest.mark.asyncio

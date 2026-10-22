@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from fastapi import HTTPException
+from helpers import held_reply_body, streamed_reply_frames
 
 from app.services.chat_profile import ChatProfile
-from app.services.partner_chat import chat_completion_non_streaming, chat_completion_streaming
 
 
 def _settings() -> MagicMock:
@@ -40,7 +40,7 @@ def _patched_client(*, post_side_effect=None, response=None):
 
 
 async def _call() -> None:
-    await chat_completion_non_streaming(
+    await held_reply_body(
         messages=[{"role": "user", "content": "hi"}],
         model="klai-primary",
         temperature=0.7,
@@ -54,7 +54,7 @@ async def _call() -> None:
 @pytest.mark.asyncio
 async def test_non_streaming_connect_error_returns_502():
     fake_client = _patched_client(post_side_effect=httpx.ConnectError("all attempts failed"))
-    with patch("app.services.partner_chat.httpx.AsyncClient", fake_client):
+    with patch("app.services.widget_write.httpx.AsyncClient", fake_client):
         with pytest.raises(HTTPException) as exc:
             await _call()
     assert exc.value.status_code == 502
@@ -64,7 +64,7 @@ async def test_non_streaming_connect_error_returns_502():
 @pytest.mark.asyncio
 async def test_non_streaming_timeout_returns_502():
     fake_client = _patched_client(post_side_effect=httpx.ReadTimeout("slow"))
-    with patch("app.services.partner_chat.httpx.AsyncClient", fake_client):
+    with patch("app.services.widget_write.httpx.AsyncClient", fake_client):
         with pytest.raises(HTTPException) as exc:
             await _call()
     assert exc.value.status_code == 502
@@ -73,7 +73,7 @@ async def test_non_streaming_timeout_returns_502():
 @pytest.mark.asyncio
 async def test_non_streaming_read_error_returns_502():
     fake_client = _patched_client(post_side_effect=httpx.ReadError("connection dropped while reading"))
-    with patch("app.services.partner_chat.httpx.AsyncClient", fake_client):
+    with patch("app.services.widget_write.httpx.AsyncClient", fake_client):
         with pytest.raises(HTTPException) as exc:
             await _call()
     assert exc.value.status_code == 502
@@ -87,7 +87,7 @@ async def test_non_streaming_upstream_status_error_returns_502():
     resp = MagicMock()
     resp.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("503", request=request, response=response))
     fake_client = _patched_client(response=resp)
-    with patch("app.services.partner_chat.httpx.AsyncClient", fake_client):
+    with patch("app.services.widget_write.httpx.AsyncClient", fake_client):
         with pytest.raises(HTTPException) as exc:
             await _call()
     assert exc.value.status_code == 502
@@ -145,21 +145,18 @@ def _stream_client_read_error():
 @pytest.mark.asyncio
 async def test_streaming_markers_upstream_connect_error_emits_error_frame():
     with patch(
-        "app.services.partner_chat.httpx.AsyncClient",
+        "app.services.widget_write.httpx.AsyncClient",
         _stream_client_raising(httpx.ConnectError("all attempts failed")),
     ):
-        chunks = [
-            chunk
-            async for chunk in chat_completion_streaming(
-                profile=ChatProfile(surface="internal", kb_mode="open"),
-                messages=[{"role": "user", "content": "hi"}],
-                model="klai-primary",
-                temperature=0.7,
-                system_prompt="system",
-                settings=_settings(),
-                org_id=1,
-            )
-        ]
+        chunks = await streamed_reply_frames(
+            profile=ChatProfile(surface="internal", kb_mode="open"),
+            messages=[{"role": "user", "content": "hi"}],
+            model="klai-primary",
+            temperature=0.7,
+            system_prompt="system",
+            settings=_settings(),
+            org_id=1,
+        )
     body = b"".join(chunks).decode()
     assert '"error"' in body
     assert "upstream_error" in body
@@ -168,19 +165,16 @@ async def test_streaming_markers_upstream_connect_error_emits_error_frame():
 
 @pytest.mark.asyncio
 async def test_streaming_markers_upstream_read_error_emits_error_frame():
-    with patch("app.services.partner_chat.httpx.AsyncClient", _stream_client_read_error()):
-        chunks = [
-            chunk
-            async for chunk in chat_completion_streaming(
-                profile=ChatProfile(surface="internal", kb_mode="open"),
-                messages=[{"role": "user", "content": "hi"}],
-                model="klai-primary",
-                temperature=0.7,
-                system_prompt="system",
-                settings=_settings(),
-                org_id=1,
-            )
-        ]
+    with patch("app.services.widget_write.httpx.AsyncClient", _stream_client_read_error()):
+        chunks = await streamed_reply_frames(
+            profile=ChatProfile(surface="internal", kb_mode="open"),
+            messages=[{"role": "user", "content": "hi"}],
+            model="klai-primary",
+            temperature=0.7,
+            system_prompt="system",
+            settings=_settings(),
+            org_id=1,
+        )
     body = b"".join(chunks).decode()
     assert "upstream_error" in body
     assert "data: [DONE]" in body
@@ -191,19 +185,16 @@ async def test_streaming_markers_upstream_status_error_emits_error_frame():
     request = httpx.Request("POST", "http://litellm:4000/v1/chat/completions")
     response = httpx.Response(503, request=request)
     err = httpx.HTTPStatusError("503", request=request, response=response)
-    with patch("app.services.partner_chat.httpx.AsyncClient", _stream_client_raising(err)):
-        chunks = [
-            chunk
-            async for chunk in chat_completion_streaming(
-                profile=ChatProfile(surface="internal", kb_mode="open"),
-                messages=[{"role": "user", "content": "hi"}],
-                model="klai-primary",
-                temperature=0.7,
-                system_prompt="system",
-                settings=_settings(),
-                org_id=1,
-            )
-        ]
+    with patch("app.services.widget_write.httpx.AsyncClient", _stream_client_raising(err)):
+        chunks = await streamed_reply_frames(
+            profile=ChatProfile(surface="internal", kb_mode="open"),
+            messages=[{"role": "user", "content": "hi"}],
+            model="klai-primary",
+            temperature=0.7,
+            system_prompt="system",
+            settings=_settings(),
+            org_id=1,
+        )
     body = b"".join(chunks).decode()
     assert "upstream_error" in body
     assert "data: [DONE]" in body
