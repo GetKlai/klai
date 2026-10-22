@@ -94,9 +94,12 @@ assert_contains "$config" \
 assert_contains "$config" \
   "overridePackageName: 'https://github.com/aquasecurity/trivy.git'" \
   'Trivy must use its public Git repository for lookups'
-assert_contains "$config" \
-  "minimumReleaseAge: '0 days'" \
-  'Aqua Git-tag lookups without timestamps must not remain pending forever'
+assert_line "$config" \
+  "  minimumReleaseAgeBehaviour: 'timestamp-optional'," \
+  'an update without a release timestamp (GHCR images, lock file refresh, Git tags) must not stay pending forever'
+assert_line "$config" \
+  "    npm: '^11'," \
+  'lock files must be generated with the npm major that CI installs them with'
 assert_contains "$config" \
   "internalChecksFilter: 'flexible'" \
   'a group must not wait for its most frequently released member to age'
