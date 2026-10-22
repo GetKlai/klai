@@ -853,11 +853,13 @@ main() {
   # own result, and may already have pushed "up" before its retention step, so
   # a "down" from here would leave a good night red. Without flock (only the
   # macOS test runs) the run proceeds unlocked: no backup at all is worse than
-  # an unlikely race.
+  # an unlikely race. The lock is on BACKUP_ROOT itself, opened read-only: a
+  # lock file created by one root run would be unwritable for klai and fail
+  # every later night.
   if command -v flock >/dev/null 2>&1; then
-    exec 9>"${BACKUP_ROOT}/.backup.lock"
+    exec 9<"${BACKUP_ROOT}"
     if ! flock -n 9; then
-      log "ERROR: another backup is running (${BACKUP_ROOT}/.backup.lock is held); not starting"
+      log "ERROR: another backup is running (lock on ${BACKUP_ROOT} is held); not starting"
       exit 1
     fi
   else
