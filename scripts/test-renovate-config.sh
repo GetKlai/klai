@@ -102,6 +102,29 @@ assert_line "$config" \
 assert_line "$config" \
   "    'custom.regex'," \
   'customManagers only run when custom.regex is an enabled manager'
+# Docker Hub carries a Qdrant tag before the GitHub release exists (v1.20.0 on
+# 2026-10-21); the version must come from the release, and the data store
+# group must still catch it under that datasource.
+assert_line "$config" \
+  "      matchStrings: ['qdrant/qdrant:v(?<currentValue>[0-9][0-9.]*)']," \
+  'Qdrant must be read from deploy/docker-compose.yml by the custom manager'
+assert_line "$config" \
+  "      datasourceTemplate: 'github-releases'," \
+  'Qdrant must only be proposed from a published GitHub release'
+assert_line "$config" \
+  "      matchDatasources: ['docker', 'github-releases']," \
+  'a Qdrant series bump from GitHub releases must stay in the non-automerge data store group'
+# Under the global 'flexible' a still-young version is proposed anyway, with
+# only the stability check pending; 'strict' is what holds the branch back.
+qdrant_rules=$(grep -A1 -F "      matchPackageNames: ['qdrant/qdrant']," "$config")
+if ! printf '%s\n' "$qdrant_rules" | grep -qxF '      enabled: false,'; then
+  echo 'FAIL: the Docker Hub lookup for Qdrant must be disabled' >&2
+  exit 1
+fi
+if ! printf '%s\n' "$qdrant_rules" | grep -qxF "      internalChecksFilter: 'strict',"; then
+  echo 'FAIL: Qdrant must use the strict internal checks filter' >&2
+  exit 1
+fi
 assert_line "$config" \
   "    npm: '^11'," \
   'lock files must be generated with the npm major that CI installs them with'

@@ -206,6 +206,21 @@
       datasourceTemplate: 'npm',
     },
     {
+      // Qdrant pushes a Docker Hub tag before its GitHub release exists:
+      // v1.20.0 was on Docker Hub on 2026-10-21 with no release or notes, and
+      // the docker lookup proposed it (#1730). Qdrant holds the knowledge
+      // vectors, so the version comes from the GitHub release instead, which
+      // also gives the 7-day cooldown a publication date to count from. Every
+      // release so far has a matching vX.Y.Z image tag; one without fails the
+      // core-01 deploy on the image pull, loudly.
+      customType: 'regex',
+      managerFilePatterns: ['/^deploy/docker-compose\\.yml$/'],
+      matchStrings: ['qdrant/qdrant:v(?<currentValue>[0-9][0-9.]*)'],
+      depNameTemplate: 'qdrant/qdrant',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)$',
+    },
+    {
       customType: 'regex',
       managerFilePatterns: ['/^deploy/docker-compose\\.yml$/'],
       matchStrings: [
@@ -377,7 +392,9 @@
         waiting mongo series bump must not hold back everything that can \
         merge on its own. Patches for these images stay in the main group \
         and keep flowing.',
-      matchDatasources: ['docker'],
+      // github-releases: the Qdrant version is read from its GitHub releases
+      // by the custom manager above, not from Docker Hub.
+      matchDatasources: ['docker', 'github-releases'],
       matchUpdateTypes: ['minor'],
       matchPackageNames: [
         'mongo',
@@ -549,6 +566,27 @@
       matchManagers: ['docker-compose'],
       matchPackageNames: ['ghcr.io/berriai/litellm'],
       enabled: false,
+    },
+    {
+      description:
+        'The Qdrant image tag comes from the GitHub-releases custom manager, so \
+        the docker-compose manager must not also propose a Docker Hub tag that \
+        has no release yet.',
+      matchManagers: ['docker-compose'],
+      matchPackageNames: ['qdrant/qdrant'],
+      enabled: false,
+    },
+    {
+      description:
+        'Qdrant is proposed only once its GitHub release is 7 days old. Under \
+        the global flexible filter, a dependency whose every new version is \
+        still inside the window gets the newest one anyway with only \
+        renovate/stability-days pending, which is how #1730 offered v1.20.0 \
+        the day it appeared. strict opens no branch until a version has aged; \
+        a branch that already exists is left as it is, not updated.',
+      matchDatasources: ['github-releases'],
+      matchPackageNames: ['qdrant/qdrant'],
+      internalChecksFilter: 'strict',
     },
     {
       description:
