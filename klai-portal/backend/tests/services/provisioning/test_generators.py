@@ -119,7 +119,8 @@ class TestCharacterizeGenerateLibrechatEnvSnapshot:
         assert "SEARCH=true" not in result
         # Deterministic secrets
         assert f"JWT_SECRET={'ab' * 32}" in result
-        assert f"CREDS_IV={'ab' * 8}" in result
+        # LibreChat v0.8.8 refuses to start unless CREDS_IV is 16 bytes (32 hex).
+        assert f"CREDS_IV={'ab' * 16}" in result
 
 
 class TestCharacterizeGenerateLibrechatYaml:

@@ -219,7 +219,10 @@ def _generate_librechat_env(
     jwt_refresh_secret = secrets.token_hex(32)
     session_secret = secrets.token_hex(32)
     creds_key = secrets.token_hex(32)
-    creds_iv = secrets.token_hex(8)
+    # 16 bytes: LibreChat's AES-CBC IV. v0.8.8 refuses to start on anything
+    # else, and the 8-byte IV this used to mint never worked: WebCrypto rejects
+    # it, so no tenant ever stored data under it (checked on 2026-10-22).
+    creds_iv = secrets.token_hex(16)
     if not meili_api_key or not meili_api_key.strip():
         raise ValueError("meili_api_key is required; never write the Meili master key into tenant envs")
 
