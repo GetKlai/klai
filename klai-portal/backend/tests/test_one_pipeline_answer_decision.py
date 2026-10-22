@@ -163,11 +163,13 @@ def _frames(chunks: list[bytes]) -> list[dict]:
 
 
 class _Turn:
-    def __init__(self, text: str, frames: list[dict], message: dict, records: list[dict]) -> None:
+    def __init__(self, text: str, frames: list[dict], message: dict, records: list[dict], sent: Any) -> None:
         self.text = text
         self.frames = frames
         self.message = message
         self.records = records
+        # The bytes of a streamed turn, or the whole body of a plain one, as they left portal-api.
+        self.sent = sent
 
 
 async def _turn(
@@ -236,15 +238,17 @@ async def _turn(
         frames: list[dict] = []
         message: dict = {}
         if stream:
-            frames = _frames([chunk async for chunk in response.body_iterator])
+            sent = b"".join([chunk async for chunk in response.body_iterator])
+            frames = _frames([sent])
             text = "".join(c["delta"].get("content") or "" for f in frames for c in f.get("choices") or [])
         else:
+            sent = response
             message = response["choices"][0]["message"]
             text = message["content"]
         # The record and an Open turn's check are written after the reply.
         while pending := [task for task in (partner._pending | partner_chat._pending_turn_tasks) if not task.done()]:
             await asyncio.gather(*pending)
-    return _Turn(text, frames, message, records)
+    return _Turn(text, frames, message, records, sent)
 
 
 def _system_prompt(llm: _LiteLLM) -> str:
@@ -994,3 +998,80 @@ async def test_a_pdf_beside_an_unreadable_file_is_still_read(monkeypatch):
     latest = next(m for m in reversed(answer["messages"]) if m["role"] == "user")
     assert "Rooster: maandag vrij." in str(latest["content"])
     assert "rooster.docx" not in str(latest["content"])
+
+
+# --- held delivery: what a widget and an internal Strict turn send, byte for byte ---------
+#
+# Captured on main before the internal Open and general modes moved onto the
+# one writer (widget_write.write_reply), so a change to how a held reply is
+# written or rendered shows up here as a diff of what left portal-api.
+
+_GOLDEN_SOURCE = {"label": "1", "title": "Verlof aanvragen", "url": "https://kb.example.com/verlof-0", "origin": "kb"}
+_GOLDEN_STRICT_TEXT = (
+    "Je vraagt verlof aan in het HR-portaal onder Verlof. Je leidinggevende keurt de aanvraag goed."
+    "\n\n**Bronnen**\n- [Verlof aanvragen](https://kb.example.com/verlof-0)"
+    "\n\n**Agent activiteit**\n- Modus: Strict, alleen kennisbank.\n- Kennisbank geraadpleegd: 1 fragment opgehaald."
+)
+_GOLDEN_FRAMES = (
+    b'data: {"choices": [{"delta": {"language": "nl"}}]}\n\n'
+    b'data: {"choices": [{"delta": {"activity": [{"step": "knowledge_retrieved", "label": "Kennisbank geraadpleegd",'
+    b' "detail": "1 passages gevonden", "count": 1}]}}]}\n\n'
+    b'data: {"choices": [{"delta": {"sources": [{"label": "1", "title": "Verlof aanvragen",'
+    b' "url": "https://kb.example.com/verlof-0", "origin": "kb"}]}}]}\n\n'
+    b'data: {"choices": [{"delta": {"activity": [{"step": "sources_attached", "label": "Bronnen gekoppeld",'
+    b' "detail": "1 bronnen beschikbaar", "count": 1}]}}]}\n\n'
+    b'data: {"choices": [{"delta": {"content": "%s"}}]}\n\n'
+    b"data: [DONE]\n\n"
+)
+_GOLDEN_STRICT_RECORD = {
+    "org_id": 7,
+    "band": "high",
+    "multi_question": False,
+    "judge_failed": ["case"],
+    "grounding": "all_in_articles",
+    "verdict": "answered",
+    "decision": "answer",
+    "top_score": 0.82,
+    "gap_type": None,
+    "sources_count": 1,
+    "refused": False,
+    "broad_mode": False,
+    "language": "nl",
+    "model": "klai-primary",
+    "appointment": False,
+    "sub_questions": 0,
+    "unsupported": 0,
+}
+
+
+def _golden_body(content: str) -> dict:
+    message = {"role": "assistant", "content": content, "language": "nl", "sources": [_GOLDEN_SOURCE]}
+    return {
+        "id": "chatcmpl-off-topic",
+        "object": "chat.completion",
+        "model": "klai-primary",
+        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+    }
+
+
+@pytest.mark.parametrize("stream", [True, False], ids=["frames", "body"])
+@pytest.mark.parametrize("surface", ["widget", "internal_strict"])
+@pytest.mark.asyncio
+async def test_a_held_reply_leaves_portal_api_byte_for_byte_as_before_the_one_writer(monkeypatch, surface, stream):
+    widget = surface == "widget"
+    turn = await _turn(
+        monkeypatch,
+        _LiteLLM(),
+        profile=ChatProfile(surface="widget") if widget else _internal(),
+        retrieval={"evidence_pack": _pack(items=2), "confidence_band": "high"},
+        stream=stream,
+        key_id="wgt_acme" if widget else "key-internal",
+    )
+
+    text = ANSWER if widget else _GOLDEN_STRICT_TEXT
+    if stream:
+        assert turn.sent == _GOLDEN_FRAMES % json.dumps(text, ensure_ascii=False)[1:-1].encode()
+    else:
+        assert turn.sent == _golden_body(text)
+    records = [{key: value for key, value in record.items() if key != "timings"} for record in turn.records]
+    assert records == ([] if widget else [_GOLDEN_STRICT_RECORD])
