@@ -98,6 +98,7 @@ jobs:
           # so a mid-flight failure is the expensive kind. Its disk guard is
           # what keeps a full disk from producing one.
           bash deploy/scripts/tests/deploy-portal-api-disk-guard.test.sh
+          bash deploy/scripts/tests/deploy-portal-api-locks.test.sh
           # This job installs backup.sh on core-01, so its retention tests
           # belong here too — the second one covers the window shrinking to 7.
           bash deploy/scripts/tests/backup-retention.test.sh
@@ -300,6 +301,17 @@ jobs:
               fi
               echo "::endgroup::"
             }
+
+            # One measurement wait for every recreate below: this step runs
+            # compose-up.sh twice (librechat-getklai and the env-drift sweep),
+            # and each run would otherwise wait up to 20 minutes for a round on
+            # its own. The lock is held on this shell's descriptor until the
+            # step ends; compose-up.sh sees KLAI_MEASUREMENT_LOCK_HELD and only
+            # takes the container lock. deploy-locks.sh was installed by the
+            # deploy/scripts loop above.
+            source /opt/klai/scripts/deploy-locks.sh
+            require_flock
+            take_measurement_lock deploying
 
             # SPEC-INFRA-CONFIG-SYNC-001 R2 — apply helper to all four
             # single-file relative bind-mounts that lack a dedicated

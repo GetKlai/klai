@@ -100,6 +100,9 @@ jobs:
           # script; rsync's default is write-to-temp-then-rename, so the swap is
           # atomic. Kept explicit because compose-up.sh now decides whether a
           # deploy counts as successful.
+          # compose-up.sh sources deploy-locks.sh from its own directory, so the
+          # two travel together; the lock helpers go first.
+          retry rsync -av deploy/scripts/deploy-locks.sh klai@${{ secrets.CORE01_HOST }}:/opt/klai/scripts/deploy-locks.sh
           retry rsync -av deploy/scripts/compose-up.sh klai@${{ secrets.CORE01_HOST }}:/opt/klai/scripts/compose-up.sh
           retry ssh klai@${{ secrets.CORE01_HOST }} "chmod 0755 /opt/klai/scripts/compose-up.sh"
 

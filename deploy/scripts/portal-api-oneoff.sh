@@ -63,18 +63,13 @@ done
 # clone the container that deploy left behind, not the one it replaced. The
 # descriptor stays open in this shell and in `docker run` below, so the lock is
 # held until the container has exited. Without flock a round would run
-# unannounced, so a missing binary is an error, as in the deploy scripts.
-# A round usually runs as root and a deploy as klai, so the file is opened
-# read-only (enough for flock(2)) and created world-readable: whoever made it,
-# the other side can still lock it.
+# unannounced, so a missing binary is an error, as in the deploy scripts. The
+# file is created and opened the way the deploys do it (deploy-locks.sh).
 if [[ "$measurement" == yes ]]; then
-    MEASUREMENT_LOCK="${KLAI_MEASUREMENT_LOCK:-/opt/klai/.measurement.lock}"
-    if ! command -v flock >/dev/null 2>&1; then
-        echo "ERROR: flock not found; refusing to start a measurement round without the lock $MEASUREMENT_LOCK" >&2
-        exit 1
-    fi
-    [[ -e "$MEASUREMENT_LOCK" ]] || install -m 644 /dev/null "$MEASUREMENT_LOCK"
-    exec 8<"$MEASUREMENT_LOCK"
+    # shellcheck source-path=SCRIPTDIR source=deploy-locks.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/deploy-locks.sh"
+    require_flock
+    open_measurement_lock
     if ! flock -s -n 8; then
         echo "A deploy holds $MEASUREMENT_LOCK; the round starts once it is done."
         flock -s 8

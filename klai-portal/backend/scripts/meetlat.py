@@ -299,16 +299,14 @@ def _guard_meta(meta_path: Path, modules: dict[str, str], fingerprint: dict[str,
 
 
 def _is_restart(exc: BaseException) -> bool:
-    """Whether the exception, or one it was raised from, is a service that was gone or answered 502/503/504.
+    """Whether the exception, or one it was raised from, is a connection that was gone or timed out.
 
-    The pipeline wraps every gateway failure in its own 502 (AnswerUpstreamError),
-    so the status that counts is the one of the httpx error underneath.
+    Only what fails before the stream starts raises out of the replay (a database
+    or service connection); a gateway failure arrives in the stream (``_restart_behind``).
     """
     current: BaseException | None = exc
     while current is not None:
-        if isinstance(current, _RESTART_ERRORS) or (
-            isinstance(current, httpx.HTTPStatusError) and current.response.status_code in _RESTART_STATUSES
-        ):
+        if isinstance(current, _RESTART_ERRORS):
             return True
         current = current.__cause__
     return False
@@ -317,13 +315,22 @@ def _is_restart(exc: BaseException) -> bool:
 def _restart_behind(answer: dict) -> str | None:
     """Why an answer that did come back measured a restart instead of the pipeline, or None.
 
-    The internal chat turns a lost knowledge base into a refusal or a general
-    answer and names the failure in ``retrieval_failure``: ``HTTP <status>`` or
-    the httpx error's class name.
+    A gateway that went away mid-turn ends the stream with an error frame, often
+    after part of the text. A selection step that got no verdict from the
+    gateway twice turns Strict into the fixed refusal. The internal chat turns a
+    lost knowledge base into a refusal or a general answer and names the failure
+    in ``retrieval_failure``: ``HTTP <status>`` or the httpx error's class name.
+    A persistent cause still ends as an error row after the retries.
     """
+    if answer.get("stream_error"):
+        return f"stream error {answer['stream_error']}"
     if not (answer.get("text") or "").strip():
         return "empty_answer"
-    failure = (answer.get("signals") or {}).get("retrieval_failure")
+    signals = answer.get("signals") or {}
+    selection = signals.get("selection")
+    if isinstance(selection, dict) and selection.get("failed"):
+        return f"selection {selection['failed']}"
+    failure = signals.get("retrieval_failure")
     if not failure:
         return None
     if failure.startswith("HTTP "):

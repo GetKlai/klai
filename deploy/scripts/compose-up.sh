@@ -73,53 +73,15 @@ DOCKER="${KLAI_DOCKER_BIN:-docker}"
 VERIFY_POLLS="${KLAI_VERIFY_POLLS:-5}"
 VERIFY_INTERVAL="${KLAI_VERIFY_INTERVAL:-2}"
 
-# One container deploy on this host at a time. Two workflows recreated
-# klai-docker-authz in the same second (21 October 2026) and compose exited on
-# "removal of container is already in progress"; a GitHub concurrency group
-# cancels the third job that queues, so the lock lives on the host instead.
-# Without flock this deploy would run unlocked next to another one, so a missing
-# binary is an error, not a skip. The test suites put a stub flock on PATH.
-LOCK_FILE="${KLAI_CONTAINER_LOCK:-$KLAI_DIR/.container-deploy.lock}"
-if ! command -v flock >/dev/null 2>&1; then
-    echo "ERROR: flock not found; refusing to deploy without the host lock $LOCK_FILE" >&2
-    exit 1
-fi
-
-# Chat quality rounds (portal-api-oneoff.sh --measurement) hold the
-# measurement lock shared for as long as their container runs; on 22 October
-# 2026 three deploys recreated a service in the middle of a 25 to 45 minute
-# round and cost it its turns. A deploy asks for that lock exclusively before
-# the container lock, in this order in compose-up.sh and
-# tenant-config-regenerate.sh alike, so two deploys never each hold the lock
-# the other waits for. It keeps the lock until it exits, so no round starts
-# halfway through. The wait is bounded: a hotfix must not sit behind a
-# measurement for an hour, so after KLAI_MEASUREMENT_WAIT_SECONDS (20 minutes)
-# it goes ahead and says so. A round usually runs as root and a deploy as klai,
-# so the file is opened read-only (enough for flock(2)) and created
-# world-readable.
-MEASUREMENT_LOCK="${KLAI_MEASUREMENT_LOCK:-$KLAI_DIR/.measurement.lock}"
-MEASUREMENT_WAIT="${KLAI_MEASUREMENT_WAIT_SECONDS:-1200}"
-[[ -e "$MEASUREMENT_LOCK" ]] || install -m 644 /dev/null "$MEASUREMENT_LOCK"
-exec 8<"$MEASUREMENT_LOCK"
-if ! flock -x -n 8; then
-    waited=0
-    while (( waited < MEASUREMENT_WAIT )); do
-        echo "Waiting for a measurement round (or another deploy) to finish: $MEASUREMENT_LOCK is held (${waited} of ${MEASUREMENT_WAIT} s)"
-        step=$(( MEASUREMENT_WAIT - waited < 60 ? MEASUREMENT_WAIT - waited : 60 ))
-        if flock -x -w "$step" 8; then break; fi
-        waited=$(( waited + step ))
-    done
-    if (( waited >= MEASUREMENT_WAIT )); then
-        echo "::warning::$MEASUREMENT_LOCK still held after ${MEASUREMENT_WAIT} s; deploying anyway, a running measurement round will see this restart"
-    fi
-fi
-
-# Then the container lock.
-exec 9>"$LOCK_FILE"
-if ! flock -w "${KLAI_LOCK_WAIT_SECONDS:-900}" 9; then
-    echo "ERROR: another container deploy has held $LOCK_FILE for 15 minutes; not starting" >&2
-    exit 1
-fi
+# The measurement lock, then the container lock (deploy-locks.sh, installed
+# next to this script). A caller that already holds them passes them on through
+# KLAI_MEASUREMENT_LOCK_HELD / KLAI_CONTAINER_LOCK_HELD, so nothing is waited
+# for twice.
+# shellcheck source-path=SCRIPTDIR source=deploy-locks.sh
+source "$(dirname "${BASH_SOURCE[0]}")/deploy-locks.sh"
+require_flock
+take_measurement_lock deploying
+take_container_lock starting
 # A zero here would skip the status check entirely and make every deploy green.
 if (( VERIFY_POLLS < 1 )); then VERIFY_POLLS=1; fi
 

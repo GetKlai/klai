@@ -52,6 +52,16 @@ fi
 echo "Pulling ${IMAGE}..."
 docker pull "$IMAGE"
 
+# Both host locks before the migration, not only inside compose-up.sh: that
+# script may wait 35 minutes for them, and the live portal-api would run on the
+# migrated schema all that time. compose-up.sh below sees them held and does not
+# wait again (deploy-locks.sh, installed next to this script).
+# shellcheck source-path=SCRIPTDIR source=deploy-locks.sh
+source "$(dirname "${BASH_SOURCE[0]}")/deploy-locks.sh"
+require_flock
+take_measurement_lock deploying
+take_container_lock starting
+
 echo "Running portal-api Alembic migrations from the new image..."
 docker compose run --rm --no-deps --entrypoint alembic portal-api upgrade head
 

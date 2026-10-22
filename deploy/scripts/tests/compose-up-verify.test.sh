@@ -227,6 +227,43 @@ check "  waited in steps of at most a minute, then took the container lock" \
     "$(sed 's/ lock=.*//' "$case_dir/fixtures/flock_calls" | paste -sd '|' -)"
 check "  the container was still recreated" 1 "$(wc -l < "$case_dir/fixtures/up_argv" | tr -d ' ')"
 
+# A caller that already waited for the round (the deploy-compose sync step,
+# deploy-portal-api.sh) passes the lock on; compose-up.sh must not wait again.
+new_case measurement_lock_held_by_the_caller
+fx measurement_busy_for always
+KLAI_MEASUREMENT_LOCK_HELD=1 run_target demo
+check "the caller holds the measurement lock -> 0" 0 "$rc"
+check "  no measurement wait of its own, only the container lock" \
+    "flock -w 900 9" "$(sed 's/ lock=.*//' "$case_dir/fixtures/flock_calls" | paste -sd '|' -)"
+
+# The deploy-compose sync step: it sources deploy-locks.sh, waits once, then
+# runs compose-up.sh twice. One measurement wait for the step, a container lock
+# per run.
+new_case one_wait_for_a_step_with_two_deploys
+fx measurement_busy_for 1
+set +e
+PATH="$work/bin:$PATH" KLAI_COMPOSE_DIR="$case_dir" KLAI_DOCKER_BIN="$work/docker" \
+    FIXTURES="$case_dir/fixtures" KLAI_VERIFY_POLLS=2 KLAI_VERIFY_INTERVAL=0 \
+    bash -c 'set -e; source "$1/deploy-locks.sh"; require_flock; take_measurement_lock deploying
+             bash "$1/compose-up.sh" demo; bash "$1/compose-up.sh" demo' _ "$script_dir" > "$case_dir/out" 2>&1
+rc=$?
+set -e
+check "a step that took the lock once and deployed twice -> 0" 0 "$rc"
+check "  waited for the round once, then a container lock per deploy" \
+    "flock -x -n 8|flock -x -w 60 8|flock -w 900 9|flock -w 900 9" \
+    "$(sed 's/ lock=.*//' "$case_dir/fixtures/flock_calls" | paste -sd '|' -)"
+
+# Two starters that both find the file missing must lock the same inode, and a
+# later start must never replace the file a running round holds.
+new_case lock_file_keeps_its_inode
+run_target demo
+inode_of() { python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_ino)' "$case_dir/.measurement.lock"; }
+first_inode="$(inode_of)"
+run_target demo
+check "a second deploy start keeps the lock file's inode" "$first_inode" "$(inode_of)"
+check "  the file a deploy created is readable by a round of another user" "644" \
+    "$(python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$case_dir/.measurement.lock")"
+
 # The knowledge-ingest case: stop_grace_period 90s + a busy procrastinate queue
 # makes compose abort on the removal race, but the replacement IS there.
 new_case compose_fails_container_replaced

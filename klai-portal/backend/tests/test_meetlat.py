@@ -262,19 +262,14 @@ def test_run_replays_only_the_cases_of_its_org_and_those_without_an_org(monkeypa
 # --- a restart during the round --------------------------------------------------------------------------------
 
 
-def _answer(text="answer after the restart", signals=None):
-    return {"text": text, "ttft_ms": 5, "total_ms": 900, "signals": signals or {"decision": "answer"}}
-
-
-def _gateway_error(status_code: int) -> Exception:
-    """What the pipeline raises when LiteLLM answers ``status_code``: the httpx error, wrapped as the turn's 502."""
-    from app.services.widget_reply import AnswerUpstreamError
-
-    request = httpx.Request("POST", "http://litellm.example.com/v1/chat/completions")
-    cause = httpx.HTTPStatusError("upstream", request=request, response=httpx.Response(status_code, request=request))
-    error = AnswerUpstreamError("Chat service error", "nl")
-    error.__cause__ = cause
-    return error
+def _answer(text="answer after the restart", signals=None, stream_error=None):
+    return {
+        "text": text,
+        "ttft_ms": 5,
+        "total_ms": 900,
+        "signals": signals or {"decision": "answer"},
+        "stream_error": stream_error,
+    }
 
 
 def _replay_with_outcomes(monkeypatch, tmp_path, outcomes):
@@ -299,14 +294,13 @@ def _replay_with_outcomes(monkeypatch, tmp_path, outcomes):
     return row, pauses, remaining
 
 
+# The internal surface streams, so a gateway that is gone never raises out of
+# _new_answer: it ends the stream with an error frame, before or after the first
+# tokens. What does raise is a connection that fails before the stream starts.
 @pytest.mark.parametrize(
     "failure",
-    [
-        httpx.ConnectError("connection refused"),
-        httpx.ReadTimeout("timed out"),
-        _gateway_error(503),
-    ],
-    ids=["connection_error", "timeout", "gateway_503_behind_the_turns_502"],
+    [httpx.ConnectError("connection refused"), httpx.ReadTimeout("timed out")],
+    ids=["connection_error_before_the_stream", "timeout_before_the_stream"],
 )
 def test_a_turn_that_meets_a_restart_is_replayed_after_growing_pauses(monkeypatch, tmp_path, capsys, failure):
     row, pauses, _ = _replay_with_outcomes(monkeypatch, tmp_path, [failure, failure, _answer()])
@@ -319,29 +313,37 @@ def test_a_turn_that_meets_a_restart_is_replayed_after_growing_pauses(monkeypatc
     assert "attempt 2 of 4" in out
 
 
-def test_an_empty_answer_counts_as_a_restart_and_is_replayed(monkeypatch, tmp_path):
-    row, pauses, _ = _replay_with_outcomes(monkeypatch, tmp_path, [_answer(text="  "), _answer()])
-
-    assert row["text"] == "answer after the restart"
-    assert pauses == [10]
-
-
-def test_a_refusal_behind_a_retrieval_outage_is_replayed(monkeypatch, tmp_path):
-    outage = _answer(text="De kennisbank is tijdelijk niet bereikbaar.", signals={"retrieval_failure": "HTTP 503"})
-
+@pytest.mark.parametrize(
+    "outage",
+    [
+        _answer(text="", stream_error="Chat service unavailable"),
+        _answer(text="Zie het hand", stream_error="Chat service unavailable"),
+        _answer(text="  "),
+        _answer(text="De kennisbank is tijdelijk niet bereikbaar.", signals={"retrieval_failure": "HTTP 503"}),
+        _answer(
+            text="Dat staat niet in de kennisbank.",
+            signals={"decision": "refusal", "selection": {"failed": "no_verdict_after_retry"}},
+        ),
+    ],
+    ids=[
+        "gateway_gone_before_the_first_token",
+        "gateway_gone_after_partial_text",
+        "empty_answer",
+        "retrieval_503_behind_a_strict_refusal",
+        "selection_without_a_verdict_behind_a_strict_refusal",
+    ],
+)
+def test_an_answer_that_measured_a_restart_is_replayed(monkeypatch, tmp_path, outage):
     row, pauses, _ = _replay_with_outcomes(monkeypatch, tmp_path, [outage, _answer()])
 
     assert row["text"] == "answer after the restart"
     assert pauses == [10]
 
 
-@pytest.mark.parametrize(
-    "failure", [KeyError("decision"), _gateway_error(500)], ids=["bug_in_the_pipeline", "gateway_500"]
-)
-def test_a_failure_that_is_not_a_restart_is_an_error_row_at_once(monkeypatch, tmp_path, failure):
-    row, pauses, remaining = _replay_with_outcomes(monkeypatch, tmp_path, [failure, _answer()])
+def test_a_failure_that_is_not_a_restart_is_an_error_row_at_once(monkeypatch, tmp_path):
+    row, pauses, remaining = _replay_with_outcomes(monkeypatch, tmp_path, [KeyError("decision"), _answer()])
 
-    assert row["error"] == type(failure).__name__
+    assert row["error"] == "KeyError"
     assert pauses == []
     assert len(remaining) == 1
 

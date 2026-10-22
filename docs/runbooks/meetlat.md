@@ -56,10 +56,11 @@ loaded from before it replays anything.
    not sit behind a measurement, and the round meets the restart. A round started while a deploy holds the file waits
    for that deploy, then clones the portal-api it left behind.
 
-   A turn that meets a restart anyway is replayed: a connection error, a timeout, a 502/503/504 from the gateway or from
-   retrieval (including the internal chat's refusal when it lost the knowledge base), or an empty answer is tried again
-   after 10, 30 and 60 seconds, each attempt logged with its number, and only then written as an error row. Any other
-   failure is written as an error row at once.
+   A turn that meets a restart anyway is replayed: a connection error or a timeout before the stream starts, a stream
+   that ends in an error frame (the gateway went away, also after part of the text), an empty answer, a selection step
+   that got no verdict, or a retrieval 502/503/504, connection error or timeout behind the internal chat's refusal is
+   tried again after 10, 30 and 60 seconds, each attempt logged with its number, and only then written as an error
+   row. Any other failure is written as an error row at once.
 
 3. Read the banner. It is the first output and the first key of `round-candidate-1.jsonl.meta.json`:
 

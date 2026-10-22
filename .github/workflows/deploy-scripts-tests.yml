@@ -156,6 +156,9 @@ jobs:
       - name: portal-api deploy disk-guard suite
         run: bash deploy/scripts/tests/deploy-portal-api-disk-guard.test.sh
 
+      - name: portal-api deploy lock-order suite
+        run: bash deploy/scripts/tests/deploy-portal-api-locks.test.sh
+
       - name: portal-api one-off clone suite
         run: bash deploy/tests/test-portal-api-oneoff.sh
 
