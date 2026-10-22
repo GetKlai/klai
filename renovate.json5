@@ -15,7 +15,11 @@
   // single PR. A silent no-op for 28 weeks, which is why transitive pins
   // (h2, idna, cryptography, pypdf) drifted until a manual audit caught them.
 
+  // custom.regex has to be listed for the customManagers below to run at all.
+  // It was missing, so the litellm-tests.yml and vexa-bot regex managers had
+  // never run: #1732 moved the LiteLLM image and left the PyPI pin behind.
   enabledManagers: [
+    'custom.regex',
     'docker-compose',
     'dockerfile',
     'github-actions',
