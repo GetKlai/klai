@@ -84,18 +84,6 @@ from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
 
-# For an internal Open turn whose selection found no passage that answers (or
-# could not decide): the passages stay, the writer is told. Handed every
-# passage without this, the writer answered two questions from another
-# product's articles, with those as sources (internal chat, 14 to 21 October).
-NO_PASSAGE_ANSWERS_NOTE = (
-    "[The selection step read these passages and found none that answers the "
-    "question, or could not decide. Use a passage only for what it literally "
-    "says about this question, and never present an article about another "
-    "product or feature as the answer. What the passages do not cover, write "
-    "from general knowledge and say so.]"
-)
-
 
 def _top_chunk_score(chunks: list[dict]) -> tuple[dict | None, float | None]:
     """Return ``(top chunk, its score)`` — reranker score when present, else dense.
@@ -471,9 +459,6 @@ class KnowledgeTurn:
     not_in_passages: bool = False
     # The writer's passages are the selection's, not everything retrieval found.
     passages_chosen: bool = False
-    # Internal Open whose selection chose nothing: the writer keeps every
-    # passage and is told that none was found to answer.
-    no_passage_answers: bool = False
     # The grounding check that runs after the reply (an Open turn, or a reply
     # written from chosen passages); the per-turn record waits for it.
     grounding_check: asyncio.Task[None] | None = None
@@ -933,6 +918,11 @@ async def _call_retrieval(t: _Turn, retrieve_body: dict) -> dict | _Result:
         )
         if failure == "identity_assertion":
             raise
+        # The refusal or the general answer below reads like any other turn; the
+        # record names the outage behind it, and a measurement round
+        # (scripts/meetlat.py) retries the turn when the failure was transient.
+        if t.answer_signals is not None:
+            t.answer_signals["retrieval_failure"] = failure
         if profile.kb_mode == "strict":
             turn.refusal = strict_kb_unavailable_message
             return [], "", [], False
@@ -1170,7 +1160,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     # skipped this step. Not on a turn that is answered broadly, which reads
     # no articles. "Not in the passages" is routed by the caller (the
     # widget's "not found", the internal Strict refusal); an internal Open
-    # turn without chosen passages is written from general knowledge below.
+    # turn without chosen passages keeps every passage (see below).
     # The kept passages of a widget conversation (kept_passages_of) join the
     # candidates, also when the search found nothing; broad mode and the gap
     # read the search's own chunks.
@@ -1201,17 +1191,12 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             turn.passages_chosen = True
             chunks = [{**chunk, _CHOSEN_PASSAGE_KEY: True} for chunk in chosen]
             trusted_sources = _filter_trusted_sources_for_chunks(trusted_sources, chunks)
-        elif not source_only and (turn.selection is None or turn.not_in_passages):
-            # Internal Open with nothing chosen (not in the passages, no
-            # sentence pointed at, or no verdict) keeps every passage, with a
-            # note that none was found to answer. Withholding them was measured
-            # on the internal meetlat (21 October): the writer lost 5 to 7 of
-            # 21 answers the owner expected from the knowledge base, because
-            # the selection's "not in the passages" is wrong more often on an
-            # employee's long, relayed question than on a visitor's. A verdict
-            # "answers" with empty evidence (a rewrite of text already in the
-            # conversation) needs no passage and gets no note.
-            turn.no_passage_answers = True
+        # Internal Open with nothing chosen (not in the passages, no sentence
+        # pointed at, or no verdict) keeps every passage. Withholding them was
+        # measured on the internal meetlat (21 October): the writer lost 5 to 7
+        # of 21 answers the owner expected from the knowledge base, because the
+        # selection's "not in the passages" is wrong more often on an
+        # employee's long, relayed question than on a visitor's.
     if not (turn.passages_chosen and any(chunk.get("kept") for chunk in chunks)):
         # A kept passage answered: the knowledge base had the answer.
         _register_gap(t, found)
@@ -1250,8 +1235,6 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         # must still see them so it does not answer them from other lines.
         if unchecked := unchecked_question_blocks(found.unchecked_questions, start_index=len(found.sub_queries) + 1):
             system_prompt += "\n\n" + "\n\n".join(unchecked)
-    elif turn.no_passage_answers and chunks and not broad:
-        system_prompt += "\n\n" + NO_PASSAGE_ANSWERS_NOTE
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
 

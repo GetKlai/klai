@@ -388,16 +388,9 @@ async def test_strict_turn_whose_selection_fails_twice_gets_the_strict_refusal_w
 
 @pytest.mark.parametrize("selection", [NOT_IN_PASSAGES, ""], ids=["not_in_passages", "failed_twice"])
 @pytest.mark.asyncio
-async def test_open_turn_whose_selection_chose_nothing_keeps_the_passages_with_the_no_answer_note(
-    monkeypatch, selection
-):
-    """A writer handed every passage after the selection chose none wrote a
-    confident answer from another product's article; withholding the passages
-    instead lost a third of the knowledge-base answers on the internal
-    meetlat. So the passages stay, and the writer is told none was found to
-    answer."""
-    from app.services.retrieval_context import NO_PASSAGE_ANSWERS_NOTE
-
+async def test_open_turn_whose_selection_chose_nothing_keeps_the_passages(monkeypatch, selection):
+    """Withholding the passages after the selection chose none lost a third of
+    the knowledge-base answers on the internal meetlat, so the passages stay."""
     llm = _LiteLLM(selection=selection)
 
     turn = await _turn(
@@ -410,7 +403,6 @@ async def test_open_turn_whose_selection_chose_nothing_keeps_the_passages_with_t
 
     prompt = _system_prompt(llm)
     assert ARTICLE in prompt
-    assert NO_PASSAGE_ANSWERS_NOTE in prompt
     assert "zero results for this query" not in prompt
     assert turn.text.startswith(ANSWER)
 
@@ -437,6 +429,23 @@ async def test_a_retrieve_body_that_is_not_json_counts_as_a_lost_knowledge_base(
     assert expected.lower() in turn.text.lower()
     (record,) = turn.records
     assert record["decision"] in ("refusal", "general_knowledge", "answer")
+
+
+@pytest.mark.asyncio
+async def test_an_internal_record_names_the_retrieval_failure_behind_the_refusal(monkeypatch):
+    """A retrieval-api restart turned into an ordinary-looking Strict refusal,
+    so a measurement round scored the outage as a correct refusal."""
+    turn = await _turn(
+        monkeypatch,
+        _LiteLLM(UNRELATED),
+        profile=_internal(kb_mode="strict"),
+        retrieval_response=httpx.Response(503, text="restarting"),
+        stream=False,
+    )
+
+    assert "tijdelijk niet bereikbaar" in turn.text.lower()
+    (record,) = turn.records
+    assert record["retrieval_failure"] == "HTTP 503"
 
 
 @pytest.mark.asyncio
@@ -493,13 +502,10 @@ async def test_an_internal_turn_runs_the_selection_in_the_internal_words(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_an_internal_rewrite_request_keeps_the_passages_without_the_no_answer_note(monkeypatch):
+async def test_an_internal_rewrite_request_keeps_the_passages(monkeypatch):
     """ "Answers with empty evidence" is the selection's word for a request
     that needs no passage (rewrite text already in the conversation); the
-    note that no passage answers would make the writer say "not in the
-    knowledge base" over a mail written from the previous answer."""
-    from app.services.retrieval_context import NO_PASSAGE_ANSWERS_NOTE
-
+    writer still sees the passages, and no brief of chosen lines."""
     llm = _LiteLLM(
         selection={"need": "een mail van het vorige antwoord", "evidence": [], "verdict": "answers", "question": ""}
     )
@@ -513,7 +519,7 @@ async def test_an_internal_rewrite_request_keeps_the_passages_without_the_no_ans
     )
 
     prompt = _system_prompt(llm)
-    assert ARTICLE in prompt and NO_PASSAGE_ANSWERS_NOTE not in prompt
+    assert ARTICLE in prompt and "[This turn]" not in prompt
 
 
 # --- Open and general never refuse for a missing source ---------------------------

@@ -45,8 +45,34 @@ loaded from before it replays anything.
        --cases /out/cases.jsonl --out /out/round-candidate-1.jsonl --overlay /out/ov-candidate
    ```
 
-   `--days` (default 365) bounds how far back the conversations are looked up. Only `--surface internal` is built.
+   `--days` (default 365) bounds how far back the conversations are looked up.
    Leave out `--overlay` to measure the image as it is; the banner then says that nothing is checked.
+
+   A widget round replays as one widget, through the route itself (a preview session token, the answer held), so the
+   widget's own settings and articles apply and nothing is recorded. Its cases carry their own conversation: `id`,
+   `messages` (the visitor's turns and the earlier replies, ending in the turn to replay) and `expect` (`antwoord`,
+   `vraag`, `niet_gevonden` or `doorverwijzing`). `--widget` names a JSON file with `wgt_id`, `org_id`, `kb_ids`,
+   `slug` and `origin`, kept next to the cases, outside the repository:
+
+   ```bash
+   deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
+     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend \
+     python /out/ov-candidate/scripts/meetlat.py run --surface widget --org <org-slug> --widget /out/widget.json \
+       --cases /out/widget-cases.jsonl --out /out/widget-candidate-1.jsonl --overlay /out/ov-candidate
+   ```
+
+   A widget row has `text`, `sources`, `appointment` (the button was shown), `signals` and `total_ms`; `compare` reads
+   the same file for both surfaces. Two things a widget round does not reproduce, as the private script before it did
+   not either: a follow-up turn is replayed without the case the earlier turn would have stored (nothing is recorded
+   and every case gets a fresh session), and the page context the browser sends when the widget has it enabled is
+   not in the cases.
+
+   A deploy that lands during a round restarts the gateway or portal-api under it; the round is not protected
+   against that, a turn that meets a restart is replayed: a connection error or a timeout before the stream starts, a stream
+   that ends in an error frame (the gateway went away, also after part of the text), an empty answer, a selection step
+   that got no verdict, or a retrieval 502/503/504, connection error or timeout behind the internal chat's refusal is
+   tried again after 10, 30 and 60 seconds, each attempt logged with its number, and only then written as an error
+   row. Any other failure is written as an error row at once.
 
 3. Read the banner. It is the first output and the first key of `round-candidate-1.jsonl.meta.json`:
 

@@ -15,6 +15,7 @@ import sys
 import types
 from pathlib import Path
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -110,8 +111,8 @@ def test_run_prints_the_banner_and_exits_2_before_any_turn_when_the_overlay_did_
     assert not (tmp_path / "r.jsonl").exists()
 
 
-def test_widget_surface_exits_2_and_says_it_is_not_built(tmp_path, capsys):
-    cases = _write_jsonl(tmp_path / "cases.jsonl", [{"cid": "aaaaaaaa", "turn": 0}])
+def test_widget_surface_needs_a_widget_file(tmp_path, capsys):
+    cases = _write_jsonl(tmp_path / "cases.jsonl", [{"id": "w-1", "messages": [{"role": "user", "content": "hi"}]}])
 
     code = meetlat.main(
         [
@@ -128,7 +129,7 @@ def test_widget_surface_exits_2_and_says_it_is_not_built(tmp_path, capsys):
     )
 
     assert code == 2
-    assert "widget" in capsys.readouterr().err
+    assert "--widget" in capsys.readouterr().err
 
 
 # --- run -------------------------------------------------------------------------------------------------------
@@ -256,6 +257,224 @@ def test_run_replays_only_the_cases_of_its_org_and_those_without_an_org(monkeypa
     assert answered == ["first", "no org field"]
     assert "2 of 3 cases are for this org" in capsys.readouterr().out
     assert json.loads((tmp_path / "r.jsonl.meta.json").read_text())["cases"] == 2
+
+
+# --- a restart during the round --------------------------------------------------------------------------------
+
+
+def _answer(text="answer after the restart", signals=None, stream_error=None):
+    return {
+        "text": text,
+        "ttft_ms": 5,
+        "total_ms": 900,
+        "signals": signals or {"decision": "answer"},
+        "stream_error": stream_error,
+    }
+
+
+def _replay_with_outcomes(monkeypatch, tmp_path, outcomes):
+    """One case whose replay attempts give ``outcomes`` in turn (an exception is raised); the row and the pauses."""
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa-1", ["first"])}, [])
+    remaining = list(outcomes)
+    pauses: list[float] = []
+
+    async def new_answer(_org, _profile, _messages):
+        outcome = remaining.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def sleep(seconds):
+        pauses.append(seconds)
+
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+    monkeypatch.setattr(meetlat.asyncio, "sleep", sleep)
+    assert _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}], overlay) == 0
+    (row,) = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    return row, pauses, remaining
+
+
+# The internal surface streams, so a gateway that is gone never raises out of
+# _new_answer: it ends the stream with an error frame, before or after the first
+# tokens. What does raise is a connection that fails before the stream starts.
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ConnectError("connection refused"), httpx.ReadTimeout("timed out")],
+    ids=["connection_error_before_the_stream", "timeout_before_the_stream"],
+)
+def test_a_turn_that_meets_a_restart_is_replayed_after_growing_pauses(monkeypatch, tmp_path, capsys, failure):
+    row, pauses, _ = _replay_with_outcomes(monkeypatch, tmp_path, [failure, failure, _answer()])
+
+    assert row["text"] == "answer after the restart"
+    assert "error" not in row
+    assert pauses == [10, 30]
+    out = capsys.readouterr().out
+    assert "attempt 1 of 4" in out
+    assert "attempt 2 of 4" in out
+
+
+@pytest.mark.parametrize(
+    "outage",
+    [
+        _answer(text="", stream_error="Chat service unavailable"),
+        _answer(text="Zie het hand", stream_error="Chat service unavailable"),
+        _answer(text="  "),
+        _answer(text="De kennisbank is tijdelijk niet bereikbaar.", signals={"retrieval_failure": "HTTP 503"}),
+        _answer(
+            text="Dat staat niet in de kennisbank.",
+            signals={"decision": "refusal", "selection": {"failed": "no_verdict_after_retry"}},
+        ),
+    ],
+    ids=[
+        "gateway_gone_before_the_first_token",
+        "gateway_gone_after_partial_text",
+        "empty_answer",
+        "retrieval_503_behind_a_strict_refusal",
+        "selection_without_a_verdict_behind_a_strict_refusal",
+    ],
+)
+def test_an_answer_that_measured_a_restart_is_replayed(monkeypatch, tmp_path, outage):
+    row, pauses, _ = _replay_with_outcomes(monkeypatch, tmp_path, [outage, _answer()])
+
+    assert row["text"] == "answer after the restart"
+    assert pauses == [10]
+
+
+def test_a_failure_that_is_not_a_restart_is_an_error_row_at_once(monkeypatch, tmp_path):
+    row, pauses, remaining = _replay_with_outcomes(monkeypatch, tmp_path, [KeyError("decision"), _answer()])
+
+    assert row["error"] == "KeyError"
+    assert pauses == []
+    assert len(remaining) == 1
+
+
+def test_a_turn_that_keeps_failing_becomes_an_error_row_after_three_retries(monkeypatch, tmp_path, capsys):
+    row, pauses, remaining = _replay_with_outcomes(monkeypatch, tmp_path, [httpx.ConnectError("down")] * 4)
+
+    assert row["error"] == "ConnectError"
+    assert pauses == [10, 30, 60]
+    assert remaining == []
+    assert "1 error row(s)" in capsys.readouterr().out
+
+
+# --- run, widget ----------------------------------------------------------------------------------------------
+
+
+_WIDGET = {
+    "wgt_id": "wgt_1",
+    "org_id": 7,
+    "kb_ids": [3],
+    "slug": "brightwater",
+    "origin": "https://brightwater.example.com",
+}
+
+
+def _widget_answer(text="Open the settings and pick the option.", status=200, **extra):
+    return {
+        "status": status,
+        "text": text,
+        "sources": ["https://help.example.com/settings"],
+        "appointment": False,
+        "signals": {"decision": "answer", "sources_count": 1},
+        "total_ms": 1500,
+        **extra,
+    }
+
+
+def _stub_widget_environment(monkeypatch, tmp_path, outcomes):
+    """A widget round whose turns give ``outcomes`` in order (an exception is raised); the overlay and the sent messages."""
+    overlay = tmp_path / "ov"
+    _point_modules_at(monkeypatch, overlay)
+    sent: list[list[dict]] = []
+    remaining = list(outcomes)
+
+    async def widget_answer(widget, messages):
+        assert widget == _WIDGET
+        sent.append(messages)
+        outcome = remaining.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(meetlat, "_widget_answer", widget_answer)
+    monkeypatch.setattr(meetlat, "_apply_measurement_patches", lambda: None)
+    monkeypatch.setattr(meetlat.asyncio, "sleep", sleep)
+    monkeypatch.setattr(replay, "_route_logs_to", lambda _path: None)
+    (tmp_path / "widget.json").write_text(json.dumps(_WIDGET))
+    return overlay, sent
+
+
+def _run_widget(tmp_path, cases_rows, overlay):
+    cases = _write_jsonl(tmp_path / "cases.jsonl", cases_rows)
+    return meetlat.main(
+        ["run", "--surface", "widget", "--org", "brightwater", "--widget", str(tmp_path / "widget.json"),
+         "--cases", str(cases), "--out", str(tmp_path / "r.jsonl"), "--overlay", str(overlay)]
+    )  # fmt: skip
+
+
+def _widget_case(case_id="w-1", asks=("first question",), expect="antwoord"):
+    messages = []
+    for ask in asks:
+        messages += [{"role": "user", "content": ask}, {"role": "assistant", "content": f"earlier reply to {ask}"}]
+    return {"id": case_id, "messages": messages[:-1], "expect": expect}
+
+
+def test_run_replays_each_widget_case_with_its_own_conversation_and_keys_the_row_by_case_id(
+    monkeypatch, tmp_path, capsys
+):
+    overlay, sent = _stub_widget_environment(monkeypatch, tmp_path, [_widget_answer(), _widget_answer("Second.")])
+
+    code = _run_widget(tmp_path, [_widget_case("w-1", ("first", "x" * 500)), _widget_case("w-2")], overlay)
+
+    rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert code == 0
+    assert [m["content"] for m in sent[0]] == ["first", "earlier reply to first", "x" * 500]
+    assert [(r["cid"], r["u"]) for r in rows] == [("w-1", 1), ("w-2", 0)]
+    assert rows[0]["ask"] == "x" * 400
+    assert rows[0]["sources"] == ["https://help.example.com/settings"] and rows[0]["appointment"] is False
+    assert rows[1]["text"] == "Second." and rows[1]["signals"] == {"decision": "answer", "sources_count": 1}
+    assert "2 of 2 cases are for this org" in capsys.readouterr().out
+
+
+def test_a_widget_turn_that_meets_a_gateway_restart_is_replayed(monkeypatch, tmp_path):
+    overlay, sent = _stub_widget_environment(monkeypatch, tmp_path, [_widget_answer(status=503), _widget_answer()])
+
+    assert _run_widget(tmp_path, [_widget_case()], overlay) == 0
+
+    (row,) = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert len(sent) == 2 and "error" not in row and row["text"].startswith("Open")
+
+
+def test_a_widget_http_error_that_is_not_a_restart_is_an_error_row_at_once(monkeypatch, tmp_path):
+    overlay, sent = _stub_widget_environment(monkeypatch, tmp_path, [_widget_answer(status=401, text="")])
+
+    assert _run_widget(tmp_path, [_widget_case()], overlay) == 0
+
+    (row,) = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert len(sent) == 1 and row["error"] == "HTTP 401"
+
+
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [{"role": "assistant", "content": "x"}],
+        [{"role": "user", "content": "q"}, {"role": "assistant", "content": "x"}],
+    ],
+    ids=["no_user_turn", "ends_on_a_reply"],
+)
+def test_a_widget_case_that_does_not_end_in_a_user_turn_is_refused(tmp_path, capsys, messages):
+    cases = _write_jsonl(tmp_path / "cases.jsonl", [{"id": "w-1", "messages": messages}])
+    (tmp_path / "widget.json").write_text(json.dumps(_WIDGET))
+
+    code = meetlat.main(
+        ["run", "--surface", "widget", "--org", "brightwater", "--widget", str(tmp_path / "widget.json"),
+         "--cases", str(cases), "--out", str(tmp_path / "r.jsonl")]
+    )  # fmt: skip
+
+    assert code == 2 and "user turn" in capsys.readouterr().err
 
 
 def test_run_refuses_to_resume_rows_that_another_code_tree_produced(monkeypatch, tmp_path, capsys):
@@ -423,6 +642,28 @@ def test_antwoord_algemeen_gelabeld_needs_a_general_knowledge_label(tmp_path, ca
     report = _json_report(tmp_path, capsys, [case], [[row]])
 
     assert _verdict_of(report, "antwoord_algemeen_gelabeld") == {"ok": int(ok), "of": 1}
+
+
+@pytest.mark.parametrize(
+    ("klass", "row", "ok"),
+    [
+        ("antwoord", _row("w-1", 0, decision="answer"), True),
+        ("antwoord", _row("w-1", 0, decision="human_request", text="I will connect you; use the button below."), True),
+        ("antwoord", _row("w-1", 0, decision="answer", text="Which phone do you use?"), False),
+        ("antwoord", _row("w-1", 0, decision="refusal", sources=0, text="Not in our help articles."), False),
+        ("vraag", _row("w-1", 0, decision="answer", text="Which phone do you use?"), True),
+        ("vraag", _row("w-1", 0, decision="answer"), False),
+        ("niet_gevonden", _row("w-1", 0, decision="refusal", sources=0, text="Not in our help articles."), True),
+        ("niet_gevonden", _row("w-1", 0, decision="answer", signals={"refused": True}), True),
+        ("niet_gevonden", _row("w-1", 0, decision="answer"), False),
+        ("doorverwijzing", _row("w-1", 0, decision="off_topic", sources=0, text="Please use the button below."), True),
+        ("doorverwijzing", _row("w-1", 0, decision="answer"), False),
+    ],
+)
+def test_widget_classes_read_the_kind_of_reply_the_visitor_got(tmp_path, capsys, klass, row, ok):
+    report = _json_report(tmp_path, capsys, [_widget_case("w-1", expect=klass)], [[row]])
+
+    assert _verdict_of(report, klass) == {"ok": int(ok), "of": 1}
 
 
 @pytest.mark.parametrize("klass", ["weigering", "antwoord_kb", "dekkend_antwoord", "antwoord_algemeen_gelabeld"])
