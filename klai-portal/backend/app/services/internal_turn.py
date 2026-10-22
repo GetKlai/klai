@@ -1,13 +1,14 @@
 """The internal chat's turn (LibreChat employees in Strict, Open or general), on the help widget's flow.
 
-The flow is chat-quality-history-and-plan.md §5 as widget_turn.py runs it:
+The flow is chat-quality-history-and-plan.md §5a as widget_turn.py runs it:
 read the case, search, select, route in code what the selection decided,
 write. The steps that are the same come from widget_turn.py. What differs is
-the end of the flow (§5, "Punt in de stroom"): the internal chat has no
+the end of the flow (§5a, "Punt in de stroom"): the internal chat has no
 appointment button, so there is no contact route and no off-topic referral;
 the escalation, frustration and conversational addenda are help-widget prompt
 concepts; "not in the passages" is the Strict refusal that suggests the open
-mode, while Open writes from general knowledge without passages; and the
+mode, while Open keeps every passage with a note that none was found to answer
+(retrieval_context.NO_PASSAGE_ANSWERS_NOTE) and fills from general knowledge; and the
 selection's variant question is never asked, because an employee often relays
 someone else's question and cannot answer it, so the writer gives the steps
 per variant (passage_selection.writer_brief). ``app.api.partner.chat_completions`` resolves the
