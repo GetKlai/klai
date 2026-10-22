@@ -1089,6 +1089,18 @@ async def _internal_chat_turn(
         instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
         templates_block = build_template_instructions_block(instructions)
     conversation = _internal_conversation(sent, profile)
+    if conversation is not None:
+        # Digest prefixes only: whether two turns LibreChat sends land in the
+        # same conversation can only be read here, never from the text.
+        logger.info(
+            "internal_chat_conversation",
+            org_id=auth.org_id,
+            key=conversation.key[:8],
+            previous=conversation.previous[:8],
+            current=conversation.current[:8],
+            turns=len(sent),
+            follow_up=case_file.is_follow_up(request.messages),
+        )
     previous = await _previous_internal_turn(request, auth, db, profile, conversation)
     inputs = InternalInputs(
         request=request,
