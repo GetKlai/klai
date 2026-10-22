@@ -1,7 +1,7 @@
 # Klai build of crawl4ai: one patch on top of upstream.
 #
 # Build (on core-01, where the compose stack runs):
-#   docker build -t ghcr.io/getklai/crawl4ai:0.9.4-local-<YYMMDD-HHMM> deploy/crawl4ai/
+#   docker build -t ghcr.io/getklai/crawl4ai:0.9.5-local-<YYMMDD-HHMM> deploy/crawl4ai/
 #
 # The tag follows the locally-built convention accepted by
 # deploy/check-image-pullable.sh (`<semver>-local-YYMMDD-HHMM`) — this image
