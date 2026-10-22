@@ -681,7 +681,8 @@ async def test_the_footer_warning_and_the_record_read_the_same_answer_check(monk
     from app.services.answer_check import AnswerCheck, Statement
 
     check = AnswerCheck([Statement("201234567", "phone", None), Statement("EUR 10", "amount", ARTICLE)])
-    monkeypatch.setattr(widget_write, "check_hard_facts", lambda *_args: check)
+    calls = []
+    monkeypatch.setattr(widget_write, "check_hard_facts", lambda *args: calls.append(args) or check)
 
     turn = await _turn(
         monkeypatch,
@@ -691,6 +692,7 @@ async def test_the_footer_warning_and_the_record_read_the_same_answer_check(monk
         stream=True,
     )
 
+    assert len(calls) == 1
     assert "- Let op: telefoonnummer in dit antwoord staat niet in de kennisbank." in turn.text
     (record,) = turn.records
     assert record["hard_facts_outside_kb"] == {"phone": 1}
