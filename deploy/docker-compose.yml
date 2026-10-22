@@ -136,7 +136,7 @@ volumes:
   crm-postgres-data:           # Twenty CRM database (SPEC-INFRA-COOLIFY-EXIT-001)
   crm-storage:                 # Twenty CRM uploads: avatars and attachments
   umami-postgres-data:         # Umami analytics database (SPEC-INFRA-COOLIFY-EXIT-001)
-  fider-postgres-data:         # Fider feedback board database (SPEC-INFRA-COOLIFY-EXIT-001)
+  fider-postgres-data-18:      # Fider feedback board database, PostgreSQL 18
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
 # /etc/docker/daemon.json:
@@ -2504,12 +2504,16 @@ services:
   # PostgreSQL 12.22, the last release that series will ever get, unsupported
   # since November 2024. 17 is what Fider's own compose file uses. The data
   # arrives by pg_dump from 12 and restore into 17, verified table by table.
+  # 17 -> 18 went the same way, rehearsed against fider v0.38.2.
   fider-postgres:
     logging: *log-rotation
-    image: postgres:17.11-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
-      - fider-postgres-data:/var/lib/postgresql/data
+      # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
+      # with a mount at the old .../data path. New volume, filled by dump and
+      # restore before deploy; the old volume stays on the host for rollback.
+      - fider-postgres-data-18:/var/lib/postgresql
     environment:
       POSTGRES_USER: fider
       POSTGRES_PASSWORD: ${FIDER_POSTGRES_PASSWORD}
