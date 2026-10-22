@@ -38,6 +38,7 @@ from klai_chat_prompts import (
 from klai_chat_prompts import no_citable_sources_message as _no_citable_sources_message
 
 from app.core.config import Settings
+from app.services.answer_check import AnswerCheck, check_hard_facts
 from app.services.answer_compose import (
     _NO_CITABLE_SOURCES_DECISION_KEY,
     _answer_without_retrieved_sources,
@@ -52,7 +53,7 @@ from app.services.answer_compose import (
 )
 from app.services.answer_epistemics import pop_answer_contract_stream_text, strip_answer_contract_markers
 from app.services.answer_footer import render_answer_footer
-from app.services.answer_grounding import GroundingCheck, check_grounding, grounding_budget
+from app.services.answer_grounding import check_statements, grounding_budget
 from app.services.answer_judge import AnswerJudgement, decide_answer, is_clarifying_question, judge_answer
 from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import (
@@ -69,7 +70,6 @@ from app.services.chat_safety import (
     _helpdesk_refusal_offers,
     _last_user_message,
     _text_offers_appointment,
-    hard_facts_outside,
     output_safety_violation,
     safety_refusal_message,
     without_unsourced_contact_details,
@@ -764,7 +764,9 @@ def _flag_hard_facts(
     Per kind, for the footer's warning and the record: the employee may
     already have read them, so they are flagged rather than removed.
     """
-    if turn.answer_mode != "open" or not (hard_facts := hard_facts_outside(seen, citation_chunks, messages)):
+    if turn.answer_mode != "open" or not (
+        hard_facts := check_hard_facts(seen, citation_chunks, messages).hard_facts_outside
+    ):
         return
     decision["hard_facts_outside_kb"] = hard_facts
     if answer_signals is not None:
@@ -868,7 +870,7 @@ async def _judge(
         # costs its own 2.1 s median once and nothing on top of the light judge.
         judgement, grounding = await asyncio.gather(
             light_judge,
-            check_grounding(
+            check_statements(
                 question=_last_user_message(messages) or "",
                 draft=safe_text,
                 articles=articles,
@@ -944,7 +946,7 @@ def _decided(
     *,
     safe_text: str,
     judgement: AnswerJudgement | None,
-    grounding: GroundingCheck | None,
+    grounding: AnswerCheck | None,
     citation_chunks: list[dict] | None,
     response_language: str | None,
     force_escalation: bool,
@@ -993,8 +995,8 @@ def _decided(
     if (
         outcome in ("answer", "partial_answer")
         and grounding is not None
-        and len(grounding.statements) >= 2
-        and len(grounding.unsupported) == len(grounding.statements)
+        and len(grounding.claims) >= 2
+        and len(grounding.unsupported) == len(grounding.claims)
         and not chosen
     ):
         # The selection step did not choose this turn's passages (it failed,
