@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
-import importlib
 import json
 import re
 import statistics
@@ -91,7 +90,14 @@ class OverlayError(UsageError):
 
 def code_under_test() -> dict[str, str]:
     """Module name to the file it was actually loaded from."""
-    return {name: str(importlib.import_module(name).__file__) for name in _BANNER_MODULES}
+    # Literal imports: Semgrep's non-literal-import rule is right that a name
+    # from data must not pick the module; the names here are fixed.
+    import klai_chat_prompts
+
+    from app.services import internal_turn, passage_selection, retrieval_context, widget_turn
+
+    modules = (internal_turn, widget_turn, retrieval_context, passage_selection, klai_chat_prompts)
+    return {module.__name__: str(sys.modules[module.__name__].__file__) for module in modules}
 
 
 def check_overlay(modules: dict[str, str], overlay: Path) -> None:
