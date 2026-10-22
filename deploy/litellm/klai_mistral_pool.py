@@ -239,12 +239,12 @@ class KlaiMistralPoolHook(CustomLogger):
         mark = self._marks.get(account)
         if mark is None:
             return False
-        if state == "ok":
-            if mark.at < self._status_mtime:
-                del self._marks[account]
-                self._log_change(fp, "ok", "probe")
-                return False
-            return True
+        if state == "ok" and mark.at < self._status_mtime:
+            del self._marks[account]
+            self._log_change(fp, "ok", "probe")
+            return False
+        # An ok verdict older than the 402, no verdict, or an unprobed key: the
+        # bench decides, so a dead probe cannot keep a key off for good.
         return time.time() < mark.until
 
     def _mark_full(self, account: str) -> None:
@@ -253,8 +253,9 @@ class KlaiMistralPoolHook(CustomLogger):
         if mark is not None and now < mark.until:
             return
         self._marks[account] = _Bench(at=now, until=now + BENCH_SECONDS)
-        if mark is None:
-            self._log_change(key_fingerprint(account), "full", "request")
+        # Past the early return there was no active bench: a first 402, or one
+        # after the bench expired, is a state change either way.
+        self._log_change(key_fingerprint(account), "full", "request")
 
     def _lowest_eligible_order(self, orders: dict[int, str]) -> int | None:
         for order in sorted(orders):

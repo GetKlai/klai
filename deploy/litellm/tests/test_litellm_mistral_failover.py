@@ -748,6 +748,47 @@ async def test_without_a_probe_verdict_a_402_benches_the_key_for_five_minutes_an
 
 
 @pytest.mark.asyncio
+async def test_an_ok_verdict_older_than_the_402_lets_the_bench_expire(real_litellm, tmp_path) -> None:
+    """The probe said ok a minute before the 402 and then died. The key is
+    benched on the 402, and once the five minutes are over it is offered
+    again: a verdict from before the 402 says nothing about it, and a dead
+    probe must not keep a key off until someone revives it."""
+    status_file = tmp_path / "mistral-keys.json"
+    _write_status(status_file, {_KLAI_KEY: "ok", _KLAI2_KEY: "ok"}, mtime=time.time() - 60)
+    calls: list[str] = []
+    klai_full = True
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        api_key = _api_key_of(request)
+        calls.append(api_key)
+        if api_key == _KLAI_KEY and klai_full:
+            return _error_response(request, 402, "Workspace monthly spending limit reached")
+        return _ok_response(request)
+
+    router, hook = _pinned_router(real_litellm, status_file=status_file)
+    try:
+        with _mock_mistral_http(handler):
+            await asyncio.wait_for(
+                router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]), timeout=15
+            )
+            assert calls == [_KLAI_KEY, _KLAI2_KEY]
+            await _wait_for(lambda: _KLAI_KEY in hook._marks)
+
+            calls.clear()
+            await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "still benched"}])
+            assert calls == [_KLAI2_KEY]
+
+            hook._marks[_KLAI_KEY].until = time.time() - 1
+            klai_full = False
+            calls.clear()
+            await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "bench over"}])
+    finally:
+        router.reset()
+
+    assert calls == [_KLAI_KEY]
+
+
+@pytest.mark.asyncio
 async def test_a_probe_verdict_holds_however_old_the_file_is(real_litellm, tmp_path) -> None:
     """A probe or timer that died is the probe-missing alert's job; the hook
     does not start guessing after ten minutes, it keeps the last verdict."""

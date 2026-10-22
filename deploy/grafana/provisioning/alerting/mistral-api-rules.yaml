@@ -229,7 +229,7 @@ groups:
           runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
           description: |
             No Mistral API probe log was seen in the last 10 minutes, so the
-            per-key state file LiteLLM reads goes stale too and LiteLLM falls
-            back to finding full keys through failed user requests.
+            per-key state file LiteLLM reads is no longer refreshed: LiteLLM
+            keeps its last verdict until the probe runs again.
             Check `mistral-api-probe.timer`, `/opt/klai/logs/mistral-api-probe.log`,
             Alloy, and VictoriaLogs.
