@@ -23,7 +23,7 @@ PLAN = "docs/architecture/chat-quality-history-and-plan.md"
 CHAT_PATH = re.compile(
     r"^(klai-portal/backend/app/api/partner(_openai_compat|_support_sessions|_hubspot|_feedback|_widget_config)?\.py"
     r"|klai-portal/backend/app/services/"
-    r"(partner_chat|retrieval_context|chat_safety|chat_prompting|chat_sources|chat_sse|openai_passthrough|answer_\w+|turn_judge|clarify_\w+|query_paraphrase|query_rewrite"
+    r"(widget_write|widget_reply|widget_turn|internal_turn|retrieval_context|chat_safety|chat_prompting|chat_sources|chat_sse|openai_passthrough|answer_\w+|turn_judge|clarify_\w+|query_paraphrase|query_rewrite"
     r"|escalation_intent|gap_classification|off_topic_referral|chat_turn_rules)\.py"
     r"|klai-libs/chat-prompts/klai_chat_prompts/.*\.py"
     r"|deploy/litellm/custom_router\.py"

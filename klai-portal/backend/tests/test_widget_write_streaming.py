@@ -102,3 +102,38 @@ async def test_an_open_reply_streams_its_words_first_and_ends_on_its_sources_and
     # Every word was sent exactly once.
     text = "".join(deltas[i]["content"] for i in contents)
     assert text.startswith("Je vraagt verlof aan in het HR-portaal onder Verlof, zo regel je het snel en goed.\n\n")
+
+
+class _TextThenToolModel(_PausingModel):
+    """A streamed answer that writes a sentence and then calls one of the employee's tools."""
+
+    async def aiter_lines(self):
+        yield "data: " + json.dumps({"choices": [{"delta": {"content": "Ik zoek het rooster voor je op."}}]})
+        call = {"index": 0, "id": "call_1", "type": "function", "function": {"name": "rooster", "arguments": "{}"}}
+        yield "data: " + json.dumps({"choices": [{"delta": {"tool_calls": [call]}}]})
+        yield "data: [DONE]"
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_reply_with_text_and_a_tool_call_ends_on_run_the_tools(monkeypatch):
+    """Main's live leg forwarded the call but never said "run the tools now", so an
+    OpenAI client showed the text and never ran the tool; the held path always did."""
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", _TextThenToolModel("", ""))
+    reply = await write_reply(
+        messages=[{"role": "user", "content": "Wat is mijn rooster?"}],
+        model="klai-primary",
+        temperature=0.2,
+        system_prompt="prompt",
+        settings=MagicMock(litellm_base_url="http://litellm.example.com", litellm_master_key="key"),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
+        tools=[{"type": "function", "function": {"name": "rooster"}}],
+        stream=True,
+    )
+
+    frames = [frame async for frame in streamed_frames(reply)]
+
+    assert any("tool_calls" in d for frame in frames for d in _deltas(frame))
+    assert frames[-2:] == [
+        b'data: {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}\n\n',
+        b"data: [DONE]\n\n",
+    ]
