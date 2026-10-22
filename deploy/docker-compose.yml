@@ -135,7 +135,7 @@ volumes:
   calnode-data:                # Calnode SQLite DB + encrypted stored credentials
   crm-postgres-data:           # Twenty CRM database (SPEC-INFRA-COOLIFY-EXIT-001)
   crm-storage:                 # Twenty CRM uploads: avatars and attachments
-  umami-postgres-data:         # Umami analytics database (SPEC-INFRA-COOLIFY-EXIT-001)
+  umami-postgres-data-18:      # Umami analytics database, PostgreSQL 18
   fider-postgres-data-18:      # Fider feedback board database, PostgreSQL 18
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
@@ -2471,17 +2471,21 @@ services:
           memory: 256m
 
   # ─── Umami — datastore ───────────────────────────────────────────────────
-  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001), pinned to the
-  # PostgreSQL that ran there (16.13) so the move is a relocation. It lands
+  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001) on the
+  # PostgreSQL that ran there (16) so the move stayed a relocation; 16 -> 18
+  # followed by dump and restore, rehearsed against Umami 3.4.0. It lands
   # before the app for the same reason as the CRM's: Umami applies its Prisma
   # migrations on start, so pointed at an empty database it creates a fresh
   # schema that the restored dump would collide with.
   umami-postgres:
     logging: *log-rotation
-    image: postgres:16.15-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
-      - umami-postgres-data:/var/lib/postgresql/data
+      # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
+      # with a mount at the old .../data path. New volume, filled by dump and
+      # restore before deploy; the old volume stays on the host for rollback.
+      - umami-postgres-data-18:/var/lib/postgresql
     environment:
       POSTGRES_USER: umami
       POSTGRES_PASSWORD: ${UMAMI_POSTGRES_PASSWORD}
