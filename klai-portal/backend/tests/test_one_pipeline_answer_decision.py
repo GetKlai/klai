@@ -342,7 +342,10 @@ async def test_strict_turn_whose_passages_do_not_answer_gets_the_strict_refusal_
     assert turn.text == STRICT_REFUSAL
     assert len(llm.of("passage_selection")) == 1
     assert llm.of("answer") == [] and llm.of("answer_judge") == [] and llm.of("grounding_check") == []
-    assert "selection" not in turn.records[0], "the internal record keeps signals, never text"
+    selection = turn.records[0]["selection"]
+    assert selection["verdict"] == "not_in_passages" and "evidence" not in selection and "question" not in selection, (
+        "the internal record keeps the verdict and passage numbers, never text"
+    )
 
 
 @pytest.mark.asyncio
@@ -1126,6 +1129,7 @@ _GOLDEN_STRICT_RECORD = {
     "org_id": 7,
     "band": "high",
     "multi_question": False,
+    "selection": {"verdict": "answers", "passages": [1]},
     "judge_failed": ["case"],
     "grounding": "all_in_articles",
     "verdict": "answered",
