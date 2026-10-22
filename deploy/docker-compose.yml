@@ -1578,7 +1578,7 @@ services:
 
   gitea:
     logging: *log-rotation
-    image: gitea/gitea:1.27.3
+    image: gitea/gitea:28.2.0
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -1598,6 +1598,17 @@ services:
       GITEA__security__SECRET_KEY: ${GITEA_SECRET_KEY}
       GITEA__security__INTERNAL_TOKEN: ${GITEA_INTERNAL_TOKEN}
       GITEA__log__LEVEL: Warn
+      # Every KB repo has a push webhook to knowledge-ingest, which resolves to
+      # a private Docker address. Gitea 28 routes outbound calls through an
+      # egress filter that needs an explicit allow entry for a non-public
+      # address and drops "*" as a list entry, so the "knowledge-ingest,*"
+      # this volume's app.ini carried from 1.27 denied every delivery on 28.
+      # "private" is the narrowest entry that does not depend on Docker's
+      # subnet assignment; public hosts stay allowed in the default lax mode,
+      # as "*" allowed them before. Set here because the [webhook] key in
+      # app.ini overrides [security] ALLOWED_HOST_LIST while it exists.
+      # Verified 2026-10-22 against a 1.27.3 data dir opened by 28.2.0.
+      GITEA__webhook__ALLOWED_HOST_LIST: private
     volumes:
       - gitea-data:/data
     networks:
