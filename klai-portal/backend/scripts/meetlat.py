@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import importlib
 import json
 import re
@@ -213,8 +214,13 @@ def _read_cases(path: Path) -> list[dict]:
     except (OSError, ValueError) as exc:
         raise UsageError(f"cannot read the cases file {path}: {exc}") from exc
     for number, case in enumerate(cases, 1):
-        if not (isinstance(case.get("cid"), str) and len(case["cid"]) == 8 and isinstance(case.get("turn"), int)):
-            raise UsageError(f"{path} line {number}: needs a cid of 8 characters and an integer turn")
+        if not (
+            isinstance(case.get("cid"), str)
+            and len(case["cid"]) == 8
+            and isinstance(case.get("turn"), int)
+            and case["turn"] >= 0
+        ):
+            raise UsageError(f"{path} line {number}: needs a cid of 8 characters and a turn index of 0 or more")
     return cases
 
 
@@ -228,11 +234,17 @@ def _case_class(case: dict) -> str:
     return klass
 
 
-def _guard_meta(meta_path: Path, modules: dict[str, str], out: Path) -> None:
+def _module_hashes(modules: dict[str, str]) -> dict[str, str]:
+    """First 12 hex characters of the sha256 of each module file: the same path can hold other code after a copy."""
+    return {name: hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12] for name, path in modules.items()}
+
+
+def _guard_meta(meta_path: Path, modules: dict[str, str], hashes: dict[str, str], out: Path) -> None:
     """Rows from another code tree must not be topped up with rows from this one."""
     if not (meta_path.exists() and out.exists()):
         return
-    if json.loads(meta_path.read_text()).get("modules") != modules:
+    previous = json.loads(meta_path.read_text())
+    if previous.get("modules") != modules or previous.get("module_hashes") != hashes:
         raise UsageError(
             f"refusing to resume: the rows in {out} were produced with other code than this run loads "
             f"(see {meta_path}). Use a new --out."
@@ -281,11 +293,13 @@ async def _run(args: argparse.Namespace) -> int:
     if _rows_inside_checkout(out):
         raise UsageError("refusing to run: --out must be outside the repository, the rows hold real conversations")
     meta_path = out.with_name(out.name + ".meta.json")
-    _guard_meta(meta_path, modules, out)
+    hashes = _module_hashes(modules)
+    _guard_meta(meta_path, modules, hashes, out)
     out.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     meta = {
         "banner": banner,
         "modules": modules,
+        "module_hashes": hashes,
         "overlay": str(overlay.resolve()) if overlay else None,
         "overlay_git": _git_describe(overlay),
         "started_at": datetime.now(UTC).isoformat(),
@@ -342,9 +356,9 @@ def _names_variants(text: str, variants: list[str]) -> bool:
 
 def _verdict(klass: str, case: dict, row: dict | None) -> bool:
     """Whether the row meets the expectation class; a case without a row never does."""
-    if row is None or "error" in row:
-        return False
     signals, text = _signals(row), _text(row)
+    if row is None or "error" in row or not text:
+        return False
     decision, sources = signals.get("decision"), signals.get("sources_count") or 0
     if klass == "weigering":
         return decision == "refusal"
@@ -352,11 +366,7 @@ def _verdict(klass: str, case: dict, row: dict | None) -> bool:
         return decision in _ANSWERS and sources >= 1 and not _is_short_question(text)
     if klass == "dekkend_antwoord":
         return decision in _ANSWERS and _names_variants(text, case.get("variants") or list(_DEFAULT_VARIANTS))
-    return (
-        decision == "general_knowledge"
-        or (decision == "answer" and sources == 0)
-        or bool(_GENERAL_KNOWLEDGE.search(text))
-    )
+    return decision == "general_knowledge" or bool(_GENERAL_KNOWLEDGE.search(text))
 
 
 def _count(value: Any) -> int:
@@ -450,9 +460,12 @@ def build_report(cases: list[dict], round_paths: list[Path]) -> dict:
     rounds = {}
     for path in round_paths:
         try:
-            rounds[path.name] = {(r["cid"], r["u"]): r for r in _read_jsonl(path)}
+            rows = {(r["cid"], r["u"]): r for r in _read_jsonl(path)}
         except (OSError, ValueError, KeyError) as exc:
             raise UsageError(f"cannot read the round {path}: {exc}") from exc
+        if str(path) in rounds:
+            raise UsageError(f"the round {path} is given twice")
+        rounds[str(path)] = rows
     return {
         "rounds": [_round_summary(name, rows, cases) for name, rows in rounds.items()],
         "reading": _reading(cases, rounds),

@@ -56,6 +56,8 @@ def _point_modules_at(monkeypatch, directory: Path, *, except_for: str | None = 
     directory.mkdir(parents=True, exist_ok=True)
     for name in _BANNER_MODULES:
         target = (elsewhere or directory) if name == except_for else directory
+        target.mkdir(parents=True, exist_ok=True)
+        (target / f"{name}.py").write_text("# candidate code\n")
         monkeypatch.setattr(importlib.import_module(name), "__file__", str(target / f"{name}.py"))
 
 
@@ -243,6 +245,28 @@ def test_run_refuses_to_resume_rows_that_another_code_tree_produced(monkeypatch,
     assert "other code" in capsys.readouterr().err
 
 
+def test_run_refuses_to_resume_when_a_module_file_changed_under_the_same_path(monkeypatch, tmp_path, capsys):
+    answered: list[str] = []
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa-1", ["first"])}, answered)
+    assert _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}], overlay) == 0
+    meta = json.loads((tmp_path / "r.jsonl.meta.json").read_text())
+    assert set(meta["module_hashes"]) == set(_BANNER_MODULES)
+    assert all(len(h) == 12 for h in meta["module_hashes"].values())
+    (overlay / "app.services.internal_turn.py").write_text("# replaced after the first rows\n")
+
+    code = _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}, {"cid": "aaaaaaaa", "turn": 1}], overlay)
+
+    assert code == 2
+    assert "other code" in capsys.readouterr().err
+
+
+def test_a_negative_turn_in_the_cases_file_is_refused(tmp_path, capsys):
+    code = _compare(tmp_path, [{"cid": "aaaaaaaa", "turn": -1, "class": "weigering"}], [[_row()]])
+
+    assert code == 2
+    assert "turn" in capsys.readouterr().err
+
+
 # --- compare ---------------------------------------------------------------------------------------------------
 
 
@@ -318,13 +342,22 @@ def test_dekkend_antwoord_names_every_variant_of_the_case(tmp_path, capsys, text
     ("row", "ok"),
     [
         (_row(decision="general_knowledge", sources=0), True),
-        (_row(decision="answer", sources=0, text="Restart the router."), True),
+        (_row(decision="general_knowledge", sources=0, text=""), False),
+        (_row(decision="answer", sources=0, text="Restart the router."), False),
         (_row(decision="answer", sources=2, text="Uit algemene kennis: start de router opnieuw."), True),
         (_row(decision="answer", sources=2, text="Based on general knowledge, restart it."), True),
         (_row(decision="answer", sources=2, text="Restart the router."), False),
         (_row(decision="refusal", sources=0, text="Not found."), False),
     ],
-    ids=["decision", "no-sources", "dutch-phrase", "english-phrase", "grounded", "refusal"],
+    ids=[
+        "decision",
+        "decision-without-text",
+        "unlabelled-answer-without-sources",
+        "dutch-phrase",
+        "english-phrase",
+        "grounded",
+        "refusal",
+    ],
 )
 def test_antwoord_algemeen_gelabeld_needs_a_general_knowledge_label(tmp_path, capsys, row, ok):
     case = {"cid": "aaaaaaaa", "turn": 0, "class": "antwoord_algemeen_gelabeld"}
@@ -332,6 +365,36 @@ def test_antwoord_algemeen_gelabeld_needs_a_general_knowledge_label(tmp_path, ca
     report = _json_report(tmp_path, capsys, [case], [[row]])
 
     assert _verdict_of(report, "antwoord_algemeen_gelabeld") == {"ok": int(ok), "of": 1}
+
+
+@pytest.mark.parametrize("klass", ["weigering", "antwoord_kb", "dekkend_antwoord", "antwoord_algemeen_gelabeld"])
+@pytest.mark.parametrize("kind", ["empty", "error"])
+def test_empty_text_and_error_rows_fail_every_automatic_class(tmp_path, capsys, klass, kind):
+    row = (
+        _row(decision="refusal", text="  ") if kind == "empty" else {"cid": "aaaaaaaa", "u": 0, "error": "TimeoutError"}
+    )
+    if kind == "empty" and klass != "weigering":
+        row = _row(decision="general_knowledge", text="")
+
+    report = _json_report(tmp_path, capsys, [{"cid": "aaaaaaaa", "turn": 0, "class": klass}], [[row]])
+
+    assert _verdict_of(report, klass) == {"ok": 0, "of": 1}
+
+
+def test_rounds_with_the_same_file_name_in_different_directories_stay_separate(tmp_path, capsys):
+    cases = [{"cid": "aaaaaaaa", "turn": 0, "class": "weigering"}]
+    paths = []
+    for directory, decision in (("main", "answer"), ("candidate", "refusal")):
+        (tmp_path / directory).mkdir()
+        paths.append(str(_write_jsonl(tmp_path / directory / "round.jsonl", [_row(decision=decision)])))
+    case_path = _write_jsonl(tmp_path / "cases.jsonl", cases)
+
+    assert meetlat.main(["compare", "--cases", str(case_path), "--json", *paths]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert [r["round"] for r in report["rounds"]] == paths
+    assert [r["verdicts"]["weigering"]["ok"] for r in report["rounds"]] == [0, 1]
+    assert meetlat.main(["compare", "--cases", str(case_path), paths[0], paths[0]]) == 2
 
 
 def test_weigering_feiten_gets_no_automatic_verdict_and_is_counted_for_reading(tmp_path, capsys):
@@ -390,7 +453,7 @@ def test_compare_json_round_trips_the_same_report_the_text_form_prints(tmp_path,
     report = _json_report(tmp_path, capsys, cases, rounds)
 
     assert json.loads(json.dumps(report)) == report
-    assert [r["round"] for r in report["rounds"]] == ["round1.jsonl", "round2.jsonl"]
+    assert [r["round"] for r in report["rounds"]] == [str(tmp_path / "round1.jsonl"), str(tmp_path / "round2.jsonl")]
     reading = report["reading"][0]
     assert (reading["cid"], reading["turn"], reading["class"]) == ("aaaaaaaa", 0, "weigering_feiten")
     first = reading["rounds"][0]
@@ -402,7 +465,7 @@ def test_compare_json_round_trips_the_same_report_the_text_form_prints(tmp_path,
 
     _compare(tmp_path, cases, rounds)
     text = capsys.readouterr().out
-    assert "round1.jsonl" in text
+    assert f"{tmp_path / 'round1.jsonl'}:" in text
     assert "weigering 1/1" in text
     assert "info@example.com" in text
 
