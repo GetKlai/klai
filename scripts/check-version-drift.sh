@@ -12,19 +12,21 @@
 # A stuck update must also show up within days, not weeks. From 2026-09-25 to
 # 2026-10-22 a status check that could never pass held the Docker images, LiteLLM
 # and lock file PRs open for four weeks while the Dependency Dashboard listed 13
-# updates as Errored. Renovate only opens a PR for a version that already passed
-# its release-age wait and merges green PRs hourly, so three more checks fail on
-# the symptoms: an automerge PR older than a few days, an Errored or Repository
-# Problems section on the dashboard, and no successful Renovate run lately.
+# updates as Errored. Renovate merges green PRs hourly, so three more checks fail
+# on the symptoms: an automerge PR that is days old with a failed check (or
+# merely pending for longer than the 7-day release age explains), an Errored or
+# Repository Problems section on the dashboard, and no successful Renovate run.
 #
 # Env: GH_TOKEN with read access to REPOS; MAX_PR_AGE_DAYS (default 14);
-# AUTOMERGE_MAX_AGE_DAYS (default 3); RENOVATE_MAX_RUN_AGE_HOURS (default 6);
+# AUTOMERGE_MAX_AGE_DAYS (default 3) and AUTOMERGE_WAIT_MAX_DAYS (default 10,
+# for a PR that is only pending); RENOVATE_MAX_RUN_AGE_HOURS (default 6);
 # ACTIONS_TOKEN (optional) for reading workflow runs, which the Renovate app
 # token cannot do (the app has no actions permission); defaults to GH_TOKEN.
 set -uo pipefail
 REPOS="${REPOS:-GetKlai/klai GetKlai/klai-website}"
 MAX_PR_AGE_DAYS="${MAX_PR_AGE_DAYS:-14}"
 AUTOMERGE_MAX_AGE_DAYS="${AUTOMERGE_MAX_AGE_DAYS:-3}"
+AUTOMERGE_WAIT_MAX_DAYS="${AUTOMERGE_WAIT_MAX_DAYS:-10}"
 RENOVATE_MAX_RUN_AGE_HOURS="${RENOVATE_MAX_RUN_AGE_HOURS:-6}"
 RENOVATE_REPO=GetKlai/klai
 FAIL=0
@@ -46,22 +48,40 @@ for repo in $REPOS; do
     ok "$repo: no Renovate PR older than ${MAX_PR_AGE_DAYS} days"
   fi
 
-  # An automerge PR only exists once its version passed the release-age wait,
-  # and green ones merge hourly, so one that lives for days is stuck.
-  if ! stuck=$(gh pr list -R "$repo" --state open --limit 200 --json number,title,createdAt,author,body \
+  # Green automerge PRs merge on the next hourly run, so one that is days old
+  # is stuck when a check failed or everything is green. One that is only
+  # pending (usually renovate/stability-days, when Renovate moved it to a newer
+  # release that is still inside its 7-day wait) is waiting, until it has
+  # waited longer than any release age can explain.
+  if ! automerge=$(gh pr list -R "$repo" --state open --limit 200 --json number,title,createdAt,author,body \
     --jq "[.[] | select((.author.login | test(\"renovate\")) and (.body | contains(\"Automerge**: Enabled\")) and (now - (.createdAt | fromdateiso8601) > $AUTOMERGE_MAX_AGE_DAYS * 86400))] | .[] | \"\(.number)\t\(((now - (.createdAt | fromdateiso8601)) / 86400) | floor)\t\(.title)\""); then
     fail "$repo: could not list pull requests for the automerge check"
-  elif [ -n "$stuck" ]; then
-    fail "$repo: automerge PRs open longer than ${AUTOMERGE_MAX_AGE_DAYS} days (stuck, Renovate would have merged them):"
-    while IFS=$'\t' read -r num age title; do
-      printf '        #%s open %sd: %s\n' "$num" "$age" "$title"
-      blocking=$(gh pr checks "$num" -R "$repo" --json bucket,name \
-        --jq '.[] | select(.bucket != "pass" and .bucket != "skipping") | "\(.bucket) \(.name)"' 2>/dev/null)
-      if [ -n "$blocking" ]; then printf '%s\n' "$blocking" | sed 's/^/            not green: /'
-      else printf '            all checks green, so Renovate itself is not merging it\n'; fi
-    done <<<"$stuck"
   else
-    ok "$repo: no automerge PR older than ${AUTOMERGE_MAX_AGE_DAYS} days"
+    stuck=0
+    while IFS=$'\t' read -r num age title; do
+      [ -n "$num" ] || continue
+      if ! blocking=$(gh pr checks "$num" -R "$repo" --json bucket,name \
+        --jq '.[] | select(.bucket != "pass" and .bucket != "skipping") | "\(.bucket) \(.name)"'); then
+        # gh exits 8 while checks are pending, with the JSON still printed.
+        [ -n "$blocking" ] || { fail "$repo: could not read the checks of #$num"; continue; }
+      fi
+      if [ -z "$blocking" ]; then
+        reason='all checks green, so Renovate itself is not merging it'
+      elif printf '%s\n' "$blocking" | grep -q '^fail '; then
+        reason=$(printf '%s\n' "$blocking" | grep '^fail ' | sed 's/^/not green: /')
+      elif [ "$blocking" != 'pending renovate/stability-days' ] || [ "$age" -gt "$AUTOMERGE_WAIT_MAX_DAYS" ]; then
+        # Only the release-age check earns the longer wait; a CI check that
+        # is cancelled or has been pending for days blocks the merge as well.
+        reason=$(printf '%s\n' "$blocking" | sed 's/^/not green: /')
+      else
+        note "$repo: #$num open ${age}d, waiting: $(printf '%s' "$blocking" | tr '\n' ';')"
+        continue
+      fi
+      stuck=1
+      fail "$repo: automerge PR #$num open ${age}d is stuck: $title"
+      printf '%s\n' "$reason" | sed 's/^/            /'
+    done <<<"$automerge"
+    [ "$stuck" = 1 ] || ok "$repo: no stuck automerge PR"
   fi
 
   # Renovate lists what it could not do in the Dependency Dashboard issue.
