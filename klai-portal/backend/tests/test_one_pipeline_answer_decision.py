@@ -674,6 +674,30 @@ async def test_the_warning_stays_when_the_caller_asked_for_no_sources(monkeypatc
     assert "- Let op: e-mailadres in dit antwoord staat niet in de kennisbank." in turn.text
 
 
+@pytest.mark.asyncio
+async def test_the_footer_warning_and_the_record_read_the_same_answer_check(monkeypatch):
+    """The footer and the record used to be fed by separate checks; one AnswerCheck now feeds both."""
+    from app.services import widget_write
+    from app.services.answer_check import AnswerCheck, Statement
+
+    check = AnswerCheck([Statement("201234567", "phone", None), Statement("EUR 10", "amount", ARTICLE)])
+    calls = []
+    monkeypatch.setattr(widget_write, "check_hard_facts", lambda *args: calls.append(args) or check)
+
+    turn = await _turn(
+        monkeypatch,
+        _LiteLLM(ANSWER),
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    assert len(calls) == 1
+    assert "- Let op: telefoonnummer in dit antwoord staat niet in de kennisbank." in turn.text
+    (record,) = turn.records
+    assert record["hard_facts_outside_kb"] == {"phone": 1}
+
+
 @pytest.mark.parametrize("kb_mode", ["open", "strict"])
 @pytest.mark.asyncio
 async def test_only_an_open_turn_reads_the_web_results_the_employee_asked_for(monkeypatch, kb_mode):
