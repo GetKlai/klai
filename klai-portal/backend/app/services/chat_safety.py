@@ -145,7 +145,17 @@ def _amount_key(currency: str, number: str) -> str:
 
 
 def _links(texts: list[str]) -> set[str]:
-    return {key for url in urls_in_passages([{"text": text} for text in texts]) if (key := source_url_key(url))}
+    return {key for url in urls_in_passages([{"text": text} for text in texts]) if (key := _link_key(url))}
+
+
+def _link_key(url: str) -> str | None:
+    # A model can write a token that looks like a link but is not one
+    # ("http://[stap 1]"): the normaliser raises on it, and a reply must not
+    # fail on a malformed link it never cited (internal meetlat, 22 October).
+    try:
+        return source_url_key(url)
+    except ValueError:
+        return None
 
 
 def _user_texts(messages: list[dict]) -> list[str]:
