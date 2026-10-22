@@ -151,9 +151,10 @@ artifact_size() {
 record_file() {
   local file="$1"
 
-  if [[ ! -s "${file}" ]]; then
-    fail "expected artifact is missing or empty: ${file}"
-  fi
+  # run_step calls steps inside `if !`, where errexit does not apply, so a
+  # missing artifact has to be returned, not just logged: every step ends in
+  # this call and its status is the step's status.
+  [[ -s "${file}" ]] || { fail "expected artifact is missing or empty: ${file}"; return 1; }
 
   ARTIFACTS+=("${file}")
   log "      Size: $(artifact_size "${file}")"
@@ -214,7 +215,7 @@ run_step() {
 backup_postgres() {
   local output="${BACKUP_DIR}/postgres-all.sql"
 
-  docker compose exec -T postgres pg_dumpall -U klai > "${output}"
+  docker compose exec -T postgres pg_dumpall -U klai > "${output}" || return 1
   record_file "${output}"
 }
 
@@ -224,7 +225,7 @@ backup_gitea() {
   docker run --rm \
     --volumes-from "$(ctr gitea):ro" \
     -v "${BACKUP_DIR}:/backup" \
-    alpine tar -czf /backup/gitea-repos.tar.gz -C /data git/repositories gitea/conf
+    alpine tar -czf /backup/gitea-repos.tar.gz -C /data git/repositories gitea/conf || return 1
   record_file "${output}"
 }
 
@@ -245,16 +246,20 @@ backup_mongodb() {
 
   if ! container_running "${container}"; then
     fail "MongoDB container is not running"
+    return 1
   fi
 
-  nofile_limit="$(container_nofile_limit "${container}")"
+  nofile_limit="$(container_nofile_limit "${container}")" || return 1
   if [[ "${nofile_limit}" =~ ^[0-9]+$ && "${nofile_limit}" -lt "${MONGODB_MIN_NOFILE}" ]]; then
     fail "MongoDB nofile limit is ${nofile_limit}; set compose ulimits.nofile to at least ${MONGODB_MIN_NOFILE}"
+    return 1
   fi
 
-  image="$(docker inspect -f '{{.Config.Image}}' "${container}")"
-  before_restarts="$(container_restart_count "${container}")"
-  before_started_at="$(container_started_at "${container}")"
+  # Two empty restart counters compare equal, so a failed inspect here would
+  # let the restart check below pass without looking at anything.
+  image="$(docker inspect -f '{{.Config.Image}}' "${container}")" || return 1
+  before_restarts="$(container_restart_count "${container}")" || return 1
+  before_started_at="$(container_started_at "${container}")" || return 1
   rm -f "${tmp}" "${output}"
 
   if ! docker run --rm \
@@ -270,16 +275,18 @@ backup_mongodb() {
       --archive="/backup/$(basename "${tmp}")"; then
     rm -f "${tmp}" "${output}"
     fail "mongodump failed"
+    return 1
   fi
 
-  after_restarts="$(container_restart_count "${container}")"
-  after_started_at="$(container_started_at "${container}")"
+  after_restarts="$(container_restart_count "${container}")" || return 1
+  after_started_at="$(container_started_at "${container}")" || return 1
   if [[ "${before_restarts}" != "${after_restarts}" || "${before_started_at}" != "${after_started_at}" ]]; then
     rm -f "${tmp}" "${output}"
     fail "MongoDB restarted during mongodump (restarts ${before_restarts}->${after_restarts})"
+    return 1
   fi
 
-  mv "${tmp}" "${output}"
+  mv "${tmp}" "${output}" || return 1
   record_file "${output}"
 }
 
@@ -291,11 +298,6 @@ backup_mongodb() {
 # dump. LASTSAVE moves only when a save completes, so poll that instead, and
 # fail loudly when the save does not finish or reports an error.
 BGSAVE_TIMEOUT="${BGSAVE_TIMEOUT:-900}"
-# record_file logs a missing artifact but returns 0, and run_step calls steps
-# inside `if !` where errexit does not apply; the steps below fail explicitly.
-require_file() {
-  [[ -s "$1" ]] || { fail "expected artifact is missing or empty: $1"; return 1; }
-}
 redis_q() { # redis_q <container> <auth args...> -- <command...>; fails on any error reply
   local container="$1"; shift
   local auth=()
@@ -344,7 +346,6 @@ backup_redis() {
 
   bgsave_and_wait "$(ctr redis)" -a "${REDIS_PASSWORD}" || return 1
   docker compose cp redis:/data/dump.rdb "${output}" || return 1
-  require_file "${output}" || return 1
   record_file "${output}"
 }
 
@@ -381,7 +382,6 @@ backup_vexa_redis() {
 
   bgsave_and_wait "${container}" ${password:+-a "${password}"} || return 1
   docker cp "${container}:/data/dump.rdb" "${output}" || return 1
-  require_file "${output}" || return 1
   record_file "${output}"
 }
 
@@ -419,7 +419,6 @@ backup_meilisearch() {
     return 1
   fi
   docker cp "${container}:/meili_data/snapshots/meili_data.snapshot" "${output}" || return 1
-  require_file "${output}" || return 1
   record_file "${output}"
 }
 
@@ -482,10 +481,12 @@ backup_qdrant() {
   QDRANT_API_KEY="${QDRANT_API_KEY:-$(container_env_value "${container}" QDRANT__SERVICE__API_KEY)}"
   if [[ -z "${QDRANT_API_KEY}" ]]; then
     fail "Qdrant is running but QDRANT__SERVICE__API_KEY is empty"
+    return 1
   fi
 
-  collections_json="$(qdrant_api GET /collections)"
-  collections="$(printf '%s' "${collections_json}" | json_qdrant_collections)"
+  # A failed listing would otherwise read as "No collections found" below.
+  collections_json="$(qdrant_api GET /collections)" || return 1
+  collections="$(printf '%s' "${collections_json}" | json_qdrant_collections)" || return 1
   if [[ -z "${collections}" ]]; then
     log "      No collections found"
     return 0
@@ -494,10 +495,11 @@ backup_qdrant() {
   while IFS= read -r collection; do
     [[ -n "${collection}" ]] || continue
 
-    response="$(qdrant_api POST "/collections/${collection}/snapshots")"
-    snapshot="$(printf '%s' "${response}" | json_qdrant_snapshot_name)"
+    response="$(qdrant_api POST "/collections/${collection}/snapshots")" || return 1
+    snapshot="$(printf '%s' "${response}" | json_qdrant_snapshot_name)" || return 1
     if [[ -z "${snapshot}" ]]; then
       fail "Qdrant did not return a snapshot name for ${collection}: ${response}"
+      return 1
     fi
 
     output="${BACKUP_DIR}/qdrant-${collection}.snapshot"
@@ -512,6 +514,7 @@ backup_qdrant() {
       qdrant_api DELETE "/collections/${collection}/snapshots/${snapshot}" >/dev/null || true
       rm -f "${output}"
       fail "Qdrant snapshot download failed for ${collection}"
+      return 1
     fi
 
     if [[ -s "${output}" ]]; then
@@ -521,6 +524,7 @@ backup_qdrant() {
       qdrant_api DELETE "/collections/${collection}/snapshots/${snapshot}" >/dev/null || true
       rm -f "${output}"
       fail "Qdrant snapshot download was empty for ${collection}"
+      return 1
     fi
     qdrant_api DELETE "/collections/${collection}/snapshots/${snapshot}" >/dev/null || true
   done <<< "${collections}"
@@ -540,7 +544,6 @@ backup_falkordb() {
 
   bgsave_and_wait "${container}" || return 1
   docker cp "${container}:/var/lib/falkordb/data/dump.rdb" "${output}" || return 1
-  require_file "${output}" || return 1
   record_file "${output}"
 }
 
@@ -557,7 +560,10 @@ backup_garage_meta() {
     return 0
   fi
 
-  snapshot_output="$(docker exec "${container}" /garage meta snapshot 2>&1)"
+  # A failed snapshot must stop here: the tar below would otherwise pack the
+  # newest older snapshot and report it as tonight's.
+  snapshot_output="$(docker exec "${container}" /garage meta snapshot 2>&1)" \
+    || { fail "Garage metadata snapshot failed: ${snapshot_output}"; return 1; }
   log "      ${snapshot_output}"
 
   docker run --rm \
@@ -567,7 +573,7 @@ backup_garage_meta() {
       latest=$(ls -1td /var/lib/garage/meta/snapshots/*/ 2>/dev/null | head -1)
       test -n "${latest}"
       tar -czf /backup/garage-meta.tar.gz -C "${latest}" .
-    '
+    ' || return 1
   record_file "${output}"
 }
 
@@ -582,7 +588,7 @@ backup_garage_data() {
   docker run --rm \
     -v /opt/klai/garage-data:/data:ro \
     -v "${BACKUP_DIR}:/backup" \
-    alpine tar -czf /backup/garage-data.tar.gz -C /data .
+    alpine tar -czf /backup/garage-data.tar.gz -C /data . || return 1
   record_file "${output}"
 }
 
@@ -598,7 +604,7 @@ backup_firecrawl_postgres() {
     return 0
   fi
 
-  docker exec "${container}" pg_dumpall -U firecrawl > "${output}"
+  docker exec "${container}" pg_dumpall -U firecrawl > "${output}" || return 1
   record_file "${output}"
 }
 
@@ -614,7 +620,7 @@ backup_listmonk_postgres() {
     return 0
   fi
 
-  docker exec "${container}" pg_dumpall -U listmonk > "${output}"
+  docker exec "${container}" pg_dumpall -U listmonk > "${output}" || return 1
   record_file "${output}"
 }
 
@@ -630,7 +636,7 @@ backup_crm_postgres() {
     return 0
   fi
 
-  docker exec "${container}" pg_dumpall -U twenty > "${output}"
+  docker exec "${container}" pg_dumpall -U twenty > "${output}" || return 1
   record_file "${output}"
 }
 
@@ -646,7 +652,7 @@ backup_fider_postgres() {
     return 0
   fi
 
-  docker exec "${container}" pg_dumpall -U fider > "${output}"
+  docker exec "${container}" pg_dumpall -U fider > "${output}" || return 1
   record_file "${output}"
 }
 
@@ -662,7 +668,7 @@ backup_umami_postgres() {
     return 0
   fi
 
-  docker exec "${container}" pg_dumpall -U umami > "${output}"
+  docker exec "${container}" pg_dumpall -U umami > "${output}" || return 1
   record_file "${output}"
 }
 
@@ -743,24 +749,24 @@ backup_research_uploads() {
     return 0
   fi
 
-  rsync -a --delete /opt/klai/research-uploads/ "${output}/"
+  rsync -a --delete /opt/klai/research-uploads/ "${output}/" || return 1
   log "      Size: $(artifact_size "${output}")"
 }
 
 encrypt_artifacts() {
   local artifact
 
-  ENCRYPT_DIR="$(mktemp -d)"
+  ENCRYPT_DIR="$(mktemp -d)" || return 1
 
   for artifact in "${ARTIFACTS[@]}"; do
     age -r "${AGE_RECIPIENTS[0]}" -r "${AGE_RECIPIENTS[1]}" "${artifact}" \
-      > "${ENCRYPT_DIR}/$(basename "${artifact}").age"
+      > "${ENCRYPT_DIR}/$(basename "${artifact}").age" || return 1
   done
 
   if [[ -d "${BACKUP_DIR}/research-uploads" ]]; then
     tar -czf - -C "${BACKUP_DIR}" research-uploads \
       | age -r "${AGE_RECIPIENTS[0]}" -r "${AGE_RECIPIENTS[1]}" \
-      > "${ENCRYPT_DIR}/research-uploads.tar.gz.age"
+      > "${ENCRYPT_DIR}/research-uploads.tar.gz.age" || return 1
   fi
 }
 
@@ -778,13 +784,13 @@ upload_encrypted_artifacts() {
     -e "ssh -p 23 -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30" \
     -az --mkpath --stats \
     "${ENCRYPT_DIR}/" \
-    "${STORAGEBOX_USER}@${STORAGEBOX_HOST}:${remote_path}/"
+    "${STORAGEBOX_USER}@${STORAGEBOX_HOST}:${remote_path}/" || return 1
 
   log "      Uploaded to: ${STORAGEBOX_USER}@${STORAGEBOX_HOST}:${remote_path}"
 }
 
 encrypt_and_upload() {
-  encrypt_artifacts
+  encrypt_artifacts || return 1
   upload_encrypted_artifacts
 }
 

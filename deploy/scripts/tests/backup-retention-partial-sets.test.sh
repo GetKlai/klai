@@ -29,20 +29,50 @@ for day in $(seq -w 11 16); do
     mkdir -p "$BACKUP_ROOT/2026-07-$day"
 done
 
-# Every step succeeds, so the run reaches local retention.
+# Every step succeeds, so the run reaches local retention. record_file rejects
+# a missing or empty artifact, so the stub produces each one the way the real
+# command does: a stdout redirect, a file named inside a directory mounted at
+# /backup or /out, or the destination of a `cp`.
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
-if [[ "$*" == *".Config.Env"* && "$*" == *"klai-core-redis-1"* ]]; then
+all="$*"
+if [[ "$all" == *".Config.Env"* && "$all" == *"klai-core-redis-1"* ]]; then
     echo 'REDIS_PASSWORD=test-only'; exit 0
 fi
-if [[ "$*" == *".State.Running"* ]]; then echo 'true'; exit 0; fi
+if [[ "$all" == *".Config.Env"* && "$all" == *"klai-core-qdrant-1"* ]]; then
+    echo 'QDRANT__SERVICE__API_KEY=test-only'; exit 0
+fi
+if [[ "$all" == *".State.Running"* ]]; then echo 'true'; exit 0; fi
 # backup.sh waits for each BGSAVE to finish: LASTSAVE must move, and the save
 # must report ok, or the step fails before retention can run.
-if [[ "$*" == *" LASTSAVE" ]]; then date +%s%N; exit 0; fi
-if [[ "$*" == *" BGSAVE" ]]; then echo 'Background saving started'; exit 0; fi
-if [[ "$*" == *" INFO persistence" ]]; then echo 'rdb_last_bgsave_status:ok'; exit 0; fi
-# The Redis-protocol and Meilisearch steps require a non-empty copy.
-if [[ " $* " == *" cp "* ]]; then echo stub >"${@: -1}"; exit 0; fi
+if [[ "$all" == *" LASTSAVE" ]]; then date +%s%N; exit 0; fi
+if [[ "$all" == *" BGSAVE" ]]; then echo 'Background saving started'; exit 0; fi
+if [[ "$all" == *" INFO persistence" ]]; then echo 'rdb_last_bgsave_status:ok'; exit 0; fi
+# pg_dumpall writes to stdout; STUB_EMPTY_DUMP_USER makes one dump come out empty.
+if [[ "$all" == *pg_dumpall* ]]; then
+    [[ -n "${STUB_EMPTY_DUMP_USER:-}" && "$all" == *"-U $STUB_EMPTY_DUMP_USER"* ]] || echo '-- dump'
+    exit 0
+fi
+# `docker cp` and `docker compose cp`: the destination is the last argument.
+if [[ " $all " == *" cp "* ]]; then echo stub >"${@: -1}"; exit 0; fi
+if [[ "$1" == "run" ]]; then
+    # tar, mongodump, the Garage snapshot tar and the Qdrant snapshot download
+    # run in a throwaway container with the backup directory mounted: create
+    # the file they were told to write there.
+    for arg in "$@"; do
+        [[ "$arg" == *:/backup || "$arg" == *:/out ]] && dir="${arg%:*}"
+    done
+    if [[ -n "${dir:-}" && "$all" =~ /(backup|out)/([A-Za-z0-9._-]+) ]]; then
+        echo stub >"$dir/${BASH_REMATCH[2]}"
+    fi
+    # The Qdrant API calls answer in JSON.
+    case "$all" in
+        *curlimages/curl*" -o "*) ;;
+        *"-X POST"*) echo '{"result":{"name":"snap-1"}}' ;;
+        *"-X DELETE"*) echo '{}' ;;
+        *curlimages/curl*) echo '{"result":{"collections":[{"name":"docs"}]}}' ;;
+    esac
+fi
 exit 0
 STUB
 for stub in sleep rsync age curl tar; do
@@ -50,21 +80,25 @@ for stub in sleep rsync age curl tar; do
 done
 chmod +x "$TMP/bin"/*
 
-set +e
-PATH="$TMP/bin:$PATH" \
-BACKUP_DATE=2026-07-17 \
-BACKUP_ROOT="$BACKUP_ROOT" \
-COMPOSE_DIR="$COMPOSE_DIR" \
-STORAGEBOX_HOST=invalid.test \
-STORAGEBOX_USER=test-only \
-bash "$SCRIPT" >"$TMP/out" 2>&1
-set -e
+run_backup() { # run_backup <date>: exit code in $rc, log in $TMP/out
+    set +e
+    PATH="$TMP/bin:$PATH" \
+    BACKUP_DATE="$1" \
+    BACKUP_ROOT="$BACKUP_ROOT" \
+    COMPOSE_DIR="$COMPOSE_DIR" \
+    STORAGEBOX_HOST=invalid.test \
+    STORAGEBOX_USER=test-only \
+    bash "$SCRIPT" >"$TMP/out" 2>&1
+    rc=$?
+    set -e
+}
 
-# The run itself may report failed steps — the stubs do not implement every
-# dump. What this test pins is the retention decision, so it only asserts on
-# retention when retention actually ran.
-if ! grep -q "Local cleanup" "$TMP/out"; then
-    echo "SKIP-GUARD: retention did not run; this test cannot observe the window" >&2
+run_backup 2026-07-17
+
+# Every stub step succeeds, so a failure here means a stub lost an artifact and
+# the retention assertions below could not be observed.
+if [ "$rc" -ne 0 ] || ! grep -q "Local cleanup" "$TMP/out"; then
+    echo "SKIP-GUARD: the run did not complete cleanly; this test cannot observe the window" >&2
     sed 's/^/  /' "$TMP/out" >&2
     exit 1
 fi
@@ -94,4 +128,19 @@ fi
 # The stubs from the failed nights fall inside the window here and are kept;
 # what matters is that they did not cost a complete set. Once they age out the
 # same cut removes them, which the count-based form never did.
+
+# A dump that produces an empty file is a failed step. run_step calls steps
+# inside `if !`, where errexit does not apply, so record_file used to log the
+# empty artifact and return 0: the night was reported green and marked complete.
+STUB_EMPTY_DUMP_USER=listmonk run_backup 2026-07-18
+if [ "$rc" -eq 0 ] || ! grep -q "Backup finished with 1 failed step(s): listmonk Postgres" "$TMP/out"; then
+    echo "FAIL: an empty pg_dumpall artifact was not reported as a failed step" >&2
+    sed 's/^/  /' "$TMP/out" >&2
+    exit 1
+fi
+if [ -e "$BACKUP_ROOT/2026-07-18/$MARKER" ]; then
+    echo "FAIL: a set with an empty dump was marked complete" >&2
+    exit 1
+fi
+
 echo "backup retention with partial sets: OK"
