@@ -52,7 +52,7 @@ services:
       retries: 5
 
   meilisearch:
-    image: getmeili/meilisearch:v1.54.0
+    image: getmeili/meilisearch:v1.55.0
     restart: unless-stopped
     ports:
       - "127.0.0.1:7700:7700"
@@ -63,6 +63,9 @@ services:
       MEILI_DB_PATH: /meili_data
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-klai-dev-meili-key}
       MEILI_NO_ANALYTICS: "true"
+      # Same as production: without it a minor bump exits on the existing
+      # dev volume ("Your database version (1.54.0) is incompatible").
+      MEILI_UPGRADE_DB: "true"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7700/health"]
       interval: 10s
