@@ -4,8 +4,9 @@ Same shape as ``test_internal_chat_turns_postgres.py``: a throwaway schema, the
 fail-loud tenant helper, the table as the Alembic migration creates it, and a
 non-superuser role, so RLS applies. The policy is read from the shipped
 ``post_deploy_f3a9c6e2b4d1_internal_chat_cases_rls.sql``, so the test fails
-when that file's policy does. Rows are written and read by the production
-functions, ``keep_internal_case`` and ``last_internal_case``.
+when that file's policy does, and the ``user_id`` column is added by the
+shipped ``post_deploy_a7d2e9c4f1b8_internal_chat_cases_user_id.sql``. Rows are
+written, read, forgotten and pruned by the production functions.
 
 Run: ``RLS_TEST_DATABASE_URL=... uv run pytest tests/test_internal_chat_cases_postgres.py -m postgres -q``
 
@@ -26,26 +27,28 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 from app.core import database as db_module
 from app.core.database import TenantContextSession, tenant_scoped_session
-from app.services.widget_audit import keep_internal_case, last_internal_case
+from app.services.widget_audit import (
+    forget_internal_cases,
+    keep_internal_case,
+    last_internal_case,
+    prune_internal_cases,
+)
 
 pytestmark = pytest.mark.postgres
 
 _SCHEMA = "internal_chat_cases_test_schema"
 _ROLE = "internal_chat_cases_test_role"
 _PW = "internal_chat_cases_test_pw"  # throwaway role in a disposable schema
-_POLICY_SQL = (
-    Path(__file__).resolve().parents[1]
-    / "alembic"
-    / "versions"
-    / "post_deploy_f3a9c6e2b4d1_internal_chat_cases_rls.sql"
-)
+_VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+_POLICY_SQL = _VERSIONS / "post_deploy_f3a9c6e2b4d1_internal_chat_cases_rls.sql"
+_USER_ID_SQL = _VERSIONS / "post_deploy_a7d2e9c4f1b8_internal_chat_cases_user_id.sql"
 _CASE = {"problem": "verlof aanvragen", "language": "nl"}
 _PASSAGE = {"chunk_id": "c1", "kb_slug": "handboek", "title": "Verlof", "source_url": None, "text": "Verlof via HR."}
 
 
-def _shipped_rls_statements() -> list[str]:
-    """ENABLE, FORCE and the policy from the post-deploy SQL, aimed at the test schema."""
-    body = _POLICY_SQL.read_text().split("BEGIN;", 1)[1].split("COMMIT;", 1)[0]
+def _shipped_statements(path: Path) -> list[str]:
+    """The statements of a post-deploy SQL file, aimed at the test schema; ownership and grants left out."""
+    body = path.read_text().split("BEGIN;", 1)[1].split("COMMIT;", 1)[0]
     body = re.sub(r"--[^\n]*", "", body)
     statements = [stmt.strip() for stmt in body.split(";") if stmt.strip()]
     kept = [stmt for stmt in statements if " OWNER TO " not in stmt and not stmt.startswith("GRANT")]
@@ -83,7 +86,8 @@ _SETUP = [
         kept_passages jsonb NOT NULL,
         updated_at timestamptz NOT NULL DEFAULT now(),
         CONSTRAINT uq_internal_chat_cases_org_key UNIQUE (org_id, conversation_key))""",
-    *_shipped_rls_statements(),
+    *_shipped_statements(_POLICY_SQL),
+    *_shipped_statements(_USER_ID_SQL),
     f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {_SCHEMA} TO {_ROLE}",
     f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {_SCHEMA} TO {_ROLE}",
     f"GRANT EXECUTE ON FUNCTION {_SCHEMA}._rls_current_org_id() TO {_ROLE}",
@@ -125,8 +129,19 @@ async def _visible_keys(org_id: int) -> list[str]:
         return [row[0] for row in rows]
 
 
+async def _keep(org_id: int, user_id: str, key: str, digest: str = "d1", **fields) -> None:
+    await keep_internal_case(
+        org_id=org_id,
+        user_id=user_id,
+        conversation_key=key,
+        turn_digest=digest,
+        case=fields.get("case", _CASE),
+        kept_passages=fields.get("kept_passages", [_PASSAGE]),
+    )
+
+
 async def test_a_stored_case_is_readable_only_inside_its_own_org(pg) -> None:
-    await keep_internal_case(org_id=901, conversation_key="k1", turn_digest="d1", case=_CASE, kept_passages=[_PASSAGE])
+    await _keep(901, "u1", "k1")
 
     stored = await last_internal_case(org_id=901, conversation_key="k1", turn_digest="d1")
     assert stored is not None
@@ -135,20 +150,39 @@ async def test_a_stored_case_is_readable_only_inside_its_own_org(pg) -> None:
     assert await _visible_keys(902) == []
 
 
-async def test_a_conversation_keeps_one_row_and_a_write_prunes_cases_older_than_thirty_days(pg) -> None:
-    async with pg.begin() as conn:
-        await conn.execute(
-            text(
-                "INSERT INTO internal_chat_cases (org_id, conversation_key, turn_digest, kept_passages, updated_at) "
-                "VALUES (901, 'old', 'd0', '[]', now() - interval '31 days')"
-            )
-        )
-
-    await keep_internal_case(org_id=901, conversation_key="k1", turn_digest="d1", case=_CASE, kept_passages=[])
-    await keep_internal_case(org_id=901, conversation_key="k1", turn_digest="d2", case=None, kept_passages=[_PASSAGE])
+async def test_a_conversation_keeps_one_row_with_its_latest_turn(pg) -> None:
+    await _keep(901, "u1", "k1", "d1", kept_passages=[])
+    await _keep(901, "u1", "k1", "d2", case=None)
 
     assert await _visible_keys(901) == ["k1"]
     assert await last_internal_case(org_id=901, conversation_key="k1", turn_digest="d1") is None
     stored = await last_internal_case(org_id=901, conversation_key="k1", turn_digest="d2")
     assert stored is not None
     assert (stored.case, stored.kept_passages) == (None, [_PASSAGE])
+
+
+async def test_forgetting_an_employee_deletes_their_cases_and_no_one_elses(pg) -> None:
+    await _keep(901, "leaving", "k1")
+    await _keep(901, "staying", "k2")
+
+    async with tenant_scoped_session(901) as db:
+        assert await forget_internal_cases(db, org_id=901, user_id="leaving") == 1
+        await db.commit()
+
+    assert await _visible_keys(901) == ["k2"]
+
+
+async def test_the_nightly_prune_removes_cases_older_than_thirty_days_and_keeps_younger_ones(pg) -> None:
+    await _keep(901, "u1", "young")
+    await _keep(902, "u2", "old")
+    async with pg.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE internal_chat_cases SET updated_at = now() - interval '31 days' WHERE conversation_key = 'old'"
+            )
+        )
+
+    assert await prune_internal_cases() == 1
+
+    assert await _visible_keys(901) == ["young"]
+    assert await _visible_keys(902) == []

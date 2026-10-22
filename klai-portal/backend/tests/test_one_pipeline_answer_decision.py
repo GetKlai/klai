@@ -187,6 +187,7 @@ async def _turn(
     retrieval_response: httpx.Response | None = None,
     web_search: bool = False,
     cases: dict | None = None,
+    searchable: tuple[str, ...] = ("handboek",),
 ) -> _Turn:
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
@@ -219,12 +220,20 @@ async def _turn(
         return stored if digest == turn_digest else None
 
     async def keep_internal_case(
-        *, org_id: int, conversation_key: str, turn_digest: str, case: dict | None, kept_passages: list[dict]
+        *,
+        org_id: int,
+        user_id: str,
+        conversation_key: str,
+        turn_digest: str,
+        case: dict | None,
+        kept_passages: list[dict],
     ) -> None:
         cases[(org_id, conversation_key)] = (turn_digest, StoredTurn(case, "", kept_passages, None))
 
     monkeypatch.setattr(partner, "last_internal_case", last_internal_case)
     monkeypatch.setattr(partner, "keep_internal_case", keep_internal_case)
+    # The knowledge bases the employee may search now (access.get_accessible_kb_slugs).
+    monkeypatch.setattr(partner, "get_accessible_kb_slugs", AsyncMock(return_value=list(searchable)))
 
     db = AsyncMock()
     no_widget = MagicMock()
@@ -714,13 +723,20 @@ def _one_article(text: str, chunk_id: str, title: str) -> dict:
     }
 
 
-async def _two_internal_turns(monkeypatch, found_next: dict | None = None) -> tuple[_Turn, _Turn, _LiteLLM]:
+async def _two_internal_turns(
+    monkeypatch,
+    found_next: dict | None = None,
+    *,
+    profile: ChatProfile | None = None,
+    searchable_next: tuple[str, ...] = ("handboek",),
+) -> tuple[_Turn, _Turn, _LiteLLM]:
     """Turn 1 chooses KEPT_ARTICLE; turn 2's search finds only an unrelated article, or ``found_next``."""
     cases: dict = {}
+    profile = profile or _internal()
     first = await _turn(
         monkeypatch,
         _LiteLLM(case=LEAVE_CASE),
-        profile=_internal(),
+        profile=profile,
         retrieval=_one_article(KEPT_ARTICLE, "c-leave", "Verlof goedkeuren"),
         cases=cases,
     )
@@ -728,11 +744,12 @@ async def _two_internal_turns(monkeypatch, found_next: dict | None = None) -> tu
     second = await _turn(
         monkeypatch,
         llm,
-        profile=_internal(),
+        profile=profile,
         retrieval=_one_article(UNRELATED, "c-parking", "Parkeren") if found_next is None else found_next,
         history=({"role": "user", "content": QUESTION}, {"role": "assistant", "content": first.text}),
         question="En als mijn leidinggevende niet reageert?",
         cases=cases,
+        searchable=searchable_next,
     )
     return first, second, llm
 
@@ -772,6 +789,36 @@ async def test_a_strict_follow_up_whose_search_finds_nothing_is_written_from_the
 
     assert second.text != STRICT_REFUSAL
     assert KEPT_ARTICLE in _system_prompt(llm)
+
+
+@pytest.mark.asyncio
+async def test_a_kept_passage_from_a_knowledge_base_the_employee_can_no_longer_search_is_not_offered(monkeypatch):
+    """An employee searching every org knowledge base has no slug list, so the
+    scope check on the kept passages let everything through: a passage from a
+    knowledge base the employee lost access to came back on the next turn."""
+    _, _, llm = await _two_internal_turns(monkeypatch, profile=_internal(kb_slugs=None), searchable_next=())
+
+    (selection,) = llm.of("passage_selection")
+    assert KEPT_ARTICLE not in selection["messages"][1]["content"]
+
+
+def test_two_openers_that_differ_only_in_their_attachment_are_two_conversations():
+    """The conversation key rested on the text parts alone, so two conversations
+    that opened with the same sentence beside different files shared one case."""
+    from app.api.partner import _internal_conversation
+
+    def opener(image: str) -> list[dict]:
+        content = [
+            {"type": "text", "text": "Wat staat er op deze foto?"},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image}"}},
+        ]
+        return [{"role": "user", "content": content}]
+
+    first = _internal_conversation(opener("aW1hZ2Ux"), _internal())
+    second = _internal_conversation(opener("aW1hZ2Uy"), _internal())
+
+    assert first is not None and second is not None
+    assert first.key != second.key
 
 
 # --- Grounding check and repair ---------------------------------------------------

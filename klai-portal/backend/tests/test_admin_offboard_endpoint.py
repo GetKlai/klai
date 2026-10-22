@@ -182,6 +182,7 @@ class TestOffboardEndpointHappyPath:
                 "app.api.admin.users.revoke_user_credentials",
                 AsyncMock(return_value=(2, 3)),
             ) as mock_revoke,
+            patch("app.api.admin.users.forget_internal_cases", AsyncMock(return_value=1)) as mock_forget,
             patch("app.api.admin.users.zitadel", mock_zitadel),
             patch("app.api.admin.users.settings") as mock_settings,
             patch("app.api.admin.users.log_event", AsyncMock()) as mock_log,
@@ -203,6 +204,8 @@ class TestOffboardEndpointHappyPath:
         mock_apply.assert_awaited_once()
         # Token revoke runs in same tx.
         mock_revoke.assert_awaited_once_with(target_user_id="uid-leaving", org_id=1, db=db)
+        # The internal chat's stored cases of the employee go in the same tx.
+        mock_forget.assert_awaited_once_with(db, org_id=1, user_id="uid-leaving")
         # User status flipped + commit.
         assert user.status == "offboarded"
         db.commit.assert_awaited_once()

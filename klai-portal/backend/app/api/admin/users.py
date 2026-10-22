@@ -47,6 +47,7 @@ from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.notifications import notify_user_join_approved
 from app.services.user_deletion_orchestrator import delete_user_with_state_machine
 from app.services.user_memberships import get_user_membership_summary
+from app.services.widget_audit import forget_internal_cases
 from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 from app.services.zitadel_identity_recovery import (
     ZitadelIdentityRecoveryError,
@@ -1264,6 +1265,8 @@ async def offboard_user(
     # is only on CursorResult, hence getattr with a 0 default to satisfy pyright.
     memberships_removed_count = getattr(membership_delete_result, "rowcount", 0) or 0
     # SPEC-PORTAL-RBAC-001: portal_user_products is dropped; no rows to clean up.
+    # The case and passages the internal chat kept for the employee's conversations.
+    await forget_internal_cases(db, org_id=perms.org_id, user_id=zitadel_user_id)
 
     user.status = "offboarded"
     # SPEC-SEC-TENANT-001 REQ-1.4: structured event for VictoriaLogs audit so

@@ -127,6 +127,25 @@ async def test_external_kb_delete_step_revokes_credentials_after_kb_dispositions
     assert state.mcp_tokens_count == 2
 
 
+@pytest.mark.asyncio
+async def test_portal_db_delete_step_forgets_the_internal_chat_cases_of_the_user() -> None:
+    """The cases the internal chat stored for the user go in the transaction that deletes the user."""
+    from app.services.user_deletion_steps import step_portal_db_delete
+
+    state = _deletion_state()
+    state.db_for_steps = AsyncMock()
+    state.portal_user = MagicMock()
+
+    with (
+        patch("app.services.user_deletion_steps.set_tenant", new=AsyncMock()),
+        patch("app.services.user_deletion_steps.forget_internal_cases", new=AsyncMock(return_value=2)) as forget,
+    ):
+        await step_portal_db_delete(state)
+
+    forget.assert_awaited_once_with(state.db_for_steps, org_id=42, user_id="target-user")
+    assert state.db_user_deleted
+
+
 # ---------------------------------------------------------------------------
 # AC4.2 — Zitadel step failure → failed_partial + audit event
 # ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import set_tenant
 from app.models.groups import PortalGroup, PortalGroupMembership
+from app.services.widget_audit import forget_internal_cases
 from app.services.zitadel import zitadel
 
 logger = structlog.get_logger()
@@ -144,6 +145,8 @@ async def step_portal_db_delete(state: _UserDeletionState) -> None:
         )
     )
     state.group_memberships_deleted = getattr(membership_delete_result, "rowcount", 0) or 0
+    # The case and passages the internal chat kept for the user's conversations.
+    await forget_internal_cases(db, org_id=state.org_id, user_id=state.zitadel_user_id)
 
     await db.delete(state.portal_user)
     # Flush so the DELETE is in the session before commit.
