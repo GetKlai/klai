@@ -11,13 +11,17 @@
 # Bumping this file is NOT a pin flip: this is a custom xcaddy build with
 # the hetzner-DNS and ratelimit plugins, so the change only reaches
 # production once CI rebuilds and republishes ghcr.io/getklai/caddy-hetzner.
-FROM caddy:2.11.6-builder-alpine AS builder
+# 2.11.7 is adopted ahead of the 7-day Renovate cooldown (pushed 2026-10-21):
+# its builder ships Go 1.27.3, which fixes four stdlib CVEs the 2.11.6 build
+# (Go 1.27.1) carried, and those findings block the Trivy gate that every
+# Caddy deploy has to pass.
+FROM caddy:2.11.7-builder-alpine AS builder
 
 # The two --replace lines pin transitive dependencies, not plugins. Caddy
 # 2.11.4's own graph selects versions that Trivy flags with a fix available:
 #
-#   golang.org/x/net        CVE-2026-46600       fixed in 0.56.0
-#   google.golang.org/grpc  GHSA-hrxh-6v49-42gf  fixed in 1.82.1
+#   golang.org/x/net        CVE-2026-46600, CVE-2026-78669     fixed in 0.60.0
+#   google.golang.org/grpc  CVE-2026-84304, CVE-2026-84445     fixed in 1.83.2
 #
 # Both get fixed at source rather than earning a .trivyignore entry, which is
 # reserved for findings that have no fix to apply.
@@ -27,10 +31,6 @@ FROM caddy:2.11.6-builder-alpine AS builder
 # dies with "cannot find module providing package golang.org/x/net" (tried it —
 # 3ccaaddb9). --replace writes only the go.mod directive.
 #
-# x/net goes to 0.58.0 rather than the 0.56.0 minimum because that is what the
-# module graph resolves to once x/net is a direct requirement — this pins
-# forward to where the tree already wants to be, not down at the CVE floor.
-#
 # Both plugins above are deliberately unversioned, so the resolved graph drifts
 # between builds: a plain 2.11.4 build selected x/net 0.55.0 in CI and 0.57.0
 # locally on the same day. These pins make the two dependencies that actually
@@ -39,10 +39,10 @@ FROM caddy:2.11.6-builder-alpine AS builder
 RUN xcaddy build \
     --with github.com/caddy-dns/hetzner/v2 \
     --with github.com/mholt/caddy-ratelimit \
-    --replace golang.org/x/net=golang.org/x/net@v0.58.0 \
-    --replace google.golang.org/grpc=google.golang.org/grpc@v1.82.1
+    --replace golang.org/x/net=golang.org/x/net@v0.60.0 \
+    --replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2
 
-FROM caddy:2.11.6-alpine
+FROM caddy:2.11.7-alpine
 
 # Apply Alpine package security updates that landed AFTER the
 # `caddy:2.11.4-alpine` image was published. These packages are exposed
