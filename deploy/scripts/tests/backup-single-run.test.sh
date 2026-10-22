@@ -26,10 +26,10 @@ chmod +x "$TMP/bin/docker"
 
 # The other run: holds the lock until this test exits.
 # --no-fork: the lock dies with $holder instead of with a forked sleep.
-flock --no-fork "$BACKUP_ROOT/.backup.lock" sleep 60 &
+flock --no-fork "$BACKUP_ROOT" sleep 60 &
 holder=$!
 for _ in $(seq 50); do
-    flock -n "$BACKUP_ROOT/.backup.lock" true || break
+    flock -n "$BACKUP_ROOT" true || break
     sleep 0.1
 done
 
