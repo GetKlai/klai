@@ -8,6 +8,7 @@ on:
       - 'deploy/librechat/mcp_catalog.yaml'
       - 'deploy/librechat/klai-entrypoint.sh'
       - 'deploy/librechat/patches/**'
+      - 'deploy/scripts/tenant-config-regenerate.sh'
       - '.github/workflows/deploy-librechat-config.yml'
   workflow_dispatch:
     inputs:
@@ -37,6 +38,9 @@ jobs:
       - name: Validate the prune guard itself
         run: sh deploy/scripts/tests/assert-safe-to-prune.test.sh
 
+      - name: Validate the regenerate script
+        run: bash deploy/scripts/tests/tenant-config-regenerate.test.sh
+
       - name: Sync base config and patches to core-01
         uses: appleboy/ssh-action@v1
         with:
@@ -48,6 +52,8 @@ jobs:
 
             # Sparse-checkout the librechat config directory
             cd /tmp && rm -rf klai-librechat-sync
+            # Removed on every exit, a failed regenerate included.
+            trap 'rm -rf /tmp/klai-librechat-sync' EXIT
             git clone --depth=1 --filter=blob:none --sparse \
               https://github.com/GetKlai/klai.git klai-librechat-sync
             cd klai-librechat-sync
@@ -74,131 +80,12 @@ jobs:
               deploy/librechat/patches /opt/klai/librechat/patches
             rsync -a --delete deploy/librechat/patches/ /opt/klai/librechat/patches/
 
-            rm -rf /tmp/klai-librechat-sync
-
             echo "LibreChat base config synced to /opt/klai/librechat/"
 
-            # The previous rm -rf left us in a deleted directory. docker compose
-            # calls getwd() and crashes if cwd no longer exists, so jump to the
-            # compose project dir before invoking it.
-            cd /opt/klai
-            RECREATE_CONTAINERS="${{ github.event_name == 'workflow_dispatch' && inputs.recreate_containers == true }}"
-
-            # Regenerate per-tenant configs from the updated base template.
-            # portal-api exposes an internal endpoint that re-runs _generate_librechat_yaml
-            # for each tenant, writes the result, flushes Redis, and restarts containers.
-            # Push-triggered config/catalog/patch changes use restart-only. Full
-            # recreate is reserved for explicit workflow_dispatch image rollouts.
-            #
-            # portal-api has no host port mapping — it only listens on portal-api:8010
-            # inside the klai-net Docker network. We therefore run the request *inside*
-            # the portal-api container itself, where localhost:8010 is the API. We use
-            # Python's httpx (already installed) instead of curl because the python:slim
-            # base image does not ship curl. The INTERNAL_SECRET env var is already set
-            # inside the container from .env.
-            #
-            # Finding 3D (adversarial review 2026-08-13): a bare "HTTP 200 = success"
-            # check is not enough -- the endpoint can report per-tenant failures in its
-            # errors array on a 200 (restart-only mode keeps that contract on purpose,
-            # see finding 3E). The script below is belt and braces: it fails on any
-            # non-200 status AND, independently, fails whenever the errors array is
-            # non-empty regardless of status code. `set -e` is active for this whole
-            # script (line 39), so a non-zero exit from the exec'd python process aborts
-            # the step and surfaces every printed line (including the errors list) in
-            # the step output.
-            # The regenerate endpoint recreates containers through
-            # klai-docker-authz. The host lock below keeps the proxy's own
-            # deploy from running at the same time; this poll covers a proxy
-            # that is restarting for any other reason.
-            authz_ready=no
-            for attempt in $(seq 1 24); do
-              if docker compose -f /opt/klai/docker-compose.yml exec -T portal-api python -c '
-            import sys
-
-            import httpx
-
-            sys.exit(0 if httpx.get("http://klai-docker-authz:2375/health", timeout=5.0).status_code == 200 else 1)
-            ' 2>/dev/null; then
-                authz_ready=yes
-                break
-              fi
-              echo "klai-docker-authz not answering yet (attempt $attempt of 24)"
-              sleep 5
-            done
-            if [ "$authz_ready" != yes ]; then
-              # Regenerating now would write every tenant's config and then
-              # fail each container action; better to fail before writing.
-              echo "ERROR: klai-docker-authz did not answer within 2 minutes; not regenerating." >&2
-              exit 1
-            fi
-
-            echo "Triggering tenant config regeneration via portal-api..."
-            # The same host lock compose-up.sh takes: the regenerate recreates
-            # tenant containers through klai-docker-authz, and must not run
-            # while another deploy recreates that proxy.
-            flock -w 900 /opt/klai/.container-deploy.lock \
-              docker compose -f /opt/klai/docker-compose.yml exec -T \
-              -e RECREATE_CONTAINERS="$RECREATE_CONTAINERS" \
-              portal-api python -c '
-            import json
-            import os
-            import sys
-
-            import httpx
-
-            secret = os.environ["INTERNAL_SECRET"]
-            url = "http://localhost:8010/internal/librechat/regenerate"
-            if os.environ.get("RECREATE_CONTAINERS") == "true":
-                url += "?recreate_containers=true"
-
-            try:
-                r = httpx.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {secret}",
-                        "Content-Type": "application/json",
-                    },
-                    timeout=600.0,
-                )
-            except Exception as exc:
-                print(f"ERROR: request to {url} failed: {exc}", file=sys.stderr)
-                sys.exit(1)
-
-            print(f"HTTP {r.status_code}")
-            try:
-                body = r.json()
-            except (json.JSONDecodeError, ValueError):
-                print(r.text)
-                print("ERROR: response body was not valid JSON", file=sys.stderr)
-                sys.exit(1)
-
-            updated = body.get("tenants_updated") or []
-            skipped = body.get("tenants_skipped") or []
-            errors = body.get("errors") or []
-            compose_managed = body.get("compose_managed_skipped") or []
-            print(f"tenants_updated ({len(updated)}): {updated}")
-            print(f"tenants_skipped ({len(skipped)}): {skipped}")
-            if compose_managed:
-                # Incident 2026-08-14: portal-api must not take over a container
-                # that docker compose owns, so these were restarted, not
-                # recreated. A restart does NOT change the image -- an image
-                # rollout for these tenants lands via deploy-compose instead.
-                print(
-                    f"compose_managed_skipped ({len(compose_managed)}): {compose_managed} "
-                    "-- restarted, NOT recreated; image rollout belongs to deploy-compose"
-                )
-            if errors:
-                print(f"errors ({len(errors)}):")
-                for e in errors:
-                    print(f"  - {e}")
-
-            if r.status_code != 200:
-                print(f"ERROR: regenerate endpoint returned HTTP {r.status_code}", file=sys.stderr)
-                sys.exit(1)
-            if errors:
-                # Belt and braces: some paths can report errors on a 200.
-                print("ERROR: regenerate endpoint reported a non-empty errors array on HTTP 200", file=sys.stderr)
-                sys.exit(1)
-
-            print("Tenant configs regenerated successfully")
-            '
+            # Lock, klai-docker-authz health wait and the regenerate call live in
+            # the script, with tests in deploy/scripts/tests/. It runs from this
+            # checkout rather than /opt/klai/scripts: it has to be the version
+            # from this commit, and installing it there would give that file a
+            # second writer next to deploy-compose.yml.
+            RECREATE_CONTAINERS="${{ github.event_name == 'workflow_dispatch' && inputs.recreate_containers == true }}" \
+              bash deploy/scripts/tenant-config-regenerate.sh

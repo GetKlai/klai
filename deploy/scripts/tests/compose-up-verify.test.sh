@@ -96,6 +96,23 @@ echo "stub: unexpected docker args: $*" >&2
 exit 90
 STUB
     chmod +x "$work/docker"
+
+    # compose-up.sh refuses to run without flock, so the stub is what lets the
+    # suite run on macOS. It records its arguments and the file behind fd 9
+    # (/proc on Linux, F_GETPATH on macOS) so a case can prove which lock was
+    # taken.
+    mkdir -p "$work/bin"
+    cat > "$work/bin/flock" <<'STUB'
+#!/usr/bin/env bash
+if [[ -e "/proc/$$/fd/9" ]]; then
+  lock="$(readlink "/proc/$$/fd/9")"
+else
+  lock="$(python3 -c 'import fcntl; print(fcntl.fcntl(9, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode())')"
+fi
+echo "flock $* lock=$lock" >> "$FIXTURES/flock_calls"
+exit 0
+STUB
+    chmod +x "$work/bin/flock"
 }
 
 new_case() {
@@ -120,6 +137,7 @@ fx() { printf '%s\n' "$2" > "$case_dir/fixtures/$1"; }
 
 run_target() {
     set +e
+    PATH="$work/bin:$PATH" \
     KLAI_COMPOSE_DIR="$case_dir" \
     KLAI_DOCKER_BIN="$work/docker" \
     FIXTURES="$case_dir/fixtures" \
@@ -158,6 +176,10 @@ new_case happy
 run_target demo
 check "green compose + running container -> 0" 0 "$rc"
 check_output "  reports no healthcheck" "no healthcheck defined"
+# The host lock tenant-config-regenerate.sh shares, taken with a bounded wait.
+check "  takes the host lock" \
+    "flock -w 900 9 lock=$(cd "$case_dir" && pwd -P)/.container-deploy.lock" \
+    "$(cat "$case_dir/fixtures/flock_calls")"
 
 # The knowledge-ingest case: stop_grace_period 90s + a busy procrastinate queue
 # makes compose abort on the removal race, but the replacement IS there.
