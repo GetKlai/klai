@@ -193,6 +193,9 @@
       // could each only fail: #1876 (npm 1.64.1, image 1.63.0, "Executable
       // doesn't exist") and #1822 (image 1.64.1 alone). Reading the tag as the
       // npm package puts both in the Playwright monorepo group, one PR.
+      // @playwright/test is pinned exactly in package.json for the same reason:
+      // under ^1.63.0 the lock file refresh (#1749) moved it to 1.64.1 on its
+      // own and broke the visual job the same way.
       customType: 'regex',
       managerFilePatterns: [
         '/^\\.github/workflows/portal-frontend\\.yml$/',
