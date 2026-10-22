@@ -436,6 +436,25 @@ async def test_a_retrieve_body_that_is_not_json_counts_as_a_lost_knowledge_base(
     assert record["decision"] in ("refusal", "general_knowledge", "answer")
 
 
+@pytest.mark.asyncio
+async def test_an_internal_record_carries_the_selection_verdict_without_its_quotes(monkeypatch):
+    """The internal meetlat tunes the selection on its verdict, which the
+    record never carried: it was skipped whole because quotes are text."""
+    llm = _LiteLLM()
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    (record,) = turn.records
+    assert record["selection"] == {"verdict": "answers", "passages": [1]}
+    assert "quote" not in str(record["selection"]) and "question" not in record["selection"]
+
+
 # --- Open and general never refuse for a missing source ---------------------------
 
 

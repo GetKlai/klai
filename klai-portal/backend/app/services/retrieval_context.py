@@ -1126,6 +1126,24 @@ def _register_gap(t: _Turn, found: _Found) -> None:
     )
 
 
+def _selection_signal(selection: PassageSelection | None, *, internal: bool) -> dict[str, Any]:
+    """The selection's verdict for the record; quotes and the question are text, which the internal record never keeps.
+
+    An internal turn records the verdict and the passage numbers (the
+    internal meetlat tunes the selection on that verdict); the widget's record
+    keeps the quotes as well (widget_audit.record_widget_turn).
+    """
+    if selection is None:
+        return {"failed": "no_verdict_after_retry"}
+    if internal:
+        return {"verdict": selection.verdict, "passages": [item.passage for item in selection.evidence]}
+    return {
+        "verdict": selection.verdict,
+        "evidence": [{"passage": item.passage, "quote": item.quote[:200]} for item in selection.evidence],
+        "question": selection.question[:200],
+    }
+
+
 async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     """Step 3: record the gap, choose the passages, build the prompt the writer reads."""
     profile, turn = t.profile, t.turn
@@ -1174,20 +1192,8 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             # selections in that week).
             turn.selection_failed = True
             turn.not_in_passages = source_only
-        if t.answer_signals is not None and not t.internal:
-            # Quotes and the question are text; the internal record keeps
-            # signals only (widget_audit.record_internal_turn).
-            t.answer_signals["selection"] = (
-                {
-                    "verdict": turn.selection.verdict,
-                    "evidence": [
-                        {"passage": item.passage, "quote": item.quote[:200]} for item in turn.selection.evidence
-                    ],
-                    "question": turn.selection.question[:200],
-                }
-                if turn.selection
-                else {"failed": "no_verdict_after_retry"}
-            )
+        if t.answer_signals is not None:
+            t.answer_signals["selection"] = _selection_signal(turn.selection, internal=t.internal)
         if turn.selection is not None:
             turn.not_in_passages = turn.selection.not_in_passages(selection_chunks)
         chosen = turn.selection.chosen(selection_chunks) if turn.selection else []
