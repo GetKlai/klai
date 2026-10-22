@@ -291,31 +291,60 @@ backup_mongodb() {
 # dump. LASTSAVE moves only when a save completes, so poll that instead, and
 # fail loudly when the save does not finish or reports an error.
 BGSAVE_TIMEOUT="${BGSAVE_TIMEOUT:-900}"
+# record_file logs a missing artifact but returns 0, and run_step calls steps
+# inside `if !` where errexit does not apply; the steps below fail explicitly.
+require_file() {
+  [[ -s "$1" ]] || { fail "expected artifact is missing or empty: $1"; return 1; }
+}
+redis_q() { # redis_q <container> <auth args...> -- <command...>; fails on any error reply
+  local container="$1"; shift
+  local auth=()
+  while [[ "$1" != "--" ]]; do auth+=("$1"); shift; done
+  shift
+  docker exec "${container}" redis-cli ${auth[@]+"${auth[@]}"} --no-auth-warning -e "$@"
+}
+bgsave_in_progress() {
+  local info
+  info="$(redis_q "$@" INFO persistence)" || return 2
+  [[ "${info}" == *"rdb_bgsave_in_progress:1"* ]]
+}
 bgsave_and_wait() {
   local container="$1"
   shift
-  local before now i
+  local before now reply i rc
 
-  before="$(docker exec "${container}" redis-cli "$@" --no-auth-warning LASTSAVE)"
-  docker exec "${container}" redis-cli "$@" --no-auth-warning BGSAVE SCHEDULE >/dev/null \
-    || fail "BGSAVE rejected by ${container}" || return 1
+  # Let a save that is already running finish first, so its completion cannot
+  # be mistaken for ours.
   for (( i = 0; i < BGSAVE_TIMEOUT; i++ )); do
-    now="$(docker exec "${container}" redis-cli "$@" --no-auth-warning LASTSAVE)"
-    [[ "${now}" != "${before}" ]] && break
+    bgsave_in_progress "${container}" "$@" --; rc=$?
+    (( rc == 2 )) && { fail "${container}: INFO persistence failed"; return 1; }
+    (( rc == 1 )) && break
     sleep 1
   done
-  [[ "${now}" != "${before}" ]] \
-    || fail "${container}: BGSAVE did not finish within ${BGSAVE_TIMEOUT}s" || return 1
-  docker exec "${container}" redis-cli "$@" --no-auth-warning INFO persistence \
-    | grep -q '^rdb_last_bgsave_status:ok' \
-    || fail "${container}: last BGSAVE reported an error" || return 1
+  before="$(redis_q "${container}" "$@" -- LASTSAVE)" && [[ "${before}" =~ ^[0-9]+$ ]] \
+    || { fail "${container}: LASTSAVE failed"; return 1; }
+  # LASTSAVE has one-second resolution: start our save in a later second than
+  # the one recorded, so its completion always reads as a newer value.
+  sleep 1
+  reply="$(redis_q "${container}" "$@" -- BGSAVE)" && [[ "${reply}" == *"Background saving started"* ]] \
+    || { fail "${container}: BGSAVE not started (${reply:-no reply})"; return 1; }
+  for (( i = 0; i < BGSAVE_TIMEOUT; i++ )); do
+    now="$(redis_q "${container}" "$@" -- LASTSAVE)" && [[ "${now}" =~ ^[0-9]+$ ]] \
+      || { fail "${container}: LASTSAVE failed"; return 1; }
+    (( now > before )) && break
+    sleep 1
+  done
+  (( now > before )) || { fail "${container}: BGSAVE did not finish within ${BGSAVE_TIMEOUT}s"; return 1; }
+  redis_q "${container}" "$@" -- INFO persistence | grep -q '^rdb_last_bgsave_status:ok' \
+    || { fail "${container}: last BGSAVE reported an error"; return 1; }
 }
 
 backup_redis() {
   local output="${BACKUP_DIR}/redis-dump.rdb"
 
   bgsave_and_wait "$(ctr redis)" -a "${REDIS_PASSWORD}" || return 1
-  docker compose cp redis:/data/dump.rdb "${output}"
+  docker compose cp redis:/data/dump.rdb "${output}" || return 1
+  require_file "${output}" || return 1
   record_file "${output}"
 }
 
@@ -351,7 +380,8 @@ backup_vexa_redis() {
   fi
 
   bgsave_and_wait "${container}" ${password:+-a "${password}"} || return 1
-  docker cp "${container}:/data/dump.rdb" "${output}"
+  docker cp "${container}:/data/dump.rdb" "${output}" || return 1
+  require_file "${output}" || return 1
   record_file "${output}"
 }
 
@@ -388,7 +418,8 @@ backup_meilisearch() {
     fail "Meilisearch snapshot did not complete"
     return 1
   fi
-  docker cp "${container}:/meili_data/snapshots/meili_data.snapshot" "${output}"
+  docker cp "${container}:/meili_data/snapshots/meili_data.snapshot" "${output}" || return 1
+  require_file "${output}" || return 1
   record_file "${output}"
 }
 
@@ -508,7 +539,8 @@ backup_falkordb() {
   fi
 
   bgsave_and_wait "${container}" || return 1
-  docker cp "${container}:/var/lib/falkordb/data/dump.rdb" "${output}"
+  docker cp "${container}:/var/lib/falkordb/data/dump.rdb" "${output}" || return 1
+  require_file "${output}" || return 1
   record_file "${output}"
 }
 

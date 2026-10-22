@@ -12,7 +12,7 @@ cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 state="$STUB_DIR/lastsave-polls"
 case "$*" in
-  *" BGSAVE SCHEDULE") echo "Background saving started" ;;
+  *" BGSAVE") echo "Background saving started" ;;
   *" LASTSAVE")
     n=$(( $(cat "$state" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$state"
     if [[ "${STUB_SAVE_NEVER_FINISHES:-}" == 1 || "$n" -le 3 ]]; then echo 1000; else echo 2000; fi ;;
@@ -31,7 +31,8 @@ set +e
 
 fail_test() { echo "FAIL: $1" >&2; exit 1; }
 
-# The save finishes on the fourth LASTSAVE: the helper must not return before it.
+# The save finishes on the fourth LASTSAVE (the first is the baseline): the
+# helper must not return before it.
 bgsave_and_wait klai-core-falkordb-1 >/dev/null 2>&1 || fail_test "a save that finishes was reported as failed"
 polls=$(cat "$TMP/lastsave-polls")
 [[ "$polls" -ge 4 ]] || fail_test "returned after $polls LASTSAVE polls, before the save had finished"
@@ -40,5 +41,18 @@ polls=$(cat "$TMP/lastsave-polls")
 rm -f "$TMP/lastsave-polls"
 BGSAVE_TIMEOUT=2 STUB_SAVE_NEVER_FINISHES=1 bgsave_and_wait klai-core-falkordb-1 >/dev/null 2>&1 \
   && fail_test "a save that never finished was reported as done"
+
+# A LASTSAVE call that fails must fail the step, not read as a finished save.
+rm -f "$TMP/lastsave-polls"
+cat >"$TMP/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  *" INFO persistence") echo 'rdb_bgsave_in_progress:0' ;;
+  *" BGSAVE") echo "Background saving started" ;;
+  *) exit 1 ;;
+esac
+STUB
+BGSAVE_TIMEOUT=2 bgsave_and_wait klai-core-falkordb-1 >/dev/null 2>&1 \
+  && fail_test "a failing LASTSAVE was reported as a finished save"
 
 echo "backup-bgsave-wait: PASS"
