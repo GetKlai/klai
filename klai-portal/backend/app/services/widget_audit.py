@@ -514,7 +514,7 @@ async def keep_internal_case(
 async def forget_internal_cases(db: AsyncSession, *, org_id: int, user_id: str) -> int:
     """Delete one employee's stored cases in the caller's transaction (offboarding, user deletion); the row count.
 
-    A row stored before the column existed has no employee and expires with the nightly purge.
+    Rows stored before the column existed were deleted by its post-deploy SQL, so every row has an employee.
     """
     result = await db.execute(
         text("DELETE FROM internal_chat_cases WHERE org_id = :org_id AND user_id = :user_id"),
