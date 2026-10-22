@@ -32,6 +32,15 @@ def test_a_hard_fact_counts_as_outside_only_when_no_passage_holds_it_in_any_nota
     assert check_hard_facts(text, passages, []).hard_facts_outside == {"email": 1, "link": 1, "amount": 1}
 
 
+def test_a_malformed_link_in_the_reply_is_not_a_hard_fact_and_does_not_fail_the_turn():
+    """The normaliser raises "Invalid IPv6 URL" on "http://[stap 1]"; the
+    reply must settle, and the token is neither a link nor an error."""
+    text = "Open http://[stap 1] en kijk dan op https://kb.example.com/verlof."
+    passages = [{"text": "Zie https://kb.example.com/verlof.", "source_url": "https://kb.example.com/verlof"}]
+
+    assert check_hard_facts(text, passages, []).hard_facts_outside == {}
+
+
 @pytest.mark.parametrize(
     ("amount", "passage"),
     [("€ 12,50", "1250 euro"), ("$ 1250", "1250 euro"), ("16.95 euro", "€ 16,- per maand of 95 cent")],
