@@ -468,3 +468,15 @@ def test_measurement_patches_open_every_database_connection_read_only():
     connection = FakeConnection()
     listener(connection, None)
     assert connection.cursor_.statements == ["SET default_transaction_read_only = on"]
+
+
+def test_rows_may_sit_next_to_an_overlay_but_not_inside_a_checkout(tmp_path, monkeypatch):
+    """On the production host the overlay sits under /out with no .git; the
+    guard protects a checkout with a public remote, not every parent directory."""
+    import replay_internal_chat as replay
+
+    monkeypatch.setattr(replay, "REPO_ROOT", tmp_path)
+    assert not meetlat._rows_inside_checkout(tmp_path / "rows.jsonl")
+    (tmp_path / ".git").mkdir()
+    assert meetlat._rows_inside_checkout(tmp_path / "rows.jsonl")
+    assert not meetlat._rows_inside_checkout(tmp_path.parent / "elsewhere.jsonl")

@@ -168,7 +168,7 @@ Ask = Callable[[list[dict]], Awaitable[dict]]
 def _out_dir(org_slug: str) -> Path:
     default = Path(tempfile.gettempdir()) / f"replay-{org_slug}-{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
     out = Path(os.getenv("KLAI_REPLAY_OUT") or default).resolve()
-    if out == REPO_ROOT or REPO_ROOT in out.parents:
+    if (REPO_ROOT / ".git").exists() and (out == REPO_ROOT or REPO_ROOT in out.parents):
         raise SystemExit("KLAI_REPLAY_OUT must be outside the repository: the transcripts are real conversations.")
     # exist_ok: KLAI_REPLAY_OUT may point at a folder from an interrupted run,
     # which main() resumes by reading its turns.jsonl.

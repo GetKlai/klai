@@ -255,6 +255,16 @@ async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
     return {**row, "text": answer["text"], "signals": answer["signals"], "total_ms": answer["total_ms"]}
 
 
+def _rows_inside_checkout(out: Path) -> bool:
+    """True when ``out`` lies inside a git checkout: rows hold real conversations and a checkout has a public remote.
+
+    An overlay on the production host (``/out/<overlay>``) has no ``.git``
+    and is not a repository, so rows may sit next to it.
+    """
+    root = replay.REPO_ROOT
+    return (root / ".git").exists() and (out == root or root in out.parents)
+
+
 async def _run(args: argparse.Namespace) -> int:
     if args.surface != "internal":
         raise UsageError(f"--surface {args.surface} is not built yet: only internal is supported")
@@ -268,7 +278,7 @@ async def _run(args: argparse.Namespace) -> int:
             raise UsageError(f"refusing to run: the overlay {overlay} is not a directory")
         check_overlay(modules, overlay)
     out: Path = args.out.resolve()
-    if replay.REPO_ROOT in out.parents:
+    if _rows_inside_checkout(out):
         raise UsageError("refusing to run: --out must be outside the repository, the rows hold real conversations")
     meta_path = out.with_name(out.name + ".meta.json")
     _guard_meta(meta_path, modules, out)
