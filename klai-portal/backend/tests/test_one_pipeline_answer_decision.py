@@ -45,6 +45,8 @@ ANSWER = "Je vraagt verlof aan in het HR-portaal onder Verlof. Je leidinggevende
 # Shares no content word with ARTICLE, so the composer cites nothing.
 UNRELATED = "Parkeren kost vier euro per dag bij de hoofdingang."
 QUESTION = "Hoe vraag ik verlof aan?"
+# A LibreChat conversation id (a UUID), synthetic.
+CONVERSATION = "0f6c2a1e-5b7d-4c3a-9e2f-1a2b3c4d5e6f"
 
 
 def _pack(*, score: float = 0.82, items: int = 1) -> dict:
@@ -188,6 +190,7 @@ async def _turn(
     web_search: bool = False,
     cases: dict | None = None,
     searchable: tuple[str, ...] = ("handboek",),
+    conversation_id: str | None = CONVERSATION,
 ) -> _Turn:
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
@@ -215,20 +218,13 @@ async def _turn(
     # internal_chat_cases in memory, shared by the turns of one conversation.
     cases = {} if cases is None else cases
 
-    async def last_internal_case(*, org_id: int, conversation_key: str, turn_digest: str) -> StoredTurn | None:
-        digest, stored = cases.get((org_id, conversation_key), ("", None))
-        return stored if digest == turn_digest else None
+    async def last_internal_case(*, org_id: int, user_id: str, conversation_id: str) -> StoredTurn | None:
+        return cases.get((org_id, user_id, conversation_id))
 
     async def keep_internal_case(
-        *,
-        org_id: int,
-        user_id: str,
-        conversation_key: str,
-        turn_digest: str,
-        case: dict | None,
-        kept_passages: list[dict],
+        *, org_id: int, user_id: str, conversation_id: str, case: dict | None, kept_passages: list[dict]
     ) -> None:
-        cases[(org_id, conversation_key)] = (turn_digest, StoredTurn(case, "", kept_passages, None))
+        cases[(org_id, user_id, conversation_id)] = StoredTurn(case, "", kept_passages, None)
 
     monkeypatch.setattr(partner, "last_internal_case", last_internal_case)
     monkeypatch.setattr(partner, "keep_internal_case", keep_internal_case)
@@ -253,7 +249,9 @@ async def _turn(
         knowledge=KnowledgeOptions(include_sources=include_sources),
         web_search=web_search,
     )
-    http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
+    # LibreChat's "Klai AI" endpoint sends the conversation id as a header (deploy/librechat/librechat.yaml).
+    headers = {"x-klai-conversation-id": conversation_id} if conversation_id is not None else {}
+    http_request = MagicMock(headers=headers, client=MagicMock(host="127.0.0.1"))
 
     with respx.mock(assert_all_called=False) as router:
         router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=llm)
@@ -729,9 +727,11 @@ async def _two_internal_turns(
     *,
     profile: ChatProfile | None = None,
     searchable_next: tuple[str, ...] = ("handboek",),
+    conversation_next: str | None = CONVERSATION,
+    cases: dict | None = None,
 ) -> tuple[_Turn, _Turn, _LiteLLM]:
     """Turn 1 chooses KEPT_ARTICLE; turn 2's search finds only an unrelated article, or ``found_next``."""
-    cases: dict = {}
+    cases = {} if cases is None else cases
     profile = profile or _internal()
     first = await _turn(
         monkeypatch,
@@ -750,6 +750,7 @@ async def _two_internal_turns(
         question="En als mijn leidinggevende niet reageert?",
         cases=cases,
         searchable=searchable_next,
+        conversation_id=conversation_next,
     )
     return first, second, llm
 
@@ -802,23 +803,59 @@ async def test_a_kept_passage_from_a_knowledge_base_the_employee_can_no_longer_s
     assert KEPT_ARTICLE not in selection["messages"][1]["content"]
 
 
-def test_two_openers_that_differ_only_in_their_attachment_are_two_conversations():
-    """The conversation key rested on the text parts alone, so two conversations
-    that opened with the same sentence beside different files shared one case."""
-    from app.api.partner import _internal_conversation
+@pytest.mark.parametrize("header", [None, "{{LIBRECHAT_BODY_CONVERSATIONID}}"])
+@pytest.mark.asyncio
+async def test_a_follow_up_without_a_conversation_id_reads_no_case_and_says_so(monkeypatch, header):
+    """A tenant whose LibreChat config predates the header, or a placeholder
+    LibreChat left unresolved, gets no memory: never a case guessed from the
+    messages, never one shared by every conversation of the employee."""
+    from structlog.testing import capture_logs
 
-    def opener(image: str) -> list[dict]:
-        content = [
-            {"type": "text", "text": "Wat staat er op deze foto?"},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image}"}},
-        ]
-        return [{"role": "user", "content": content}]
+    with capture_logs() as logs:
+        _, second, _ = await _two_internal_turns(monkeypatch, conversation_next=header)
 
-    first = _internal_conversation(opener("aW1hZ2Ux"), _internal())
-    second = _internal_conversation(opener("aW1hZ2Uy"), _internal())
+    (record,) = second.records
+    assert record["case_remembered"] is False
+    assert [entry["event"] for entry in logs].count("internal_chat_conversation_id_missing") == 1
 
-    assert first is not None and second is not None
-    assert first.key != second.key
+
+@pytest.mark.asyncio
+async def test_two_conversations_of_one_employee_with_the_same_opener_keep_their_own_case(monkeypatch):
+    other = "6b1d0c9e-2f4a-4e8b-a7c5-9d3e2f1a0b4c"
+    cases: dict = {}
+
+    _, second, _ = await _two_internal_turns(monkeypatch, conversation_next=other, cases=cases)
+
+    (record,) = second.records
+    assert record["case_remembered"] is False
+    assert {key[2] for key in cases} == {CONVERSATION, other}
+
+
+@pytest.mark.asyncio
+async def test_a_regenerated_follow_up_reads_its_conversation_case_and_overwrites_it(monkeypatch):
+    """LibreChat resends the same history with the same id: the turn reads the
+    case its first answer stored and stores the new one in its place."""
+    cases: dict = {}
+    await _two_internal_turns(monkeypatch, cases=cases)
+    regenerated_case = {**LEAVE_CASE, "problem": "verlof aanvragen, opnieuw gevraagd"}
+    llm = _LiteLLM(case=regenerated_case)
+
+    again = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval=_one_article(UNRELATED, "c-parking", "Parkeren"),
+        history=({"role": "user", "content": QUESTION}, {"role": "assistant", "content": "Eerder antwoord."}),
+        question="En als mijn leidinggevende niet reageert?",
+        cases=cases,
+    )
+
+    (record,) = again.records
+    assert record["case_remembered"] is True
+    (case_call,) = llm.of("case_update")
+    assert LEAVE_CASE["problem"] in case_call["messages"][1]["content"]
+    (stored,) = cases.values()
+    assert stored.case["problem"] == regenerated_case["problem"]
 
 
 # --- Grounding check and repair ---------------------------------------------------

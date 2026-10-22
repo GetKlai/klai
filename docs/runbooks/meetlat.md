@@ -62,10 +62,17 @@ loaded from before it replays anything.
    ```
 
    A widget row has `text`, `sources`, `appointment` (the button was shown), `signals` and `total_ms`; `compare` reads
-   the same file for both surfaces. Two things a widget round does not reproduce, as the private script before it did
-   not either: a follow-up turn is replayed without the case the earlier turn would have stored (nothing is recorded
-   and every case gets a fresh session), and the page context the browser sends when the widget has it enabled is
-   not in the cases.
+   the same file for both surfaces. The page context the browser sends when the widget has it enabled is not in the
+   cases, so a widget round does not reproduce it.
+
+   Both surfaces replay the case memory a follow-up reads in production. Per conversation, `run` replays every user
+   turn up to the highest named one, in order, and writes rows for the named turns only; the earlier turns are
+   replayed for the case and passages they store. An internal turn carries LibreChat's conversation id in the
+   `X-Klai-Conversation-Id` header, a widget case gets one preview session for all its turns, and the store and the
+   read go to a dictionary in the process, keyed by that conversation, never to the database. The history stays the
+   conversation's own (LibreChat's messages, the case's `messages`), so the stored widget turn stands for the reply in
+   that history, which is what the route checks before it reads a case. A round therefore replays more turns than it
+   writes rows: for each conversation, its highest named turn plus one.
 
    A deploy that lands during a round restarts the gateway or portal-api under it; the round is not protected
    against that, a turn that meets a restart is replayed: a connection error or a timeout before the stream starts, a stream
@@ -91,11 +98,11 @@ loaded from before it replays anything.
    start time, the org, the surface and the number of cases.
 
 4. A run can be interrupted: start the same command again and it replays only the cases that have no row yet (rows are
-   keyed by `cid` and `u`). It refuses to resume rows that were produced with other code, so a new candidate gets a new
+   keyed by `cid` and `u`); the earlier turns of a conversation are replayed again for their memory. It refuses to resume rows that were produced with other code, so a new candidate gets a new
    `--out`. A row with an `error` counts as done; delete it to replay that case.
 
 The replay is read-only: the database connections open read-only, the retrieval log, the gap event and the internal turn
-record are skipped, and the grounding check gets a 30 s budget so a slow host does not decide the measurement.
+record are skipped, the case memory stays in the process, and the grounding check gets a 30 s budget so a slow host does not decide the measurement.
 
 ## Compare rounds
 

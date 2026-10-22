@@ -146,7 +146,7 @@ def _stub_run_environment(monkeypatch, tmp_path, threads, answered):
     async def fetch_threads(_org, prefixes, _days):
         return {p: threads[p] for p in prefixes if p in threads}
 
-    async def new_answer(_org, _profile, messages):
+    async def new_answer(_org, _profile, messages, _conversation_id):
         answered.append(messages[-1]["content"])
         return {
             "text": f"answer to {messages[-1]['content']}",
@@ -217,7 +217,8 @@ def test_run_resumes_rows_already_in_the_output_and_replays_only_the_rest(monkey
 
     rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
     assert code == 0
-    assert answered == ["second", "other"]
+    # "first" again, for the case memory "second" reads; its row is not written twice.
+    assert answered == ["first", "second", "other"]
     assert (tmp_path / "r.jsonl").read_text().startswith(first_row)
     assert [(r["cid"], r["u"]) for r in rows] == [("aaaaaaaa", 0), ("aaaaaaaa", 1), ("bbbbbbbb", 0)]
 
@@ -278,7 +279,7 @@ def _replay_with_outcomes(monkeypatch, tmp_path, outcomes):
     remaining = list(outcomes)
     pauses: list[float] = []
 
-    async def new_answer(_org, _profile, _messages):
+    async def new_answer(_org, _profile, _messages, _conversation_id):
         outcome = remaining.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -388,7 +389,7 @@ def _stub_widget_environment(monkeypatch, tmp_path, outcomes):
     sent: list[list[dict]] = []
     remaining = list(outcomes)
 
-    async def widget_answer(widget, messages):
+    async def widget_answer(widget, messages, _session_id):
         assert widget == _WIDGET
         sent.append(messages)
         outcome = remaining.pop(0)
@@ -425,13 +426,15 @@ def _widget_case(case_id="w-1", asks=("first question",), expect="antwoord"):
 def test_run_replays_each_widget_case_with_its_own_conversation_and_keys_the_row_by_case_id(
     monkeypatch, tmp_path, capsys
 ):
-    overlay, sent = _stub_widget_environment(monkeypatch, tmp_path, [_widget_answer(), _widget_answer("Second.")])
+    outcomes = [_widget_answer("For the memory."), _widget_answer(), _widget_answer("Second.")]
+    overlay, sent = _stub_widget_environment(monkeypatch, tmp_path, outcomes)
 
     code = _run_widget(tmp_path, [_widget_case("w-1", ("first", "x" * 500)), _widget_case("w-2")], overlay)
 
     rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
     assert code == 0
-    assert [m["content"] for m in sent[0]] == ["first", "earlier reply to first", "x" * 500]
+    assert [m["content"] for m in sent[0]] == ["first"]
+    assert [m["content"] for m in sent[1]] == ["first", "earlier reply to first", "x" * 500]
     assert [(r["cid"], r["u"]) for r in rows] == [("w-1", 1), ("w-2", 0)]
     assert rows[0]["ask"] == "x" * 400
     assert rows[0]["sources"] == ["https://help.example.com/settings"] and rows[0]["appointment"] is False
@@ -855,37 +858,131 @@ def test_the_gap_event_stand_in_is_a_plain_function_like_the_one_it_replaces():
     assert meetlat._skip_gap_event(org_id=1, query_text="q") is None
 
 
-async def test_a_replayed_internal_turn_stores_no_case(monkeypatch):
-    """A round runs on a read-only database: the case store must be skipped, or every replayed turn would fail it."""
-    import asyncio
-
+def _measuring_with_memory(monkeypatch, tmp_path) -> tuple[Path, list[str]]:
+    """The real measurement patches, undone after the test, and a database that fails any session; the overlay and
+    the sessions that were opened."""
     from app.api import partner
-    from app.services import answer_grounding, widget_turn
+    from app.services import answer_grounding, widget_audit, widget_turn
 
-    stored: list[dict] = []
-
-    async def keep_internal_case(**fields):
-        stored.append(fields)
-
-    # Every attribute the patches replace is restored after the test.
     for owner, name in (
         (partner, "record_internal_turn"),
         (partner, "record_widget_turn"),
         (partner, "last_internal_case"),
+        (partner, "keep_internal_case"),
+        (partner, "last_case"),
         (widget_turn, "write_retrieval_log"),
         (meetlat.retrieval_context, "_schedule_gap_event"),
         (answer_grounding, "_CHECK_TIMEOUT_SECONDS"),
         (answer_grounding, "_INTERNAL_CHECK_TIMEOUT_SECONDS"),
     ):
         monkeypatch.setattr(owner, name, getattr(owner, name))
-    monkeypatch.setattr(partner, "keep_internal_case", keep_internal_case)
+    monkeypatch.setattr(meetlat, "_internal_cases", {})
+    monkeypatch.setattr(meetlat, "_widget_cases", {})
     monkeypatch.setattr(meetlat, "_make_database_read_only", lambda _db: None)
+    monkeypatch.setattr(replay, "_route_logs_to", lambda _path: None)
+    opened: list[str] = []
 
-    meetlat._apply_measurement_patches()
-    conversation = partner._InternalConversation("sub-employee", "key", "previous", "current")
-    turn = types.SimpleNamespace(case=None, kept_passages=[{"chunk_id": "c1", "text": "Synthetic passage."}])
-    partner._keep_internal_case(7, conversation, turn)  # type: ignore[arg-type]
-    await asyncio.gather(*partner._pending)
+    def no_database(*_args, **_kwargs):
+        opened.append("session")
+        raise AssertionError("a replay reached the case store in the database")
 
-    assert stored == []
-    assert await partner.last_internal_case(org_id=7, conversation_key="key", turn_digest="previous") is None
+    for name in ("tenant_scoped_session", "cross_org_session"):
+        monkeypatch.setattr(widget_audit, name, no_database)
+    overlay = tmp_path / "ov"
+    _point_modules_at(monkeypatch, overlay)
+    return overlay, opened
+
+
+def test_a_named_internal_turn_reads_the_case_its_replayed_earlier_turns_stored(monkeypatch, tmp_path):
+    """Turn 2 is named, so turns 0 and 1 are replayed first for their memory
+    only, with LibreChat's conversation id in the header as production sends it."""
+    from contextlib import asynccontextmanager
+
+    from starlette.responses import StreamingResponse
+
+    from app.api import partner
+    from app.services.chat_profile import ChatProfile
+
+    overlay, opened = _measuring_with_memory(monkeypatch, tmp_path)
+    profile = ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee")
+    thread = meetlat.Thread(
+        "aaaaaaaa-0000-4000-8000-000000000001", profile, "open", _thread("x", ["first", "second", "third"]).turns
+    )
+    org = type("Org", (), {"id": 7, "slug": "brightwater", "zitadel_org_id": "zorg"})()
+    seen: list[dict | None] = []
+
+    async def load_org(_slug):
+        return org
+
+    async def fetch_threads(_org, _prefixes, _days):
+        return {"aaaaaaaa": thread}
+
+    @asynccontextmanager
+    async def no_session(_org_id):
+        yield None
+
+    async def chat_completions(*, request, http_request, auth, db, profile):
+        """The route's memory steps around a fixed reply."""
+        conversation = partner._internal_conversation(http_request, request, auth, profile)
+        assert conversation is not None
+        stored = await partner.last_internal_case(
+            org_id=auth.org_id, user_id=conversation.user_id, conversation_id=conversation.id
+        )
+        seen.append(stored.case if stored else None)
+        ask = request.messages[-1]["content"]
+        case = types.SimpleNamespace(model_dump=lambda: {"problem": f"after {ask}"})
+        partner._keep_internal_case(auth.org_id, conversation, types.SimpleNamespace(case=case, kept_passages=[]))
+        frame = json.dumps({"choices": [{"index": 0, "delta": {"content": f"answer to {ask}"}}]})
+
+        async def frames():
+            yield f"data: {frame}\n\n".encode()
+
+        return StreamingResponse(frames(), media_type="text/event-stream")
+
+    monkeypatch.setattr(replay, "_load_org", load_org)
+    monkeypatch.setattr(meetlat, "_fetch_threads", fetch_threads)
+    monkeypatch.setattr(replay, "tenant_scoped_session", no_session)
+    monkeypatch.setattr(partner, "chat_completions", chat_completions)
+
+    assert _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 2}], overlay) == 0
+
+    rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert [(r["cid"], r["u"], r["text"]) for r in rows] == [("aaaaaaaa", 2, "answer to third")]
+    assert seen == [None, {"problem": "after first"}, {"problem": "after second"}]
+    assert opened == []
+
+
+def test_a_named_widget_turn_reads_the_case_its_replayed_earlier_turns_stored(monkeypatch, tmp_path):
+    """The case's own messages are the history, so the stored turn stands for
+    the reply in them: the route's check that the case belongs to this
+    conversation (case_file.stored_case_for) then lets it through."""
+    from app.api import partner
+    from app.services import case_file, widget_audit
+
+    overlay, opened = _measuring_with_memory(monkeypatch, tmp_path)
+    (tmp_path / "widget.json").write_text(json.dumps(_WIDGET))
+    seen: list[dict | None] = []
+    sessions: set[str] = set()
+
+    async def widget_answer(widget, messages, session_id):
+        """The route's memory steps around a fixed reply, under the session key the route derives from the token."""
+        sessions.add(session_id)
+        key = widget_audit.session_key_from_claims(org_id=widget["org_id"], wgt_id=widget["wgt_id"], jti=session_id)
+        stored = case_file.stored_case_for(messages, await partner.last_case(widget_id="w-row", session_key=key))
+        seen.append(stored.case if stored else None)
+        ask = messages[-1]["content"]
+        signals = {"case": {"problem": f"after {ask}"}, "decision": "answer"}
+        await partner.record_widget_turn(
+            widget_id="w-row", session_key=key, role="assistant", content=f"replayed {ask}", answer_signals=signals
+        )
+        return _widget_answer(f"replayed {ask}", signals=signals)
+
+    monkeypatch.setattr(meetlat, "_widget_answer", widget_answer)
+
+    assert _run_widget(tmp_path, [_widget_case("w-1", ("first", "second", "third"))], overlay) == 0
+
+    rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert [(r["cid"], r["u"], r["text"]) for r in rows] == [("w-1", 2, "replayed third")]
+    assert seen == [None, {"problem": "after first"}, {"problem": "after second"}]
+    assert len(sessions) == 1
+    assert opened == []

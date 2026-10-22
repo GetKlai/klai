@@ -178,6 +178,11 @@ endpoints:
       # partner endpoint and the org's internal-chat key.
       apiKey: "${KLAI_CHAT_API_KEY}"
       baseURL: "${KLAI_CHAT_BASE_URL}"
+      # LibreChat resolves the placeholder from the request's conversationId on
+      # every call (v0.8.8, resolveConfigHeaders); portal-api keys the internal
+      # chat's case memory on it, together with the org and the employee.
+      headers:
+        X-Klai-Conversation-Id: "{{LIBRECHAT_BODY_CONVERSATIONID}}"
       models:
         default:
           - klai-primary

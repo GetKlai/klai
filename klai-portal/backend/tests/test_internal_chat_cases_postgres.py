@@ -4,13 +4,16 @@ Same shape as ``test_internal_chat_turns_postgres.py``: a throwaway schema, the
 fail-loud tenant helper, the table as the Alembic migration creates it, and a
 non-superuser role, so RLS applies. The policy is read from the shipped
 ``post_deploy_f3a9c6e2b4d1_internal_chat_cases_rls.sql``, so the test fails
-when that file's policy does, and the ``user_id`` column is added by the
-shipped ``post_deploy_a7d2e9c4f1b8_internal_chat_cases_user_id.sql``. Rows are
-written, read, forgotten and pruned by the production functions.
+when that file's policy does, the ``user_id`` column is added by the shipped
+``post_deploy_a7d2e9c4f1b8_internal_chat_cases_user_id.sql``, and the key moves
+to LibreChat's conversation id through the shipped
+``post_deploy_f9b2d6a4c8e1_internal_chat_cases_conversation_id.sql``, run
+twice as every deploy does. Rows are written, read, forgotten and pruned by
+the production functions.
 
 Run: ``RLS_TEST_DATABASE_URL=... uv run pytest tests/test_internal_chat_cases_postgres.py -m postgres -q``
 
-synthetic-data: generator=hand-written seed=0 (org ids 901/902, invented case and passage).
+synthetic-data: generator=hand-written seed=0 (org ids 900/901/902, invented ids, case and passage).
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ _PW = "internal_chat_cases_test_pw"  # throwaway role in a disposable schema
 _VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
 _POLICY_SQL = _VERSIONS / "post_deploy_f3a9c6e2b4d1_internal_chat_cases_rls.sql"
 _USER_ID_SQL = _VERSIONS / "post_deploy_a7d2e9c4f1b8_internal_chat_cases_user_id.sql"
+_CONVERSATION_ID_SQL = _VERSIONS / "post_deploy_f9b2d6a4c8e1_internal_chat_cases_conversation_id.sql"
 _CASE = {"problem": "verlof aanvragen", "language": "nl"}
 _PASSAGE = {"chunk_id": "c1", "kb_slug": "handboek", "title": "Verlof", "source_url": None, "text": "Verlof via HR."}
 
@@ -90,6 +94,13 @@ _SETUP = [
         CONSTRAINT uq_internal_chat_cases_org_key UNIQUE (org_id, conversation_key))""",
     *_shipped_statements(_POLICY_SQL),
     *_shipped_statements(_USER_ID_SQL),
+    # A row keyed by digests, as the code before the conversation id stored it: the next file deletes it.
+    "INSERT INTO portal_orgs (id) VALUES (900)",
+    "INSERT INTO internal_chat_cases (org_id, user_id, conversation_key, turn_digest, kept_passages) "
+    "VALUES (900, 'u0', 'digest-key', 'digest', '[]')",
+    *_shipped_statements(_CONVERSATION_ID_SQL),
+    # Deploys apply every post-deploy file again; the second run must change nothing.
+    *_shipped_statements(_CONVERSATION_ID_SQL),
     f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {_SCHEMA} TO {_ROLE}",
     f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {_SCHEMA} TO {_ROLE}",
     f"GRANT EXECUTE ON FUNCTION {_SCHEMA}._rls_current_org_id() TO {_ROLE}",
@@ -127,25 +138,31 @@ async def pg() -> AsyncIterator[AsyncEngine]:
 
 async def _visible_keys(org_id: int) -> list[str]:
     async with tenant_scoped_session(org_id) as db:
-        rows = await db.execute(text("SELECT conversation_key FROM internal_chat_cases ORDER BY conversation_key"))
+        rows = await db.execute(text("SELECT conversation_id FROM internal_chat_cases ORDER BY conversation_id"))
         return [row[0] for row in rows]
 
 
-async def _keep(org_id: int, user_id: str, key: str, digest: str = "d1", **fields) -> None:
+async def _keep(org_id: int, user_id: str, conversation_id: str, **fields) -> None:
     await keep_internal_case(
         org_id=org_id,
         user_id=user_id,
-        conversation_key=key,
-        turn_digest=digest,
+        conversation_id=conversation_id,
         case=fields.get("case", _CASE),
         kept_passages=fields.get("kept_passages", [_PASSAGE]),
     )
 
 
+async def test_the_post_deploy_sql_deletes_the_rows_keyed_by_digests(pg) -> None:
+    async with pg.begin() as conn:
+        left = (await conn.execute(text("SELECT count(*) FROM internal_chat_cases WHERE org_id = 900"))).scalar_one()
+
+    assert left == 0
+
+
 async def test_a_stored_case_is_readable_only_inside_its_own_org(pg) -> None:
     await _keep(901, "u1", "k1")
 
-    stored = await last_internal_case(org_id=901, conversation_key="k1", turn_digest="d1")
+    stored = await last_internal_case(org_id=901, user_id="u1", conversation_id="k1")
     assert stored is not None
     assert (stored.case, stored.kept_passages) == (_CASE, [_PASSAGE])
     assert await _visible_keys(901) == ["k1"]
@@ -153,14 +170,19 @@ async def test_a_stored_case_is_readable_only_inside_its_own_org(pg) -> None:
 
 
 async def test_a_conversation_keeps_one_row_with_its_latest_turn(pg) -> None:
-    await _keep(901, "u1", "k1", "d1", kept_passages=[])
-    await _keep(901, "u1", "k1", "d2", case=None)
+    await _keep(901, "u1", "k1", kept_passages=[])
+    await _keep(901, "u1", "k1", case=None)
 
     assert await _visible_keys(901) == ["k1"]
-    assert await last_internal_case(org_id=901, conversation_key="k1", turn_digest="d1") is None
-    stored = await last_internal_case(org_id=901, conversation_key="k1", turn_digest="d2")
+    stored = await last_internal_case(org_id=901, user_id="u1", conversation_id="k1")
     assert stored is not None
     assert (stored.case, stored.kept_passages) == (None, [_PASSAGE])
+
+
+async def test_a_conversation_id_reads_only_the_employee_s_own_case(pg) -> None:
+    await _keep(901, "u1", "k1")
+
+    assert await last_internal_case(org_id=901, user_id="u2", conversation_id="k1") is None
 
 
 async def test_forgetting_an_employee_deletes_their_cases_and_no_one_elses(pg) -> None:
@@ -182,9 +204,7 @@ async def test_the_nightly_prune_removes_old_cases_and_those_of_employees_no_lon
     await _keep(902, "u2", "old")
     async with pg.begin() as conn:
         await conn.execute(
-            text(
-                "UPDATE internal_chat_cases SET updated_at = now() - interval '31 days' WHERE conversation_key = 'old'"
-            )
+            text("UPDATE internal_chat_cases SET updated_at = now() - interval '31 days' WHERE conversation_id = 'old'")
         )
         await conn.execute(
             text(

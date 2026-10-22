@@ -358,14 +358,23 @@ async def _no_internal_case(**_: object) -> None:
 
 
 async def _skip_internal_case(**_: object) -> None:
-    """Stands in for ``keep_internal_case``: a replayed turn leaves nothing for the employee's next turn."""
+    """Stands in for ``keep_internal_case``: a replayed turn leaves nothing for the employee's next turn.
+
+    This script sends no conversation id, so the route neither reads nor
+    keeps a case; the two stand-ins stay as the guard that it never touches
+    the employee's stored cases. scripts/meetlat.py replays with the id and
+    an in-process store instead.
+    """
     return None
 
 
-async def _new_answer(org: PortalOrg, profile: ChatProfile, messages: list[dict]) -> dict:
+async def _new_answer(
+    org: PortalOrg, profile: ChatProfile, messages: list[dict], conversation_id: str | None = None
+) -> dict:
     # A context, not a key: chat_completions only checks "chat", and the profile
     # passed in decides surface and scope. is_preview keeps the turn out of the
-    # knowledge-gap backlog, as it does for widget previews.
+    # knowledge-gap backlog, as it does for widget previews. The conversation id
+    # goes in the header LibreChat sends it in; without it the turn has no case memory.
     auth = PartnerAuthContext(
         key_id="replay",
         org_id=org.id,
@@ -382,7 +391,14 @@ async def _new_answer(org: PortalOrg, profile: ChatProfile, messages: list[dict]
     async with tenant_scoped_session(org.id) as db:
         response = await partner.chat_completions(
             request=partner._parse_knowledge_chat_request(_body(messages)),
-            http_request=Request({"type": "http", "headers": []}),
+            http_request=Request(
+                {
+                    "type": "http",
+                    "headers": [(partner.CONVERSATION_ID_HEADER.encode(), conversation_id.encode())]
+                    if conversation_id
+                    else [],
+                }
+            ),
             auth=auth,
             db=db,
             profile=profile,
