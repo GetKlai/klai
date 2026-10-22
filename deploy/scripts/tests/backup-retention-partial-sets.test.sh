@@ -36,6 +36,10 @@ if [[ "$*" == *".Config.Env"* && "$*" == *"klai-core-redis-1"* ]]; then
     echo 'REDIS_PASSWORD=test-only'; exit 0
 fi
 if [[ "$*" == *".State.Running"* ]]; then echo 'true'; exit 0; fi
+# backup.sh waits for each BGSAVE to finish: LASTSAVE must move, and the save
+# must report ok, or the step fails before retention can run.
+if [[ "$*" == *" LASTSAVE" ]]; then date +%s%N; exit 0; fi
+if [[ "$*" == *" INFO persistence" ]]; then echo 'rdb_last_bgsave_status:ok'; exit 0; fi
 exit 0
 STUB
 for stub in sleep rsync age curl tar; do

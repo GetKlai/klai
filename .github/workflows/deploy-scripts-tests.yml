@@ -153,6 +153,10 @@ jobs:
       - name: backup retention partial-set suite
         run: bash deploy/scripts/tests/backup-retention-partial-sets.test.sh
 
+      # A Redis-protocol dump is copied only after its BGSAVE has finished.
+      - name: backup BGSAVE wait suite
+        run: bash deploy/scripts/tests/backup-bgsave-wait.test.sh
+
       - name: portal-api deploy disk-guard suite
         run: bash deploy/scripts/tests/deploy-portal-api-disk-guard.test.sh
 

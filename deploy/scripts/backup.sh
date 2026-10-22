@@ -283,11 +283,38 @@ backup_mongodb() {
   record_file "${output}"
 }
 
+# bgsave_and_wait <container> [redis-cli auth args...]
+# Starts a background save and returns once it has finished. Every Redis-
+# protocol dump here used to BGSAVE, sleep 3 s and copy: on 2026-10-22 the
+# nightly falkordb-dump.rdb was three hours older than the run, because a
+# 1 GB graph takes far longer than 3 s to save and the copy took the previous
+# dump. LASTSAVE moves only when a save completes, so poll that instead, and
+# fail loudly when the save does not finish or reports an error.
+BGSAVE_TIMEOUT="${BGSAVE_TIMEOUT:-900}"
+bgsave_and_wait() {
+  local container="$1"
+  shift
+  local before now i
+
+  before="$(docker exec "${container}" redis-cli "$@" --no-auth-warning LASTSAVE)"
+  docker exec "${container}" redis-cli "$@" --no-auth-warning BGSAVE SCHEDULE >/dev/null \
+    || fail "BGSAVE rejected by ${container}" || return 1
+  for (( i = 0; i < BGSAVE_TIMEOUT; i++ )); do
+    now="$(docker exec "${container}" redis-cli "$@" --no-auth-warning LASTSAVE)"
+    [[ "${now}" != "${before}" ]] && break
+    sleep 1
+  done
+  [[ "${now}" != "${before}" ]] \
+    || fail "${container}: BGSAVE did not finish within ${BGSAVE_TIMEOUT}s" || return 1
+  docker exec "${container}" redis-cli "$@" --no-auth-warning INFO persistence \
+    | grep -q '^rdb_last_bgsave_status:ok' \
+    || fail "${container}: last BGSAVE reported an error" || return 1
+}
+
 backup_redis() {
   local output="${BACKUP_DIR}/redis-dump.rdb"
 
-  docker compose exec -T redis redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning BGSAVE
-  sleep 3
+  bgsave_and_wait "$(ctr redis)" -a "${REDIS_PASSWORD}" || return 1
   docker compose cp redis:/data/dump.rdb "${output}"
   record_file "${output}"
 }
@@ -323,20 +350,14 @@ backup_vexa_redis() {
       | grep -A1 '^--requirepass$' | tail -1)"
   fi
 
-  if ! docker exec "${container}" \
-       redis-cli ${password:+-a "${password}"} --no-auth-warning BGSAVE >/dev/null; then
-    log "      FAILED (BGSAVE rejected — check VEXA_REDIS_PASSWORD)"
-    return 1
-  fi
-  sleep 3
+  bgsave_and_wait "${container}" ${password:+-a "${password}"} || return 1
   docker cp "${container}:/data/dump.rdb" "${output}"
   record_file "${output}"
 }
 
 backup_meilisearch() {
-  local key
-  local response
   local container
+  local output="${BACKUP_DIR}/meilisearch.snapshot"
 
   container="$(ctr meilisearch)"
   if ! container_running "${container}"; then
@@ -344,20 +365,31 @@ backup_meilisearch() {
     return 0
   fi
 
-  key="${MEILI_MASTER_KEY:-$(secret_file_value "${SECRETS_DIR}/meili_master_key.txt")}"
-  if [[ -z "${key}" ]]; then
-    log "      Skipped (MEILI_MASTER_KEY is empty)"
-    return 0
+  # The master key exists only in the container's environment, so this script
+  # never had it: every night logged "Skipped (MEILI_MASTER_KEY is empty)" and
+  # no Meilisearch backup existed (found 2026-10-22). Even a successful call
+  # left the snapshot inside the container volume, outside the backup set. The
+  # snapshot now runs inside the container with its own key, waits for the
+  # task and is copied out like every other artifact.
+  if ! docker exec "${container}" sh -c '
+      auth="Authorization: Bearer ${MEILI_MASTER_KEY:?}"
+      uid=$(wget -qO- --post-data="" --header="$auth" http://127.0.0.1:7700/snapshots \
+        | sed -n "s/.*\"taskUid\":\([0-9]*\).*/\1/p")
+      [ -n "$uid" ] || exit 1
+      i=0
+      while [ $i -lt 600 ]; do
+        status=$(wget -qO- --header="$auth" "http://127.0.0.1:7700/tasks/$uid" \
+          | sed -n "s/.*\"status\":\"\([a-z]*\)\".*/\1/p")
+        [ "$status" = succeeded ] && exit 0
+        [ "$status" = failed ] || [ "$status" = canceled ] && exit 1
+        i=$((i + 1)); sleep 1
+      done
+      exit 1'; then
+    fail "Meilisearch snapshot did not complete"
+    return 1
   fi
-
-  if response="$(docker compose exec -T meilisearch \
-      wget -qO- --post-data="" \
-      --header="Authorization: Bearer ${key}" \
-      http://127.0.0.1:7700/snapshots 2>/dev/null)"; then
-    log "      Response: ${response}"
-  else
-    log "      Snapshot failed (non-fatal; Meilisearch can rebuild from MongoDB)"
-  fi
+  docker cp "${container}:/meili_data/snapshots/meili_data.snapshot" "${output}"
+  record_file "${output}"
 }
 
 qdrant_api() {
@@ -475,8 +507,7 @@ backup_falkordb() {
     return 0
   fi
 
-  docker exec "${container}" redis-cli BGSAVE >/dev/null
-  sleep 3
+  bgsave_and_wait "${container}" || return 1
   docker cp "${container}:/var/lib/falkordb/data/dump.rdb" "${output}"
   record_file "${output}"
 }
@@ -828,4 +859,7 @@ main() {
   fi
 }
 
-main "$@"
+# Sourced by deploy/scripts/tests/backup-bgsave-wait.test.sh to reach the helpers.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -102,6 +102,7 @@ jobs:
           # belong here too — the second one covers the window shrinking to 7.
           bash deploy/scripts/tests/backup-retention.test.sh
           bash deploy/scripts/tests/backup-retention-partial-sets.test.sh
+          bash deploy/scripts/tests/backup-bgsave-wait.test.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
