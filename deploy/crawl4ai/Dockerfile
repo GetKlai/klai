@@ -23,7 +23,7 @@
 # untrusted-allowed list and server-clamped, so we set it per request from
 # knowledge_ingest/crawl4ai_config.py instead of patching a hardcoded 30000
 # and steering it with an env var. A supported field beats a patched constant.
-FROM unclecode/crawl4ai:0.9.4
+FROM unclecode/crawl4ai:0.9.5
 
 # site-packages is root-owned; the base image runs as appuser.
 USER root
