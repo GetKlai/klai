@@ -1,16 +1,21 @@
 name: Version drift
 
-# Weekly check for what Renovate cannot update or updates nobody merges; see
-# scripts/check-version-drift.sh. A failed scheduled run mails its owner,
-# which is the point: it stays red until someone merges or decides.
+# Daily check for what Renovate cannot update or updates nobody merges; see
+# scripts/check-version-drift.sh. A red run opens a ci-failure issue through
+# ci-failure-notice.yml and the issue closes itself on the next green run, so a
+# stuck update cannot stay invisible: from 2026-09-25 to 2026-10-22 the weekly
+# run was red three times and its mail to the workflow owner was never acted on.
 
 on:
   schedule:
-    - cron: '30 5 * * 1'  # Monday, after Renovate's Monday-morning window
+    - cron: '30 6 * * *'  # daily, after Renovate's 03:00 UTC run and its usual delay
   workflow_dispatch:
 
 permissions:
   contents: read
+  # Reads renovate.yml runs. The Renovate app token cannot: the app has no
+  # actions permission, so the script gets this one through ACTIONS_TOKEN.
+  actions: read
 
 jobs:
   drift:
@@ -28,3 +33,4 @@ jobs:
       - run: bash scripts/check-version-drift.sh
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
