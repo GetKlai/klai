@@ -106,7 +106,7 @@ networks:
     # NOT internal — bot containers need internet egress to join meeting platforms
 
 volumes:
-  firecrawl-postgres-data:
+  firecrawl-postgres-data-18:
   caddy-data:
   caddy-config:
   caddy-tenants:
@@ -118,7 +118,7 @@ volumes:
   mongodb-data-80:
   postgres-data:
   redis-data:
-  listmonk-postgres-data:
+  listmonk-postgres-data-18:
   listmonk-uploads-data:
   meilisearch-data:
   glitchtip-data:
@@ -133,10 +133,10 @@ volumes:
   runtime-api-docker-socket:   # SPEC-SEC-021 socat bridge socket (runtime-api <-> docker-socket-proxy)
   vaultwarden-data:            # Vaultwarden SQLite DB + attachments
   calnode-data:                # Calnode SQLite DB + encrypted stored credentials
-  crm-postgres-data:           # Twenty CRM database (SPEC-INFRA-COOLIFY-EXIT-001)
+  crm-postgres-data-18:        # Twenty CRM database, PostgreSQL 18
   crm-storage:                 # Twenty CRM uploads: avatars and attachments
-  umami-postgres-data:         # Umami analytics database (SPEC-INFRA-COOLIFY-EXIT-001)
-  fider-postgres-data:         # Fider feedback board database (SPEC-INFRA-COOLIFY-EXIT-001)
+  umami-postgres-data-18:      # Umami analytics database, PostgreSQL 18
+  fider-postgres-data-18:      # Fider feedback board database, PostgreSQL 18
 
 # Log rotation. The daemon default lives outside this repo, in core-01's
 # /etc/docker/daemon.json:
@@ -265,10 +265,13 @@ services:
   # ─── listmonk PostgreSQL (mailing.getklai.com) ───────────────────────────
   listmonk-db:
     logging: *log-rotation
-    image: postgres:17.11-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
-      - listmonk-postgres-data:/var/lib/postgresql/data
+      # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
+      # with a mount at the old .../data path. New volume, filled by dump and
+      # restore before deploy; the old volume stays on the host for rollback.
+      - listmonk-postgres-data-18:/var/lib/postgresql
     environment:
       POSTGRES_USER: listmonk
       POSTGRES_PASSWORD: ${LISTMONK_DB_PASSWORD}
@@ -2297,12 +2300,24 @@ services:
       retries: 5
       start_period: 10s
     volumes:
-      - firecrawl-postgres-data:/var/lib/postgresql/data
+      # PG18 keeps PGDATA in /var/lib/postgresql/18/docker. The old mount at
+      # .../data never held the database: the image's own VOLUME at
+      # /var/lib/postgresql caught it in an anonymous volume, so a compose
+      # down would have dropped the queue and a fresh volume would not start.
+      # New volume at the parent, filled by dump and restore before deploy.
+      - firecrawl-postgres-data-18:/var/lib/postgresql
       - ./firecrawl-nuq-init.sql:/docker-entrypoint-initdb.d/nuq-schema.sql:ro
 
+  # No volume on purpose: the queues are durable but hold only in-flight
+  # crawl coordination, and firecrawl declares every queue it needs on start.
+  # The node name is the container id, so each recreate starts a fresh node
+  # anyway. That is also why 3.13 -> 4.4 needed no in-place upgrade (4.3+
+  # only upgrades from 4.2): verified 2026-10-22 that 4.4.0 starts as a new
+  # node on a volume holding a 3.13 node directory, and that the firecrawl
+  # contract harness passes against it.
   firecrawl-rabbitmq:
     logging: *log-rotation
-    image: rabbitmq:3.13.7-alpine
+    image: rabbitmq:4.4.0-alpine
     restart: unless-stopped
     networks:
       - klai-net
@@ -2414,10 +2429,9 @@ services:
           memory: 256m
 
   # ─── Twenty CRM — datastores ─────────────────────────────────────────────
-  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001). The engines
-  # are pinned to exactly what ran there — PostgreSQL 16.13, Redis 7.4.8 —
-  # because this step is a relocation: if something breaks, it must be the
-  # move and not an engine upgrade hiding inside it.
+  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001) on the
+  # engines that ran there, PostgreSQL 16 and Redis 7, so the move stayed a
+  # relocation. The engine majors followed later as their own changes.
   #
   # The datastores land before the application on purpose. Twenty runs its
   # migrations on start, so pointed at an empty database it initialises a
@@ -2425,13 +2439,18 @@ services:
   # goes in first; the app follows in a separate change.
   #
   # Redis is cache only (Twenty's queue is pg-boss, in Postgres), so it keeps
-  # no volume.
+  # no volume, and the move from 7.4 to 8.10 had no data to carry: Twenty
+  # v2.47.0 refilled the cache on 8.10.2 with the server healthy and the
+  # worker running (verified locally 2026-10-22).
   crm-postgres:
     logging: *log-rotation
-    image: postgres:16.15-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
-      - crm-postgres-data:/var/lib/postgresql/data
+      # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
+      # with a mount at the old .../data path. New volume, filled by dump and
+      # restore before deploy; the old volume stays on the host for rollback.
+      - crm-postgres-data-18:/var/lib/postgresql
     environment:
       POSTGRES_USER: twenty
       POSTGRES_PASSWORD: ${CRM_POSTGRES_PASSWORD}
@@ -2450,7 +2469,7 @@ services:
 
   crm-redis:
     logging: *log-rotation
-    image: redis:7.4.11-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     command: ["redis-server", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
     networks:
@@ -2466,17 +2485,21 @@ services:
           memory: 256m
 
   # ─── Umami — datastore ───────────────────────────────────────────────────
-  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001), pinned to the
-  # PostgreSQL that ran there (16.13) so the move is a relocation. It lands
+  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001) on the
+  # PostgreSQL that ran there (16) so the move stayed a relocation; 16 -> 18
+  # followed by dump and restore, rehearsed against Umami 3.4.0. It lands
   # before the app for the same reason as the CRM's: Umami applies its Prisma
   # migrations on start, so pointed at an empty database it creates a fresh
   # schema that the restored dump would collide with.
   umami-postgres:
     logging: *log-rotation
-    image: postgres:16.15-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
-      - umami-postgres-data:/var/lib/postgresql/data
+      # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
+      # with a mount at the old .../data path. New volume, filled by dump and
+      # restore before deploy; the old volume stays on the host for rollback.
+      - umami-postgres-data-18:/var/lib/postgresql
     environment:
       POSTGRES_USER: umami
       POSTGRES_PASSWORD: ${UMAMI_POSTGRES_PASSWORD}
@@ -2499,12 +2522,16 @@ services:
   # PostgreSQL 12.22, the last release that series will ever get, unsupported
   # since November 2024. 17 is what Fider's own compose file uses. The data
   # arrives by pg_dump from 12 and restore into 17, verified table by table.
+  # 17 -> 18 went the same way, rehearsed against fider v0.38.2.
   fider-postgres:
     logging: *log-rotation
-    image: postgres:17.11-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
-      - fider-postgres-data:/var/lib/postgresql/data
+      # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
+      # with a mount at the old .../data path. New volume, filled by dump and
+      # restore before deploy; the old volume stays on the host for rollback.
+      - fider-postgres-data-18:/var/lib/postgresql
     environment:
       POSTGRES_USER: fider
       POSTGRES_PASSWORD: ${FIDER_POSTGRES_PASSWORD}

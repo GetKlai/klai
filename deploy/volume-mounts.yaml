@@ -316,11 +316,11 @@ mounts:
   firecrawl-postgres:
     service: firecrawl-postgres
     kind: named
-    host: firecrawl-postgres-data
-    container_path: /var/lib/postgresql/data
-    image: postgres:18.4-alpine
+    host: firecrawl-postgres-data-18
+    container_path: /var/lib/postgresql
+    image: postgres:18.6-alpine
     category: data
-    data_path_source: upstream docs (PGDATA default)
+    data_path_source: env PGDATA=/var/lib/postgresql/18/docker (mounted at its parent)
     pii: false
     backup: sql
     backup_method: pg_dumpall
@@ -331,11 +331,11 @@ mounts:
   listmonk-db:
     service: listmonk-db
     kind: named
-    host: listmonk-postgres-data
-    container_path: /var/lib/postgresql/data
-    image: postgres:17.10-alpine
+    host: listmonk-postgres-data-18
+    container_path: /var/lib/postgresql
+    image: postgres:18.6-alpine
     category: data
-    data_path_source: upstream docs (PGDATA default)
+    data_path_source: env PGDATA=/var/lib/postgresql/18/docker (mounted at its parent)
     pii: true
     backup: sql
     backup_method: pg_dumpall
@@ -400,11 +400,11 @@ mounts:
   crm-postgres:
     service: crm-postgres
     kind: named
-    host: crm-postgres-data
-    container_path: /var/lib/postgresql/data
-    image: postgres:16.13-alpine
+    host: crm-postgres-data-18
+    container_path: /var/lib/postgresql
+    image: postgres:18.6-alpine
     category: data
-    data_path_source: upstream docs (PGDATA default)
+    data_path_source: env PGDATA=/var/lib/postgresql/18/docker (mounted at its parent)
     pii: true
     backup: sql
     backup_method: pg_dumpall
@@ -419,11 +419,11 @@ mounts:
   fider-postgres:
     service: fider-postgres
     kind: named
-    host: fider-postgres-data
-    container_path: /var/lib/postgresql/data
-    image: postgres:17.10-alpine
+    host: fider-postgres-data-18
+    container_path: /var/lib/postgresql
+    image: postgres:18.6-alpine
     category: data
-    data_path_source: upstream docs (PGDATA default)
+    data_path_source: env PGDATA=/var/lib/postgresql/18/docker (mounted at its parent)
     pii: true
     backup: sql
     backup_method: pg_dumpall
@@ -438,11 +438,11 @@ mounts:
   umami-postgres:
     service: umami-postgres
     kind: named
-    host: umami-postgres-data
-    container_path: /var/lib/postgresql/data
-    image: postgres:16.13-alpine
+    host: umami-postgres-data-18
+    container_path: /var/lib/postgresql
+    image: postgres:18.6-alpine
     category: data
-    data_path_source: upstream docs (PGDATA default)
+    data_path_source: env PGDATA=/var/lib/postgresql/18/docker (mounted at its parent)
     pii: true
     backup: sql
     backup_method: pg_dumpall

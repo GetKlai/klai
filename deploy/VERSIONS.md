@@ -28,7 +28,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 |---|---|---|
 | `postgres` | `pgvector/pgvector:0.8.6-pg18` | pgvector 0.8.6 on pg18 (bumped 2026-08-13, same Postgres major — data-compatible). PostgreSQL major version upgrades require dump/restore. pg18 is the current stable (since Sept 2025). Upgrade path: `pg_dumpall` → stop services → change image → delete volume → restore dump. |
 | `firecrawl-postgres` | `postgres:18.4-alpine` | Firecrawl-internal queue DB (NUQ schema). Pinned to match main postgres major. Data is transient (queue state), so cross-major migration is just a volume delete. |
-| `listmonk-db` | `postgres:17.10-alpine` | Dedicated database for listmonk campaigns, subscribers, templates, and admin users. Kept on the upstream listmonk Docker Compose default; dump/restore before any major PostgreSQL bump. |
+| `listmonk-db` | `postgres:18.6-alpine` | Dedicated database for listmonk campaigns, subscribers, templates, and admin users. Moved from 17 to 18 on 2026-10-22 by dump and restore into a new volume mounted at `/var/lib/postgresql` (the 18 image keeps PGDATA in `/var/lib/postgresql/18/docker`), rehearsed against listmonk v6.2.0. Upstream's compose file still ships 17; listmonk ran its install, upgrade and public pages on 18 without changes. |
 | `mongodb` | `mongo:8.0.32` | The 8.0 LTS line, kept there by Renovate (`allowedVersions: <8.1`). We ran the 8.2 minor release with FCV 8.0 until 2026-09-26; 8.3 would have required FCV 8.2 first and minors are supported only briefly, and Community has no binary downgrade, so the return to 8.0 was a mongodump/mongorestore into the new `mongodb-data-80` volume (all 43 databases and 30,953 documents compared equal on a copy first). LibreChat tenants depend on this. |
 | `redis` | `redis:8.10.0-alpine` | Bumped 2026-08-13: 8.8.1 was a security release on our 8.8.0 pin; 8.10.0 is current stable on the same major. Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. |
 | `vexa-redis` | `redis:8.10.0-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
@@ -79,7 +79,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 | Service | Image | Why stuck |
 |---|---|---|
-| `firecrawl-rabbitmq` | `rabbitmq:3-alpine` | RabbitMQ 4.0 made AMQP 1.0 the default protocol (breaking change from 3.x). [Firecrawl](https://github.com/firecrawl/firecrawl) has not published confirmed RabbitMQ 4.x support. Upgrade only after Firecrawl releases a compatibility statement. Current latest is 4.3.2-alpine. |
+| `firecrawl-rabbitmq` | `rabbitmq:4.4.0-alpine` | Bumped from 3.13.7 on 2026-10-22. Firecrawl talks AMQP 0-9-1 through amqplib, which 4.x still serves; its durable queues are quorum queues and its per-listener queues are exclusive classic ones, so neither the removal of classic mirrored queues nor the `transient_nonexcl_queues` deprecation touches it, and its prefetch is per-consumer, not the denied `global_qos`. 4.3+ only upgrades in place from 4.2, which does not matter here: the container has no named volume and a new node name on every recreate, so the queue state is discarded by design. `deploy/tests/firecrawl-contract.sh` reads this pin from compose and passed against 4.4.0. |
 
 ---
 
