@@ -103,6 +103,12 @@ jobs:
       - name: compose-up.sh verification suite
         run: bash deploy/scripts/tests/compose-up-verify.test.sh
 
+      - name: env-drift recreate suite
+        run: bash deploy/scripts/tests/compose-env-drift-recreate.test.sh
+
+      - name: LibreChat regenerate suite
+        run: bash deploy/scripts/tests/tenant-config-regenerate.test.sh
+
       # A shipped image that does not patch its base OS is a deploy the Trivy
       # gate will block — for whoever happens to touch that service next, not
       # for whoever left it unpatched.
