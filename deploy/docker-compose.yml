@@ -381,6 +381,12 @@ services:
       # litellm_settings.callbacks): see klai_mistral_pool.py's module
       # docstring.
       - ./litellm/klai_mistral_pool.py:/app/klai_mistral_pool.py:ro
+      # Per-key Mistral state that scripts/mistral-api-probe.sh (host
+      # systemd timer) writes as mistral-keys.json; the hook above never
+      # offers a key it calls full. The directory, not the file: the probe
+      # replaces the file by rename, and a single-file bind mount would keep
+      # showing the old inode forever.
+      - ./state/litellm:/app/state:ro
       - ./litellm/klai_context.py:/app/klai_context.py:ro
       - ./litellm/klai_kb_request_context.py:/app/klai_kb_request_context.py:ro
       # Conversation-level language decision module — the single language

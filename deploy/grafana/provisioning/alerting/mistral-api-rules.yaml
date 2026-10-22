@@ -1,11 +1,30 @@
-# Mistral API synthetic auth probe alerts.
+# Mistral key state alerts, from the synthetic probe.
 #
-# The systemd timer `mistral-api-probe.timer` calls Mistral `/v1/models` with
-# the deployed production key every 2 minutes. The script appends JSON logs to
-# `/opt/klai/logs/mistral-api-probe.log`; Alloy file scraping ships them to
-# VictoriaLogs with `service:mistral-api-probe`.
+# The systemd timer `mistral-api-probe.timer` completes one token with every
+# MISTRAL_API_KEY* key LiteLLM routes over, every 2 minutes. The script
+# appends one JSON line per key to `/opt/klai/logs/mistral-api-probe.log`
+# (fields status ok|full|error, key_env, key_fingerprint, keys_total,
+# keys_ok); Alloy ships them to VictoriaLogs with
+# `service:mistral-api-probe`. It also writes the per-key state LiteLLM's
+# klai_mistral_pool hook uses to skip a full key.
+#
+# The alerts hang on state, not on a counter: a workspace that is full stays
+# firing until a probe run sees it complete again. The 5m window holds the
+# last two runs, so an alert resolves within 5 minutes of the fix.
+#
+# Routed via component=mistral-api-probe -> klai-ops-alerts-email, repeat 1h
+# (policies.yaml). Before October 2026 the critical rule here had no route,
+# fell to the default receiver and sat unread for 2.5 days while a workspace
+# was full; scripts/audit-alert-routes.py now fails CI on that.
 
 apiVersion: 1
+
+# File provisioning never removes a rule it stops listing; the old
+# single-key probe_failed rule would otherwise keep firing on status:fail
+# lines that no longer exist, i.e. never, while looking like coverage.
+deleteRules:
+  - orgId: 1
+    uid: obs-003-mistral-api-probe-failed
 
 groups:
   - orgId: 1
@@ -13,8 +32,12 @@ groups:
     folder: Klai
     interval: 1m
     rules:
-      - uid: obs-003-mistral-api-probe-failed
-        title: mistral_api_probe_failed
+      # One alert per key. `error` is in here as well as `full`: a key the
+      # probe cannot complete with (401 revoked, 5xx, timeout) is reserve
+      # that will not work when the other workspace fills up, and before the
+      # rework the single probe rule paged on it too.
+      - uid: obs-003-mistral-workspace-unavailable
+        title: mistral_workspace_unavailable
         condition: threshold
         data:
           - refId: query
@@ -29,8 +52,8 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: |
-                _time:5m service:mistral-api-probe event:mistral_api_probe status:fail
-                  | stats count() as n
+                _time:5m service:mistral-api-probe event:mistral_api_probe status:in(full, error)
+                  | stats by (key_env, key_fingerprint, status) count() as n
               queryType: stats
           - refId: reduce
             datasourceUid: __expr__
@@ -59,19 +82,91 @@ groups:
         noDataState: OK
         execErrState: OK
         for: 0s
-        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: warning
+          service_group: litellm
+          alert_type: synthetic
+          component: mistral-api-probe
+        annotations:
+          summary: 'Mistral key {{ $labels.key_env }} is {{ $labels.status }}'
+          runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
+          description: |
+            The Mistral probe found {{ $labels.key_env }} (fingerprint
+            {{ $labels.key_fingerprint }}) {{ $labels.status }} in its last
+            run. full = HTTP 402, the workspace's spending limit is reached
+            and LiteLLM already routes around this key. error = the key could
+            not complete a request (401, 5xx or timeout).
+
+            Triage in VictoriaLogs:
+              _time:15m service:mistral-api-probe event:mistral_api_probe | sort by(_time) desc | limit 20
+
+      # Fires on a run in which no key completed: every workspace full, or
+      # full and rejected mixed, or every key timing out, or the probe unable
+      # to read the env file (keys_total 0). Any of these leaves the chat
+      # aliases without a working key. keys_ok:* skips lines that carry no
+      # count.
+      - uid: obs-003-mistral-no-usable-key
+        title: mistral_no_usable_key
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:5m service:mistral-api-probe event:mistral_api_probe keys_ok:*
+                  | stats min(keys_ok) as usable
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 0s
         isPaused: false
         labels:
           severity: critical
           service_group: litellm
           alert_type: synthetic
+          component: mistral-api-probe
         annotations:
-          summary: 'Mistral API key probe failed'
+          summary: 'No usable Mistral key: no MISTRAL_API_KEY* completed a request'
           runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
           description: |
-            The synthetic Mistral API probe failed in the last 5 minutes.
-            This catches workspace spending-limit/API-access pauses and key
-            auth failures before chat traffic has to hit LiteLLM.
+            In one probe run no MISTRAL_API_KEY* key completed a request
+            (full, rejected or unreachable), or the probe could not read the
+            env file at all (error env_file_unreadable). The klai-* chat
+            aliases have no working workspace, so chat turns fail until a
+            spending limit is raised, a key is fixed or a workspace is added.
 
             Triage in VictoriaLogs:
               _time:15m service:mistral-api-probe event:mistral_api_probe | sort by(_time) desc | limit 20
@@ -128,10 +223,13 @@ groups:
           severity: warning
           service_group: litellm
           alert_type: synthetic
+          component: mistral-api-probe
         annotations:
           summary: 'Mistral API probe logs missing'
           runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
           description: |
-            No Mistral API probe log was seen in the last 10 minutes.
+            No Mistral API probe log was seen in the last 10 minutes, so the
+            per-key state file LiteLLM reads goes stale too and LiteLLM falls
+            back to finding full keys through failed user requests.
             Check `mistral-api-probe.timer`, `/opt/klai/logs/mistral-api-probe.log`,
             Alloy, and VictoriaLogs.

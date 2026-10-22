@@ -1,5 +1,5 @@
 [Unit]
-Description=Klai Mistral API auth probe
+Description=Klai Mistral API key probe (every MISTRAL_API_KEY*, writes per-key state for LiteLLM)
 Documentation=https://github.com/GetKlai/klai/blob/main/docs/runbooks/litellm-provider-auth-failed.md
 Wants=network-online.target
 After=network-online.target
@@ -9,10 +9,16 @@ Type=oneshot
 User=root
 Group=root
 ExecStart=/opt/klai/scripts/mistral-api-probe.sh
-TimeoutStartSec=30s
+# One completion per key at up to MISTRAL_PROBE_TIMEOUT (8s) each, plus the
+# 10s heartbeat push: 26s for two keys, so the old 30s still fits them; 60s
+# leaves room for up to six. deploy-compose.yml only stages this file in
+# /opt/klai/systemd; systemd reads the change after the manual daemon-reload
+# in docs/runbooks/litellm-provider-auth-failed.md.
+TimeoutStartSec=60s
 
-# Stdout goes to journald; the script also appends a JSON line to
-# /opt/klai/logs/mistral-api-probe.log, which Alloy ships to VictoriaLogs.
+# Stdout goes to journald; the script also appends one JSON line per key to
+# /opt/klai/logs/mistral-api-probe.log, which Alloy ships to VictoriaLogs, and
+# replaces /opt/klai/state/litellm/mistral-keys.json, which LiteLLM reads.
 StandardOutput=journal
 StandardError=journal
 

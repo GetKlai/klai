@@ -19,6 +19,7 @@ on:
       - 'deploy/check-klai-presidio-digest.sh'    # Klai presidio-analyzer image must be digest-pinned
       - 'deploy/scripts/**'                       # Public-safe deploy scripts; operator health scripts live in klai-infra
       - 'scripts/mistral-api-probe.sh'            # authenticated provider heartbeat
+      - 'deploy/systemd/mistral-api-probe.*'      # its unit + timer, staged in /opt/klai/systemd
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
@@ -185,6 +186,10 @@ jobs:
             install -m 0644 deploy/systemd/docker-cleanup.timer /opt/klai/systemd/docker-cleanup.timer
             install -m 0644 deploy/systemd/orphan-audit.service /opt/klai/systemd/orphan-audit.service
             install -m 0644 deploy/systemd/orphan-audit.timer /opt/klai/systemd/orphan-audit.timer
+            # Mistral key probe: same one-time symlink install, see
+            # docs/runbooks/litellm-provider-auth-failed.md ("Probe unit").
+            install -m 0644 deploy/systemd/mistral-api-probe.service /opt/klai/systemd/mistral-api-probe.service
+            install -m 0644 deploy/systemd/mistral-api-probe.timer /opt/klai/systemd/mistral-api-probe.timer
 
             # SPEC-SEC-024 M4.2 — sync Grafana provisioning. Grafana loads
             # provisioning only at startup, so we need to restart when files
