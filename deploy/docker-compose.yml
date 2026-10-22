@@ -2300,9 +2300,16 @@ services:
       - firecrawl-postgres-data:/var/lib/postgresql/data
       - ./firecrawl-nuq-init.sql:/docker-entrypoint-initdb.d/nuq-schema.sql:ro
 
+  # No volume on purpose: the queues are durable but hold only in-flight
+  # crawl coordination, and firecrawl declares every queue it needs on start.
+  # The node name is the container id, so each recreate starts a fresh node
+  # anyway. That is also why 3.13 -> 4.4 needed no in-place upgrade (4.3+
+  # only upgrades from 4.2): verified 2026-10-22 that 4.4.0 starts as a new
+  # node on a volume holding a 3.13 node directory, and that the firecrawl
+  # contract harness passes against it.
   firecrawl-rabbitmq:
     logging: *log-rotation
-    image: rabbitmq:3.13.7-alpine
+    image: rabbitmq:4.4.0-alpine
     restart: unless-stopped
     networks:
       - klai-net

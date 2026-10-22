@@ -38,7 +38,11 @@ MEM_LIMIT=$(awk '/^  firecrawl-api:/{f=1} f&&/memory:/{print $2; exit}' "$COMPOS
 WORKER_COUNT=$(awk '/^  firecrawl-api:/{f=1} f&&/NUQ_WORKER_COUNT:/{gsub(/"/,"",$2); print $2; exit}' "$COMPOSE")
 [ -n "$MEM_LIMIT" ] || { echo "no memory limit found for firecrawl-api in $COMPOSE" >&2; exit 1; }
 [ -n "$WORKER_COUNT" ] || { echo "no NUQ_WORKER_COUNT found for firecrawl-api in $COMPOSE" >&2; exit 1; }
-echo "testing: $IMAGE (memory $MEM_LIMIT, NUQ_WORKER_COUNT $WORKER_COUNT)"
+# The broker is read from compose too: a RabbitMQ major bump has to run this
+# harness against the new broker, not against the one it replaces.
+MQ_IMAGE=$(awk '/^  firecrawl-rabbitmq:/{f=1} f&&/image:/{print $2; exit}' "$COMPOSE")
+[ -n "$MQ_IMAGE" ] || { echo "no firecrawl-rabbitmq image found in $COMPOSE" >&2; exit 1; }
+echo "testing: $IMAGE (memory $MEM_LIMIT, NUQ_WORKER_COUNT $WORKER_COUNT) against $MQ_IMAGE"
 
 N=fc-contract-net
 P=fc-contract
@@ -53,14 +57,18 @@ docker network create $N >/dev/null
 docker run -d --name ${P}-pg --network $N \
     -e POSTGRES_USER=firecrawl -e POSTGRES_PASSWORD=contracttest -e POSTGRES_DB=firecrawl \
     -v "$INIT_SQL":/docker-entrypoint-initdb.d/nuq.sql:ro postgres:18.4-alpine >/dev/null
-docker run -d --name ${P}-mq --network $N rabbitmq:3.13.7-alpine >/dev/null
+docker run -d --name ${P}-mq --network $N "$MQ_IMAGE" >/dev/null
 docker run -d --name ${P}-redis --network $N redis:8.10.0-alpine >/dev/null
 
+# The probe runs as the rabbitmq user. As root, a probe that lands before the
+# broker has written /var/lib/rabbitmq/.erlang.cookie creates that file owned
+# by root, the broker then dies on "eacces", and the wait runs out: that is
+# what failed two of three runs against 4.4.0 on 2026-10-22.
 printf 'waiting for postgres + rabbitmq'
 i=0
 while [ $i -lt 90 ]; do
     if docker exec ${P}-pg pg_isready -U firecrawl >/dev/null 2>&1 &&
-       docker exec ${P}-mq rabbitmq-diagnostics -q check_running >/dev/null 2>&1; then
+       docker exec -u rabbitmq ${P}-mq rabbitmq-diagnostics -q check_running >/dev/null 2>&1; then
         break
     fi
     printf '.'; sleep 2; i=$((i + 1))

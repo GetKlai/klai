@@ -79,7 +79,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 | Service | Image | Why stuck |
 |---|---|---|
-| `firecrawl-rabbitmq` | `rabbitmq:3-alpine` | RabbitMQ 4.0 made AMQP 1.0 the default protocol (breaking change from 3.x). [Firecrawl](https://github.com/firecrawl/firecrawl) has not published confirmed RabbitMQ 4.x support. Upgrade only after Firecrawl releases a compatibility statement. Current latest is 4.3.2-alpine. |
+| `firecrawl-rabbitmq` | `rabbitmq:4.4.0-alpine` | Bumped from 3.13.7 on 2026-10-22. Firecrawl talks AMQP 0-9-1 through amqplib, which 4.x still serves; its durable queues are quorum queues and its per-listener queues are exclusive classic ones, so neither the removal of classic mirrored queues nor the `transient_nonexcl_queues` deprecation touches it, and its prefetch is per-consumer, not the denied `global_qos`. 4.3+ only upgrades in place from 4.2, which does not matter here: the container has no named volume and a new node name on every recreate, so the queue state is discarded by design. `deploy/tests/firecrawl-contract.sh` reads this pin from compose and passed against 4.4.0. |
 
 ---
 
