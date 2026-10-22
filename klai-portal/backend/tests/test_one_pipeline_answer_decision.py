@@ -480,6 +480,17 @@ async def test_an_internal_turn_runs_the_selection_in_the_internal_words(monkeyp
     assert system == SELECTION_SYSTEM_PROMPT_INTERNAL and system != SELECTION_SYSTEM_PROMPT
     assert "rewrite, review, translate or shorten" in system
 
+    widget_llm = _LiteLLM()
+    await _turn(
+        monkeypatch,
+        widget_llm,
+        profile=ChatProfile(surface="partner", kb_mode="strict", kb_slugs=("handboek",)),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        key_id="key-partner",
+    )
+    (widget_selection,) = widget_llm.of("passage_selection")
+    assert next(m["content"] for m in widget_selection["messages"] if m["role"] == "system") == SELECTION_SYSTEM_PROMPT
+
 
 # --- Open and general never refuse for a missing source ---------------------------
 
