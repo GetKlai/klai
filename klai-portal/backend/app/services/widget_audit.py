@@ -524,11 +524,23 @@ async def forget_internal_cases(db: AsyncSession, *, org_id: int, user_id: str) 
 
 
 async def prune_internal_cases() -> int:
-    """Delete every org's stored cases older than INTERNAL_CASE_DAYS; the row count. Run by the nightly purge."""
+    """Delete every org's stored cases older than INTERNAL_CASE_DAYS, and those of employees no longer active; the row count.
+
+    Run by the nightly purge. The second delete covers a store that finished
+    after the employee was offboarded or removed (the turn's write runs in the
+    background), which forget_internal_cases could not see.
+    """
     async with cross_org_session() as db:
-        result = await db.execute(
+        expired = await db.execute(
             text("DELETE FROM internal_chat_cases WHERE updated_at < now() - make_interval(days => :days)"),
             {"days": INTERNAL_CASE_DAYS},
         )
+        orphaned = await db.execute(
+            text(
+                "DELETE FROM internal_chat_cases c WHERE NOT EXISTS ("
+                "SELECT 1 FROM portal_users u WHERE u.org_id = c.org_id "
+                "AND u.zitadel_user_id = c.user_id AND u.status = 'active')"
+            )
+        )
         await db.commit()
-    return result.rowcount or 0  # type: ignore[attr-defined]
+    return (expired.rowcount or 0) + (orphaned.rowcount or 0)  # type: ignore[attr-defined]

@@ -1033,6 +1033,8 @@ async def remove_user(
                 detail=f"Failed to delete user: {exc}",
             ) from exc
 
+    # The case and passages the internal chat kept for the employee's conversations.
+    await forget_internal_cases(db, org_id=perms.org_id, user_id=zitadel_user_id)
     await db.delete(user)
     await db.commit()
     fire_role_change_notification(zitadel_user_id)
@@ -1569,6 +1571,7 @@ async def leave_workspace(
         )
     )
     caller_user = caller_row_result.scalar_one()
+    await forget_internal_cases(db, org_id=perms.org_id, user_id=perms.user_id)
     await db.delete(caller_user)
     await db.commit()
     logger.info("leave_workspace: user=%s left org=%d", perms.user_id, perms.org_id)

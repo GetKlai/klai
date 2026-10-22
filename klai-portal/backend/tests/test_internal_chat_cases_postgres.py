@@ -76,6 +76,8 @@ _SETUP = [
     END; $fn$
     """,
     f"CREATE TABLE {_SCHEMA}.portal_orgs (id integer PRIMARY KEY)",
+    # Only what the nightly prune joins on; the real table is wider and Cat-A.
+    f"CREATE TABLE {_SCHEMA}.portal_users (org_id integer, zitadel_user_id text, status text)",
     # As alembic/versions/f3a9c6e2b4d1_add_internal_chat_cases.py creates it.
     f"""CREATE TABLE {_SCHEMA}.internal_chat_cases (
         id bigserial PRIMARY KEY,
@@ -172,8 +174,11 @@ async def test_forgetting_an_employee_deletes_their_cases_and_no_one_elses(pg) -
     assert await _visible_keys(901) == ["k2"]
 
 
-async def test_the_nightly_prune_removes_cases_older_than_thirty_days_and_keeps_younger_ones(pg) -> None:
+async def test_the_nightly_prune_removes_old_cases_and_those_of_employees_no_longer_active(pg) -> None:
+    """A store that finished after the employee was offboarded leaves a row
+    forget_internal_cases never saw; the prune removes it with the expired ones."""
     await _keep(901, "u1", "young")
+    await _keep(901, "gone", "after-offboarding")
     await _keep(902, "u2", "old")
     async with pg.begin() as conn:
         await conn.execute(
@@ -181,8 +186,14 @@ async def test_the_nightly_prune_removes_cases_older_than_thirty_days_and_keeps_
                 "UPDATE internal_chat_cases SET updated_at = now() - interval '31 days' WHERE conversation_key = 'old'"
             )
         )
+        await conn.execute(
+            text(
+                "INSERT INTO portal_users (org_id, zitadel_user_id, status) "
+                "VALUES (901, 'u1', 'active'), (901, 'gone', 'offboarded'), (902, 'u2', 'active')"
+            )
+        )
 
-    assert await prune_internal_cases() == 1
+    assert await prune_internal_cases() == 2
 
     assert await _visible_keys(901) == ["young"]
     assert await _visible_keys(902) == []

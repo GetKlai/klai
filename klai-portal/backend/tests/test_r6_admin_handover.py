@@ -165,13 +165,18 @@ class TestLeaveWorkspace:
 
         db.execute = _execute
 
-        with patch("app.api.admin.users.emit_event", MagicMock()):
+        with (
+            patch("app.api.admin.users.emit_event", MagicMock()),
+            patch("app.api.admin.users.forget_internal_cases", AsyncMock(return_value=0)) as forget,
+        ):
             result = await leave_workspace(
                 perms=make_perms(role="company", user_id="u1"),
                 db=db,
             )
 
         db.delete.assert_awaited_once_with(caller)
+        # The internal chat's stored cases leave with the employee (same session, before the row goes).
+        assert forget.await_args.kwargs["user_id"] == "u1"
         assert result.message
 
     @pytest.mark.asyncio
