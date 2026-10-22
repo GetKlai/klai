@@ -143,4 +143,13 @@ if [ -e "$BACKUP_ROOT/2026-07-18/$MARKER" ]; then
     exit 1
 fi
 
+# A failed rerun on the same date must not inherit the earlier run's marker:
+# 2026-07-17 completed above, so its directory holds a marker before this run.
+[ -e "$BACKUP_ROOT/2026-07-17/$MARKER" ] || { echo "FAIL: setup: 2026-07-17 has no marker" >&2; exit 1; }
+STUB_EMPTY_DUMP_USER=listmonk run_backup 2026-07-17
+if [ -e "$BACKUP_ROOT/2026-07-17/$MARKER" ]; then
+    echo "FAIL: a failed rerun kept the marker of the earlier complete run" >&2
+    exit 1
+fi
+
 echo "backup retention with partial sets: OK"
