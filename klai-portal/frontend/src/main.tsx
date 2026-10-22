@@ -69,17 +69,32 @@ declare module '@tanstack/react-router' {
 const rawDsn = import.meta.env.VITE_SENTRY_DSN as string | undefined
 const dsn = rawDsn?.replace(/^(https?:\/\/)([^@]+)(@)/, (_, proto, key, at) => proto + key.replaceAll('-', '') + at)
 
+const PII_DENY = ['forwarded', '-ip', 'remote-', 'via', '-user']
+
 Sentry.init({
   dsn,
   environment: import.meta.env.MODE,
-  sendDefaultPii: false,
-  enableLogs: true,
-  integrations: [
+  // v11 collects user info, cookies, headers and bodies unless told otherwise, so the v10
+  // default (sendDefaultPii: false) is spelled out, using the baseline from Sentry's v11
+  // migration guide. The browser SDK has no database, queue or GenAI data to collect.
+  dataCollection: {
+    userInfo: false,
+    cookies: false,
+    httpHeaders: { request: { deny: PII_DENY }, response: { deny: PII_DENY } },
+    httpBodies: [],
+    urlQueryParams: { deny: PII_DENY },
+  },
+  // GlitchTip stores transactions but drops the streamed `span` envelope items v11 sends by
+  // default (apps/event_ingest/schema.py IgnoredItemType, GlitchTip 6.2.6), so stay on transactions.
+  traceLifecycle: 'static',
+  integrations: (defaults) => [
+    // Disable console breadcrumbs: console logs may contain user data. v11 moved them from
+    // breadcrumbsIntegration({ console }) to the default Console integration.
+    ...defaults.filter((integration) => integration.name !== 'Console'),
     Sentry.tanstackRouterBrowserTracingIntegration(router),
     Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] }),
-    // Disable console + DOM breadcrumbs: console logs may contain user data,
-    // DOM click trails are behavioural data we don't need for debugging.
-    Sentry.breadcrumbsIntegration({ console: false, dom: false }),
+    // Disable DOM breadcrumbs: click trails are behavioural data we don't need for debugging.
+    Sentry.breadcrumbsIntegration({ dom: false }),
   ],
   tracesSampleRate: 0.3,
   beforeSend(event) {
