@@ -2421,10 +2421,9 @@ services:
           memory: 256m
 
   # ─── Twenty CRM — datastores ─────────────────────────────────────────────
-  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001). The engines
-  # are pinned to exactly what ran there — PostgreSQL 16.13, Redis 7.4.8 —
-  # because this step is a relocation: if something breaks, it must be the
-  # move and not an engine upgrade hiding inside it.
+  # Moved off Coolify on public-01 (SPEC-INFRA-COOLIFY-EXIT-001) on the
+  # engines that ran there, PostgreSQL 16 and Redis 7, so the move stayed a
+  # relocation. The engine majors followed later as their own changes.
   #
   # The datastores land before the application on purpose. Twenty runs its
   # migrations on start, so pointed at an empty database it initialises a
@@ -2432,7 +2431,9 @@ services:
   # goes in first; the app follows in a separate change.
   #
   # Redis is cache only (Twenty's queue is pg-boss, in Postgres), so it keeps
-  # no volume.
+  # no volume, and the move from 7.4 to 8.10 had no data to carry: Twenty
+  # v2.47.0 refilled the cache on 8.10.2 with the server healthy and the
+  # worker running (verified locally 2026-10-22).
   crm-postgres:
     logging: *log-rotation
     image: postgres:16.15-alpine
@@ -2457,7 +2458,7 @@ services:
 
   crm-redis:
     logging: *log-rotation
-    image: redis:7.4.11-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     command: ["redis-server", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
     networks:
