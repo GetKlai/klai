@@ -386,7 +386,7 @@ STREAM_CLEANUP_TARGET=/app/packages/api/dist/index.cjs
 # createStreamServices() returns. Matching on either keeps this transform from
 # layering a second, inert cleanupOnComplete key onto the bundle.
 STREAM_CLEANUP_SERVER=/app/api/server/index.js
-if grep -qE "SPEC-STREAM-CLEANUP-001" "$STREAM_CLEANUP_TARGET" "$STREAM_CLEANUP_SERVER" 2>/dev/null; then
+if grep -qE "SPEC-STREAM-CLEANUP-001|CLEANUP_ON_COMPLETE" "$STREAM_CLEANUP_TARGET" "$STREAM_CLEANUP_SERVER" 2>/dev/null; then
   echo "[klai-entrypoint] cleanup-on-complete already in place (runtime marker or baked-in server/index.js patch), skipping"
 else
   node <<'STREAM_CLEANUP_NODE'

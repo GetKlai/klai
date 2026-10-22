@@ -67,15 +67,18 @@ for (const [name, target] of [
 ]) {
   assert.match(target, /SPEC-STREAM-CLEANUP-001/, name);
   assert.match(target, /STREAM_CLEANUP_TARGET=\/app\/packages\/api\/dist\/index\.cjs/, name);
-  // The skip-check must recognise BOTH ways the fix can already be present:
-  // this transform having run before (marker in the bundle), and an image built
-  // from the source diff (marker in the unbundled server/index.js, where v0.8.8
-  // decides cleanupOnComplete). Matching only the first would layer a second,
-  // inert cleanupOnComplete key onto the bundle of a baked image.
+  // The skip-check must recognise every way the fix can already be present:
+  // this transform having run before (SPEC-STREAM-CLEANUP-001 in the bundle),
+  // a v0.8.8+ image built from the source diff (the same marker in the
+  // unbundled server/index.js), and a v0.8.7 Klai image, whose bundle carries
+  // the baked-in CLEANUP_ON_COMPLETE identifier. Tenants keep running the
+  // v0.8.7 image until they are recreated, and its bundle is read-only: on
+  // 2026-10-22 dropping that marker sent the transform into a write there and
+  // crash-looped every tenant container for about eight minutes.
   assert.match(target, /STREAM_CLEANUP_SERVER=\/app\/api\/server\/index\.js/, name);
   assert.match(
     target,
-    /grep -qE "SPEC-STREAM-CLEANUP-001" "\$STREAM_CLEANUP_TARGET" "\$STREAM_CLEANUP_SERVER"/,
+    /grep -qE "SPEC-STREAM-CLEANUP-001\|CLEANUP_ON_COMPLETE" "\$STREAM_CLEANUP_TARGET" "\$STREAM_CLEANUP_SERVER"/,
     name,
   );
   assert.match(target, /already in place .*skipping/, name);
