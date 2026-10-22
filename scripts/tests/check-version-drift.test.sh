@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# check-version-drift.sh must fail on a Renovate automerge PR that has been open
-# longer than AUTOMERGE_MAX_AGE_DAYS, and name it. gh and curl are stubbed on
+# check-version-drift.sh must fail on a Renovate automerge PR that is days old
+# with a failed check or pending past any release age, and name it, while a PR
+# that is only waiting out its release age is noted, not failed. gh and curl are stubbed on
 # PATH; the stub applies the script's own --jq filter to canned JSON, so the
 # real age and author filters run.
 set -euo pipefail
@@ -29,7 +30,7 @@ jq -n '
    pr(102; "app/klai-renovate"; 1; "🚦 **Automerge**: Enabled."),
    pr(103; "app/klai-renovate"; 5; "🚦 **Automerge**: Disabled by config."),
    pr(104; "mvletter"; 4; "🚦 **Automerge**: Enabled.")]' > "$tmp/pr-list.json"
-jq -n '[{bucket: "pending", name: "renovate/stability-days"}, {bucket: "pass", name: "quality"}]' > "$tmp/pr-checks.json"
+checks() { jq -n "[{bucket: \"$1\", name: \"$2\"}, {bucket: \"pass\", name: \"quality\"}]" > "$tmp/pr-checks.json"; }
 echo '[]' > "$tmp/issue-list.json"
 jq -n '[{createdAt: (now - 3600 | todate)}]' > "$tmp/run-list.json"
 
@@ -38,20 +39,26 @@ run_script() {
 }
 fail() { echo "FAIL: $1" >&2; printf '%s\n' "$out" >&2; exit 1; }
 
-# 4-day-old automerge PR: the script exits non-zero and prints it with its
-# failing check; the fresh, non-automerge and human PRs are not reported.
+# 4-day-old automerge PR with a failed check: the script exits non-zero and
+# names it; the fresh, non-automerge and human PRs are not reported.
+checks fail quality-gate
 if (cd "$root" && STUB_DIR="$tmp" PATH="$tmp/bin:$PATH" REPOS=GetKlai/klai bash scripts/check-version-drift.sh >/dev/null 2>&1); then
-  echo "FAIL: exit 0 with a 4-day-old automerge PR" >&2; exit 1
+  echo "FAIL: exit 0 with a 4-day-old red automerge PR" >&2; exit 1
 fi
 out=$(run_script)
-grep -q 'FAIL: GetKlai/klai: automerge PRs open longer than 3 days' <<<"$out" || fail "no automerge failure line"
-grep -q '#101 open 4d' <<<"$out" || fail "stuck PR #101 not printed"
-grep -q 'not green: pending renovate/stability-days' <<<"$out" || fail "non-green check not printed"
+grep -q 'FAIL: GetKlai/klai: automerge PR #101 open 4d is stuck' <<<"$out" || fail "stuck PR #101 not reported"
+grep -q 'not green: fail quality-gate' <<<"$out" || fail "failing check not printed"
 grep -qE '#10[234] open' <<<"$out" && fail "reported a PR that is not a stuck automerge PR"
 
-# Only the fresh automerge PR: no automerge failure.
-jq '[.[] | select(.number == 102)]' "$tmp/pr-list.json" > "$tmp/pr-list.tmp" && mv "$tmp/pr-list.tmp" "$tmp/pr-list.json"
+# Same PR only pending (a newer release inside its 7-day wait): waiting, not stuck.
+checks pending renovate/stability-days
 out=$(run_script)
-grep -q 'OK:   GetKlai/klai: no automerge PR older than 3 days' <<<"$out" || fail "fresh automerge PR was flagged"
+grep -q 'automerge PR #101' <<<"$out" && fail "a PR that is only waiting was reported as stuck"
+grep -q 'NOTE: GetKlai/klai: #101 open 4d, waiting' <<<"$out" || fail "waiting PR not noted"
+
+# Pending for 11 days: no release age explains that any more.
+jq '(.[] | select(.number == 101) | .createdAt) |= (now - 11 * 86400 | todate)' "$tmp/pr-list.json" > "$tmp/pr-list.tmp" && mv "$tmp/pr-list.tmp" "$tmp/pr-list.json"
+out=$(run_script)
+grep -q 'FAIL: GetKlai/klai: automerge PR #101 open 11d is stuck' <<<"$out" || fail "11-day pending PR not reported"
 
 echo "check-version-drift: PASS"
