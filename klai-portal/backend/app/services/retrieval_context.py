@@ -1183,7 +1183,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         and not _broad_mode_active(chunks, broad_consent=t.broad_consent)
     ):
         turn.selection = await select_passages(
-            t.messages, selection_chunks, t.settings, delegated_org_id=t.zitadel_org_id
+            t.messages, selection_chunks, t.settings, delegated_org_id=t.zitadel_org_id, internal=t.internal
         )
         if turn.selection is None:
             # A failed selection fails closed where the reply may only come

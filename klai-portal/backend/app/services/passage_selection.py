@@ -62,6 +62,36 @@ SELECTION_SYSTEM_PROMPT = (
     "Otherwise an empty string."
 )
 
+# The internal chat's own words for the same step. Its user is an employee
+# who relays a customer's question, asks what something is or whether it
+# exists, or asks to rewrite text already in the conversation: on the internal
+# meetlat of 22 October the widget's "how to do it" rule called 13 of 48
+# turns "not in the passages" while the owner expected a knowledge-base
+# answer (a product's Windows app, what an Ascend feature is, a mail written
+# from the previous answer).
+SELECTION_SYSTEM_PROMPT_INTERNAL = (
+    "You prepare a colleague's answer from the knowledge base. You get the conversation and numbered passages. "
+    "The user is an employee: they may relay a customer's question, ask what something is or whether it exists, "
+    "or ask you to rewrite, review or shorten text that is already in the conversation. Work in this order.\n"
+    "need: in one sentence, what the user needs now. Use the earlier turns to understand a short latest message. "
+    "When the message asks several things, the one sentence names each part.\n"
+    "evidence: go through the passages and copy, word for word, the sentence that answers the need, with the "
+    "passage number: the step that tells how to do it, the fact asked for, the sentence that says what something "
+    "is or which options exist, or the sentence that says it is not possible or no longer supported. For one "
+    "question at most three passages, one sentence each; for several questions one sentence per answered part, "
+    "at most six lines in total. Copy only sentences about the same product, device and direction (import is "
+    "not export, inbound is not outbound, the mobile app is not a desk phone). Leave the list empty when no "
+    "passage says anything about the need.\n"
+    "verdict: answers when the evidence covers the need or a clear part of it; a missing part is no reason to "
+    "refuse, the writer will say what the knowledge base does not cover. depends only when you copied evidence "
+    "from passages whose steps DIFFER per variant (device, app) and the conversation does not say which applies. "
+    "not_in_passages when no passage says anything about the need. A request to rewrite, review, translate or "
+    "shorten text already in the conversation, a request for a person, a thank-you or a remark about the chat "
+    "needs no passage: answers with empty evidence.\n"
+    "question: only for depends, the one question that would settle the variant, in the user's language, at most "
+    "fifteen words. Otherwise an empty string."
+)
+
 # The checker's own budget on the widget is 4 s for a reply that lists every
 # statement; this call reads the same passages and returns a few short fields.
 # The budget grows with what is offered: an internal turn offers 13 to 22
@@ -210,7 +240,12 @@ class PassageSelection(BaseModel):
 
 
 async def select_passages(
-    messages: list[dict], chunks: list[dict], settings: Settings, *, delegated_org_id: str | None = None
+    messages: list[dict],
+    chunks: list[dict],
+    settings: Settings,
+    *,
+    delegated_org_id: str | None = None,
+    internal: bool = False,
 ) -> PassageSelection | None:
     passages = "\n\n".join(
         f"[{number}] {chunk.get('title') or ''}\n{str(chunk.get('text') or '')[:_PASSAGE_CHARS]}"
@@ -224,7 +259,7 @@ async def select_passages(
     for _ in range(2):
         selection = await structured_judge_call(
             name="passage_selection",
-            system_prompt=SELECTION_SYSTEM_PROMPT,
+            system_prompt=SELECTION_SYSTEM_PROMPT_INTERNAL if internal else SELECTION_SYSTEM_PROMPT,
             # The latest message whole: the week's multi-part messages ran
             # 1,100 to 2,600 characters, and at the excerpt's 800 the later
             # questions never reached this step.
