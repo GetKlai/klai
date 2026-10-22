@@ -342,7 +342,10 @@ async def test_strict_turn_whose_passages_do_not_answer_gets_the_strict_refusal_
     assert turn.text == STRICT_REFUSAL
     assert len(llm.of("passage_selection")) == 1
     assert llm.of("answer") == [] and llm.of("answer_judge") == [] and llm.of("grounding_check") == []
-    assert "selection" not in turn.records[0], "the internal record keeps signals, never text"
+    selection = turn.records[0]["selection"]
+    assert selection["verdict"] == "not_in_passages" and "evidence" not in selection and "question" not in selection, (
+        "the internal record keeps the verdict and passage numbers, never text"
+    )
 
 
 @pytest.mark.asyncio
@@ -434,6 +437,25 @@ async def test_a_retrieve_body_that_is_not_json_counts_as_a_lost_knowledge_base(
     assert expected.lower() in turn.text.lower()
     (record,) = turn.records
     assert record["decision"] in ("refusal", "general_knowledge", "answer")
+
+
+@pytest.mark.asyncio
+async def test_an_internal_record_carries_the_selection_verdict_without_its_quotes(monkeypatch):
+    """The internal meetlat tunes the selection on its verdict, which the
+    record never carried: it was skipped whole because quotes are text."""
+    llm = _LiteLLM()
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    (record,) = turn.records
+    assert record["selection"] == {"verdict": "answers", "passages": [1]}
+    assert "quote" not in str(record["selection"]) and "question" not in record["selection"]
 
 
 # --- Open and general never refuse for a missing source ---------------------------
@@ -1131,6 +1153,7 @@ _GOLDEN_STRICT_RECORD = {
     "org_id": 7,
     "band": "high",
     "multi_question": False,
+    "selection": {"verdict": "answers", "passages": [1]},
     "judge_failed": ["case"],
     "grounding": "all_in_articles",
     "verdict": "answered",
