@@ -69,7 +69,9 @@ for repo in $REPOS; do
         reason='all checks green, so Renovate itself is not merging it'
       elif printf '%s\n' "$blocking" | grep -q '^fail '; then
         reason=$(printf '%s\n' "$blocking" | grep '^fail ' | sed 's/^/not green: /')
-      elif [ "$age" -gt "$AUTOMERGE_WAIT_MAX_DAYS" ]; then
+      elif [ "$blocking" != 'pending renovate/stability-days' ] || [ "$age" -gt "$AUTOMERGE_WAIT_MAX_DAYS" ]; then
+        # Only the release-age check earns the longer wait; a CI check that
+        # is cancelled or has been pending for days blocks the merge as well.
         reason=$(printf '%s\n' "$blocking" | sed 's/^/not green: /')
       else
         note "$repo: #$num open ${age}d, waiting: $(printf '%s' "$blocking" | tr '\n' ';')"

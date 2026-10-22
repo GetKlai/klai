@@ -16,6 +16,9 @@ cat > "$tmp/bin/gh" <<'STUB'
 file="$STUB_DIR/$1-$2.json"
 while [ $# -gt 0 ]; do [ "$1" = --jq ] && { expr=$2; break; }; shift; done
 jq -r "$expr" "$file"
+# Like the real gh, `pr checks` exits 8 while a check is still pending.
+[ "$1 $2" = "pr checks" ] && jq -e 'any(.bucket == "pending")' "$file" >/dev/null && exit 8
+exit 0
 STUB
 printf '#!/usr/bin/env bash\nexit 22\n' > "$tmp/bin/curl"
 chmod +x "$tmp/bin/gh" "$tmp/bin/curl"
@@ -56,7 +59,13 @@ out=$(run_script)
 grep -q 'automerge PR #101' <<<"$out" && fail "a PR that is only waiting was reported as stuck"
 grep -q 'NOTE: GetKlai/klai: #101 open 4d, waiting' <<<"$out" || fail "waiting PR not noted"
 
-# Pending for 11 days: no release age explains that any more.
+# A CI check pending for days is not a release-age wait.
+checks pending quality-gate
+out=$(run_script)
+grep -q 'FAIL: GetKlai/klai: automerge PR #101 open 4d is stuck' <<<"$out" || fail "PR held by a pending CI check not reported"
+
+# Pending on the release age for 11 days: no release age explains that any more.
+checks pending renovate/stability-days
 jq '(.[] | select(.number == 101) | .createdAt) |= (now - 11 * 86400 | todate)' "$tmp/pr-list.json" > "$tmp/pr-list.tmp" && mv "$tmp/pr-list.tmp" "$tmp/pr-list.json"
 out=$(run_script)
 grep -q 'FAIL: GetKlai/klai: automerge PR #101 open 11d is stuck' <<<"$out" || fail "11-day pending PR not reported"
