@@ -28,6 +28,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.conftest import FakeOrg
+
 WIDGET_ID = "wgt_abcdef1234567890abcdef1234567890abcdef12"
 
 # ---------------------------------------------------------------------------
@@ -56,17 +58,6 @@ class FakeWidget:
     last_used_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
     created_by: str = "test-user"
-
-
-@dataclass
-class FakeOrg:
-    id: int = 42
-    zitadel_org_id: str = "zitadel-org-123"
-    slug: str = "test"
-    platform_unlocked_features: list = field(default_factory=lambda: ["widgets"])
-    deleted_at: object = None
-    provisioning_status: str = "ready"
-    enabled_addons: list = field(default_factory=list)
 
 
 def _make_db_mock(widget_row=None, org_row=None):
