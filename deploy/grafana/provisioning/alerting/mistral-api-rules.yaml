@@ -15,7 +15,7 @@
 # Routed via component=mistral-api-probe -> klai-ops-alerts-email, repeat 1h
 # (policies.yaml). Before October 2026 the critical rule here had no route,
 # fell to the default receiver and sat unread for 2.5 days while a workspace
-# was full; scripts/audit-alert-routes.py now fails CI on that.
+# was full; the severity=critical catch-all route in policies.yaml now covers that.
 
 apiVersion: 1
 

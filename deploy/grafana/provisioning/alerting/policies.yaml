@@ -13,9 +13,6 @@
 #   - component=mistral-api-probe                → klai-ops-alerts-email (Mistral key state, repeat 1h)
 #   - severity=critical                          → klai-ops-alerts-email (any critical rule not matched above)
 #
-# A critical rule must never fall to the fallback: scripts/audit-alert-routes.py
-# fails CI when one matches no route here.
-#
 # Grouping + repeat_interval tuning per route:
 #   - SEC/INFRA: repeat 24h — suppress email-floods from a wedged call-path
 #   - OBS heartbeat: repeat 5m — push must arrive every 5 min at Uptime Kuma
@@ -180,8 +177,7 @@ policies:
       # RLS tenant context, session cookie key and TOTP Redis) matched no
       # route above and fell to the default receiver, several despite a
       # header comment claiming a spec route. Last, so a rule's own route
-      # still wins; scripts/audit-alert-routes.py fails CI on a critical rule
-      # that matches no route. Grouping and repeat mirror the default policy,
+      # still wins. Grouping and repeat mirror the default policy,
       # so for those nine only the receiver and its subject line change.
       - receiver: klai-ops-alerts-email
         matchers:

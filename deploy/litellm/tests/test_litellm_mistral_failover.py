@@ -693,17 +693,13 @@ async def test_the_probe_reporting_ok_releases_a_key_a_402_benched(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", ["missing", "stale"])
-async def test_without_a_fresh_probe_verdict_the_bench_grows_and_a_success_resets_it(
-    real_litellm, tmp_path, status: str
+async def test_without_a_probe_verdict_a_402_benches_the_key_for_five_minutes_and_a_success_releases_it(
+    real_litellm, tmp_path
 ) -> None:
-    """With no probe verdict younger than ten minutes, a 402 benches the key
-    for 5, 15, then 60 minutes (capped), each time the key is tried again
-    and is still full. A stale file that says full is not believed, and one
-    success on the key resets the bench to 5 minutes."""
+    """The Vibe key is never probed, so the request path is its only signal:
+    a 402 keeps it off for five minutes, every time, and one success on the
+    key puts it back."""
     status_file = tmp_path / "mistral-keys.json"
-    if status == "stale":
-        _write_status(status_file, {_KLAI_KEY: "full", _KLAI2_KEY: "ok"}, mtime=time.time() - 601)
     calls: list[str] = []
     klai_full = True
 
@@ -734,7 +730,7 @@ async def test_without_a_fresh_probe_verdict_the_bench_grows_and_a_success_reset
     benches = []
     try:
         with _mock_mistral_http(handler):
-            for _ in range(4):
+            for _ in range(2):
                 previous = marks().get(_KLAI_KEY)
                 await request_after_bench()
                 assert calls == [_KLAI_KEY, _KLAI2_KEY]
@@ -745,15 +741,32 @@ async def test_without_a_fresh_probe_verdict_the_bench_grows_and_a_success_reset
             await request_after_bench()
             assert calls == [_KLAI_KEY]
             await _wait_for(lambda: _KLAI_KEY not in marks())
-
-            klai_full = True
-            await request_after_bench()
-            await _wait_for(lambda: _KLAI_KEY in marks())
-            benches.append(bench_minutes())
     finally:
         router.reset()
 
-    assert benches == [5, 15, 60, 60, 5]
+    assert benches == [5, 5]
+
+
+@pytest.mark.asyncio
+async def test_a_probe_verdict_holds_however_old_the_file_is(real_litellm, tmp_path) -> None:
+    """A probe or timer that died is the probe-missing alert's job; the hook
+    does not start guessing after ten minutes, it keeps the last verdict."""
+    status_file = tmp_path / "mistral-keys.json"
+    _write_status(status_file, {_KLAI_KEY: "full", _KLAI2_KEY: "ok"}, mtime=time.time() - 3 * 3600)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        return _ok_response(request)
+
+    router, _hook = _pinned_router(real_litellm, status_file=status_file)
+    try:
+        with _mock_mistral_http(handler):
+            await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}])
+    finally:
+        router.reset()
+
+    assert calls == [_KLAI2_KEY]
 
 
 @pytest.mark.asyncio

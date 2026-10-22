@@ -8,7 +8,6 @@ on:
       - 'scripts/audit-alert-secrets.sh'
       - 'scripts/audit-alert-uid-length.sh'
       - 'scripts/audit-alert-logsql-shape.py'
-      - 'scripts/audit-alert-routes.py'
       - 'scripts/verify-alert-runbooks.sh'
       - 'scripts/test-alerting-guards.sh'
       - 'deploy/scripts/verify-alert-datasource-access.py'
@@ -24,7 +23,6 @@ on:
       - 'scripts/audit-alert-secrets.sh'
       - 'scripts/audit-alert-uid-length.sh'
       - 'scripts/audit-alert-logsql-shape.py'
-      - 'scripts/audit-alert-routes.py'
       - 'scripts/verify-alert-runbooks.sh'
       - 'scripts/test-alerting-guards.sh'
       - 'deploy/scripts/verify-alert-datasource-access.py'
@@ -63,12 +61,6 @@ jobs:
       # firing on nothing with execErrState Alerting, never firing with OK.
       - name: Audit VictoriaLogs alert query shape (stats only)
         run: python3 scripts/audit-alert-logsql-shape.py
-
-      # A critical rule that matches no route in policies.yaml falls to the
-      # default receiver. In October 2026 the Mistral probe's critical alert
-      # did, and nobody acted on it for 2.5 days.
-      - name: Audit every critical alert rule has a notification route
-        run: python3 scripts/audit-alert-routes.py
 
       # The datasource-access checker itself runs at deploy time, on core-01,
       # where a real database exists. What CI can prove is that its relation

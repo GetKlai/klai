@@ -2,7 +2,6 @@
 # test-alerting-guards.sh — regression tests for:
 #   - scripts/audit-alert-secrets.sh
 #   - scripts/verify-alert-runbooks.sh
-#   - scripts/audit-alert-routes.py
 #
 # Proves both scripts catch the CLASS of bug they're designed for, not just
 # the one specific pattern. Mirrors the SEC-024 pattern set by
@@ -256,57 +255,6 @@ groups:
           severity: warning
 YAML
 run_verify_pass "verify-V5: external https runbook_url accepted (cross-repo)" "${F}"
-
-# ═══════════════════════════════════════════════════════════════════════════
-# audit-alert-routes.py
-# ═══════════════════════════════════════════════════════════════════════════
-
-write_routes_fixture() {
-  local dir="$1" matcher="$2"
-  mkdir -p "${dir}"
-  cat > "${dir}/policies.yaml" <<EOF
-apiVersion: 1
-policies:
-  - orgId: 1
-    receiver: grafana-default-email
-    routes:
-      - receiver: klai-ops-alerts-email
-        matchers:
-          - ${matcher}
-EOF
-  cat > "${dir}/probe-rules.yaml" <<'YAML'
-apiVersion: 1
-groups:
-  - orgId: 1
-    name: probe
-    rules:
-      - uid: probe-all-keys-full
-        title: probe_all_keys_full
-        labels:
-          severity: critical
-          component: probe
-YAML
-}
-
-# --- Scenario R1: critical rule matched by an equality route → PASS --------
-write_routes_fixture "${FIXTURE_ROOT}/routes-r1" "component = probe"
-run_pass "routes-R1: critical rule with an equality route" \
-  python3 "${REPO_ROOT}/scripts/audit-alert-routes.py" "${FIXTURE_ROOT}/routes-r1"
-
-# --- Scenario R2: critical rule that only the default receiver catches → FAIL
-# The October 2026 Mistral incident: the rule's labels match no route.
-write_routes_fixture "${FIXTURE_ROOT}/routes-r2" "component = something-else"
-run_fail "routes-R2: critical rule falls to the default receiver" \
-  python3 "${REPO_ROOT}/scripts/audit-alert-routes.py" "${FIXTURE_ROOT}/routes-r2"
-
-# --- Scenario R3: a regex route is not understood, so it does not count → FAIL
-write_routes_fixture "${FIXTURE_ROOT}/routes-r3" "component =~ prob.*"
-run_fail "routes-R3: regex matcher does not count as a route" \
-  python3 "${REPO_ROOT}/scripts/audit-alert-routes.py" "${FIXTURE_ROOT}/routes-r3"
-
-# --- Scenario R4: the repo's own rules → PASS --------------------------------
-run_pass "routes-R4: every critical rule in the repo has a route" \
-  python3 "${REPO_ROOT}/scripts/audit-alert-routes.py" "${REPO_ROOT}/deploy/grafana/provisioning/alerting"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Summary
