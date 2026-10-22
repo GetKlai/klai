@@ -1,8 +1,8 @@
 diff --git a/src/stream.ts b/src/stream.ts
-index 6913f43..19e50d7 100644
+index 8f36612c..3104003b 100644
 --- a/src/stream.ts
 +++ b/src/stream.ts
-@@ -40,6 +40,177 @@ import { safeDispatchCustomEvent } from '@/utils/events';
+@@ -66,6 +66,177 @@ import { composeAbortSignals } from '@/utils/misc';
  import { isGoogleLike } from '@/utils/llm';
  import { getMessageId } from '@/messages';
  
@@ -180,7 +180,7 @@ index 6913f43..19e50d7 100644
  const LOCAL_CODING_BUNDLE_NAME_SET: ReadonlySet<string> = new Set(
    LOCAL_CODING_BUNDLE_NAMES
  );
-@@ -1564,6 +1735,14 @@ hasToolCallChunks: ${hasToolCallChunks}
+@@ -2061,6 +2232,14 @@ hasToolCallChunks: ${hasToolCallChunks}
      ) {
        return;
      } else if (typeof content === 'string') {
@@ -195,7 +195,7 @@ index 6913f43..19e50d7 100644
        if (agentContext.currentTokenType === ContentTypes.TEXT) {
          await graph.dispatchMessageDelta(
            stepId,
-@@ -1571,14 +1750,15 @@ hasToolCallChunks: ${hasToolCallChunks}
+@@ -2068,14 +2247,15 @@ hasToolCallChunks: ${hasToolCallChunks}
              content: [
                {
                  type: ContentTypes.TEXT,
@@ -213,7 +213,7 @@ index 6913f43..19e50d7 100644
          if (thinking) {
            await graph.dispatchReasoningDelta(
              stepId,
-@@ -1617,6 +1797,7 @@ hasToolCallChunks: ${hasToolCallChunks}
+@@ -2115,6 +2295,7 @@ hasToolCallChunks: ${hasToolCallChunks}
                  {
                    type: ContentTypes.TEXT,
                    text: text,
@@ -221,7 +221,7 @@ index 6913f43..19e50d7 100644
                  },
                ],
              },
-@@ -1800,14 +1981,46 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+@@ -2457,9 +2638,20 @@ export function createContentAggregator(): t.ContentAggregatorResult {
      ) {
        // TODO: update this!!
        const currentContent = contentParts[index] as t.MessageDeltaUpdate;
@@ -235,15 +235,17 @@ index 6913f43..19e50d7 100644
 +      const seamIdx = findPartialKlaiMarkerStart(accumulated);
 +      const head = seamIdx === -1 ? accumulated : accumulated.slice(0, seamIdx);
 +      const carry = seamIdx === -1 ? '' : accumulated.slice(seamIdx);
-+      const extracted = extractKlaiSourcesFromText(carry + contentPart.text);
++      const extracted = extractKlaiSourcesFromText(carry + (incomingText ?? ''));
        const update: t.MessageDeltaUpdate = {
          type: ContentTypes.TEXT,
--        text: (currentContent.text || '') + contentPart.text,
+-        text: (currentContent.text || '') + (incomingText ?? ''),
 +        text: head + extracted.text,
        };
  
        if (contentPart.tool_call_ids) {
-         update.tool_call_ids = contentPart.tool_call_ids;
+@@ -2468,6 +2660,27 @@ export function createContentAggregator(): t.ContentAggregatorResult {
+         /** A citations-only delta must not drop ids already accumulated */
+         update.tool_call_ids = currentContent.tool_call_ids;
        }
 +      /* Newly-seen sources win; otherwise keep what we already accumulated.
 +         `??` is wrong here: an empty array is not nullish, so a delta carrying
@@ -266,52 +268,6 @@ index 6913f43..19e50d7 100644
 +          currentContent as { sources?: unknown[] }
 +        ).sources;
 +      }
-       contentParts[index] = update;
-     } else if (
-       partType.startsWith(ContentTypes.THINK) &&
-@@ -2041,9 +2254,20 @@ export function createContentAggregator(): t.ContentAggregatorResult {
-         return;
-       }
  
--      const contentPart = getFirstContentPart(messageDelta.delta.content);
--      if (contentPart != null) {
--        updateContent(runStep.index, contentPart);
-+      /* Klai patch: upstream only ever reads content[0]. A provider that emits
-+         a multi-part delta silently loses everything after the first part --
-+         including a content part carrying klai_sources. Iterate all of them
-+         and warn once so the frequency is queryable. */
-+      const messageDeltaContent = Array.isArray(messageDelta.delta.content)
-+        ? messageDelta.delta.content
-+        : [messageDelta.delta.content];
-+      if (messageDeltaContent.length > 1) {
-+        klaiWarnOnce('stream.delta-array guard saw multi-part delta (message)');
-+      }
-+      for (const contentPart of messageDeltaContent) {
-+        if (contentPart != null) {
-+          updateContent(runStep.index, contentPart);
-+        }
-       }
-     } else if (
-       event === GraphEvents.ON_AGENT_UPDATE &&
-@@ -2062,9 +2286,18 @@ export function createContentAggregator(): t.ContentAggregatorResult {
-         return;
-       }
- 
--      const contentPart = getFirstContentPart(reasoningDelta.delta.content);
--      if (contentPart != null) {
--        updateContent(runStep.index, contentPart);
-+      const reasoningDeltaContent = Array.isArray(reasoningDelta.delta.content)
-+        ? reasoningDelta.delta.content
-+        : [reasoningDelta.delta.content];
-+      if (reasoningDeltaContent.length > 1) {
-+        klaiWarnOnce(
-+          'stream.delta-array guard saw multi-part delta (reasoning)'
-+        );
-+      }
-+      for (const contentPart of reasoningDeltaContent) {
-+        if (contentPart != null) {
-+          updateContent(runStep.index, contentPart);
-+        }
-       }
-     } else if (event === GraphEvents.ON_RUN_STEP_DELTA) {
-       const runStepDelta = data as t.RunStepDeltaEvent;
+       if (incomingCitations !== undefined) {
+         update.citations =

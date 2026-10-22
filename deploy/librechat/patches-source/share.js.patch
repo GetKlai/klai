@@ -1,8 +1,8 @@
 diff --git a/api/server/routes/share.js b/api/server/routes/share.js
-index 1a15bd2..4f5bf0f 100644
+index 3cd5761cb..29935c45c 100644
 --- a/api/server/routes/share.js
 +++ b/api/server/routes/share.js
-@@ -66,6 +66,93 @@ const resolveSharedLinkExpiration = (req, conversationId) =>
+@@ -124,6 +124,93 @@ const resolveSharedLinkExpiration = (req, conversationId) =>
      },
    );
  
@@ -96,12 +96,16 @@ index 1a15bd2..4f5bf0f 100644
  /**
   * Shared messages
   */
-@@ -249,7 +336,7 @@ if (allowSharedLinks) {
-         });
-         if (share) {
+@@ -397,7 +484,11 @@ if (allowSharedLinks) {
            res.set('Cache-Control', 'private, no-store');
--          res.status(200).json(share);
-+          res.status(200).json(sanitizeShare(share));
+           res
+             .status(200)
+-            .json(langfuseSessionUrl == null ? share : { ...share, langfuseSessionUrl });
++            .json(
++              sanitizeShare(
++                langfuseSessionUrl == null ? share : { ...share, langfuseSessionUrl },
++              ),
++            );
          } else {
            res.status(404).end();
          }

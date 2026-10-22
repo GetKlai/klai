@@ -379,13 +379,15 @@ fi
 # getklai/entrypoint.sh.
 STREAM_CLEANUP_TARGET=/app/packages/api/dist/index.cjs
 # Two ways this can already be satisfied: this transform ran before (leaves
-# its own marker), or the image was built from the source diff and carries
-# CLEANUP_ON_COMPLETE. The second is the SPEC-LIBRECHAT-PATCH-MODEL-001
-# model, and matching on it is what keeps the runtime transform from
-# layering a duplicate cleanupOnComplete key on top of the baked-in one.
-# The identifier is the marker, not a comment: the bundler strips comments.
-if grep -qE "SPEC-STREAM-CLEANUP-001|CLEANUP_ON_COMPLETE" "$STREAM_CLEANUP_TARGET" 2>/dev/null; then
-  echo "[klai-entrypoint] cleanup-on-complete already in place (runtime marker or baked-in CLEANUP_ON_COMPLETE), skipping"
+# its own marker in the bundle), or the image was built from the source diff.
+# The second is the SPEC-LIBRECHAT-PATCH-MODEL-001 model. From v0.8.8 the diff
+# lives in the plain, unbundled /app/api/server/index.js (its comment survives),
+# because upstream decides cleanupOnComplete there, after spreading the object
+# createStreamServices() returns. Matching on either keeps this transform from
+# layering a second, inert cleanupOnComplete key onto the bundle.
+STREAM_CLEANUP_SERVER=/app/api/server/index.js
+if grep -qE "SPEC-STREAM-CLEANUP-001" "$STREAM_CLEANUP_TARGET" "$STREAM_CLEANUP_SERVER" 2>/dev/null; then
+  echo "[klai-entrypoint] cleanup-on-complete already in place (runtime marker or baked-in server/index.js patch), skipping"
 else
   node <<'STREAM_CLEANUP_NODE'
 const { existsSync, readFileSync, writeFileSync } = require('fs');

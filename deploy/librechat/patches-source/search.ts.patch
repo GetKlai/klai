@@ -1,11 +1,11 @@
 diff --git a/src/tools/search/search.ts b/src/tools/search/search.ts
-index d18a7533..aa091920 100644
+index 2f3f8955..857f8023 100644
 --- a/src/tools/search/search.ts
 +++ b/src/tools/search/search.ts
-@@ -22,7 +22,19 @@ const chunker = {
+@@ -32,7 +32,19 @@ const chunker = {
      /** Cleaned up excessive spaces and tabs */
      const cleanedSpaces = cleanedNewlines.replace(/[ \t]+/g, ' ');
-
+ 
 -    return cleanedSpaces.trim();
 +    /** Strip lone surrogates: text splitter can cut inside a UTF-16 surrogate pair
 +     * (bold/italic Unicode like LinkedIn fancy text encodes as surrogate pairs) */
@@ -23,10 +23,10 @@ index d18a7533..aa091920 100644
    },
    splitText: async (
      text: string,
-@@ -42,7 +54,24 @@ const chunker = {
+@@ -52,7 +64,24 @@ const chunker = {
        chunkOverlap,
      });
-
+ 
 -    return await splitter.splitText(text);
 +    const chunks = await splitter.splitText(text);
 +
@@ -47,18 +47,18 @@ index d18a7533..aa091920 100644
 +
 +    return sanitizedChunks;
    },
-
+ 
    splitTexts: async (
-@@ -101,7 +130,7 @@ const getHighlights = async ({
-   query,
+@@ -163,7 +192,7 @@ const getHighlights = async ({
    content,
    reranker,
+   metrics,
 -  topResults = 5,
 +  topResults = 3,
    maxContentLength = DEFAULT_MAX_CONTENT_LENGTH,
-   logger,
+   chunkOptions,
  }: {
-@@ -162,7 +191,7 @@ const createSerperAPI = (
+@@ -255,7 +284,7 @@ const createSerperAPI = (
      date,
      country,
      safeSearch,
@@ -67,8 +67,8 @@ index d18a7533..aa091920 100644
      type,
    }: t.GetSourcesParams): Promise<t.SearchResult> => {
      if (!query.trim()) {
-@@ -255,7 +284,7 @@ const createSearXNGAPI = (
-
+@@ -356,7 +385,7 @@ const createSearXNGAPI = (
+ 
    const getSources = async ({
      query,
 -    numResults = 8,
@@ -76,7 +76,7 @@ index d18a7533..aa091920 100644
      safeSearch,
      type,
    }: t.GetSourcesParams): Promise<t.SearchResult> => {
-@@ -473,7 +502,7 @@ export const createSourceProcessor = (
+@@ -611,7 +640,7 @@ export const createSourceProcessor = (
      throw new Error('Scraper instance is required');
    }
    const {

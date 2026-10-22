@@ -208,6 +208,7 @@ dry_run_transforms() {
 /app/packages/data-schemas/dist/index.cjs
 /app/api/db/indexSync.js
 /app/api/server/routes/messages.js
+/app/api/server/index.js
 /app/packages/api/dist/index.cjs
 "
   local p dest

@@ -62,7 +62,16 @@ function makeRequire() {
       id === './utils/truncation.cjs' ||
       id === 'uuid' ||
       id === './tools/eagerEventExecution.cjs' ||
-      id === './tools/streamedToolCallSeals.cjs'
+      id === './tools/streamedToolCallSeals.cjs' ||
+      id === './utils/misc.cjs' ||
+      id === './utils/toolContent.cjs' ||
+      id === './messages/reasoningTypes.cjs' ||
+      id === './messages/assistantPhase.cjs' ||
+      id === './llm/streamLimits.cjs' ||
+      id === './tools/intentArg.cjs' ||
+      id === './graphs/acceptedModelResponse.cjs' ||
+      id === './tools/preparedSubagents.cjs' ||
+      id === './tools/toolErrorContent.cjs'
     ) {
       return {};
     }

@@ -1,0 +1,18 @@
+diff --git a/api/server/index.js b/api/server/index.js
+index 8477c3b57..a99ee63ef 100644
+--- a/api/server/index.js
++++ b/api/server/index.js
+@@ -132,7 +132,12 @@ const configureGenerationStreams = () => {
+   const streamServices = createStreamServices();
+   GenerationJobManager.configure({
+     ...streamServices,
+-    cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS),
++    // SPEC-STREAM-CLEANUP-001: keep completed generation jobs briefly so a client
++    // that reconnects right as an answer completes can still retrieve it. Upstream
++    // defaults to discarding them immediately and decides here, after the spread,
++    // so a value set in createStreamServices() never reaches the manager. Unset
++    // means keep; STREAM_KEEP_COMPLETED_JOBS=false still restores upstream.
++    cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS ?? 'true'),
+   });
+   GenerationJobManager.setApprovalExpiredHandler(recordExpiredScheduleApproval);
+   GenerationJobManager.setTerminalHostActionHandler(
