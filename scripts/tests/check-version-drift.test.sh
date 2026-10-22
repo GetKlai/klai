@@ -34,7 +34,8 @@ jq -n '
    pr(103; "app/klai-renovate"; 5; "🚦 **Automerge**: Disabled by config."),
    pr(104; "mvletter"; 4; "🚦 **Automerge**: Enabled.")]' > "$tmp/pr-list.json"
 checks() { jq -n "[{bucket: \"$1\", name: \"$2\"}, {bucket: \"pass\", name: \"quality\"}]" > "$tmp/pr-checks.json"; }
-echo '[]' > "$tmp/issue-list.json"
+# The dashboard carries only the notice timestamp-optional causes on purpose.
+jq -n '[{title: "Dependency Dashboard", author: {login: "app/klai-renovate"}, body: "## Repository Problems\n\nRenovate tried to run on this repository, but found these problems.\n\n - WARN: Some release(s) did not have a releaseTimestamp, but as we are running with minimumReleaseAgeBehaviour=timestamp-optional, proceeding.\n"}]' > "$tmp/issue-list.json"
 jq -n '[{createdAt: (now - 3600 | todate)}]' > "$tmp/run-list.json"
 
 run_script() {
@@ -69,5 +70,7 @@ checks pending renovate/stability-days
 jq '(.[] | select(.number == 101) | .createdAt) |= (now - 11 * 86400 | todate)' "$tmp/pr-list.json" > "$tmp/pr-list.tmp" && mv "$tmp/pr-list.tmp" "$tmp/pr-list.json"
 out=$(run_script)
 grep -q 'FAIL: GetKlai/klai: automerge PR #101 open 11d is stuck' <<<"$out" || fail "11-day pending PR not reported"
+
+grep -q "Dashboard has a 'Repository Problems' section" <<<"$out" && fail "the timestamp-optional notice was reported as a problem"
 
 echo "check-version-drift: PASS"
