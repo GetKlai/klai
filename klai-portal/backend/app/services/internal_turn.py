@@ -34,6 +34,7 @@ from app.services.chat_safety import _last_user_message
 from app.services.retrieval_context import (
     INTERNAL_RETRIEVE_TOP_K,
     KnowledgeTurn,
+    kept_passages_of,
     retrieval_upstream_errors,
     retrieve_context,
     strict_risk_model,
@@ -68,6 +69,12 @@ class InternalInputs:
     templates_block: str
     telemetry_level: str
     pasted_correspondence: bool
+    # The case and the kept passages the previous turn of this conversation
+    # stored (partner._previous_internal_turn), empty on a first turn. The
+    # turn leaves its own case in ``case`` and replaces ``kept_passages`` with
+    # what the next turn reads; neither goes into answer_signals.
+    previous_case: dict | None
+    kept_passages: list[dict]
     # Signals only, never text: the record is record_internal_turn's, LibreChat keeps the conversation.
     answer_signals: dict[str, Any]
     turn_started: float
@@ -76,6 +83,7 @@ class InternalInputs:
     # (partner._maybe_apply_web_search). Open and general only: Strict never
     # searches the web.
     web_search: Callable[[str], Awaitable[tuple[str, list[dict], str | None]]]
+    case: case_file.Case | None = None
 
 
 async def internal_turn(inputs: InternalInputs) -> Reply:
@@ -105,6 +113,9 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
             (found, retrieval_ms), (case, case_ms) = await asyncio.gather(
                 timed(_search(inputs, turn, [])), timed(_read_case(inputs))
             )
+    inputs.case = case
+    if turn.passages_chosen:
+        inputs.kept_passages = kept_passages_of(found.chunks, inputs.kept_passages)
     if case is None and inputs.profile.kb_mode != "general":
         inputs.answer_signals["judge_failed"] = ["case"]
     profile, auth = inputs.profile, inputs.auth
@@ -120,11 +131,11 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
 
 
 def _read_case(inputs: InternalInputs) -> Awaitable[case_file.Case | None]:
-    # No previous case: LibreChat sends the whole conversation and the internal
-    # record has no conversation key to store one under. No subjects either:
-    # there is no referral to send an employee to.
+    # The case the previous turn stored, as on the widget, so the language it
+    # fixed and the problem it narrowed carry over. No subjects: there is no
+    # referral to send an employee to.
     return case_file.update_case(
-        inputs.request.messages, None, inputs.settings, delegated_org_id=inputs.auth.zitadel_org_id
+        inputs.request.messages, inputs.previous_case, inputs.settings, delegated_org_id=inputs.auth.zitadel_org_id
     )
 
 
@@ -133,6 +144,7 @@ async def _search(inputs: InternalInputs, turn: KnowledgeTurn, follow_up_variant
     knowledge = request.knowledge
     chunks, system_prompt, trusted_sources, broad = await retrieve_context(
         follow_up_variants=follow_up_variants,
+        kept_passages=inputs.kept_passages,
         answer_signals=inputs.answer_signals,
         org_id=auth.org_id,
         zitadel_org_id=auth.zitadel_org_id,

@@ -853,3 +853,39 @@ def test_the_gap_event_stand_in_is_a_plain_function_like_the_one_it_replaces():
     assert not inspect.iscoroutinefunction(meetlat._skip_gap_event)
     assert not inspect.iscoroutinefunction(meetlat.retrieval_context._schedule_gap_event)
     assert meetlat._skip_gap_event(org_id=1, query_text="q") is None
+
+
+async def test_a_replayed_internal_turn_stores_no_case(monkeypatch):
+    """A round runs on a read-only database: the case store must be skipped, or every replayed turn would fail it."""
+    import asyncio
+
+    from app.api import partner
+    from app.services import answer_grounding, widget_turn
+
+    stored: list[dict] = []
+
+    async def keep_internal_case(**fields):
+        stored.append(fields)
+
+    # Every attribute the patches replace is restored after the test.
+    for owner, name in (
+        (partner, "record_internal_turn"),
+        (partner, "record_widget_turn"),
+        (partner, "last_internal_case"),
+        (widget_turn, "write_retrieval_log"),
+        (meetlat.retrieval_context, "_schedule_gap_event"),
+        (answer_grounding, "_CHECK_TIMEOUT_SECONDS"),
+        (answer_grounding, "_INTERNAL_CHECK_TIMEOUT_SECONDS"),
+    ):
+        monkeypatch.setattr(owner, name, getattr(owner, name))
+    monkeypatch.setattr(partner, "keep_internal_case", keep_internal_case)
+    monkeypatch.setattr(meetlat, "_make_database_read_only", lambda _db: None)
+
+    meetlat._apply_measurement_patches()
+    conversation = partner._InternalConversation("key", "previous", "current")
+    turn = types.SimpleNamespace(case=None, kept_passages=[{"chunk_id": "c1", "text": "Synthetic passage."}])
+    partner._keep_internal_case(7, conversation, turn)  # type: ignore[arg-type]
+    await asyncio.gather(*partner._pending)
+
+    assert stored == []
+    assert await partner.last_internal_case(org_id=7, conversation_key="key", turn_digest="previous") is None

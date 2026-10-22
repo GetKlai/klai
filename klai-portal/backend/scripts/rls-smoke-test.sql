@@ -143,6 +143,18 @@ BEGIN
     END;
 END $$;
 
+SELECT '=== Test 13: internal_chat_cases (internal chat case memory Cat-D) ===' AS test;
+-- Strict Cat-D: a SELECT without tenant context must raise insufficient_privilege.
+DO $$
+BEGIN
+    BEGIN
+        PERFORM COUNT(*) FROM internal_chat_cases;
+        RAISE EXCEPTION 'RLS SMOKE FAILURE: SELECT on internal_chat_cases without tenant context did not raise';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK: internal_chat_cases raised insufficient_privilege as expected';
+    END;
+END $$;
+
 SELECT '=== Test 10: cleanup ===' AS test;
 SELECT set_config('app.current_org_id', '', false);
 SELECT set_config('app.cross_org_admin', '', false);

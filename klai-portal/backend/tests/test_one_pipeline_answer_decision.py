@@ -30,6 +30,7 @@ from helpers import selection_quoting_first_passage
 from klai_chat_prompts import no_citable_sources_message
 
 from app.api.partner_dependencies import PartnerAuthContext
+from app.services.case_file import StoredTurn
 from app.services.chat_profile import ChatProfile
 from app.services.chat_safety import safety_refusal_message
 
@@ -185,6 +186,7 @@ async def _turn(
     include_sources: bool = True,
     retrieval_response: httpx.Response | None = None,
     web_search: bool = False,
+    cases: dict | None = None,
 ) -> _Turn:
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
@@ -209,6 +211,20 @@ async def _turn(
         records.append({"org_id": org_id, **answer_signals})
 
     monkeypatch.setattr(partner, "record_internal_turn", record)
+    # internal_chat_cases in memory, shared by the turns of one conversation.
+    cases = {} if cases is None else cases
+
+    async def last_internal_case(*, org_id: int, conversation_key: str, turn_digest: str) -> StoredTurn | None:
+        digest, stored = cases.get((org_id, conversation_key), ("", None))
+        return stored if digest == turn_digest else None
+
+    async def keep_internal_case(
+        *, org_id: int, conversation_key: str, turn_digest: str, case: dict | None, kept_passages: list[dict]
+    ) -> None:
+        cases[(org_id, conversation_key)] = (turn_digest, StoredTurn(case, "", kept_passages, None))
+
+    monkeypatch.setattr(partner, "last_internal_case", last_internal_case)
+    monkeypatch.setattr(partner, "keep_internal_case", keep_internal_case)
 
     db = AsyncMock()
     no_widget = MagicMock()
@@ -660,6 +676,92 @@ async def test_an_internal_follow_up_makes_no_rewrite_and_no_title_clarify_call(
     kinds = {_LiteLLM._kind(body) for body in llm.calls}
     assert {"case_update", "passage_selection", "answer"} <= kinds
     assert not kinds & {"rewrite", "clarify_question"}
+
+
+# --- The case and its passages, kept across an internal conversation ------------
+
+KEPT_ARTICLE = "Een verlofaanvraag die na twee werkdagen niet is goedgekeurd, gaat vanzelf door naar HR."
+LEAVE_CASE = {
+    "problem": "verlof aanvragen en niemand keurt het goed",
+    "product": "HR-portaal",
+    "variant": "",
+    "tried": [],
+    "wants_quote": "",
+    "wants": "knowledge",
+    "out_of_scope_quote": "",
+    "out_of_scope": False,
+    "sentiment": "neutral",
+    "language": "nl",
+    "queries": ["verlof aanvragen HR-portaal goedkeuring", "verlof goedkeuring leidinggevende reageert niet"],
+}
+
+
+def _one_article(text: str, chunk_id: str, title: str) -> dict:
+    """A retrieve response with one article; the knowledge base comes from the raw chunks, as retrieval-api sends it."""
+    item = {
+        "chunk_id": chunk_id,
+        "evidence_id": f"ev-{chunk_id}",
+        "text": text,
+        "title": title,
+        "source_url": f"https://kb.example.com/{chunk_id}",
+        "reranker_score": 0.82,
+        "final_score": 0.82,
+    }
+    return {
+        "evidence_pack": {"items": [item], "sources": [{"url": item["source_url"], "title": title}]},
+        "chunks": [{"chunk_id": chunk_id, "kb_slug": "handboek"}],
+        "confidence_band": "high",
+    }
+
+
+async def _two_internal_turns(monkeypatch) -> tuple[_Turn, _Turn, _LiteLLM]:
+    """Turn 1 chooses KEPT_ARTICLE; turn 2's search finds only an unrelated article."""
+    cases: dict = {}
+    first = await _turn(
+        monkeypatch,
+        _LiteLLM(case=LEAVE_CASE),
+        profile=_internal(),
+        retrieval=_one_article(KEPT_ARTICLE, "c-leave", "Verlof goedkeuren"),
+        cases=cases,
+    )
+    llm = _LiteLLM(case=LEAVE_CASE)
+    second = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval=_one_article(UNRELATED, "c-parking", "Parkeren"),
+        history=({"role": "user", "content": QUESTION}, {"role": "assistant", "content": first.text}),
+        question="En als mijn leidinggevende niet reageert?",
+        cases=cases,
+    )
+    return first, second, llm
+
+
+@pytest.mark.asyncio
+async def test_an_internal_follow_up_offers_the_passage_the_previous_turn_chose(monkeypatch):
+    """The widget's case memory on the internal chat: the passage turn 1 chose
+    is offered to turn 2's selection and writer, though turn 2's search lost it,
+    and turn 2 reads its case on the case turn 1 stored."""
+    _, _, llm = await _two_internal_turns(monkeypatch)
+
+    (selection,) = llm.of("passage_selection")
+    passages = selection["messages"][1]["content"].split("Passages:\n", 1)[1]
+    assert passages.startswith(f"[1] Verlof goedkeuren\n{KEPT_ARTICLE}")
+    assert KEPT_ARTICLE in _system_prompt(llm)
+    (case_call,) = llm.of("case_update")
+    assert LEAVE_CASE["problem"] in case_call["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_an_internal_record_says_whether_the_case_was_remembered_without_its_text(monkeypatch):
+    first, second, _ = await _two_internal_turns(monkeypatch)
+
+    assert first.records[0]["case_remembered"] is False
+    (record,) = second.records
+    assert record["case_remembered"] is True
+    recorded = json.dumps(record, ensure_ascii=False)
+    assert KEPT_ARTICLE not in recorded
+    assert LEAVE_CASE["problem"] not in recorded
 
 
 # --- Grounding check and repair ---------------------------------------------------
@@ -1215,6 +1317,7 @@ _GOLDEN_FRAMES = (
 )
 _GOLDEN_STRICT_RECORD = {
     "org_id": 7,
+    "case_remembered": False,
     "band": "high",
     "multi_question": False,
     "selection": {"verdict": "answers", "passages": [1]},

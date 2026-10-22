@@ -19,6 +19,9 @@ Layout:
   Returns nothing — failures are logged but never re-raised.
 - ``record_internal_turn(...)``: the internal chat's per-turn signals, one
   row in ``internal_chat_turns``, same failure contract.
+- ``last_internal_case(...)`` / ``keep_internal_case(...)``: the case an
+  internal conversation carries to its next turn, one row per conversation
+  in ``internal_chat_cases``.
 """
 
 from __future__ import annotations
@@ -414,3 +417,96 @@ async def last_case(*, widget_id: str, session_key: str) -> StoredTurn | None:
         return None
     kept = stored[2] if isinstance(stored[2], list) else []
     return StoredTurn(stored[0] if isinstance(stored[0], dict) else None, str(stored[1] or ""), kept, stored[3])
+
+
+# How long an internal conversation's case is kept, and how many expired rows
+# one write deletes: the table holds one row per conversation and would
+# otherwise only grow.
+_INTERNAL_CASE_DAYS = 30
+_INTERNAL_CASE_PRUNE_ROWS = 100
+
+
+async def last_internal_case(*, org_id: int, conversation_key: str, turn_digest: str) -> StoredTurn | None:
+    """The case and kept passages the previous turn of an internal conversation stored; :func:`last_case` for LibreChat.
+
+    ``turn_digest`` is the digest of the employee's messages before the
+    latest one, so only the row the turn right before this one stored
+    matches: a regenerated or edited turn, and another conversation that
+    opened with the same message, read nothing. The stored turn has no text,
+    because the internal chat keeps no reply; LibreChat does.
+    """
+    async with tenant_scoped_session(org_id) as db:
+        stored = (
+            await db.execute(
+                text(
+                    """
+                    SELECT case_file, kept_passages
+                      FROM internal_chat_cases
+                     WHERE org_id = :org_id
+                       AND conversation_key = :conversation_key
+                       AND turn_digest = :turn_digest
+                       AND updated_at > now() - make_interval(days => :days)
+                    """
+                ),
+                {
+                    "org_id": org_id,
+                    "conversation_key": conversation_key,
+                    "turn_digest": turn_digest,
+                    "days": _INTERNAL_CASE_DAYS,
+                },
+            )
+        ).first()
+    if stored is None:
+        return None
+    kept = stored[1] if isinstance(stored[1], list) else []
+    return StoredTurn(stored[0] if isinstance(stored[0], dict) else None, "", kept, None)
+
+
+async def keep_internal_case(
+    *, org_id: int, conversation_key: str, turn_digest: str, case: dict | None, kept_passages: list[dict]
+) -> None:
+    """Store what the next turn of an internal conversation reads, one row per conversation, and prune expired rows.
+
+    The case and the passages are text, so they live in ``internal_chat_cases``,
+    never in ``internal_chat_turns`` or a log line: a failure is logged by its
+    type only, because a database error's message carries the parameters.
+    """
+    try:
+        async with tenant_scoped_session(org_id) as db:
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO internal_chat_cases
+                           (org_id, conversation_key, turn_digest, case_file, kept_passages, updated_at)
+                    VALUES (:org_id, :conversation_key, :turn_digest,
+                            CAST(:case_file AS jsonb), CAST(:kept_passages AS jsonb), now())
+                    ON CONFLICT (org_id, conversation_key) DO UPDATE
+                       SET turn_digest = EXCLUDED.turn_digest,
+                           case_file = EXCLUDED.case_file,
+                           kept_passages = EXCLUDED.kept_passages,
+                           updated_at = EXCLUDED.updated_at
+                    """
+                ),
+                {
+                    "org_id": org_id,
+                    "conversation_key": conversation_key,
+                    "turn_digest": turn_digest,
+                    "case_file": json.dumps(case),
+                    "kept_passages": json.dumps(kept_passages),
+                },
+            )
+            await db.execute(
+                text(
+                    """
+                    DELETE FROM internal_chat_cases
+                     WHERE id IN (SELECT id FROM internal_chat_cases
+                                   WHERE org_id = :org_id
+                                     AND updated_at < now() - make_interval(days => :days)
+                                   LIMIT :rows)
+                    """
+                ),
+                {"org_id": org_id, "days": _INTERNAL_CASE_DAYS, "rows": _INTERNAL_CASE_PRUNE_ROWS},
+            )
+            await db.commit()
+    except Exception as exc:
+        logger.warning("internal_chat_case_keep_failed", org_id=org_id, error=type(exc).__name__)

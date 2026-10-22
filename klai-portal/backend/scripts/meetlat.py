@@ -224,6 +224,9 @@ def _apply_measurement_patches() -> None:
     """Turn the production pipeline into a measuring one: nothing it does may reach an employee's or visitor's data."""
     _make_database_read_only(database)
     replay.partner.record_internal_turn = replay._capture_internal_turn  # type: ignore[assignment]
+    # A replayed follow-up neither reads the case the employee's own turn stored nor stores one.
+    replay.partner.last_internal_case = replay._no_internal_case  # type: ignore[assignment]
+    replay.partner.keep_internal_case = replay._skip_internal_case  # type: ignore[assignment]
     replay.partner.record_widget_turn = _capture_widget_turn  # type: ignore[assignment]
     # The retrieval log keys feedback to the chunks of the employee's latest turn,
     # and the gap event feeds the knowledge-gap backlog: neither may see a replay.
