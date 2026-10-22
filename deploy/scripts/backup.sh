@@ -845,6 +845,11 @@ main() {
   log "============================================"
 
   mkdir -p "${BACKUP_DIR}"
+  # A second run on the same date overwrites this directory's artifacts. A
+  # marker left by an earlier successful run would then mark a failed rerun's
+  # half-overwritten set as complete, and retention could drop an older good
+  # set in its favour. Only this run's own success may write it again.
+  rm -f "${BACKUP_DIR}/${COMPLETE_MARKER}"
   cd "${COMPOSE_DIR}"
   load_config
 
