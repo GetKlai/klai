@@ -49,6 +49,10 @@ be resumed by pointing at the same folder again:
 
     deploy/scripts/portal-api-oneoff.sh -- \\
         env KLAI_REPLAY_OUT=/out python scripts/replay_internal_chat.py <org_slug> [conversations] [turns]
+
+Importing this module (scripts/meetlat.py does) never touches ``sys.path``: the
+caller sets ``PYTHONPATH`` (candidate overlay first, then the backend root), and
+only a direct run falls back to appending the backend root.
 """
 
 from __future__ import annotations
@@ -70,10 +74,13 @@ from pathlib import Path
 from typing import Any
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-if str(BACKEND_ROOT) not in sys.path:
+if __name__ == "__main__" and str(BACKEND_ROOT) not in sys.path:
     # Same bootstrap as the other operator scripts: running "python scripts/x.py"
     # puts scripts/ on the path, not the backend root, so ``app`` would not import.
-    sys.path.insert(0, str(BACKEND_ROOT))
+    # Only when run directly, and appended: a module that inserts its own root at
+    # sys.path[0] on import shadows a candidate overlay given through PYTHONPATH,
+    # and three measurement rounds then ran the code of main (see scripts/meetlat.py).
+    sys.path.append(str(BACKEND_ROOT))
 
 import httpx  # noqa: E402
 import simulate_conversations as sim  # noqa: E402

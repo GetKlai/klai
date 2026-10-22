@@ -1,0 +1,519 @@
+"""The chat quality measuring stick (docs/architecture/chat-quality-history-and-plan.md §6, §8) as one CLI.
+
+    meetlat run     --surface internal --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>] [--days <n>]
+    meetlat compare --cases <cases.jsonl> [--json] <round.jsonl>...
+
+The script holds no case data. A case file has one JSON object per line with
+``cid`` (the first 8 characters of a conversation id) and ``turn`` (the index of
+the employee's turn in that conversation); ``run`` ignores every other field.
+``compare`` also reads ``class`` (the expectation class) and, for
+``dekkend_antwoord``, ``variants`` (regexes that must all appear in the answer;
+default android and iphone|ios).
+
+``run`` replays those turns through the one chat pipeline the way
+replay_internal_chat.py does and writes one row per turn. Before the first turn
+it prints which files the pipeline's own modules were loaded from: in October
+2026 three rounds ran the code of main instead of the candidate because a module
+put its own root at the front of sys.path and shadowed the candidate overlay.
+With ``--overlay`` it refuses (exit 2) unless every one of those modules comes
+from under that directory.
+
+This script never touches sys.path. The caller sets PYTHONPATH, the candidate
+overlay first and the backend root after it (docs/runbooks/meetlat.md). The
+transcripts are real conversations, so ``--out`` must lie outside the repository.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import importlib
+import json
+import re
+import statistics
+import subprocess
+import sys
+from collections import Counter
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import replay_internal_chat as replay
+from sqlalchemy import event
+
+from app.core import database
+from app.services import answer_grounding, retrieval_context
+from app.services.chat_profile import ChatProfile
+
+# The modules whose provenance decides what a round measured.
+_BANNER_MODULES = (
+    "app.services.internal_turn",
+    "app.services.widget_turn",
+    "app.services.retrieval_context",
+    "app.services.passage_selection",
+    "klai_chat_prompts",
+)
+
+# A replay measures what the check decides, not whether it beat a clock on a busy
+# host, so it gets a budget far above the production 4 s (widget) and 12 s (internal).
+_GROUNDING_BUDGET_SECONDS = 30.0
+# The cases name conversations by prefix; a LibreChat thread can be older than
+# replay_internal_chat's 90 day sampling window.
+_DEFAULT_DAYS = 365
+_ASK_CHARS = 400
+_READING_CHARS = 260
+# An answer that is only a clarifying question is no answer from the knowledge base.
+_SHORT_QUESTION_CHARS = 200
+
+_CLASS_FIELDS = ("class", "klasse", "expect")
+_AUTOMATIC_CLASSES = ("weigering", "antwoord_kb", "dekkend_antwoord", "antwoord_algemeen_gelabeld")
+_READ_CLASSES = ("weigering_feiten",)
+_DEFAULT_VARIANTS = ("android", "iphone|ios")
+_ANSWERS = ("answer", "partial_answer")
+_GENERAL_KNOWLEDGE = re.compile(r"algemene kennis|general knowledge", re.IGNORECASE)
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_URL = re.compile(r"https?://[^\s)>\]\"']+")
+_AMOUNT = re.compile(r"(?:[€$£]\s?\d[\d.,]*|\d[\d.,]*\s?(?:[€$£]|(?:euro|eur|dollar)s?\b))", re.IGNORECASE)
+
+
+class UsageError(Exception):
+    """The run or comparison cannot start as asked; main() prints it and exits 2."""
+
+
+class OverlayError(UsageError):
+    """A module the pipeline runs on did not load from the overlay."""
+
+
+# --- which code runs -------------------------------------------------------------------------------------------
+
+
+def code_under_test() -> dict[str, str]:
+    """Module name to the file it was actually loaded from."""
+    return {name: str(importlib.import_module(name).__file__) for name in _BANNER_MODULES}
+
+
+def check_overlay(modules: dict[str, str], overlay: Path) -> None:
+    root = overlay.resolve()
+    outside = {name: path for name, path in modules.items() if not Path(path).resolve().is_relative_to(root)}
+    if outside:
+        listed = ", ".join(f"{name} ({path})" for name, path in outside.items())
+        raise OverlayError(
+            f"refusing to run: {len(outside)} module(s) did not load from the overlay {root}: {listed}. "
+            "Put the overlay first on PYTHONPATH and give it a complete app/ and klai_chat_prompts/."
+        )
+
+
+def _banner(modules: dict[str, str], overlay: Path | None) -> str:
+    lines = ["meetlat: code under test", *(f"  {name}: {path}" for name, path in modules.items())]
+    lines.append(
+        f"meetlat: overlay {overlay.resolve()} (every module above must be under it)"
+        if overlay
+        else "meetlat: no overlay given, nothing is checked; the code above is what runs"
+    )
+    return "\n".join(lines)
+
+
+def _git_describe(directory: Path | None) -> str | None:
+    if directory is None or not (directory / ".git").exists():
+        return None
+    done = subprocess.run(  # noqa: S603 - fixed argument list, the directory is the operator's own overlay
+        ["git", "-C", str(directory), "describe", "--always", "--dirty"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+# --- run -------------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Thread:
+    """One conversation as the pipeline replays it: the full id, the employee's profile and the readable turns."""
+
+    cid: str
+    profile: ChatProfile | None
+    mode: str
+    turns: list[dict]
+
+
+async def _skip_gap_event(**_: object) -> None:
+    return None
+
+
+def _make_database_read_only(engine: Any) -> None:
+    """Every pooled connection opens read-only, so a replay that tries to write fails instead of writing."""
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _read_only(dbapi_connection: Any, _record: object) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("SET default_transaction_read_only = on")
+        cursor.close()
+
+
+def _apply_measurement_patches() -> None:
+    """Turn the production pipeline into a measuring one: nothing it does may reach an employee's data."""
+    _make_database_read_only(database.engine)
+    replay.partner.record_internal_turn = replay._capture_internal_turn  # type: ignore[assignment]
+    # The retrieval log keys feedback to the chunks of the employee's latest turn,
+    # and the gap event feeds the knowledge-gap backlog: neither may see a replay.
+    replay.widget_turn.write_retrieval_log = replay._skip_retrieval_log  # type: ignore[assignment]
+    retrieval_context._schedule_gap_event = _skip_gap_event  # type: ignore[assignment]
+    answer_grounding._CHECK_TIMEOUT_SECONDS = _GROUNDING_BUDGET_SECONDS
+    answer_grounding._INTERNAL_CHECK_TIMEOUT_SECONDS = _GROUNDING_BUDGET_SECONDS
+
+
+def _find_conversations(database_name: str, prefixes: list[str], days: int) -> list[dict]:
+    pattern = "^(?:" + "|".join(re.escape(p) for p in prefixes) + ")"
+    since = datetime.now(UTC) - timedelta(days=days)
+    with replay._mongo_client() as client:
+        return list(
+            client[database_name].conversations.find(
+                {"updatedAt": {"$gte": since}, "conversationId": {"$regex": pattern}},
+                {"conversationId": 1, "user": 1, "_id": 0},
+            )
+        )
+
+
+async def _fetch_threads(org: Any, prefixes: list[str], days: int) -> dict[str, Thread]:
+    """The conversations the 8-character prefixes name; a prefix that matches none or several is left out."""
+    database_name = replay.provisioning_names_for_slug(org.slug, domain=replay.settings.domain).mongodb_database
+    found = await asyncio.to_thread(_find_conversations, database_name, prefixes, days)
+    by_prefix: dict[str, list[dict]] = {}
+    for conversation in found:
+        by_prefix.setdefault(conversation["conversationId"][:8], []).append(conversation)
+    unique = {prefix: matches[0] for prefix, matches in by_prefix.items() if len(matches) == 1}
+    messages = await asyncio.to_thread(
+        replay._sync_fetch_messages, database_name, [c["conversationId"] for c in unique.values()]
+    )
+    profiles: dict[str, ChatProfile | None] = {}
+    async with replay.tenant_scoped_session(org.id) as db:
+        for user in dict.fromkeys(c["user"] for c in unique.values()):
+            try:
+                profiles[user] = await replay.resolve_internal_profile(db, org, user, remember=False)
+            except replay.LibreChatIdentityError:
+                profiles[user] = None
+    threads = {}
+    for prefix, conversation in unique.items():
+        profile = profiles[conversation["user"]]
+        turns = replay._turns_from_messages(messages.get(conversation["conversationId"], []))
+        threads[prefix] = Thread(conversation["conversationId"], profile, profile.kb_mode if profile else "", turns)
+    return threads
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _read_cases(path: Path) -> list[dict]:
+    try:
+        cases = _read_jsonl(path)
+    except (OSError, ValueError) as exc:
+        raise UsageError(f"cannot read the cases file {path}: {exc}") from exc
+    for number, case in enumerate(cases, 1):
+        if not (isinstance(case.get("cid"), str) and len(case["cid"]) == 8 and isinstance(case.get("turn"), int)):
+            raise UsageError(f"{path} line {number}: needs a cid of 8 characters and an integer turn")
+    return cases
+
+
+def _case_class(case: dict) -> str:
+    klass = next((case[f] for f in _CLASS_FIELDS if f in case), None)
+    if klass not in (*_AUTOMATIC_CLASSES, *_READ_CLASSES):
+        raise UsageError(
+            f"case {case['cid']} turn {case['turn']}: field class is {klass!r}, "
+            f"expected one of {', '.join((*_AUTOMATIC_CLASSES, *_READ_CLASSES))}"
+        )
+    return klass
+
+
+def _guard_meta(meta_path: Path, modules: dict[str, str], out: Path) -> None:
+    """Rows from another code tree must not be topped up with rows from this one."""
+    if not (meta_path.exists() and out.exists()):
+        return
+    if json.loads(meta_path.read_text()).get("modules") != modules:
+        raise UsageError(
+            f"refusing to resume: the rows in {out} were produced with other code than this run loads "
+            f"(see {meta_path}). Use a new --out."
+        )
+
+
+async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
+    """One row. Index k is the position in the readable turns, u the position among the employee's turns."""
+    user_turns = [k for k, turn in enumerate(thread.turns) if turn["role"] == "user"]
+    u = case["turn"]
+    if u >= len(user_turns):
+        return {"cid": case["cid"], "u": u, "error": "turn_out_of_range"}
+    k = user_turns[u]
+    messages = [{"role": t["role"], "content": t["content"]} for t in thread.turns[: k + 1]]
+    row = {"cid": case["cid"], "k": k, "u": u, "mode": thread.mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
+    try:
+        answer = await replay._new_answer(org, thread.profile, messages)  # type: ignore[arg-type]
+    except Exception as exc:  # one broken turn may not stop the round
+        return {**row, "error": type(exc).__name__}
+    return {**row, "text": answer["text"], "signals": answer["signals"], "total_ms": answer["total_ms"]}
+
+
+async def _run(args: argparse.Namespace) -> int:
+    if args.surface != "internal":
+        raise UsageError(f"--surface {args.surface} is not built yet: only internal is supported")
+    cases = _read_cases(args.cases)
+    overlay: Path | None = args.overlay
+    modules = code_under_test()
+    banner = _banner(modules, overlay)
+    print(banner, flush=True)
+    if overlay is not None:
+        if not overlay.is_dir():
+            raise UsageError(f"refusing to run: the overlay {overlay} is not a directory")
+        check_overlay(modules, overlay)
+    out: Path = args.out.resolve()
+    if replay.REPO_ROOT in out.parents:
+        raise UsageError("refusing to run: --out must be outside the repository, the rows hold real conversations")
+    meta_path = out.with_name(out.name + ".meta.json")
+    _guard_meta(meta_path, modules, out)
+    out.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    meta = {
+        "banner": banner,
+        "modules": modules,
+        "overlay": str(overlay.resolve()) if overlay else None,
+        "overlay_git": _git_describe(overlay),
+        "started_at": datetime.now(UTC).isoformat(),
+        "org": args.org,
+        "surface": args.surface,
+        "cases": len(cases),
+    }
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n")
+
+    done = {(r["cid"], r["u"]) for r in _read_jsonl(out)} if out.exists() else set()
+    todo = [c for c in cases if (c["cid"], c["turn"]) not in done]
+    print(f"{len(cases)} cases, {len(done)} already in {out}, replaying {len(todo)}", flush=True)
+    if not todo:
+        return 0
+
+    _apply_measurement_patches()
+    replay._route_logs_to(out.with_name(out.name + ".pipeline.log"))
+    org = await replay._load_org(args.org)
+    threads = await _fetch_threads(org, sorted({c["cid"] for c in todo}), args.days)
+    errors = 0
+    with out.open("a") as handle:
+        for number, case in enumerate(todo, 1):
+            thread = threads.get(case["cid"])
+            if thread is None or thread.profile is None:
+                row = {"cid": case["cid"], "u": case["turn"], "error": "conversation_or_profile_not_found"}
+            else:
+                row = await _replay_turn(org, thread, case)
+            errors += "error" in row
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            handle.flush()
+            print(f"{number}/{len(todo)} {'failed: ' + row['error'] if 'error' in row else 'replayed'}", flush=True)
+    print(f"files: {out} ({errors} error row(s))")
+    return 0
+
+
+# --- compare ---------------------------------------------------------------------------------------------------
+
+
+def _signals(row: dict | None) -> dict:
+    return (row or {}).get("signals") or {}
+
+
+def _text(row: dict | None) -> str:
+    return ((row or {}).get("text") or "").strip()
+
+
+def _is_short_question(text: str) -> bool:
+    return text.endswith("?") and len(text) <= _SHORT_QUESTION_CHARS
+
+
+def _names_variants(text: str, variants: list[str]) -> bool:
+    return all(re.search(rf"\b(?:{variant})\b", text, re.IGNORECASE) for variant in variants)
+
+
+def _verdict(klass: str, case: dict, row: dict | None) -> bool:
+    """Whether the row meets the expectation class; a case without a row never does."""
+    if row is None or "error" in row:
+        return False
+    signals, text = _signals(row), _text(row)
+    decision, sources = signals.get("decision"), signals.get("sources_count") or 0
+    if klass == "weigering":
+        return decision == "refusal"
+    if klass == "antwoord_kb":
+        return decision in _ANSWERS and sources >= 1 and not _is_short_question(text)
+    if klass == "dekkend_antwoord":
+        return decision in _ANSWERS and _names_variants(text, case.get("variants") or list(_DEFAULT_VARIANTS))
+    return (
+        decision == "general_knowledge"
+        or (decision == "answer" and sources == 0)
+        or bool(_GENERAL_KNOWLEDGE.search(text))
+    )
+
+
+def _count(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, dict):
+        return sum(_count(v) for v in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return len(value)
+    return 1 if value else 0
+
+
+def _round_summary(name: str, rows: dict[tuple[str, int], dict], cases: list[dict]) -> dict:
+    verdicts: dict[str, dict[str, int]] = {}
+    to_read = 0
+    for case in cases:
+        klass = _case_class(case)
+        if klass in _READ_CLASSES:
+            to_read += 1
+            continue
+        score = verdicts.setdefault(klass, {"ok": 0, "of": 0})
+        score["of"] += 1
+        score["ok"] += _verdict(klass, case, rows.get((case["cid"], case["turn"])))
+    answered = [r for r in rows.values() if "error" not in r]
+    unsupported = [s["unsupported"] for s in map(_signals, answered) if s.get("unsupported") is not None]
+    hard_facts = [_count(s["hard_facts_outside_kb"]) for s in map(_signals, answered) if s.get("hard_facts_outside_kb")]
+    latencies = [r["total_ms"] for r in answered if r.get("total_ms") is not None]
+    selection = Counter(
+        sel.get("verdict") or ("failed" if sel.get("failed") else "unknown")
+        for sel in (_signals(r).get("selection") for r in answered)
+        if isinstance(sel, dict)
+    )
+    return {
+        "round": name,
+        "verdicts": verdicts,
+        "total": {"ok": sum(v["ok"] for v in verdicts.values()), "of": sum(v["of"] for v in verdicts.values())},
+        "to_read": to_read,
+        "decisions": dict(Counter(str(_signals(r).get("decision")) for r in answered)),
+        "unsupported": {
+            "sum": sum(unsupported),
+            "answers_with": sum(1 for n in unsupported if n),
+            "of": len(unsupported),
+        },
+        "hard_facts": {"answers": len(hard_facts), "facts": sum(hard_facts)},
+        "median_total_ms": round(statistics.median(latencies)) if latencies else None,
+        "errors_or_empty": sum(1 for r in rows.values() if "error" in r or not _text(r)),
+        "selection": dict(selection),
+    }
+
+
+def _contacts(text: str) -> dict[str, list[str]]:
+    return {
+        "emails": _EMAIL.findall(text),
+        "amounts": [a.strip().rstrip(".,") for a in _AMOUNT.findall(text)],
+        "urls": [u.rstrip(".,;") for u in _URL.findall(text)],
+    }
+
+
+def _reading(cases: list[dict], rounds: dict[str, dict[tuple[str, int], dict]]) -> list[dict]:
+    reading = []
+    for case in cases:
+        klass = _case_class(case)
+        if klass not in (*_READ_CLASSES, "dekkend_antwoord"):
+            continue
+        entries = []
+        for name, rows in rounds.items():
+            row = rows.get((case["cid"], case["turn"]))
+            signals = _signals(row)
+            entries.append(
+                {
+                    "round": name,
+                    "decision": signals.get("decision")
+                    if row and "error" not in row
+                    else "error"
+                    if row
+                    else "missing",
+                    "sources": signals.get("sources_count"),
+                    "unsupported": signals.get("unsupported"),
+                    "hard_facts": _count(signals.get("hard_facts_outside_kb")),
+                    "text": _text(row)[:_READING_CHARS],
+                    "contacts": _contacts(_text(row)),
+                }
+            )
+        reading.append({"cid": case["cid"], "turn": case["turn"], "class": klass, "rounds": entries})
+    return reading
+
+
+def build_report(cases: list[dict], round_paths: list[Path]) -> dict:
+    rounds = {}
+    for path in round_paths:
+        try:
+            rounds[path.name] = {(r["cid"], r["u"]): r for r in _read_jsonl(path)}
+        except (OSError, ValueError, KeyError) as exc:
+            raise UsageError(f"cannot read the round {path}: {exc}") from exc
+    return {
+        "rounds": [_round_summary(name, rows, cases) for name, rows in rounds.items()],
+        "reading": _reading(cases, rounds),
+    }
+
+
+def _format_report(report: dict) -> str:
+    lines = []
+    for summary in report["rounds"]:
+        parts = [f"{klass} {v['ok']}/{v['of']}" for klass, v in summary["verdicts"].items()]
+        if summary["to_read"]:
+            parts.append(f"weigering_feiten {summary['to_read']} te lezen")
+        total = summary["total"]
+        lines.append(f"{summary['round']}: {' | '.join(parts)} | totaal {total['ok']}/{total['of']}")
+        unsupported, facts = summary["unsupported"], summary["hard_facts"]
+        lines.append(
+            f"  decisions {summary['decisions']}; unsupported {unsupported['sum']} in {unsupported['answers_with']} "
+            f"of {unsupported['of']} answers; hard facts outside kb {facts['facts']} in {facts['answers']} answers; "
+            f"median total_ms {summary['median_total_ms']}; error or empty rows {summary['errors_or_empty']}"
+            + (f"; selection {summary['selection']}" if summary["selection"] else "")
+        )
+    for case in report["reading"]:
+        lines += ["", f"== {case['cid']} turn {case['turn']} [{case['class']}]"]
+        for entry in case["rounds"]:
+            lines.append(
+                f"  {entry['round']}: {entry['decision']}, sources {entry['sources']}, "
+                f"unsupported {entry['unsupported']}, hard facts {entry['hard_facts']}"
+            )
+            lines.append(f"    {entry['text']}")
+            found = {kind: values for kind, values in entry["contacts"].items() if values}
+            if found:
+                lines.append("    " + "; ".join(f"{kind}: {', '.join(values)}" for kind, values in found.items()))
+    return "\n".join(lines)
+
+
+def _compare(args: argparse.Namespace) -> int:
+    report = build_report(_read_cases(args.cases), args.rounds)
+    print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else _format_report(report))
+    return 0
+
+
+# --- command line ----------------------------------------------------------------------------------------------
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="meetlat", description=(__doc__ or "").split("\n")[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    run = commands.add_parser("run", help="replay the cases through the chat pipeline")
+    run.add_argument("--surface", choices=("internal", "widget"), required=True)
+    run.add_argument("--org", required=True, help="org slug")
+    run.add_argument("--cases", type=Path, required=True)
+    run.add_argument("--out", type=Path, required=True)
+    run.add_argument(
+        "--overlay", type=Path, help="directory with the candidate code; every pipeline module must load from it"
+    )
+    run.add_argument("--days", type=int, default=_DEFAULT_DAYS, help="only conversations updated within this many days")
+    compare = commands.add_parser("compare", help="classify and compare rounds")
+    compare.add_argument("--cases", type=Path, required=True)
+    compare.add_argument("--json", action="store_true")
+    compare.add_argument("rounds", nargs="+", type=Path)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        return asyncio.run(_run(args)) if args.command == "run" else _compare(args)
+    except UsageError as exc:
+        print(f"meetlat: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
