@@ -77,15 +77,18 @@ for (const target of [entrypoint, getklaiEntrypoint]) {
   assert.match(target, /ambiguous LibreChat data-schemas dist shape/);
 }
 
-assert.match(dockerCompose, /image: getmeili\/meilisearch:v1\.54\.0/);
+assert.match(dockerCompose, /image: getmeili\/meilisearch:v1\.55\.0/);
 assert.match(dockerCompose, /MEILI_DB_PATH: \/meili_data/);
+// Every Meilisearch minor refuses the previous minor's database without it.
+assert.match(dockerCompose, /MEILI_UPGRADE_DB: "true"/);
 assert.match(dockerCompose, /MEILI_MASTER_KEY: "\$\{GETKLAI_MEILI_API_KEY:\?set a Meili key scoped to getklai_messages,getklai_convos\}"/);
 assert.match(dockerCompose, /MEILI_MESSAGES_INDEX: getklai_messages/);
 assert.match(dockerCompose, /MEILI_CONVOS_INDEX: getklai_convos/);
 assert.match(dockerCompose, /ghcr\.io\/danny-avila\/librechat:v0\.8\.7/);
 assert.match(dockerCompose, /librechat\/getklai\/entrypoint\.sh:\/klai-entrypoint\.sh:ro/);
-assert.match(devCompose, /image: getmeili\/meilisearch:v1\.54\.0/);
+assert.match(devCompose, /image: getmeili\/meilisearch:v1\.55\.0/);
 assert.match(devCompose, /MEILI_DB_PATH: \/meili_data/);
+assert.match(devCompose, /MEILI_UPGRADE_DB: "true"/);
 
 const missingEnv = spawnSync('sh', [path.join(repoRoot, 'deploy/librechat/klai-entrypoint.sh')], {
   cwd: repoRoot,
