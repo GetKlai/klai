@@ -20,8 +20,8 @@ model_list:
   # their cost is only known when the startup fetch of the remote cost map
   # succeeds, and after a failed fetch no Small or Medium call would count.
   # Spend and the window start live in the compose `redis` service
-  # (router_settings.redis_host/port/password), synced from process memory every second
-  # (litellm DEFAULT_REDIS_SYNC_INTERVAL), so a restart loses at most the
+  # (router_settings.redis_host/port/password), synced from process memory
+  # every second (litellm DEFAULT_REDIS_SYNC_INTERVAL), so a restart loses at most the
   # last second of spend instead of the whole day. Until October 2026 they
   # lived in process memory only and every container recreate handed each
   # deployment a fresh budget. The key is

@@ -40,11 +40,13 @@ jobs:
       # must run from the deploy/litellm working directory.
       - name: Test (pytest)
         working-directory: deploy/litellm
-        # redis: the version the litellm image ships (5.3.1, read on core-01
-        # on 2026-10-22); litellm does not depend on it, but its Router does
-        # once router_settings name a Redis, and a test builds that router.
         # pyyaml: test_litellm_config_provider_guard.py imports yaml; missing
         # dep kept this workflow red on main from 2026-06-18 to 2026-07-07.
+        # redis: litellm 1.105.1's litellm.proxy.utils imports redis at module
+        # load, which the CustomLogger contract test reads. The proxy image
+        # ships redis 5.3.1 in both v1.96.2 and v1.105.1 (checked 2026-10-22).
+        # The Redis budget test also builds a Router from router_settings,
+        # which goes through redis-py.
         run: >
           uv run --no-project --python 3.13
           --with pytest --with pytest-asyncio --with httpx --with structlog

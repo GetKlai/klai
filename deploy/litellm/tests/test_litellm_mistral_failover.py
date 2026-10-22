@@ -835,6 +835,7 @@ def test_router_budgets_reach_the_compose_redis_with_a_url_unsafe_password(real_
     router = real_litellm.Router(model_list=[], **settings)
     connection = router.cache.redis_cache.redis_client.connection_pool.connection_kwargs
 
+    assert "redis_url" not in config["router_settings"]
     assert (connection["host"], int(connection["port"]), connection["password"]) == ("redis", 6379, password)
     assert litellm_service["environment"]["REDIS_PASSWORD"] == "${REDIS_PASSWORD}"
     assert "redis" in litellm_service["depends_on"]
