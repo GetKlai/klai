@@ -71,7 +71,7 @@ async def test_the_visitor_is_not_kept_waiting_past_the_budget(monkeypatch):
     monkeypatch.setattr(ag, "_post", _slow_post)
     monkeypatch.setattr(ag, "_CHECK_TIMEOUT_SECONDS", 0.05)
 
-    result = await ag.check_grounding(question="Q", draft="D", articles=[], settings=_Settings(), org_id=8)
+    result = await ag.check_statements(question="Q", draft="D", articles=[], settings=_Settings(), org_id=8)
 
     assert result is None, "past the budget the caller gets what it always got"
     released.set()
@@ -91,7 +91,7 @@ async def test_the_late_verdict_is_logged_when_the_call_finishes(monkeypatch):
     monkeypatch.setattr(ag, "_CHECK_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(ag.logger, "info", lambda event, **kw: logged.append((event, kw)))
 
-    await ag.check_grounding(question="Q", draft="D", articles=[], settings=_Settings(), org_id=8)
+    await ag.check_statements(question="Q", draft="D", articles=[], settings=_Settings(), org_id=8)
     released.set()
     await asyncio.sleep(0.02)
 
@@ -110,7 +110,7 @@ async def test_a_check_within_budget_behaves_as_before(monkeypatch):
 
     monkeypatch.setattr(ag, "_post", _fast_post)
 
-    result = await ag.check_grounding(question="Q", draft="D", articles=[], settings=_Settings())
+    result = await ag.check_statements(question="Q", draft="D", articles=[], settings=_Settings())
 
     assert result is not None
     assert len(result.unsupported) == 2
@@ -133,7 +133,7 @@ async def test_during_an_outage_the_late_checks_stop_piling_up(monkeypatch):
     monkeypatch.setattr(ag.logger, "warning", lambda event, **_kw: logged.append(event))
 
     for _ in range(4):
-        await ag.check_grounding(question="Q", draft="D", articles=[], settings=_Settings())
+        await ag.check_statements(question="Q", draft="D", articles=[], settings=_Settings())
 
     assert len(ag._late_checks) == 2, "no more than the limit may run"
     assert logged.count("answer_grounding_late_skipped") == 2
@@ -159,7 +159,7 @@ async def test_a_cancelled_request_takes_its_check_with_it(monkeypatch):
 
     monkeypatch.setattr(ag, "_post", _hanging_post)
 
-    request = asyncio.create_task(ag.check_grounding(question="Q", draft="D", articles=[], settings=_Settings()))
+    request = asyncio.create_task(ag.check_statements(question="Q", draft="D", articles=[], settings=_Settings()))
     await started.wait()
     request.cancel()
     with pytest.raises(asyncio.CancelledError):

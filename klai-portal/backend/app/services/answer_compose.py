@@ -34,9 +34,9 @@ from klai_chat_prompts.language import (
 )
 
 from app.core.config import Settings
+from app.services.answer_check import AnswerCheck
 from app.services.answer_grounding import (
-    GroundingCheck,
-    check_grounding,
+    check_statements,
     grounding_budget,
 )
 from app.services.answer_judge import is_clarifying_question
@@ -373,7 +373,7 @@ def _compose_answer(
 _pending_turn_tasks: set[asyncio.Task] = set()
 
 
-def _grounding_signals(sink: dict[str, Any] | None, grounding: GroundingCheck | None, *, keep_statements: bool) -> None:
+def _grounding_signals(sink: dict[str, Any] | None, grounding: AnswerCheck | None, *, keep_statements: bool) -> None:
     """Put the statement-level check's outcome into the audit sink.
 
     ``keep_statements`` stores the flagged statements themselves, only where
@@ -391,7 +391,7 @@ def _grounding_signals(sink: dict[str, Any] | None, grounding: GroundingCheck | 
         # changes a reply after writing, and without the text a measurement
         # cannot tell whether a flag was right. Capped; it is
         # text the stored reply already holds. Not shown in the activity view yet.
-        sink["unsupported_statements"] = [item.statement[:300] for item in grounding.unsupported[:5]]
+        sink["unsupported_statements"] = [item.text[:300] for item in grounding.unsupported[:5]]
 
 
 def _check_answer_later(
@@ -415,7 +415,7 @@ def _check_answer_later(
     """
 
     async def check() -> None:
-        grounding = await check_grounding(
+        grounding = await check_statements(
             question=question,
             draft=draft,
             articles=articles,
@@ -434,10 +434,10 @@ def _check_answer_later(
     return task
 
 
-def _grounding_label(grounding: GroundingCheck) -> str:
+def _grounding_label(grounding: AnswerCheck) -> str:
     if grounding.unsupported:
         return "some_not_in_articles"
-    return "all_in_articles" if grounding.statements else "no_company_statements"
+    return "all_in_articles" if grounding.claims else "no_company_statements"
 
 
 def _log_turn_timing(

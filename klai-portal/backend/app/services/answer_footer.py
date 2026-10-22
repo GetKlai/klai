@@ -59,7 +59,7 @@ _GENERAL_KNOWLEDGE_LINE = {
 }
 
 
-# The kinds widget_write._flag_hard_facts counts (chat_safety.hard_facts_outside).
+# The kinds widget_write._flag_hard_facts counts (answer_check.AnswerCheck.hard_facts_outside).
 _HARD_FACT_LABEL = {
     "nl": {"email": "e-mailadres", "link": "link", "phone": "telefoonnummer", "amount": "bedrag"},
     "en": {"email": "e-mail address", "link": "link", "phone": "phone number", "amount": "amount"},
@@ -123,7 +123,7 @@ def render_answer_footer(
 
     ``general_knowledge`` (an Open answer without a supporting source) renders
     the activity section with its general-knowledge line even without sources.
-    ``hard_facts`` (kind to count, from ``chat_safety.hard_facts_outside``)
+    ``hard_facts`` (kind to count, from ``AnswerCheck.hard_facts_outside``)
     adds one line naming the kinds the knowledge base does not hold.
 
     ``sources`` must be the same labelled list the answer's inline citation
