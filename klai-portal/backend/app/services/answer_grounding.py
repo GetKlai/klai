@@ -45,6 +45,7 @@ from klai_chat_prompts import (
 )
 
 from app.core.config import Settings
+from app.services.answer_check import AnswerCheck, Statement
 from app.services.litellm_delegation import with_delegated_org, with_feature_tag
 
 logger = structlog.get_logger()
@@ -177,7 +178,17 @@ def _log_late_verdict(task: asyncio.Task, *, org_id: int | str | None, started: 
     )
 
 
-async def check_grounding(
+def _claims(check: GroundingCheck) -> AnswerCheck:
+    """The checker's verdict as claims; a claim the articles contradict is as unsupported as one they lack."""
+    return AnswerCheck(
+        [
+            Statement(item.statement, "claim", item.evidence if item.support == "supported" else None)
+            for item in check.statements
+        ]
+    )
+
+
+async def check_statements(
     *,
     question: str,
     draft: str,
@@ -186,8 +197,8 @@ async def check_grounding(
     org_id: int | str | None = None,
     timeout_seconds: float = _CHECK_TIMEOUT_SECONDS,
     delegated_org_id: str | None = None,
-) -> GroundingCheck | None:
-    """List the reply's statements with their evidence; ``None`` when it did not return in time.
+) -> AnswerCheck | None:
+    """List the reply's claims with their evidence; ``None`` when it did not return in time.
 
     ``None`` is what the caller has always acted on. A call that is merely slow
     keeps running and reports what it would have said; see ``_log_late_verdict``.
@@ -227,7 +238,8 @@ async def check_grounding(
     check = parse_grounding_check(content)
     if check is None:
         logger.warning("answer_grounding_unparseable")
-    return check
+        return None
+    return _claims(check)
 
 
 # A removal can leave "1." or "**Stap 2:**" with nothing behind it. The repair

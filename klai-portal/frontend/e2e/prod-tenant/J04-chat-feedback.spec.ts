@@ -58,7 +58,10 @@ test('J04 - chat feedback click reaches LibreChat feedback route and marks activ
     .locator('[data-testid="regenerate-generation-button"]')
     .waitFor({ state: 'visible', timeout: 90_000 })
 
-  const loveButton = frame.locator('button[title="Love this"]').last()
+  // By accessible name, not by title: from LibreChat v0.8.8 the active-state
+  // button that replaces it after a rating carries aria-label="Love this" and
+  // no title, so a title selector loses the button exactly when it is pressed.
+  const loveButton = frame.getByRole('button', { name: 'Love this', exact: true }).last()
   await expect(loveButton, '"Love this" feedback control should render on the completed message').toBeVisible()
   await expect(loveButton, 'feedback should start unset').toHaveAttribute('aria-pressed', 'false')
 

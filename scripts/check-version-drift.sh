@@ -93,7 +93,11 @@ for repo in $REPOS; do
   else
     clean=1
     for heading in Errored 'Repository Problems'; do
-      lines=$(printf '%s\n' "$body" | awk -v h="## $heading" '/^## /{p=($0==h); next} p&&NF' | cut -c1-200)
+      # Only the list entries count, minus the notice renovate.json5 asks for:
+      # minimumReleaseAgeBehaviour 'timestamp-optional' makes Renovate say on
+      # every run that it proceeds without a release timestamp, by design.
+      lines=$(printf '%s\n' "$body" | awk -v h="## $heading" '/^## /{p=($0==h); next} p&&NF' \
+        | grep -E '^[[:space:]]*- ' | grep -v 'minimumReleaseAgeBehaviour=timestamp-optional, proceeding' | cut -c1-200)
       if [ -n "$lines" ]; then
         clean=0
         fail "$repo: Dependency Dashboard has a '$heading' section:"

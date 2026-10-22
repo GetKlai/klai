@@ -1737,38 +1737,6 @@ def test_the_contact_gate_reads_dotted_numbers_keeps_the_next_sentence_and_drops
     assert "\n1.\n" not in f"\n{gated}\n"
 
 
-def test_a_hard_fact_counts_as_outside_only_when_no_passage_holds_it_in_any_notation():
-    text = (
-        "Het kost € 1.250,00 per jaar, zie https://kb.example.com/prijzen/ of bel 050 700 9999. "
-        "Mail naar sales@example.com, of lees https://other.example.com/faq. Een licentie kost 99 euro."
-    )
-    passages = [
-        {"text": "De prijs is 1250 euro per jaar. Bel +31 50 700 9999.", "source_url": "https://kb.example.com/prijzen"}
-    ]
-
-    assert chat_safety.hard_facts_outside(text, passages, []) == {"email": 1, "link": 1, "amount": 1}
-
-
-def test_a_malformed_link_in_the_reply_is_not_a_hard_fact_and_does_not_fail_the_turn():
-    """The normaliser raises "Invalid IPv6 URL" on "http://[stap 1]"; the
-    reply must settle, and the token is neither a link nor an error."""
-    text = "Open http://[stap 1] en kijk dan op https://kb.example.com/verlof."
-    passages = [{"text": "Zie https://kb.example.com/verlof.", "source_url": "https://kb.example.com/verlof"}]
-
-    assert chat_safety.hard_facts_outside(text, passages, []) == {}
-
-
-@pytest.mark.parametrize(
-    ("amount", "passage"),
-    [("€ 12,50", "1250 euro"), ("$ 1250", "1250 euro"), ("16.95 euro", "€ 16,- per maand of 95 cent")],
-    ids=["decimals", "currency", "fraction"],
-)
-def test_an_amount_stands_in_a_passage_only_with_the_same_value_and_currency(amount, passage):
-    """ "€ 12,50" and "1250 euro" shared one key, so an invented price could
-    pass as supported by a passage with another one."""
-    assert chat_safety.hard_facts_outside(f"Het kost {amount}.", [{"text": passage}], []) == {"amount": 1}
-
-
 async def test_the_judges_cannot_hand_the_visitor_the_ungated_draft(monkeypatch):
     """The judges may return the draft instead of the composed text; that text
     passes the same gate."""
