@@ -22,7 +22,11 @@ set -euo pipefail
 ENV_FILE="${KLAI_ENV_FILE:-/opt/klai/.env}"
 URL="${MISTRAL_PROBE_URL:-https://api.mistral.ai/v1/chat/completions}"
 MODEL="${MISTRAL_PROBE_MODEL:-mistral-small-2603}"
-TIMEOUT="${MISTRAL_PROBE_TIMEOUT:-10}"
+# Keys are probed one after another and the heartbeat push allows 10s, so a
+# run takes at most keys x TIMEOUT + 10s: 26s for two keys, inside the
+# unit's TimeoutStartSec=30s that core-01 may still be running (the unit file
+# is synced but only re-read after a manual daemon-reload, see the runbook).
+TIMEOUT="${MISTRAL_PROBE_TIMEOUT:-8}"
 LOG_FILE="${MISTRAL_PROBE_LOG_FILE:-/opt/klai/logs/mistral-api-probe.log}"
 STATE_FILE="${MISTRAL_PROBE_STATE_FILE:-/opt/klai/state/litellm/mistral-keys.json}"
 
@@ -51,7 +55,9 @@ emit() {
 }
 
 if [[ ! -r "$ENV_FILE" ]]; then
-  emit "{\"service\":\"mistral-api-probe\",\"event\":\"mistral_api_probe\",\"msg\":\"mistral_api_probe\",\"status\":\"error\",\"http_status\":0,\"error\":\"env_file_unreadable\"}"
+  # keys_ok 0 is what the no-usable-key alert matches: a probe that cannot
+  # read the keys cannot vouch for any of them, and the state file goes stale.
+  emit "{\"service\":\"mistral-api-probe\",\"event\":\"mistral_api_probe\",\"msg\":\"mistral_api_probe\",\"status\":\"error\",\"http_status\":0,\"error\":\"env_file_unreadable\",\"keys_total\":0,\"keys_ok\":0}"
   exit 0
 fi
 
@@ -117,17 +123,19 @@ with os.fdopen(fd, "w") as f:
 os.chmod(tmp, 0o644)
 os.replace(tmp, state_file)
 
-reserve = sum(1 for p in probed if p[3] != "full")
+# Only a key that completed counts as usable: a full key and a key that
+# answers 401 or times out serve nobody alike.
+usable = sum(1 for p in probed if p[3] == "ok")
 for name, fingerprint, http_status, state, error in probed:
     print(json.dumps({
         "service": "mistral-api-probe", "event": "mistral_api_probe", "msg": "mistral_api_probe",
         "status": state, "http_status": http_status, "key_env": name, "key_fingerprint": fingerprint,
-        "error": error, "keys_total": len(probed), "keys_not_full": reserve,
+        "error": error, "keys_total": len(probed), "keys_ok": usable,
     }, separators=(",", ":")))
 ' "$STATE_FILE")
 
 if [[ -z "$log_lines" ]]; then
-  emit "{\"service\":\"mistral-api-probe\",\"event\":\"mistral_api_probe\",\"msg\":\"mistral_api_probe\",\"status\":\"error\",\"http_status\":0,\"error\":\"missing_mistral_api_key\"}"
+  emit "{\"service\":\"mistral-api-probe\",\"event\":\"mistral_api_probe\",\"msg\":\"mistral_api_probe\",\"status\":\"error\",\"http_status\":0,\"error\":\"missing_mistral_api_key\",\"keys_total\":0,\"keys_ok\":0}"
   push_heartbeat down
   exit 0
 fi

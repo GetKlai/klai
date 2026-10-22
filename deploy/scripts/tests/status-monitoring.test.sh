@@ -95,13 +95,20 @@ PROVIDER_STATUS=402 probe
 [[ $(key_state "$fp1" state) == full && $(key_state "$fp1" http_status) == 402 ]]
 [[ $(key_state "$fp1" since) != 2026-10-01T00:00:00Z ]]
 [[ $(key_state "$fp2" state) == ok && $(key_state "$fp2" since) == 2026-10-01T00:00:00Z ]]
-grep -q "\"status\":\"full\",\"http_status\":402,\"key_env\":\"MISTRAL_API_KEY\",\"key_fingerprint\":\"$fp1\",\"error\":\"provider_budget_exhausted\",\"keys_total\":2,\"keys_not_full\":1" "$tmp/probe.log"
+grep -q "\"status\":\"full\",\"http_status\":402,\"key_env\":\"MISTRAL_API_KEY\",\"key_fingerprint\":\"$fp1\",\"error\":\"provider_budget_exhausted\",\"keys_total\":2,\"keys_ok\":1" "$tmp/probe.log"
 grep -q 'heartbeat-token?status=up' "$tmp/heartbeat"
 
-# No reserve left: every key full.
+# No usable key: one workspace full and the other key rejected counts as
+# zero usable keys, not as one key in reserve.
+: > "$tmp/probe.log"
+PROVIDER_STATUS=402 PROVIDER_STATUS_2=401 probe
+[[ $(grep -c '"keys_total":2,"keys_ok":0' "$tmp/probe.log") == 2 ]]
+grep -q 'heartbeat-token?status=down' "$tmp/heartbeat"
+
+# Every key full.
 : > "$tmp/probe.log"
 PROVIDER_STATUS=402 PROVIDER_STATUS_2=402 probe
-[[ $(grep -c '"status":"full".*"keys_not_full":0' "$tmp/probe.log") == 2 ]]
+[[ $(grep -c '"status":"full".*"keys_ok":0' "$tmp/probe.log") == 2 ]]
 grep -q 'heartbeat-token?status=down' "$tmp/heartbeat"
 
 PROVIDER_STATUS=401 PROVIDER_STATUS_2=401 REFLECT_SECRET=1 probe
@@ -131,3 +138,9 @@ if grep -q 'provider-key\|heartbeat-token' "$tmp/error"; then
     echo "credential leaked in delivery error" >&2
     exit 1
 fi
+
+# An unreadable env file is a run with zero usable keys, so the same alert
+# matches it, instead of a line no rule reads while the probe looks alive.
+: > "$tmp/probe.log"
+ENV="$tmp/no-such-env" probe
+grep -q '"error":"env_file_unreadable","keys_total":0,"keys_ok":0' "$tmp/probe.log"

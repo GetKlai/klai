@@ -1,7 +1,7 @@
 # LiteLLM Provider Auth Failed
 
 Alerts: `litellm_provider_auth_failed`, `mistral_workspace_unavailable`,
-`mistral_no_reserve_left`, `mistral_api_probe_missing`
+`mistral_no_usable_key`, `mistral_api_probe_missing`
 
 ## Meaning
 
@@ -59,9 +59,11 @@ It logs one line per key per run (every 2 minutes) with `key_env`,
 ## Mistral key state
 
 `mistral_workspace_unavailable` (warning, one alert per key) fires while the
-latest probe runs see a key `full` or `error`. `mistral_no_reserve_left`
-(critical) fires when every `MISTRAL_API_KEY*` key was `full` in one run, so
-the chat aliases have no workspace left. Both route to
+latest probe runs see a key `full` or `error`. `mistral_no_usable_key`
+(critical) fires when no `MISTRAL_API_KEY*` key was `ok` in one run (any mix
+of `full` and `error` counts, as does `error=env_file_unreadable`, where the
+probe could not read `/opt/klai/.env`), so the chat aliases have no working
+workspace left. Both route to
 `klai-ops-alerts-email` and repeat every hour until resolved.
 
 The probe also writes the per-key state to
@@ -95,6 +97,25 @@ falls back to learning about full keys from failed user requests (a 402
 benches a key for 5, then 15, then 60 minutes). Check
 `systemctl status mistral-api-probe.timer mistral-api-probe.service`,
 `/opt/klai/logs/mistral-api-probe.log`, Alloy and VictoriaLogs.
+
+## Probe unit
+
+`deploy-compose.yml` syncs the script to `/opt/klai/scripts/` and stages the
+unit and timer in `/opt/klai/systemd/`, but it runs no `systemctl` (no sudo).
+Activating them, or picking up a changed unit file, is manual:
+
+```bash
+ssh core-01
+sudo ln -sf /opt/klai/systemd/mistral-api-probe.service /etc/systemd/system/mistral-api-probe.service
+sudo ln -sf /opt/klai/systemd/mistral-api-probe.timer   /etc/systemd/system/mistral-api-probe.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now mistral-api-probe.timer
+systemctl show mistral-api-probe.service -p TimeoutStartUSec   # expect 1min
+```
+
+With the symlinks in place a later unit change still needs the
+`daemon-reload`. A run with two keys takes at most 26 s, so it also fits the
+old 30 s timeout until then.
 
 ## Recover
 

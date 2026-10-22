@@ -319,7 +319,13 @@ class KlaiMistralPoolHook(CustomLogger):
 
     async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
         account = self._account_of(kwargs)
-        if account is not None and self._marks.pop(account, None) is not None:
+        mark = self._marks.get(account) if account is not None else None
+        # A request that was already in flight when the 402 came in says
+        # nothing about the key now; only one started after the mark clears
+        # it. start_time is litellm's naive datetime.now() (utils.py
+        # function_setup), so .timestamp() is the same clock as time.time().
+        if mark is not None and mark.at < start_time.timestamp():
+            del self._marks[account]
             self._log_change(key_fingerprint(account), "ok", "request")
 
     async def log_success_fallback_event(self, original_model_group, kwargs, original_exception):

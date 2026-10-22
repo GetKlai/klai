@@ -4,7 +4,7 @@
 # MISTRAL_API_KEY* key LiteLLM routes over, every 2 minutes. The script
 # appends one JSON line per key to `/opt/klai/logs/mistral-api-probe.log`
 # (fields status ok|full|error, key_env, key_fingerprint, keys_total,
-# keys_not_full); Alloy ships them to VictoriaLogs with
+# keys_ok); Alloy ships them to VictoriaLogs with
 # `service:mistral-api-probe`. It also writes the per-key state LiteLLM's
 # klai_mistral_pool hook uses to skip a full key.
 #
@@ -101,8 +101,13 @@ groups:
             Triage in VictoriaLogs:
               _time:15m service:mistral-api-probe event:mistral_api_probe | sort by(_time) desc | limit 20
 
-      - uid: obs-003-mistral-no-reserve
-        title: mistral_no_reserve_left
+      # Fires on a run in which no key completed: every workspace full, or
+      # full and rejected mixed, or every key timing out, or the probe unable
+      # to read the env file (keys_total 0). Any of these leaves the chat
+      # aliases without a working key. keys_ok:* skips lines that carry no
+      # count.
+      - uid: obs-003-mistral-no-usable-key
+        title: mistral_no_usable_key
         condition: threshold
         data:
           - refId: query
@@ -117,8 +122,8 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: |
-                _time:5m service:mistral-api-probe event:mistral_api_probe keys_total:>0
-                  | stats min(keys_not_full) as reserve
+                _time:5m service:mistral-api-probe event:mistral_api_probe keys_ok:*
+                  | stats min(keys_ok) as usable
               queryType: stats
           - refId: reduce
             datasourceUid: __expr__
@@ -154,12 +159,14 @@ groups:
           alert_type: synthetic
           component: mistral-api-probe
         annotations:
-          summary: 'No Mistral reserve left: every workspace is full'
+          summary: 'No usable Mistral key: no MISTRAL_API_KEY* completed a request'
           runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
           description: |
-            Every MISTRAL_API_KEY* key answered 402 in one probe run. LiteLLM
-            has no workspace left for the klai-* chat aliases, so chat turns
-            fail until someone raises a spending limit or adds a workspace.
+            In one probe run no MISTRAL_API_KEY* key completed a request
+            (full, rejected or unreachable), or the probe could not read the
+            env file at all (error env_file_unreadable). The klai-* chat
+            aliases have no working workspace, so chat turns fail until a
+            spending limit is raised, a key is fixed or a workspace is added.
 
             Triage in VictoriaLogs:
               _time:15m service:mistral-api-probe event:mistral_api_probe | sort by(_time) desc | limit 20

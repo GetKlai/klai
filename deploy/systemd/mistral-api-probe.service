@@ -9,9 +9,12 @@ Type=oneshot
 User=root
 Group=root
 ExecStart=/opt/klai/scripts/mistral-api-probe.sh
-# One completion per key at up to MISTRAL_PROBE_TIMEOUT (10s) each, plus
-# the 10s heartbeat push: 30s only fitted a single key.
-TimeoutStartSec=90s
+# One completion per key at up to MISTRAL_PROBE_TIMEOUT (8s) each, plus the
+# 10s heartbeat push: 26s for two keys, so the old 30s still fits them; 60s
+# leaves room for up to six. deploy-compose.yml only stages this file in
+# /opt/klai/systemd; systemd reads the change after the manual daemon-reload
+# in docs/runbooks/litellm-provider-auth-failed.md.
+TimeoutStartSec=60s
 
 # Stdout goes to journald; the script also appends one JSON line per key to
 # /opt/klai/logs/mistral-api-probe.log, which Alloy ships to VictoriaLogs, and

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib
+import inspect
 import json
 import math
 import os
@@ -22,6 +23,7 @@ import re
 import sys
 import time
 from collections.abc import Callable
+from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -81,6 +83,17 @@ def real_litellm():
         sys.modules.pop("klai_mistral_pool", None)
 
 
+def _new_hook(status_file: Path):
+    """status_file is passed only when the hook takes it, so the probe-file
+    tests run red on their assertions against a hook without the probe file,
+    not on a TypeError while building it."""
+    import klai_mistral_pool
+
+    if "status_file" in inspect.signature(klai_mistral_pool.KlaiMistralPoolHook).parameters:
+        return klai_mistral_pool.KlaiMistralPoolHook(status_file=status_file)
+    return klai_mistral_pool.KlaiMistralPoolHook()
+
+
 def _pinned_router(
     real_litellm: Any,
     *,
@@ -111,7 +124,7 @@ def _pinned_router(
     # removed first so FULL state never leaks between tests -- litellm's own
     # callback dedup keys purely on class name, so an add without a prior
     # remove would silently keep reusing the old instance.
-    hook = klai_mistral_pool.KlaiMistralPoolHook(status_file=status_file)
+    hook = _new_hook(status_file)
     real_litellm.logging_callback_manager.remove_callbacks_by_type(
         real_litellm.callbacks, klai_mistral_pool.KlaiMistralPoolHook
     )
@@ -639,7 +652,7 @@ async def test_the_probe_reporting_ok_releases_a_key_a_402_benched(
     probe run said ok; only a probe run written after that 402 releases it."""
     import klai_mistral_pool
 
-    monkeypatch.setattr(klai_mistral_pool, "STATUS_FILE_RECHECK_SECONDS", 0)
+    monkeypatch.setattr(klai_mistral_pool, "STATUS_FILE_RECHECK_SECONDS", 0, raising=False)
     status_file = tmp_path / "mistral-keys.json"
     _write_status(status_file, {_KLAI_KEY: "ok", _KLAI2_KEY: "ok"}, mtime=time.time() - 60)
     calls: list[str] = []
@@ -701,8 +714,11 @@ async def test_without_a_fresh_probe_verdict_the_bench_grows_and_a_success_reset
             return _error_response(request, 402, "Workspace monthly spending limit reached")
         return _ok_response(request)
 
+    def marks() -> dict:
+        return getattr(hook, "_marks", {})
+
     async def request_after_bench() -> None:
-        mark = hook._marks.get(_KLAI_KEY)
+        mark = marks().get(_KLAI_KEY)
         if mark is not None:
             mark.until = time.time() - 1
         calls.clear()
@@ -710,34 +726,65 @@ async def test_without_a_fresh_probe_verdict_the_bench_grows_and_a_success_reset
             router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]), timeout=15
         )
 
-    def bench_minutes() -> float:
-        mark = hook._marks[_KLAI_KEY]
-        return round((mark.until - mark.at) / 60)
+    def bench_minutes() -> float | None:
+        mark = marks().get(_KLAI_KEY)
+        return None if mark is None else round((mark.until - mark.at) / 60)
 
     router, hook = _pinned_router(real_litellm, status_file=status_file)
     benches = []
     try:
         with _mock_mistral_http(handler):
             for _ in range(4):
-                previous = hook._marks.get(_KLAI_KEY)
+                previous = marks().get(_KLAI_KEY)
                 await request_after_bench()
                 assert calls == [_KLAI_KEY, _KLAI2_KEY]
-                await _wait_for(lambda previous=previous: hook._marks.get(_KLAI_KEY) is not previous)
+                await _wait_for(lambda previous=previous: marks().get(_KLAI_KEY) is not previous)
                 benches.append(bench_minutes())
 
             klai_full = False
             await request_after_bench()
             assert calls == [_KLAI_KEY]
-            await _wait_for(lambda: _KLAI_KEY not in hook._marks)
+            await _wait_for(lambda: _KLAI_KEY not in marks())
 
             klai_full = True
             await request_after_bench()
-            await _wait_for(lambda: _KLAI_KEY in hook._marks)
+            await _wait_for(lambda: _KLAI_KEY in marks())
             benches.append(bench_minutes())
     finally:
         router.reset()
 
     assert benches == [5, 15, 60, 60, 5]
+
+
+@pytest.mark.asyncio
+async def test_a_success_that_started_before_a_402_does_not_release_the_key(real_litellm, tmp_path) -> None:
+    """A slow request already in flight when another request got the 402 can
+    finish successfully afterwards; that says nothing about the key now, so
+    it must not undo the bench. A success that started after the 402 does."""
+    hook = _new_hook(tmp_path / "missing.json")
+    deployments = [
+        {"litellm_params": {"order": 1, "api_key": _KLAI_KEY}, "model_info": {"id": "order-1"}},
+        {"litellm_params": {"order": 2, "api_key": _KLAI2_KEY}, "model_info": {"id": "order-2"}},
+    ]
+    order1 = {"litellm_params": {"model_info": {"id": "order-1"}}}
+    full = real_litellm.exceptions.APIError(
+        status_code=402, message="Workspace monthly spending limit reached", llm_provider="mistral", model="m"
+    )
+
+    async def offered_orders() -> list[int]:
+        picked = await hook.async_filter_deployments(_ALIAS, deployments, [])
+        return [d["litellm_params"]["order"] for d in picked]
+
+    assert await offered_orders() == [1]
+    in_flight_since = datetime.now()
+    await asyncio.sleep(0.01)
+    await hook.async_log_failure_event({**order1, "exception": full}, None, datetime.now(), datetime.now())
+    await hook.async_log_success_event(order1, None, in_flight_since, datetime.now())
+    assert await offered_orders() == [2]
+
+    await asyncio.sleep(0.01)
+    await hook.async_log_success_event(order1, None, datetime.now(), datetime.now())
+    assert await offered_orders() == [1]
 
 
 def test_router_budgets_are_kept_in_the_compose_redis(real_litellm) -> None:
