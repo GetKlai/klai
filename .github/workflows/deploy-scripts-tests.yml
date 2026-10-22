@@ -31,6 +31,8 @@ on:
       - 'renovate.json5'
       - 'deploy/docker-compose.yml'
       - 'scripts/test-renovate-config.sh'
+      - 'scripts/check-version-drift.sh'
+      - 'scripts/tests/check-version-drift.test.sh'
   push:
     branches: [main]
     paths:
@@ -48,6 +50,8 @@ on:
       - 'renovate.json5'
       - 'deploy/docker-compose.yml'
       - 'scripts/test-renovate-config.sh'
+      - 'scripts/check-version-drift.sh'
+      - 'scripts/tests/check-version-drift.test.sh'
 
 permissions:
   contents: read
@@ -80,6 +84,11 @@ jobs:
       # every scheduled run failed for 18 hours before anyone saw it.
       - name: Renovate configuration contracts
         run: sh scripts/test-renovate-config.sh
+
+      # The drift alarm is what makes a stuck Renovate update visible; a filter
+      # that stops matching would silence it without any run turning red.
+      - name: Version drift alarm
+        run: bash scripts/tests/check-version-drift.test.sh
 
       # Renovate automerges Twenty one minor per PR, but nothing orders the
       # merges. Only the next hop may go green; see check-twenty-hop.sh.
