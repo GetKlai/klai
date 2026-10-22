@@ -15,6 +15,8 @@ LITELLM_DIR = REPO_ROOT / "deploy" / "litellm"
 COMPOSE_FILE = REPO_ROOT / "deploy" / "docker-compose.yml"
 COMPOSE_UP_SCRIPT = REPO_ROOT / "deploy" / "scripts" / "compose-up.sh"
 DEPLOY_COMPOSE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-compose.yml"
+# The env-drift sweep moved out of that workflow into a host script (22 October 2026).
+ENV_DRIFT_SCRIPT = REPO_ROOT / "deploy" / "scripts" / "compose-env-drift-recreate.sh"
 LITELLM_DEPLOY_WORKFLOW = (
     REPO_ROOT / ".github" / "workflows" / "litellm-hook-deploy.yml"
 )
@@ -44,10 +46,10 @@ def test_litellm_prisma_migrations_are_preflight_gated():
     assert "if has_service litellm; then" in compose_up_text
     assert '[[ -z "$SERVICE" || "$SERVICE" == "litellm" ]]' not in compose_up_text
     assert "- 'deploy/docker-compose.yml'" in litellm_deploy_text
-    assert "awk '$0 != \"litellm\"'" in deploy_compose_text
-    assert "no env-drift services resolved; refusing an all-services compose up" in (
-        deploy_compose_text
-    )
+    env_drift_text = ENV_DRIFT_SCRIPT.read_text(encoding="utf-8")
+    assert "awk '$0 != \"litellm\"'" in env_drift_text
+    assert "no env-drift services resolved; refusing an all-services compose up" in env_drift_text
+    assert "compose-env-drift-recreate.sh" in deploy_compose_text
 
 
 def test_compose_allowlist_preserves_the_empty_kill_switch():
