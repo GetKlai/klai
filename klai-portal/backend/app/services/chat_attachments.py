@@ -168,16 +168,23 @@ def _attachment_from_part(
     user_text: str,
     part: dict[str, Any],
 ) -> _Attachment | str:
-    """The PDF in ``part``, or the filename of a file that is not a PDF."""
+    """The PDF in ``part``, or the filename of a file Klai cannot read as a PDF.
+
+    Only a PDF can fail the turn (too large); anything that is not one,
+    whatever its size or payload, is just a file to leave out.
+    """
     file_info = part.get("file")
     if not isinstance(file_info, dict):
-        raise ChatAttachmentError("invalid_file_payload")
+        return "document"
     filename = str(file_info.get("filename") or "document.pdf").strip() or "document.pdf"
-    content = _extract_data_url_bytes(file_info.get("file_data"))
-    if len(content) > settings.chat_pdf_max_bytes:
-        raise ChatAttachmentError("file_too_large")
+    try:
+        content = _extract_data_url_bytes(file_info.get("file_data"))
+    except ChatAttachmentError:
+        return filename
     if not content.startswith(b"%PDF"):
         return filename
+    if len(content) > settings.chat_pdf_max_bytes:
+        raise ChatAttachmentError("file_too_large")
     return _Attachment(
         message_index=message_index,
         filename=filename,
@@ -304,12 +311,17 @@ def _replace_latest_user_content(
     return next_messages
 
 
-async def process_chat_attachments(messages: object, *, language: object) -> ChatAttachmentResult:
+async def process_chat_attachments(
+    messages: object, *, language: object, answer_beside_unreadable: bool = True
+) -> ChatAttachmentResult:
     """Convert the active PDF file part in the latest user turn to text.
 
     No-op (processed_count=0) when there is no PDF file part. File parts that
     are not PDFs are dropped from the returned messages and named in
-    ``unreadable``; they are no error by themselves. ``language``
+    ``unreadable``; they are no error by themselves, unless
+    ``answer_beside_unreadable`` is False (the typed text is only a caption):
+    then the turn ends with the ``unsupported_attachment`` text before any PDF
+    is converted. ``language``
     is the already-decided response-language CODE (computed on the
     unmodified messages, before this call) — used only to render
     ``user_visible_error`` text, never to decide anything about the PDF
@@ -326,6 +338,8 @@ async def process_chat_attachments(messages: object, *, language: object) -> Cha
     unreadable: list[str] = []
     try:
         attachments, unreadable, typed_messages = _split_file_parts(typed_messages)
+        if unreadable and not answer_beside_unreadable:
+            raise ChatAttachmentError("unsupported_attachment")
         meta["chat_pdf_attachments_seen"] = len(attachments)
         if not attachments:
             return ChatAttachmentResult(messages=typed_messages, processed_count=0, meta=meta, unreadable=unreadable)

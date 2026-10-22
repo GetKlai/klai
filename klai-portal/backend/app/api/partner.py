@@ -681,15 +681,13 @@ async def _attachment_error_reply(request: ChatCompletionsRequest) -> tuple[Any,
     """
     attachment_language = resolve_conversation_language(request.messages).language
     typed_text = (_last_user_message(request.messages) or "").strip()
-    attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
+    attachment_result = await process_chat_attachments(
+        request.messages,
+        language=attachment_language,
+        answer_beside_unreadable=len(typed_text) >= _TEXT_BESIDE_ATTACHMENT_MIN_CHARS,
+    )
     error = attachment_result.user_visible_error
-    notice = ""
-    if attachment_result.unreadable:
-        unsupported = user_visible_error("unsupported_attachment", attachment_language)
-        if len(typed_text) >= _TEXT_BESIDE_ATTACHMENT_MIN_CHARS:
-            notice = unsupported
-        else:
-            error = error or unsupported
+    notice = user_visible_error("unsupported_attachment", attachment_language) if attachment_result.unreadable else ""
     if error is not None:
         if request.stream:
             return StreamingResponse(content=fixed_reply_stream(error), media_type="text/event-stream"), ""
