@@ -106,7 +106,7 @@ networks:
     # NOT internal — bot containers need internet egress to join meeting platforms
 
 volumes:
-  firecrawl-postgres-data:
+  firecrawl-postgres-data-18:
   caddy-data:
   caddy-config:
   caddy-tenants:
@@ -2300,7 +2300,12 @@ services:
       retries: 5
       start_period: 10s
     volumes:
-      - firecrawl-postgres-data:/var/lib/postgresql/data
+      # PG18 keeps PGDATA in /var/lib/postgresql/18/docker. The old mount at
+      # .../data never held the database: the image's own VOLUME at
+      # /var/lib/postgresql caught it in an anonymous volume, so a compose
+      # down would have dropped the queue and a fresh volume would not start.
+      # New volume at the parent, filled by dump and restore before deploy.
+      - firecrawl-postgres-data-18:/var/lib/postgresql
       - ./firecrawl-nuq-init.sql:/docker-entrypoint-initdb.d/nuq-schema.sql:ro
 
   # No volume on purpose: the queues are durable but hold only in-flight
