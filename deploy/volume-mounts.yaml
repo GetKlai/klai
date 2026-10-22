@@ -205,7 +205,7 @@ mounts:
     kind: named
     host: gitea-data
     container_path: /data
-    image: gitea/gitea:1.26.4
+    image: gitea/gitea:28.2.0
     category: data
     data_path_source: upstream docs (gitea GITEA_WORK_DIR default)
     pii: false
