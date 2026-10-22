@@ -62,7 +62,10 @@ loaded from before it replays anything.
    ```
 
    A widget row has `text`, `sources`, `appointment` (the button was shown), `signals` and `total_ms`; `compare` reads
-   the same file for both surfaces.
+   the same file for both surfaces. Two things a widget round does not reproduce, as the private script before it did
+   not either: a follow-up turn is replayed without the case the earlier turn would have stored (nothing is recorded
+   and every case gets a fresh session), and the page context the browser sends when the widget has it enabled is
+   not in the cases.
 
    A deploy that lands during a round restarts the gateway or portal-api under it; the round is not protected
    against that, a turn that meets a restart is replayed: a connection error or a timeout before the stream starts, a stream

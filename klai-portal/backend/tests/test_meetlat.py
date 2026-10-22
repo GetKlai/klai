@@ -457,8 +457,16 @@ def test_a_widget_http_error_that_is_not_a_restart_is_an_error_row_at_once(monke
     assert len(sent) == 1 and row["error"] == "HTTP 401"
 
 
-def test_a_widget_case_without_a_user_turn_is_refused(tmp_path, capsys):
-    cases = _write_jsonl(tmp_path / "cases.jsonl", [{"id": "w-1", "messages": [{"role": "assistant", "content": "x"}]}])
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [{"role": "assistant", "content": "x"}],
+        [{"role": "user", "content": "q"}, {"role": "assistant", "content": "x"}],
+    ],
+    ids=["no_user_turn", "ends_on_a_reply"],
+)
+def test_a_widget_case_that_does_not_end_in_a_user_turn_is_refused(tmp_path, capsys, messages):
+    cases = _write_jsonl(tmp_path / "cases.jsonl", [{"id": "w-1", "messages": messages}])
     (tmp_path / "widget.json").write_text(json.dumps(_WIDGET))
 
     code = meetlat.main(

@@ -284,9 +284,10 @@ def _read_cases(path: Path) -> list[dict]:
         if isinstance(case.get("messages"), list):
             # A widget case: the row is keyed like an internal one, by case id
             # and the index of the replayed turn among the visitor's turns.
-            user_turns = [m for m in case["messages"] if isinstance(m, dict) and m.get("role") == "user"]
-            if not (isinstance(case.get("id"), str) and case["id"] and user_turns):
-                raise UsageError(f"{path} line {number}: a widget case needs an id and messages with a user turn")
+            messages = [m for m in case["messages"] if isinstance(m, dict)]
+            user_turns = [m for m in messages if m.get("role") == "user"]
+            if not (isinstance(case.get("id"), str) and case["id"] and messages and messages[-1] in user_turns):
+                raise UsageError(f"{path} line {number}: a widget case needs an id and messages ending in a user turn")
             case["cid"], case["turn"] = case["id"], len(user_turns) - 1
         elif not (
             isinstance(case.get("cid"), str)
@@ -470,13 +471,16 @@ async def _widget_answer(widget: dict, messages: list[dict]) -> dict:
     )
     _captured_widget_signals.clear()
     started = time.perf_counter()
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://meetlat", timeout=_WIDGET_TIMEOUT_SECONDS
-    ) as client:
-        response = await client.post(
-            "/partner/v1/chat/completions",
-            json={"model": "klai-primary", "stream": False, "messages": messages},
-            headers={"Authorization": f"Bearer {token}", "Origin": widget["origin"]},
+    # The ASGI transport runs the route in this process and honours no client
+    # timeout, so the deadline is kept here; a turn that hangs is a restart.
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://meetlat") as client:
+        response = await asyncio.wait_for(
+            client.post(
+                "/partner/v1/chat/completions",
+                json={"model": "klai-primary", "stream": False, "messages": messages},
+                headers={"Authorization": f"Bearer {token}", "Origin": widget["origin"]},
+            ),
+            _WIDGET_TIMEOUT_SECONDS,
         )
     total_ms = round((time.perf_counter() - started) * 1000)
     pending = {*replay.partner._pending, *answer_compose._pending_turn_tasks}
@@ -534,6 +538,11 @@ async def _run(args: argparse.Namespace) -> int:
     if args.surface == "widget" and args.widget is None:
         raise UsageError("--surface widget needs --widget <json> with " + ", ".join(_WIDGET_FIELDS))
     widget = _read_widget(args.widget) if args.surface == "widget" else None
+    if widget is not None:
+        # The route and its middleware are part of what a widget round measures,
+        # so they are loaded before the code fingerprint; importing the app also
+        # configures logging, which the routing below then replaces.
+        importlib.import_module("app.main")
     all_cases = _read_cases(args.cases)
     # A cases file may span organisations; a case without an org field is for every org.
     cases = [c for c in all_cases if c.get("org", args.org) == args.org]
@@ -575,9 +584,6 @@ async def _run(args: argparse.Namespace) -> int:
         return 0
 
     _apply_measurement_patches()
-    if widget is not None:
-        # Importing the app configures logging; done here so the routing below is what stays.
-        importlib.import_module("app.main")
     replay._route_logs_to(out.with_name(out.name + ".pipeline.log"))
     replay_case = await _replayer(args, widget, todo)
     errors = 0

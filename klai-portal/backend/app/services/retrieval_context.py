@@ -1160,7 +1160,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     # skipped this step. Not on a turn that is answered broadly, which reads
     # no articles. "Not in the passages" is routed by the caller (the
     # widget's "not found", the internal Strict refusal); an internal Open
-    # turn without chosen passages is written from general knowledge below.
+    # turn without chosen passages keeps every passage (see below).
     # The kept passages of a widget conversation (kept_passages_of) join the
     # candidates, also when the search found nothing; broad mode and the gap
     # read the search's own chunks.
