@@ -157,6 +157,10 @@ jobs:
       - name: backup BGSAVE wait suite
         run: bash deploy/scripts/tests/backup-bgsave-wait.test.sh
 
+      # Two runs on one date leave a complete-looking broken set; the second refuses.
+      - name: backup single-run lock suite
+        run: bash deploy/scripts/tests/backup-single-run.test.sh
+
       - name: portal-api deploy disk-guard suite
         run: bash deploy/scripts/tests/deploy-portal-api-disk-guard.test.sh
 

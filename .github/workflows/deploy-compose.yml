@@ -103,6 +103,7 @@ jobs:
           bash deploy/scripts/tests/backup-retention.test.sh
           bash deploy/scripts/tests/backup-retention-partial-sets.test.sh
           bash deploy/scripts/tests/backup-bgsave-wait.test.sh
+          bash deploy/scripts/tests/backup-single-run.test.sh
 
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
