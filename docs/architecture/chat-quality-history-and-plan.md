@@ -250,7 +250,7 @@ De stappen H tot en met N en O1 tot en met O6 en J uit §7 zijn gedaan (§8). Wa
 |---|---|
 | Elke bewering in een voorstel draagt een label uit de kop van dit document | Dan is zichtbaar waar een ontwerp op rust |
 | Wie een voorstel doet, zegt wat hem van mening zou doen veranderen; een positie verandert op nieuw bewijs | Taalmodellen schuiven mee met tegenspraak: 58% in één meting [onderzoek: SycEval, https://arxiv.org/abs/2502.08177] |
-| Eén meetlat: echte gesprekken met per gesprek de verwachting en het bewijs, vastgesteld door de eigenaar | Zonder vaste meetlat stuurt het laatste incident |
+| Eén meetlat: echte gesprekken met per gesprek de verwachting en het bewijs, vastgesteld door de eigenaar; draaien en vergelijken gaat met `klai-portal/backend/scripts/meetlat.py`, zie [docs/runbooks/meetlat.md](../runbooks/meetlat.md) | Zonder vaste meetlat stuurt het laatste incident |
 | Geen wijziging aan het chatpad zonder de meetlat; de uitkomst staat in de PR | De poort op papier is vijf keer overgeslagen |
 | Eén wijziging, één verwachting, vooraf opgeschreven met het criterium om te stoppen | Anders is een daling niet toe te wijzen |
 | Elke stap verdient zijn plek: wat op de meetlat niets bijdraagt, gaat eruit | Het systeem groeide alleen |

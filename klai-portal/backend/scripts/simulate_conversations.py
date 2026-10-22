@@ -35,10 +35,12 @@ import tempfile
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-if str(BACKEND_ROOT) not in sys.path:
+if __name__ == "__main__" and str(BACKEND_ROOT) not in sys.path:
     # Same bootstrap as the other operator scripts: running "python scripts/x.py"
     # puts scripts/ on the path, not the backend root, so ``app`` would not import.
-    sys.path.insert(0, str(BACKEND_ROOT))
+    # Only when run directly, and appended: replay_internal_chat imports this module,
+    # and an insert at sys.path[0] on import would shadow a candidate overlay on PYTHONPATH.
+    sys.path.append(str(BACKEND_ROOT))
 
 import httpx  # noqa: E402
 from sqlalchemy import text  # noqa: E402
