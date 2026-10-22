@@ -127,6 +127,7 @@ __all__ = [
     "CLARIFY_QUESTION_WRITER_SYSTEM_PROMPT",
     "CLARIFY_TURN_ADDENDUM",
     "FINAL_RESPONSE_LANGUAGE_REMINDER",
+    "FIXED_TEXTS",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "GROUNDED_CHAT_SYSTEM_PROMPT",
     "GROUNDING_CHECK_SYSTEM_PROMPT",
@@ -151,6 +152,7 @@ __all__ = [
     "contact_reply",
     "contact_reply_again",
     "final_response_language_reminder",
+    "fixed_text",
     "grounding_check_response_format",
     "grounding_check_user_content",
     "grounding_repair_system_prompt",
@@ -167,92 +169,103 @@ __all__ = [
 ]
 
 
-_DUTCH_REFUSAL: Final[str] = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
-_ENGLISH_REFUSAL: Final[str] = "I cannot answer this reliably from the available knowledge sources."
-_DUTCH_OPEN_MODE_HINT: Final[str] = " Probeer het in Open-modus voor een antwoord op basis van algemene kennis."
-_ENGLISH_OPEN_MODE_HINT: Final[str] = " Try Open mode for an answer based on general knowledge."
-# The two other languages the internal chat is used in (21 October 2026: a
-# German conversation got the English refusal). Any other code stays English.
-_REFUSAL_BY_CODE: Final[dict[str, tuple[str, str]]] = {
-    "de": (
-        "Ich kann das anhand der verfügbaren Wissensquellen nicht zuverlässig beantworten.",
-        " Versuche es im Open-Modus für eine Antwort auf Basis von Allgemeinwissen.",
-    ),
-    "fr": (
-        "Je ne peux pas répondre de manière fiable à partir des sources de connaissances disponibles.",
-        " Essayez le mode Open pour une réponse basée sur des connaissances générales.",
-    ),
+# Every fixed user-facing sentence, by name and language code. Dutch and
+# English exist for all of them; German and French only for the strict
+# refusal and its Open-mode hint (the two other languages the internal chat is
+# used in, added 21 October 2026 after a German conversation got the English
+# refusal). :func:`fixed_text` picks the language.
+#
+# The helpdesk texts are for the public help-page widget: customer words (no
+# "kennisbank"/"knowledge sources" jargon a website visitor does not
+# recognise) and an offer to reach support instead of the internal Open-mode
+# hint (the widget has no Strict/Open toggle). The helpdesk refusal bypasses
+# the system prompt entirely: it is substituted after generation whenever no
+# source survived the citation firewall, so none of the tone work in
+# SUPPORT_CHAT_SYSTEM_PROMPT can reach it. That makes it the most frequently
+# shown line the bot has, and it therefore carries the brand voice on its
+# own. "Neem contact op met onze klantenservice afdeling" is listed under what
+# does NOT work in the brand documentation (docs/research/voys-tone-of-voice.md
+# § 10); the phrasing below follows the measured house style instead: plain,
+# second person, and it names the next step rather than a department.
+#
+# A visitor who asks for a person, for contact or for an appointment gets the
+# contact reply and nothing else: no article, no steps. The widget renders the
+# button. The second contact request in a row gets the "again" reply instead
+# of the same text again: a visitor who had said they did not want to call got
+# the contact reply four times, word for word (week of 14 to 21 October).
+#
+# The broad marker is the visible label the widget backend prepends to every
+# consented broad-mode (general-knowledge) answer. Two jobs, one string: the
+# visitor sees on the answer itself that it is general knowledge and not from
+# the help articles (the strict boundary is provenance, "about the world",
+# never "about us", not a confidence gradient), and widget_outcome recognises
+# a broad answer as a knowledge gap so it is never counted as answered from
+# the knowledge base.
+FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
+    "strict_refusal": {
+        "nl": "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen.",
+        "en": "I cannot answer this reliably from the available knowledge sources.",
+        "de": "Ich kann das anhand der verfügbaren Wissensquellen nicht zuverlässig beantworten.",
+        "fr": "Je ne peux pas répondre de manière fiable à partir des sources de connaissances disponibles.",
+    },
+    "open_mode_hint": {
+        "nl": " Probeer het in Open-modus voor een antwoord op basis van algemene kennis.",
+        "en": " Try Open mode for an answer based on general knowledge.",
+        "de": " Versuche es im Open-Modus für eine Antwort auf Basis von Allgemeinwissen.",
+        "fr": " Essayez le mode Open pour une réponse basée sur des connaissances générales.",
+    },
+    "strict_kb_unavailable": {
+        "nl": (
+            "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
+            "betrouwbaar beantwoorden op basis van je kennisbronnen."
+        ),
+        "en": (
+            "The knowledge base is temporarily unavailable, so I cannot answer this reliably from your "
+            "knowledge sources."
+        ),
+    },
+    "helpdesk_offer": {
+        "nl": "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder.",
+        "en": "If you want to be sure, schedule an appointment with someone who can help you personally.",
+    },
+    "helpdesk_not_found": {
+        "nl": "Dit vind ik niet terug in onze helpartikelen.",
+        "en": "I can't find this in our help articles.",
+    },
+    "contact_reply": {
+        "nl": (
+            "Je kunt een afspraak maken met een medewerker, die helpt je persoonlijk verder. Gebruik daarvoor de knop "
+            "onder dit bericht."
+        ),
+        "en": (
+            "You can schedule an appointment with someone who will help you personally. "
+            "Use the button under this message."
+        ),
+    },
+    "contact_reply_again": {
+        "nl": "Via dit chatvenster kan ik alleen een afspraak voor je inplannen; iets anders kan ik hier niet regelen.",
+        "en": "In this chat window I can only schedule an appointment for you; I can't arrange anything else here.",
+    },
+    "contact_email": {
+        "nl": "Mailen kan ook: {email}.",
+        "en": "You can also email us: {email}.",
+    },
+    "contact_phone": {
+        "nl": "Bellen kan ook: {phone}.",
+        "en": "You can also call us: {phone}.",
+    },
+    "broad_marker": {
+        "nl": "Algemene kennis, niet afkomstig uit onze helpartikelen.",
+        "en": "General knowledge, not from our help articles.",
+    },
 }
 
-# Helpdesk variant of the strict-mode refusal, for the public help-page
-# widget. Same bilingual contract as the base refusal, but in customer
-# words: no "kennisbank"/"knowledge sources" jargon a website visitor does
-# not recognise, and an explicit offer to reach support instead of the
-# internal Open-mode hint (the widget has no Strict/Open toggle).
-# This sentence bypasses the system prompt entirely: it is substituted after
-# generation whenever no source survived the citation firewall, so none of the
-# tone work in SUPPORT_CHAT_SYSTEM_PROMPT can reach it. That makes it the most
-# frequently shown line the bot has, and it therefore carries the brand voice
-# on its own. "Neem contact op met onze klantenservice afdeling" is listed
-# under what does NOT work in the brand documentation
-# (docs/research/voys-tone-of-voice.md § 10); the phrasing below follows the
-# measured house style instead — plain, second person, and it names the next
-# step rather than a department.
-_DUTCH_HELPDESK_OFFER: Final[str] = (
-    "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder."
-)
-_ENGLISH_HELPDESK_OFFER: Final[str] = (
-    "If you want to be sure, schedule an appointment with someone who can help you personally."
-)
-# A visitor who asks for a person, for contact or for an appointment gets this
-# and nothing else: no article, no steps. The widget renders the button.
-_DUTCH_CONTACT_REPLY: Final[str] = (
-    "Je kunt een afspraak maken met een medewerker, die helpt je persoonlijk verder. Gebruik daarvoor de knop "
-    "onder dit bericht."
-)
-_ENGLISH_CONTACT_REPLY: Final[str] = (
-    "You can schedule an appointment with someone who will help you personally. Use the button under this message."
-)
-# The second contact request in a row gets this instead of the same reply
-# again: a visitor who had said they did not want to call got the contact
-# reply four times, word for word (week of 14 to 21 October).
-_DUTCH_CONTACT_REPLY_AGAIN: Final[str] = (
-    "Via dit chatvenster kan ik alleen een afspraak voor je inplannen; iets anders kan ik hier niet regelen."
-)
-_ENGLISH_CONTACT_REPLY_AGAIN: Final[str] = (
-    "In this chat window I can only schedule an appointment for you; I can't arrange anything else here."
-)
-_DUTCH_CONTACT_EMAIL: Final[str] = "Mailen kan ook: {email}."
-_ENGLISH_CONTACT_EMAIL: Final[str] = "You can also email us: {email}."
-_DUTCH_CONTACT_PHONE: Final[str] = "Bellen kan ook: {phone}."
-_ENGLISH_CONTACT_PHONE: Final[str] = "You can also call us: {phone}."
-_DUTCH_HELPDESK_REFUSAL: Final[str] = "Dit vind ik niet terug in onze helpartikelen. " + _DUTCH_HELPDESK_OFFER
-_ENGLISH_HELPDESK_REFUSAL: Final[str] = "I can't find this in our help articles. " + _ENGLISH_HELPDESK_OFFER
-
-# Visible label the widget backend prepends to every consented broad-mode
-# (general-knowledge) answer. Two jobs, one string: the visitor sees on the
-# answer itself that it is general knowledge and not from the help articles
-# (the strict boundary is provenance — "about the world", never "about us" —
-# not a confidence gradient), and widget_outcome recognises a broad answer
-# as a knowledge gap so it is never counted as answered from the knowledge
-# base. Keep the language of the answer in sync: the marker is picked with
-# the same language-code rule as the refusal below, so the whole label set
-# is exposed via :data:`BROAD_MODE_ANSWER_MARKERS` and consumers test
-# membership, not a single string.
-_DUTCH_BROAD_MARKER: Final[str] = "Algemene kennis, niet afkomstig uit onze helpartikelen."
-_ENGLISH_BROAD_MARKER: Final[str] = "General knowledge, not from our help articles."
-
-# All broad-mode markers, both languages. Derived from the marker constants,
-# never hand-copied — a wording change here propagates to the outcome worker.
-# The dash forms are the labels stored before 2026-09-22, when the widget
-# stopped showing dashes; stored conversations still carry them.
+# All broad-mode markers, both languages. Derived from the table, never
+# hand-copied: a wording change there propagates to the outcome worker. The
+# dash forms are the labels stored before 2026-09-22, when the widget stopped
+# showing dashes; stored conversations still carry them.
 BROAD_MODE_ANSWER_MARKERS: Final[frozenset[str]] = frozenset(
-    {
-        _DUTCH_BROAD_MARKER,
-        _ENGLISH_BROAD_MARKER,
-        _DUTCH_BROAD_MARKER.replace(", ", " \u2014 ", 1),
-        _ENGLISH_BROAD_MARKER.replace(", ", " \u2014 ", 1),
-    }
+    marker for text in FIXED_TEXTS["broad_marker"].values() for marker in (text, text.replace(", ", " \u2014 ", 1))
 )
 
 
@@ -284,6 +297,19 @@ def _language_is_dutch(language: object) -> bool:
     return language in ("nl", "und")
 
 
+def fixed_text(name: str, language: object) -> str:
+    """Return the fixed text ``name`` in the language of one turn.
+
+    None, "und", blank and non-string codes give Dutch (see
+    :func:`_language_is_dutch`); an exact lowercase code the text exists in
+    gives that language; every other code gives English.
+    """
+    texts = FIXED_TEXTS[name]
+    if _language_is_dutch(language):
+        return texts["nl"]
+    return texts.get(str(language), texts["en"])
+
+
 def broad_mode_answer_marker(language: object) -> str:
     """Return the visible general-knowledge label for one turn.
 
@@ -291,7 +317,7 @@ def broad_mode_answer_marker(language: object) -> str:
     rule as :func:`no_citable_sources_message`, so the marker and the
     refusal are never in different languages within one turn.
     """
-    return _DUTCH_BROAD_MARKER if _language_is_dutch(language) else _ENGLISH_BROAD_MARKER
+    return fixed_text("broad_marker", language)
 
 
 # Machine-only signal the SUPPORT profiles append when the reply they just
@@ -364,22 +390,20 @@ def contact_reply(language: object, *, email: str | None = None, phone: str | No
     one sentence after the appointment sentence, and without them the text is
     the constant above.
     """
-    dutch = _language_is_dutch(language)
-    return _with_channels(_DUTCH_CONTACT_REPLY if dutch else _ENGLISH_CONTACT_REPLY, dutch, email, phone)
+    return _with_channels("contact_reply", language, email, phone)
 
 
 def contact_reply_again(language: object, *, email: str | None = None, phone: str | None = None) -> str:
     """The reply to a contact request after the contact reply: same language rule, same channel sentences."""
-    dutch = _language_is_dutch(language)
-    return _with_channels(_DUTCH_CONTACT_REPLY_AGAIN if dutch else _ENGLISH_CONTACT_REPLY_AGAIN, dutch, email, phone)
+    return _with_channels("contact_reply_again", language, email, phone)
 
 
-def _with_channels(sentence: str, dutch: bool, email: str | None, phone: str | None) -> str:
-    parts = [sentence]
+def _with_channels(name: str, language: object, email: str | None, phone: str | None) -> str:
+    parts = [fixed_text(name, language)]
     if email:
-        parts.append((_DUTCH_CONTACT_EMAIL if dutch else _ENGLISH_CONTACT_EMAIL).format(email=email))
+        parts.append(fixed_text("contact_email", language).format(email=email))
     if phone:
-        parts.append((_DUTCH_CONTACT_PHONE if dutch else _ENGLISH_CONTACT_PHONE).format(phone=phone))
+        parts.append(fixed_text("contact_phone", language).format(phone=phone))
     return " ".join(parts)
 
 
@@ -390,7 +414,7 @@ def appointment_offer_sentence(language: object) -> str:
     does not; the widget backend adds this sentence when the button is there
     and the reply does not name it.
     """
-    return _DUTCH_HELPDESK_OFFER if _language_is_dutch(language) else _ENGLISH_HELPDESK_OFFER
+    return fixed_text("helpdesk_offer", language)
 
 
 def no_citable_sources_message(language: object, *, suggest_open_mode: bool = False, helpdesk: bool = False) -> str:
@@ -419,15 +443,10 @@ def no_citable_sources_message(language: object, *, suggest_open_mode: bool = Fa
     exclusive by design. Default False keeps every existing caller on the
     exact same refusal text.
     """
-    is_dutch = _language_is_dutch(language)
     if helpdesk:
-        return _DUTCH_HELPDESK_REFUSAL if is_dutch else _ENGLISH_HELPDESK_REFUSAL
-    if is_dutch:
-        base, hint = _DUTCH_REFUSAL, _DUTCH_OPEN_MODE_HINT
-    else:
-        code = language if isinstance(language, str) else ""
-        base, hint = _REFUSAL_BY_CODE.get(code, (_ENGLISH_REFUSAL, _ENGLISH_OPEN_MODE_HINT))
-    return base + hint if suggest_open_mode else base
+        return f"{fixed_text('helpdesk_not_found', language)} {fixed_text('helpdesk_offer', language)}"
+    base = fixed_text("strict_refusal", language)
+    return base + fixed_text("open_mode_hint", language) if suggest_open_mode else base
 
 
 # Shared language-detection contract (SPEC-RAG-MULTILINGUAL-CHAT-001

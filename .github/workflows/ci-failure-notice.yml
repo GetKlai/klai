@@ -44,6 +44,11 @@ on:
       - Sync docker-compose.yml + config + smoke-test to core-01
       - Sync LibreChat base config to core-01
       - Deploy LiteLLM hooks
+      # The alarm for updates that stopped landing: red when a Renovate
+      # automerge PR is stuck, the Dependency Dashboard lists errors or
+      # Renovate has not run. Scheduled runs belong to the default branch, so
+      # head_branch is main and the job condition below holds.
+      - Version drift
     types: [completed]
 
     # Deliberately NOT watched, so the open-issue list stays a list of real

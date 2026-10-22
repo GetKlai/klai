@@ -19,13 +19,18 @@ model_list:
   # entry for mistral-small-2603 or mistral-medium-3.5; without these fields
   # their cost is only known when the startup fetch of the remote cost map
   # succeeds, and after a failed fetch no Small or Medium call would count.
-  # Known limits: spend is counted in process memory (this proxy has no
-  # Redis), so a restart resets it, and the window is 24h from the first call
-  # after start rather than a calendar day. klai_mistral_pool keeps an alias
-  # on order 1 until Mistral answers 402, so a spent order 1 stops the alias
-  # and order 2's budget only comes into play after a 402: worst case two
-  # budgets per alias per day. A budget that survives restarts needs Redis in
-  # router_settings (redis_host/redis_port).
+  # Spend and the window start live in the compose `redis` service
+  # (router_settings.redis_url), synced from process memory every second
+  # (litellm DEFAULT_REDIS_SYNC_INTERVAL), so a restart loses at most the
+  # last second of spend instead of the whole day. Until October 2026 they
+  # lived in process memory only and every container recreate handed each
+  # deployment a fresh budget. The key is
+  # deployment_spend:<deployment id>, and the id hashes litellm_params, so
+  # editing a deployment's params (max_budget included) starts its count at
+  # zero. Known limits: the window is 24h from the first call rather than a
+  # calendar day. klai_mistral_pool keeps an alias on order 1 until that key
+  # is full, so a spent order 1 stops the alias and order 2's budget only
+  # comes into play after a 402: worst case two budgets per alias per day.
 
   # Primary: Mistral Small — default for user-facing tasks
   # Routes through custom_router.py: may be upgraded to klai-large (tool calls)
@@ -271,6 +276,13 @@ router_settings:
   # needed to keep that advance FULL-gated instead of retry-exhaustion-gated.
   # Behavioral coverage: tests/test_litellm_mistral_failover.py.
   routing_strategy: simple-shuffle
+  # Keeps the max_budget spend above across restarts (see model_list). The
+  # router's rpm counter and cooldowns move to Redis with it: one INCR per
+  # request, and litellm 1.96.2 falls back to its in-memory count when a
+  # Redis call fails (caching/dual_cache.py), so Redis down degrades to the
+  # old per-process behaviour instead of failing requests. REDIS_URL is
+  # already in the litellm service environment.
+  redis_url: os.environ/REDIS_URL
   # Small (klai-primary, klai-fast) falls back to Mistral Large when it fails or
   # its budget is spent: Large is the next model up that costs less than Medium
   # on both input and output. Nothing falls back to Medium: that fallback served

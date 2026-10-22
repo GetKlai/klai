@@ -97,6 +97,11 @@ assert_contains "$config" \
 assert_line "$config" \
   "  minimumReleaseAgeBehaviour: 'timestamp-optional'," \
   'an update without a release timestamp (GHCR images, lock file refresh, Git tags) must not stay pending forever'
+# Without it every customManagers entry is silently skipped: the litellm-tests
+# and vexa-bot regex managers never ran until this was added (2026-10-22).
+assert_line "$config" \
+  "    'custom.regex'," \
+  'customManagers only run when custom.regex is an enabled manager'
 assert_line "$config" \
   "    npm: '^11'," \
   'lock files must be generated with the npm major that CI installs them with'

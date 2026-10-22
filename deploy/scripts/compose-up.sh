@@ -67,15 +67,17 @@ VERIFY_INTERVAL="${KLAI_VERIFY_INTERVAL:-2}"
 # klai-docker-authz in the same second (21 October 2026) and compose exited on
 # "removal of container is already in progress"; a GitHub concurrency group
 # cancels the third job that queues, so the lock lives on the host instead.
-# flock is a Linux facility; where it is absent (a developer's machine running
-# the tests) there is no other deploy to wait for.
+# Without flock this deploy would run unlocked next to another one, so a missing
+# binary is an error, not a skip. The test suites put a stub flock on PATH.
 LOCK_FILE="${KLAI_CONTAINER_LOCK:-$KLAI_DIR/.container-deploy.lock}"
-if command -v flock >/dev/null 2>&1; then
-    exec 9>"$LOCK_FILE"
-    if ! flock -w "${KLAI_LOCK_WAIT_SECONDS:-900}" 9; then
-        echo "ERROR: another container deploy has held $LOCK_FILE for 15 minutes; not starting" >&2
-        exit 1
-    fi
+if ! command -v flock >/dev/null 2>&1; then
+    echo "ERROR: flock not found; refusing to deploy without the host lock $LOCK_FILE" >&2
+    exit 1
+fi
+exec 9>"$LOCK_FILE"
+if ! flock -w "${KLAI_LOCK_WAIT_SECONDS:-900}" 9; then
+    echo "ERROR: another container deploy has held $LOCK_FILE for 15 minutes; not starting" >&2
+    exit 1
 fi
 # A zero here would skip the status check entirely and make every deploy green.
 if (( VERIFY_POLLS < 1 )); then VERIFY_POLLS=1; fi

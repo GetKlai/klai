@@ -51,7 +51,7 @@ from app.core.database import get_db
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.widgets import Widget
 from app.services import case_file
-from app.services.chat_attachments import drop_unreadable_file_parts, process_chat_attachments
+from app.services.chat_attachments import process_chat_attachments, user_visible_error
 from app.services.chat_profile import ChatProfile, resolve_chat_profile
 from app.services.chat_safety import (
     _last_user_message,
@@ -684,23 +684,22 @@ async def _attachment_error_reply(request: ChatCompletionsRequest) -> tuple[Any,
     beside a file that is not a PDF used to get only the fixed sentence about
     PDF files and stayed unanswered (internal chat, 14 to 21 October); now the
     turn runs on the text without that file, and the sentence goes first. A
-    PDF uploaded beside it is still read, on a second pass without the file.
+    PDF uploaded beside it is still read in the same pass.
     """
     attachment_language = resolve_conversation_language(request.messages).language
-    attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
-    notice = ""
-    if (
-        attachment_result.meta["chat_pdf_error_reason"] == "unsupported_attachment"
-        and len((_last_user_message(request.messages) or "").strip()) >= _TEXT_BESIDE_ATTACHMENT_MIN_CHARS
-    ):
-        notice = attachment_result.user_visible_error or ""
-        drop_unreadable_file_parts(request.messages)
-        attachment_result = await process_chat_attachments(request.messages, language=attachment_language)
-    if (error := attachment_result.user_visible_error) is not None:
+    typed_text = (_last_user_message(request.messages) or "").strip()
+    attachment_result = await process_chat_attachments(
+        request.messages,
+        language=attachment_language,
+        answer_beside_unreadable=len(typed_text) >= _TEXT_BESIDE_ATTACHMENT_MIN_CHARS,
+    )
+    error = attachment_result.user_visible_error
+    notice = user_visible_error("unsupported_attachment", attachment_language) if attachment_result.unreadable else ""
+    if error is not None:
         if request.stream:
             return StreamingResponse(content=fixed_reply_stream(error), media_type="text/event-stream"), ""
         return fixed_reply_response(model=request.model, message=error), ""
-    if attachment_result.processed_count:
+    if attachment_result.processed_count or attachment_result.unreadable:
         request.messages = attachment_result.messages
     return None, notice
 

@@ -1110,3 +1110,39 @@ async def test_a_held_reply_leaves_portal_api_byte_for_byte_as_before_the_one_wr
         assert turn.sent == _golden_body(text)
     records = [{key: value for key, value in record.items() if key != "timings"} for record in turn.records]
     assert records == ([] if widget else [_GOLDEN_STRICT_RECORD])
+
+
+@pytest.mark.asyncio
+async def test_a_caption_beside_an_unreadable_file_and_two_pdfs_gets_the_pdf_only_refusal(monkeypatch):
+    import base64
+
+    from app.api import partner
+    from app.services import chat_attachments
+
+    convert = AsyncMock(return_value="body")
+    monkeypatch.setattr(chat_attachments, "_convert_pdf_with_docling", convert)
+
+    def file_part(name: str, data: bytes) -> dict:
+        return {"type": "file", "file": {"filename": name, "file_data": base64.b64encode(data).decode()}}
+
+    request = partner.ChatCompletionsRequest(
+        model="klai-primary",
+        stream=False,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "zie bijlage"},
+                    file_part("rooster.docx", b"PK\x03\x04"),
+                    file_part("een.pdf", b"%PDF-1.7 x"),
+                    file_part("twee.pdf", b"%PDF-1.7 y"),
+                ],
+            }
+        ],
+    )
+
+    reply, notice = await partner._attachment_error_reply(request)
+
+    assert reply["choices"][0]["message"]["content"] == "Klai kan nu alleen PDF-bestanden direct in chat verwerken."
+    assert notice == ""
+    convert.assert_not_awaited()

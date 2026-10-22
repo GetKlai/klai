@@ -150,18 +150,18 @@ check "a missing pin warns loudly" \
 check "a missing pin fails the firewall unit" \
     test "$LAST_RC" -ne 0
 
-# Execute the real tail of the embedded deploy script with boundary commands
-# stubbed. This catches ordering and exit-code bugs without SSH or Docker.
+# The env-drift sweep and its firewall re-apply moved out of deploy-compose.yml
+# into compose-env-drift-recreate.sh. The workflow must still call it, or the
+# cases below test a script nothing runs.
+check "deploy-compose.yml runs the env-drift sweep script" \
+    grep -q '^ */opt/klai/scripts/compose-env-drift-recreate\.sh$' "$WORKFLOW"
+
+# Execute the real sweep with boundary commands stubbed. This catches ordering
+# and exit-code bugs without SSH or Docker.
 run_workflow_tail() {
     local scenario="$1"
     local tmp; tmp="$(mktemp -d)"
-
-    awk '
-      /echo "::group::SPEC-MCP-RETRIEVAL-001 follow-up/ { capture=1 }
-      capture && /# SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test/ { exit }
-      capture { sub(/^            /, ""); print }
-    ' "$WORKFLOW" | sed -e 's|cd /opt/klai|cd "$WORK_DIR"|' \
-        -e 's|/opt/klai/scripts/compose-up.sh|"$WORK_DIR/compose-up.sh"|' >"$tmp/workflow-tail.sh"
+    mkdir -p "$tmp/scripts"
 
     cat >"$tmp/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -181,7 +181,7 @@ case "$*" in
 esac
 exit 0
 STUB
-    cat >"$tmp/compose-up.sh" <<'STUB'
+    cat >"$tmp/scripts/compose-up.sh" <<'STUB'
 #!/usr/bin/env bash
 echo "compose-up $*" >>"$CALLS"
 [ "$SCENARIO" = compose_fail ] && exit 42
@@ -197,11 +197,12 @@ STUB
 echo "systemctl $*" >>"$CALLS"
 exit 0
 STUB
-    chmod +x "$tmp/docker" "$tmp/compose-up.sh" "$tmp/sudo" "$tmp/systemctl"
+    chmod +x "$tmp/docker" "$tmp/scripts/compose-up.sh" "$tmp/sudo" "$tmp/systemctl"
 
     set +e
-    PATH="$tmp:$PATH" SCENARIO="$scenario" CALLS="$tmp/calls" WORK_DIR="$tmp" \
-        bash -e "$tmp/workflow-tail.sh" >"$tmp/out" 2>&1
+    PATH="$tmp:$PATH" SCENARIO="$scenario" CALLS="$tmp/calls" \
+    KLAI_COMPOSE_DIR="$tmp" KLAI_DOCKER_BIN="$tmp/docker" \
+        bash "$REPO_ROOT/deploy/scripts/compose-env-drift-recreate.sh" >"$tmp/out" 2>&1
     WORKFLOW_RC=$?
     set -e
     WORKFLOW_OUT="$(cat "$tmp/out")"

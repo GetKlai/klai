@@ -10,6 +10,11 @@
 #   - spec=SPEC-INFRA-CONTAINER-HYGIENE-001      → klai-ops-alerts-email (REQ-5 orphan-audit)
 #   - spec=SPEC-INGEST-LOGIN-WALL-DETECT-001     → klai-ops-alerts-email (REQ-08 login-wall)
 #   - spec=SPEC-KB-015                           → klai-ops-alerts-email (feedback-loop health)
+#   - component=mistral-api-probe                → klai-ops-alerts-email (Mistral key state, repeat 1h)
+#   - severity=critical                          → klai-ops-alerts-email (any critical rule not matched above)
+#
+# A critical rule must never fall to the fallback: scripts/audit-alert-routes.py
+# fails CI when one matches no route here.
 #
 # Grouping + repeat_interval tuning per route:
 #   - SEC/INFRA: repeat 24h — suppress email-floods from a wedged call-path
@@ -138,6 +143,23 @@ policies:
         repeat_interval: 4h
         continue: false
 
+      # Mistral key state (mistral-api-rules.yaml): one alert per key that is
+      # full or failing, one critical when no key is left. group_wait 0s
+      # because the probe already debounces (one run every 2 minutes) and a
+      # full workspace stops chat for every tenant; repeat 1h because a full
+      # workspace waits on a person and went unread for 2.5 days in October
+      # 2026 on the default receiver's cadence.
+      - receiver: klai-ops-alerts-email
+        matchers:
+          - component = mistral-api-probe
+        group_by:
+          - alertname
+          - key_env
+        group_wait: 0s
+        group_interval: 1m
+        repeat_interval: 1h
+        continue: false
+
       # SPEC-KB-015 — feedback-loop health. The rule evaluates a 30-day
       # window behind a >=5-event volume gate, so it cannot burst: at most one
       # firing state per day is meaningful. A 24h repeat matches that cadence
@@ -151,4 +173,20 @@ policies:
         group_wait: 30s
         group_interval: 10m
         repeat_interval: 24h
+        continue: false
+
+      # Every other critical rule. Nine critical rules (docker-authz, identity
+      # assert, litellm provider auth and budget, Zitadel 5xx, MFA fail-open,
+      # RLS tenant context, session cookie key and TOTP Redis) matched no
+      # route above and fell to the default receiver, several despite a
+      # header comment claiming a spec route. Last, so a rule's own route
+      # still wins; scripts/audit-alert-routes.py fails CI on a critical rule
+      # that matches no route. Grouping and repeat mirror the default policy,
+      # so for those nine only the receiver and its subject line change.
+      - receiver: klai-ops-alerts-email
+        matchers:
+          - severity = critical
+        group_by:
+          - grafana_folder
+          - alertname
         continue: false

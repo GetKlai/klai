@@ -3,7 +3,7 @@ paths:
   - "klai-knowledge-ingest/**"
   - "klai-connector/**"
   - "klai-retrieval-api/**"
-  - "klai-portal/backend/app/services/partner_chat.py"
+  - "klai-portal/backend/app/services/answer_compose.py"
   - "klai-libs/chat-prompts/**"
 ---
 # Knowledge Domain Patterns
@@ -43,7 +43,7 @@ SPEC-RAG-MULTILINGUAL-CHAT-001.
 | Location | What lives here | Used by |
 |---|---|---|
 | `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` (`GROUNDED_CHAT_SYSTEM_PROMPT`) | The shared multilingual base prompt: detect substantive language, three guards, no translator disclaimers, [n] citation rules | imported by paths B (`partner_chat.py`) and C (`synthesis.py`) |
-| `klai-portal/backend/app/services/partner_chat.py::_build_system_prompt` | Adds the chunks-as-context block to the shared base | path B — Widget + Partner API |
+| `klai-portal/backend/app/services/retrieval_context.py::_build_system_prompt` | Adds the chunks-as-context block to the shared base | path B — Widget + Partner API |
 
 **Why more than one:** chat traffic in Klai takes concurrent paths. (B)
 portal-api `/partner/v1/chat/completions` → LiteLLM → Mistral, which

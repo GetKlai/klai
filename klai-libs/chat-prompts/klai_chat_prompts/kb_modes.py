@@ -7,7 +7,7 @@ library stays the one home of chat prompt text.
 
 from __future__ import annotations
 
-from klai_chat_prompts import _language_is_dutch
+from klai_chat_prompts import fixed_text
 
 # A user-provided attachment is the user's OWN input, not a knowledge-base
 # source. It must always be usable standalone content, in every mode and on
@@ -191,14 +191,7 @@ def kb_retrieval_failure_notice(retrieval_failure: str) -> str:
 
 def strict_kb_unavailable_message(language: object) -> str:
     """Strict-mode reply when the knowledge base could not be searched; no model runs."""
-    if _language_is_dutch(language):
-        return (
-            "De kennisbank is tijdelijk niet bereikbaar, dus ik kan dit niet "
-            "betrouwbaar beantwoorden op basis van je kennisbronnen."
-        )
-    return (
-        "The knowledge base is temporarily unavailable, so I cannot answer this reliably from your knowledge sources."
-    )
+    return fixed_text("strict_kb_unavailable", language)
 
 
 def kb_zero_chunks_notice(kb_narrow: bool) -> str:

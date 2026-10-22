@@ -19,6 +19,7 @@ on:
       - 'deploy/check-klai-presidio-digest.sh'    # Klai presidio-analyzer image must be digest-pinned
       - 'deploy/scripts/**'                       # Public-safe deploy scripts; operator health scripts live in klai-infra
       - 'scripts/mistral-api-probe.sh'            # authenticated provider heartbeat
+      - 'deploy/systemd/mistral-api-probe.*'      # its unit + timer, staged in /opt/klai/systemd
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
@@ -83,6 +84,8 @@ jobs:
           # every service. This job is the only thing that installs it on
           # core-01, so its tests belong here.
           bash deploy/scripts/tests/compose-up-verify.test.sh
+          # The env-drift sweep at the end of the sync step, installed here too.
+          bash deploy/scripts/tests/compose-env-drift-recreate.test.sh
           # The orphan audit decides which live containers look abandoned. A
           # class it does not know reads as a wees — that is the librechat-voys
           # incident. This job also installs it, so its tests belong here.
@@ -183,6 +186,10 @@ jobs:
             install -m 0644 deploy/systemd/docker-cleanup.timer /opt/klai/systemd/docker-cleanup.timer
             install -m 0644 deploy/systemd/orphan-audit.service /opt/klai/systemd/orphan-audit.service
             install -m 0644 deploy/systemd/orphan-audit.timer /opt/klai/systemd/orphan-audit.timer
+            # Mistral key probe: same one-time symlink install, see
+            # docs/runbooks/litellm-provider-auth-failed.md ("Probe unit").
+            install -m 0644 deploy/systemd/mistral-api-probe.service /opt/klai/systemd/mistral-api-probe.service
+            install -m 0644 deploy/systemd/mistral-api-probe.timer /opt/klai/systemd/mistral-api-probe.timer
 
             # SPEC-SEC-024 M4.2 — sync Grafana provisioning. Grafana loads
             # provisioning only at startup, so we need to restart when files
@@ -357,88 +364,11 @@ jobs:
             cd /tmp && rm -rf klai-compose-sync
             echo "docker-compose.yml + grafana provisioning + scripts synced to /opt/klai/"
 
-            # SPEC-MCP-RETRIEVAL-001 follow-up — auto-recreate on env-only changes.
-            #
-            # Without this, an env-var change in docker-compose.yml lands on
-            # disk but never reaches the running container — only discovered
-            # via a 401 in production (PR #493 was exactly this trap).
-            #
-            # ``compose up -d`` with the service list is idempotent: Compose
-            # recreates only services whose declaration changed, leaves the
-            # rest untouched. LiteLLM is intentionally excluded here: its
-            # docker-compose.yml changes trigger litellm-hook-deploy.yml,
-            # which recreates it through /opt/klai/scripts/compose-up.sh
-            # litellm so the Prisma migration baseline gate runs before a
-            # serving-container recreate.
-            echo "::group::SPEC-MCP-RETRIEVAL-001 follow-up — compose up -d for env-drift recreate"
-            cd /opt/klai
-            set -o pipefail
-            COMPOSE_ENV_DRIFT_SERVICES="$(docker compose config --services | awk '$0 != "litellm"' | tr '\n' ' ')"
-            if [ -z "$COMPOSE_ENV_DRIFT_SERVICES" ]; then
-              echo "::error::no env-drift services resolved; refusing an all-services compose up"
-              exit 1
-            fi
-
-            # Docker can recreate a network before a later container fails. Arm
-            # the EXIT trap only after config/list validation, then clear it once
-            # compose succeeds so both success and failure paths re-apply exactly
-            # once. The failure handler preserves compose's original exit code.
-            reapply_firewall() {
-              echo "Re-applying firewall rules (network definitions may have changed) ..."
-              if ! sudo systemctl restart klai-harden-firewall.service; then
-                echo "::error::klai-harden-firewall failed to restart"
-                return 1
-              fi
-              systemctl is-active --quiet klai-harden-firewall.service \
-                || { echo "::error::klai-harden-firewall failed to re-apply"; return 1; }
-            }
-            on_compose_exit() {
-              local compose_exit="$1"
-              trap - EXIT
-              reapply_firewall || exit 1
-              exit "$compose_exit"
-            }
-            trap 'on_compose_exit "$?"' EXIT
-
-            # Through compose-up.sh rather than a bare `docker compose up -d`.
-            # compose returns once containers are CREATED, so the bare call
-            # reported green while a recreated container could be dead on boot,
-            # crash-looping, or left under a hash-prefixed name by a
-            # half-finished recreate. On 2026-09-18 this sweep recreated 31
-            # services in one merge, Caddy and the fail-closed PII analyzer
-            # among them, with nothing checking any of them came back.
-            #
-            # compose-up.sh still issues one `up -d` for the whole list, so
-            # depends_on ordering is unchanged; it then verifies each container
-            # that was actually recreated, in parallel, and fails the step if
-            # any did not come up. --no-pull keeps this sweep's behaviour: it
-            # never pulled, and pulling every image on every compose change
-            # would be slow and a new way to fail. The script was installed a
-            # few steps up, in the deploy/scripts loop, so this is the version
-            # from this same commit.
-            #
-            # No `| tail` here: it hid the start of compose's output, and the
-            # per-service verdict is exactly what someone reading a red run needs.
-            # shellcheck disable=SC2086
-            /opt/klai/scripts/compose-up.sh --no-pull $COMPOSE_ENV_DRIFT_SERVICES
-            trap - EXIT
-            echo "::endgroup::"
-
-            # Re-apply the firewall after compose has settled.
-            #
-            # klai-harden-firewall.service is After=docker.service / WantedBy=
-            # multi-user.target — it runs at boot and never again. The bot
-            # isolation rules (SPEC-SEC-022 REQ-2) carry the vexa12-bots subnet,
-            # read from Docker at the time they were installed. A compose change
-            # that recreates that network can hand it a different subnet, and the
-            # rules then match nothing at all: bots regain the host until the next
-            # reboot, silently.
-            #
-            # That is not hypothetical — recreating the network on 2026-08-17 is
-            # what surfaced this, and the rules had to be re-applied by hand.
-            # A deploy is exactly when the network can change, so a deploy is when
-            # the rules get rewritten.
-            reapply_firewall
+            # SPEC-MCP-RETRIEVAL-001 env-drift recreate, then the firewall
+            # re-apply (also on failure). The incidents behind each part are in
+            # the script; it was installed by the deploy/scripts loop above, so
+            # it is the version from this commit.
+            /opt/klai/scripts/compose-env-drift-recreate.sh
 
             # SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test. Prints
             # [OK]/[FAIL] per probe; warns on non-zero exit but does NOT
