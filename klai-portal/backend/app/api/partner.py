@@ -857,8 +857,8 @@ async def _previous_internal_turn(
         stored = await last_internal_case(
             org_id=auth.org_id, conversation_key=conversation.key, turn_digest=conversation.previous
         )
-    except Exception as exc:
-        logger.warning("internal_chat_previous_case_unavailable", org_id=auth.org_id, error=type(exc).__name__)
+    except Exception:
+        logger.warning("internal_chat_previous_case_unavailable", org_id=auth.org_id, exc_info=True)
         return None
     if stored is not None:
         logger.info(

@@ -33,6 +33,7 @@ from typing import Any, Literal
 
 import structlog
 from sqlalchemy import text
+from sqlalchemy.exc import StatementError
 
 from app.core.config import settings as _global_settings
 from app.core.database import cross_org_session, tenant_scoped_session
@@ -468,8 +469,8 @@ async def keep_internal_case(
     """Store what the next turn of an internal conversation reads, one row per conversation, and prune expired rows.
 
     The case and the passages are text, so they live in ``internal_chat_cases``,
-    never in ``internal_chat_turns`` or a log line: a failure is logged by its
-    type only, because a database error's message carries the parameters.
+    never in ``internal_chat_turns`` or a log line: a failure is logged with
+    the statement's parameters hidden, which a database error prints otherwise.
     """
     try:
         async with tenant_scoped_session(org_id) as db:
@@ -509,4 +510,6 @@ async def keep_internal_case(
             )
             await db.commit()
     except Exception as exc:
-        logger.warning("internal_chat_case_keep_failed", org_id=org_id, error=type(exc).__name__)
+        if isinstance(exc, StatementError):
+            exc.hide_parameters = True
+        logger.warning("internal_chat_case_keep_failed", org_id=org_id, exc_info=True)

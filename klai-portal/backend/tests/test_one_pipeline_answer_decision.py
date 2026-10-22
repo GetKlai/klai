@@ -714,8 +714,8 @@ def _one_article(text: str, chunk_id: str, title: str) -> dict:
     }
 
 
-async def _two_internal_turns(monkeypatch) -> tuple[_Turn, _Turn, _LiteLLM]:
-    """Turn 1 chooses KEPT_ARTICLE; turn 2's search finds only an unrelated article."""
+async def _two_internal_turns(monkeypatch, found_next: dict | None = None) -> tuple[_Turn, _Turn, _LiteLLM]:
+    """Turn 1 chooses KEPT_ARTICLE; turn 2's search finds only an unrelated article, or ``found_next``."""
     cases: dict = {}
     first = await _turn(
         monkeypatch,
@@ -729,7 +729,7 @@ async def _two_internal_turns(monkeypatch) -> tuple[_Turn, _Turn, _LiteLLM]:
         monkeypatch,
         llm,
         profile=_internal(),
-        retrieval=_one_article(UNRELATED, "c-parking", "Parkeren"),
+        retrieval=_one_article(UNRELATED, "c-parking", "Parkeren") if found_next is None else found_next,
         history=({"role": "user", "content": QUESTION}, {"role": "assistant", "content": first.text}),
         question="En als mijn leidinggevende niet reageert?",
         cases=cases,
@@ -762,6 +762,16 @@ async def test_an_internal_record_says_whether_the_case_was_remembered_without_i
     recorded = json.dumps(record, ensure_ascii=False)
     assert KEPT_ARTICLE not in recorded
     assert LEAVE_CASE["problem"] not in recorded
+
+
+@pytest.mark.asyncio
+async def test_a_strict_follow_up_whose_search_finds_nothing_is_written_from_the_kept_passage(monkeypatch):
+    """Strict refused every turn whose search came back empty before the kept
+    passages were looked at; the widget offers them in that case too."""
+    _, second, llm = await _two_internal_turns(monkeypatch, {"evidence_pack": {"items": [], "sources": []}})
+
+    assert second.text != STRICT_REFUSAL
+    assert KEPT_ARTICLE in _system_prompt(llm)
 
 
 # --- Grounding check and repair ---------------------------------------------------
