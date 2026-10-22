@@ -133,7 +133,7 @@ volumes:
   runtime-api-docker-socket:   # SPEC-SEC-021 socat bridge socket (runtime-api <-> docker-socket-proxy)
   vaultwarden-data:            # Vaultwarden SQLite DB + attachments
   calnode-data:                # Calnode SQLite DB + encrypted stored credentials
-  crm-postgres-data:           # Twenty CRM database (SPEC-INFRA-COOLIFY-EXIT-001)
+  crm-postgres-data-18:        # Twenty CRM database, PostgreSQL 18
   crm-storage:                 # Twenty CRM uploads: avatars and attachments
   umami-postgres-data-18:      # Umami analytics database, PostgreSQL 18
   fider-postgres-data-18:      # Fider feedback board database, PostgreSQL 18
@@ -2439,10 +2439,13 @@ services:
   # worker running (verified locally 2026-10-22).
   crm-postgres:
     logging: *log-rotation
-    image: postgres:16.15-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
-      - crm-postgres-data:/var/lib/postgresql/data
+      # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
+      # with a mount at the old .../data path. New volume, filled by dump and
+      # restore before deploy; the old volume stays on the host for rollback.
+      - crm-postgres-data-18:/var/lib/postgresql
     environment:
       POSTGRES_USER: twenty
       POSTGRES_PASSWORD: ${CRM_POSTGRES_PASSWORD}
