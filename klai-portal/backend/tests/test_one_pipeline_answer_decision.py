@@ -492,6 +492,30 @@ async def test_an_internal_turn_runs_the_selection_in_the_internal_words(monkeyp
     assert next(m["content"] for m in widget_selection["messages"] if m["role"] == "system") == SELECTION_SYSTEM_PROMPT
 
 
+@pytest.mark.asyncio
+async def test_an_internal_rewrite_request_keeps_the_passages_without_the_no_answer_note(monkeypatch):
+    """ "Answers with empty evidence" is the selection's word for a request
+    that needs no passage (rewrite text already in the conversation); the
+    note that no passage answers would make the writer say "not in the
+    knowledge base" over a mail written from the previous answer."""
+    from app.services.retrieval_context import NO_PASSAGE_ANSWERS_NOTE
+
+    llm = _LiteLLM(
+        selection={"need": "een mail van het vorige antwoord", "evidence": [], "verdict": "answers", "question": ""}
+    )
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+    )
+
+    prompt = _system_prompt(llm)
+    assert ARTICLE in prompt and NO_PASSAGE_ANSWERS_NOTE not in prompt
+
+
 # --- Open and general never refuse for a missing source ---------------------------
 
 
