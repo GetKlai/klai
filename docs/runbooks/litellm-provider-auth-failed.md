@@ -92,9 +92,9 @@ probe run (at most 2 minutes) marks the key `ok`, LiteLLM picks it up within
 10 seconds of that, and the alert resolves within 5 minutes.
 
 `mistral_api_probe_missing` (warning) means no probe line for 10 minutes.
-Once the state file is older than 10 minutes LiteLLM stops trusting it and
-falls back to learning about full keys from failed user requests (a 402
-benches a key for 5, then 15, then 60 minutes). Check
+LiteLLM keeps the last verdict in the state file however old it gets, so a
+key the file calls full stays off until the probe runs again; a 402 on a
+real request still benches a key for 5 minutes. Check
 `systemctl status mistral-api-probe.timer mistral-api-probe.service`,
 `/opt/klai/logs/mistral-api-probe.log`, Alloy and VictoriaLogs.
 

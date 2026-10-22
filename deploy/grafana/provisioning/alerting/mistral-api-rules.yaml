@@ -15,7 +15,7 @@
 # Routed via component=mistral-api-probe -> klai-ops-alerts-email, repeat 1h
 # (policies.yaml). Before October 2026 the critical rule here had no route,
 # fell to the default receiver and sat unread for 2.5 days while a workspace
-# was full; scripts/audit-alert-routes.py now fails CI on that.
+# was full; the severity=critical catch-all route in policies.yaml now covers that.
 
 apiVersion: 1
 
@@ -229,7 +229,7 @@ groups:
           runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
           description: |
             No Mistral API probe log was seen in the last 10 minutes, so the
-            per-key state file LiteLLM reads goes stale too and LiteLLM falls
-            back to finding full keys through failed user requests.
+            per-key state file LiteLLM reads is no longer refreshed: LiteLLM
+            keeps its last verdict until the probe runs again.
             Check `mistral-api-probe.timer`, `/opt/klai/logs/mistral-api-probe.log`,
             Alloy, and VictoriaLogs.

@@ -124,18 +124,17 @@ MISTRAL_VIBE_KEY (klai-ingest, klai-judge) is not probed: it is Vibe-scoped
 (see config.yaml), a mistral-small probe would not test it, and it has no
 second order to move to, so it stays on the request-path bench below. A
 key the file calls `full` is never offered. A 402 on a real request still benches its key at
-once (the probe can be up to 2 minutes behind), until a probe run written
-after that 402 says `ok`. When the file is missing, unreadable or older
-than 10 minutes (probe or timer dead), or does not mention the key, or
-calls it `error`, the request path is the only signal again and the bench
-grows per consecutive 402 on that key: 5, 15, then 60 minutes, capped, and
-reset by one success. 60 minutes is the cap because a 402 waits on a
-person lifting the limit; a dead probe should not keep a fixed key off for
-longer than that. Known ceiling: bench expiry is a plain timestamp, not a
-single-flight probe, so a burst right at expiry can all reach a still-full
-account; concurrent 402s from that burst re-arm the bench once, not once
-per request. An asyncio.Lock gating one canary request is the upgrade path
-if that burst ever matters.
+once (the probe can be up to 2 minutes behind) for 5 minutes, and a probe
+run written after that 402 decides earlier: `ok` releases the key, `full`
+keeps it off. The file's age is not judged here: a probe or timer that has
+died is the `mistral_api_probe_missing` alert's job, and until it is fixed
+the last verdict holds. The 5-minute bench therefore only matters for a key
+the probe does not cover (the Vibe key) and for the two minutes between a
+402 and the next probe run. Known ceiling: bench expiry is a plain
+timestamp, not a single-flight probe, so a burst right at expiry can all
+reach a still-full account; concurrent 402s from that burst re-arm the
+bench once, not once per request. An asyncio.Lock gating one canary request
+is the upgrade path if that burst ever matters.
 
 Every FULL/ok transition is logged as `klai_mistral_pool_state_change
 key_fingerprint=<fp> state=<state> source=probe|request`.
@@ -155,11 +154,9 @@ STATUS_FILE = Path("/app/state/mistral-keys.json")
 # The probe runs every 2 minutes; reading more often than this buys nothing
 # and this check sits on every deployment pick.
 STATUS_FILE_RECHECK_SECONDS = 10
-# Five missed probe runs: the probe or its timer is gone.
-STATUS_FILE_MAX_AGE_SECONDS = 600
-# Bench after the 1st, 2nd and 3rd-or-later consecutive 402 without a probe
-# verdict. See module docstring.
-BENCH_SECONDS = (300, 900, 3600)
+# How long a 402 keeps a key off when no later probe run has judged it. See
+# module docstring.
+BENCH_SECONDS = 300
 
 logger = logging.getLogger(__name__)
 
@@ -173,12 +170,11 @@ class _Bench:
     # Not a @dataclass: LiteLLM loads this module without registering it in
     # sys.modules, which crashes dataclass processing under
     # `from __future__ import annotations` (tests/test_callback_module_loading.py).
-    __slots__ = ("at", "level", "until")
+    __slots__ = ("at", "until")
 
-    def __init__(self, at: float, until: float, level: int) -> None:
+    def __init__(self, at: float, until: float) -> None:
         self.at = at
         self.until = until
-        self.level = level
 
 
 class KlaiMistralPoolHook(CustomLogger):
@@ -228,29 +224,27 @@ class KlaiMistralPoolHook(CustomLogger):
                 self._log_change(fp, state, "probe")
         self._probe_states = states
 
-    def _fresh_probe_states(self) -> dict[str, str]:
+    def _probe_states_now(self) -> dict[str, str]:
         now = time.time()
         if now - self._status_checked_at >= STATUS_FILE_RECHECK_SECONDS:
             self._status_checked_at = now
             self._reload_status()
-        if self._probe_states is None or now - self._status_mtime > STATUS_FILE_MAX_AGE_SECONDS:
-            return {}
-        return self._probe_states
+        return self._probe_states or {}
 
     def _is_full(self, account: str) -> bool:
         fp = key_fingerprint(account)
-        state = self._fresh_probe_states().get(fp)
+        state = self._probe_states_now().get(fp)
         if state == "full":
             return True
         mark = self._marks.get(account)
         if mark is None:
             return False
-        if state == "ok":
-            if mark.at < self._status_mtime:
-                del self._marks[account]
-                self._log_change(fp, "ok", "probe")
-                return False
-            return True
+        if state == "ok" and mark.at < self._status_mtime:
+            del self._marks[account]
+            self._log_change(fp, "ok", "probe")
+            return False
+        # An ok verdict older than the 402, no verdict, or an unprobed key: the
+        # bench decides, so a dead probe cannot keep a key off for good.
         return time.time() < mark.until
 
     def _mark_full(self, account: str) -> None:
@@ -258,10 +252,10 @@ class KlaiMistralPoolHook(CustomLogger):
         mark = self._marks.get(account)
         if mark is not None and now < mark.until:
             return
-        level = 0 if mark is None else min(mark.level + 1, len(BENCH_SECONDS) - 1)
-        self._marks[account] = _Bench(at=now, until=now + BENCH_SECONDS[level], level=level)
-        if mark is None:
-            self._log_change(key_fingerprint(account), "full", "request")
+        self._marks[account] = _Bench(at=now, until=now + BENCH_SECONDS)
+        # Past the early return there was no active bench: a first 402, or one
+        # after the bench expired, is a state change either way.
+        self._log_change(key_fingerprint(account), "full", "request")
 
     def _lowest_eligible_order(self, orders: dict[int, str]) -> int | None:
         for order in sorted(orders):
