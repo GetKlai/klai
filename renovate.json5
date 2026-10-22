@@ -80,6 +80,24 @@
   // generating the lockfile, producing a PR that cannot build. Keep the two
   // numbers in sync; the npm one also applies to every manual install.
   minimumReleaseAge: '7 days',
+  // Since Renovate 42 an update WITHOUT a release timestamp counts as never
+  // aged, and is held forever. GHCR, Quay, MCR and every other non-Docker-Hub
+  // registry publish no timestamp, and neither does a lock file refresh. From
+  // 2026-09-25 to 2026-10-22 that held the Docker images group (22 images,
+  // among them Zitadel, Grafana, Caddy and Redis, behind five GHCR members),
+  // LiteLLM and the lock file refresh on a `renovate/stability-days` check
+  // that could never turn green. 'timestamp-optional' still ages everything
+  // that HAS a timestamp (npm, PyPI, Docker Hub); only an update that can
+  // never be aged goes through without the cooldown, which beats never.
+  minimumReleaseAgeBehaviour: 'timestamp-optional',
+  // Renovate otherwise installs the newest npm to regenerate lock files. npm
+  // 12 defaults allow-remote to 'none' and refused the tarball of
+  // @tailwindcss/oxide-wasm32-wasi, so every lock file refresh and thirteen
+  // npm updates ended in EALLOWREMOTE (2026-10-21). CI and the Dockerfiles
+  // run Node 24, which ships npm 11: generate locks with what installs them.
+  constraints: {
+    npm: '^11',
+  },
   // With the default 'strict', a grouped update waits until EVERY member's
   // newest release is 7 days old. Ollama and LiteLLM release weekly, so the
   // Docker images group never aged: on 2026-09-25 Grafana 13.2.2 (out since
@@ -210,7 +228,6 @@
       matchPackageNames: ['aquasecurity/setup-trivy'],
       overrideDatasource: 'git-tags',
       overridePackageName: 'https://github.com/aquasecurity/setup-trivy.git',
-      minimumReleaseAge: '0 days',
     },
     {
       description:
@@ -220,7 +237,6 @@
       matchPackageNames: ['aquasecurity/trivy'],
       overrideDatasource: 'git-tags',
       overridePackageName: 'https://github.com/aquasecurity/trivy.git',
-      minimumReleaseAge: '0 days',
     },
     {
       description: 'Auto-merge patch and minor updates once CI is green',
