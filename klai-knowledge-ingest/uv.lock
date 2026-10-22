@@ -807,7 +807,7 @@ wheels = [
 
 [[package]]
 name = "fastapi"
-version = "0.159.1"
+version = "0.161.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
@@ -817,9 +817,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/40/a212bffb9809afb9a94b250f11e0c29fd8b2589ec92e4bedd1cc7adf9938/fastapi-0.159.1.tar.gz", hash = "sha256:b45b1ec57f3aa4d2f80f09bfbcf068b46764a2ee892e56753f35bb3d9d845ce2", size = 522004, upload-time = "2026-10-21T20:59:29.054Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/12/f5a074dd4efd40898b1270551fdba19202f17591895dbc8429755128bd1b/fastapi-0.161.0.tar.gz", hash = "sha256:c65a5226b55061349a5d5f4940a1c45da6c08ec40e58211aed9e3e1baa4e7ba5", size = 527298, upload-time = "2026-10-22T18:30:43.421Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/35/b03b5df04a1a8ee400c9df4b1795af84370b2bb6f1cc4be57c0b79688d00/fastapi-0.159.1-py3-none-any.whl", hash = "sha256:49b94c29afec2fca1390e9c39be202c59755d5cda8e4f1148a133761e4313e7e", size = 149604, upload-time = "2026-10-21T20:59:27.58Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/48/3cd6f8f30857fef456c03ae1ef89c1a82aba8a3a229896c28967b49849e1/fastapi-0.161.0-py3-none-any.whl", hash = "sha256:843d71746b18a3349e2c0b56993631788e6d89381c1973d7d8f4aa098f623ecb", size = 149008, upload-time = "2026-10-22T18:30:41.955Z" },
 ]
 
 [[package]]
@@ -1825,7 +1825,7 @@ wheels = [
 
 [[package]]
 name = "langchain-core"
-version = "1.6.13"
+version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -1839,9 +1839,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uuid-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/40/76/0b8e5383a9c6a05bde284790d661487bb586cf101f43e8d4dac1fb3da1ee/langchain_core-1.6.13.tar.gz", hash = "sha256:756d8fd971cd7e3a5a19cf5453a81159351bd40cbfe62cbfe7e2ee3941008772", size = 1018477, upload-time = "2026-10-21T20:43:32.248Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/64/cb/77d1dabe57d0dc0f96f65cba321366c341627295d1c09eefa58549e34391/langchain_core-1.7.0.tar.gz", hash = "sha256:c34e53358b103cd73f43c63f5f46f9b5c6c3467efdffcdf134892b89020494e4", size = 1020046, upload-time = "2026-10-22T17:47:21.554Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/2f/c15b026e7b4aa093bc237c909bf909e8a59143b1315efee43c296fad58ce/langchain_core-1.6.13-py3-none-any.whl", hash = "sha256:8605de6f84a49902ef6be03d6fe2a126e7dfc35184315989689f341181f0a8fb", size = 574683, upload-time = "2026-10-21T20:43:30.951Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/d8/ed130e91cee0525cb47d185b98a5a6ffd6a8b660a100fbee43d887e745d6/langchain_core-1.7.0-py3-none-any.whl", hash = "sha256:e82b24d7ac51fc74874baa29d6b3c0b8234880d4f3d897f8ff57fb80dfd9b07d", size = 574676, upload-time = "2026-10-22T17:47:19.749Z" },
 ]
 
 [[package]]
@@ -2811,7 +2811,7 @@ wheels = [
 
 [[package]]
 name = "posthog"
-version = "7.75.4"
+version = "7.75.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "backoff" },
@@ -2819,9 +2819,9 @@ dependencies = [
     { name = "requests" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d3/76/c693fd5e8afccbb62a5cce57eb9836b9755ff2da060c98b8d05eee50254a/posthog-7.75.4.tar.gz", hash = "sha256:b3c543ac2e074ff4c0299174a448d70d489f82606bab2943c7052ec7de63c407", size = 785826, upload-time = "2026-10-22T10:40:44.946Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6f/1f/0a995ef6fc346c620507a8bd383a8d6f79cbed81243661a744cf82f80a42/posthog-7.75.6.tar.gz", hash = "sha256:c1675dfd34be02cf85d0f6e31b0c17c51feaae67bbbfbd2eef571f4cc3824ae0", size = 787102, upload-time = "2026-10-22T18:12:34.327Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/8b/1d250ca0c427ec7084c4dd9cfb92f55ba0c05fe5fd488582a05dd4504492/posthog-7.75.4-py3-none-any.whl", hash = "sha256:139a23d20b0a811af7df24315c5437f8e9a84da242b067bddfe52a53062c6e5d", size = 921392, upload-time = "2026-10-22T10:40:43.064Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/05/a89280a96eec96eb8c2fbbed547f92068cd21232e8b2904e99be59e2362c/posthog-7.75.6-py3-none-any.whl", hash = "sha256:b95ec6a155d38d4804ac7a3b004066a1d5faa238c5e20e1cfb42b7a446abe6a3", size = 922694, upload-time = "2026-10-22T18:12:32.466Z" },
 ]
 
 [[package]]
