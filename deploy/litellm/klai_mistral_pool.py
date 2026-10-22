@@ -57,11 +57,15 @@ test suite built on that patch would never notice this hook going silent):
    - Healthy: unaffected -- order 1 was already the only eligible order.
    - Persistent 429 / rpm-budget exhaustion / any non-402 failure on order
      1: order 1 is not FULL, so order 2 never survives this filter. When
-     the router's own order-based fallback then asks for `target_order=2`,
-     `litellm.utils._get_order_filtered_deployments` finds no order-2
-     candidate to narrow to and, per its own documented fallback ("target_
-     order doesn't match any deployment -- return all"), hands back
-     whatever we returned (order 1, or empty). Order 2 is never called.
+     the router's own order-based fallback then asks for `_target_order=2`
+     (a request kwarg the router pops right after this hook), this hook
+     rewrites it to the eligible order, so the router narrows to what we
+     returned (order 1, or empty). Order 2 is never called. 1.96.2 did that
+     narrowing itself ("target_order doesn't match any deployment -- return
+     all"); 1.105.1's `get_order_filtered_deployments` returns an empty list
+     instead, and the resulting "No deployments available"
+     RouterRateLimitError -- a ValueError without a status_code, so an HTTP
+     500 at the proxy -- replaced Mistral's 429 as the request's final error.
    - Order 1 already marked FULL (from an earlier request -- see point 2):
      order 1 is stripped, order 2 (or the next non-FULL order) is used.
 
@@ -298,6 +302,11 @@ class KlaiMistralPoolHook(CustomLogger):
         if eligible_order is None:
             # Every known account is FULL.
             return []
+        if request_kwargs is not None and "_target_order" in request_kwargs:
+            # See module docstring point 1: an order-based fallback hop to a
+            # non-eligible order retries the eligible one, so the request ends
+            # on the provider's own error instead of an empty selection.
+            request_kwargs["_target_order"] = eligible_order
 
         # May be empty if `eligible_order` isn't in THIS call's healthy_
         # deployments (e.g. cooling down) -- deliberately not falling
