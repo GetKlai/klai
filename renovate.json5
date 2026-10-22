@@ -186,6 +186,23 @@
       datasourceTemplate: 'pypi',
     },
     {
+      // The visual tests run in the Playwright image, whose browsers must be
+      // the build the installed @playwright/test expects. Looked up on MCR,
+      // which publishes no release timestamps, the image skipped the 7-day
+      // cooldown that npm waits out, so the two arrived as separate PRs that
+      // could each only fail: #1876 (npm 1.64.1, image 1.63.0, "Executable
+      // doesn't exist") and #1822 (image 1.64.1 alone). Reading the tag as the
+      // npm package puts both in the Playwright monorepo group, one PR.
+      customType: 'regex',
+      managerFilePatterns: [
+        '/^\\.github/workflows/portal-frontend\\.yml$/',
+        '/^klai-portal/frontend/package\\.json$/',
+      ],
+      matchStrings: ['mcr\\.microsoft\\.com/playwright:v(?<currentValue>[0-9][0-9.]*)-noble'],
+      depNameTemplate: '@playwright/test',
+      datasourceTemplate: 'npm',
+    },
+    {
       customType: 'regex',
       managerFilePatterns: ['/^deploy/docker-compose\\.yml$/'],
       matchStrings: [
@@ -492,6 +509,14 @@
       groupName: 'Python base image',
       automerge: false,
       dependencyDashboardApproval: true,
+    },
+    {
+      description:
+        'The Playwright image tag comes from the npm-backed custom manager, so \
+        the github-actions manager must not also propose an MCR tag for it.',
+      matchManagers: ['github-actions'],
+      matchPackageNames: ['mcr.microsoft.com/playwright'],
+      enabled: false,
     },
     {
       description:
