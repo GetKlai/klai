@@ -22,6 +22,10 @@
 # (KLAI_MEASUREMENT_WAIT_SECONDS) for running chat quality rounds and then
 # going ahead with a warning, and the container lock
 # /opt/klai/.container-deploy.lock it shares with tenant-config-regenerate.sh.
+# Together that is up to 35 minutes before the first container is touched, so
+# every appleboy/ssh-action step that reaches this script or
+# tenant-config-regenerate.sh sets command_timeout: 40m; the action's default
+# of 10m would kill the deploy while it waits.
 #
 # Usage:
 #   compose-up.sh                          — pull + up all services

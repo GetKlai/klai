@@ -179,6 +179,9 @@ jobs:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          # The deploy scripts wait up to 20 min for a measurement round and 15 min
+          # for the container lock; the action's own default (10m) would kill them.
+          command_timeout: 40m
           script: |
             set -e
             source /opt/klai/.env
