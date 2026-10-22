@@ -13,9 +13,11 @@ docstring point 2).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -79,7 +81,12 @@ def real_litellm():
         sys.modules.pop("klai_mistral_pool", None)
 
 
-def _pinned_router(real_litellm: Any, *, rpm_overrides: dict[tuple[str, int], int] | None = None):
+def _pinned_router(
+    real_litellm: Any,
+    *,
+    rpm_overrides: dict[tuple[str, int], int] | None = None,
+    status_file: Path = Path("/nonexistent/mistral-keys.json"),
+):
     import klai_mistral_pool
 
     config = yaml.safe_load(_CONFIG_PATH.read_text())
@@ -104,7 +111,7 @@ def _pinned_router(real_litellm: Any, *, rpm_overrides: dict[tuple[str, int], in
     # removed first so FULL state never leaks between tests -- litellm's own
     # callback dedup keys purely on class name, so an add without a prior
     # remove would silently keep reusing the old instance.
-    hook = klai_mistral_pool.KlaiMistralPoolHook()
+    hook = klai_mistral_pool.KlaiMistralPoolHook(status_file=status_file)
     real_litellm.logging_callback_manager.remove_callbacks_by_type(
         real_litellm.callbacks, klai_mistral_pool.KlaiMistralPoolHook
     )
@@ -119,9 +126,11 @@ def _pinned_router(real_litellm: Any, *, rpm_overrides: dict[tuple[str, int], in
     for check in (RouterBudgetLimiting, ModelRateLimitingCheck):
         real_litellm.logging_callback_manager.remove_callbacks_by_type(real_litellm.callbacks, check)
 
+    # The tests have no Redis; budgets and counters stay in process memory.
+    router_settings = {k: v for k, v in config["router_settings"].items() if not k.startswith("redis_")}
     router = real_litellm.Router(
         model_list=deployments,
-        **config["router_settings"],
+        **router_settings,
     )
     return router, hook
 
@@ -563,40 +572,187 @@ async def test_rpm_budget_exhaustion_on_order1_does_not_spill_to_order2(real_lit
     assert _KLAI2_KEY not in calls
 
 
+def _fingerprint(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
+def _write_status(path: Path, states: dict[str, str], *, mtime: float | None = None) -> None:
+    """Write the file mistral-api-probe.sh writes, keyed by key fingerprint."""
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-10-22T10:00:00Z",
+                "keys": {
+                    _fingerprint(key): {"state": state, "since": "2026-10-22T10:00:00Z", "http_status": 200}
+                    for key, state in states.items()
+                },
+            }
+        )
+    )
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+
+
+def _state_changes(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("klai_mistral_pool_state_change")]
+
+
+async def _wait_for(condition: Callable[[], bool]) -> None:
+    # The failure and success hooks run as fire-and-forget tasks.
+    for _ in range(100):
+        if condition():
+            return
+        await asyncio.sleep(0.02)
+
+
 @pytest.mark.asyncio
-async def test_full_account_is_re_admitted_after_bench_time(real_litellm) -> None:
-    """After the bench time elapses, the next request probes order 1 again
-    instead of staying on order 2 forever."""
+async def test_a_key_the_probe_reports_full_is_never_offered(real_litellm, tmp_path, caplog) -> None:
+    """No user request pays a failed first try on a workspace the probe
+    already found full: the alias goes straight to the next account."""
+    status_file = tmp_path / "mistral-keys.json"
+    _write_status(status_file, {_KLAI_KEY: "full", _KLAI2_KEY: "ok"})
     calls: list[str] = []
-    order1_full = True
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(_api_key_of(request))
+        return _ok_response(request)
+
+    router, _hook = _pinned_router(real_litellm, status_file=status_file)
+    try:
+        with _mock_mistral_http(handler), caplog.at_level("WARNING", logger="klai_mistral_pool"):
+            await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}])
+    finally:
+        router.reset()
+
+    assert calls == [_KLAI2_KEY]
+    assert (
+        f"klai_mistral_pool_state_change key_fingerprint={_fingerprint(_KLAI_KEY)} state=full source=probe"
+        in _state_changes(caplog)
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_probe_reporting_ok_releases_a_key_a_402_benched(
+    real_litellm, tmp_path, caplog, monkeypatch
+) -> None:
+    """A 402 on a real request benches the key at once, even though the last
+    probe run said ok; only a probe run written after that 402 releases it."""
+    import klai_mistral_pool
+
+    monkeypatch.setattr(klai_mistral_pool, "STATUS_FILE_RECHECK_SECONDS", 0)
+    status_file = tmp_path / "mistral-keys.json"
+    _write_status(status_file, {_KLAI_KEY: "ok", _KLAI2_KEY: "ok"}, mtime=time.time() - 60)
+    calls: list[str] = []
+    klai_full = True
 
     def handler(request: httpx.Request) -> httpx.Response:
         api_key = _api_key_of(request)
         calls.append(api_key)
-        if api_key == _KLAI_KEY and order1_full:
+        if api_key == _KLAI_KEY and klai_full:
             return _error_response(request, 402, "Workspace monthly spending limit reached")
         return _ok_response(request)
 
-    router, hook = _pinned_router(real_litellm)
+    router, _hook = _pinned_router(real_litellm, status_file=status_file)
     try:
-        with _mock_mistral_http(handler):
+        with _mock_mistral_http(handler), caplog.at_level("WARNING", logger="klai_mistral_pool"):
             await asyncio.wait_for(
-                router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]),
-                timeout=15,
+                router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]), timeout=15
             )
-            assert hook._is_full(_KLAI_KEY)
-            order1_full = False  # simulate Mark raising the spending limit
-
-            # Force the bench time to have already elapsed.
-            hook._full_until[_KLAI_KEY] = time.monotonic() - 1
+            assert calls == [_KLAI_KEY, _KLAI2_KEY]
 
             calls.clear()
-            second = await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello again"}])
+            await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "still benched"}])
+            assert calls == [_KLAI2_KEY]
+
+            klai_full = False  # the workspace owner raised the limit
+            _write_status(status_file, {_KLAI_KEY: "ok", _KLAI2_KEY: "ok"}, mtime=time.time() + 1)
+            calls.clear()
+            await router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "released"}])
     finally:
         router.reset()
 
-    assert second.choices[0].message.content == "backup response"
     assert calls == [_KLAI_KEY]
+    fingerprint = _fingerprint(_KLAI_KEY)
+    assert _state_changes(caplog)[-2:] == [
+        f"klai_mistral_pool_state_change key_fingerprint={fingerprint} state=full source=request",
+        f"klai_mistral_pool_state_change key_fingerprint={fingerprint} state=ok source=probe",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["missing", "stale"])
+async def test_without_a_fresh_probe_verdict_the_bench_grows_and_a_success_resets_it(
+    real_litellm, tmp_path, status: str
+) -> None:
+    """With no probe verdict younger than ten minutes, a 402 benches the key
+    for 5, 15, then 60 minutes (capped), each time the key is tried again
+    and is still full. A stale file that says full is not believed, and one
+    success on the key resets the bench to 5 minutes."""
+    status_file = tmp_path / "mistral-keys.json"
+    if status == "stale":
+        _write_status(status_file, {_KLAI_KEY: "full", _KLAI2_KEY: "ok"}, mtime=time.time() - 601)
+    calls: list[str] = []
+    klai_full = True
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        api_key = _api_key_of(request)
+        calls.append(api_key)
+        if api_key == _KLAI_KEY and klai_full:
+            return _error_response(request, 402, "Workspace monthly spending limit reached")
+        return _ok_response(request)
+
+    async def request_after_bench() -> None:
+        mark = hook._marks.get(_KLAI_KEY)
+        if mark is not None:
+            mark.until = time.time() - 1
+        calls.clear()
+        await asyncio.wait_for(
+            router.acompletion(model=_ALIAS, messages=[{"role": "user", "content": "hello"}]), timeout=15
+        )
+
+    def bench_minutes() -> float:
+        mark = hook._marks[_KLAI_KEY]
+        return round((mark.until - mark.at) / 60)
+
+    router, hook = _pinned_router(real_litellm, status_file=status_file)
+    benches = []
+    try:
+        with _mock_mistral_http(handler):
+            for _ in range(4):
+                previous = hook._marks.get(_KLAI_KEY)
+                await request_after_bench()
+                assert calls == [_KLAI_KEY, _KLAI2_KEY]
+                await _wait_for(lambda previous=previous: hook._marks.get(_KLAI_KEY) is not previous)
+                benches.append(bench_minutes())
+
+            klai_full = False
+            await request_after_bench()
+            assert calls == [_KLAI_KEY]
+            await _wait_for(lambda: _KLAI_KEY not in hook._marks)
+
+            klai_full = True
+            await request_after_bench()
+            await _wait_for(lambda: _KLAI_KEY in hook._marks)
+            benches.append(bench_minutes())
+    finally:
+        router.reset()
+
+    assert benches == [5, 15, 60, 60, 5]
+
+
+def test_router_budgets_are_kept_in_the_compose_redis(real_litellm) -> None:
+    """max_budget spend lives in process memory unless the router has a
+    Redis, and a restart then resets every daily ceiling. The proxy only
+    warns about a router_settings key Router does not accept, so a typo
+    here would silently bring that back."""
+    config = yaml.safe_load(_CONFIG_PATH.read_text())
+    compose = yaml.safe_load(_COMPOSE_PATH.read_text())
+    litellm_service = compose["services"]["litellm"]
+
+    assert config["router_settings"]["redis_url"] == "os.environ/REDIS_URL"
+    assert "redis_url" in real_litellm.Router.get_valid_args()
+    assert litellm_service["environment"]["REDIS_URL"].endswith("@redis:6379")
+    assert "redis" in litellm_service["depends_on"]
 
 
 @pytest.mark.asyncio

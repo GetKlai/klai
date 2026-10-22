@@ -103,58 +103,161 @@ process). Process-local dict state is therefore correct as-is; sharing it
 (Redis, etc.) is only needed if that ever changes to more than one worker
 or container replica.
 
-Bench time: 5 minutes. A 402 means a monthly/workspace spending limit that
-only a person lifts (raising the limit, enabling pay-as-you-go, adding an
-account). A probe that gets another 402 costs nothing and re-arms the
-bench, while a short bench means traffic returns within minutes of that
-fix instead of up to an hour later (measured need, 2026-09-26: every
-account went FULL overnight and recovery waits on the owner). Known ceiling: expiry is a plain
-timestamp, not a single-flight probe, so a burst of concurrent requests
-right at expiry could all reach the still-full account before any of their
-402s re-arms it. Given Mistral's per-deployment rpm caps (45-900 depending
-on alias) and how rare an organisation going full actually is, that burst
-is small and self-limiting; a real single-flight probe (e.g. an
-asyncio.Lock gating exactly one canary request) is the upgrade path if it
-ever isn't.
+Which keys are FULL: the host probe is the canary. Before October 2026
+a 402 benched a key for 5 minutes and the next real user request probed it
+again, so while one workspace stayed exhausted for three days, one user
+request per alias every five minutes paid a failed first try before
+failing over. Now `mistral-api-probe.sh` (systemd timer, every 2 minutes)
+completes one token with every MISTRAL_API_KEY* in the host env file and
+writes /opt/klai/state/litellm/mistral-keys.json, mounted read-only here:
+`{"generated_at": ..., "keys": {"<fingerprint>": {"state": "ok"|"full"|
+"error", "since": ..., "http_status": ...}}}`, keyed by the first 12 hex
+chars of sha256(key) so the file holds no secret. The key here is the
+resolved value: the proxy replaces every `os.environ/` reference in
+config.yaml, model_list included, before it builds the router
+(proxy_server.py `_check_for_os_environ_vars`, litellm 1.96.2).
+MISTRAL_VIBE_KEY (klai-ingest, klai-judge) is not probed: it is Vibe-scoped
+(see config.yaml), a mistral-small probe would not test it, and it has no
+second order to move to, so it stays on the request-path bench below. A
+key the file calls `full` is never offered. A 402 on a real request still benches its key at
+once (the probe can be up to 2 minutes behind), until a probe run written
+after that 402 says `ok`. When the file is missing, unreadable or older
+than 10 minutes (probe or timer dead), or does not mention the key, or
+calls it `error`, the request path is the only signal again and the bench
+grows per consecutive 402 on that key: 5, 15, then 60 minutes, capped, and
+reset by one success. 60 minutes is the cap because a 402 waits on a
+person lifting the limit; a dead probe should not keep a fixed key off for
+longer than that. Known ceiling: bench expiry is a plain timestamp, not a
+single-flight probe, so a burst right at expiry can all reach a still-full
+account; concurrent 402s from that burst re-arm the bench once, not once
+per request. An asyncio.Lock gating one canary request is the upgrade path
+if that burst ever matters.
+
+Every FULL/ok transition is logged as `klai_mistral_pool_state_change
+key_fingerprint=<fp> state=<state> source=probe|request`.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
+from pathlib import Path
 
 from litellm.integrations.custom_logger import CustomLogger
 
-# A 402 marks the failing organisation FULL for this long before the next
-# request is allowed to probe it again. See module docstring for why 5 minutes.
-BENCH_SECONDS = 300
+STATUS_FILE = Path("/app/state/mistral-keys.json")
+# The probe runs every 2 minutes; reading more often than this buys nothing
+# and this check sits on every deployment pick.
+STATUS_FILE_RECHECK_SECONDS = 10
+# Five missed probe runs: the probe or its timer is gone.
+STATUS_FILE_MAX_AGE_SECONDS = 600
+# Bench after the 1st, 2nd and 3rd-or-later consecutive 402 without a probe
+# verdict. See module docstring.
+BENCH_SECONDS = (300, 900, 3600)
 
 logger = logging.getLogger(__name__)
+
+
+def key_fingerprint(key: str) -> str:
+    """Same value mistral-api-probe.sh writes; never the key itself."""
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
+class _Bench:
+    # Not a @dataclass: LiteLLM loads this module without registering it in
+    # sys.modules, which crashes dataclass processing under
+    # `from __future__ import annotations` (tests/test_callback_module_loading.py).
+    __slots__ = ("at", "level", "until")
+
+    def __init__(self, at: float, until: float, level: int) -> None:
+        self.at = at
+        self.until = until
+        self.level = level
 
 
 class KlaiMistralPoolHook(CustomLogger):
     """Keeps every klai-* Mistral alias on the lowest non-FULL account order."""
 
-    def __init__(self) -> None:
+    def __init__(self, status_file: Path = STATUS_FILE) -> None:
         super().__init__()
+        self._status_file = status_file
+        self._status_checked_at = float("-inf")
+        self._status_mtime: float | None = None
+        # fingerprint -> state from the last readable file; None when unusable.
+        self._probe_states: dict[str, str] | None = None
         # Keyed by account (the resolved API key the router already holds in
-        # this process); never logged.
-        self._full_until: dict[str, float] = {}
+        # this process); never logged, only its fingerprint is.
+        self._marks: dict[str, _Bench] = {}
         self._known_orders: dict[str, dict[int, str]] = {}
         self._known_deployment_accounts: dict[str, str] = {}
 
-    def reset(self) -> None:
-        """Test helper: clear all learned/FULL state."""
-        self._full_until.clear()
-        self._known_orders.clear()
-        self._known_deployment_accounts.clear()
+    def _log_change(self, account_fingerprint: str, state: str, source: str) -> None:
+        logger.warning(
+            "klai_mistral_pool_state_change key_fingerprint=%s state=%s source=%s", account_fingerprint, state, source
+        )
+
+    def _reload_status(self) -> None:
+        try:
+            mtime = self._status_file.stat().st_mtime
+        except OSError as exc:
+            # Missing is normal until the probe's first run after a deploy;
+            # anything else (permissions, a broken mount) is not.
+            if not isinstance(exc, FileNotFoundError):
+                logger.warning("klai_mistral_pool_status_file_unreadable error=%s", exc)
+            self._status_mtime = self._probe_states = None
+            return
+        if mtime == self._status_mtime:
+            return
+        self._status_mtime = mtime
+        try:
+            keys = json.loads(self._status_file.read_text())["keys"]
+            states = {fp: entry["state"] for fp, entry in keys.items()}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            logger.warning("klai_mistral_pool_status_file_unreadable error=%s", exc)
+            self._probe_states = None
+            return
+        previous = self._probe_states or {}
+        for fp, state in states.items():
+            if previous.get(fp) != state:
+                self._log_change(fp, state, "probe")
+        self._probe_states = states
+
+    def _fresh_probe_states(self) -> dict[str, str]:
+        now = time.time()
+        if now - self._status_checked_at >= STATUS_FILE_RECHECK_SECONDS:
+            self._status_checked_at = now
+            self._reload_status()
+        if self._probe_states is None or now - self._status_mtime > STATUS_FILE_MAX_AGE_SECONDS:
+            return {}
+        return self._probe_states
 
     def _is_full(self, account: str) -> bool:
-        full_until = self._full_until.get(account)
-        return full_until is not None and time.monotonic() < full_until
+        fp = key_fingerprint(account)
+        state = self._fresh_probe_states().get(fp)
+        if state == "full":
+            return True
+        mark = self._marks.get(account)
+        if mark is None:
+            return False
+        if state == "ok":
+            if mark.at < self._status_mtime:
+                del self._marks[account]
+                self._log_change(fp, "ok", "probe")
+                return False
+            return True
+        return time.time() < mark.until
 
     def _mark_full(self, account: str) -> None:
-        self._full_until[account] = time.monotonic() + BENCH_SECONDS
+        now = time.time()
+        mark = self._marks.get(account)
+        if mark is not None and now < mark.until:
+            return
+        level = 0 if mark is None else min(mark.level + 1, len(BENCH_SECONDS) - 1)
+        self._marks[account] = _Bench(at=now, until=now + BENCH_SECONDS[level], level=level)
+        if mark is None:
+            self._log_change(key_fingerprint(account), "full", "request")
 
     def _lowest_eligible_order(self, orders: dict[int, str]) -> int | None:
         for order in sorted(orders):
@@ -202,15 +305,22 @@ class KlaiMistralPoolHook(CustomLogger):
         # module docstring point 1).
         return [d for d in healthy_deployments if (d.get("litellm_params") or {}).get("order") == eligible_order]
 
+    def _account_of(self, kwargs) -> str | None:
+        deployment_id = ((kwargs.get("litellm_params") or {}).get("model_info") or {}).get("id")
+        return self._known_deployment_accounts.get(deployment_id)
+
     async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
         exception = kwargs.get("exception")
         if getattr(exception, "status_code", None) != 402:
             return
-        deployment_id = ((kwargs.get("litellm_params") or {}).get("model_info") or {}).get("id")
-        account = self._known_deployment_accounts.get(deployment_id)
-        if account is None:
-            return
-        self._mark_full(account)
+        account = self._account_of(kwargs)
+        if account is not None:
+            self._mark_full(account)
+
+    async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+        account = self._account_of(kwargs)
+        if account is not None and self._marks.pop(account, None) is not None:
+            self._log_change(key_fingerprint(account), "ok", "request")
 
     async def log_success_fallback_event(self, original_model_group, kwargs, original_exception):
         # LiteLLM 1.96.2 logs a spent deployment budget only at debug level

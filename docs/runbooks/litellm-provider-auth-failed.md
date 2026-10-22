@@ -1,6 +1,7 @@
 # LiteLLM Provider Auth Failed
 
-Alert: `litellm_provider_auth_failed`
+Alerts: `litellm_provider_auth_failed`, `mistral_workspace_unavailable`,
+`mistral_no_reserve_left`, `mistral_api_probe_missing`
 
 ## Meaning
 
@@ -29,13 +30,12 @@ _time:15m service:litellm
 ```
 
 Check the model alias and provider in the log body. In the current config,
-`klai-primary`, `klai-fast`, `klai-large`, and `klai-medium` all use:
-
-```yaml
-api_key: os.environ/MISTRAL_API_KEY
-```
-
-So fallback between these aliases does not recover from a bad Mistral key.
+`klai-primary`, `klai-fast`, `klai-large`, and `klai-medium` each have an
+`order: 1` deployment on `MISTRAL_API_KEY` and an `order: 2` deployment on
+`MISTRAL_API_KEY_2`. LiteLLM only moves an alias to order 2 when order 1 is
+full (HTTP 402), never on a 401, so a bad `MISTRAL_API_KEY` is not recovered
+by the second workspace. `klai-ingest` and `klai-judge` use
+`MISTRAL_VIBE_KEY` and have no second workspace.
 
 Also check the synthetic Mistral API probe:
 
@@ -45,9 +45,56 @@ _time:15m service:mistral-api-probe event:mistral_api_probe
 | limit 20
 ```
 
-`status=fail` with `http_status=401` means Mistral rejected the deployed key
-before LiteLLM was involved. Check the workspace monthly spending limit/API
-paused state as well as the key itself.
+It logs one line per key per run (every 2 minutes) with `key_env`,
+`key_fingerprint` (first 12 hex chars of sha256 of the key, never the key),
+`status` and `error`:
+
+| status | http_status | meaning |
+|---|---|---|
+| `ok` | 200 | the key completed a one-token request |
+| `full` | 402 | the workspace's monthly spending limit is reached |
+| `error` | 401 | Mistral rejected the key before LiteLLM was involved |
+| `error` | other, or 0 | 5xx, timeout or no connection from core-01 |
+
+## Mistral key state
+
+`mistral_workspace_unavailable` (warning, one alert per key) fires while the
+latest probe runs see a key `full` or `error`. `mistral_no_reserve_left`
+(critical) fires when every `MISTRAL_API_KEY*` key was `full` in one run, so
+the chat aliases have no workspace left. Both route to
+`klai-ops-alerts-email` and repeat every hour until resolved.
+
+The probe also writes the per-key state to
+`/opt/klai/state/litellm/mistral-keys.json`, mounted read-only into the
+`litellm` container as `/app/state/mistral-keys.json`. The
+`klai_mistral_pool` hook never offers a key that file calls `full`, so while
+one workspace is full no user request has to fail on it first. A 402 on a real
+request benches the key at once as well, until a later probe run says `ok`.
+
+```bash
+cat /opt/klai/state/litellm/mistral-keys.json
+# {"generated_at": "...", "keys": {"<fingerprint>": {"state": "full", "since": "...", "http_status": 402}, ...}}
+```
+
+To see which `key_env` a fingerprint belongs to, read the probe log line,
+not the env file. The hook logs every switch as
+`klai_mistral_pool_state_change key_fingerprint=<fp> state=<full|ok> source=<probe|request>`:
+
+```text
+_time:24h service:litellm "klai_mistral_pool_state_change"
+```
+
+Recovering a full workspace: raise its spending limit or enable
+pay-as-you-go in the Mistral console. Nothing has to be restarted; the next
+probe run (at most 2 minutes) marks the key `ok`, LiteLLM picks it up within
+10 seconds of that, and the alert resolves within 5 minutes.
+
+`mistral_api_probe_missing` (warning) means no probe line for 10 minutes.
+Once the state file is older than 10 minutes LiteLLM stops trusting it and
+falls back to learning about full keys from failed user requests (a 402
+benches a key for 5, then 15, then 60 minutes). Check
+`systemctl status mistral-api-probe.timer mistral-api-probe.service`,
+`/opt/klai/logs/mistral-api-probe.log`, Alloy and VictoriaLogs.
 
 ## Recover
 
@@ -77,5 +124,9 @@ paused state as well as the key itself.
 ## Related Files
 
 - `deploy/litellm/config.yaml`
+- `deploy/litellm/klai_mistral_pool.py`
 - `deploy/docker-compose.yml`
+- `scripts/mistral-api-probe.sh`
+- `deploy/systemd/mistral-api-probe.service`, `deploy/systemd/mistral-api-probe.timer`
 - `deploy/grafana/provisioning/alerting/litellm-rules.yaml`
+- `deploy/grafana/provisioning/alerting/mistral-api-rules.yaml`

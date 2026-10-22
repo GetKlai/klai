@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
-# Probe that the deployed Klai workspace key can actually complete a request.
+# Probe that every Mistral key LiteLLM routes over can actually complete a
+# request, and publish the result for LiteLLM's klai_mistral_pool hook.
 #
 # It used to GET /v1/models, which only proves the key is valid. On
 # 2026-09-26 the workspace hit its monthly spending limit: every completion
 # returned 402 for hours while /v1/models kept answering 200 and this probe
 # stayed green. A one-token completion sees what users see.
 #
-# Emits one JSON line to stdout and to /opt/klai/logs for Alloy file scraping.
+# It also used to test MISTRAL_API_KEY only. In October 2026 that workspace
+# stayed full for three days while LiteLLM found out by letting one user
+# request per alias fail every five minutes. Every MISTRAL_API_KEY and
+# MISTRAL_API_KEY_<n> in the env file is probed now, and the per-key verdict
+# is written atomically to STATE_FILE; klai_mistral_pool.py never offers a
+# key that file calls full. The file is keyed by the first 12 hex chars of
+# sha256(key), so it holds no secret.
+#
+# Emits one JSON line per key to stdout and to /opt/klai/logs for Alloy file
+# scraping.
 set -euo pipefail
 
 ENV_FILE="${KLAI_ENV_FILE:-/opt/klai/.env}"
@@ -14,6 +24,7 @@ URL="${MISTRAL_PROBE_URL:-https://api.mistral.ai/v1/chat/completions}"
 MODEL="${MISTRAL_PROBE_MODEL:-mistral-small-2603}"
 TIMEOUT="${MISTRAL_PROBE_TIMEOUT:-10}"
 LOG_FILE="${MISTRAL_PROBE_LOG_FILE:-/opt/klai/logs/mistral-api-probe.log}"
+STATE_FILE="${MISTRAL_PROBE_STATE_FILE:-/opt/klai/state/litellm/mistral-keys.json}"
 
 push_heartbeat() {
   local status="$1" token
@@ -30,21 +41,8 @@ push_heartbeat() {
   fi
 }
 
-json_escape() {
-  python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])'
-}
-
 emit() {
-  local status="$1"
-  local http_status="$2"
-  local key_suffix="$3"
-  local error="$4"
-  local correlation_id="$5"
-  local escaped_error
-  escaped_error=$(printf '%s' "$error" | json_escape)
-  local line
-  line=$(printf '{"service":"mistral-api-probe","event":"mistral_api_probe","msg":"mistral_api_probe","status":"%s","http_status":%s,"key_suffix":"%s","error":"%s","mistral_correlation_id":"%s"}' \
-    "$status" "$http_status" "$key_suffix" "$escaped_error" "$correlation_id")
+  local line="$1"
   printf '%s\n' "$line"
   if [[ -n "$LOG_FILE" ]]; then
     mkdir -p "$(dirname "$LOG_FILE")"
@@ -53,43 +51,94 @@ emit() {
 }
 
 if [[ ! -r "$ENV_FILE" ]]; then
-  emit fail 0 "" "env_file_unreadable:$ENV_FILE" ""
+  emit "{\"service\":\"mistral-api-probe\",\"event\":\"mistral_api_probe\",\"msg\":\"mistral_api_probe\",\"status\":\"error\",\"http_status\":0,\"error\":\"env_file_unreadable\"}"
   exit 0
 fi
 
-key=$(
-  awk -F= '
-    /^MISTRAL_API_KEY=/ {
-      sub(/^MISTRAL_API_KEY=/, "")
-      print
-      exit
+# NAME FINGERPRINT HTTP_STATUS per key, fed to the writer below on stdin.
+results=""
+while IFS=$'\t' read -r name key; do
+  fingerprint=$(printf '%s' "$key" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])')
+  http_status=$(
+    printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\nurl = "%s"\ndata = "{\\"model\\":\\"%s\\",\\"max_tokens\\":1,\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"ok\\"}]}"\n' \
+      "$key" "$URL" "$MODEL" | curl --config - -sS -m "$TIMEOUT" \
+      -o /dev/null -w '%{http_code}' 2>/dev/null || true
+  )
+  [[ "$http_status" =~ ^[0-9]{3}$ ]] || http_status=000
+  results+="$name $fingerprint $http_status"$'\n'
+done < <(
+  awk '
+    match($0, /^MISTRAL_API_KEY(_[0-9]+)?=/) {
+      value = substr($0, RLENGTH + 1)
+      if (value != "") printf "%s\t%s\n", substr($0, 1, RLENGTH - 1), value
     }
   ' "$ENV_FILE"
 )
 
-if [[ -z "$key" ]]; then
-  emit fail 0 "" "missing_mistral_api_key" ""
+# Writes STATE_FILE (temp file + rename, so LiteLLM never reads half a file),
+# keeps each key's `since` while its state is unchanged, and prints one log
+# line per key. Prints nothing and writes {"keys": {}} when no key was found.
+log_lines=$(printf '%s' "$results" | python3 -c '
+import json, os, sys, tempfile
+from datetime import datetime, timezone
+
+state_file = sys.argv[1]
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+try:
+    with open(state_file) as f:
+        previous = json.load(f)["keys"]
+except (OSError, ValueError, KeyError):
+    previous = {}
+
+probed = []
+for line in sys.stdin.read().splitlines():
+    name, fingerprint, http_status = line.split()
+    http_status = int(http_status)
+    if http_status == 200:
+        state, error = "ok", ""
+    elif http_status == 402:
+        state, error = "full", "provider_budget_exhausted"
+    elif http_status == 0:
+        state, error = "error", "provider_transport_error"
+    else:
+        state, error = "error", "provider_http_error"
+    probed.append((name, fingerprint, http_status, state, error))
+
+keys = {}
+for name, fingerprint, http_status, state, error in probed:
+    before = previous.get(fingerprint) or {}
+    since = before.get("since", now) if before.get("state") == state else now
+    keys[fingerprint] = {"state": state, "since": since, "http_status": http_status}
+
+os.makedirs(os.path.dirname(state_file), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(state_file), prefix=".mistral-keys.")
+with os.fdopen(fd, "w") as f:
+    json.dump({"generated_at": now, "keys": keys}, f)
+os.chmod(tmp, 0o644)
+os.replace(tmp, state_file)
+
+reserve = sum(1 for p in probed if p[3] != "full")
+for name, fingerprint, http_status, state, error in probed:
+    print(json.dumps({
+        "service": "mistral-api-probe", "event": "mistral_api_probe", "msg": "mistral_api_probe",
+        "status": state, "http_status": http_status, "key_env": name, "key_fingerprint": fingerprint,
+        "error": error, "keys_total": len(probed), "keys_not_full": reserve,
+    }, separators=(",", ":")))
+' "$STATE_FILE")
+
+if [[ -z "$log_lines" ]]; then
+  emit "{\"service\":\"mistral-api-probe\",\"event\":\"mistral_api_probe\",\"msg\":\"mistral_api_probe\",\"status\":\"error\",\"http_status\":0,\"error\":\"missing_mistral_api_key\"}"
   push_heartbeat down
   exit 0
 fi
 
-http_status=$(
-  printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\nurl = "%s"\ndata = "{\\"model\\":\\"%s\\",\\"max_tokens\\":1,\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"ok\\"}]}"\n' \
-    "$key" "$URL" "$MODEL" | curl --config - -sS -m "$TIMEOUT" \
-    -o /dev/null -w '%{http_code}' 2>/dev/null || true
-)
+while IFS= read -r line; do
+  emit "$line"
+done <<< "$log_lines"
 
-if [[ "$http_status" == "200" ]]; then
-  emit ok 200 "" "" ""
+# Users are served while any key completes, so that is what the status page shows.
+if grep -q '"status":"ok"' <<< "$log_lines"; then
   push_heartbeat up
-  exit 0
+else
+  push_heartbeat down
 fi
-
-error_category=provider_transport_error
-if [[ "$http_status" == "402" ]]; then
-  error_category=provider_budget_exhausted
-elif [[ "$http_status" =~ ^[0-9]{3}$ && "$http_status" != "000" ]]; then
-  error_category=provider_http_error
-fi
-emit fail "${http_status:-0}" "" "$error_category" ""
-push_heartbeat down
