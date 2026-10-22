@@ -34,9 +34,12 @@ note() { printf 'NOTE: %s\n' "$*"; }
 
 cutoff=$(date -u -d "-${MAX_PR_AGE_DAYS} days" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-"${MAX_PR_AGE_DAYS}"d +%Y-%m-%dT%H:%M:%SZ)
 for repo in $REPOS; do
-  stale=$(gh pr list -R "$repo" --state open --limit 200 --json number,title,createdAt,author \
-    --jq "[.[] | select((.author.login | test(\"renovate\")) and .createdAt < \"$cutoff\")] | .[] | \"#\(.number) \(.createdAt[0:10]) \(.title)\"")
-  if [ -n "$stale" ]; then
+  # A failed query must not read as "nothing found": that would turn the alarm
+  # green exactly when it cannot see anything.
+  if ! stale=$(gh pr list -R "$repo" --state open --limit 200 --json number,title,createdAt,author \
+    --jq "[.[] | select((.author.login | test(\"renovate\")) and .createdAt < \"$cutoff\")] | .[] | \"#\(.number) \(.createdAt[0:10]) \(.title)\""); then
+    fail "$repo: could not list pull requests"
+  elif [ -n "$stale" ]; then
     fail "$repo: Renovate PRs open longer than ${MAX_PR_AGE_DAYS} days:"
     printf '%s\n' "$stale" | sed 's/^/        /'
   else
@@ -45,9 +48,10 @@ for repo in $REPOS; do
 
   # An automerge PR only exists once its version passed the release-age wait,
   # and green ones merge hourly, so one that lives for days is stuck.
-  stuck=$(gh pr list -R "$repo" --state open --limit 200 --json number,title,createdAt,author,body \
-    --jq "[.[] | select((.author.login | test(\"renovate\")) and (.body | contains(\"Automerge**: Enabled\")) and (now - (.createdAt | fromdateiso8601) > $AUTOMERGE_MAX_AGE_DAYS * 86400))] | .[] | \"\(.number)\t\(((now - (.createdAt | fromdateiso8601)) / 86400) | floor)\t\(.title)\"")
-  if [ -n "$stuck" ]; then
+  if ! stuck=$(gh pr list -R "$repo" --state open --limit 200 --json number,title,createdAt,author,body \
+    --jq "[.[] | select((.author.login | test(\"renovate\")) and (.body | contains(\"Automerge**: Enabled\")) and (now - (.createdAt | fromdateiso8601) > $AUTOMERGE_MAX_AGE_DAYS * 86400))] | .[] | \"\(.number)\t\(((now - (.createdAt | fromdateiso8601)) / 86400) | floor)\t\(.title)\""); then
+    fail "$repo: could not list pull requests for the automerge check"
+  elif [ -n "$stuck" ]; then
     fail "$repo: automerge PRs open longer than ${AUTOMERGE_MAX_AGE_DAYS} days (stuck, Renovate would have merged them):"
     while IFS=$'\t' read -r num age title; do
       printf '        #%s open %sd: %s\n' "$num" "$age" "$title"
@@ -61,9 +65,10 @@ for repo in $REPOS; do
   fi
 
   # Renovate lists what it could not do in the Dependency Dashboard issue.
-  body=$(gh issue list -R "$repo" --state open --search 'Dependency Dashboard in:title' --json title,author,body \
-    --jq '.[] | select(.title == "Dependency Dashboard" and (.author.login | test("renovate"))) | .body' | tr -d '\r')
-  if [ -z "$body" ]; then
+  if ! body=$(gh issue list -R "$repo" --state open --search 'Dependency Dashboard in:title' --json title,author,body \
+    --jq '.[] | select(.title == "Dependency Dashboard" and (.author.login | test("renovate"))) | .body' | tr -d '\r'); then
+    fail "$repo: could not read the Dependency Dashboard issue"
+  elif [ -z "$body" ]; then
     note "$repo: no Dependency Dashboard issue found"
   else
     clean=1
