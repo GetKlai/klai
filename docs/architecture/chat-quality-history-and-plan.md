@@ -376,7 +376,6 @@ Hier komt per stap van het plan: datum, verwachting vooraf, uitkomst op de meetl
 | Eén schrijver | 22 okt | Er is nog één schrijver: `write_reply` schrijft ook de interne Open- en general-beurt, en streamt die zoals de live schrijver deed. | Interne meetlat: automatisch goed 27 en 25 van 31 tegen 24, onbewezen uitspraken 82 en 73 tegen 107; de widgetmeetlat bleef binnen de spreiding (zoals verwacht 71 en 75 tegen 74 en 71). | Uitgerold; tweede schrijver weg |
 | – | 22 okt | Geen te meten gedrag: het interne record bewaart voortaan het oordeel van de keuzestap en de nummers van de gekozen passages (geen citaten, geen vraag), zodat de interne meetlat de keuzestap per beurt kan afstellen | Niet gemeten: een signaalveld, door een test vastgelegd | Samengevoegd zonder meting |
 | Eén controle achteraf | 22 okt | De twee controles na het antwoord geven één vorm terug (`answer_check.AnswerCheck`), zodat de voettekst en het record dezelfde uitkomst lezen. | Niet gemeten: het gedrag verandert alleen in één randgeval, waar passages en gebruikersberichten nu elk apart gelezen worden. | Gebouwd |
-| Eén schrijver | 22 okt | Er is nog één schrijver: `write_reply` schrijft ook de interne Open- en general-beurt, en streamt die zoals de live schrijver deed. | Wordt door de hoofdagent gemeten op de interne en de widgetmeetlat | Gebouwd, meting volgt |
 | – | 22 okt | Geen te meten gedrag: de vaste teksten van het chatpad staan in één tabel, een bijlage naast een bestand dat Klai niet leest wordt in één keer verwerkt, en het nepobject in de tests is van het datamodel afgeleid | Niet gemeten: de teksten en de bijlagenverwerking zijn vastgelegd door de bestaande tests, die ongewijzigd groen bleven | Samengevoegd zonder meting |
 | – | 21 okt | Geen te meten gedrag: de vaste Strict-weigering en de Open-hint bestaan nu ook in het Duits en Frans (een Duits gesprek kreeg de Engelse tekst), een zoekantwoord dat geen JSON is telt als onbereikbare kennisbank, en de alert op die fout ziet ook de afgewezen identiteit en negeert de E2E-organisatie | Niet gemeten: vaste teksten en een foutpad, door tests vastgelegd | Samengevoegd zonder meting |
 | – | 21 okt | Geen te meten gedrag: een partnersleutel of widgettoken van een organisatie die zacht verwijderd is of waarvan de verwijdering loopt of mislukte, authenticeert niet meer, en de widget van zo'n organisatie geeft geen token meer uit | Niet gemeten: een toegangsregel, door vier tests vastgelegd die zonder de regel een context teruggeven | Samengevoegd zonder meting |
@@ -697,7 +696,7 @@ Uitkomst: Interne meetlat van 36 beurten uit 22 echte gesprekken van één klant
 
 Besluit: Uitgerold in de tweede variant. De melding aan de schrijver is een zachte maatregel; de harde-feitenmelding en de live cijfers van volgende week zijn de maat, en een Duitse (en Franse) tekst voor de vaste reacties is de volgende kleine stap
 
-### Eén schrijver, uitgerold (22 okt)
+### Eén schrijver (22 okt)
 
 Verwachting: Er is nog één schrijver: `write_reply` schrijft ook de interne Open- en general-beurt, en streamt die zoals de live schrijver deed, waarna het antwoord op dezelfde manier wordt afgerond als een vastgehouden antwoord. Wat de widget, een partnersleutel en intern Strict versturen blijft byte voor byte gelijk (een test legt een widgetbeurt en een Strict-beurt vast zoals main ze verstuurde), de medewerker ziet in Open en general dezelfde stroom, en de live schrijver met zijn eigen voettekst, telling van harde feiten en record is weg. Twee bewuste verschillen: een gestreamde beurt die tekst schrijft en ook een tool aanroept, eindigt nu met `finish_reason: tool_calls` zoals de vastgehouden beurt al deed (de live leg liet dat weg, waardoor een client de tool nooit draaide), en een niet-gestreamde Open- of general-beurt laat bij `include_sources=false` ook de bronnen uit de voettekst, zoals de gestreamde al deed
 
@@ -712,14 +711,6 @@ Verwachting: De twee controles na het antwoord, de regex op e-mailadressen, link
 Uitkomst: Niet gemeten: het gedrag verandert in dit randgeval, verder niet
 
 Besluit: Gebouwd
-
-### Eén schrijver, gebouwd (22 okt)
-
-Verwachting: Er is nog één schrijver: `write_reply` schrijft ook de interne Open- en general-beurt, en streamt die zoals de live schrijver deed, waarna het antwoord op dezelfde manier wordt afgerond als een vastgehouden antwoord. Wat de widget, een partnersleutel en intern Strict versturen blijft byte voor byte gelijk (een test legt een widgetbeurt en een Strict-beurt vast zoals main ze verstuurde), de medewerker ziet in Open en general dezelfde stroom, en de live schrijver met zijn eigen voettekst, telling van harde feiten en record is weg. Twee bewuste verschillen: een gestreamde beurt die tekst schrijft en ook een tool aanroept, eindigt nu met `finish_reason: tool_calls` zoals de vastgehouden beurt al deed (de live leg liet dat weg, waardoor een client de tool nooit draaide), en een niet-gestreamde Open- of general-beurt laat bij `include_sources=false` ook de bronnen uit de voettekst, zoals de gestreamde al deed
-
-Uitkomst: Wordt door de hoofdagent gemeten op de interne en de widgetmeetlat
-
-Besluit: Gebouwd, meting volgt
 
 ## 9. Wat in de logboeken staat en hier is samengevat
 
