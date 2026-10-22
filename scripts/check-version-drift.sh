@@ -93,11 +93,14 @@ for repo in $REPOS; do
   else
     clean=1
     for heading in Errored 'Repository Problems'; do
-      # Only the list entries count, minus the notice renovate.json5 asks for:
-      # minimumReleaseAgeBehaviour 'timestamp-optional' makes Renovate say on
-      # every run that it proceeds without a release timestamp, by design.
+      # Only the list entries count, minus two notices that describe the
+      # cooldown, not a stall: minimumReleaseAgeBehaviour 'timestamp-optional'
+      # makes Renovate say on every run that it proceeds without a release
+      # timestamp, and npm '--before' cannot be enforced while the lock file
+      # holds a version adopted inside its 7 days (a security fix taken early).
       lines=$(printf '%s\n' "$body" | awk -v h="## $heading" '/^## /{p=($0==h); next} p&&NF' \
-        | grep -E '^[[:space:]]*- ' | grep -v 'minimumReleaseAgeBehaviour=timestamp-optional, proceeding' | cut -c1-200)
+        | grep -E '^[[:space:]]*- ' | grep -v 'minimumReleaseAgeBehaviour=timestamp-optional, proceeding' \
+        | grep -v 'npm .--before. could not be enforced' | cut -c1-200)
       if [ -n "$lines" ]; then
         clean=0
         fail "$repo: Dependency Dashboard has a '$heading' section:"

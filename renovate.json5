@@ -218,6 +218,19 @@
   packageRules: [
     {
       description:
+        'npm waits for its own 7 days (min-release-age=7 in .npmrc) and refuses \
+        a younger version while regenerating the lock file. With flexible, a \
+        dependency whose every new release is still inside the window got a \
+        branch at the newest pending version anyway, npm answered ETARGET, and \
+        the Dependency Dashboard listed it as Errored (@tanstack/react-query \
+        5.104.5 and driver.js 1.10.2 on 2026-10-22, both younger than 7 days). \
+        strict opens the branch only once a version has aged, which is when \
+        npm accepts it. flexible stays for the Docker groups it was set for.',
+      matchDatasources: ['npm'],
+      internalChecksFilter: 'strict',
+    },
+    {
+      description:
         'Klai LibreChat is intentionally digest-only and has no latest tag. Its \
         digest is produced by librechat-image-build.yml and enforced by the \
         deploy digest guard, so Docker tag discovery is not applicable.',
