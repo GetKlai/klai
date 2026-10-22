@@ -968,15 +968,15 @@ async def crawl_single_page_source(url: str) -> CrawlResult:
 
 
 # The Chrome major must match the Chromium bundled in the crawl4ai image
-# (153 in 0.9.4); deploy/tests/crawl4ai-cookie-contract.sh fails when they
+# (156 in 0.9.5); deploy/tests/crawl4ai-cookie-contract.sh fails when they
 # drift. Left to itself crawl4ai sends a hardcoded "Chrome/116" from that
-# Chromium 153 engine, and its ``user_agent_mode="random"`` pool is just as
+# Chromium 156 engine, and its ``user_agent_mode="random"`` pool is just as
 # stale. Measured 2026-09-26: a help centre answered every Chrome major below
 # 140 with HTTP 401 (140 and up: 200), and a Cloudflare-fronted site blocked
 # the stale string more often than a current one.
 _BROWSER_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
 )
 
 

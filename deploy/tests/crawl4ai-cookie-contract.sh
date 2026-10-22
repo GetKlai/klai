@@ -78,7 +78,7 @@ echo
 # VERSION. The upstream version these contracts were last proven against.
 # Moving the base image fails here until someone reruns this file against the
 # new one and moves the number, so a bump cannot ship on the old proof.
-VERIFIED=0.9.4
+VERIFIED=0.9.5
 INSTALLED=$(docker exec ${P}-srv python -c "from crawl4ai.__version__ import __version__; print(__version__)")
 if [ "$INSTALLED" != "$VERIFIED" ]; then
     echo "UNVERIFIED — the image runs crawl4ai $INSTALLED, these contracts were proven on $VERIFIED. Rerun this file against it, then set VERIFIED." >&2

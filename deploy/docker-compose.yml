@@ -2232,7 +2232,7 @@ services:
   # is set per request in knowledge_ingest/crawl4ai_config.py now.
   crawl4ai:
     logging: *log-rotation
-    image: ghcr.io/getklai/crawl4ai:0.9.4-local-260925-2225
+    image: ghcr.io/getklai/crawl4ai:0.9.5-local-261022-1031
     restart: unless-stopped
     environment:
       CRAWL4AI_API_TOKEN: ${CRAWL4AI_INTERNAL_KEY}
