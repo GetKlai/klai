@@ -450,6 +450,9 @@ services:
       # serving so the image and Postgres schema cannot drift.
       USE_PRISMA_MIGRATE: "True"
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      # Router budgets (config.yaml router_settings.redis_password). Not via
+      # REDIS_URL: the password holds a URL-reserved character.
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
       MISTRAL_API_KEY_2: ${MISTRAL_API_KEY_2}
       # Required: LiteLLM's mistral provider falls back to MISTRAL_API_KEY when

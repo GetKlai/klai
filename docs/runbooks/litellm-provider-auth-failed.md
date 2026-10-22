@@ -142,6 +142,21 @@ old 30 s timeout until then.
 
 5. Run a real chat/search turn and verify answer synthesis succeeds.
 
+## Incidents
+
+- **22 Oct 2026, litellm down ~17 minutes (08:38 to 08:55 UTC).** #1938 put
+  `redis_url: os.environ/REDIS_URL` in `router_settings`. REDIS_URL is
+  `redis://:${REDIS_PASSWORD}@redis:6379`, and the Redis password holds a
+  URL-reserved character, so redis-py read part of the password as the port
+  (`ValueError: Port could not be cast to integer value`) and every startup
+  failed. Stopped by removing the line on core-01 by hand; the repo now passes
+  `redis_host`, `redis_port` and `redis_password` separately, and a test
+  builds the router from them with a password like that. A fragment of the
+  password reached the container log and VictoriaLogs through the traceback.
+  The hook's `klai_mistral_pool_state_change` lines were missing in that
+  window only because the proxy never finished starting; they appeared on
+  the first read once it did.
+
 ## Related Files
 
 - `deploy/litellm/config.yaml`

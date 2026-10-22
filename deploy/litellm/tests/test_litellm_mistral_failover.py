@@ -787,14 +787,58 @@ async def test_a_success_that_started_before_a_402_does_not_release_the_key(real
     assert await offered_orders() == [1]
 
 
-def test_router_never_takes_redis_as_a_url_with_the_password_in_it() -> None:
-    """redis_url carried the raw password inside the URL; it holds a
-    URL-reserved character, redis-py read part of it as the port and litellm
-    crash-looped for 17 minutes on 22 October 2026. The Redis-backed budget
-    returns as host, port and password fields, never as a URL."""
+@pytest.mark.asyncio
+async def test_the_first_read_of_the_probe_file_logs_every_key(real_litellm, tmp_path, caplog) -> None:
+    """An operator must see from the logs alone that the hook reads the
+    file: its first read logs the state of every key in it, ok included,
+    not only later changes."""
+    status_file = tmp_path / "mistral-keys.json"
+    _write_status(status_file, {_KLAI_KEY: "full", _KLAI2_KEY: "ok"})
+    hook = _new_hook(status_file)
+    deployments = [
+        {"litellm_params": {"order": 1, "api_key": _KLAI_KEY}, "model_info": {"id": "order-1"}},
+        {"litellm_params": {"order": 2, "api_key": _KLAI2_KEY}, "model_info": {"id": "order-2"}},
+    ]
+
+    with caplog.at_level("WARNING", logger="klai_mistral_pool"):
+        await hook.async_filter_deployments(_ALIAS, deployments, [])
+        await hook.async_filter_deployments(_ALIAS, deployments, [])
+
+    assert sorted(_state_changes(caplog)) == sorted(
+        [
+            f"klai_mistral_pool_state_change key_fingerprint={_fingerprint(_KLAI_KEY)} state=full source=probe",
+            f"klai_mistral_pool_state_change key_fingerprint={_fingerprint(_KLAI2_KEY)} state=ok source=probe",
+        ]
+    )
+
+
+def test_router_budgets_reach_the_compose_redis_with_a_url_unsafe_password(real_litellm, monkeypatch) -> None:
+    """max_budget spend lives in process memory unless the router has a
+    Redis, and a restart then resets every daily ceiling. The settings are
+    rendered the way the proxy renders them (every `os.environ/` replaced)
+    and handed to Router, so this runs litellm's own _create_redis_cache.
+    On 2026-10-22 a redis:// URL carrying the password crash-looped the
+    proxy at startup: the production password holds a URL-reserved
+    character. The password below is fictional and holds several."""
+    password = "Xq7Lm/9#a@b:c?"
+    monkeypatch.setenv("REDIS_PASSWORD", password)
+    # What compose gives the container; an explicit host must win over it.
+    monkeypatch.setenv("REDIS_URL", f"redis://:{password}@redis:6379")
     config = yaml.safe_load(_CONFIG_PATH.read_text())
+    compose = yaml.safe_load(_COMPOSE_PATH.read_text())
+    litellm_service = compose["services"]["litellm"]
+    settings = {
+        k: os.environ[v.removeprefix("os.environ/")] if isinstance(v, str) and v.startswith("os.environ/") else v
+        for k, v in config["router_settings"].items()
+    }
+
+    router = real_litellm.Router(model_list=[], **settings)
+    connection = router.cache.redis_cache.redis_client.connection_pool.connection_kwargs
 
     assert "redis_url" not in config["router_settings"]
+    assert (connection["host"], int(connection["port"]), connection["password"]) == ("redis", 6379, password)
+    assert litellm_service["environment"]["REDIS_PASSWORD"] == "${REDIS_PASSWORD}"
+    assert "redis" in litellm_service["depends_on"]
 
 
 @pytest.mark.asyncio

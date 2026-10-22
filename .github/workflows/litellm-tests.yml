@@ -45,6 +45,8 @@ jobs:
         # redis: litellm 1.105.1's litellm.proxy.utils imports redis at module
         # load, which the CustomLogger contract test reads. The proxy image
         # ships redis 5.3.1 in both v1.96.2 and v1.105.1 (checked 2026-10-22).
+        # The Redis budget test also builds a Router from router_settings,
+        # which goes through redis-py.
         run: >
           uv run --no-project --python 3.13
           --with pytest --with pytest-asyncio --with httpx --with structlog
