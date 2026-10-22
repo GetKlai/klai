@@ -787,19 +787,14 @@ async def test_a_success_that_started_before_a_402_does_not_release_the_key(real
     assert await offered_orders() == [1]
 
 
-def test_router_budgets_are_kept_in_the_compose_redis(real_litellm) -> None:
-    """max_budget spend lives in process memory unless the router has a
-    Redis, and a restart then resets every daily ceiling. The proxy only
-    warns about a router_settings key Router does not accept, so a typo
-    here would silently bring that back."""
+def test_router_never_takes_redis_as_a_url_with_the_password_in_it() -> None:
+    """redis_url carried the raw password inside the URL; it holds a
+    URL-reserved character, redis-py read part of it as the port and litellm
+    crash-looped for 17 minutes on 22 October 2026. The Redis-backed budget
+    returns as host, port and password fields, never as a URL."""
     config = yaml.safe_load(_CONFIG_PATH.read_text())
-    compose = yaml.safe_load(_COMPOSE_PATH.read_text())
-    litellm_service = compose["services"]["litellm"]
 
-    assert config["router_settings"]["redis_url"] == "os.environ/REDIS_URL"
-    assert "redis_url" in real_litellm.Router.get_valid_args()
-    assert litellm_service["environment"]["REDIS_URL"].endswith("@redis:6379")
-    assert "redis" in litellm_service["depends_on"]
+    assert "redis_url" not in config["router_settings"]
 
 
 @pytest.mark.asyncio

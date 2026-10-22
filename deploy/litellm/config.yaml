@@ -282,7 +282,10 @@ router_settings:
   # Redis call fails (caching/dual_cache.py), so Redis down degrades to the
   # old per-process behaviour instead of failing requests. REDIS_URL is
   # already in the litellm service environment.
-  redis_url: os.environ/REDIS_URL
+  # The Redis-backed budget (#1938) used redis_url with the raw password in
+  # the URL; the password holds a URL-reserved character, redis-py read
+  # part of it as the port and litellm crash-looped for 17 minutes on
+  # 22 October. Off until the setting lands as host, port and password.
   # Small (klai-primary, klai-fast) falls back to Mistral Large when it fails or
   # its budget is spent: Large is the next model up that costs less than Medium
   # on both input and output. Nothing falls back to Medium: that fallback served
