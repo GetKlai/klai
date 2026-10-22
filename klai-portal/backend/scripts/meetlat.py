@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 import replay_internal_chat as replay
-from sqlalchemy import event
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core import database
 from app.services import answer_grounding, retrieval_context
@@ -140,23 +140,35 @@ class Thread:
     turns: list[dict]
 
 
-async def _skip_gap_event(**_: object) -> None:
+def _skip_gap_event(**_: object) -> None:
     return None
 
 
-def _make_database_read_only(engine: Any) -> None:
-    """Every pooled connection opens read-only, so a replay that tries to write fails instead of writing."""
+def _make_database_read_only(db: Any) -> None:
+    """Replace the app's engine with one whose connections start read-only, so a replay that writes fails.
 
-    @event.listens_for(engine.sync_engine, "connect")
-    def _read_only(dbapi_connection: Any, _record: object) -> None:
-        cursor = dbapi_connection.cursor()
-        cursor.execute("SET default_transaction_read_only = on")
-        cursor.close()
+    The server setting goes in with the connection startup packet. A ``SET`` run
+    from a connect listener executes inside the transaction the asyncpg adapter
+    has already begun, so the first transaction would stay read-write and a
+    rollback would undo the ``SET`` for the rest of the connection. Sessions are
+    rebound to the new engine; nothing has connected through the old one yet.
+    """
+    settings = replay.settings
+    db.engine = create_async_engine(
+        settings.database_url,
+        echo=False,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_recycle=settings.db_pool_recycle,
+        pool_pre_ping=settings.db_pool_pre_ping,
+        connect_args={"server_settings": {"default_transaction_read_only": "on"}},
+    )
+    db.AsyncSessionLocal.configure(bind=db.engine)
 
 
 def _apply_measurement_patches() -> None:
     """Turn the production pipeline into a measuring one: nothing it does may reach an employee's data."""
-    _make_database_read_only(database.engine)
+    _make_database_read_only(database)
     replay.partner.record_internal_turn = replay._capture_internal_turn  # type: ignore[assignment]
     # The retrieval log keys feedback to the chunks of the employee's latest turn,
     # and the gap event feeds the knowledge-gap backlog: neither may see a replay.
@@ -221,6 +233,14 @@ def _read_cases(path: Path) -> list[dict]:
             and case["turn"] >= 0
         ):
             raise UsageError(f"{path} line {number}: needs a cid of 8 characters and a turn index of 0 or more")
+        try:
+            variants = case.get("variants") or []
+            if not isinstance(variants, list):
+                raise TypeError("not a list")
+            for variant in variants:
+                re.compile(variant)
+        except (re.error, TypeError) as exc:
+            raise UsageError(f"{path} line {number}: variants must be a list of regexes: {exc}") from exc
     return cases
 
 
@@ -234,17 +254,30 @@ def _case_class(case: dict) -> str:
     return klass
 
 
-def _module_hashes(modules: dict[str, str]) -> dict[str, str]:
-    """First 12 hex characters of the sha256 of each module file: the same path can hold other code after a copy."""
-    return {name: hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12] for name, path in modules.items()}
+def _code_fingerprint() -> dict[str, Any]:
+    """One sha256 (12 hex) over the bytes of every loaded ``app`` and ``klai_chat_prompts`` module, plus their count.
+
+    The same path can hold other code after a copy, and the pipeline runs on far
+    more than the five banner modules. Call it after the pipeline is imported.
+    """
+    digest = hashlib.sha256()
+    count = 0
+    for name in sorted(sys.modules):
+        if name.split(".")[0] not in ("app", "klai_chat_prompts"):
+            continue
+        path = getattr(sys.modules[name], "__file__", None)
+        if path and Path(path).is_file():
+            digest.update(name.encode() + b"\0" + Path(path).read_bytes() + b"\0")
+            count += 1
+    return {"code_hash": digest.hexdigest()[:12], "code_files": count}
 
 
-def _guard_meta(meta_path: Path, modules: dict[str, str], hashes: dict[str, str], out: Path) -> None:
+def _guard_meta(meta_path: Path, modules: dict[str, str], fingerprint: dict[str, Any], out: Path) -> None:
     """Rows from another code tree must not be topped up with rows from this one."""
     if not (meta_path.exists() and out.exists()):
         return
     previous = json.loads(meta_path.read_text())
-    if previous.get("modules") != modules or previous.get("module_hashes") != hashes:
+    if previous.get("modules") != modules or any(previous.get(k) != v for k, v in fingerprint.items()):
         raise UsageError(
             f"refusing to resume: the rows in {out} were produced with other code than this run loads "
             f"(see {meta_path}). Use a new --out."
@@ -295,13 +328,13 @@ async def _run(args: argparse.Namespace) -> int:
     if _rows_inside_checkout(out):
         raise UsageError("refusing to run: --out must be outside the repository, the rows hold real conversations")
     meta_path = out.with_name(out.name + ".meta.json")
-    hashes = _module_hashes(modules)
-    _guard_meta(meta_path, modules, hashes, out)
+    fingerprint = _code_fingerprint()
+    _guard_meta(meta_path, modules, fingerprint, out)
     out.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     meta = {
         "banner": banner,
         "modules": modules,
-        "module_hashes": hashes,
+        **fingerprint,
         "overlay": str(overlay.resolve()) if overlay else None,
         "overlay_git": _git_describe(overlay),
         "started_at": datetime.now(UTC).isoformat(),
@@ -370,8 +403,13 @@ def _verdict(klass: str, case: dict, row: dict | None) -> bool:
     if klass == "antwoord_kb":
         return decision in _ANSWERS and sources >= 1 and not _is_short_question(text)
     if klass == "dekkend_antwoord":
-        return decision in _ANSWERS and _names_variants(text, case.get("variants") or list(_DEFAULT_VARIANTS))
-    return decision == "general_knowledge" or bool(_GENERAL_KNOWLEDGE.search(text))
+        return (
+            decision in _ANSWERS
+            and sources >= 1
+            and not _is_short_question(text)
+            and _names_variants(text, case.get("variants") or list(_DEFAULT_VARIANTS))
+        )
+    return decision == "general_knowledge" or (decision in _ANSWERS and bool(_GENERAL_KNOWLEDGE.search(text)))
 
 
 def _count(value: Any) -> int:

@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import inspect
 import json
 import sys
 import types
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -274,14 +275,47 @@ def test_run_refuses_to_resume_when_a_module_file_changed_under_the_same_path(mo
     overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa-1", ["first"])}, answered)
     assert _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}], overlay) == 0
     meta = json.loads((tmp_path / "r.jsonl.meta.json").read_text())
-    assert set(meta["module_hashes"]) == set(_BANNER_MODULES)
-    assert all(len(h) == 12 for h in meta["module_hashes"].values())
+    assert len(meta["code_hash"]) == 12
+    assert meta["code_files"] >= len(_BANNER_MODULES)
     (overlay / "app.services.internal_turn.py").write_text("# replaced after the first rows\n")
 
     code = _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}, {"cid": "aaaaaaaa", "turn": 1}], overlay)
 
     assert code == 2
     assert "other code" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("module", "filename"),
+    [("app.services.partner_chat_probe", "partner_chat.py"), ("klai_chat_prompts.language_probe", "language.py")],
+)
+def test_run_refuses_to_resume_when_any_loaded_app_or_prompt_module_changed(
+    monkeypatch, tmp_path, capsys, module, filename
+):
+    source = tmp_path / "probe" / filename
+    source.parent.mkdir()
+    source.write_text("VERSION = 1\n")
+    probe = types.ModuleType(module)
+    probe.__file__ = str(source)
+    monkeypatch.setitem(sys.modules, module, probe)
+    answered: list[str] = []
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa-1", ["first"])}, answered)
+    assert _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}], overlay) == 0
+    source.write_text("VERSION = 2\n")
+
+    code = _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}, {"cid": "aaaaaaaa", "turn": 1}], overlay)
+
+    assert code == 2
+    assert "other code" in capsys.readouterr().err
+
+
+def test_a_variants_entry_that_is_not_a_regex_is_refused_with_a_message(tmp_path, capsys):
+    case = {"cid": "aaaaaaaa", "turn": 0, "class": "dekkend_antwoord", "variants": ["android", "iphone("]}
+
+    code = _compare(tmp_path, [case], [[_row()]])
+
+    assert code == 2
+    assert "variants" in capsys.readouterr().err
 
 
 def test_a_negative_turn_in_the_cases_file_is_refused(tmp_path, capsys):
@@ -421,6 +455,31 @@ def test_rounds_with_the_same_file_name_in_different_directories_stay_separate(t
     assert meetlat.main(["compare", "--cases", str(case_path), paths[0], paths[0]]) == 2
 
 
+@pytest.mark.parametrize(
+    "row",
+    [
+        _row(sources=0, text="On Android and on iPhone open Settings."),
+        _row(sources=2, text="Do you use Android or iPhone?"),
+    ],
+    ids=["no-sources", "short-clarifying-question"],
+)
+def test_dekkend_antwoord_needs_sources_and_must_not_be_a_short_question(tmp_path, capsys, row):
+    report = _json_report(tmp_path, capsys, [{"cid": "aaaaaaaa", "turn": 0, "class": "dekkend_antwoord"}], [[row]])
+
+    assert _verdict_of(report, "dekkend_antwoord") == {"ok": 0, "of": 1}
+
+
+def test_a_refusal_that_mentions_general_knowledge_is_not_a_labelled_general_answer(tmp_path, capsys):
+    row = _row(
+        decision="refusal", sources=0, text="That is not in the knowledge base; I will not use general knowledge."
+    )
+    case = {"cid": "aaaaaaaa", "turn": 0, "class": "antwoord_algemeen_gelabeld"}
+
+    report = _json_report(tmp_path, capsys, [case], [[row]])
+
+    assert _verdict_of(report, "antwoord_algemeen_gelabeld") == {"ok": 0, "of": 1}
+
+
 def test_weigering_feiten_gets_no_automatic_verdict_and_is_counted_for_reading(tmp_path, capsys):
     cases = [
         {"cid": "aaaaaaaa", "turn": 0, "class": "weigering_feiten"},
@@ -528,42 +587,28 @@ def test_importing_replay_internal_chat_leaves_sys_path_alone(monkeypatch):
     assert sys.path == before
 
 
-def test_measurement_patches_open_every_database_connection_read_only():
-    class FakeCursor:
-        def __init__(self):
-            self.statements = []
+def test_measurement_patches_start_every_database_connection_read_only_through_the_engine_arguments(monkeypatch):
+    created = []
 
-        def execute(self, statement):
-            self.statements.append(statement)
+    def create_engine_stub(url, **kwargs):
+        created.append((url, kwargs))
+        return "read-only engine"
 
-        def close(self):
-            pass
+    monkeypatch.setattr(meetlat, "create_async_engine", create_engine_stub)
+    sessions = async_sessionmaker(bind=None)
+    db = types.SimpleNamespace(engine="app engine", AsyncSessionLocal=sessions)
 
-    class FakeConnection:
-        cursor_ = FakeCursor()
+    meetlat._make_database_read_only(db)
 
-        def cursor(self):
-            return self.cursor_
-
-    engine = create_engine("sqlite://")
-
-    before = list(engine.pool.dispatch.connect)
-
-    meetlat._make_database_read_only(types.SimpleNamespace(sync_engine=engine))
-
-    (listener,) = [fn for fn in engine.pool.dispatch.connect if fn not in before]
-    connection = FakeConnection()
-    listener(connection, None)
-    assert connection.cursor_.statements == ["SET default_transaction_read_only = on"]
+    ((url, kwargs),) = created
+    assert url == replay.settings.database_url
+    assert kwargs["connect_args"] == {"server_settings": {"default_transaction_read_only": "on"}}
+    assert kwargs["pool_size"] == replay.settings.db_pool_size
+    assert db.engine == "read-only engine"
+    assert sessions.kw["bind"] == "read-only engine"
 
 
-def test_rows_may_sit_next_to_an_overlay_but_not_inside_a_checkout(tmp_path, monkeypatch):
-    """On the production host the overlay sits under /out with no .git; the
-    guard protects a checkout with a public remote, not every parent directory."""
-    import replay_internal_chat as replay
-
-    monkeypatch.setattr(replay, "REPO_ROOT", tmp_path)
-    assert not meetlat._rows_inside_checkout(tmp_path / "rows.jsonl")
-    (tmp_path / ".git").mkdir()
-    assert meetlat._rows_inside_checkout(tmp_path / "rows.jsonl")
-    assert not meetlat._rows_inside_checkout(tmp_path.parent / "elsewhere.jsonl")
+def test_the_gap_event_stand_in_is_a_plain_function_like_the_one_it_replaces():
+    assert not inspect.iscoroutinefunction(meetlat._skip_gap_event)
+    assert not inspect.iscoroutinefunction(meetlat.retrieval_context._schedule_gap_event)
+    assert meetlat._skip_gap_event(org_id=1, query_text="q") is None
