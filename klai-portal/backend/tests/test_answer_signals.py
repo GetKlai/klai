@@ -180,7 +180,7 @@ def _mock_litellm(monkeypatch, model_text: str) -> None:
         def stream(self, *_, **__):
             return _StreamCtx()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", _Client)
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", _Client)
 
 
 def _fake_retrieval(chunks: list[dict], band: str | None):
@@ -288,7 +288,7 @@ async def test_refusal_marks_refused_and_zero_sources(monkeypatch):
 
 
 def _fill(chunks: list[dict], *, query: str = "hoe reset ik mijn wachtwoord?", sources: list | None = None) -> dict:
-    from app.services.partner_chat import _fill_answer_signals
+    from app.services.answer_compose import _fill_answer_signals
 
     sink: dict = {}
     _fill_answer_signals(
@@ -317,7 +317,7 @@ def test_broad_turn_scores_the_retrieval_that_triggered_it():
 def test_fill_keeps_the_band_retrieval_wrote_and_defaults_the_rest():
     """_fill_answer_signals never re-bands: it leaves retrieval's band alone and
     marks a turn that never retrieved as unknown."""
-    from app.services.partner_chat import _fill_answer_signals
+    from app.services.answer_compose import _fill_answer_signals
 
     kept: dict = {"band": "high"}
     empty: dict = {}

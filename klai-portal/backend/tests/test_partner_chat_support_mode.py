@@ -2,7 +2,7 @@
 
 Three seams are covered:
 
-* ``partner_chat`` prompt + refusal selection — a widget or partner turn gets
+* ``answer_compose`` prompt + refusal selection — a widget or partner turn gets
   the SUPPORT_CHAT profile in its register, and the helpdesk refusal only
   where the caller asks for it.
 * ``partner.py`` plumbing — the widget_config ``tone_register`` field is read
@@ -24,8 +24,8 @@ from klai_chat_prompts import (
     no_citable_sources_message,
 )
 
+from app.services.answer_compose import _compose_answer
 from app.services.case_file import Case
-from app.services.partner_chat import _compose_answer
 from app.services.retrieval_context import KnowledgeTurn, _build_system_prompt
 from app.services.widget_reply import Reply
 

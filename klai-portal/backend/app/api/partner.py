@@ -63,8 +63,7 @@ from app.services.chat_safety import (
     widget_input_safety_violation,
 )
 from app.services.chat_sse import _sse_content_delta
-from app.services.internal_turn import InternalInputs, Live, internal_turn
-from app.services.partner_chat import chat_completion_non_streaming, chat_completion_streaming
+from app.services.internal_turn import InternalInputs, internal_turn
 from app.services.pasted_correspondence import detect_pasted_correspondence
 from app.services.prompt_templates import internal_turn_settings
 from app.services.retrieval_context import KnowledgeTurn
@@ -77,7 +76,14 @@ from app.services.widget_audit import (
     record_widget_turn,
     session_key_from_token,
 )
-from app.services.widget_reply import AnswerUpstreamError, Reply, error_frames, reply_body, reply_frames
+from app.services.widget_reply import (
+    AnswerUpstreamError,
+    Reply,
+    error_frames,
+    reply_body,
+    reply_frames,
+    streamed_frames,
+)
 from app.services.widget_turn import TurnInputs, widget_turn
 
 logger = structlog.get_logger()
@@ -312,7 +318,7 @@ def _write_widget_record(turn: KnowledgeTurn | None, **fields: Any) -> None:
     """One record per widget turn, written at once; its signals completed when the later check is done.
 
     The check on a reply written from chosen passages runs after the reply
-    went out (``turn.grounding_check``, partner_chat.py). The row is written
+    went out (``turn.grounding_check``, answer_compose.py). The row is written
     first so the transcript keeps its order under a quick follow-up and the
     feedback endpoint finds the turn; the signals it was written with are
     then replaced by the completed ones (``patch_answer_signals``).
@@ -355,15 +361,16 @@ def _write_internal_record(org_id: int, answer_signals: dict[str, Any], turn: Kn
     task.add_done_callback(_pending.discard)
 
 
-async def _internal_record_streaming_wrapper(
-    inner: AsyncGenerator[bytes], *, org_id: int, answer_signals: dict[str, Any], turn: KnowledgeTurn
-) -> AsyncGenerator[bytes]:
-    """Pass the stream through, then write the turn's record, also when the client left early."""
+async def _streamed_then_recorded(reply: Reply, *, include_sources: bool, org_id: int) -> AsyncGenerator[bytes]:
+    """Send a streamed reply as the model writes it, then write the turn's record, also when the client left early.
+
+    The reply settles once its text is in, so its record can only follow the stream.
+    """
     try:
-        async for chunk in inner:
-            yield chunk
+        async for frame in streamed_frames(reply, include_sources=include_sources):
+            yield frame
     finally:
-        _write_internal_record(org_id, answer_signals, turn)
+        _write_internal_record(org_id, reply.signals, reply.turn)
 
 
 def _input_safety_block_response(
@@ -819,17 +826,6 @@ def _record_fields(
     }
 
 
-def _sent_body(result: dict, request: ChatCompletionsRequest) -> dict:
-    """The non-streaming body as the caller asked for it."""
-    knowledge = request.knowledge
-    if knowledge is not None and not knowledge.include_sources:
-        for choice in result.get("choices") or []:
-            message = choice.get("message") if isinstance(choice, dict) else None
-            if isinstance(message, dict):
-                message.pop("sources", None)
-    return result
-
-
 async def _replayed(frames: list[bytes]) -> AsyncGenerator[bytes]:
     for frame in frames:
         yield frame
@@ -966,7 +962,7 @@ async def _internal_chat_turn(
     pasted_correspondence: bool,
     turn_started: float,
 ) -> Any:
-    """Step 2b: an internal chat turn (internal_turn.py). A Strict reply comes back held and composed; an Open or general one is streamed live, because employees read the tokens as they arrive."""
+    """Step 2b: an internal chat turn (internal_turn.py). A Strict reply comes back held and composed; an Open or general one streams as it is written when the request streams, because employees read the tokens as they arrive."""
     # The employee's own KB settings, resolved into the profile, scope the
     # turn; the internal key's kb_access plays no part. No slugs means every
     # org KB, which retrieval-api scopes by the key's org and the employee.
@@ -974,9 +970,8 @@ async def _internal_chat_turn(
     if profile.user_id is not None:
         instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
         templates_block = build_template_instructions_block(instructions)
-    answer_signals: dict[str, Any] = {}
     try:
-        outcome = await internal_turn(
+        reply = await internal_turn(
             InternalInputs(
                 request=request,
                 auth=auth,
@@ -985,74 +980,23 @@ async def _internal_chat_turn(
                 templates_block=templates_block,
                 telemetry_level=telemetry_level,
                 pasted_correspondence=pasted_correspondence,
-                answer_signals=answer_signals,
+                answer_signals={},
                 turn_started=turn_started,
+                web_search=lambda system_prompt: _maybe_apply_web_search(
+                    request=request, auth=auth, system_prompt=system_prompt
+                ),
             )
         )
     except AnswerUpstreamError as error:
         return _upstream_error_response(error, request)
-    if isinstance(outcome, Reply):
-        _write_internal_record(auth.org_id, outcome.signals, outcome.turn)
-        return _reply_response(outcome, request, None)
-    return await _internal_live_response(
-        request, auth, profile, outcome, answer_signals=answer_signals, pasted_correspondence=pasted_correspondence
-    )
-
-
-async def _internal_live_response(
-    request: ChatCompletionsRequest,
-    auth: PartnerAuthContext,
-    profile: ChatProfile,
-    live: Live,
-    *,
-    answer_signals: dict[str, Any],
-    pasted_correspondence: bool,
-) -> Any:
-    """Step 3: the live leg of an internal Open or general turn, streamed or not, with its signals recorded."""
-    chunks, system_prompt, trusted_sources, knowledge_turn, turn_timing = live
-    system_prompt, web_chunks, web_query = await _maybe_apply_web_search(
-        request=request,
-        auth=auth,
-        system_prompt=system_prompt,
-    )
-    knowledge = request.knowledge
-    generation: dict[str, Any] = {
-        "messages": request.messages,
-        "model": request.model,
-        "temperature": request.temperature,
-        "system_prompt": system_prompt,
-        "settings": settings,
-        "org_id": auth.org_id,
-        "citation_chunks": chunks,
-        "web_chunks": web_chunks,
-        "web_query": web_query,
-        "trusted_sources": trusted_sources,
-        "source_query": knowledge.query if knowledge is not None else None,
-        "answer_signals": answer_signals,
-        "turn_timing": turn_timing,
-        "profile": profile,
-        "tools": request.tools,
-        "tool_choice": request.tool_choice,
-        # Every model call of the turn runs on LiteLLM's master key, so the org
-        # travels with it for LiteLLM to apply the tenant's PII policy.
-        "delegated_org_id": auth.zitadel_org_id,
-        "knowledge_turn": knowledge_turn,
-        "pasted_correspondence": pasted_correspondence,
-    }
-    if request.stream:
-        streaming_gen = _internal_record_streaming_wrapper(
-            chat_completion_streaming(
-                **generation, emit_sources=knowledge.include_sources if knowledge is not None else True
-            ),
-            org_id=auth.org_id,
-            answer_signals=answer_signals,
-            turn=knowledge_turn,
+    if reply.deltas is not None:
+        knowledge = request.knowledge
+        frames = _streamed_then_recorded(
+            reply, include_sources=knowledge.include_sources if knowledge is not None else True, org_id=auth.org_id
         )
-        return StreamingResponse(content=streaming_gen, media_type="text/event-stream")
-
-    result = await chat_completion_non_streaming(**generation)
-    _write_internal_record(auth.org_id, answer_signals, knowledge_turn)
-    return _sent_body(result, request)
+        return StreamingResponse(content=frames, media_type="text/event-stream")
+    _write_internal_record(auth.org_id, reply.signals, reply.turn)
+    return _reply_response(reply, request, None)
 
 
 async def chat_completions(
@@ -1065,7 +1009,7 @@ async def chat_completions(
     """One chat turn, streamed or not: admit the request, then run it as the turn of its surface.
 
     The widget and the partner key run ``widget_turn``; the internal chat runs
-    ``internal_turn``, whose Open and general replies are streamed live.
+    ``internal_turn``, whose Open and general replies stream as they are written.
     """
     turn_started = time.perf_counter()
     require_permission(auth, "chat")

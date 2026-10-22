@@ -134,8 +134,8 @@ def _auth(*, key_id: str, permissions: dict | None = None, kb_access: dict | Non
 def pipeline(monkeypatch):
     """Patch everything around chat_completions that is not the knowledge path."""
     import app.api.partner as partner
-    import app.services.partner_chat as partner_chat
     import app.services.widget_turn as widget_turn
+    import app.services.widget_write as widget_write
     from app.services import retrieval_context
 
     monkeypatch.setattr(partner.settings, "knowledge_retrieve_url", "http://retrieval.example.com")
@@ -145,7 +145,7 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(widget_turn, "write_retrieval_log", AsyncMock())
 
     def run(recorder: _Recorder):
-        monkeypatch.setattr(partner_chat.httpx, "AsyncClient", recorder.factory)
+        monkeypatch.setattr(widget_write.httpx, "AsyncClient", recorder.factory)
         return recorder
 
     return run

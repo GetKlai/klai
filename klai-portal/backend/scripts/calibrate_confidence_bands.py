@@ -23,7 +23,7 @@ every report/dashboard already excludes them, see ``grounding_report.py``. The t
 own ``answer_signals.band`` (copied verbatim from retrieval-api's actual decision for
 that turn) is the only band this script trusts. The grounding judge runs on the DRAFT,
 before ``decide_answer`` turns it into a refusal/clarify/answer (see
-``_finish_live_answer`` in app/services/partner_chat.py) — so a turn's
+``_judge`` and ``_open_answer`` in app/services/widget_write.py) — so a turn's
 ``unsupported`` count is only meaningful when ``decision`` is ``answer`` or
 ``partial_answer``; refusal/off_topic/clarifying_question turns are reported as their
 own share per band, never pooled into the grounded rate.
@@ -277,7 +277,7 @@ _BACKOFF_SECONDS = (5.0, 15.0, 45.0)
 # else is a schema drift and gets dropped rather than silently miscounted.
 _VALID_BANDS = ("high", "medium", "low", "unknown")
 # The grounding judge runs on the draft BEFORE decide_answer turns it into a
-# refusal/clarify/answer (see _finish_live_answer in partner_chat.py), so
+# refusal/clarify/answer (see _judge in widget_write.py), so
 # "unsupported" is only a claim about content the visitor actually saw when the
 # turn ended up as one of these two decisions. Pooling refusal/off_topic/
 # clarifying_question in with them was confirmed defect #2 in the 2026-09-24

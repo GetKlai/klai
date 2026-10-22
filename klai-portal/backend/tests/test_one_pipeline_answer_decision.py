@@ -184,10 +184,11 @@ async def _turn(
     history: tuple[dict, ...] = (),
     include_sources: bool = True,
     retrieval_response: httpx.Response | None = None,
+    web_search: bool = False,
 ) -> _Turn:
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
-    from app.services import partner_chat, retrieval_context, widget_turn
+    from app.services import answer_compose, retrieval_context, widget_turn
 
     for name, value in {
         "litellm_base_url": LITELLM,
@@ -217,7 +218,7 @@ async def _turn(
         key_id=key_id,
         org_id=7,
         zitadel_org_id="zorg-acme",
-        permissions=INTERNAL_KEY if profile.surface == "internal" else {"chat": True},
+        permissions={**INTERNAL_KEY, "web_search": web_search} if profile.surface == "internal" else {"chat": True},
         kb_access={10: "read"},
         rate_limit_rpm=60,
     )
@@ -225,6 +226,7 @@ async def _turn(
         messages=[*history, {"role": "user", "content": question}],
         stream=stream,
         knowledge=KnowledgeOptions(include_sources=include_sources),
+        web_search=web_search,
     )
     http_request = MagicMock(headers={}, client=MagicMock(host="127.0.0.1"))
 
@@ -246,7 +248,7 @@ async def _turn(
             message = response["choices"][0]["message"]
             text = message["content"]
         # The record and an Open turn's check are written after the reply.
-        while pending := [task for task in (partner._pending | partner_chat._pending_turn_tasks) if not task.done()]:
+        while pending := [task for task in (partner._pending | answer_compose._pending_turn_tasks) if not task.done()]:
             await asyncio.gather(*pending)
     return _Turn(text, frames, message, records, sent)
 
@@ -670,6 +672,39 @@ async def test_the_warning_stays_when_the_caller_asked_for_no_sources(monkeypatc
 
     assert "**Bronnen**" not in turn.text
     assert "- Let op: e-mailadres in dit antwoord staat niet in de kennisbank." in turn.text
+
+
+@pytest.mark.parametrize("kb_mode", ["open", "strict"])
+@pytest.mark.asyncio
+async def test_only_an_open_turn_reads_the_web_results_the_employee_asked_for(monkeypatch, kb_mode):
+    """The web step moved from the endpoint into the internal turn with the one writer; Strict never searches the web."""
+    from app.api import partner
+
+    result = {"title": "Verlof 2026", "url": "https://news.example.com/verlof", "content": "Verlof gaat via HR."}
+    search = AsyncMock(return_value=[result])
+    monkeypatch.setattr(partner, "search_web", search)
+    llm = _LiteLLM()
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode=kb_mode),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        stream=True,
+        web_search=True,
+    )
+
+    activity = [a for f in turn.frames for c in f.get("choices") or [] for a in c["delta"].get("activity") or []]
+    searched = [a for a in activity if a["step"] == "web_searched"]
+    if kb_mode == "open":
+        search.assert_awaited_once()
+        assert "[Untrusted web search results]" in _system_prompt(llm)
+        assert searched == [
+            {"step": "web_searched", "label": "Web doorzocht", "detail": "1 resultaten gevonden", "count": 1}
+        ]
+    else:
+        search.assert_not_awaited()
+        assert searched == []
 
 
 @pytest.mark.parametrize("pack", [_pack(), {"items": [], "sources": []}], ids=["with_sources", "zero"])

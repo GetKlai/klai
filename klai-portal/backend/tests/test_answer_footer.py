@@ -8,6 +8,7 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+from helpers import held_reply_body, streamed_reply_frames
 
 from app.services.answer_footer import render_answer_footer, strip_answer_footer_from_text
 from app.services.chat_profile import ChatProfile
@@ -185,13 +186,10 @@ def _content_frames(body: str) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_live_internal_turn_with_sources_appends_footer_as_extra_delta(monkeypatch):
-    from app.services.partner_chat import chat_completion_streaming
-
     events = [{"choices": [{"delta": {"content": "Naam 4(https://getklai.com/docs/legal/privacy)."}}]}]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client(events))
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _Client(events))
 
-    chunks = []
-    async for chunk in chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         messages=[{"role": "user", "content": "Welke gegevens staan in de privacy policy?"}],
         model="klai-primary",
         temperature=0.7,
@@ -200,8 +198,7 @@ async def test_live_internal_turn_with_sources_appends_footer_as_extra_delta(mon
         citation_chunks=_SINGLE_SOURCE_CITATION_CHUNKS,
         trusted_sources=_SINGLE_TRUSTED_SOURCE,
         profile=ChatProfile(surface="internal", kb_mode="open"),
-    ):
-        chunks.append(chunk)
+    )
 
     body = b"".join(chunks).decode()
     content_frames = _content_frames(body)
@@ -219,21 +216,17 @@ async def test_live_internal_turn_with_sources_appends_footer_as_extra_delta(mon
 
 @pytest.mark.asyncio
 async def test_internal_turn_without_sources_gets_no_footer(monkeypatch):
-    from app.services.partner_chat import chat_completion_streaming
-
     events = [{"choices": [{"delta": {"content": "Klai ondersteunt SIP-trunking voor elk plan."}}]}]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _Client(events))
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _Client(events))
 
-    chunks = []
-    async for chunk in chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         messages=[{"role": "user", "content": "Ondersteunt Klai SIP-trunking?"}],
         model="klai-primary",
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
         profile=ChatProfile(surface="internal", kb_mode="open"),
-    ):
-        chunks.append(chunk)
+    )
 
     body = b"".join(chunks).decode()
     assert "Bronnen" not in body
@@ -242,8 +235,6 @@ async def test_internal_turn_without_sources_gets_no_footer(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_streaming_internal_turn_with_sources_appends_footer_to_message_content(monkeypatch):
-    from app.services.partner_chat import chat_completion_non_streaming
-
     class _Response:
         status_code = 200
 
@@ -263,9 +254,9 @@ async def test_non_streaming_internal_turn_with_sources_appends_footer_to_messag
         async def post(self, *_, **__):
             return _Response()
 
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _AsyncClient())
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _AsyncClient())
 
-    result = await chat_completion_non_streaming(
+    result = await held_reply_body(
         messages=[{"role": "user", "content": "Welke gegevens staan in de privacy policy?"}],
         model="klai-primary",
         temperature=0.7,

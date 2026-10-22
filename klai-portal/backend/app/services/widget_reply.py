@@ -3,13 +3,14 @@
 The widget's turn (widget_turn.py) and the internal chat's turn
 (internal_turn.py) end in a ``Reply`` whether the text was written by the
 model or decided in code. This module turns a ``Reply`` into the two shapes
-the contract allows: the non-streaming completion body and the SSE frames.
-Nothing else renders such a reply; only an internal Open or general answer,
-streamed live, has its own frames.
+the contract allows: the non-streaming completion body and the SSE frames,
+for a held reply all at once and for a streamed one as the model writes it.
+Nothing else renders a reply.
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -29,12 +30,16 @@ from app.services.chat_sse import (
 from app.services.retrieval_context import KnowledgeTurn
 
 _DONE = b"data: [DONE]\n\n"
+# OpenAI clients read this finish reason as "run the tools now".
+_RUN_THE_TOOLS = b'data: {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}\n\n'
 
 
 @dataclass
 class Reply:
     """One reply, decided in code or written, with what the caller needs to send and record it."""
 
+    # What the reader gets in one piece; on a streamed reply, what follows the
+    # deltas once it settled: the part not yet seen and the footer.
     text: str
     sources: list[dict]
     signals: dict[str, Any]
@@ -47,8 +52,15 @@ class Reply:
     passages: int = 0
     # The answer call's id, model and usage as LiteLLM returned them; empty on a reply decided in code.
     completion: dict[str, Any] = field(default_factory=dict)
-    # The employee's own tools the answer model called (internal Strict only); the client runs them.
+    # The employee's own tools the answer model called (internal only); the client runs them.
+    # On a streamed reply these are the call deltas as they were already sent.
     tool_calls: list[dict] | None = None
+    # Live web results the writer read beside the passages (internal Open and general), for the activity frame.
+    web_results: int = 0
+    # A streamed reply (internal Open and general): the model's text, and its
+    # tool-call deltas, as the reader may see them now. Every field above
+    # settles in place once these are exhausted (widget_write.write_reply).
+    deltas: AsyncIterator[str | list[dict]] | None = None
 
 
 class AnswerUpstreamError(HTTPException):
@@ -102,12 +114,38 @@ def reply_frames(reply: Reply, *, include_sources: bool = True) -> list[bytes]:
         # A streamed tool call carries its position; the completion body's calls do not.
         frames.append(_sse_tool_calls_delta([{"index": i, **call} for i, call in enumerate(reply.tool_calls)]))
         if not reply.text:
-            # OpenAI clients read this finish reason as "run the tools now".
-            return [
-                *frames,
-                b'data: {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}\n\n',
-                _DONE,
-            ]
+            return [*frames, _RUN_THE_TOOLS, _DONE]
+    return [*frames, *_closing_frames(reply, include_sources=include_sources)]
+
+
+async def streamed_frames(reply: Reply, *, include_sources: bool = True) -> AsyncIterator[bytes]:
+    """The SSE frames of a streamed reply: its language, the model's deltas as they arrive, then how it ends.
+
+    Once the stream has started a failure of the answer model cannot become a
+    502, so it ends the stream as an error frame. A turn that only called a
+    tool ends on "run the tools now" without a composed text after it.
+    """
+    assert reply.deltas is not None, "a held reply has no deltas; reply_frames renders it"
+    if reply.language is not None:
+        yield _sse_language_delta(reply.language)
+    try:
+        async for delta in reply.deltas:
+            yield _sse_content_delta(delta) if isinstance(delta, str) else _sse_tool_calls_delta(delta)
+    except AnswerUpstreamError as error:
+        yield _sse_error_frame(error.message)
+        yield _DONE
+        return
+    if reply.tool_calls and not reply.text:
+        yield _RUN_THE_TOOLS
+        yield _DONE
+        return
+    for frame in _closing_frames(reply, include_sources=include_sources):
+        yield frame
+
+
+def _closing_frames(reply: Reply, *, include_sources: bool) -> list[bytes]:
+    """What ends every reply: what was read, the sources, the text, and DONE."""
+    frames: list[bytes] = []
     if reply.passages:
         frames.append(
             _sse_activity_delta(
@@ -117,6 +155,19 @@ def reply_frames(reply: Reply, *, include_sources: bool = True) -> list[bytes]:
                         "label": "Kennisbank geraadpleegd",
                         "detail": f"{reply.passages} passages gevonden",
                         "count": reply.passages,
+                    }
+                ]
+            )
+        )
+    if reply.web_results:
+        frames.append(
+            _sse_activity_delta(
+                [
+                    {
+                        "step": "web_searched",
+                        "label": "Web doorzocht",
+                        "detail": f"{reply.web_results} resultaten gevonden",
+                        "count": reply.web_results,
                     }
                 ]
             )
@@ -139,7 +190,7 @@ def reply_frames(reply: Reply, *, include_sources: bool = True) -> list[bytes]:
     if reply.tool_calls:
         # Text beside a tool call still ends on "run the tools now"; without
         # it an OpenAI client shows the text and never runs the tool.
-        frames.append(b'data: {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}\n\n')
+        frames.append(_RUN_THE_TOOLS)
     frames.append(_DONE)
     return frames
 

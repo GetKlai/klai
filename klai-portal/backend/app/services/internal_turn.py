@@ -18,16 +18,15 @@ what it returns.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from klai_chat_prompts import no_citable_sources_message
 
 from app.core.config import Settings
 from app.services import case_file
-from app.services.answer_footer import render_answer_footer
 from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import _is_web_search_tool
 from app.services.chat_safety import _last_user_message
@@ -71,19 +70,14 @@ class InternalInputs:
     # Signals only, never text: the record is record_internal_turn's, LibreChat keeps the conversation.
     answer_signals: dict[str, Any]
     turn_started: float
+    # Appends the live web results the request asked for to a system prompt and
+    # returns them as their own citation tier with the query they were found for
+    # (partner._maybe_apply_web_search). Open and general only: Strict never
+    # searches the web.
+    web_search: Callable[[str], Awaitable[tuple[str, list[dict], str | None]]]
 
 
-class Live(NamedTuple):
-    """An Open or general turn, which chat_completions streams as the writer's tokens arrive."""
-
-    chunks: list[dict]
-    system_prompt: str
-    trusted_sources: list[dict[str, Any]]
-    turn: KnowledgeTurn
-    timing: dict[str, float]
-
-
-async def internal_turn(inputs: InternalInputs) -> Reply | Live:
+async def internal_turn(inputs: InternalInputs) -> Reply:
     turn = KnowledgeTurn()
     messages = inputs.request.messages
     case: case_file.Case | None = None
@@ -121,12 +115,6 @@ async def internal_turn(inputs: InternalInputs) -> Reply | Live:
     if routed := _route(inputs, turn, found, case):
         return routed
     timing = {"started_at": inputs.turn_started, "retrieval_ms": retrieval_ms, "case_ms": case_ms}
-    if profile.kb_mode != "strict":
-        # 5. Write, live. An employee reads the tokens as they arrive, and an
-        # Open answer may use general knowledge by design, so nothing holds it
-        # for a check; the check runs after the reply (_check_answer_later).
-        return Live(found.chunks, found.system_prompt, found.trusted_sources, turn, timing)
-    # 5. Write, held until the reply is composed and judged, as on the widget.
     return await _write(inputs, turn, found, timing)
 
 
@@ -186,15 +174,25 @@ def _refusal(inputs: InternalInputs, turn: KnowledgeTurn, text: str, language: s
 
 
 async def _write(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, timing: dict[str, float]) -> Reply:
+    """5. Write. Strict is held until the reply is composed and judged, as on the widget.
+
+    Open and general stream when the request does: an employee reads the
+    tokens as they arrive, and an Open answer may use general knowledge by
+    design, so nothing holds it for a check; the check runs after the reply.
+    """
     request, auth, profile = inputs.request, inputs.auth, inputs.profile
     knowledge = request.knowledge
-    reply = await write_reply(
+    strict = profile.kb_mode == "strict"
+    system_prompt, web_chunks, web_query = found.system_prompt, [], None
+    if not strict:
+        system_prompt, web_chunks, web_query = await inputs.web_search(found.system_prompt)
+    return await write_reply(
         messages=request.messages,
         model=strict_risk_model(
             request.model, profile=profile, turn=turn, chunks=found.chunks, messages=request.messages
         ),
         temperature=request.temperature,
-        system_prompt=found.system_prompt,
+        system_prompt=system_prompt,
         settings=inputs.settings,
         org_id=auth.org_id,
         citation_chunks=found.chunks,
@@ -208,17 +206,8 @@ async def _write(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, timi
         profile=profile,
         tools=request.tools,
         tool_choice=request.tool_choice,
+        web_chunks=web_chunks,
+        web_query=web_query,
+        include_sources=knowledge is None or knowledge.include_sources,
+        stream=request.stream and not strict,
     )
-    # LibreChat renders only text, so the sources and the turn's activity
-    # follow the answer as a text footer, the last render step.
-    footer = render_answer_footer(
-        sources=reply.sources,
-        kb_mode=profile.kb_mode,
-        chunks_injected=len(found.chunks),
-        sub_queries=turn.sub_queries,
-        language=reply.language,
-    )
-    knowledge = request.knowledge
-    if footer and reply.text and (knowledge is None or knowledge.include_sources):
-        reply.text = f"{reply.text.rstrip()}\n\n{footer}"
-    return reply

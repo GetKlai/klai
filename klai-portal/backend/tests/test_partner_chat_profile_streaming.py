@@ -11,11 +11,11 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+from helpers import streamed_reply_frames
 
 from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import _build_conversation_history, _strip_web_search_tools
 from app.services.chat_safety import _last_user_message
-from app.services.partner_chat import chat_completion_streaming
 
 
 def _sse_content_frames(body: str) -> list[dict]:
@@ -102,10 +102,9 @@ async def test_tool_call_delta_reaches_client_before_stream_ends(monkeypatch):
         {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "lookup"}}]}}]},
         {"choices": [{"delta": {"content": "Klai ondersteunt SIP-trunking."}}]},
     ]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
 
-    chunks = []
-    async for chunk in chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         messages=[{"role": "user", "content": "Ondersteunt Klai SIP-trunking?"}],
         model="klai-primary",
         temperature=0.7,
@@ -113,8 +112,7 @@ async def test_tool_call_delta_reaches_client_before_stream_ends(monkeypatch):
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
         profile=ChatProfile(surface="internal", kb_mode="open"),
-    ):
-        chunks.append(chunk)
+    )
 
     frames = _sse_content_frames(b"".join(chunks).decode())
     tool_call_index = next(i for i, f in enumerate(frames) if "tool_calls" in f)
@@ -138,10 +136,9 @@ async def test_tool_call_content_never_enters_composed_text_or_grounding_input(m
         },
         {"choices": [{"delta": {"content": "Klai ondersteunt SIP-trunking."}}]},
     ]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
 
-    chunks = []
-    async for chunk in chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         messages=[{"role": "user", "content": "Ondersteunt Klai SIP-trunking?"}],
         model="klai-primary",
         temperature=0.7,
@@ -149,8 +146,7 @@ async def test_tool_call_content_never_enters_composed_text_or_grounding_input(m
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
         profile=ChatProfile(surface="internal", kb_mode="open"),
-    ):
-        chunks.append(chunk)
+    )
 
     frames = _sse_content_frames(b"".join(chunks).decode())
     composed_text = "".join(f.get("content", "") for f in frames if "content" in f)
@@ -230,18 +226,16 @@ async def test_open_internal_profile_yields_multiple_content_frames(monkeypatch)
         {"choices": [{"delta": {"content": "ondersteunt SIP-trunking "}}]},
         {"choices": [{"delta": {"content": "voor elk plan."}}]},
     ]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
 
-    chunks = []
-    async for chunk in chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         messages=[{"role": "user", "content": "Ondersteunt Klai SIP-trunking?"}],
         model="klai-primary",
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
         profile=ChatProfile(surface="internal", kb_mode="open"),
-    ):
-        chunks.append(chunk)
+    )
 
     frames = _sse_content_frames(b"".join(chunks).decode())
     content_frames = [f for f in frames if f.get("content")]
@@ -255,18 +249,16 @@ async def test_live_turn_never_streams_a_model_written_link_and_never_repeats_th
         {"choices": [{"delta": {"content": "https://evil.example.com/verlof "}}]},
         {"choices": [{"delta": {"content": "bij je leidinggevende."}}]},
     ]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
 
-    chunks = []
-    async for chunk in chat_completion_streaming(
+    chunks = await streamed_reply_frames(
         messages=[{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
         model="klai-primary",
         temperature=0.7,
         system_prompt="prompt",
         settings=_settings(),
         profile=ChatProfile(surface="internal", kb_mode="open"),
-    ):
-        chunks.append(chunk)
+    )
 
     streamed = "".join(f.get("content") or "" for f in _sse_content_frames(b"".join(chunks).decode()))
     assert "example.com" not in streamed
@@ -280,9 +272,9 @@ async def test_internal_generation_call_carries_the_org_for_pii_masking(
     monkeypatch, delegated_org_id, expected_metadata
 ):
     events = [{"choices": [{"delta": {"content": "Antwoord."}}]}]
-    monkeypatch.setattr("app.services.partner_chat.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
 
-    async for _ in chat_completion_streaming(
+    await streamed_reply_frames(
         messages=[{"role": "user", "content": "Wat is het telefoonnummer van Jan de Vries?"}],
         model="klai-primary",
         temperature=0.7,
@@ -290,8 +282,7 @@ async def test_internal_generation_call_carries_the_org_for_pii_masking(
         settings=_settings(),
         delegated_org_id=delegated_org_id,
         profile=ChatProfile(surface="internal", kb_mode="open"),
-    ):
-        pass
+    )
 
     sent = _RecordingClient.last_json or {}
     assert (sent.get("metadata", {}).get("_klai_delegated_org_id") == "zorg-a") is expected_metadata

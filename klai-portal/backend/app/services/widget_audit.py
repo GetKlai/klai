@@ -144,7 +144,7 @@ async def patch_answer_signals(*, widget_id: str, message_id: int, answer_signal
     """Replace the signals of an assistant turn that was recorded before its statement check finished.
 
     The check on a widget reply written from chosen passages runs after the
-    reply went out (partner_chat._check_answer_later). The row itself is
+    reply went out (answer_compose._check_answer_later). The row itself is
     written at once, so the transcript keeps its order and feedback finds the
     turn; only its signals are completed here, on the row the insert returned.
     """
