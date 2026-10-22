@@ -308,23 +308,11 @@ EXPLICIT_LANGUAGE_NAMES: dict[str, str] = {
 # which is why the directing-preposition rule below decides the normal case.
 _REQUEST_FILLER_WORDS = frozenset(
     {
-        "graag",
-        "alstublieft",
-        "alsjeblieft",
-        "aub",
-        "svp",
-        "dank",
-        "bedankt",  # nl
-        "please",
-        "thanks",
-        "thank",
-        "pls",  # en
-        "bitte",
-        "danke",  # de
+        "graag", "alstublieft", "alsjeblieft", "aub", "svp", "dank", "bedankt",  # nl
+        "please", "thanks", "thank", "pls",  # en
+        "bitte", "danke",  # de
         "merci",  # fr ("svp" is listed once, under nl; it is shared)
-        "favor",
-        "obrigado",
-        "obrigada",  # pt
+        "favor", "obrigado", "obrigada",  # pt
         "gracias",  # es
     }
 )
@@ -350,7 +338,12 @@ _QUOTED_SPAN_RE = re.compile(r'"[^"\n]*"')
 # quotes. A lone straight single quote is deliberately NOT treated as a span:
 # in French and English it is a typewriter apostrophe (s'il, don't), and matching '…'
 # would flag ordinary prose as quoting.
-_QUOTED_SWITCH_RE = re.compile('"[^"\\n]*"|\u201c[^\u201d]*\u201d|\u2018[^\u2019]*\u2019|\u00ab[^\u00bb]*\u00bb')
+_QUOTED_SWITCH_RE = re.compile(
+    '"[^"\\n]*"'
+    '|\u201c[^\u201d]*\u201d'
+    '|\u2018[^\u2019]*\u2019'
+    '|\u00ab[^\u00bb]*\u00bb'
+)
 
 # Protocol/mail header: token-ish key + ":" + non-empty value. Keys contain
 # no spaces (From:, Content-Type:, X-Mailer:) — a space rules it out so prose
@@ -384,7 +377,9 @@ _TABLE_ROW_RE = re.compile(r"^\|")
 _URL_LINE_RE = re.compile(r"^<?(?:https?://|ftp://|mailto:|www\.)\S+>?$", re.IGNORECASE)
 _JSON_OR_TAG_START_RE = re.compile(r"^[{}\[\]<>]")
 _JSON_KV_RE = re.compile(r'"\s*[A-Za-z_][\w.-]*\s*"\s*:')
-_LOG_LINE_RE = re.compile(r"^\[?(?:DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL|FATAL|TRACE)\]?(?::\s|\s|$)")
+_LOG_LINE_RE = re.compile(
+    r"^\[?(?:DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL|FATAL|TRACE)\]?(?::\s|\s|$)"
+)
 # Token characters that may surround an identifier without being part of it.
 _STRIP_PUNCTUATION = "()[]{}<>,;:!?'\"\\|/"
 
@@ -442,7 +437,11 @@ def _token_is_machine_identifier(token: str) -> bool:
     t = token.strip(_STRIP_PUNCTUATION)
     if "-" in t:
         parts = t.split("-")
-        if all(parts) and (any(c.isupper() for c in t) or any(c.isdigit() for c in t) or len(parts) >= 3):
+        if all(parts) and (
+            any(c.isupper() for c in t)
+            or any(c.isdigit() for c in t)
+            or len(parts) >= 3
+        ):
             return True
     return False
 
@@ -476,7 +475,11 @@ _SENTENCE_WORD_RE = re.compile(r"[^\W\d_]+(?:[-'\u2019][^\W\d_]+)*", re.UNICODE)
 
 def _sentence_word_count(line: str) -> int:
     """Count whitespace-separated word tokens in one surviving line."""
-    return sum(1 for token in _TOKEN_RE.findall(line) if _SENTENCE_WORD_RE.fullmatch(token.strip(_STRIP_PUNCTUATION)))
+    return sum(
+        1
+        for token in _TOKEN_RE.findall(line)
+        if _SENTENCE_WORD_RE.fullmatch(token.strip(_STRIP_PUNCTUATION))
+    )
 
 
 def _line_is_machine(line: str) -> bool:
@@ -577,7 +580,9 @@ def classify_turn_evidence(text: str) -> TurnEvidence:
     prose_words = len(_WORD_RE.findall(prose))
 
     machine_majority = total_lines > 0 and machine_lines * 2 > total_lines
-    if machine_majority and not any(_sentence_word_count(line) >= MIN_PROSE_SENTENCE_WORDS for line in prose_lines):
+    if machine_majority and not any(
+        _sentence_word_count(line) >= MIN_PROSE_SENTENCE_WORDS for line in prose_lines
+    ):
         return TurnEvidence(EVIDENCE_MACHINE, prose)
     if prose_words >= MIN_PROSE_WORDS:
         return TurnEvidence(EVIDENCE_PROSE, prose)
@@ -594,19 +599,10 @@ def classify_turn_evidence(text: str) -> TurnEvidence:
 # ABOUT a language into a request to speak it.
 _REQUEST_DIRECTING_WORDS = frozenset(
     {
-        "in",
-        "into",
-        "to",
-        "naar",
-        "op",  # nl / en
-        "auf",
-        "ins",  # de
-        "en",
-        "dans",  # fr / es
-        "em",
-        "no",
-        "na",
-        "para",  # pt
+        "in", "into", "to", "naar", "op",          # nl / en
+        "auf", "ins",                               # de
+        "en", "dans",                               # fr / es
+        "em", "no", "na", "para",                   # pt
     }
 )
 
@@ -719,20 +715,8 @@ def _reset_detector_cache() -> None:
 # (0.70) — enough for a borderline-English score to wrongly pass.
 _PROTOCOL_ACRONYMS = frozenset(
     {
-        "tcp",
-        "ip",
-        "dns",
-        "sip",
-        "voip",
-        "ssl",
-        "dhcp",
-        "nat",
-        "api",
-        "pbx",
-        "udp",
-        "tls",
-        "http",
-        "https",
+        "tcp", "ip", "dns", "sip", "voip", "ssl", "dhcp", "nat", "api",
+        "pbx", "udp", "tls", "http", "https",
     }
 )
 _PROTOCOL_ACRONYM_RE = re.compile(
@@ -753,76 +737,20 @@ def _strip_protocol_acronyms(text: str) -> str:
 # table, so they can never decide anything. Lowercased whole tokens.
 _DUTCH_FUNCTION_WORDS = frozenset(
     {
-        "wat",
-        "welke",
-        "waarom",
-        "wanneer",
-        "wie",
-        "waar",
-        "hoe",  # vragers
-        "kan",
-        "kun",
-        "kunt",
-        "kunnen",
-        "wil",
-        "willen",
-        "zou",
-        "zouden",
-        "moet",
-        "moeten",
-        "heb",
-        "heeft",
-        "hebben",  # hulpwerkwoorden
-        "ik",
-        "mij",
-        "mijn",
-        "mezelf",
-        "jij",
-        "hij",
-        "het",  # voornaamwoorden
-        "een",
-        "geen",
-        "niet",
-        "deze",
-        "maar",
-        "ook",
-        "omdat",  # overig
+        "wat", "welke", "waarom", "wanneer", "wie", "waar", "hoe",  # vragers
+        "kan", "kun", "kunt", "kunnen", "wil", "willen", "zou", "zouden",
+        "moet", "moeten", "heb", "heeft", "hebben",  # hulpwerkwoorden
+        "ik", "mij", "mijn", "mezelf", "jij", "hij", "het",  # voornaamwoorden
+        "een", "geen", "niet", "deze", "maar", "ook", "omdat",  # overig
     }
 )
 _ENGLISH_FUNCTION_WORDS = frozenset(
     {
-        "what",
-        "when",
-        "where",
-        "which",
-        "who",
-        "why",
-        "how",
-        "can",
-        "could",
-        "would",
-        "should",
-        "may",
-        "might",
-        "do",
-        "does",
-        "did",
-        "have",
-        "has",
-        "are",
-        "the",
-        "this",
-        "that",
-        "these",
-        "those",
-        "there",
-        "they",
-        "them",
-        "you",
-        "your",
-        "with",
-        "about",
-        "from",
+        "what", "when", "where", "which", "who", "why", "how",
+        "can", "could", "would", "should", "may", "might",
+        "do", "does", "did", "have", "has", "are",
+        "the", "this", "that", "these", "those", "there",
+        "they", "them", "you", "your", "with", "about", "from",
     }
 )
 
@@ -945,7 +873,9 @@ def _message_text(message: dict) -> str:
         return content
     if isinstance(content, list):
         return " ".join(
-            str(part.get("text", "")) for part in content if isinstance(part, dict) and part.get("type") == "text"
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
         )
     return ""
 
@@ -1104,6 +1034,7 @@ class _ReplayState:
             self.pending_run = 0
 
 
+
 def _decision_reason(
     state: _ReplayState,
     *,
@@ -1160,7 +1091,9 @@ def resolve_conversation_language(messages: list[dict]) -> LanguageDecision:
         if requested is not None:
             # Step 2 ignores turn strength entirely; strong=True is a
             # formality so the cast signature stays uniform.
-            state.cast(requested, explicit=True, strong=True, method=METHOD_EXPLICIT_REQUEST)
+            state.cast(
+                requested, explicit=True, strong=True, method=METHOD_EXPLICIT_REQUEST
+            )
             continue
 
         if not evidence.has_evidence:
