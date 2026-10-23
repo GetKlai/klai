@@ -38,6 +38,9 @@ const QUESTION =
   process.env.E2E_PROBE_QUESTION ||
   'Hoe lang rijst het deeg van het Proefbrood van Probe Bakkerij?'
 const SOURCE_PATTERN = new RegExp(process.env.E2E_PROBE_SOURCE_PATTERN || 'probe', 'i')
+// The fact the probe document states (its dough rises for 18 hours): a cited
+// source alone does not prove the answer is right.
+const EXPECTED_FACT = new RegExp(process.env.E2E_PROBE_EXPECTED_FACT || '\\b18\\b')
 const API_BASE = (process.env.E2E_PROBE_API_BASE_URL || 'https://api.getklai.com').replace(/\/$/, '')
 
 // Same threshold and reasoning as WIDGET_PROBE_MAX_LATENCY_MS in
@@ -56,6 +59,30 @@ interface MintResponse {
 interface StreamSource {
   label?: string
   title?: string
+}
+
+// The browser sends a preflight before both calls (custom header on the mint,
+// JSON body and Authorization on the chat); a broken OPTIONS route blocks
+// every customer widget while the calls themselves still answer.
+async function expectPreflight(url: string, method: string, headers: string, signal: AbortSignal) {
+  const res = await fetch(url, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: ORIGIN,
+      'Access-Control-Request-Method': method,
+      'Access-Control-Request-Headers': headers,
+    },
+    signal,
+  })
+  expect(res.status, `preflight ${method} ${url} must answer 2xx`).toBeLessThan(300)
+  expectCors(res, `preflight ${method}`)
+  const allowed = (res.headers.get('access-control-allow-headers') ?? '').toLowerCase()
+  for (const header of headers.split(',')) {
+    expect(
+      allowed === '*' || allowed.split(',').map((h) => h.trim()).includes(header.trim()),
+      `preflight ${method} must allow header ${header} (got ${allowed})`,
+    ).toBe(true)
+  }
 }
 
 function expectCors(res: Response, step: string) {
@@ -80,8 +107,10 @@ test.describe('J06 - customer widget answer', () => {
     const started = Date.now()
 
     // 1. Mint a session token exactly as the widget does.
+    const mintUrl = `${API_BASE}/partner/v1/widget-config?${new URLSearchParams({ id: WIDGET_ID })}`
+    await expectPreflight(mintUrl, 'GET', 'x-klai-widget-session-id', signal)
     const mintRes = await fetch(
-      `${API_BASE}/partner/v1/widget-config?${new URLSearchParams({ id: WIDGET_ID })}`,
+      mintUrl,
       {
         headers: { Origin: ORIGIN, 'X-Klai-Widget-Session-Id': crypto.randomUUID().replaceAll('-', '') },
         signal,
@@ -95,6 +124,7 @@ test.describe('J06 - customer widget answer', () => {
     const endpoint = mint.chat_endpoint!.startsWith('/') ? API_BASE + mint.chat_endpoint : mint.chat_endpoint!
 
     // 2. Ask the question and read the stream to its end.
+    await expectPreflight(endpoint, 'POST', 'authorization,content-type', signal)
     const chatRes = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -153,6 +183,7 @@ test.describe('J06 - customer widget answer', () => {
       sources.some((s) => SOURCE_PATTERN.test(`${s.title ?? ''} ${s.label ?? ''}`)),
       `at least one source must refer to the probe document (${SOURCE_PATTERN}); got ${JSON.stringify(sources)}`,
     ).toBe(true)
+    expect(answer, `the answer must state the document's fact (${EXPECTED_FACT})`).toMatch(EXPECTED_FACT)
     expect(totalMs, `mint + answer took ${totalMs} ms`).toBeLessThan(MAX_TOTAL_MS)
   })
 })
