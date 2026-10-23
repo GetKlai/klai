@@ -132,9 +132,12 @@ groups:
             always available to operators.
 
             Triage:
-              1. List the affected tenants:
-                   SELECT slug, name FROM portal_orgs
-                    WHERE telemetry_level = 'full' AND deleted_at IS NULL;
+              1. List the affected tenants (the same conditions as this
+                 rule; a tenant with support cases is excluded on purpose,
+                 flipping it back would purge them):
+                   SELECT o.id, o.slug FROM portal_orgs o
+                    WHERE o.telemetry_level = 'full' AND o.deleted_at IS NULL
+                      AND o.id NOT IN (SELECT org_id FROM portal_support_evidence_orgs);
               2. Check the audit-log for the original "switched to full"
                  reason:
                    SELECT details FROM portal_audit_log
