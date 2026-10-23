@@ -1307,7 +1307,7 @@ def _retrieval(tmp_path, cases_rows, overlay, surface="internal"):
     )  # fmt: skip
 
 
-def test_a_retrieval_round_measures_the_named_internal_turn_and_replays_the_earlier_turns_in_full(
+def test_a_retrieval_round_stops_every_internal_turn_after_its_retrieval_and_measures_the_named_one(
     monkeypatch, tmp_path, capsys
 ):
     thread = _thread("aaaaaaaa-1111", ["first", "second"])
@@ -1323,8 +1323,8 @@ def test_a_retrieval_round_measures_the_named_internal_turn_and_replays_the_earl
 
     rows = {r["u"]: r for r in map(json.loads, (tmp_path / "r.jsonl").read_text().splitlines())}
     assert code == 0
-    # Turn 0 is replayed for the case turn 1 reads, but only turn 1 is armed.
-    assert asked == [("first", False), ("second", True)]
+    # Turn 0 is replayed for the case turn 1 reads; both stop after their retrieval, only turn 1 gets a row.
+    assert asked == [("first", True), ("second", True)]
     assert rows[0] == {"cid": "aaaaaaaa", "u": 0, "skipped": "no_expected_source"}
     assert {k: rows[1][k] for k in ("search", "rerank", "served", "expected", "top_k", "retrieve_ms")} == {
         "search": True, "rerank": False, "served": 2, "expected": 1, "top_k": 20, "retrieve_ms": 250,
@@ -1398,6 +1398,6 @@ def test_a_retrieval_round_on_the_widget_reads_the_expected_articles_from_the_ca
 
     rows = {r["cid"]: r for r in map(json.loads, (tmp_path / "r.jsonl").read_text().splitlines())}
     assert code == 0
-    assert armed == [False, True]
+    assert armed == [True, True]
     assert (rows["w-1"]["search"], rows["w-1"]["rerank"], rows["w-1"]["served"]) == (True, True, 1)
     assert rows["w-2"]["skipped"] == rows["w-3"]["skipped"] == "no_expected_source"

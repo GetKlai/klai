@@ -33,15 +33,15 @@ put its own root at the front of sys.path and shadowed the candidate overlay.
 With ``--overlay`` it refuses (exit 2) unless every one of those modules comes
 from under that directory.
 
-``retrieval`` replays the same turns, and for every case with an expected
-article stops each named turn right after its retrieval: it asks retrieval-api
-for the source keys of each stage (``debug_stages``) and writes where the
-expected article stood after search, after the rerank and in the passages the
-chat would have received, plus a summary (recall per stage, MRR of the served
-list, timing of /retrieve) next to the rows. The expected article is the
-case's ``articles`` (URLs); an internal case without them takes the URLs of the
-reply recorded in the conversation, for the classes the knowledge base should
-answer (antwoord, antwoord_kb, dekkend_antwoord). Other cases get a skipped row.
+``retrieval`` replays the same turns but stops every one of them right after its
+retrieval, so no model selects or writes. For the named turns of the cases with an
+expected article it asks retrieval-api for the source keys of each stage
+(``debug_stages``) and writes where the article stood after search, after the rerank
+and in the passages the chat would have received, plus a summary (recall per stage,
+MRR of the served list, timing of /retrieve) next to the rows. The expected article is
+the case's ``articles`` (URLs); an internal case without them takes the links of the
+reply recorded in the conversation, for the classes the knowledge base should answer
+(antwoord, antwoord_kb, dekkend_antwoord). Other cases get a skipped row.
 
 This script never touches sys.path. The caller sets PYTHONPATH, the candidate
 overlay first and the backend root after it (docs/runbooks/meetlat.md). The
@@ -537,17 +537,21 @@ async def _replay_internal_conversation(
 
     A row after an earlier turn that failed carries ``prefix_errors``: it was
     measured without the memory that turn would have stored. With ``expected``
-    (a retrieval round) the named turns are cut short after their retrieval and
-    their row says where the expected articles stood (:func:`_stage_row`).
+    (a retrieval round) every turn is cut short after its retrieval, the earlier
+    ones too: the case they store does not depend on the reply, and no model
+    needs to write one. The named turns' rows say where the expected articles
+    stood (:func:`_stage_row`).
     """
     named = {case["turn"] for case in cases}
     failed: list[dict] = []
     for u in range(max(named) + 1):
-        if expected is not None and u in named:
+        if expected is not None:
             _arm()
         row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u})
-        if expected is not None and u in named:
-            row = _stage_row(row, expected[u], _take())
+        if expected is not None:
+            record = _take()
+            if u in named:
+                row = _stage_row(row, expected[u], record)
         if u in named:
             yield {**row, "prefix_errors": list(failed)} if failed else row
         if "error" in row:
@@ -630,6 +634,8 @@ async def _replay_widget_turn(widget: dict, case: dict, expected: list[str] | No
     assert session_key is not None, "_read_widget requires org_id and wgt_id"
     failed: list[dict] = []
     for u, (k, following) in enumerate(itertools.pairwise(users)):
+        if expected is not None:
+            _arm()
         earlier = await _replayed(
             {"cid": case["cid"], "u": u},
             _from_the_same_memory(
@@ -637,6 +643,8 @@ async def _replay_widget_turn(widget: dict, case: dict, expected: list[str] | No
             ),
             (),
         )
+        if expected is not None:
+            _take()
         if "error" in earlier:
             failed.append({"u": u, "error": earlier["error"]})
         if session_key in _widget_cases:
