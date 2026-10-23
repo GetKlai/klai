@@ -156,6 +156,7 @@ jobs:
             # from this directory, and a loop over *.sh alone left it behind on
             # 2026-10-23, so every one-off refused to start on the server.
             for script in deploy/scripts/*.sh deploy/scripts/*.py; do
+              [[ -e "$script" ]] || continue
               name=$(basename "$script")
               case "$name" in
                 push-health.sh|gpu-health.sh|audit-monitor-coverage.sh|push-component-health.sh) continue ;;
