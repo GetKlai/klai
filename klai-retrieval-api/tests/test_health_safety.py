@@ -2,9 +2,9 @@
 
 Verifies that the retrieval-api /health endpoint:
 
-* REQ-39.1 — wraps the synchronous FalkorDB ping in ``asyncio.to_thread``
-  so it does not block the event loop. Concurrent /health calls run in
-  parallel via the default thread pool.
+* REQ-39.1 — probes FalkorDB with an async PING so it does not block the
+  event loop; ``test_graph_resilience.py`` proves that against a socket
+  server that answers late.
 * REQ-39.2 — returns the literal string ``"error"`` for failing dependency
   fields in the JSON body, never echoing the underlying exception
   message (which can include internal hostnames or IP addresses).
@@ -16,14 +16,11 @@ Verifies that the retrieval-api /health endpoint:
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 from typing import Any
 
 import httpx
 import pytest
-from httpx import ASGITransport
 
 # --------------------------------------------------------------------------- #
 # Fakes for the four dependencies probed by /health
@@ -56,33 +53,18 @@ class _FakeQdrantFail:
         raise ConnectionError("qdrant: no route to host 172.18.0.4:6333")
 
 
-class _FakeFalkorOK:
-    class _Conn:
-        def ping(self) -> None: ...
+class _FakeRedisOK:
+    def __init__(self, *_a, **_kw): ...
 
-    def __init__(self, *_a, **_kw):
-        self.connection = self._Conn()
+    async def ping(self) -> bool:
+        return True
 
-
-def _slow_falkor(sleep_for: float):
-    class _Conn:
-        def ping(self) -> None:
-            time.sleep(sleep_for)
-
-    class _Falkor:
-        def __init__(self, *_a, **_kw):
-            self.connection = _Conn()
-
-    return _Falkor
+    async def aclose(self) -> None: ...
 
 
-class _FailFalkor:
-    class _Conn:
-        def ping(self) -> None:
-            raise ConnectionError("falkordb: no route to host 172.18.0.5:6379")
-
-    def __init__(self, *_a, **_kw):
-        self.connection = self._Conn()
+class _FailRedis(_FakeRedisOK):
+    async def ping(self) -> bool:
+        raise ConnectionError("falkordb: no route to host 172.18.0.5:6379")
 
 
 # --------------------------------------------------------------------------- #
@@ -93,12 +75,12 @@ class _FailFalkor:
 @pytest.fixture
 def all_deps_ok(monkeypatch):
     """Patch every dependency probed by /health to return success quickly."""
-    import falkordb
     import qdrant_client
+    import redis.asyncio
 
     monkeypatch.setattr(httpx.AsyncClient, "get", _httpx_get_ok, raising=True)
     monkeypatch.setattr(qdrant_client, "AsyncQdrantClient", _FakeQdrantOK)
-    monkeypatch.setattr(falkordb, "FalkorDB", _FakeFalkorOK)
+    monkeypatch.setattr(redis.asyncio, "Redis", _FakeRedisOK)
 
 
 @pytest.fixture
@@ -181,8 +163,8 @@ def test_health_response_body_does_not_leak_internal_topology(monkeypatch, log_c
     REQ-39.3: the underlying exception MUST be captured via ``exc_info``
     on the structlog/stdlib log record, so operators can still debug.
     """
-    import falkordb
     import qdrant_client
+    import redis.asyncio
     from fastapi.testclient import TestClient
 
     from retrieval_api.config import settings
@@ -191,7 +173,7 @@ def test_health_response_body_does_not_leak_internal_topology(monkeypatch, log_c
     monkeypatch.setattr(settings, "graphiti_enabled", True, raising=False)
     monkeypatch.setattr(httpx.AsyncClient, "get", _httpx_get_connect_error, raising=True)
     monkeypatch.setattr(qdrant_client, "AsyncQdrantClient", _FakeQdrantFail)
-    monkeypatch.setattr(falkordb, "FalkorDB", _FailFalkor)
+    monkeypatch.setattr(redis.asyncio, "Redis", _FailRedis)
 
     client = TestClient(app)
     r = client.get("/health")
@@ -215,49 +197,4 @@ def test_health_response_body_does_not_leak_internal_topology(monkeypatch, log_c
         "Expected at least one log record with exc_info attached for the "
         "/health dependency failures, found none. Without exc_info the "
         "exception detail is lost (REQ-39.3)."
-    )
-
-
-# --------------------------------------------------------------------------- #
-# REQ-39.1 — sync FalkorDB ping does not block the event loop
-# --------------------------------------------------------------------------- #
-
-
-async def test_health_falkordb_ping_does_not_block_event_loop(monkeypatch, all_deps_ok):
-    """REQ-39.1: sync ``db.connection.ping()`` MUST run in a thread pool.
-
-    The strategy: replace FalkorDB's ping with a 400 ms sleep and fire four
-    concurrent /health requests on the same event loop via ``asyncio.gather``
-    against an in-process ASGI transport. If the ping blocks the loop, total
-    wall time approaches ``n * sleep = 1.6 s``. With ``asyncio.to_thread``
-    the pings run concurrently in the default thread-pool executor, so total
-    wall time stays close to a single ping (~0.4 s + scheduler overhead).
-    """
-    import falkordb
-
-    from retrieval_api.config import settings
-    from retrieval_api.main import app
-
-    monkeypatch.setattr(settings, "graphiti_enabled", True, raising=False)
-
-    sleep_secs = 0.4
-    monkeypatch.setattr(falkordb, "FalkorDB", _slow_falkor(sleep_secs))
-
-    transport = ASGITransport(app=app)
-    n_concurrent = 4
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        start = time.monotonic()
-        results = await asyncio.gather(*(ac.get("/health") for _ in range(n_concurrent)))
-        elapsed = time.monotonic() - start
-
-    assert all(r.status_code == 200 for r in results), [r.status_code for r in results]
-
-    # Sequential (event loop blocked): n * sleep = 1.6 s.
-    # Concurrent (asyncio.to_thread + thread pool >= n): max(sleep) + overhead ≈ 0.5 s.
-    # Threshold = 60% of the sequential bound, generous to avoid CI flakes.
-    upper_bound = (n_concurrent * sleep_secs) * 0.6
-    assert elapsed < upper_bound, (
-        f"Event loop appears blocked by sync FalkorDB ping: "
-        f"{n_concurrent} concurrent /health calls took {elapsed:.2f}s "
-        f"(expected < {upper_bound:.2f}s with asyncio.to_thread)."
     )

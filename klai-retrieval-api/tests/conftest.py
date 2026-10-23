@@ -109,6 +109,14 @@ def _auto_allow_identity_assert(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_graph_circuit(monkeypatch):
+    """Graph failures in one test must not open the circuit for the next."""
+    from retrieval_api.services import graph_search
+
+    monkeypatch.setattr(graph_search, "_circuit", graph_search._GraphCircuit())
+
+
 @pytest.fixture
 def client():
     """Synchronous test client for the FastAPI app.
