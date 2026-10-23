@@ -30,7 +30,6 @@ StepName = Literal[
     "router",
     "qdrant_search",
     "graph_search",
-    "link_expand",
     "rerank",
     "quality_floor",
     "source_select",

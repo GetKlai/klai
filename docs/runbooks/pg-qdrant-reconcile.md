@@ -51,7 +51,9 @@ not report at all.
 2. Check these fields on the newest event:
 
    - `missing_in_qdrant`: active synced PG artifacts with no Qdrant payload.
-   - `orphaned_in_qdrant`: Qdrant artifact payloads without an active synced PG row.
+   - `orphaned_in_qdrant`: Qdrant artifact payloads without an active PG row. An
+     active row with `index_status=failed` (enrichment failed) keeps its raw
+     chunks by design and does not count as an orphan.
    - `missing_sample` / `orphaned_sample`: sample artifact keys.
 
 3. If the samples point to a recent ingest failure, inspect neighboring

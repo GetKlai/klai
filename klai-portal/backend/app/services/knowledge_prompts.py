@@ -20,6 +20,7 @@ from klai_chat_prompts import (
     KB_CONTEXT_LANGUAGE_REMINDER,
     META_CHAT_SYSTEM_PROMPT,
     OPEN_KB_CHAT_SYSTEM_PROMPT,
+    fixed_text,
 )
 from klai_chat_prompts.kb_modes import (
     KB_ANSWER_FORMAT_INSTRUCTION,
@@ -142,10 +143,28 @@ def unchecked_question_blocks(unchecked_questions: list[str], *, start_index: in
     if remainder > 0:
         blocks.append(
             f"[Plus {remainder} more questions were not separately "
-            "searched — tell the user you could not check them all and "
-            "suggest splitting the message into smaller parts.]"
+            "searched — do not answer them. The application will inform "
+            "the user that they could not be checked.]"
         )
     return blocks
+
+
+def unchecked_questions_notice(unchecked_questions: list[str], language: object) -> str:
+    """What the application tells the user about the questions it did not search, or "" when there are none.
+
+    The prompt blocks above promise this notice; the application appends it
+    to the reply because a prompt-only instruction was ignored by the model
+    (the removed LiteLLM hook needed a deterministic backstop for exactly
+    that, 18 August 2026). The same cap as the prompt: the first
+    ``MAX_UNCHECKED_QUESTIONS_SHOWN`` are named, the rest are counted.
+    """
+    if not unchecked_questions:
+        return ""
+    shown = unchecked_questions[:MAX_UNCHECKED_QUESTIONS_SHOWN]
+    lines = [fixed_text("unchecked_questions_intro", language), *(f"- {_sanitize_question_echo(q)}" for q in shown)]
+    if remainder := len(unchecked_questions) - len(shown):
+        lines.append(fixed_text("unchecked_questions_more", language).format(count=remainder))
+    return "\n".join(lines)
 
 
 def multi_question_guard(*, multi_question: bool, sub_query_results: list[dict] | None) -> str:

@@ -444,6 +444,9 @@ class KnowledgeTurn:
     low_confidence: bool = False
     # The sub-questions retrieval fanned out over (at most MAX_SUB_QUESTIONS).
     sub_queries: list[str] = field(default_factory=list)
+    # The questions beyond that limit, never searched. Set once the search ran;
+    # the reply names them (knowledge_prompts.unchecked_questions_notice).
+    unchecked_questions: list[str] = field(default_factory=list)
     # The mode the answer is decided under (answer_judge.decide_answer): the
     # profile's, or "general" for an internal turn that searched nothing.
     answer_mode: KbMode = "strict"
@@ -534,7 +537,7 @@ def _record_retrieval_band(sink: dict[str, Any] | None, result: dict, *, blocked
     """Put retrieval-api's certainty band for this turn into the audit sink.
 
     That band is the one the LibreChat path acts on: it scores final_rank_score,
-    link-expand and page-context boosts included, which the reranker_score in the
+    page-context boost included, which the reranker_score in the
     chunks handed to the portal does not carry. Re-banding here gave the
     calibration readout a second band that could differ from the one that acted.
     When the safety filter dropped a chunk, the set the service banded never
@@ -622,6 +625,7 @@ class _Turn:
     follow_up_variants: list[str] | None
     kept_passages: list[dict]
     prompt: Callable[..., str]
+    product: str
 
 
 @dataclass
@@ -635,7 +639,6 @@ class _Found:
     retrieval_ms: int
     retrieval_user_id: str | None
     sub_queries: list[str]
-    unchecked_questions: list[str]
 
 
 def _read_turn(
@@ -665,6 +668,7 @@ def _read_turn(
     knowledge_turn: KnowledgeTurn | None,
     follow_up_variants: list[str] | None,
     kept_passages: list[dict],
+    product: str,
 ) -> _Turn:
     """Step 1: read the request once. The query, the page context, the turn's sink and the prompt builder."""
     cleaned_page_context = _clean_page_context(page_context)
@@ -739,6 +743,7 @@ def _read_turn(
         follow_up_variants=follow_up_variants,
         kept_passages=kept_passages,
         prompt=prompt,
+        product=product,
     )
 
 
@@ -838,6 +843,9 @@ async def _retrieve_body(t: _Turn, sub_queries: list[str], retrieval_user_id: st
     }
     if t.kb_slugs:
         retrieve_body["kb_slugs"] = t.kb_slugs
+    if t.product:
+        # A preference for the question's product, never a filter (knowledge-base plan, step 7).
+        retrieve_body["product"] = t.product
     if t.internal:
         retrieve_body.update(
             user_id=retrieval_user_id,
@@ -932,14 +940,14 @@ async def _call_retrieval(t: _Turn, retrieve_body: dict) -> dict | _Result:
 def _usable_evidence(t: _Turn, result: dict, retrieve_body: dict) -> tuple[list[dict], list[dict[str, Any]]]:
     """The chunks and sources the turn may read: below the Strict floor and unsafe context dropped, the band and the search trace recorded."""
     evidence_pack = result.get("evidence_pack")
-    # The evidence pack items carry no knowledge-base slug; the raw chunks of
-    # the same response do, and a kept passage needs it (_with_kept).
-    slugs = {
-        chunk.get("chunk_id"): chunk.get("kb_slug") for chunk in result.get("chunks") or [] if isinstance(chunk, dict)
-    }
-    chunks = [
-        {**chunk, "kb_slug": slugs.get(chunk.get("chunk_id"))} for chunk in evidence_pack_items_as_chunks(evidence_pack)
-    ]
+    # The evidence pack items carry no knowledge-base slug or product; the raw
+    # chunks of the same response do, and a kept passage needs the slug
+    # (_with_kept), the selection step the product (passage_selection.py).
+    raw = {chunk.get("chunk_id"): chunk for chunk in result.get("chunks") or [] if isinstance(chunk, dict)}
+    chunks = []
+    for chunk in evidence_pack_items_as_chunks(evidence_pack):
+        source = raw.get(chunk.get("chunk_id")) or {}
+        chunks.append({**chunk, "kb_slug": source.get("kb_slug"), "product": source.get("product")})
     trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
     if t.internal and t.profile.kb_mode == "strict":
         # Strict promises knowledge-base-only answers, so noise-level evidence
@@ -1020,6 +1028,7 @@ async def _search(t: _Turn) -> _Found | _Result:
         return result
     retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
     chunks, trusted_sources = _usable_evidence(t, result, retrieve_body)
+    t.turn.unchecked_questions = unchecked_questions
     return _Found(
         result=result,
         evidence_pack=result.get("evidence_pack"),
@@ -1028,7 +1037,6 @@ async def _search(t: _Turn) -> _Found | _Result:
         retrieval_ms=retrieval_ms,
         retrieval_user_id=retrieval_user_id,
         sub_queries=sub_queries,
-        unchecked_questions=unchecked_questions,
     )
 
 
@@ -1130,6 +1138,7 @@ def _selection_signal(selection: PassageSelection | None, *, internal: bool) -> 
     return {
         "verdict": selection.verdict,
         "evidence": [{"passage": item.passage, "quote": item.quote[:200]} for item in selection.evidence],
+        "missing": selection.missing[:200],
         "question": selection.question[:200],
     }
 
@@ -1173,7 +1182,12 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         and not _broad_mode_active(chunks, broad_consent=t.broad_consent)
     ):
         turn.selection = await select_passages(
-            t.messages, selection_chunks, t.settings, delegated_org_id=t.zitadel_org_id, internal=t.internal
+            t.messages,
+            selection_chunks,
+            t.settings,
+            delegated_org_id=t.zitadel_org_id,
+            internal=t.internal,
+            product=t.product,
         )
         if turn.selection is None:
             # A failed selection fails closed where the reply may only come
@@ -1218,7 +1232,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         broad_mode=broad,
         multi_question=grouped,
         sub_query_results=sub_query_results if grouped else None,
-        unchecked_questions=found.unchecked_questions or None,
+        unchecked_questions=turn.unchecked_questions or None,
     )
 
     if turn.passages_chosen and turn.selection is not None and not broad:
@@ -1230,10 +1244,11 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             question=turn.selection.question
             if not t.internal and turn.multi_question and turn.selection.verdict == "depends"
             else "",
+            unchecked=bool(turn.unchecked_questions),
         )
         # The parts beyond the search limit were never searched; the writer
         # must still see them so it does not answer them from other lines.
-        if unchecked := unchecked_question_blocks(found.unchecked_questions, start_index=len(found.sub_queries) + 1):
+        if unchecked := unchecked_question_blocks(turn.unchecked_questions, start_index=len(found.sub_queries) + 1):
             system_prompt += "\n\n" + "\n\n".join(unchecked)
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
@@ -1288,6 +1303,10 @@ async def retrieve_context(
     # Help widget: the passages the previous turn chose (kept_passages_of),
     # offered to this turn's selection when the search lost them or found nothing.
     kept_passages: list[dict] | None = None,
+    # The product the question is about, one of the org's product labels
+    # (case_file.py), or "": preferred by retrieval-api and named to the
+    # selection step (knowledge-base plan, step 7).
+    product: str = "",
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
@@ -1349,6 +1368,7 @@ async def retrieve_context(
         knowledge_turn=knowledge_turn,
         follow_up_variants=follow_up_variants,
         kept_passages=kept_passages or [],
+        product=product,
     )
     without_search = _without_search(t, retrieval_enabled=retrieval_enabled)
     if without_search is not None:

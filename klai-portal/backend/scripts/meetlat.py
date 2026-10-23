@@ -92,6 +92,13 @@ _BANNER_MODULES = (
 # A replay measures what the check decides, not whether it beat a clock on a busy
 # host, so it gets a budget far above the production 4 s (widget) and 12 s (internal).
 _GROUNDING_BUDGET_SECONDS = 30.0
+# Every model call of a round runs on the Vibe allowance (chat-quality-history-and-plan.md section 6). On
+# 23 Oct 2026 a round on klai-primary, klai-medium and klai-fast spent the Mistral workspaces' monthly limit that
+# live chat shares, and every tenant's chat answered 402.
+_FAST_ALIAS = "klai-ingest"
+_MEDIUM_ALIAS = "klai-judge"
+# The compose alias and the container name of the live retrieval-api, whose own LLM calls the portal cannot patch.
+_LIVE_RETRIEVAL_HOSTS = ("retrieval-api", "klai-core-retrieval-api-1")
 # The cases name conversations by prefix; a LibreChat thread can be older than
 # replay_internal_chat's 90 day sampling window.
 _DEFAULT_DAYS = 365
@@ -296,6 +303,15 @@ def _apply_measurement_patches() -> None:
     retrieval_context._schedule_gap_event = _skip_gap_event  # type: ignore[assignment]
     answer_grounding._CHECK_TIMEOUT_SECONDS = _GROUNDING_BUDGET_SECONDS
     answer_grounding._INTERNAL_CHECK_TIMEOUT_SECONDS = _GROUNDING_BUDGET_SECONDS
+    # The request model, and every model the chat path reads from the settings: the case, the answer judge, the
+    # off-topic referral and the other judges on the small alias; the selection step, the grounding check and the
+    # paraphrases on the medium one. A request model other than klai-primary also keeps the internal Strict rule
+    # (retrieval_context.strict_risk_model) from moving the writer to klai-medium.
+    replay._REQUEST_MODEL = _FAST_ALIAS
+    replay.partner._ALLOWED_MODELS = replay.partner._ALLOWED_MODELS | {_FAST_ALIAS}
+    replay.settings.extraction_model = _FAST_ALIAS
+    replay.settings.answer_grounding_model = _MEDIUM_ALIAS
+    replay.settings.retrieval_paraphrase_model = _MEDIUM_ALIAS
 
 
 def _find_conversations(database_name: str, prefixes: list[str], days: int) -> list[dict]:
@@ -571,6 +587,10 @@ def _read_widget(path: Path) -> dict:
     return widget
 
 
+def _widget_body(messages: list[dict]) -> dict:
+    return {"model": _FAST_ALIAS, "stream": False, "messages": messages}
+
+
 async def _widget_answer(widget: dict, messages: list[dict], session_id: str) -> dict:
     """One widget turn through the route itself, as the browser sends it: a preview session token, the answer held.
 
@@ -600,7 +620,7 @@ async def _widget_answer(widget: dict, messages: list[dict], session_id: str) ->
         response = await asyncio.wait_for(
             client.post(
                 "/partner/v1/chat/completions",
-                json={"model": "klai-primary", "stream": False, "messages": messages},
+                json=_widget_body(messages),
                 headers={"Authorization": f"Bearer {token}", "Origin": widget["origin"]},
             ),
             _WIDGET_TIMEOUT_SECONDS,
@@ -730,6 +750,12 @@ def _conversations(todo: list[dict]) -> list[list[dict]]:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if urlparse(replay.settings.knowledge_retrieve_url).hostname in _LIVE_RETRIEVAL_HOSTS:
+        raise UsageError(
+            "refusing to run: KNOWLEDGE_RETRIEVE_URL is the live retrieval-api, which rewrites follow-up questions "
+            "on klai-fast, a key live chat shares. Start a one-off with deploy/scripts/retrieval-api-oneoff.sh "
+            "and point KNOWLEDGE_RETRIEVE_URL at it."
+        )
     if args.surface == "widget" and args.widget is None:
         raise UsageError("--surface widget needs --widget <json> with " + ", ".join(_WIDGET_FIELDS))
     widget = _read_widget(args.widget) if args.surface == "widget" else None
@@ -836,6 +862,7 @@ def _install_retrieval_probe() -> None:
                 "retrieve_ms": round((time.perf_counter() - started) * 1000),
                 "api_ms": (result.get("metadata") or {}).get("retrieval_ms"),
                 "stages": result.get("debug_stages"),
+                "product": retrieve_body.get("product") or "",
             }
         else:
             _probe["record"] = {"failed": True}
@@ -847,6 +874,7 @@ def _install_retrieval_probe() -> None:
             return await choose(t, found)
         if _probe["record"] is not None:
             _probe["record"]["served"] = _distinct_keys(chunk.get("source_url") for chunk in found.chunks)
+            _probe["record"]["served_products"] = [chunk.get("product") or "" for chunk in found.chunks]
         _end_turn(t)
         return [], "", [], False
 
@@ -952,7 +980,21 @@ def _stage_row(row: dict, expected: list[str], record: dict | None, *, kb_hosts_
         "search_n": len(record["stages"].get("search", ())),
         "retrieve_ms": record["retrieve_ms"],
         "api_ms": record["api_ms"],
+        **_other_product(record),
     }
+
+
+def _other_product(record: dict) -> dict:
+    """How many served items are labelled with another product than the question's; nothing when it named none.
+
+    A lookalike article of another product (knowledge-base plan, step 7). An
+    item without a label is not counted: unknown is not another product.
+    """
+    product = (record.get("product") or "").casefold()
+    if not product:
+        return {}
+    served = [label.casefold() for label in record.get("served_products") or ()]
+    return {"product": record["product"], "other_product": sum(1 for label in served if label and label != product)}
 
 
 def summarize_stages(rows: list[dict]) -> dict:
@@ -984,6 +1026,9 @@ def summarize_stages(rows: list[dict]) -> dict:
         else None,
         "retrieve_ms": timing("retrieve_ms"),
         "api_ms": timing("api_ms"),
+        # Turns whose question named a product, and the served items of another product in them.
+        "product_known": sum(1 for row in measured if "other_product" in row),
+        "other_product_served": sum(row.get("other_product", 0) for row in measured),
     }
 
 

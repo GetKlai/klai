@@ -93,10 +93,12 @@ All three with **7-day TTL**. Nothing under any mode survives 7 days.
 - A Klai operator flips it explicitly in response to a debug request,
   and the audit-log records the operator's identity + reason.
 
-Both paths produce a row in `portal_audit_log`. After 14 days, our
-operations team gets a `privacy_tenant_stuck_in_full` alert if a
-tenant is still in `full` mode — operators are expected to either
-confirm the debug session is still active or flip the tenant back.
+Both paths produce a row in `portal_audit_log`. When a tenant switched to
+`full` more than 14 days ago and holds no support cases, our operations team
+gets a `privacy_tenant_stuck_in_full` alert; operators are expected to either
+confirm the debug session is still active or flip the tenant back. A tenant
+that holds support cases needs `full` for them (a downgrade purges them) and
+does not fire.
 
 **Use when:** you or Klai are actively investigating a specific issue
 and need to see the literal text of failing queries. Don't forget to

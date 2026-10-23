@@ -236,9 +236,9 @@ state per `(org_id, kb_slug, url)`:
   (SHA-256 of extracted markdown), `raw_markdown`, `crawled_at`. Used for deduplication and
   as a content cache for future re-ingest without re-crawling.
 - `page_links` — link graph: `from_url → to_url` pairs with `link_text`, extracted from
-  `result.links['internal']` by crawl4ai. Used by SPEC-CRAWLER-003 for link-graph
-  retrieval enrichment: anchor text augmentation (vocabulary bridging in `enriched_text`),
-  `incoming_link_count` authority boost, and 1-hop forward expansion in the retrieval API.
+  `result.links['internal']` by crawl4ai. Used by SPEC-CRAWLER-003 for anchor text
+  augmentation (vocabulary bridging in `enriched_text`). The retrieval API no longer uses the
+  link graph: the authority boost and the 1-hop forward expansion were removed on 23 Oct 2026.
 
 **Dual-hash deduplication:** both `crawl_url` and the bulk crawler skip ingest in two stages:
 1. `raw_html_hash` unchanged → skip everything (JS/tracking noise ignored)
@@ -423,7 +423,7 @@ potential admin-only repair scripts).
 
 **Empty-list convention (SPEC-CRAWLER-005 REQ-04).** Qdrant strips empty-list payload
 keys on upsert. A page with no inbound links has `anchor_texts` *absent* from its
-payload, not `[]`. Retrieval-api reads list-shaped keys (`anchor_texts`, `links_to`,
+payload, not `[]`. Retrieval-api reads list-shaped keys (`entity_names`,
 `image_urls`) through `retrieval_api/util/payload.py::payload_list()` which treats
 key-absent, `None`, and non-list values all as `[]`, so the two shapes are
 interchangeable at the consumer boundary.
@@ -579,6 +579,15 @@ from the ingest request as follows:
 - For connectors (GitHub, Notion, etc.): the `connector_type` from the portal config (e.g., `"github"`, `"notion"`)
 - For meeting transcripts: the literal string `"meetings"`
 - For KB articles: the `kb_slug` value as fallback
+
+**product and text_fingerprint (knowledge-base plan, step 7):** each chunk carries a
+b-bit MinHash of its text (`text_fingerprint`), which retrieval-api uses to collapse
+lookalikes, and, when one of the KB's `product_rules` matches its host plus URL path or
+its path, the product its document is about (`product_label.py`), which retrieval-api
+uses to prefer the question's product. Without a matching rule there is no label: a
+first URL segment or folder is a language or section code as often as a product.
+Chunks written before this, or before a matching rule existed, are labelled by
+`python -m knowledge_ingest.scripts.product_backfill`.
 
 **Bron-aware enrichment prompt:** The enrichment prompt in Step A is updated to accept
 three additional context fields: `kb_name` (friendly name of the knowledge base), `connector_type`
@@ -1011,24 +1020,9 @@ that?" becomes something more specific before embedding.
 fallback). If `settings.graphiti_enabled`, a Graphiti graph search fires concurrently
 and is RRF-merged with the Qdrant results.
 
-**4a. Link-graph enrichment (SPEC-CRAWLER-003, crawled KBs only):** After RRF merge, two
-link-graph signals are applied before reranking:
-
-- **1-hop forward expansion:** The outbound URLs from the top `link_expand_seed_k` (default
-  10) chunks are collected, and Qdrant is queried for any chunks whose `source_url` matches
-  one of those URLs (`fetch_chunks_by_urls()`). Matching chunks are added as candidates with
-  `score=0.0` so they pass through to the reranker, which scores them on actual relevance.
-- **Authority boost:** For every candidate chunk, `score += link_authority_boost × log(1 +
-  incoming_link_count)`. Pages with many inbound links within the KB are editorially
-  important — this boost surfaces them ahead of equally-similar but less-linked pages.
-  Default `link_authority_boost = 0.05` (configurable per deployment).
-
-> **Instrumentation (F3 phase 1, audit retrieval-coupling-2026-05-06):** the
-> `retrieval_decision_record` log entry carries a `link_expand` block measuring how
-> many expanded chunks survive the reranker into the served top-K
-> (`expanded_in_top_k`, `seed_in_top_k`, `expanded_top_k_chunk_ids`). Phase 2 (whether
-> to migrate to RRF-merge across dense/authority/expansion ranklists, recalibrate the
-> coefficient, or disable) is gated on ~7 days of this telemetry.
+**4a. Link-graph enrichment (removed 23 Oct 2026):** the 1-hop expansion and the authority boost were taken out
+of retrieval after a measurement (plan step 8 in `knowledge-base-ingestion-and-retrieval-plan.md`); the `links_to` and
+`incoming_link_count` payload fields are still written at ingest.
 
 **4b. Rerank.** The top candidates are reranked by `infinity-reranker`
 (bge-reranker-v2-m3 on GPU — gpu-01 via SSH tunnel at 172.18.0.1:7998). The reranker applies a cross-attention model that scores

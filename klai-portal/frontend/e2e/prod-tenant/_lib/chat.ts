@@ -37,3 +37,27 @@ export async function getChatFrame(page: Page): Promise<Frame> {
 
   throw new Error(`chat frame/input not found; frames=${page.frames().map((frame) => frame.url()).join(' | ')}`)
 }
+
+export function hasTcpExplanation(text: string): boolean {
+  return (
+    /TCP\/IP\s+(is|staat|vormt|bestaat|verwijst|betekent)/i.test(text) ||
+    /Transmission Control Protocol/i.test(text) ||
+    /Internet Protocol/i.test(text)
+  )
+}
+
+/**
+ * Text of the latest assistant message only.
+ *
+ * The whole frame also holds the sidebar, whose conversation titles the
+ * general model writes from the question ("TCP/IP: Internet Protocol Suite"),
+ * so a Strict refusal read with the page around it failed J02 on 2026-10-22.
+ * `agent-turn` is the class LibreChat v0.8.7 and v0.8.8 give an assistant
+ * message (`user-turn` for the employee's own).
+ */
+export function latestReplyText(frame: Frame): Promise<string> {
+  return frame.evaluate(() => {
+    const replies = document.querySelectorAll<HTMLElement>('.agent-turn')
+    return replies.length ? replies[replies.length - 1].innerText : ''
+  })
+}

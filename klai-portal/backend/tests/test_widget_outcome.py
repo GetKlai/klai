@@ -75,6 +75,20 @@ def test_a_refusal_stored_before_the_dash_was_dropped_still_counts_as_escalation
 # ---------------------------------------------------------------------------
 
 
+def test_a_refusal_followed_by_the_unchecked_questions_notice_still_counts_as_escalation():
+    """A refusal over more than six questions ends with the application's
+    notice about the unsearched ones; it is still the support referral."""
+    from klai_chat_prompts import no_citable_sources_message
+
+    from app.services.knowledge_prompts import unchecked_questions_notice
+
+    refusal = no_citable_sources_message("nl", helpdesk=True)
+    reply = refusal + unchecked_questions_notice(["Vraag zeven?", "Vraag acht?"], "nl")
+    turns = [_turn("user", "acht vragen"), _turn("assistant", reply)]
+
+    assert derive_outcome(turns, has_handoff=False) == "escalated"
+
+
 def test_broad_mode_answer_with_thumbs_up_is_resolved():
     """A thumbs-up is the strongest signal this system has. A visitor who opted
     into general knowledge and then rated the answer up did get helped —

@@ -1209,14 +1209,14 @@ def _retrieval_payload():
         {"chunk_id": "c2", "evidence_id": "E2", "text": "passage", "title": "Two", "source_url": f"{_ART}/b"},
     ]
     return {
-        "chunks": [],
+        "chunks": [{"chunk_id": "c1", "product": "orbit"}, {"chunk_id": "c2", "product": "zephyr"}],
         "metadata": {"retrieval_ms": 321.0},
         "evidence_pack": {"items": items, "sources": []},
         "debug_stages": {"search": [f"{_ART}/a", f"{_ART}/b", f"{_ART}/c"], "rerank": [f"{_ART}/a"]},
     }
 
 
-async def _retrieve_with_probe(monkeypatch, *, armed: bool):
+async def _retrieve_with_probe(monkeypatch, *, armed: bool, product: str = ""):
     from app.services import retrieval_context
     from app.services.retrieval_context import KnowledgeTurn
 
@@ -1241,7 +1241,14 @@ async def _retrieve_with_probe(monkeypatch, *, armed: bool):
     )
     turn = KnowledgeTurn()
     result = await retrieval_context.retrieve_context(
-        42, "zorg", ["kb"], [{"role": "user", "content": "How do I do this?"}], settings, top_k=8, knowledge_turn=turn
+        42,
+        "zorg",
+        ["kb"],
+        [{"role": "user", "content": "How do I do this?"}],
+        settings,
+        top_k=8,
+        knowledge_turn=turn,
+        product=product,
     )
     return posted, turn, result, meetlat._take()
 
@@ -1261,6 +1268,34 @@ async def test_the_probe_asks_for_the_stages_keeps_what_the_chat_would_receive_a
     assert (record["top_k"], record["api_ms"]) == (8, 321.0) and record["retrieve_ms"] >= 0
     assert result == ([], "", [], False)
     assert turn.not_in_passages and turn.refusal is not None
+
+
+@pytest.mark.asyncio
+async def test_the_probe_keeps_the_questions_product_and_the_product_of_each_served_item(monkeypatch):
+    posted, _, _, record = await _retrieve_with_probe(monkeypatch, armed=True, product="Orbit")
+
+    assert posted.bodies[0]["product"] == "Orbit"
+    assert (record["product"], record["served_products"]) == ("Orbit", ["orbit", "zephyr"])
+
+
+def test_the_summary_counts_served_items_of_another_product_than_the_questions():
+    record = {
+        "top_k": 8,
+        "retrieve_ms": 10,
+        "api_ms": 9.0,
+        "stages": {"search": [f"{_ART}/a"], "rerank": [f"{_ART}/a"]},
+        "served": [f"{_ART}/a"],
+        "product": "Orbit",
+        "served_products": ["orbit", "zephyr", "", "Zephyr"],
+    }
+    known = meetlat._stage_row({"cid": "c", "u": 0}, [f"{_ART}/a"], record)
+    unknown = meetlat._stage_row({"cid": "c", "u": 1}, [f"{_ART}/a"], {**record, "product": ""})
+
+    summary = meetlat.summarize_stages([known, unknown])
+
+    assert known["other_product"] == 2
+    assert "other_product" not in unknown
+    assert (summary["product_known"], summary["other_product_served"]) == (1, 2)
 
 
 @pytest.mark.asyncio
@@ -1470,3 +1505,70 @@ def test_the_articles_a_case_names_itself_are_kept_whatever_their_host():
     row = meetlat._stage_row({"cid": "c", "u": 0}, ["https://vendor.example.net/a"], record)
 
     assert (row["expected"], row["search"]) == (1, False)
+
+
+@pytest.mark.parametrize("host", ["retrieval-api", "klai-core-retrieval-api-1"])
+def test_a_round_refuses_to_start_against_the_live_retrieval_api(monkeypatch, tmp_path, capsys, host):
+    """The live service rewrites follow-up questions on klai-fast, which the portal cannot patch."""
+    answered: list[str] = []
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa", ["first"])}, answered)
+    monkeypatch.setattr(replay.settings, "knowledge_retrieve_url", f"http://{host}:8040/retrieve")
+
+    code = _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}], overlay)
+
+    assert code == 2
+    assert "retrieval-api-oneoff.sh" in capsys.readouterr().err
+    assert answered == []
+    assert not (tmp_path / "r.jsonl").exists()
+
+
+def test_a_round_starts_against_a_retrieval_api_one_off(monkeypatch, tmp_path):
+    answered: list[str] = []
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa", ["first"])}, answered)
+    monkeypatch.setattr(replay.settings, "knowledge_retrieve_url", "http://ra-depth60:8040/retrieve")
+
+    assert _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}], overlay) == 0
+    assert answered == ["first"]
+
+
+# A round runs on the Vibe allowance, never on the keys real visitors use.
+_VIBE_ALLOWANCE = {"klai-ingest", "klai-judge"}
+
+
+@pytest.mark.parametrize("surface", ["internal", "widget"])
+@pytest.mark.asyncio
+async def test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance(monkeypatch, tmp_path, surface):
+    """On 23 Oct 2026 a round answered on klai-primary and checked on klai-medium and klai-fast, and spent the
+    Mistral workspaces' monthly limit that live chat shares. The multi-part question is the one the internal
+    Strict rule would move to klai-medium, if the request were klai-primary."""
+    from app.api import partner
+    from tests.test_one_pipeline_answer_decision import _internal, _LiteLLM, _pack, _turn
+
+    _measuring_with_memory(monkeypatch, tmp_path)
+    for name in ("extraction_model", "answer_grounding_model", "retrieval_paraphrase_model"):
+        monkeypatch.setattr(replay.settings, name, getattr(replay.settings, name))
+    monkeypatch.setattr(replay, "_REQUEST_MODEL", replay._REQUEST_MODEL)
+    monkeypatch.setattr(partner, "_ALLOWED_MODELS", partner._ALLOWED_MODELS)
+    meetlat._apply_measurement_patches()
+    llm = _LiteLLM()
+    widget = surface == "widget"
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=ChatProfile(surface="widget") if widget else _internal(),
+        question="Hoe vraag ik verlof aan? En wat kost dat?",
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        key_id="wgt_acme" if widget else "key-internal",
+        stream=not widget,
+        request_body=meetlat._widget_body if widget else replay._body,
+        models_from_settings=True,
+    )
+
+    assert turn.text
+    assert {_LiteLLM._kind(body) for body in llm.calls} >= {"answer", "passage_selection", "grounding_check"}
+    assert {body["model"] for body in llm.calls} <= _VIBE_ALLOWANCE
+    # A round runs on the measurement key, which LiteLLM masks only for the tenant a call names.
+    assert all((body.get("metadata") or {}).get("_klai_delegated_org_id") for body in llm.calls)
+    # The paraphrases run on first widget questions only, so the turn above may not have made that call.
+    assert replay.settings.retrieval_paraphrase_model in _VIBE_ALLOWANCE

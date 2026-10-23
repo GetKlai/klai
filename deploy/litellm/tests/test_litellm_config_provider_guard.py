@@ -30,11 +30,16 @@ def test_text_aliases_use_mistral_provider_only() -> None:
 
     assert set(models) == TEXT_ALIASES
     for alias, deployments in models.items():
-        assert len(deployments) == 2, alias
         deployments_by_order = {params["order"]: params for params in deployments}
-        assert set(deployments_by_order) == {1, 2}, alias
+        # Orders 1 and 2 are the two chat workspaces. Order 3, when present, is
+        # the Vibe-key bridge of 23 October 2026 that carries the alias while
+        # both workspaces are at their monthly limit; nothing else may sit there.
+        assert set(deployments_by_order) in ({1, 2}, {1, 2, 3}), alias
+        assert len(deployments) == len(deployments_by_order), alias
         assert deployments_by_order[1]["api_key"] == "os.environ/MISTRAL_API_KEY", alias
         assert deployments_by_order[2]["api_key"] == "os.environ/MISTRAL_API_KEY_2", alias
+        if 3 in deployments_by_order:
+            assert deployments_by_order[3]["api_key"] == "os.environ/MISTRAL_VIBE_KEY", alias
         assert all(params["model"].startswith("mistral/") for params in deployments), (
             alias
         )

@@ -13,11 +13,31 @@ FAIL=0
 run_oneoff() {
     # $1 = name given to --name; $2 = "ok"/"down" — whether the one-off ever answers /health;
     # $3 = "true"/"false" — what docker inspect reports for the live service's .State.Running
-    local name="$1" health="$2" running="${3:-true}"
+    # $4 = "ok"/"missing"/"live" — the measurement key file holds a key, is absent, or holds the live service's key
+    # $5 = what the stub gateway answers the probe to klai-primary: "refused" (LiteLLM's key check), "open" or "budget"
+    local name="$1" health="$2" running="${3:-true}" key_mode="${4:-ok}"
+    export ONEOFF_TEST_GATEWAY="${5:-refused}"
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/bin" "$tmp/code/retrieval_api"
 
+    export KLAI_MEASUREMENT_KEY_FILE="$tmp/measurement-key"
+    case "$key_mode" in
+        ok) printf 'measurement-test-key' >"$KLAI_MEASUREMENT_KEY_FILE" ;;
+        live) printf 'live-master-key' >"$KLAI_MEASUREMENT_KEY_FILE" ;;
+    esac
+
     export ONEOFF_TEST_TMP="$tmp" ONEOFF_TEST_HEALTH="$health" ONEOFF_TEST_RUNNING="$running"
+
+    cat >"$tmp/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+cat >> "$ONEOFF_TEST_TMP/curl-config"
+case "$ONEOFF_TEST_GATEWAY" in
+    refused) printf '{"error": {"message": "denied", "type": "key_model_access_denied", "param": "model", "code": "403"}}\n403' ;;
+    open) printf '{"id": "chatcmpl-1", "choices": []}\n200' ;;
+    budget) printf '{"error": {"message": "spent", "type": "budget_exceeded", "code": "402"}}\n402' ;;
+esac
+STUB
+    chmod +x "$tmp/bin/curl"
 
     cat >"$tmp/bin/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -25,11 +45,12 @@ echo "$*" >> "$ONEOFF_TEST_TMP/calls.log"
 case "$1" in
     inspect)
         case "$*" in
+            *'.IPAddress'*) echo "172.18.0.99" ;;
             *'{{.State.Running}}'*) echo "$ONEOFF_TEST_RUNNING" ;;
             *'{{.Image}}'*) echo "sha256:deadbeef" ;;
             *'{{.Config.WorkingDir}}'*) echo "/repo/klai-retrieval-api" ;;
             *'.Aliases'*) printf 'retrieval-api\nabc123def456\n' ;;
-            *'{{range .Config.Env}}'*) printf 'FOO=bar\nRERANKER_CANDIDATES=20\nSENTRY_DSN=https://example.com/1\n' ;;
+            *'{{range .Config.Env}}'*) printf 'FOO=bar\nRERANKER_CANDIDATES=20\nCOREFERENCE_MODEL=klai-fast\nLITELLM_API_KEY=live-master-key\nSENTRY_DSN=https://example.com/1\n' ;;
             *'NetworkSettings.Networks'*) printf 'klai-net\nklai-net-postgres\n' ;;
         esac
         ;;
@@ -49,14 +70,15 @@ STUB
 
     set +e
     PATH="$tmp/bin:$PATH" KLAI_ONEOFF_HEALTH_TRIES=2 \
-        bash "$SCRIPT" --name "$name" --code "$tmp/code" --env RERANKER_CANDIDATES=60 >"$tmp/out.log" 2>"$tmp/err.log"
+        bash "$SCRIPT" --name "$name" --code "$tmp/code" --env RERANKER_CANDIDATES=60 --env litellm_api_key=live-master-key >"$tmp/out.log" 2>"$tmp/err.log"
     LAST_RC=$?
     set -e
 
     LAST_CALLS="$(cat "$tmp/calls.log" 2>/dev/null || true)"
     LAST_ENV_FILE="$tmp/env-file"
     LAST_ERR="$(cat "$tmp/err.log" 2>/dev/null || true)"
-    unset ONEOFF_TEST_TMP ONEOFF_TEST_HEALTH ONEOFF_TEST_RUNNING
+    LAST_CURL_CONFIG="$(cat "$tmp/curl-config" 2>/dev/null || true)"
+    unset ONEOFF_TEST_TMP ONEOFF_TEST_HEALTH ONEOFF_TEST_RUNNING KLAI_MEASUREMENT_KEY_FILE ONEOFF_TEST_GATEWAY
 }
 
 check() {
@@ -90,7 +112,17 @@ check "the second network is attached before start" \
     calls_have "network connect klai-net-postgres ra-test"
 check "an override replaces the live value and the Sentry DSN is dropped" \
     bash -c 'grep -q "^RERANKER_CANDIDATES=60$" "$0" && ! grep -q "^RERANKER_CANDIDATES=20$" "$0" && ! grep -q "^SENTRY_DSN=" "$0" && grep -q "^FOO=bar$" "$0"' "$LAST_ENV_FILE"
+check "every model of the one-off's own LLM calls is the Vibe alias, whatever the live value" \
+    bash -c 'for k in COREFERENCE_MODEL GRAPHITI_LLM_MODEL SYNTHESIS_MODEL; do [ "$(grep -c "^$k=" "$0")" = 1 ] && grep -q "^$k=klai-ingest$" "$0" || exit 1; done' "$LAST_ENV_FILE"
+check "a caller cannot put a pinned model back on a shared key" \
+    bash -c 'bash "$0" --name x --code /nonexistent --env COREFERENCE_MODEL=klai-fast 2>&1 | grep -q "fixed to klai-ingest"' "$SCRIPT"
 check "a healthy one-off is not removed" calls_lack "rm -f"
+check "the probe asks the gateway for klai-primary with the key from the file, on stdin" \
+    bash -c 'echo "$0" | grep -q "Bearer measurement-test-key" && echo "$0" | grep -q "172.18.0.99:4000/v1/chat/completions" && echo "$0" | grep -q "klai-primary"' "$LAST_CURL_CONFIG"
+check "a lower-case model variable cannot put a pinned model back either" \
+    bash -c 'bash "$0" --name x --code /nonexistent --env coreference_model=klai-fast 2>&1 | grep -q "fixed to klai-ingest"' "$SCRIPT"
+check "the LiteLLM key is the measurement key, even when --env names the live one in lower case" \
+    bash -c '[ "$(grep -ci "^LITELLM_API_KEY=" "$0")" = 1 ] && grep -qi "^LITELLM_API_KEY=measurement-test-key$" "$0" && ! grep -q "live-master-key" "$0"' "$LAST_ENV_FILE"
 
 for refused in klai-core-retrieval-api-1 retrieval-api; do
     run_oneoff "$refused" ok
@@ -105,6 +137,24 @@ run_oneoff ra-test down
 
 check "a one-off that never answers /health fails the script" test "$LAST_RC" -ne 0
 check "and is removed, not left running" calls_have "rm -f ra-test"
+
+for key_mode in missing live; do
+    run_oneoff ra-test ok true "$key_mode"
+
+    check "a measurement key file that is $key_mode is a refusal" test "$LAST_RC" -ne 0
+    check "docker create was never invoked when the measurement key is $key_mode" calls_lack "create"
+    check "the refusal for a $key_mode key names the script that creates it" \
+        bash -c 'echo "$0" | grep -q "litellm-measurement-key.sh"' "$LAST_ERR"
+done
+
+for gateway in open budget; do
+    run_oneoff ra-test ok true ok "$gateway"
+
+    check "a key the gateway does not refuse klai-primary ($gateway) is a refusal" test "$LAST_RC" -ne 0
+    check "docker create was never invoked when the probe got '$gateway'" calls_lack "create"
+    check "the refusal for '$gateway' says the key check did not refuse klai-primary" \
+        bash -c 'echo "$0" | grep -q "did not refuse klai-primary"' "$LAST_ERR"
+done
 
 run_oneoff ra-test ok false
 

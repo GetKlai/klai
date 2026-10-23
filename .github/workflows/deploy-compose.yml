@@ -152,7 +152,11 @@ jobs:
             # service-deploy workflows and systemd timers. Operator health
             # scripts are synced from klai-infra.
             mkdir -p /opt/klai/scripts
-            for script in deploy/scripts/*.sh; do
+            # *.py as well: retrieval-api-oneoff.sh bind-mounts its launch helper
+            # from this directory, and a loop over *.sh alone left it behind on
+            # 2026-10-23, so every one-off refused to start on the server.
+            for script in deploy/scripts/*.sh deploy/scripts/*.py; do
+              [[ -e "$script" ]] || continue
               name=$(basename "$script")
               case "$name" in
                 push-health.sh|gpu-health.sh|audit-monitor-coverage.sh|push-component-health.sh) continue ;;
@@ -166,7 +170,10 @@ jobs:
                 # success.
                 deploy-portal-api.sh) continue ;;
               esac
-              bash -n "$script"
+              case "$name" in
+                *.py) python3 -m py_compile "$script" ;;
+                *) bash -n "$script" ;;
+              esac
               install -m 0755 "$script" "/opt/klai/scripts/$name.tmp"
               mv -f "/opt/klai/scripts/$name.tmp" "/opt/klai/scripts/$name"
             done

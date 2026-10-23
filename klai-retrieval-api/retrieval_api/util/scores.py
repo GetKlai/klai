@@ -7,7 +7,7 @@ shadow mode it is absent so every pipeline stage falls back to its
 pre-contract sort key and serving stays byte-identical to the old behavior.
 
 # @MX:ANCHOR: [AUTO] Every post-rerank sort in the pipeline (diversity,
-# quality_boost, page-context boost, link-expand boost, shadow preview) MUST
+# quality_boost, page-context boost, shadow preview) MUST
 # key through this helper. Divergent per-module fallback chains were the
 # root cause of the RRF/reranker order scramble this SPEC fixes.
 # @MX:REASON: SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-01 — one ranking truth.

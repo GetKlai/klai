@@ -20,11 +20,16 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import structlog
-from klai_chat_prompts import contact_reply, contact_reply_again, no_citable_sources_message
+from klai_chat_prompts import (
+    check_unavailable_message,
+    contact_reply,
+    contact_reply_again,
+    no_citable_sources_message,
+)
 from klai_chat_prompts.language import TARGET_LANGUAGES, resolve_conversation_language
 
 from app.core.config import Settings
-from app.services import case_file, turn_judge
+from app.services import case_file, knowledge_ingest_client, turn_judge
 from app.services import escalation_intent as escalation_service
 from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import _response_language
@@ -32,6 +37,7 @@ from app.services.chat_safety import _last_user_message, output_safety_violation
 from app.services.chat_sources import PageContext
 from app.services.clarify_gate import already_asked
 from app.services.gap_classification import classify_gap
+from app.services.knowledge_prompts import unchecked_questions_notice
 from app.services.off_topic_referral import off_topic_referral
 from app.services.passage_selection import plain_question
 from app.services.pasted_correspondence import latest_user_turn_has_correspondence
@@ -124,11 +130,15 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
         # A turn that chooses nothing (a contact request, "not found") keeps
         # the conversation's evidence for the next one.
         inputs.answer_signals["kept_passages"] = inputs.kept_passages
+    # The products the org's articles are about, which the case may name and
+    # the search and the selection prefer (knowledge-base plan, step 7).
+    products = await knowledge_ingest_client.get_products(inputs.auth.zitadel_org_id)
+    latest = _last_user_message(messages) or ""
     with retrieval_upstream_errors(inputs.auth.org_id):
         if case_file.is_follow_up(messages):
             # 1. Read. The case's queries go into a follow-up's search, so the
             # case comes first.
-            case, case_ms = await timed(_read_case(inputs))
+            case, case_ms = await timed(_read_case(inputs, products))
             _keep_case(inputs, case)
             # 2. Route in code. A person, contact or an appointment needs no
             # articles, so that route is decided before the search (plan §5,
@@ -136,8 +146,9 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
             if case is not None and case.wants in case_file.CONTACT_WANTS:
                 return _contact_request_reply(inputs, turn, case)
             # 3-4. Search, and select inside retrieve_context (passage_selection.py).
-            variants = case.search_variants(_last_user_message(messages) or "") if case else []
-            found, retrieval_ms = await timed(_search(inputs, turn, variants))
+            variants = case.search_variants(latest) if case else []
+            product = case.product_label if case else case_file.named_product(latest, products)
+            found, retrieval_ms = await timed(_search(inputs, turn, variants, product))
         else:
             # A first question keeps its two paraphrases and runs the case
             # beside the search: the case's queries narrow (product, problem,
@@ -146,8 +157,11 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
             # step could ask which one applies; with the case's queries alone
             # two of the six expected clarifying questions were answered
             # instead (plan §8, step M).
+            # The case's product label comes too late for this search, so the
+            # product is a label the visitor's own words name.
             (found, retrieval_ms), (case, case_ms) = await asyncio.gather(
-                timed(_search(inputs, turn, [])), timed(_read_case(inputs))
+                timed(_search(inputs, turn, [], case_file.named_product(latest, products))),
+                timed(_read_case(inputs, products)),
             )
             _keep_case(inputs, case)
     # Feedback on a reply finds its retrieval under rl:{org}:{key}, so the log
@@ -164,7 +178,7 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
     return await _write(inputs, turn, found, routed, sentiment=case.sentiment if case else None, timing=timing)
 
 
-def _read_case(inputs: TurnInputs) -> Awaitable[case_file.Case | None]:
+def _read_case(inputs: TurnInputs, products: list[str]) -> Awaitable[case_file.Case | None]:
     # The case is the one reading of the turn (case_file.py): what the
     # visitor wants, their tone, whether the subject is one this widget
     # answers, and the queries for a follow-up's search. It replaced the
@@ -174,6 +188,7 @@ def _read_case(inputs: TurnInputs) -> Awaitable[case_file.Case | None]:
         inputs.previous_case,
         inputs.settings,
         off_topic_subjects=inputs.off_topic_subjects,
+        products=products,
         delegated_org_id=inputs.auth.zitadel_org_id,
     )
 
@@ -198,11 +213,12 @@ def fixed_language(
     return _response_language(messages, pasted_correspondence=pasted_correspondence)
 
 
-async def _search(inputs: TurnInputs, turn: KnowledgeTurn, follow_up_variants: list[str]) -> Found:
+async def _search(inputs: TurnInputs, turn: KnowledgeTurn, follow_up_variants: list[str], product: str) -> Found:
     request, auth = inputs.request, inputs.auth
     knowledge = request.knowledge
     chunks, system_prompt, trusted_sources, broad = await retrieve_context(
         follow_up_variants=follow_up_variants,
+        product=product,
         kept_passages=inputs.kept_passages,
         answer_signals=inputs.answer_signals,
         org_id=auth.org_id,
@@ -389,10 +405,17 @@ def _not_in_passages_reply(
         org_id=inputs.auth.org_id,
         wgt_id=inputs.auth.key_id,
         passages=len(found.chunks),
+        selection_failed=turn.selection_failed,
     )
-    return fixed_reply(
-        inputs, turn, no_citable_sources_message(language, helpdesk=True), language, decision="refusal", refused=True
+    # Without a verdict the articles were never checked, so "not found" would
+    # be false: on 2026-10-23 all five of the widget's not-found replies came
+    # from a selection that failed on klai-medium's budget (429).
+    text = (
+        check_unavailable_message(language, helpdesk=True)
+        if turn.selection_failed
+        else no_citable_sources_message(language, helpdesk=True)
     )
+    return fixed_reply(inputs, turn, text, language, decision="refusal", refused=True)
 
 
 def question_reply(
@@ -459,7 +482,14 @@ def fixed_reply(
     refused: bool,
     appointment: bool = True,
 ) -> Reply:
-    """A reply decided in code: recorded like any other, with the appointment button unless told otherwise."""
+    """A reply decided in code: recorded like any other, with the appointment button unless told otherwise.
+
+    It names the questions the search did not take, like a written reply does
+    (``widget_write._sent_text``): a "not found" over eight questions says
+    nothing about the seventh and eighth otherwise.
+    """
+    if notice := unchecked_questions_notice(turn.unchecked_questions, language):
+        text = f"{text}\n\n{notice}"
     inputs.answer_signals.update(
         decision=decision,
         sources_count=0,

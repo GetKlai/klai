@@ -1,0 +1,201 @@
+# Datastore crash and graph-search degradation alerts (LogsQL via VictoriaLogs).
+#
+# Both route via spec=SPEC-OBS-001 -> klai-ops-alerts-email and carry
+# page=true (the external pager, see policies.yaml) and autofix=true: both are
+# code or data failures, not security findings.
+#
+#   datastore_process_crashed   CRIT  a stateful container logged a crash line
+#   retrieval_graph_degraded    HIGH  retrieval-api graph search is failing
+#
+# Why: on 2026-10-23 FalkorDB logged "Redis 8.10.2 crashed by signal: 11" about
+# 150 times between 03:00 and 10:36 UTC and the widget failed. The restart-loop
+# rule could not fire (see infra-rules.yaml) and no rule looked at the crash
+# line or at retrieval-api's graph events, so no human heard about it.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: obs-001-datastore
+    folder: Klai
+    interval: 1m
+    rules:
+
+      # -- datastore_process_crashed ------------------------------------------
+      # Crash signatures of the stateful services in deploy/docker-compose.yml:
+      #   "crashed by signal"      Redis / FalkorDB / Valkey fatal signal handler
+      #   "Segmentation fault", SIGSEGV, SIGABRT, SIGKILL
+      #   "terminated by signal"   Postgres: a server process was killed (OOM)
+      #   panic*                   Postgres PANIC, Rust/Go panics (qdrant,
+      #                            meilisearch, garage, victoria*)
+      #   "Fatal assertion", "Invariant failure"   MongoDB
+      #   "Out Of Memory"          Redis OOM handler
+      # Deliberately not matched: SIGTERM and "shutting down" (normal stops)
+      # and Postgres "database system was not properly shut down" (it shows up
+      # after every host-level restart; on 2026-10-22 11:33 UTC five Postgres
+      # containers logged it at once and nothing was wrong afterwards).
+      #
+      # Backtest over 30 days (2026-09-23 to 2026-10-23), counted per service:
+      #   falkordb  300 lines (about 150 crashes, every line twice), all between
+      #             2026-10-23 03:00:07 and 10:36:34 UTC
+      #   every other service in the list: 0
+      # The first FalkorDB crash falls in the first evaluation window, so the
+      # alert fires within a minute of it.
+      - uid: obs-001-datastore-process-crashed
+        title: datastore_process_crashed
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:10m service:in(falkordb, redis, qdrant, postgres, meilisearch, mongodb, garage, victoriametrics, victorialogs, victorialogs-content, listmonk-db, crm-postgres, crm-redis, vexa12-redis, umami-postgres, fider-postgres, firecrawl-postgres, firecrawl-rabbitmq)
+                  ("crashed by signal" OR "Segmentation fault" OR "terminated by signal" OR "Fatal assertion" OR "Invariant failure" OR "Out Of Memory" OR SIGSEGV OR SIGABRT OR SIGKILL OR i(panic*))
+                  | stats by (service) count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: datastore
+          page: "true"
+          autofix: "true"
+        annotations:
+          summary: 'Datastore {{ $labels.service }} logged a crash line in the last 10 minutes'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#container-restart-loop'
+          description: |
+            {{ $labels.service }} wrote a crash signature (fatal signal,
+            segmentation fault, panic or a killed server process). A store
+            that crashes can lose recent writes and takes everything that
+            depends on it down while it restarts.
+
+            Triage:
+              1. VictoriaLogs: service:{{ $labels.service }} AND ("crashed by signal" OR "Segmentation fault" OR "terminated by signal" OR i(panic*)) | sort by (_time) desc | limit 20
+              2. ssh core-01 "docker inspect klai-core-{{ $labels.service }}-1 --format '{{`{{.RestartCount}} {{.State.OOMKilled}} {{.State.ExitCode}}`}}'"
+              3. A repeating crash is also a restart loop: see container_restart_loop.
+                 FalkorDB's signal 11 on 2026-10-23 repeated every ~3 minutes.
+
+      # -- retrieval_graph_degraded -------------------------------------------
+      # retrieval-api swallows graph failures and returns vector results only,
+      # so a dead FalkorDB shows up as latency (every timeout costs the 5 s
+      # graph_search_timeout) and as these three log events:
+      #   graph_search_timeout, graph_search_failed, "health_check_failed: falkordb"
+      # (the last one is logged by every /health poll, about every 10 s, while
+      # FalkorDB is unreachable).
+      # Counted for the production container only: the one-off eval containers
+      # (klai-oneoff-ra-*) log the same events and are not customer traffic.
+      #
+      # Backtest, 2026-10-09 to 2026-10-23, events in a rolling 30m window:
+      #   2026-10-09 to 2026-10-21  0 events
+      #   2026-10-22                2 short FalkorDB blips (10:20 and 11:10 UTC),
+      #                             34 events in total, at most 21 in any 10m
+      #                             bucket and 21 in the 30m window ending 10:40
+      #   2026-10-23                39 at 03:10 UTC, 59 at 03:20, 1,314 events
+      #                             over the day (loop 03:00 to 10:36)
+      # Threshold 30 sits above the blips and is crossed about 10 minutes into
+      # a loop. 0 firings in the 13 days before the loop, so it pages.
+      # Ceiling: the graph-search events depend on traffic, so a quiet night
+      # leans on the health events; a FalkorDB that is down for under three
+      # minutes (one planned recreate) stays below 30.
+      - uid: obs-001-retrieval-graph-degraded
+        title: retrieval_graph_degraded
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:30m container:klai-core-retrieval-api-1
+                  (event:graph_search_timeout OR event:graph_search_failed OR event:"health_check_failed: falkordb")
+                  | stats count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [30], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: high
+          spec: SPEC-OBS-001
+          service_group: retrieval
+          page: "true"
+          autofix: "true"
+        annotations:
+          summary: 'retrieval-api graph search is failing: more than 30 graph events in 30 minutes'
+          runbook_url: 'docs/runbooks/rag-quality.md#graph-search-degraded'
+          description: |
+            retrieval-api logged more than 30 graph_search_timeout,
+            graph_search_failed or "health_check_failed: falkordb" events in
+            the last 30 minutes (normal: none). Chat and the widget still get
+            vector results but each graph timeout adds 5 seconds, and /health
+            returns 503 while FalkorDB is unreachable.
+
+            Triage: docs/runbooks/rag-quality.md#graph-search-degraded

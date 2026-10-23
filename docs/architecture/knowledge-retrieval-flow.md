@@ -524,36 +524,6 @@ reranking. Timeout: 5 seconds. `GRAPHITI_ENABLED=true` on `retrieval-api` in pro
 
 ---
 
-### Step 4b: Link expansion + authority boost (SPEC-CRAWLER-003)
-
-**Simple:** When a top-ranked chunk links to other documents, those linked documents
-are pulled in as extra candidates. Documents that many other documents link to get a
-small ranking boost — the same logic that made PageRank work for the early web.
-
-**Technical:** Two separate mechanisms run after the initial Qdrant + graph search,
-before reranking:
-
-1. **1-hop link expansion** — for the top `link_expand_seed_k=10` chunks, the
-   `links_to` payload is mined for outbound URLs (capped at `link_expand_max_urls=30`).
-   `fetch_chunks_by_urls()` then scrolls Qdrant for chunks whose `source_url` matches
-   one of those URLs (`link_expand_candidates=20` cap), tagging each newly-added chunk
-   with an internal `_link_expanded=True` flag. Score starts at 0.0 — they earn their
-   way into the top-K through the authority boost and reranker.
-
-2. **Authority boost** — every chunk (seed or expanded) gets `score +=
-   link_authority_boost * log(1 + incoming_link_count)`. Default
-   `link_authority_boost=0.05`; a chunk with 100 incoming links gets ~+0.23 score
-   uplift.
-
-**Instrumentation (F3 phase 1, audit retrieval-coupling-2026-05-06):** the
-`retrieval_decision_record` log entry carries a `link_expand` block with `seed_k`,
-`candidate_urls`, `expanded_added`, `expanded_in_top_k`, `expanded_top_k_chunk_ids`,
-`seed_in_top_k`, `served_top_k`. This lets us measure how often expanded chunks
-actually survive into the served top-K vs. dying at the reranker cut-off — Phase 2
-(RRF migration vs. recalibrate boost vs. disable) waits on ~7 days of this data.
-
----
-
 ### Step 5: Reranking
 
 **Simple:** The vector search finds broadly relevant chunks quickly, but it's not precise
@@ -581,6 +551,15 @@ scores at the cost of being slower. It is applied to the first `reranker_candida
 candidates, and 60 adds about 230 ms at p50 over scoring 20 (23 October 2026).
 
 Timeout: 30 seconds. On failure, the top-K Qdrant results are returned unranked.
+
+**Lookalikes and the question's product (knowledge-base plan, step 7).** Before the
+reranker, candidates whose `text_fingerprint` (a b-bit MinHash of word shingles, written
+at ingest) agree on at least `lookalike_min_similarity` (0.7) of their shingles collapse
+into one: the first in search order, unless a later one carries the request's `product`
+and the first does not. After the reranker, every chunk whose `product` matches the
+request's gets `product_boost` (0.05) added to its ranking score; nothing is filtered on
+product. `services/lookalike.py`; the counts are `lookalikes_collapsed` and
+`product_boosted` in the decision record.
 
 ---
 
@@ -940,11 +919,6 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `KLAI_GAP_DENSE_THRESHOLD` | `0.35` | Dense score fallback for gap detection |
 | `retrieval_candidates` | `60` | Raw candidates fetched from Qdrant |
 | `reranker_candidates` | `60` | Top-N sent to cross-encoder (env `RERANKER_CANDIDATES`) |
-| `link_expand_enabled` | `true` | 1-hop link expansion + authority boost (SPEC-CRAWLER-003). |
-| `link_expand_seed_k` | `10` | Top-N raw chunks whose `links_to` payload is mined. |
-| `link_expand_max_urls` | `30` | Cap on URLs collected from seed chunks per request. |
-| `link_expand_candidates` | `20` | Cap on Qdrant scroll results when fetching link-expanded chunks. |
-| `link_authority_boost` | `0.05` | Coefficient on `log(1 + incoming_link_count)` authority boost. |
 | `graphiti_enabled` | `true` (both `retrieval-api` and `knowledge-ingest`) | Include FalkorDB graph search (parallel with Qdrant 3-leg RRF). |
 | `graph_search_timeout` | `5.0` | FalkorDB search timeout (seconds) |
 | `coreference_timeout` | `3.0` | Coreference LLM call timeout (seconds) |

@@ -21,7 +21,6 @@ dist-ssr
 test-results/
 playwright-report/
 playwright-report-prod-tenant/
-e2e/prod-tenant/_config/playwright-report-prod-tenant/
 
 # Editor directories and files
 .vscode/*

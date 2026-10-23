@@ -37,7 +37,24 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ -n "$name" && -n "$code" ]] || usage
+
+# The calls the one-off makes itself (coreference rewrite, graph search, synthesis) run on the Vibe allowance
+# (klai-ingest), never on the keys live chat shares: a measurement round on klai-fast helped spend the Mistral
+# workspaces' monthly limit on 23 Oct 2026 and took chat down for every tenant. Not overridable, in any case of the
+# name: the settings read coreference_model=... as COREFERENCE_MODEL.
+for key in COREFERENCE_MODEL GRAPHITI_LLM_MODEL SYNTHESIS_MODEL; do
+    for given in "${overrides[@]:-}"; do
+        [[ "$(tr '[:lower:]' '[:upper:]' <<< "${given%%=*}")" != "$key" ]] || { echo "ERROR: $key is fixed to klai-ingest for a one-off; drop --env $given." >&2; exit 1; }
+    done
+    overrides+=("$key=klai-ingest")
+done
 [[ -d "$code/retrieval_api" ]] || { echo "ERROR: $code has no retrieval_api package." >&2; exit 1; }
+
+# And the clone talks to LiteLLM only with the measurement key, so no model variable or code path inside it can reach
+# a chat alias either (oneoff-litellm-guard.sh).
+# shellcheck source=deploy/scripts/oneoff-litellm-guard.sh
+source "$here/oneoff-litellm-guard.sh"
+measurement_key_load_and_probe
 code="$(cd "$code" && pwd)"
 
 if [[ "$(docker inspect --format '{{.State.Running}}' "$LIVE_CONTAINER" 2>/dev/null || echo false)" != "true" ]]; then
@@ -61,9 +78,12 @@ trap 'rm -f "$env_file"' EXIT
 override_keys="$(printf '%s\n' "${overrides[@]:-}" | cut -d= -f1 | paste -sd'|' -)"
 docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$LIVE_CONTAINER" \
     | grep -Ev '^(SENTRY_DSN|GLITCHTIP[A-Z_]*)=' \
-    | { if [[ -n "$override_keys" ]]; then grep -Ev "^(${override_keys})="; else cat; fi; } \
+    | { if [[ -n "$override_keys" ]]; then grep -Eiv "^(${override_keys})="; else cat; fi; } \
     > "$env_file"
 printf '%s\n' "${overrides[@]:-}" | grep . >> "$env_file" || true
+
+# After the overrides, so --env cannot put a live key back.
+measurement_key_swap "$env_file" "$LIVE_CONTAINER"
 
 image="$(docker inspect --format '{{.Image}}' "$LIVE_CONTAINER")"
 workdir="$(docker inspect --format '{{.Config.WorkingDir}}' "$LIVE_CONTAINER")"

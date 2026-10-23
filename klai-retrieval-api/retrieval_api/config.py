@@ -54,17 +54,18 @@ class Settings(BaseSettings):
     # Toggle via env var: RETRIEVAL_API_SYNTHESIS_MODEL=klai-claude
     synthesis_model: str = "klai-primary"
 
-    # Link-graph expansion (SPEC-CRAWLER-003, R19/R20)
-    link_expand_enabled: bool = True
-    link_expand_seed_k: int = 10
-    link_expand_max_urls: int = 30
-    link_expand_candidates: int = 20
-    link_authority_boost: float = 0.05
-
     # Source-aware selection (SPEC-KB-021)
     source_quota_enabled: bool = True
     source_quota_max_per_source: int = 2
     source_preference_boost: float = 0.05
+    # Knowledge-base plan, step 7. The question's product adds this to a
+    # chunk's ranking score after the reranker, the same order as the source
+    # preference above. Two candidates whose text fingerprints agree on this
+    # estimated share of word shingles are lookalikes: on synthetic text the
+    # same article with another product name scored 0.73 or more from 150
+    # words up, and chunks sharing half their text 0.50 or less.
+    product_boost: float = 0.05
+    lookalike_min_similarity: float = 0.7
 
     # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-04 — ranking-contract rollout
     # flag. The contract graduated to "active" on 2026-07-08 after its shadow
@@ -93,15 +94,6 @@ class Settings(BaseSettings):
     # band does separate refusal/off-topic outcomes (60% of low vs 9% of high).
     confidence_band_high_threshold: float = 0.60
     confidence_band_low_threshold: float = 0.30
-
-    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 — link-expand reranker boost.
-    # Multiplicative boost (capped at 1.0) for chunks whose ``_link_expanded``
-    # flag is set, applied AFTER rerank and BEFORE source-aware-select. With
-    # default 1.00 this requirement is no-op until the operator tunes — the
-    # SPEC ships safe and the boost activates per-tenant via env override
-    # once the eval baseline is captured. Range [1.00, 1.30] enforced by the
-    # validator so well-meaning typos can't accidentally suppress chunks.
-    link_expand_score_boost: float = 1.00
 
     # Query router (SPEC-KB-021)
     # Pre-search: identifies relevant sources, passes decision to source_aware_select.
@@ -178,20 +170,6 @@ class Settings(BaseSettings):
                 f"{self.ranking_contract_mode!r}; require 'shadow' or 'active'"
             )
         self.ranking_contract_mode = normalized
-        return self
-
-    @model_validator(mode="after")
-    def _validate_link_expand_boost(self) -> Settings:
-        """SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3: boost factor must be
-        in [1.00, 1.30] — values < 1 would silently suppress link-expanded
-        chunks (the opposite of intent), values > 1.3 over-distort the
-        ranking distribution.
-        """
-        if not (1.0 <= self.link_expand_score_boost <= 1.3):
-            raise ValueError(
-                "link_expand_score_boost invalid: "
-                f"{self.link_expand_score_boost}; require 1.00 <= boost <= 1.30"
-            )
         return self
 
     @model_validator(mode="after")

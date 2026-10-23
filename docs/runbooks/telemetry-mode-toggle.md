@@ -26,9 +26,9 @@ the same DB-write + audit-log + cache-invalidation behaviour.
 ssh core-01
 TOKEN="$(printenv PORTAL_INTERNAL_SECRET)"
 
-# Check current state
-curl -sS http://portal-api:8010/internal/admin/orgs/<org_id>/telemetry-level \
-  -H "Authorization: Bearer $TOKEN" | jq .
+# Check current state (the endpoint is POST-only; read the column)
+docker exec klai-core-postgres-1 psql -U klai -d klai -Atc \
+  "SELECT id, telemetry_level FROM portal_orgs WHERE id = <org_id>"
 
 # Switch to 'full' for active debug
 curl -sS -X POST \
@@ -82,9 +82,12 @@ ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai \
 
 ## Alerts that route to this runbook
 
-- `privacy_tenant_stuck_in_full` — fires when any tenant has been in
-  `full` for >14 days. Triage: list affected tenants, check the audit
-  reason, decide with the operator whether to flip back.
+- `privacy_tenant_stuck_in_full` — fires when a tenant's latest switch to
+  `full` is more than 14 days old and it holds no support cases. Support
+  evidence is the one feature that needs `full`, and a downgrade purges
+  it, so a tenant with support cases is in `full` on purpose and does not
+  fire. Triage: list affected tenants, check the audit reason, decide with
+  the operator whether to flip back.
 - `privacy_shadow_drop_burst` — fires when shadow-store INSERTs drop
   >1/s for 5m. Triage: group by `reason`, check post-deploy SQL ran,
   verify Postgres health.

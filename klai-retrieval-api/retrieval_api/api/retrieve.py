@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import time
 import uuid
 from collections.abc import Iterable
@@ -19,7 +18,6 @@ from qdrant_client.models import SparseVector
 from retrieval_api.api.decision_log import _evidence_pack_decision_sources
 from retrieval_api.api.page_context import _apply_page_context_boost
 from retrieval_api.api.ranking import (
-    _apply_link_expand_boost,
     _compute_confidence_band,
     _rrf_merge,
 )
@@ -29,7 +27,6 @@ from retrieval_api.metrics import (
     retrieval_chunks_total,
     retrieval_confidence_band_total,
     retrieval_graph_top_k_total,
-    retrieval_link_expand_top_k_total,
     retrieval_requests_total,
     step_latency_seconds,
     telemetry_level_decisions_total,
@@ -46,7 +43,7 @@ from retrieval_api.models import (
 )
 from retrieval_api.quality_boost import quality_boost
 from retrieval_api.quality_floor import filter_quality_floor
-from retrieval_api.services import coreference, graph_search, reranker, search
+from retrieval_api.services import coreference, graph_search, lookalike, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
 from retrieval_api.services.evidence_pack import (
@@ -108,8 +105,7 @@ _SHADOW_PREVIEW_KEYS = (
     "score",
     "quality_score",
     "feedback_count",
-    "incoming_link_count",
-    "_link_expanded",
+    "product",
 )
 
 
@@ -446,10 +442,6 @@ class RetrievalPipelineState:
     graph_results_count: int = 0
     graph_search_ms: float | None = None
     graph_candidate_ids: set[str] = dataclass_field(default_factory=set)
-    link_expand_ms: float | None = None
-    link_expand_count: int = 0
-    link_expand_seed_chunk_ids: set[str] = dataclass_field(default_factory=set)
-    link_expand_candidate_urls: int = 0
     page_context_candidate_boosted: int = 0
     reranked: list[dict[str, Any]] = dataclass_field(default_factory=list)
     reranked_to: int = 0
@@ -457,7 +449,6 @@ class RetrievalPipelineState:
     ranking_shadow_preview: list[dict[str, Any]] | None = None
     excluded_preferred_kb_slugs: set[str] | None = None
     serving: list[dict[str, Any]] = dataclass_field(default_factory=list)
-    expanded_in_top_k_ids: list[str] = dataclass_field(default_factory=list)
     graph_in_top_k_ids: list[str] = dataclass_field(default_factory=list)
     parent_text_by_id: dict[int, str] = dataclass_field(default_factory=dict)
     chunks_out: list[ChunkResult] = dataclass_field(default_factory=list)
@@ -640,6 +631,9 @@ async def _query_variant_pass(
         cast(SparseVector | None, sparse_vector),
     )
     _note_stage(stages, "search", raw)
+    raw, _ = lookalike.collapse_lookalikes(
+        raw, req.product or "", settings.lookalike_min_similarity
+    )
     if not raw or not settings.reranker_enabled:
         return _one_per_parent(raw)[: req.top_k]
     reranked = _one_per_parent(
@@ -648,6 +642,8 @@ async def _query_variant_pass(
     _note_stage(stages, "rerank", reranked)
     if settings.ranking_contract_mode == "active":
         _set_final_rank_scores(reranked)
+    if req.product:
+        lookalike.boost_product(reranked, req.product, settings.product_boost)
     return reranked[: req.top_k]
 
 
@@ -885,85 +881,8 @@ async def _run_search(state: RetrievalPipelineState) -> None:
     state.decision_record["search_candidates_count"] = state.candidates_retrieved
 
 
-async def _run_link_expand(state: RetrievalPipelineState) -> None:
-    """Expand linked candidates and apply adjacent candidate boosts."""
-
-    req = state.req
-    # 4b. Link expansion (SPEC-CRAWLER-003 R14-R16)
-    if not settings.link_expand_enabled:
-        link_expand_step = state.trace.mark_skipped("link_expand", "disabled_by_config")
-    elif not state.raw_results:
-        link_expand_step = state.trace.mark_skipped("link_expand", "no_candidates")
-    else:
-        t_expand = time.perf_counter()
-        async with state.trace.step("link_expand", started_at=t_expand) as link_expand_step:
-            seed_chunks = state.raw_results[: settings.link_expand_seed_k]
-            candidate_urls: list[str] = []
-            seen_urls: set[str] = set()
-            for chunk in seed_chunks:
-                for url in payload_list(chunk, "links_to"):
-                    if url not in seen_urls:
-                        seen_urls.add(url)
-                        candidate_urls.append(url)
-                    if len(candidate_urls) >= settings.link_expand_max_urls:
-                        break
-                if len(candidate_urls) >= settings.link_expand_max_urls:
-                    break
-
-            # F3 phase 1: capture seed chunk_ids before expansion so we can
-            # measure later how many of the served top-k were original-seed
-            # vs newly-expanded vs neither.
-            state.link_expand_seed_chunk_ids = {c["chunk_id"] for c in seed_chunks}
-            state.link_expand_candidate_urls = len(candidate_urls)
-            link_expand_step.meta("seed_k", len(seed_chunks))
-            link_expand_step.meta("candidate_urls", state.link_expand_candidate_urls)
-
-            if not candidate_urls:
-                link_expand_step.skip("no_candidate_urls")
-            else:
-                expansion_chunks = await search.fetch_chunks_by_urls(
-                    candidate_urls, req, settings.link_expand_candidates
-                )
-                existing_ids = {r["chunk_id"] for r in state.raw_results}
-                new_chunks = [c for c in expansion_chunks if c["chunk_id"] not in existing_ids]
-                state.link_expand_count = len(new_chunks)
-                link_expand_step.meta("expanded_added", state.link_expand_count)
-                # F3 phase 1: tag the expansion chunks. Underscore prefix
-                # keeps the field internal — Pydantic ChunkResult ignores
-                # unknown fields by default and the build loop only reads
-                # explicit keys, so this never leaks to the response body.
-                for c in new_chunks:
-                    c["_link_expanded"] = True
-                state.raw_results = state.raw_results + new_chunks
-
-        state.link_expand_ms = link_expand_step.duration_ms
-        step_latency_seconds.labels(step="link_expand").observe(state.link_expand_ms / 1000)
-        logger.debug(
-            "link_expand",
-            seed_k=len(seed_chunks),
-            candidate_urls=len(candidate_urls),
-            new_chunks=state.link_expand_count,
-        )
-
-    # 4c. Authority boost (SPEC-CRAWLER-003 R17), retained only for
-    # ranking-contract shadow comparison. Active mode serves by the
-    # post-rerank final_rank_score contract instead.
-    authority_boost_enabled = (
-        state.ranking_contract_mode == "shadow"
-        and settings.link_expand_enabled
-        and bool(state.raw_results)
-    )
-    authority_boosted_count = 0
-    if authority_boost_enabled:
-        for result in state.raw_results:
-            incoming = result.get("incoming_link_count") or 0
-            if incoming > 0:
-                result["score"] = result["score"] + settings.link_authority_boost * math.log(
-                    1 + incoming
-                )
-                authority_boosted_count += 1
-    link_expand_step.meta("authority_boost_enabled", authority_boost_enabled)
-    link_expand_step.meta("authority_boosted_count", authority_boosted_count)
+async def _run_page_context_candidate_boost(state: RetrievalPipelineState) -> None:
+    """Boost candidates that match the page the visitor is on."""
 
     state.raw_results, state.page_context_candidate_boosted = _apply_page_context_boost(
         state.raw_results,
@@ -977,6 +896,11 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
     """Rerank candidates and apply the adjacent post-rerank boosts."""
 
     req = state.req
+    # 4b. Lookalikes of another product collapse into one candidate (plan step 7).
+    state.raw_results, collapsed = lookalike.collapse_lookalikes(
+        state.raw_results, req.product or "", settings.lookalike_min_similarity
+    )
+    state.decision_record["lookalikes_collapsed"] = collapsed
     # 5. Rerank (skip when reranker disabled)
     if state.raw_results and settings.reranker_enabled:
         t_rerank = time.perf_counter()
@@ -1019,31 +943,6 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
         ]
         _set_final_rank_scores(state.ranking_shadow_preview)
 
-    # 5a-ter. SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 — link-expand
-    # reranker boost. Applied AFTER rerank and BEFORE quality-floor so
-    # expanded chunks get a fair shot at surviving source-aware-select.
-    # Default boost=1.00 is a no-op until operator tunes the env var.
-    link_expand_boost_enabled = (
-        settings.link_expand_enabled and settings.link_expand_score_boost > 1.0
-    )
-    link_expand_boosted_count = sum(
-        1
-        for chunk in state.reranked
-        if link_expand_boost_enabled
-        and chunk.get("_link_expanded")
-        and (
-            isinstance(chunk.get("final_rank_score"), (int, float))
-            or isinstance(chunk.get("reranker_score"), (int, float))
-        )
-    )
-    state.reranked = _apply_link_expand_boost(
-        state.reranked,
-        boost=settings.link_expand_score_boost,
-        enabled=settings.link_expand_enabled,
-    )
-    rerank_step.meta("link_expand_boost_enabled", link_expand_boost_enabled)
-    rerank_step.meta("link_expand_boost_factor", settings.link_expand_score_boost)
-    rerank_step.meta("link_expand_boosted_count", link_expand_boosted_count)
     if settings.reranker_enabled:
         state.reranked, page_context_boosted = _apply_page_context_boost(
             state.reranked,
@@ -1052,6 +951,11 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
     else:
         page_context_boosted = state.page_context_candidate_boosted
     state.decision_record["page_context_boosted"] = page_context_boosted
+    if req.product:
+        # A soft preference for the question's product (plan step 7), never a filter.
+        state.decision_record["product_boosted"] = lookalike.boost_product(
+            state.reranked, req.product, settings.product_boost
+        )
 
 
 def _run_quality_floor(state: RetrievalPipelineState) -> None:
@@ -1148,15 +1052,14 @@ def _run_quality_boost(state: RetrievalPipelineState) -> None:
         # (same steps, same settings) on the preview so "new" is what
         # active mode would actually serve — not a partial projection.
         # "old" is captured from the real ``serving`` list further down.
-        state.ranking_shadow_preview = _apply_link_expand_boost(
-            state.ranking_shadow_preview,
-            boost=settings.link_expand_score_boost,
-            enabled=settings.link_expand_enabled,
-        )
         if settings.reranker_enabled:
             state.ranking_shadow_preview, _ = _apply_page_context_boost(
                 state.ranking_shadow_preview,
                 state.page_context,
+            )
+        if req.product:
+            lookalike.boost_product(
+                state.ranking_shadow_preview, req.product, settings.product_boost
             )
         state.ranking_shadow_preview, _ = filter_quality_floor(
             state.ranking_shadow_preview, floor=settings.retrieval_quality_floor
@@ -1191,27 +1094,6 @@ def _run_quality_boost(state: RetrievalPipelineState) -> None:
                 state.ranking_shadow_preview, max_sources=state.evidence_max_sources
             ),
         }
-
-    # F3 phase 1 instrumentation: emit link-expansion contribution to
-    # the served top-k. Lets us answer "did the extra Qdrant scroll
-    # ever produce a chunk that beat the reranker top-k cut-off?"
-    # before deciding on phase 2 (RRF migration vs disable).
-    # Audit ref: retrieval-coupling-2026-05-06 finding F3, link expansion
-    # dead weight (historical — audit removed in repo cleanup 2026-08-18).
-    state.expanded_in_top_k_ids = [r["chunk_id"] for r in state.serving if r.get("_link_expanded")]
-    seed_in_top_k_ids = [
-        r["chunk_id"] for r in state.serving if r["chunk_id"] in state.link_expand_seed_chunk_ids
-    ]
-    state.decision_record["link_expand"] = {
-        "enabled": settings.link_expand_enabled,
-        "seed_k": len(state.link_expand_seed_chunk_ids),
-        "candidate_urls": state.link_expand_candidate_urls,
-        "expanded_added": state.link_expand_count,
-        "expanded_in_top_k": len(state.expanded_in_top_k_ids),
-        "expanded_top_k_chunk_ids": state.expanded_in_top_k_ids,
-        "seed_in_top_k": len(seed_in_top_k_ids),
-        "served_top_k": len(state.serving),
-    }
 
     # Issue #71 measurement gate: before adding any custom graph traversal,
     # prove whether the current Graphiti graph leg contributes to served
@@ -1283,6 +1165,7 @@ def _run_response_build(state: RetrievalPipelineState) -> None:
                     source_url=result.get("source_url"),
                     kb_slug=result.get("kb_slug"),
                     source_label=result.get("source_label"),
+                    product=result.get("product") or None,
                     title=result.get("title"),
                     original_filename=result.get("original_filename"),
                     image_urls=payload_list(result, "image_urls") or None,
@@ -1336,14 +1219,6 @@ def _run_confidence_band(state: RetrievalPipelineState) -> None:
         "sources": _evidence_pack_decision_sources(state.evidence_pack),
         "top_item_chunk_ids": [item.chunk_id for item in state.evidence_pack.items[:5]],
     }
-
-    # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-8 — link-expand survival
-    # outcome counter. Only count when link-expand actually contributed
-    # candidates (link_expand_count > 0). Hit = at least one expanded chunk
-    # survived to the served top-K; miss = none did.
-    if state.link_expand_count > 0:
-        outcome = "hit" if state.expanded_in_top_k_ids else "miss"
-        retrieval_link_expand_top_k_total.labels(outcome=outcome, org_id=req.org_id).inc()
 
     # Issue #71: only count requests where Graphiti returned candidates. Empty
     # graph searches are measured by graph_results_count and should not dilute
@@ -1433,8 +1308,6 @@ def _record_decision_and_shadow(state: RetrievalPipelineState) -> None:
         if state.graph_search_ms is not None
         else None,
         rerank_ms=round(state.rerank_ms, 1) if state.rerank_ms is not None else None,
-        link_expand_ms=round(state.link_expand_ms, 1) if state.link_expand_ms is not None else None,
-        link_expand_count=state.link_expand_count,
     )
 
 
@@ -1544,15 +1417,8 @@ async def retrieve(
 
     await _run_router(state)
     await _run_search(state)
-    # F3 phase 1 instrumentation (audit retrieval-coupling-2026-05-06):
-    # capture seed/expanded sets across the pipeline so the final
-    # decision_record can measure link-expansion's contribution to
-    # the served top-k. Without this, we cannot tell whether the
-    # expanded chunks ever survive the reranker + source-select +
-    # quality-boost pass — i.e. whether the
-    # extra Qdrant scroll-call buys anything in practice.
-    await _run_link_expand(state)
-    # The candidates before the reranker: the search, the graph facts and the linked chunks.
+    await _run_page_context_candidate_boost(state)
+    # The candidates before the reranker: the search and the graph facts.
     _note_stage(state.debug_stages, "search", state.raw_results)
 
     await _run_rerank(state)

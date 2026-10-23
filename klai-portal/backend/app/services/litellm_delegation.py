@@ -3,8 +3,9 @@
 portal-api calls LiteLLM with the master key, which belongs to no tenant, so
 LiteLLM's PII enforcer (``deploy/litellm/klai_pii_enforce.py``) cannot tell
 whose text a call carries and masks nothing. The enforcer accepts the tenant
-from ``metadata._klai_delegated_org_id``, and only on the master key, so a
-tenant key cannot pick another org's policy this way.
+from ``metadata._klai_delegated_org_id``, and only on the master key and the
+measurement key one-offs run on (alias ``klai-measurement``), so a tenant key
+cannot pick another org's policy this way.
 """
 
 from typing import Any
