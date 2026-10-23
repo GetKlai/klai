@@ -1401,3 +1401,41 @@ def test_a_retrieval_round_on_the_widget_reads_the_expected_articles_from_the_ca
     assert armed == [True, True]
     assert (rows["w-1"]["search"], rows["w-1"]["rerank"], rows["w-1"]["served"]) == (True, True, 1)
     assert rows["w-2"]["skipped"] == rows["w-3"]["skipped"] == "no_expected_source"
+
+
+def test_an_explicitly_empty_article_list_expects_none_while_a_missing_one_falls_back_to_the_recorded_reply():
+    reply = f"See {_ART}/a."
+
+    assert (
+        meetlat._expected_sources({"cid": "aaaaaaaa", "turn": 0, "expect": "antwoord_kb", "articles": []}, reply) == []
+    )
+    assert meetlat._expected_sources({"cid": "aaaaaaaa", "turn": 0, "expect": "antwoord_kb"}, reply) == [f"{_ART}/a"]
+
+
+@pytest.mark.asyncio
+async def test_a_lost_knowledge_base_in_a_retrieval_round_is_an_error_row_and_ends_the_turn_before_a_writer(
+    monkeypatch,
+):
+    from app.services import retrieval_context
+    from app.services.retrieval_context import KnowledgeTurn
+
+    async def knowledge_base_lost(_turn, _body):
+        return [], "prompt for an Open turn without passages", [], False
+
+    monkeypatch.setattr(retrieval_context, "_call_retrieval", knowledge_base_lost)
+    monkeypatch.setattr(retrieval_context, "_choose_and_prompt", retrieval_context._choose_and_prompt)
+    meetlat._install_retrieval_probe()
+    turn = types.SimpleNamespace(turn=KnowledgeTurn())
+    meetlat._arm()
+
+    result = await retrieval_context._call_retrieval(turn, {"top_k": 20})
+    record = meetlat._take()
+
+    assert result[0] == []
+    assert record == {"failed": True}
+    assert turn.turn.refusal is not None
+    assert meetlat._stage_row({"cid": "c", "u": 0}, [f"{_ART}/a"], record) == {
+        "cid": "c",
+        "u": 0,
+        "error": "retrieval_failed",
+    }

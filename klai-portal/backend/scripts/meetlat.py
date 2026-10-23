@@ -37,7 +37,7 @@ from under that directory.
 retrieval, so no model selects or writes. For the named turns of the cases with an
 expected article it asks retrieval-api for the source keys of each stage
 (``debug_stages``) and writes where the article stood after search, after the rerank
-and in the passages the chat would have received, plus a summary (recall per stage,
+and in the evidence pack the chat would have received (before its selection step), plus a summary (recall per stage,
 MRR of the served list, timing of /retrieve) next to the rows. The expected article is
 the case's ``articles`` (URLs); an internal case without them takes the links of the
 reply recorded in the conversation, for the classes the knowledge base should answer
@@ -833,6 +833,10 @@ def _install_retrieval_probe() -> None:
                 "api_ms": (result.get("metadata") or {}).get("retrieval_ms"),
                 "stages": result.get("debug_stages"),
             }
+        else:
+            # The turn's own reply to a lost knowledge base; a refusal ends the turn before any writer.
+            _probe["record"] = {"failed": True}
+            t.turn.refusal = lambda _language: _PROBE_REPLY
         return result
 
     async def probed_choose(t: Any, found: Any) -> Any:
@@ -857,12 +861,13 @@ def _expected_sources(case: dict, recorded_reply: str = "") -> list[str]:
     """The source keys of the articles the case expects its answer from; empty when it names none.
 
     Only the classes the knowledge base should answer expect an article. A case
-    names them in ``articles`` (the widget cases do); an internal case without
-    that field falls back to the links of the reply recorded in the conversation.
+    names them in ``articles`` (the widget cases do, an empty list meaning none);
+    an internal case without that field falls back to the links of the reply
+    recorded in the conversation.
     """
     if _case_class(case) not in _ANSWERED_FROM_ARTICLES:
         return []
-    urls = case.get("articles") or [url.rstrip(".,;") for url in _URL.findall(recorded_reply)]
+    urls = case["articles"] if "articles" in case else [url.rstrip(".,;") for url in _URL.findall(recorded_reply)]
     return _distinct_keys(urls)
 
 
@@ -893,7 +898,9 @@ def _stage_row(row: dict, expected: list[str], record: dict | None) -> dict:
     kept = {field: row[field] for field in ("cid", "k", "u", "mode", "ask", "error") if field in row}
     if "error" in kept:
         return kept
-    if record is None or "served" not in record:
+    if record is not None and record.get("failed"):
+        return {**kept, "error": "retrieval_failed"}
+    if record is None:
         # A trivial turn or a question about Klai itself searches nothing.
         return {**kept, "skipped": "turn_did_not_search"}
     if record["stages"] is None:

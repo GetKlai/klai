@@ -136,8 +136,10 @@ the case they store for a follow-up does not depend on the reply.
 
 A case is measured when it names the article its answer should come from and its class is `antwoord`, `antwoord_kb` or
 `dekkend_antwoord`; every other case gets a `skipped` row. The expected article is the case's `articles` (a list of URLs,
-as the widget cases carry them); an internal case without it takes the links in the reply recorded in the LibreChat
-conversation for that turn, so check that those replies cite the article the owner expects. URLs are compared as the
+as the widget cases carry them; an empty list means none); an internal case without the field takes the links in the
+reply recorded in the LibreChat conversation for that turn, so check that those replies cite the article the owner
+expects. A turn whose retrieval failed becomes an `error` row (delete it to replay that case); a turn that searches
+nothing (a thank-you, a question about Klai itself) becomes a `skipped` row. URLs are compared as the
 evidence pack keys a source (`klai_citations.source_url_key`: host without `www.`, path without the trailing slash).
 
 A row says, for the expected articles together (any one counts):
@@ -145,7 +147,8 @@ A row says, for the expected articles together (any one counts):
 - `search`: among the candidates after search, before the reranker (`retrieval_candidates`, plus Graphiti facts when that
   leg is on; the linked chunks added afterwards are not counted);
 - `rerank`: among what the reranker returned (the best `3 x top_k` of the `reranker_candidates` it scored);
-- `served`: the rank of the best of them among the distinct sources of the passages the chat would receive, or `null`.
+- `served`: the rank of the best of them among the distinct sources of the evidence pack the chat would receive, or
+  `null`. That is the pack before the selection step, which then picks the passages the writer reads.
 
 The first two stages include the query variants (the widget's two paraphrases, a follow-up's case queries), because their
 candidates reach the served list too. retrieval-api answers `debug_stages` only when the request sets it, with source keys
