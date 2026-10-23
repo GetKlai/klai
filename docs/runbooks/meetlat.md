@@ -32,7 +32,9 @@ answer, the case and the judges that default to the small model) or `klai-judge`
 check, the paraphrases), and the route accepts `klai-ingest` for the round (`_apply_measurement_patches` in
 `meetlat.py`). The calls retrieval-api makes itself cannot be patched from the portal, so
 `deploy/scripts/retrieval-api-oneoff.sh` fixes its model variables to `klai-ingest` (see
-[Measure the retrieval](#measure-the-retrieval)). A model call added to the chat path later has to be routed there too;
+[Measure the retrieval](#measure-the-retrieval)). A round that points at the live retrieval-api (the default
+`KNOWLEDGE_RETRIEVE_URL`) still lets that service rewrite follow-up questions on `klai-fast`, so a round with follow-up
+turns runs against such a one-off. A model call added to the chat path later has to be routed there too;
 the test `test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance` fails on any turn that names another model.
 
 ## Run a round
