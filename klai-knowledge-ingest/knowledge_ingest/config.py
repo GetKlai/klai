@@ -17,9 +17,6 @@ class Settings(BaseSettings):
     docs_internal_secret: str = ""
     knowledge_ingest_secret: str = ""  # X-Internal-Secret for service-to-service auth
     gitea_webhook_secret: str = ""  # HMAC secret for Gitea webhook verification
-    # Max chars per chunk (roughly 300-400 tokens for BGE-M3)
-    chunk_size: int = 1500
-    chunk_overlap: int = 200
     # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-05 — anonymous-crawl auth-wall
     # detection. ``mode`` is one of "reject" (default, skip page entirely),
     # "audit_only" (log + ingest unchanged), or "degrade" (ingest with

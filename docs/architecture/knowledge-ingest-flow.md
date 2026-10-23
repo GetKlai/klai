@@ -318,12 +318,12 @@ context window strategies, and enrichment needs.
 
 | content_type | HyPE | Context strategy | Max chunk size |
 |---|---|---|---|
-| `kb_article` | Conditional (synthesis_depth ≤ 1) | first_n | 500 tokens (2000 chars) |
-| `pdf_document` | Always | front_matter | 800 tokens (3200 chars) |
-| `meeting_transcript` | Always | rolling_window | 400 tokens (1600 chars) |
-| `1on1_transcript` | Always | rolling_window | 300 tokens (1200 chars) |
-| `email_thread` | Conditional (depth ≤ 1) | most_recent | 500 tokens (2000 chars) |
-| `unknown` | Never | first_n | 500 tokens (2000 chars) |
+| `kb_article` | Conditional (synthesis_depth ≤ 1) | first_n | 250 tokens (1000 chars) |
+| `pdf_document` | Always | front_matter | 300 tokens (1200 chars) |
+| `meeting_transcript` | Always | rolling_window | 300 tokens (1200 chars) |
+| `1on1_transcript` | Always | rolling_window | 250 tokens (1000 chars) |
+| `email_thread` | Conditional (depth ≤ 1) | most_recent | 250 tokens (1000 chars) |
+| `unknown` | Never | first_n | 250 tokens (1000 chars) |
 
 If no `content_type` is set, the pipeline uses `unknown` — no enrichment, basic chunking.
 
@@ -437,26 +437,40 @@ LLM context — in a single pass:
    self-contained. Each section becomes one **parent chunk**.
 2. **Size split (children)** — within each parent, the text is further split at
    paragraph (`\n\n`) or sentence (`. `) boundaries until each *child* fits in
-   `chunk_size` (default 1500 chars, roughly 300–400 tokens for BGE-M3).
-3. **Overlap** — consecutive children share a 200-character tail/head overlap so an
-   answer doesn't fall between two children.
+   the profile's size (1000 chars, about 250 tokens, for most types; see the table).
+3. **No overlap** — children are cut end to end. Retrieval-api builds the passage for
+   the chat from a child plus its neighbours, so overlap would only repeat text.
 4. **Parent-child linkage** — every child carries `parent_index` pointing to its
    parent in the parents list. Parents are persisted to PostgreSQL `knowledge.parent_chunks`
    AT enrichment time (so the row IDs are then threaded into each child's Qdrant
-   payload as `parent_chunk_id`). Retrieval-api uses that linkage to expand each
-   matched child back to its parent text after reranking.
+   payload as `parent_chunk_id`). Retrieval-api uses that linkage to give the chat a
+   window of at most 2000 characters around each matched child, cut from the parent text
+   after reranking (the whole parent when it is shorter).
 
 The content profile defines `chunk_tokens_max` per document type. The chunker converts
-this to characters (`tokens × 4`) and uses it as `chunk_size`. Effective chunk sizes:
+this to characters (`tokens × 4`, `child_chunk_chars`) and uses it as the child size in
+the base ingest, in enrichment and in a rebuild. These sizes apply to text the chunker cuts
+itself (markdown and text uploads, crawled pages, connector text):
 
 | content_type | chunk_tokens_max | chunk_size (chars) |
 |---|---|---|
-| `1on1_transcript` | 300 | 1200 |
-| `meeting_transcript` | 400 | 1600 |
-| `kb_article` | 500 | 2000 |
-| `email_thread` | 500 | 2000 |
-| `unknown` | 500 | 2000 |
-| `pdf_document` | 800 | 3200 |
+| `1on1_transcript` | 250 | 1000 |
+| `meeting_transcript` | 300 | 1200 |
+| `kb_article` | 250 | 1000 |
+| `email_thread` | 250 | 1000 |
+| `unknown` | 250 | 1000 |
+| `pdf_document` | 300 | 1200 |
+
+What applies per source when the chunker is not the one cutting:
+
+- **Meeting transcripts** from the portal and scribe arrive pre-chunked (`skip_chunking=True`)
+  in groups of about four speaker turns, at most 400 tokens (`_MAX_TOKENS_PER_CHUNK` in the
+  scribe adapter); the `meeting_transcript` row does not apply to them.
+- **Binary uploads through docling-serve** (pdf, office) arrive pre-chunked from docling-serve's
+  own hybrid chunker with its default size, also `skip_chunking=True`; each chunk is its own
+  parent, so the 2000-character window never cuts them (a chunk over the cap is returned whole).
+- **Anything else without `skip_chunking`** (crawls, the JSON-feed connector, text uploads) goes
+  through the chunker and the table above.
 
 **Step 2 — Embed and store raw vectors.** Each chunk is sent to **TEI** (HuggingFace
 text-embeddings-inference, OpenAI-compatible `/v1/embeddings` endpoint) running **BGE-M3**

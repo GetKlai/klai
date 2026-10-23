@@ -21,6 +21,8 @@ class ContentTypeProfile:
     hype_question_focus: str
 
 
+# Child chunks are 200-300 tokens for every profile (no overlap, see chunker.py);
+# chunk_tokens_max is the size the chunker cuts at, 4 chars per token.
 PROFILES: dict[str, ContentTypeProfile] = {
     "kb_article": ContentTypeProfile(
         content_type="kb_article",
@@ -28,8 +30,8 @@ PROFILES: dict[str, ContentTypeProfile] = {
         context_strategy="first_n",
         context_tokens_min=800,
         context_tokens_max=2000,
-        chunk_tokens_min=300,
-        chunk_tokens_max=500,
+        chunk_tokens_min=150,
+        chunk_tokens_max=250,
         hype_question_focus=(
             "Genereer vragen in alledaagse taal die een gebruiker zou typen "
             "— herformuleringen, synoniemen, informele varianten."
@@ -42,7 +44,7 @@ PROFILES: dict[str, ContentTypeProfile] = {
         context_tokens_min=600,
         context_tokens_max=1200,
         chunk_tokens_min=150,
-        chunk_tokens_max=400,
+        chunk_tokens_max=300,
         hype_question_focus=(
             "Genereer vragen over beslissingen, actiepunten, eigenaren "
             "en deadlines die in dit fragment besproken worden."
@@ -55,7 +57,7 @@ PROFILES: dict[str, ContentTypeProfile] = {
         context_tokens_min=400,
         context_tokens_max=800,
         chunk_tokens_min=100,
-        chunk_tokens_max=300,
+        chunk_tokens_max=250,
         hype_question_focus=(
             "Genereer vragen over toezeggingen, besproken onderwerpen en genoemde namen."
         ),
@@ -66,8 +68,8 @@ PROFILES: dict[str, ContentTypeProfile] = {
         context_strategy="most_recent",
         context_tokens_min=1000,
         context_tokens_max=4000,
-        chunk_tokens_min=200,
-        chunk_tokens_max=500,
+        chunk_tokens_min=150,
+        chunk_tokens_max=250,
         hype_question_focus=(
             "Genereer vragen over de status, beslissingen en verzoeken in deze e-mailthread."
         ),
@@ -78,8 +80,8 @@ PROFILES: dict[str, ContentTypeProfile] = {
         context_strategy="front_matter",
         context_tokens_min=800,
         context_tokens_max=2000,
-        chunk_tokens_min=400,
-        chunk_tokens_max=800,
+        chunk_tokens_min=200,
+        chunk_tokens_max=300,
         hype_question_focus=(
             "Genereer how-to vragen, definitie-vragen en specificatie-vragen "
             "die dit fragment beantwoordt."
@@ -91,8 +93,8 @@ PROFILES: dict[str, ContentTypeProfile] = {
         context_strategy="first_n",
         context_tokens_min=2000,
         context_tokens_max=2000,
-        chunk_tokens_min=500,
-        chunk_tokens_max=500,
+        chunk_tokens_min=250,
+        chunk_tokens_max=250,
         hype_question_focus="",
     ),
 }
@@ -101,3 +103,8 @@ PROFILES: dict[str, ContentTypeProfile] = {
 def get_profile(content_type: str) -> ContentTypeProfile:
     """Return the profile for the given content type, falling back to 'unknown'."""
     return PROFILES.get(content_type, PROFILES["unknown"])
+
+
+def child_chunk_chars(content_type: str) -> int:
+    """Child chunk size in characters for the content type (1 token ≈ 4 chars)."""
+    return get_profile(content_type).chunk_tokens_max * 4

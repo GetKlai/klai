@@ -175,3 +175,87 @@ def test_parent_text_contains_all_child_content() -> None:
         sample = child_body[:50].strip()
         if sample:
             assert sample in parent_body, f"Child fragment {sample!r} not found in parent text"
+
+
+def _words(text: str) -> str:
+    return "".join(text.split())
+
+
+def test_children_do_not_overlap_and_cover_the_parent() -> None:
+    """Children are cut end to end: every character of the parent is in exactly one child."""
+    sentences = " ".join(f"Sentence number {i} explains one step of the flow." for i in range(80))
+    doc = f"# Flow\n\n{sentences}"
+    children, parents = chunk_markdown_with_parents(doc)
+
+    assert len(parents) == 1
+    assert len(children) > 3
+    heading_len = len("Flow\n\n")
+    bodies = [c.text[heading_len:] for c in children]
+    assert _words("".join(bodies)) == _words(parents[0].text[heading_len:])
+
+
+def test_children_stay_in_the_200_to_300_token_range() -> None:
+    sentences = " ".join(f"Sentence number {i} explains one step of the flow." for i in range(100))
+    children, _ = chunk_markdown_with_parents(f"# Flow\n\n{sentences}")
+
+    sizes = [len(c.text) // 4 for c in children[:-1]]  # the last one is the remainder
+    assert sizes
+    assert all(150 <= s <= 300 for s in sizes), sizes
+
+
+def test_a_paragraph_that_fits_in_a_child_is_not_cut() -> None:
+    """A short paragraph before a 900-char one must not pull the long one apart."""
+    short = ("Short lead paragraph of the section. " * 6).strip()
+    long_par = "Long paragraph that is cut only if the chunker ignores paragraph limits. " * 12
+    long_par = long_par.strip()[:900]
+    children, _ = chunk_markdown_with_parents(f"# T\n\n{short}\n\n{long_par}")
+
+    assert sum(long_par in c.text for c in children) == 1
+
+
+def _sentences(chars: int) -> str:
+    """Exactly ``chars`` characters of short sentences, so a sentence end is always near."""
+    out, i = "", 0
+    while len(out) < chars:
+        out += f"Step number {i:03d} is done before the next one starts. "
+        i += 1
+    return out[:chars]
+
+
+def test_splitting_with_overlap_terminates_when_a_short_lead_precedes_a_paragraph() -> None:
+    """The early paragraph break must move the window forward even when overlap > 0."""
+    import signal
+
+    from knowledge_ingest.chunker import _split_by_size
+
+    text = "x" * 59 + "\n\n" + "y" * 979
+
+    def on_alarm(*_: object) -> None:
+        raise TimeoutError("_split_by_size did not terminate")
+
+    signal.signal(signal.SIGALRM, on_alarm)
+    signal.alarm(5)
+    try:
+        chunks = _split_by_size(text, 1000, 200, keep_paragraphs=True)
+    finally:
+        signal.alarm(0)
+
+    assert len(chunks) >= 2 and sum(c.count("y") for c in chunks) >= 979
+
+
+def test_a_short_lead_does_not_become_its_own_parent() -> None:
+    lead = _sentences(131)
+    body = _sentences(5939)
+    _, parents = chunk_markdown_with_parents(f"# T\n\n{lead}\n\n{body}")
+
+    assert len(parents) <= 2
+    assert len(parents[0].text) > 3000
+
+
+def test_a_short_lead_stays_with_the_paragraph_after_it_in_the_child_split() -> None:
+    lead = "One line of lead text."
+    body = _sentences(979)
+    children, _ = chunk_markdown_with_parents(f"# T\n\n{lead}\n\n{body}")
+
+    assert lead in children[0].text
+    assert len(children[0].text) > 500

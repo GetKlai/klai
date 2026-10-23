@@ -135,8 +135,23 @@ def _split_by_headings(text: str) -> list[tuple[str, str]]:
     return sections
 
 
-def _split_by_size(text: str, size: int, overlap: int) -> list[str]:
-    """Split text into overlapping chunks by character count."""
+def _fits_whole(text: str, start: int, size: int) -> bool:
+    """True when the paragraph starting at ``start`` is at most ``size`` long."""
+    end = text.find("\n\n", start)
+    return (len(text) if end == -1 else end) - start <= size
+
+
+def _split_by_size(text: str, size: int, overlap: int, keep_paragraphs: bool = False) -> list[str]:
+    """Split text into overlapping chunks by character count.
+
+    ``keep_paragraphs`` (children only) also breaks at a paragraph boundary before
+    the halfway point when the paragraph after it fits a chunk whole, so it moves
+    to the next chunk instead of being cut: the JSON-feed adapter relies on it for
+    record lines of up to 900 chars in a 1000-char chunk. The early break is taken
+    only when it leaves a chunk of at least ``MIN_SECTION_TOKENS`` (no stub, the
+    same floor ``_merge_stubs`` applies to sections) and moves the window forward
+    by more than ``overlap``, otherwise ``start = end - overlap`` would not advance.
+    """
     if len(text) <= size:
         return [text]
     chunks: list[str] = []
@@ -146,7 +161,12 @@ def _split_by_size(text: str, size: int, overlap: int) -> list[str]:
         if end < len(text):
             # Try to break at paragraph boundary
             break_at = text.rfind("\n\n", start, end)
-            if break_at > start + size // 2:
+            early = (
+                keep_paragraphs
+                and break_at - start >= max(MIN_SECTION_TOKENS * 4, overlap + 1)
+                and _fits_whole(text, break_at + 2, size)
+            )
+            if break_at > start + size // 2 or early:
                 end = break_at
             else:
                 # Fall back to sentence boundary
@@ -186,9 +206,16 @@ def chunk_markdown(content: str, chunk_size: int = 1500, overlap: int = 200) -> 
 # SPEC-RAG-PARENT-CHILD-001 — chunk-size defaults.
 #
 # Token-to-char approximations are 1 token ≈ 4 chars for mixed Dutch/English
-# (mirrors enrichment._truncate_to_tokens). The SPEC targets:
-#   child:   ~300 tokens / 50-token overlap   →  ~1200 chars / 200 char overlap
-#   parent:  ~1500 tokens / no overlap        →  ~6000 chars / 0 overlap
+# (mirrors enrichment._truncate_to_tokens).
+#   child:   ~250 tokens / no overlap   →  ~1000 chars / 0 overlap
+#   parent:  ~1500 tokens / no overlap  →  ~6000 chars / 0 overlap
+#
+# Children used to be 300-800 tokens with 200 chars of overlap. Chroma's chunking
+# evaluation (plan §3) has 200-token recursive chunks without overlap beating
+# 800/400 on precision at equal recall, and the selection step verifies quotes
+# per passage, so it does not need whole sections. Overlap is 0 because the
+# retrieval side builds its window from the neighbouring children, so overlap
+# would only repeat text the window already adds.
 #
 # Parents align with the same heading-based section boundaries as the
 # legacy chunker — when a section is shorter than parent_size we get one
@@ -196,8 +223,8 @@ def chunk_markdown(content: str, chunk_size: int = 1500, overlap: int = 200) -> 
 # and children fan out across them.
 PARENT_CHUNK_SIZE_DEFAULT = 6000
 PARENT_CHUNK_OVERLAP_DEFAULT = 0
-CHILD_CHUNK_SIZE_DEFAULT = 1200
-CHILD_CHUNK_OVERLAP_DEFAULT = 200
+CHILD_CHUNK_SIZE_DEFAULT = 1000
+CHILD_CHUNK_OVERLAP_DEFAULT = 0
 
 
 def _approx_token_count(text: str) -> int:
@@ -387,7 +414,9 @@ def chunk_markdown_with_parents(
             parent_position += 1
 
             # Now split this parent into children for matching.
-            child_texts = _split_by_size(parent_text, child_size, child_overlap)
+            child_texts = _split_by_size(
+                parent_text, child_size, child_overlap, keep_paragraphs=True
+            )
             for child_text in child_texts:
                 if not child_text.strip():
                     continue

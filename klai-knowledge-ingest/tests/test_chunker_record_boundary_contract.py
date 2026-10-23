@@ -17,7 +17,6 @@ def test_kb_article_chunker_never_splits_adapter_record_lines() -> None:
     chunks, _parents = chunk_markdown_with_parents(
         document,
         child_size=profile.chunk_tokens_max * 4,
-        child_overlap=200,
     )
 
     assert len(document) > profile.chunk_tokens_max * 4
@@ -39,7 +38,6 @@ def test_kb_article_chunker_cuts_wrapped_oversized_records_at_segment_boundaries
     chunks, _parents = chunk_markdown_with_parents(
         document,
         child_size=profile.chunk_tokens_max * 4,
-        child_overlap=200,
     )
 
     assert len(chunks) > 1

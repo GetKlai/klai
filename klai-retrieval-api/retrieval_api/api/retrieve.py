@@ -1137,7 +1137,9 @@ async def _run_parent_lookup(state: RetrievalPipelineState) -> None:
 
 
 def _run_response_build(state: RetrievalPipelineState) -> None:
-    """Build response chunks, swapping parent text where available."""
+    """Build response chunks, swapping in a window of the parent text where available."""
+
+    from retrieval_api.services import parent_lookup
 
     # 7. Build ChunkResult objects (with parent-text swap when available)
     state.chunks_out = []
@@ -1146,7 +1148,9 @@ def _run_response_build(state: RetrievalPipelineState) -> None:
         for result in state.serving:
             pid = result.get("parent_chunk_id")
             if pid is not None and pid in state.parent_text_by_id:
-                display_text = state.parent_text_by_id[pid]
+                display_text = parent_lookup.parent_window(
+                    state.parent_text_by_id[pid], result["text"], result.get("heading_path")
+                )
                 is_parent = True
                 parent_text_chunks += 1
             else:
