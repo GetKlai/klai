@@ -459,6 +459,8 @@ class RetrievalPipelineState:
     )
     # The request's ``debug_stages`` record, filled by every pass; None when not asked for.
     debug_stages: dict[str, list[str]] | None = None
+    # The translated and alias-expanded legs (search.extra_query_legs), main pass only.
+    extra_legs_task: asyncio.Task[list[tuple[list[float], SparseVector | None]]] | None = None
 
 
 async def _resolve_identity_and_telemetry(
@@ -828,15 +830,21 @@ async def _run_search(state: RetrievalPipelineState) -> None:
     req = state.req
     # 4. Search — Qdrant + Graphiti in parallel (AC-5)
     t_qdrant = time.perf_counter()
-    qdrant_coro = search.hybrid_search(
-        state.query_vector,
-        req,
-        settings.retrieval_candidates,
-        state.sparse_vector,
-        raw_query_vector=state.raw_query_vector,
-        raw_sparse_vector=state.raw_sparse_vector,
-        query_text=state.query_resolved,
-    )
+
+    async def _qdrant() -> list[dict]:
+        # The extra legs started after coreference and ran beside the embedding;
+        # waiting for them here keeps the graph search from waiting too.
+        return await search.hybrid_search(
+            state.query_vector,
+            req,
+            settings.retrieval_candidates,
+            state.sparse_vector,
+            raw_query_vector=state.raw_query_vector,
+            raw_sparse_vector=state.raw_sparse_vector,
+            extra_legs=await state.extra_legs_task if state.extra_legs_task else None,
+        )
+
+    qdrant_coro = _qdrant()
 
     graph_task: asyncio.Task[list[dict]] | None = None
     t_graph: float | None = None
@@ -1389,6 +1397,7 @@ async def retrieve(
     state = preamble_result
     _start_query_variant_passes(state)
     await _run_coreference(state)
+    state.extra_legs_task = asyncio.create_task(search.extra_query_legs(state.query_resolved, req))
     await _run_embed(state)
 
     # The retired gate has no runtime work. Its explicit skipped step keeps the

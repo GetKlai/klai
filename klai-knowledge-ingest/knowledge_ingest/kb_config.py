@@ -148,20 +148,27 @@ async def get_kb_aliases(org_id: str, kb_slug: str) -> list[list[str]]:
 
     Read from the portal's table on the shared database, like
     ``connector_state`` reads ``portal_connectors``. asyncpg hands jsonb over
-    as text because the pool registers no JSON codec.
+    as text because the pool registers no JSON codec. A database error (the
+    portal migration not yet run, a blip) enriches without aliases rather than
+    not at all; the empty answer is cached like any other, so it is logged
+    once per KB per minute.
     """
     key = _cache_key(org_id, kb_slug)
     if key not in _alias_cache:
-        pool = await get_pool()
-        raw = await pool.fetchval(
-            """
-            SELECT kb.aliases FROM portal_knowledge_bases kb
-            JOIN portal_orgs org ON org.id = kb.org_id
-            WHERE org.zitadel_org_id = $1 AND kb.slug = $2
-            """,
-            org_id,
-            kb_slug,
-        )
+        try:
+            pool = await get_pool()
+            raw = await pool.fetchval(
+                """
+                SELECT kb.aliases FROM portal_knowledge_bases kb
+                JOIN portal_orgs org ON org.id = kb.org_id
+                WHERE org.zitadel_org_id = $1 AND kb.slug = $2
+                """,
+                org_id,
+                kb_slug,
+            )
+        except Exception as exc:
+            logger.warning("kb_alias_lookup_failed", kb_slug=kb_slug, error=type(exc).__name__)
+            raw = None
         _alias_cache[key] = json.loads(raw) if raw else []
     return _alias_cache[key]
 
