@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     litellm_api_key: str = ""
 
     retrieval_candidates: int = 60
-    reranker_candidates: int = 20  # top-N from retrieval sent to reranker (CPU budget)
+    # Top-N of the retrieval candidates the reranker scores (env RERANKER_CANDIDATES). It was 20
+    # until 23 October 2026. On the meetlat retrieval cases 60 got the article of 1 of 22 internal
+    # turns back from the reranker in every run and lost none; the widget cases did not
+    # change (35 of 36 at both depths). The price is 230 ms at p50 on /retrieve (582 to 812 ms).
+    reranker_candidates: int = 60
     # Multi-part fan-out: chunks served per sub-question. Keeps the merged
     # context bounded (6 sub-questions x 4 chunks max).
     sub_query_top_k: int = 4

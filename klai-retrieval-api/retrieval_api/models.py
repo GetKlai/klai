@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 # SPEC-SEC-010 REQ-2.5: maximum allowed length of a single conversation_history entry's
 # content field. Longer strings are rejected with HTTP 422 at the Pydantic layer.
@@ -94,6 +94,9 @@ class RetrieveRequest(BaseModel):
     # retrieved in 33 of 40 turns but the three-source cap and duplicate
     # sections left a median of five passages from three articles.
     max_sources: int | None = Field(None, ge=1, le=8)
+    # Measurement only (meetlat retrieval): answer with the source keys each
+    # pipeline stage saw, next to the normal response. Off by default.
+    debug_stages: bool = False
 
     @field_validator("conversation_history")
     @classmethod
@@ -241,6 +244,18 @@ class RetrieveResponse(BaseModel):
     # Present only on sub-question fan-out requests: per-question coverage in
     # the caller's sub_queries order.
     sub_results: list[SubQueryResult] | None = None
+    # Only when the request set ``debug_stages``: stage name ("search" = the
+    # candidates after search, "rerank" = what the reranker returned) to the
+    # distinct source keys (``chunk_source_key``) it held. Keys only, no text.
+    debug_stages: dict[str, list[str]] | None = None
+
+    @model_serializer(mode="wrap")
+    def _leave_out_debug_stages_unless_asked_for(self, handler):
+        """The key is in the body only when asked for; every other field keeps its null."""
+        body = handler(self)
+        if body.get("debug_stages") is None:
+            body.pop("debug_stages", None)
+        return body
 
 
 class Citation(BaseModel):
