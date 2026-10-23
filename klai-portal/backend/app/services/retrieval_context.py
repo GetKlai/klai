@@ -1130,6 +1130,7 @@ def _selection_signal(selection: PassageSelection | None, *, internal: bool) -> 
     return {
         "verdict": selection.verdict,
         "evidence": [{"passage": item.passage, "quote": item.quote[:200]} for item in selection.evidence],
+        "missing": selection.missing[:200],
         "question": selection.question[:200],
     }
 

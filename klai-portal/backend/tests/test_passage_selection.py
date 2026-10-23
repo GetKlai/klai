@@ -141,6 +141,44 @@ def test_open_mode_is_not_held_to_the_source_s_own_words():
     assert "Do not add a step, menu, cause or example that is not in the source." in open_mode
 
 
+def test_a_turn_answered_from_the_passages_is_not_also_told_to_say_the_articles_lack_something():
+    """A turn either answers from the passages or says it cannot, never both.
+
+    Shaped like a widget follow-up of 2026-10-23: the selection quoted the one
+    sentence that lists every app, the light judge called the reply answered,
+    and the reply still opened with "this is not in the help articles" before
+    the list. The brief asks every writer to name what the articles do not
+    cover, so the writer decides that gap itself on a turn the selection
+    already found whole."""
+    apps = "Met Belhoek kun je bellen via de Belhoek Webtelefoon, de Belhoek App en de softphone Kiepsoft Duo."
+    article = [{"chunk_id": "s", "title": "Softphones en apps", "text": "Softphones en apps. " + apps}]
+    selection = PassageSelection(
+        need="Welke softphones de bezoeker met Belhoek kan gebruiken.",
+        evidence=[Evidence(passage=1, quote=apps)],
+        verdict="answers",
+        question="",
+    )
+
+    brief = writer_brief(selection, article, internal=False, source_only=True)
+
+    assert apps in brief
+    assert "does not cover" not in brief
+
+
+def test_the_part_the_selection_names_as_missing_is_the_one_gap_the_writer_names_after_the_answer():
+    selection = PassageSelection(
+        need="Welke softphones de bezoeker kan gebruiken en of Kiepsoft Duo op een tablet werkt.",
+        evidence=[Evidence(passage=2, quote=_STEP)],
+        verdict="answers",
+        missing="of Kiepsoft Duo op een tablet werkt",
+        question="",
+    )
+
+    brief = writer_brief(selection, _SECTIONS, internal=False, source_only=True)
+
+    assert "do not cover this part: of Kiepsoft Duo op een tablet werkt. After the answer" in brief
+
+
 async def test_a_selection_that_fails_once_is_tried_again_and_used():
     """Without a verdict a source-only turn answers "not found", so one timeout
     or bad reply gets a second try before it costs the visitor the answer."""
