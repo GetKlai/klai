@@ -73,3 +73,10 @@ def test_word_count_follows_the_restored_text() -> None:
     result = _extract("Ga naar en kies.", "Ga naar [Instellingen](https://example.com/i) en kies.")
 
     assert result.word_count == len(result.fit_markdown.split())
+
+
+def test_a_line_that_also_occurs_without_a_link_is_left_alone() -> None:
+    raw = "Open [Instellingen](https://example.com/i) nu.\nOpen nu.\n"
+    fit = "Open nu.\nOpen nu.\n"
+
+    assert _extract(fit, raw).fit_markdown == fit

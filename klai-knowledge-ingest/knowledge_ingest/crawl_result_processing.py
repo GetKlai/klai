@@ -98,20 +98,23 @@ def restore_pruned_link_labels(fit: str, raw: str) -> str:
     instead keeps navigation chrome as well (+63% text on navigation pages,
     SPEC-RAG-INTAKE-QUALITY-001 section 11), so this restores only the proven case:
     a fit line whose words, with every link removed, equal those of exactly one raw
-    line that has a link and prose around it. That line is replaced by the raw
-    line; no other raw text comes back.
+    line, and that line has a link. The fit line is replaced by the raw line; no
+    other raw text comes back.
     """
     if not fit or not raw or fit == raw:
         return fit
+    # Every raw line counts, linked or not: a fit line that could belong to a
+    # linked and to an unlinked raw line is ambiguous and stays as it is.
     by_key: dict[tuple[str, ...], set[str]] = {}
     for line in raw.splitlines():
         key = _unlinked_words(line)
-        if key and _MD_LINK_RE.search(line):
+        if key:
             by_key.setdefault(key, set()).add(line)
     out: list[str] = []
     for line in fit.splitlines():
         candidates = by_key.get(_unlinked_words(line), ())
-        out.append(next(iter(candidates)) if len(candidates) == 1 else line)
+        match = next(iter(candidates)) if len(candidates) == 1 else None
+        out.append(match if match and _MD_LINK_RE.search(match) else line)
     return "\n".join(out) + ("\n" if fit.endswith("\n") else "")
 
 

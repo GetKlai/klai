@@ -259,7 +259,12 @@ def _merge_stubs(sections: list[Section]) -> tuple[list[Section], int]:
     """
 
     def eligible(stub_path: str, other_path: str) -> bool:
-        return _parent_path(other_path) in (_parent_path(stub_path), stub_path)
+        # Two top-level headings have no parent heading in common, so they are
+        # not peers; a stub before the first heading goes with that heading.
+        parent = _parent_path(stub_path)
+        return _parent_path(other_path) == stub_path or (
+            parent != "" and _parent_path(other_path) == parent
+        )
 
     def title(path: str) -> str:
         return path.rpartition(" > ")[2]

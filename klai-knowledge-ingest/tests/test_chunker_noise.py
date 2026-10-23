@@ -114,6 +114,16 @@ def test_last_stub_merges_into_the_preceding_section() -> None:
     assert "Bel eerst de beheerder." in children[0].text
 
 
+def test_stub_under_one_top_level_heading_does_not_move_to_the_next_one() -> None:
+    doc = f"# Telefoon\n\nEen kort antwoord.\n\n# Webphone\n\n{_PROSE}"
+
+    children, _ = chunk_markdown_with_parents(doc)
+
+    short = next(c for c in children if "Een kort antwoord." in c.text)
+    assert short.heading_path == "Telefoon"
+    assert "telefoon instelt" not in short.text
+
+
 def test_stub_never_merges_across_a_different_parent_heading() -> None:
     doc = (
         f"# Telefoon\n\n## Windows\n\n### Opmerking\n\nKort.\n\n"
