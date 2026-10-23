@@ -68,6 +68,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import replay_internal_chat as replay
@@ -543,6 +544,7 @@ async def _replay_internal_conversation(
     stood (:func:`_stage_row`).
     """
     named = {case["turn"] for case in cases}
+    from_reply = {case["turn"] for case in cases if "articles" not in case}
     failed: list[dict] = []
     for u in range(max(named) + 1):
         if expected is not None:
@@ -551,7 +553,7 @@ async def _replay_internal_conversation(
         if expected is not None:
             record = _take()
             if u in named:
-                row = _stage_row(row, expected[u], record)
+                row = _stage_row(row, expected[u], record, kb_hosts_only=u in from_reply)
         if u in named:
             yield {**row, "prefix_errors": list(failed)} if failed else row
         if "error" in row:
@@ -816,10 +818,12 @@ def _install_retrieval_probe() -> None:
 
     ``_call_retrieval`` asks retrieval-api for its ``debug_stages`` and times the call;
     ``_choose_and_prompt`` (the selection step, the gap event and the prompt) is replaced
-    by a stub that keeps the passages the chat would have received and routes the turn to
-    a fixed reply, so no model writes. A turn that is not armed runs unchanged.
+    by a stub that keeps the passages the chat would have received. Every way out of
+    retrieval, also the turns that search nothing (``_without_search``) and a failed call,
+    ends in :func:`_end_turn`, so no model writes. A turn that is not armed runs unchanged.
     """
     call, choose = retrieval_context._call_retrieval, retrieval_context._choose_and_prompt
+    without_search = retrieval_context._without_search
 
     async def probed_call(t: Any, retrieve_body: dict) -> Any:
         if not _probe["armed"]:
@@ -834,9 +838,8 @@ def _install_retrieval_probe() -> None:
                 "stages": result.get("debug_stages"),
             }
         else:
-            # The turn's own reply to a lost knowledge base; a refusal ends the turn before any writer.
             _probe["record"] = {"failed": True}
-            t.turn.refusal = lambda _language: _PROBE_REPLY
+            _end_turn(t)
         return result
 
     async def probed_choose(t: Any, found: Any) -> Any:
@@ -844,12 +847,30 @@ def _install_retrieval_probe() -> None:
             return await choose(t, found)
         if _probe["record"] is not None:
             _probe["record"]["served"] = _distinct_keys(chunk.get("source_url") for chunk in found.chunks)
-        t.turn.refusal = lambda _language: _PROBE_REPLY
-        t.turn.not_in_passages = True
+        _end_turn(t)
         return [], "", [], False
 
+    def probed_without_search(t: Any, **kwargs: Any) -> Any:
+        result = without_search(t, **kwargs)
+        if _probe["armed"] and result is not None:
+            _end_turn(t)
+        return result
+
+    retrieval_context._without_search = probed_without_search  # type: ignore[assignment]
     retrieval_context._call_retrieval = probed_call  # type: ignore[assignment]
     retrieval_context._choose_and_prompt = probed_choose  # type: ignore[assignment]
+
+
+def _end_turn(t: Any) -> None:
+    """Route an armed turn to a fixed reply on both surfaces, so no writer runs.
+
+    The internal chat answers a ``refusal`` in code. The widget never reads it: it answers
+    ``not_in_passages`` with its fixed "not found", and ``selection_failed`` keeps even a
+    request for a person (which the phrase detector decides) from reaching the writer.
+    """
+    t.turn.refusal = lambda _language: _PROBE_REPLY
+    t.turn.not_in_passages = True
+    t.turn.selection_failed = True
 
 
 def _distinct_keys(urls: Iterable[Any]) -> list[str]:
@@ -882,6 +903,9 @@ def _skipped_row(case: dict) -> dict:
     return {"cid": case["cid"], "u": case["turn"], "skipped": "no_expected_source"}
 
 
+_MISS: dict[str, Any] = {"search": False, "rerank": False, "served": None}
+
+
 def stage_hits(expected: list[str], stages: dict[str, list[str]], served: list[str]) -> dict:
     """Whether an expected source is among the candidates after search and the reranker's output; its best served rank."""
     wanted = set(expected)
@@ -893,16 +917,30 @@ def stage_hits(expected: list[str], stages: dict[str, list[str]], served: list[s
     }
 
 
-def _stage_row(row: dict, expected: list[str], record: dict | None) -> dict:
-    """The retrieval row of a replayed turn: where the expected articles stood, and the timing of /retrieve."""
+def _stage_row(row: dict, expected: list[str], record: dict | None, *, kb_hosts_only: bool = False) -> dict:
+    """The retrieval row of a replayed turn: where the expected articles stood, and the timing of /retrieve.
+
+    ``kb_hosts_only`` is for expected links read from a recorded reply, which can also hold
+    web search citations and product URLs: only links on a host the retrieval itself returned
+    for this turn count, and a case left with none expects no article.
+    """
     kept = {field: row[field] for field in ("cid", "k", "u", "mode", "ask", "error") if field in row}
     if "error" in kept:
         return kept
+    if kb_hosts_only and record is not None and record.get("stages") is not None:
+        seen = {
+            urlparse(key).netloc
+            for key in [*(record.get("served") or ()), *itertools.chain.from_iterable(record["stages"].values())]
+        }
+        expected = [key for key in expected if urlparse(key).netloc in seen]
+        if not expected:
+            return {"cid": row["cid"], "u": row["u"], "skipped": "no_expected_source"}
+    # The case expects an article, so a turn that lost its knowledge base or did not search
+    # at all (a thank-you, a question about Klai itself) is a miss at every stage.
     if record is not None and record.get("failed"):
-        return {**kept, "error": "retrieval_failed"}
+        return {**kept, **_MISS, "failed": True}
     if record is None:
-        # A trivial turn or a question about Klai itself searches nothing.
-        return {**kept, "skipped": "turn_did_not_search"}
+        return {**kept, **_MISS, "not_searched": True}
     if record["stages"] is None:
         # An older retrieval-api answers without the field; that is not a miss.
         return {**kept, "error": "retrieval_api_without_debug_stages"}
@@ -918,7 +956,11 @@ def _stage_row(row: dict, expected: list[str], record: dict | None) -> dict:
 
 
 def summarize_stages(rows: list[dict]) -> dict:
-    """Recall at each stage, MRR of the served list and the timing of /retrieve over the measured rows."""
+    """Recall at each stage, MRR of the served list and the timing of /retrieve over the rows that expect an article.
+
+    A turn that failed or did not search counts as a miss; ``skipped`` are the cases that
+    expect no article and ``errors`` the turns no retrieval answer could be had for.
+    """
     measured = [row for row in rows if "search" in row]
 
     def share(hit: Callable[[dict], bool]) -> float | None:
@@ -930,7 +972,9 @@ def summarize_stages(rows: list[dict]) -> dict:
 
     return {
         "cases": len(measured),
-        "skipped": sum(1 for row in rows if "skipped" in row),
+        "failed": sum(1 for row in measured if row.get("failed")),
+        "not_searched": sum(1 for row in measured if row.get("not_searched")),
+        "skipped": sum(1 for row in rows if row.get("skipped") == "no_expected_source"),
         "errors": sum(1 for row in rows if "error" in row),
         "recall_search": share(lambda row: row["search"]),
         "recall_rerank": share(lambda row: row["rerank"]),

@@ -1163,6 +1163,7 @@ def test_the_summary_gives_recall_per_stage_and_the_mrr_of_the_served_list():
     summary = meetlat.summarize_stages(_stage_rows())
 
     assert summary["cases"] == 4 and summary["skipped"] == 1 and summary["errors"] == 1
+    assert summary["failed"] == 0 and summary["not_searched"] == 0
     assert (summary["recall_search"], summary["recall_rerank"], summary["recall_served"]) == (0.75, 0.5, 0.5)
     assert summary["mrr_served"] == round((1 + 1 / 4) / 4, 3)
     assert summary["retrieve_ms"] == {"p50": 200, "p95": 400}
@@ -1350,7 +1351,7 @@ def test_a_retrieval_round_that_resumes_summarises_the_rows_of_both_runs(monkeyp
     assert json.loads((tmp_path / "r.jsonl.summary.json").read_text())["cases"] == 2
 
 
-def test_a_turn_that_searched_nothing_is_skipped(monkeypatch, tmp_path):
+def test_a_turn_that_searched_nothing_is_a_miss_at_every_stage_when_its_case_expects_an_article(monkeypatch, tmp_path):
     thread = _thread("aaaaaaaa-1111", ["first"])
     thread.turns[1]["content"] = f"See {_ART}/a."
     overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": thread}, [])
@@ -1359,7 +1360,14 @@ def test_a_turn_that_searched_nothing_is_skipped(monkeypatch, tmp_path):
     assert _retrieval(tmp_path, [{"cid": "aaaaaaaa", "turn": 0, "expect": "antwoord_kb"}], overlay) == 0
 
     (row,) = map(json.loads, (tmp_path / "r.jsonl").read_text().splitlines())
-    assert row["skipped"] == "turn_did_not_search"
+    assert (row["search"], row["rerank"], row["served"], row["not_searched"]) == (False, False, None, True)
+    summary = json.loads((tmp_path / "r.jsonl.summary.json").read_text())
+    assert (summary["cases"], summary["not_searched"], summary["recall_search"], summary["recall_served"]) == (
+        1,
+        1,
+        0.0,
+        0.0,
+    )
 
 
 def test_a_retrieval_api_that_answers_without_stages_is_an_error_not_a_miss():
@@ -1413,7 +1421,7 @@ def test_an_explicitly_empty_article_list_expects_none_while_a_missing_one_falls
 
 
 @pytest.mark.asyncio
-async def test_a_lost_knowledge_base_in_a_retrieval_round_is_an_error_row_and_ends_the_turn_before_a_writer(
+async def test_a_lost_knowledge_base_in_a_retrieval_round_is_a_miss_and_ends_the_turn_before_a_writer(
     monkeypatch,
 ):
     from app.services import retrieval_context
@@ -1434,8 +1442,31 @@ async def test_a_lost_knowledge_base_in_a_retrieval_round_is_an_error_row_and_en
     assert result[0] == []
     assert record == {"failed": True}
     assert turn.turn.refusal is not None
-    assert meetlat._stage_row({"cid": "c", "u": 0}, [f"{_ART}/a"], record) == {
-        "cid": "c",
-        "u": 0,
-        "error": "retrieval_failed",
-    }
+    row = meetlat._stage_row({"cid": "c", "u": 0}, [f"{_ART}/a"], record)
+    assert row == {"cid": "c", "u": 0, "search": False, "rerank": False, "served": None, "failed": True}
+    summary = meetlat.summarize_stages([row, *_stage_rows()[:1]])
+    assert (summary["cases"], summary["failed"], summary["recall_served"]) == (2, 1, 0.5)
+
+
+def _record(search, served=()):
+    return {"top_k": 20, "retrieve_ms": 10, "api_ms": 9.0, "stages": {"search": search, "rerank": []}, "served": served}
+
+
+def test_links_of_a_recorded_reply_outside_the_knowledge_base_do_not_become_expected_articles():
+    """A web search citation or a product URL in the reply is not an article of the knowledge base."""
+    kb, elsewhere = f"{_ART}/a", "https://vendor.example.net/pricing"
+    record = _record([kb, f"{_ART}/z"])
+
+    row = meetlat._stage_row({"cid": "c", "u": 0}, [elsewhere, kb], record, kb_hosts_only=True)
+    only_elsewhere = meetlat._stage_row({"cid": "c", "u": 0}, [elsewhere], record, kb_hosts_only=True)
+
+    assert (row["expected"], row["search"]) == (1, True)
+    assert only_elsewhere == {"cid": "c", "u": 0, "skipped": "no_expected_source"}
+
+
+def test_the_articles_a_case_names_itself_are_kept_whatever_their_host():
+    record = _record([f"{_ART}/z"])
+
+    row = meetlat._stage_row({"cid": "c", "u": 0}, ["https://vendor.example.net/a"], record)
+
+    assert (row["expected"], row["search"]) == (1, False)

@@ -138,14 +138,17 @@ A case is measured when it names the article its answer should come from and its
 `dekkend_antwoord`; every other case gets a `skipped` row. The expected article is the case's `articles` (a list of URLs,
 as the widget cases carry them; an empty list means none); an internal case without the field takes the links in the
 reply recorded in the LibreChat conversation for that turn, so check that those replies cite the article the owner
-expects. A turn whose retrieval failed becomes an `error` row (delete it to replay that case); a turn that searches
-nothing (a thank-you, a question about Klai itself) becomes a `skipped` row. URLs are compared as the
+expects. Of those links only the ones on a host that retrieval returned for that turn count, so a web search citation or a
+product URL does not become an expected article; a case left with none is `skipped`. A turn whose retrieval failed, and a
+turn that searches nothing (a thank-you, a question about Klai itself) although its case expects an article, are misses at
+every stage (`failed`, `not_searched` in the row); only a retrieval that could not be had at all (a restart that outlasted
+the retries, an older retrieval-api) is an `error` row, which you delete to replay that case. URLs are compared as the
 evidence pack keys a source (`klai_citations.source_url_key`: host without `www.`, path without the trailing slash).
 
 A row says, for the expected articles together (any one counts):
 
 - `search`: among the candidates after search, before the reranker (`retrieval_candidates`, plus Graphiti facts when that
-  leg is on; the linked chunks added afterwards are not counted);
+  leg is on, and the chunks added by link expansion);
 - `rerank`: among what the reranker returned (the best `3 x top_k` of the `reranker_candidates` it scored);
 - `served`: the rank of the best of them among the distinct sources of the evidence pack the chat would receive, or
   `null`. That is the pack before the selection step, which then picks the passages the writer reads.
@@ -155,7 +158,8 @@ candidates reach the served list too. retrieval-api answers `debug_stages` only 
 and no text; an older retrieval-api answers without it and the row becomes an `error`, not a miss.
 
 Next to the rows the round writes `<out>.summary.json` and prints it: `recall_search`, `recall_rerank`, `recall_served`,
-`mrr_served` (mean of `1/rank` in the served list, 0 where absent) and p50 and p95 of the time of `/retrieve` as the
+`mrr_served` (mean of `1/rank` in the served list, 0 where absent), the counts `cases` (the rows that expect an article,
+`failed` and `not_searched` included), `skipped` (cases without an expected article) and `errors`, and p50 and p95 of the time of `/retrieve` as the
 portal saw it (`retrieve_ms`) and as retrieval-api reports it (`api_ms`). The summary is the comparison: run the same
 cases against two settings and put the summaries side by side. It covers all rows in the file, so a resumed round
 summarises both runs.
@@ -173,7 +177,7 @@ deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
   env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend KNOWLEDGE_RETRIEVE_URL=http://ra-depth60:8040 \
   python /out/ov-candidate/scripts/meetlat.py retrieval --surface widget --org <org-slug> --widget /out/widget.json \
     --cases /out/cases.jsonl --out /out/retrieval-depth60.jsonl --overlay /out/ov-candidate
-docker rm -f ra-depth60
+docker stop ra-depth60  # the one-off runs with --rm; it refuses the live service's names
 ```
 
 Both one-offs share the live Qdrant, Redis, the reranker GPU and the LiteLLM gateway, so run rounds one after the other

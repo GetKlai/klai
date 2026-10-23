@@ -11,7 +11,9 @@
 #
 # Usage: retrieval-api-oneoff.sh --name NAME --code DIR [--env KEY=VALUE]...
 #   DIR holds the retrieval_api package (klai-retrieval-api/ of the checkout).
-# Stop it with: docker rm -f NAME
+# The container runs with --rm, so stopping it also removes it: docker stop NAME
+# NAME may not be the live container's name or one of its network aliases (retrieval-api):
+# callers reach the live service by that name, and a clone answering to it would take their traffic.
 
 set -euo pipefail
 
@@ -43,6 +45,14 @@ if [[ "$(docker inspect --format '{{.State.Running}}' "$LIVE_CONTAINER" 2>/dev/n
     exit 1
 fi
 
+live_names="$LIVE_CONTAINER
+retrieval-api
+$(docker inspect --format '{{range .NetworkSettings.Networks}}{{range .Aliases}}{{println .}}{{end}}{{end}}' "$LIVE_CONTAINER")"
+if grep -qxF -- "$name" <<< "$live_names"; then
+    echo "ERROR: --name $name is a name of the live service; pick another." >&2
+    exit 1
+fi
+
 env_file="$(mktemp)"
 chmod 600 "$env_file"
 trap 'rm -f "$env_file"' EXIT
@@ -57,9 +67,12 @@ printf '%s\n' "${overrides[@]:-}" | grep . >> "$env_file" || true
 
 image="$(docker inspect --format '{{.Image}}' "$LIVE_CONTAINER")"
 workdir="$(docker inspect --format '{{.Config.WorkingDir}}' "$LIVE_CONTAINER")"
-mapfile -t networks < <(docker inspect --format '{{range $net, $cfg := .NetworkSettings.Networks}}{{println $net}}{{end}}' "$LIVE_CONTAINER" | grep .)
+networks=()
+while IFS= read -r net; do
+    [[ -n "$net" ]] && networks+=("$net")
+done < <(docker inspect --format '{{range $net, $cfg := .NetworkSettings.Networks}}{{println $net}}{{end}}' "$LIVE_CONTAINER")
 
-docker create \
+docker create --rm \
     --name "$name" \
     --label klai.oneoff=true \
     --env-file "$env_file" \
@@ -75,12 +88,15 @@ for net in "${networks[@]:1}"; do
 done
 docker start "$name" > /dev/null
 
-for _ in $(seq 1 60); do
+tries="${KLAI_ONEOFF_HEALTH_TRIES:-60}"
+for _ in $(seq 1 "$tries"); do
     if docker exec "$name" python -c "import urllib.request as u; u.urlopen('http://localhost:8040/health', timeout=2)" 2> /dev/null; then
-        echo "retrieval-api one-off: http://${name}:8040 (stop with: docker rm -f ${name})"
+        echo "retrieval-api one-off: http://${name}:8040 (stop and remove with: docker stop ${name})"
         exit 0
     fi
     sleep 1
 done
-echo "ERROR: $name did not answer /health within 60 s; see: docker logs $name" >&2
+docker logs --tail 20 "$name" >&2 || true
+docker rm -f "$name" > /dev/null
+echo "ERROR: $name did not answer /health within ${tries} s; it was removed (last log lines above)." >&2
 exit 1

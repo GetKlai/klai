@@ -883,7 +883,6 @@ async def _run_search(state: RetrievalPipelineState) -> None:
 
     state.candidates_retrieved = len(state.raw_results)
     state.decision_record["search_candidates_count"] = state.candidates_retrieved
-    _note_stage(state.debug_stages, "search", state.raw_results)
 
 
 async def _run_link_expand(state: RetrievalPipelineState) -> None:
@@ -1553,6 +1552,8 @@ async def retrieve(
     # quality-boost pass — i.e. whether the
     # extra Qdrant scroll-call buys anything in practice.
     await _run_link_expand(state)
+    # The candidates before the reranker: the search, the graph facts and the linked chunks.
+    _note_stage(state.debug_stages, "search", state.raw_results)
 
     await _run_rerank(state)
     _run_quality_floor(state)
