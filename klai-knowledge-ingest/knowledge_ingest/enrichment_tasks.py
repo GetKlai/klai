@@ -50,6 +50,7 @@ from knowledge_ingest.enrichment_policy import (
     resumable_episode_ids,
 )
 from knowledge_ingest.episode_text import split_episode_text
+from knowledge_ingest.falkordb_probe import FalkorDBDiedDuringEpisode, graph_writer_build
 from knowledge_ingest.llm_capacity import (
     DEFERRAL_WINDOW_SECONDS,
     LLMCapacityUnavailable,
@@ -68,6 +69,16 @@ logger = structlog.get_logger()
 # 16384s, 65536s -- ~24h of re-queued retries -- before the episode fails for
 # good. Pinned by tests/test_enrichment_retry_config.py.
 _GRAPHITI_MAX_ATTEMPTS = 8
+
+# Two FalkorDB deaths under the same document's write, not one: FalkorDB can
+# also die under an innocent write (a retrieval read, an operator script). On
+# 23 October 2026 the guilty document crashed it on every attempt, so the
+# second strike costs one more 99-105 s reload instead of seven hours of them.
+_FALKORDB_DEATHS_BEFORE_QUARANTINE = 2
+
+
+class GraphitiEpisodeQuarantined(RuntimeError):
+    """FalkorDB died under this document's episode write too often to retry."""
 
 
 def _graphiti_episode_failure_event(attempt: int, max_attempts: int) -> tuple[str, bool]:
@@ -590,6 +601,17 @@ def _register_tasks(procrastinate_app: Any) -> None:
     procrastinate_app.enrich_document_interactive = enrich_document_interactive  # type: ignore[attr-defined]
     procrastinate_app.enrich_document_bulk = enrich_document_bulk  # type: ignore[attr-defined]
 
+    class _QuarantineAwareRetry(procrastinate.BaseRetryStrategy):
+        """The graphiti retry, except that a quarantined episode fails for good."""
+
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+
+        def get_retry_decision(self, *, exception: BaseException, job: Any) -> Any:
+            if isinstance(exception, GraphitiEpisodeQuarantined):
+                return None
+            return self.inner.get_retry_decision(exception=exception, job=job)
+
     @procrastinate_app.task(
         queue=queues.GRAPHITI_BULK,
         # 9 runs, waits 4s, 16s, 64s, ... 65536s (~24h) -- graphiti already has a token
@@ -600,7 +622,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
         # rate-limiting instead of a quiet klai-medium success. A bounded but
         # generous lifetime re-queues the episode instead of dropping it the
         # moment graph.py's own inner retry gives up.
-        retry=procrastinate.RetryStrategy(max_attempts=_GRAPHITI_MAX_ATTEMPTS, exponential_wait=4),
+        retry=_QuarantineAwareRetry(
+            procrastinate.RetryStrategy(max_attempts=_GRAPHITI_MAX_ATTEMPTS, exponential_wait=4)
+        ),
         pass_context=True,
     )
     async def ingest_graphiti_episode(
@@ -661,6 +685,33 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     org_id=org_id,
                 )
                 return
+            # Deaths and quarantine count only for the build that caused them;
+            # a new version of the document is a new artifact and starts clean.
+            build = graph_writer_build()
+            same_build = artifact["extra"].get("graphiti_quarantine_build") == build
+            if artifact["extra"].get("graphiti_quarantined_at"):
+                if same_build:
+                    # graph_refresh and re-syncs enqueue it again.
+                    logger.info(
+                        "graphiti_aborted_quarantined",
+                        artifact_id=artifact_id,
+                        org_id=org_id,
+                    )
+                    return
+                await pg_store.update_artifact_extra(
+                    conn,
+                    artifact_id,
+                    {"graphiti_quarantined_at": None, "graphiti_falkordb_deaths": 0},
+                )
+                logger.info(
+                    "graphiti_quarantine_released_new_build",
+                    artifact_id=artifact_id,
+                    org_id=org_id,
+                    quarantined_build=artifact["extra"].get("graphiti_quarantine_build"),
+                    build=build,
+                )
+            prior_deaths = int(artifact["extra"].get("graphiti_falkordb_deaths") or 0)
+            prior_deaths = prior_deaths if same_build else 0
             if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=False):
                 return
             from knowledge_ingest import graph as graph_module
@@ -752,17 +803,41 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         return
                 if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
                     return
-                episode_id = await graph_module.ingest_episode(
-                    artifact_id=artifact_id,
-                    document_text=episode_text,
-                    org_id=org_id,
-                    content_type=content_type,
-                    belief_time_start=belief_time_start,
-                    kb_slug=kb_slug,
-                    path=path,
-                    entity_graph_data=entity_graph_data,
-                    previous_episode_id=episode_ids[-1] if episode_ids else None,
-                )
+                try:
+                    episode_id = await graph_module.ingest_episode(
+                        artifact_id=artifact_id,
+                        document_text=episode_text,
+                        org_id=org_id,
+                        content_type=content_type,
+                        belief_time_start=belief_time_start,
+                        kb_slug=kb_slug,
+                        path=path,
+                        entity_graph_data=entity_graph_data,
+                        previous_episode_id=episode_ids[-1] if episode_ids else None,
+                    )
+                except FalkorDBDiedDuringEpisode as exc:
+                    deaths = prior_deaths + 1
+                    quarantine = deaths >= _FALKORDB_DEATHS_BEFORE_QUARANTINE
+                    extra_patch: dict[str, Any] = {
+                        "graphiti_falkordb_deaths": deaths,
+                        "graphiti_quarantine_build": build,
+                    }
+                    if quarantine:
+                        extra_patch["graphiti_quarantined_at"] = int(time.time())
+                    await pg_store.update_artifact_extra(conn, artifact_id, extra_patch)
+                    if not quarantine:
+                        raise
+                    logger.error(
+                        "graphiti_episode_quarantined",
+                        artifact_id=artifact_id,
+                        org_id=org_id,
+                        kb_slug=kb_slug,
+                        falkordb_deaths=deaths,
+                        reason="falkordb_died_during_episode",
+                    )
+                    raise GraphitiEpisodeQuarantined(
+                        f"FalkorDB died {deaths} times while writing this document's episode"
+                    ) from exc
                 if episode_id is None:
                     attempt = context.job.attempts if context is not None else 0
                     event, exhausted = _graphiti_episode_failure_event(

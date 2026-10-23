@@ -1,21 +1,17 @@
-"""Tests for confidence_band emit + link-expand reranker boost.
+"""Tests for the confidence_band helper.
 
-SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1, REQ-3.
+SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1.
 
-Covers the pure helper functions ``_compute_confidence_band`` and
-``_apply_link_expand_boost`` from ``retrieval_api.api.retrieve``. The
-end-to-end pipeline (band emit on a real /retrieve response) is exercised
-by the existing integration tests + the eval harness post-deploy.
+Covers the pure helper function ``_compute_confidence_band`` from
+``retrieval_api.api.retrieve``. The end-to-end pipeline (band emit on a real /retrieve
+response) is exercised by the existing integration tests + the eval harness post-deploy.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from retrieval_api.api.retrieve import (
-    _apply_link_expand_boost,
-    _compute_confidence_band,
-)
+from retrieval_api.api.retrieve import _compute_confidence_band
 
 # ---------------------------------------------------------------------------
 # REQ-1 — _compute_confidence_band
@@ -143,111 +139,6 @@ def test_band_handles_int_score() -> None:
         reranker_enabled=True,
     )
     assert band == "high"
-
-
-# ---------------------------------------------------------------------------
-# REQ-3 — _apply_link_expand_boost
-# ---------------------------------------------------------------------------
-
-
-def test_boost_noop_when_disabled() -> None:
-    """link_expand_enabled=False → no boost regardless of factor."""
-    chunks = [
-        {"chunk_id": "a", "_link_expanded": True, "reranker_score": 0.5},
-        {"chunk_id": "b", "reranker_score": 0.7},
-    ]
-    out = _apply_link_expand_boost(chunks, boost=1.20, enabled=False)
-    assert out[0]["reranker_score"] == 0.5
-    assert out[1]["reranker_score"] == 0.7
-
-
-def test_boost_noop_when_factor_is_one() -> None:
-    """boost=1.0 (default) is a deliberate no-op; ships safe."""
-    chunks = [
-        {"chunk_id": "a", "_link_expanded": True, "reranker_score": 0.5},
-        {"chunk_id": "b", "reranker_score": 0.7},
-    ]
-    out = _apply_link_expand_boost(chunks, boost=1.00, enabled=True)
-    assert out[0]["reranker_score"] == 0.5
-    assert out[1]["reranker_score"] == 0.7
-
-
-def test_boost_applies_to_link_expanded_only() -> None:
-    """Shadow (no final_rank_score present): pre-contract behavior — the
-    boost mutates reranker_score directly; unflagged chunks stay untouched."""
-    chunks = [
-        {"chunk_id": "a", "_link_expanded": True, "reranker_score": 0.5},
-        {"chunk_id": "b", "reranker_score": 0.5},  # no flag
-    ]
-    out = _apply_link_expand_boost(chunks, boost=1.20, enabled=True)
-    boosted = next(c for c in out if c["chunk_id"] == "a")
-    not_boosted = next(c for c in out if c["chunk_id"] == "b")
-    assert boosted["reranker_score"] == pytest.approx(0.6)
-    assert "final_rank_score" not in boosted
-    assert not_boosted["reranker_score"] == 0.5
-
-
-def test_boost_caps_at_one() -> None:
-    """A 1.20 boost on 0.95 would compute 1.14 — must cap at 1.0."""
-    chunks = [{"chunk_id": "a", "_link_expanded": True, "reranker_score": 0.95}]
-    out = _apply_link_expand_boost(chunks, boost=1.20, enabled=True)
-    assert out[0]["reranker_score"] == 1.0
-
-
-def test_boost_resorts_results() -> None:
-    """After boost, the list must be re-sorted so source-aware-select sees
-    the new order.
-    """
-    chunks = [
-        {"chunk_id": "a", "reranker_score": 0.55},  # was top
-        {"chunk_id": "b", "_link_expanded": True, "reranker_score": 0.50},  # boosted to 0.60
-        {"chunk_id": "c", "reranker_score": 0.40},
-    ]
-    out = _apply_link_expand_boost(chunks, boost=1.20, enabled=True)
-    assert [c["chunk_id"] for c in out] == ["b", "a", "c"]
-    assert out[0]["reranker_score"] == pytest.approx(0.60)
-
-
-def test_boost_targets_final_rank_score_when_contract_active() -> None:
-    """Active (final_rank_score present, REQ-RANK-01): the boost writes the
-    single ranking truth and leaves reranker_score untouched."""
-    chunks = [
-        {"chunk_id": "a", "reranker_score": 0.55, "final_rank_score": 0.55},
-        {
-            "chunk_id": "b",
-            "_link_expanded": True,
-            "reranker_score": 0.50,
-            "final_rank_score": 0.50,
-        },
-    ]
-    out = _apply_link_expand_boost(chunks, boost=1.20, enabled=True)
-    boosted = next(c for c in out if c["chunk_id"] == "b")
-    assert boosted["final_rank_score"] == pytest.approx(0.60)
-    assert boosted["reranker_score"] == 0.50
-    assert [c["chunk_id"] for c in out] == ["b", "a"]
-
-
-def test_boost_skips_chunks_with_none_score() -> None:
-    """Reranker-fallback chunks have reranker_score=None — boost must skip
-    them to avoid TypeError on multiplication.
-    """
-    chunks = [
-        {"chunk_id": "a", "_link_expanded": True, "reranker_score": None, "score": 0.5},
-        {"chunk_id": "b", "_link_expanded": True, "reranker_score": 0.5, "score": 0.5},
-    ]
-    out = _apply_link_expand_boost(chunks, boost=1.20, enabled=True)
-    a = next(c for c in out if c["chunk_id"] == "a")
-    b = next(c for c in out if c["chunk_id"] == "b")
-    assert a["reranker_score"] is None
-    assert "final_rank_score" not in a
-    assert b["reranker_score"] == pytest.approx(0.6)
-
-
-def test_boost_returns_same_list_for_chaining() -> None:
-    """Helper mutates and returns input list (matches surrounding pipeline)."""
-    chunks: list[dict] = []
-    out = _apply_link_expand_boost(chunks, boost=1.10, enabled=True)
-    assert out is chunks
 
 
 def test_band_prefers_final_rank_score_when_present() -> None:

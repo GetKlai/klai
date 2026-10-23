@@ -354,7 +354,7 @@ async def test_user_turn_carries_the_question_language(monkeypatch):
 #
 # retrieval-api already bands every result and the LibreChat path acts on that
 # band. The widget path used to throw it away and re-band on reranker_score
-# alone, which ignores the link-expand and page-context boosts final_rank_score
+# alone, which ignores the page-context boost final_rank_score
 # carries — so the band the calibration readout grouped on was not the band
 # that acted.
 

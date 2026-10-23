@@ -150,7 +150,7 @@ groups:
               type: threshold
               expression: count
               conditions:
-                - evaluator: { params: [0], type: gt }
+                - evaluator: { params: [2], type: gt }
                   operator: { type: and }
                   reducer: { params: [], type: last }
                   type: query
@@ -163,11 +163,17 @@ groups:
           severity: warning
           spec: SPEC-LAUNCH-SOFTLAUNCH-001
           service_group: retrieval
+          # Customers get a refusal (Strict) or an answer without their knowledge
+          # base (Open). Pages from 3 failed turns in 15 minutes so that one turn lost
+          # to a retrieval-api restart during a deploy does not wake anyone. There
+          # were no failures outside org 22 in the last 30 days, so the threshold
+          # has no baseline to tune against.
+          page: "true"
         annotations:
           summary: 'Internal chat retrieval failing — Strict turns refused, Open turns answered without the KB'
           description: |
-            portal-api failed to fetch knowledge-base context for at least one
-            internal chat turn in the last 15 minutes. In Strict mode the user
+            portal-api failed to fetch knowledge-base context for more than two
+            internal chat turns in the last 15 minutes. In Strict mode the user
             got a refusal; in Open mode an answer from general knowledge with a
             note that the knowledge base was unreachable. The `failure` field
             holds the HTTP status or the exception class; `identity_assertion`

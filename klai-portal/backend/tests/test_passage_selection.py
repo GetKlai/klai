@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.services import passage_selection
 from app.services.passage_selection import Evidence, PassageSelection, writer_brief
 
@@ -139,6 +141,115 @@ def test_open_mode_is_not_held_to_the_source_s_own_words():
     assert "own order and its own words" in strict
     assert "own order and its own words" not in open_mode
     assert "Do not add a step, menu, cause or example that is not in the source." in open_mode
+
+
+def test_a_turn_answered_from_the_passages_is_not_also_told_to_say_the_articles_lack_something():
+    """A turn either answers from the passages or says it cannot, never both.
+
+    Shaped like a widget follow-up of 2026-10-23: the selection quoted the one
+    sentence that lists every app, the light judge called the reply answered,
+    and the reply still opened with "this is not in the help articles" before
+    the list. The brief asks every writer to name what the articles do not
+    cover, so the writer decides that gap itself on a turn the selection
+    already found whole."""
+    apps = "Met Belhoek kun je bellen via de Belhoek Webtelefoon, de Belhoek App en de softphone Kiepsoft Duo."
+    article = [{"chunk_id": "s", "title": "Softphones en apps", "text": "Softphones en apps. " + apps}]
+    selection = PassageSelection(
+        need="Welke softphones de bezoeker met Belhoek kan gebruiken.",
+        evidence=[Evidence(passage=1, quote=apps)],
+        verdict="answers",
+        question="",
+    )
+
+    brief = writer_brief(selection, article, internal=False, source_only=True)
+
+    assert apps in brief
+    assert "does not cover" not in brief
+
+
+def test_the_part_the_selection_names_as_missing_is_the_one_gap_the_writer_names_after_the_answer():
+    selection = PassageSelection(
+        need="Welke softphones de bezoeker kan gebruiken en of Kiepsoft Duo op een tablet werkt.",
+        evidence=[Evidence(passage=2, quote=_STEP)],
+        verdict="answers",
+        missing="of Kiepsoft Duo op een tablet werkt",
+        question="",
+    )
+
+    brief = writer_brief(selection, _SECTIONS, internal=False, source_only=True)
+
+    assert "do not cover this part: of Kiepsoft Duo op een tablet werkt. After the answer" in brief
+
+
+def test_a_not_found_verdict_outranked_by_a_quote_never_claims_the_lines_answer_all_of_it():
+    """The quote outranks the verdict so the writer gets the lines (31 of 39
+    such turns were answers on 2026-10-13), but the selection did say the
+    passages do not answer the need, and 6 of those 39 were "not found"."""
+    selection = PassageSelection(
+        need="Of de headset ook via bluetooth verbindt.",
+        evidence=[Evidence(passage=2, quote=_STEP)],
+        verdict="not_in_passages",
+        question="",
+    )
+
+    brief = writer_brief(selection, _SECTIONS, internal=False, source_only=True)
+
+    assert _STEP in brief
+    assert "answer all of it" not in brief
+    assert "say after the answer in one sentence which part the help articles do not cover" in brief
+
+
+def test_a_depends_verdict_that_asks_about_one_part_never_claims_the_lines_answer_all_of_it():
+    question = "Gaat het om de draadloze of de bedrade headset?"
+    selection = PassageSelection(
+        need="Hoe de headset aansluit en hoe hij oplaadt.",
+        evidence=[Evidence(passage=2, quote=_STEP)],
+        verdict="depends",
+        question=question,
+    )
+
+    brief = writer_brief(selection, _SECTIONS, internal=False, source_only=True, question=question)
+
+    assert f"ask: {question}" in brief
+    assert "answer all of it" not in brief
+
+
+def test_questions_beyond_the_search_limit_keep_their_own_note_beside_the_brief():
+    """The questions past the search limit are told apart from "not covered"
+    by their own note; the brief must not tell the writer the lines answer
+    everything while those questions were never searched."""
+    selection = PassageSelection(
+        need="aansluiten", evidence=[Evidence(passage=2, quote=_STEP)], verdict="answers", question=""
+    )
+
+    brief = writer_brief(selection, _SECTIONS, internal=False, source_only=True, unchecked=True)
+
+    assert "answer all of it" not in brief
+    assert "not separately searched" in brief
+
+
+@pytest.mark.parametrize(
+    ("prompt_name", "internal"),
+    [
+        ("SUPPORT_CHAT_SYSTEM_PROMPT", False),
+        ("SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT", False),
+        ("GROUNDED_CHAT_SYSTEM_PROMPT", True),
+        ("OPEN_KB_CHAT_SYSTEM_PROMPT", True),
+    ],
+)
+def test_every_profile_the_brief_reaches_defers_what_is_missing_to_the_brief_it_gets(prompt_name, internal):
+    """One owner of "the sources do not cover this": each profile names the
+    note by the heading the brief really writes, or the writer keeps its own
+    rule beside the brief's."""
+    import klai_chat_prompts
+
+    selection = PassageSelection(
+        need="aansluiten", evidence=[Evidence(passage=2, quote=_STEP)], verdict="answers", question=""
+    )
+    heading = writer_brief(selection, _SECTIONS, internal=internal, source_only=True).split("\n")[2]
+    note = heading.removeprefix("[This turn] ").split(":")[0]
+
+    assert f"When a note '{note}' follows" in getattr(klai_chat_prompts, prompt_name)
 
 
 async def test_a_selection_that_fails_once_is_tried_again_and_used():

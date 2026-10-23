@@ -7,8 +7,11 @@ import logging
 from contextlib import asynccontextmanager
 
 import httpx
+import redis.asyncio as aioredis
 from fastapi import FastAPI
 from prometheus_client import make_asgi_app
+from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
 from starlette.middleware.cors import CORSMiddleware
 
 from retrieval_api.api.chat import router as chat_router
@@ -156,17 +159,22 @@ async def health():
         checks["litellm"] = "error"
 
     # FalkorDB — only checked when Graphiti is enabled (AC-12).
-    # REQ-39.1: ``db.connection.ping()`` is the falkordb sync client; running
-    # it directly in an async handler blocks the event loop (Caddy polls
-    # /health every ~10 s). Hop into the default thread pool via
-    # ``asyncio.to_thread`` so concurrent /health probes and live retrieve
-    # traffic are not stalled on the ping round-trip.
+    # REQ-39.1: an async PING, never the falkordb client. Its constructor sends
+    # two synchronous INFO commands without a socket timeout from the event
+    # loop; on 23 October 2026 a FalkorDB reloading its dump for 99-105 s let
+    # those hang and every retrieve request waited for the reload to finish.
+    # No retries: redis-py would otherwise retry a loading server ten times.
     if settings.graphiti_enabled:
         try:
-            from falkordb import FalkorDB
-
-            db = FalkorDB(host=settings.falkordb_host, port=settings.falkordb_port)
-            await asyncio.to_thread(db.connection.ping)
+            client = aioredis.Redis(
+                host=settings.falkordb_host,
+                port=settings.falkordb_port,
+                retry=Retry(NoBackoff(), 0),
+            )
+            try:
+                await asyncio.wait_for(client.ping(), timeout=3.0)
+            finally:
+                await client.aclose()
             checks["falkordb"] = "ok"
         except Exception:
             logger.warning("health_check_failed: falkordb", exc_info=True)

@@ -21,6 +21,22 @@ front of `sys.path` when it was imported, which shadowed the overlay given throu
 which code ran. The scripts no longer touch `sys.path` on import, and `run` prints where the pipeline's modules were
 loaded from before it replays anything.
 
+## Rounds run on the Vibe allowance
+
+A round never spends the keys real visitors use. On 23 October 2026 several rounds ran in parallel on `klai-primary`,
+`klai-medium` and `klai-fast`, spent the Mistral workspaces' monthly limit, and both keys answered 402 from about 10:00
+UTC: the gateway refused every model and live chat was down for every tenant. The rule of the chat plan (section 6 of
+`docs/architecture/chat-quality-history-and-plan.md`) is enforced by the CLI, so no flag or habit has to remember it:
+`run` and `retrieval` set the request model and every model the chat path reads from the settings to `klai-ingest` (the
+answer, the case and the judges that default to the small model) or `klai-judge` (the selection step, the grounding
+check, the paraphrases), and the route accepts `klai-ingest` for the round (`_apply_measurement_patches` in
+`meetlat.py`). The calls retrieval-api makes itself cannot be patched from the portal, so
+`deploy/scripts/retrieval-api-oneoff.sh` fixes its model variables to `klai-ingest` (see
+[Measure the retrieval](#measure-the-retrieval)). The live retrieval-api would rewrite follow-up questions on
+`klai-fast`, so `run` and `retrieval` refuse to start when `KNOWLEDGE_RETRIEVE_URL` is its compose host `retrieval-api`
+or its container name, and there is no flag to override that: a round always starts with a retrieval-api one-off. A model call added to the chat path later has to be routed there too;
+the test `test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance` fails on any turn that names another model.
+
 ## Run a round
 
 1. Build the overlay in the output directory of the one-off (here `/opt/klai/oneoff/meetlat`, mounted as `/out`). It
@@ -38,11 +54,13 @@ loaded from before it replays anything.
 
    Put the case file next to it as `/opt/klai/oneoff/meetlat/cases.jsonl`. The container user must be able to read both.
 
-2. Run it through the one-off, with the overlay first on `PYTHONPATH` and the backend root after it:
+2. Start a retrieval-api one-off for the round (the checkout's code, or `main`'s when only the portal changes; the
+   command is in [Measure the retrieval](#measure-the-retrieval)), then run through the portal one-off, with the
+   overlay first on `PYTHONPATH`, the backend root after it and `KNOWLEDGE_RETRIEVE_URL` on the retrieval-api one-off:
 
    ```bash
    deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
-     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend \
+     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend KNOWLEDGE_RETRIEVE_URL=http://<one-off-name>:8040 \
      python /out/ov-candidate/scripts/meetlat.py run --surface internal --org <org-slug> \
        --cases /out/cases.jsonl --out /out/round-candidate-1.jsonl --overlay /out/ov-candidate
    ```
@@ -58,7 +76,7 @@ loaded from before it replays anything.
 
    ```bash
    deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
-     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend \
+     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend KNOWLEDGE_RETRIEVE_URL=http://<one-off-name>:8040 \
      python /out/ov-candidate/scripts/meetlat.py run --surface widget --org <org-slug> --widget /out/widget.json \
        --cases /out/widget-cases.jsonl --out /out/widget-candidate-1.jsonl --overlay /out/ov-candidate
    ```
@@ -148,7 +166,7 @@ evidence pack keys a source (`klai_citations.source_url_key`: host without `www.
 A row says, for the expected articles together (any one counts):
 
 - `search`: among the candidates after search, before the reranker (`retrieval_candidates`, plus Graphiti facts when that
-  leg is on, and the chunks added by link expansion);
+  leg is on);
 - `rerank`: among what the reranker returned (the best `3 x top_k` of the `reranker_candidates` it scored);
 - `served`: the rank of the best of them among the distinct sources of the evidence pack the chat would receive, or
   `null`. That is the pack before the selection step, which then picks the passages the writer reads.
@@ -167,7 +185,9 @@ summarises both runs.
 To measure a retrieval-api change before it merges, start the checkout's retrieval-api beside the live one and point the
 portal one-off at it with `KNOWLEDGE_RETRIEVE_URL`. `deploy/scripts/retrieval-api-oneoff.sh` clones the live service's
 image, environment and networks, mounts the checkout's `retrieval_api` package over the image's, opens its Postgres pool
-read-only, skips the product event and the shadow write, and publishes no port:
+read-only, skips the product event and the shadow write, and publishes no port. It also sets `COREFERENCE_MODEL`,
+`GRAPHITI_LLM_MODEL` and `SYNTHESIS_MODEL` to `klai-ingest` (the Vibe allowance, see above) and refuses an `--env` for
+them:
 
 ```bash
 git -C <checkout> archive <candidate-ref> klai-retrieval-api/retrieval_api | tar -x -C "$stage"

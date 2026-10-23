@@ -29,7 +29,6 @@ def _post(
     searched: list[dict] | Callable,
     reranked: list[dict],
     reranker_candidates: int = 20,
-    link_expanded: list[dict] | None = None,
 ):
     """One /retrieve call with search and rerank mocked; the response and the rerank mock."""
     with ExitStack() as stack:
@@ -66,18 +65,6 @@ def _post(
         settings.sub_query_max_concurrent = 3
         settings.reranker_enabled = True
         settings.graphiti_enabled = False
-        settings.link_expand_enabled = link_expanded is not None
-        settings.link_expand_seed_k = 10
-        settings.link_expand_max_urls = 30
-        settings.link_expand_candidates = 20
-        settings.link_authority_boost = 0.05
-        enter(
-            patch(
-                "retrieval_api.api.retrieve.search.fetch_chunks_by_urls",
-                AsyncMock(return_value=link_expanded or []),
-            )
-        )
-        settings.link_expand_score_boost = 1.0
         settings.source_quota_enabled = False
         settings.router_enabled = False
         settings.retrieval_quality_floor = 0.05
@@ -166,23 +153,3 @@ def test_debug_stages_include_what_a_query_variant_pass_saw(client, sample_retri
     response, _ = _post(client, body, searched=searched, reranked=RERANKED)
 
     assert "https://example.com/variant" in response.json()["debug_stages"]["search"]
-
-
-def test_an_article_found_by_link_expansion_is_a_candidate_of_the_search_stage(
-    client, sample_retrieve_request
-):
-    searched = [_chunk("a", links_to=["https://example.com/e/"]), _chunk("b")]
-    expanded = [_chunk("e")]
-    reranked = [_chunk("e", reranker_score=0.9)]
-
-    response, _ = _post(
-        client,
-        {**sample_retrieve_request, "debug_stages": True},
-        searched=searched,
-        reranked=reranked,
-        link_expanded=expanded,
-    )
-
-    stages = response.json()["debug_stages"]
-    assert "https://example.com/e" in stages["search"]
-    assert stages["rerank"] == ["https://example.com/e"]

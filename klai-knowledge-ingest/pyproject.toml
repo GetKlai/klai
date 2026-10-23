@@ -109,6 +109,7 @@ asyncio_mode = "auto"
 markers = [
     "postgres: requires a disposable real PostgreSQL database",
     "no_mock_db_helpers: exercise real database helpers",
+    "graph_contract: runs graphiti against a real FalkorDB (see tests/graph_contract/conftest.py)",
 ]
 
 [dependency-groups]

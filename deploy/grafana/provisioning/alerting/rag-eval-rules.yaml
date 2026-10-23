@@ -85,6 +85,16 @@ groups:
       # Deterministic canary detector. Fires when the baseline nightly eval
       # writes any row whose expected_chunks canary failed before RAGAS
       # scoring. The 36h window covers one nightly run plus retries.
+      #
+      # State on 2026-10-23: firing since 2026-09-20, value 12 rows. Six
+      # canary queries have failed on every run for the last 30 days (they
+      # never passed): chat-pasted-correspondence-control-plain-question,
+      # chat-brand-control-explicit, chat-brand-salesforce-bridging,
+      # chat-pasted-correspondence-incident-shape, chat-easy-bubble-mobiele-app
+      # and org-easy-fraude-politie. The rule is right: retrieval does not
+      # return the expected chunk for them. It stays an email, it does not
+      # page, and it will keep firing until those six are fixed in retrieval
+      # or their expected_chunks are corrected in the suites.
       - uid: rag-eval-001-canary-dropped
         title: rag_eval_canary_dropped
         condition: canary_dropped
@@ -131,13 +141,21 @@ groups:
       # failure class that motivated this SPEC), a mistune of the band
       # thresholds, or a degraded reranker / retrieval-api.
       # Evaluated every 5 minutes; fires after 5 minutes of sustained elevation.
+      #
+      # Backtest over 14 days (5m steps, rule semantics incl. the 20-request
+      # gate): org 368884765035593759 above 20% for 46 of the 59 hours it had
+      # enough traffic, org 372801852200189969 for 5 hours, org
+      # 375926856798437393 for 4 hours. The main tenant's 14-day total is
+      # 5,080 low of 12,673 responses (40%), which is the condition, not the
+      # rule; whether eval-suite traffic inflates it is not visible in the
+      # metric. Severity high, email only, no page.
       - uid: spec-rag-001-low-confidence-rate
         title: "RAG: Low-confidence served rate > 20%"
         condition: low_confidence_rate_above_threshold
         data:
           - refId: low_confidence_served
             datasourceUid: victoriametrics
-            queryType: ""
+            queryType: instant
             relativeTimeRange:
               from: 3600       # 1h window matches the PromQL aggregation range
               to: 0
@@ -145,9 +163,22 @@ groups:
               datasource:
                 type: prometheus
                 uid: victoriametrics
+              # Instant, like every other VictoriaMetrics rule in this folder.
+              # The earlier range query made Grafana reject the result with
+              # "frame cannot uniquely be identified by its labels: has
+              # duplicate results with labels {}", so the rule sat in
+              # "Alerting (Error)" from 2026-10-18 on (execErrState Alerting)
+              # without ever evaluating the 20% threshold.
+              # The `and on (org_id)` gate needs 20 requests in the hour: a
+              # tenant with 3 requests a day (org 372801852200189969) is at
+              # 100% low/unknown on every one of them and is not a signal.
               expr: |
-                (sum by (org_id) (rate(retrieval_confidence_band_total{band=~"low|unknown"}[1h]))
-                 / sum by (org_id) (rate(retrieval_confidence_band_total[1h])))
+                ((sum by (org_id) (increase(retrieval_confidence_band_total{band=~"low|unknown"}[1h]))
+                  / sum by (org_id) (increase(retrieval_confidence_band_total[1h])))
+                 and on (org_id)
+                 (sum by (org_id) (increase(retrieval_confidence_band_total[1h])) >= 20))
+              instant: true
+              queryType: instant
               refId: low_confidence_served
           - refId: low_confidence_rate_above_threshold
             datasourceUid: "-100"

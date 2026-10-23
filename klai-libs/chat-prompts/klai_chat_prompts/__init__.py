@@ -148,6 +148,7 @@ __all__ = [
     "appointment_offer_sentence",
     "broad_mode_answer_marker",
     "chat_contract_article",
+    "check_unavailable_message",
     "clarify_question_addendum",
     "contact_reply",
     "contact_reply_again",
@@ -222,6 +223,40 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
         "en": (
             "The knowledge base is temporarily unavailable, so I cannot answer this reliably from your "
             "knowledge sources."
+        ),
+    },
+    # The passage selection, which decides whether the articles answer, could
+    # not run (on 2026-10-23 klai-medium was over its daily budget for hours).
+    # Saying "not in the articles" then was false: the articles were never
+    # checked. Without a selection no writer may answer from the source
+    # either, so the reply says it cannot check now.
+    "helpdesk_check_unavailable": {
+        "nl": (
+            "Ik kan onze helpartikelen op dit moment niet nakijken, dus ik kan je vraag nu niet betrouwbaar "
+            "beantwoorden. Probeer het straks nog eens, of plan een afspraak met een medewerker. Die helpt je "
+            "persoonlijk verder."
+        ),
+        "en": (
+            "I can't check our help articles right now, so I can't answer your question reliably at the moment. "
+            "Please try again shortly, or schedule an appointment with someone who can help you personally."
+        ),
+    },
+    "strict_check_unavailable": {
+        "nl": (
+            "Ik kan de kennisbank op dit moment niet nakijken, dus ik kan dit nu niet betrouwbaar beantwoorden. "
+            "Stel je vraag straks nog eens."
+        ),
+        "en": (
+            "I can't check the knowledge base right now, so I cannot answer this reliably at the moment. "
+            "Please ask again shortly."
+        ),
+        "de": (
+            "Ich kann die Wissensdatenbank gerade nicht prüfen, daher kann ich das im Moment nicht zuverlässig "
+            "beantworten. Stelle deine Frage gleich noch einmal."
+        ),
+        "fr": (
+            "Je ne peux pas consulter la base de connaissances pour le moment, je ne peux donc pas répondre de "
+            "manière fiable maintenant. Reposez votre question dans un instant."
         ),
     },
     "helpdesk_offer": {
@@ -449,6 +484,19 @@ def no_citable_sources_message(language: object, *, suggest_open_mode: bool = Fa
     return base + fixed_text("open_mode_hint", language) if suggest_open_mode else base
 
 
+def check_unavailable_message(language: object, *, helpdesk: bool) -> str:
+    """The fixed reply when the check that decides whether the sources answer could not run.
+
+    Not the not-found text: the sources were never checked. ``helpdesk``
+    picks the widget's customer words over the internal chat's; the internal
+    text points to Open mode, which keeps every passage after a failed
+    selection and can still answer.
+    """
+    if helpdesk:
+        return fixed_text("helpdesk_check_unavailable", language)
+    return fixed_text("strict_check_unavailable", language) + fixed_text("open_mode_hint", language)
+
+
 # Shared language-detection contract (SPEC-RAG-MULTILINGUAL-CHAT-001
 # REQ-01). Private — every public prompt composes this preamble verbatim
 # so the three guards can never drift between modes.
@@ -546,6 +594,10 @@ _GROUNDED_BODY: Final[str] = (
     "The application renders trusted sources separately from retrieved metadata after generation. "
     "Use the chunks to answer, and if sources contradict each other, say so — don't pick a side silently.\n\n"
     "## When the answer isn't there\n"
+    "When a note 'What the user needs' follows the sources, that note alone says whether they leave part "
+    "of the question open, also for a message with several questions: follow it, and say nothing "
+    "else about what the knowledge base lacks. Without such a note, the rest of this section and "
+    "the multi-part rules below apply.\n"
     "Say it plainly, in the user's language: e.g. 'That's not in the knowledge base' / "
     "'Dat staat niet in de kennisbank' / 'Das steht nicht in der Wissensdatenbank'. "
     "Don't guess. Don't fill the gap with general knowledge. "
@@ -648,6 +700,9 @@ _OPEN_KB_BODY: Final[str] = (
     "claims faithful to the chunks. When you use general knowledge, do not pretend that "
     "those claims came from the knowledge base.\n\n"
     "## When the KB is weak or empty\n"
+    "When a note 'What the user needs' follows the sources, that note alone says whether they leave part "
+    "of the question open: follow it, and say nothing else about what the knowledge base lacks. Without "
+    "such a note, this section and the rule on a missing answer under How to answer apply.\n"
     "If the retrieved chunks do not contain the answer, say that in the user's language "
     "in one short clause, then give a general answer if the topic allows one. Example "
     "shape: 'I didn't find this in the knowledge base; generally, ...' / 'Ik vind dit "
@@ -741,8 +796,7 @@ _SUPPORT_BODY: Final[str] = (
     "menu, and field labels exactly as they appear in the help article — do not rename or "
     "paraphrase them, not even to translate an English label. An element with no name you "
     "describe by what it looks like ('het kruisje', 'de drie puntjes'); never invent a name "
-    "for it. Give only the steps the help article gives: when it covers part of what the "
-    "visitor asked, answer that part and say in one sentence what it does not cover. A short "
+    "for it. Give only the steps the help article gives. A short "
     "correct answer beats a complete-looking one; never complete a procedure with steps of "
     "your own.\n"
     "Put a warning BEFORE the steps it applies to, never after — 'Let op:' and then what can "
@@ -760,6 +814,10 @@ _SUPPORT_BODY: Final[str] = (
     "verzoeken u vriendelijk om'), never exclamation-mark enthusiasm ('SUPER goed dat je dit "
     "vraagt!!!').\n\n"
     "## When the answer isn't there\n"
+    "When a note 'What the visitor needs' follows the help articles, that note alone says whether they leave "
+    "part of the question open, also for a message with several questions: follow it, and say "
+    "nothing else about what the help articles lack. Without such a note, the rest of this "
+    "section and the multi-part rules below apply.\n"
     "Not having all the answers is on-brand, not a failing — what matters is caring enough to "
     "find a solution. Say plainly what the help articles do not answer, in the visitor's "
     "language, in customer words. Do NOT use the word 'kennisbank' or 'knowledge base' — a "
@@ -860,8 +918,7 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "menu, and field labels exactly as they appear in the help article — do not rename or "
     "paraphrase them, not even to translate an English label. An element with no name you "
     "describe by what it looks like ('het kruisje', 'de drie puntjes'); never invent a name "
-    "for it. Give only the steps the help article gives: when it covers part of what the "
-    "visitor asked, answer that part and say in one sentence what it does not cover. A short "
+    "for it. Give only the steps the help article gives. A short "
     "correct answer beats a complete-looking one; never complete a procedure with steps of "
     "your own.\n"
     "Put a warning BEFORE the steps it applies to, never after — 'Let op:' and then what can "
@@ -901,6 +958,10 @@ _SUPPORT_EXPRESSIVE_BODY: Final[str] = (
     "verzoeken u vriendelijk om'), never exclamation-mark enthusiasm ('SUPER goed dat je dit "
     "vraagt!!!').\n\n"
     "## When the answer isn't there\n"
+    "When a note 'What the visitor needs' follows the help articles, that note alone says whether they leave "
+    "part of the question open, also for a message with several questions: follow it, and say "
+    "nothing else about what the help articles lack. Without such a note, the rest of this "
+    "section and the multi-part rules below apply.\n"
     "Not having all the answers is on-brand, not a failing — what matters is caring enough to "
     "find a solution. Say plainly what the help articles do not answer, in the visitor's "
     "language, in customer words. Do NOT use the word 'kennisbank' or 'knowledge base' — a "

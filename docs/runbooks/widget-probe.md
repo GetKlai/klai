@@ -58,7 +58,7 @@ _time:30m service:widget-probe event:widget_probe | sort by (_time) desc | limit
 
 `widget_probe_failing` fires when the last two verdicts are `fail`;
 `widget_probe_missing` when no verdict arrived for 15 minutes. Both carry
-`page="true"`, which the Signal relay reads from Grafana's Alertmanager API.
+`page="true"`, which the external pager reads from Grafana's Alertmanager API.
 
 ## What to check first
 

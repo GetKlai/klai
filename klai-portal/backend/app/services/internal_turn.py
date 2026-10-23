@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import check_unavailable_message, no_citable_sources_message
 
 from app.core.config import Settings
 from app.services import case_file
@@ -177,8 +177,19 @@ def _route(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, case: case
         # Strict promised knowledge-base-only answers, and no passage answers
         # this question: the same fixed refusal as with zero passages, decided
         # before any model writes (step N). Open writes from general knowledge.
-        logger.info("partner_chat_not_in_passages", org_id=inputs.auth.org_id, passages=len(found.chunks))
-        return _refusal(inputs, turn, no_citable_sources_message(language, suggest_open_mode=True), language)
+        logger.info(
+            "partner_chat_not_in_passages",
+            org_id=inputs.auth.org_id,
+            passages=len(found.chunks),
+            selection_failed=turn.selection_failed,
+        )
+        # A failed selection checked nothing, so it is not "not found".
+        text = (
+            check_unavailable_message(language, helpdesk=False)
+            if turn.selection_failed
+            else no_citable_sources_message(language, suggest_open_mode=True)
+        )
+        return _refusal(inputs, turn, text, language)
     return None
 
 

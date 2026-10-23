@@ -20,7 +20,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import structlog
-from klai_chat_prompts import contact_reply, contact_reply_again, no_citable_sources_message
+from klai_chat_prompts import (
+    check_unavailable_message,
+    contact_reply,
+    contact_reply_again,
+    no_citable_sources_message,
+)
 from klai_chat_prompts.language import TARGET_LANGUAGES, resolve_conversation_language
 
 from app.core.config import Settings
@@ -389,10 +394,17 @@ def _not_in_passages_reply(
         org_id=inputs.auth.org_id,
         wgt_id=inputs.auth.key_id,
         passages=len(found.chunks),
+        selection_failed=turn.selection_failed,
     )
-    return fixed_reply(
-        inputs, turn, no_citable_sources_message(language, helpdesk=True), language, decision="refusal", refused=True
+    # Without a verdict the articles were never checked, so "not found" would
+    # be false: on 2026-10-23 all five of the widget's not-found replies came
+    # from a selection that failed on klai-medium's budget (429).
+    text = (
+        check_unavailable_message(language, helpdesk=True)
+        if turn.selection_failed
+        else no_citable_sources_message(language, helpdesk=True)
     )
+    return fixed_reply(inputs, turn, text, language, decision="refusal", refused=True)
 
 
 def question_reply(

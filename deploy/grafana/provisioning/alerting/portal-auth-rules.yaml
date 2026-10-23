@@ -189,6 +189,9 @@ groups:
           severity: critical
           spec: SPEC-SEC-AUTH-COVERAGE-001
           service_group: portal-api
+          # More than 5 Zitadel 5xx a minute across the auth endpoints means login
+          # is failing now. Not once in the 14 days before 2026-10-23.
+          page: "true"
         annotations:
           summary: 'portal-api Zitadel 5xx burst across auth endpoints > 5/min'
           runbook_url: 'docs/runbooks/auth-failure-burst.md#triage-zitadel-5xx-burst'

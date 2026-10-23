@@ -10,6 +10,9 @@
 #   R3  litellm_budget_exhausted       CRIT  ANY request refused because a
 #                                            Mistral deployment spent its daily
 #                                            max_budget (added 2026-09-26)
+#   R4  litellm_chat_budget_exhausted  CRIT  the same, for klai-large, the last
+#                                            alias in the customer chat
+#                                            fallback chain (pages)
 #
 # Pitfall avoidance:
 #   - UID stays well under the 40-char Grafana limit (see
@@ -181,3 +184,81 @@ groups:
               3. Normal traffic outgrew the budget: raise max_budget for that
                  alias in config.yaml. Unexpected traffic: stop the caller;
                  the ceiling is doing its job.
+
+      # -- R4: litellm_chat_budget_exhausted ---------------------------------
+      # litellm_budget_exhausted above fires for any alias, and the aliases that
+      # actually run out are background ones: in the last 30 days klai-judge
+      # (1,407 lines since 2026-09-28) and klai-medium (1,011 on 2026-10-23),
+      # the RAG-eval judge and the enrichment model. Customers do not notice
+      # those. klai-primary and klai-fast fall back to klai-large, so chat only
+      # stops when klai-large itself is out of budget (and agentic/tool turns,
+      # which go straight to it). That is the one worth waking someone for.
+      # Backtest over 30 days: klai-large 0 lines, klai-primary 0, klai-fast 0.
+      - uid: obs-004-litellm-chat-budget-exhausted
+        title: litellm_chat_budget_exhausted
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:5m service:litellm "No deployments available - crossed budget" "model_name: klai-large,"
+                  | stats count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-SEC-IDENTITY-ASSERT-001
+          service_group: litellm
+          page: "true"
+        annotations:
+          summary: 'LiteLLM daily spend ceiling reached for klai-large: customer chat has no model left'
+          runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'
+          description: |
+            klai-large spent its daily max_budget (deploy/litellm/config.yaml).
+            klai-primary and klai-fast fall back to it, so customer chat now
+            answers errors until the 24h window resets or LiteLLM restarts
+            (spend is counted in process memory).
+
+            Triage:
+              1. VictoriaLogs: _time:1h service:litellm "crossed budget" "model_name: klai-large,"
+              2. Find the caller that drove the spend (bulk ingest, an eval run,
+                 a routing change). Normal traffic that outgrew the budget:
+                 raise max_budget for klai-large in config.yaml and recreate
+                 the container. Unexpected traffic: stop the caller.
