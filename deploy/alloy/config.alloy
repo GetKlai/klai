@@ -70,6 +70,19 @@ loki.source.file "mistral_api_probe" {
   forward_to = [loki.process.extract_level.receiver]
 }
 
+local.file_match "widget_probe" {
+  path_targets = [{
+    __path__ = "/opt/klai/logs/widget-probe.log",
+    service  = "widget-probe",
+    host     = "core-01",
+  }]
+}
+
+loki.source.file "widget_probe" {
+  targets    = local.file_match.widget_probe.targets
+  forward_to = [loki.process.extract_level.receiver]
+}
+
 // ─── Extract log level from JSON ────────────────────────────────────────────
 
 loki.process "extract_level" {
