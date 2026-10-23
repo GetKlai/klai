@@ -20,9 +20,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 MODE, WIDGET_ID, TOKEN = os.environ["MODE"], os.environ["STUB_WIDGET_ID"], os.environ["STUB_TOKEN"]
 
+def cors(h):
+    # The real API echoes an allowed Origin; mode "cors" stands for a broken CORS config.
+    if MODE != "cors":
+        h.send_header("Access-Control-Allow-Origin", h.headers.get("Origin", ""))
+
 def sse(h, *payloads):
     h.send_response(200)
     h.send_header("Content-Type", "text/event-stream")
+    cors(h)
     h.end_headers()
     for p in payloads:
         h.wfile.write(b"data: " + (p if isinstance(p, bytes) else json.dumps(p).encode()) + b"\n\n")
@@ -42,13 +48,14 @@ class H(BaseHTTPRequestHandler):
         if not ok:
             self.send_response(403); self.end_headers(); return
         body = json.dumps({"chat_endpoint": "/partner/v1/chat/completions", "session_token": TOKEN}).encode()
-        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+        self.send_response(200); self.send_header("Content-Type", "application/json"); cors(self); self.end_headers()
         self.wfile.write(body)
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
         if (self.path != "/partner/v1/chat/completions"
                 or self.headers.get("Authorization") != "Bearer " + TOKEN
+                or self.headers.get("Origin") != "https://probe.example.com"
                 or body.get("stream") is not True or not body.get("messages")):
             self.send_response(401); self.end_headers(); return
         if MODE == "http500":
@@ -63,6 +70,8 @@ class H(BaseHTTPRequestHandler):
         frames = [delta(content="Het supportteam is er van 08:15 tot 17:45.")]
         if MODE != "no_sources":
             frames.insert(0, source)
+        if MODE == "incomplete":
+            return sse(self, *frames)
         sse(self, *frames, b"[DONE]")
 
 srv = HTTPServer(("127.0.0.1", 0), H)
@@ -112,6 +121,8 @@ run empty fail empty_answer
 run stream_error fail stream_error
 run slow fail latency WIDGET_PROBE_MAX_LATENCY_MS=500
 run unreachable fail unreachable
+run cors fail cors
+run incomplete fail stream_incomplete
 
 # Without the credential the probe cannot vouch for anything: that is a fail, not silence.
 out=$(env -u WIDGET_PROBE_WIDGET_ID WIDGET_PROBE_LOG_FILE="$tmp/log2" KLAI_ENV_FILE="$tmp/no-such-env" python3 -I "$PROBE" || true)

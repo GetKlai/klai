@@ -149,3 +149,11 @@ probe question. Nothing here is created by the repo.
    every run and never stored or printed. No compose service reads these keys, so
    `deploy/SECRETS_MATRIX.md` has no row for them.
 5. **Activate** the timer (Install above) and check the first verdict is `ok`.
+   An `ok` also proves the CORS assumption: the probe sends the widget's
+   `Origin` and fails with reason `cors` when the response lacks the matching
+   `Access-Control-Allow-Origin`.
+6. **Unpause the alerts.** Both rules in
+   `deploy/grafana/provisioning/alerting/widget-probe-rules.yaml` ship with
+   `isPaused: true`. Once the first `ok` verdict is in VictoriaLogs, set both to
+   `isPaused: false` in a PR and check after the deploy that Grafana shows them
+   as Normal, not Paused. Until then nothing pages.

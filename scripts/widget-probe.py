@@ -14,11 +14,13 @@ and appends one JSON verdict line to stdout and to LOG_FILE, which Alloy ships
 to VictoriaLogs as service:widget-probe (deploy/alloy/config.alloy). The line
 is the only output: the widget id and the session token are never printed.
 
-ok needs all of: HTTP 2xx, no error frame, a non-empty answer, at least one
-source, and a total time under MAX_LATENCY_MS. A fixed "Er ging iets mis" reply
-is HTTP 200 with no sources, so the source check is what catches it. reason
-names the first failing check, in this order: config, unreachable, timeout,
-http, mint_response, stream_error, empty_answer, no_sources, latency.
+ok needs all of: HTTP 2xx, the Access-Control-Allow-Origin a browser needs,
+no error frame, a stream that ends with [DONE], a non-empty answer, at least
+one source, and a total time under MAX_LATENCY_MS. A fixed "Er ging iets mis"
+reply is HTTP 200 with no sources, so the source check is what catches it.
+reason names the first failing check, in this order: config, unreachable,
+timeout, http, cors, mint_response, stream_error, stream_broken,
+stream_incomplete, empty_answer, no_sources, latency.
 
 Latency threshold: 30000 ms. Measured 2026-10-23 from VictoriaLogs
 (service:portal-api event:partner_chat_turn_timing, total_ms): over the last 7
@@ -90,18 +92,29 @@ def request(req, timeout):
         raise Fail("unreachable")
 
 
+def check_cors(resp, origin):
+    # A browser drops a response whose Access-Control-Allow-Origin does not
+    # match its page, so a CORS regression breaks every customer widget while
+    # the API itself still answers. The probe sends the same Origin and checks
+    # the same header the browser would.
+    if resp.headers.get("Access-Control-Allow-Origin") not in (origin, "*"):
+        raise Fail("cors", resp.status)
+
+
 def probe(cfg):
     """Return (http_status, answer, source_count); raise Fail on the first failing check."""
     base, timeout = cfg["WIDGET_PROBE_BASE_URL"], float(cfg["WIDGET_PROBE_TIMEOUT"])
+    origin = cfg["WIDGET_PROBE_ORIGIN"]
     query = urllib.parse.urlencode({"id": cfg["WIDGET_PROBE_WIDGET_ID"]})
     mint = urllib.request.Request(
         f"{base}/partner/v1/widget-config?{query}",
         headers={
-            "Origin": cfg["WIDGET_PROBE_ORIGIN"],
+            "Origin": origin,
             "X-Klai-Widget-Session-Id": uuid.uuid4().hex,
         },
     )
     with request(mint, timeout) as resp:
+        check_cors(resp, origin)
         try:
             config = json.load(resp)
             token, endpoint = config["session_token"], config["chat_endpoint"]
@@ -121,11 +134,13 @@ def probe(cfg):
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
+            "Origin": origin,
         },
     )
-    answer, sources = [], 0
+    answer, sources, done = [], 0, False
     with request(chat, timeout) as resp:
         status = resp.status
+        check_cors(resp, origin)
         try:
             for raw in resp:
                 line = raw.decode("utf-8", "replace").strip()
@@ -133,6 +148,7 @@ def probe(cfg):
                     continue
                 data = line[len("data:") :].strip()
                 if data == "[DONE]":
+                    done = True
                     break
                 try:
                     event = json.loads(data)
@@ -146,6 +162,12 @@ def probe(cfg):
                     sources += len(delta["sources"])
         except TimeoutError:
             raise Fail("timeout", status)
+        except OSError:
+            raise Fail("stream_broken", status)
+    # Text and sources can already have arrived when the server closes the
+    # stream early; only the [DONE] frame proves the answer is complete.
+    if not done:
+        raise Fail("stream_incomplete", status)
     return status, "".join(answer), sources
 
 

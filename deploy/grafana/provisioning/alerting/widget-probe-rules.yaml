@@ -155,7 +155,9 @@ groups:
                   reducer: { params: [], type: last }
                   type: query
         noDataState: Alerting
-        execErrState: OK
+        # A query error must not look like a healthy probe: this rule exists
+        # to catch silence (observability.md, execErrState for silence rules).
+        execErrState: Alerting
         for: 0s
         keepFiringFor: 10m
         # Paused until the probe widget and WIDGET_PROBE_WIDGET_ID exist
