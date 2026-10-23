@@ -54,10 +54,15 @@ export function hasTcpExplanation(text: string): boolean {
  * so a Strict refusal read with the page around it failed J02 on 2026-10-22.
  * `agent-turn` is the class LibreChat v0.8.7 and v0.8.8 give an assistant
  * message (`user-turn` for the employee's own).
+ *
+ * textContent, not innerText: Klai's LibreChat entrypoint folds the
+ * "Bronnen" and "Agent activiteit" footer into a closed <details>
+ * (klai-kb-disclosure), whose body innerText leaves out, so the mode line was
+ * invisible to J02 from 2026-10-23 13:51 UTC (run 39964644408 onwards).
  */
 export function latestReplyText(frame: Frame): Promise<string> {
   return frame.evaluate(() => {
     const replies = document.querySelectorAll<HTMLElement>('.agent-turn')
-    return replies.length ? replies[replies.length - 1].innerText : ''
+    return replies.length ? (replies[replies.length - 1].textContent ?? '') : ''
   })
 }
