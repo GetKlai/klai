@@ -1472,6 +1472,30 @@ def test_the_articles_a_case_names_itself_are_kept_whatever_their_host():
     assert (row["expected"], row["search"]) == (1, False)
 
 
+@pytest.mark.parametrize("host", ["retrieval-api", "klai-core-retrieval-api-1"])
+def test_a_round_refuses_to_start_against_the_live_retrieval_api(monkeypatch, tmp_path, capsys, host):
+    """The live service rewrites follow-up questions on klai-fast, which the portal cannot patch."""
+    answered: list[str] = []
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa", ["first"])}, answered)
+    monkeypatch.setattr(replay.settings, "knowledge_retrieve_url", f"http://{host}:8040/retrieve")
+
+    code = _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}], overlay)
+
+    assert code == 2
+    assert "retrieval-api-oneoff.sh" in capsys.readouterr().err
+    assert answered == []
+    assert not (tmp_path / "r.jsonl").exists()
+
+
+def test_a_round_starts_against_a_retrieval_api_one_off(monkeypatch, tmp_path):
+    answered: list[str] = []
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": _thread("aaaaaaaa", ["first"])}, answered)
+    monkeypatch.setattr(replay.settings, "knowledge_retrieve_url", "http://ra-depth60:8040/retrieve")
+
+    assert _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 0}], overlay) == 0
+    assert answered == ["first"]
+
+
 # A round runs on the Vibe allowance, never on the keys real visitors use.
 _VIBE_ALLOWANCE = {"klai-ingest", "klai-judge"}
 

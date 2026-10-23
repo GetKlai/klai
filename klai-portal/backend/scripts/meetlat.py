@@ -97,6 +97,8 @@ _GROUNDING_BUDGET_SECONDS = 30.0
 # live chat shares, and every tenant's chat answered 402.
 _FAST_ALIAS = "klai-ingest"
 _MEDIUM_ALIAS = "klai-judge"
+# The compose alias and the container name of the live retrieval-api, whose own LLM calls the portal cannot patch.
+_LIVE_RETRIEVAL_HOSTS = ("retrieval-api", "klai-core-retrieval-api-1")
 # The cases name conversations by prefix; a LibreChat thread can be older than
 # replay_internal_chat's 90 day sampling window.
 _DEFAULT_DAYS = 365
@@ -748,6 +750,12 @@ def _conversations(todo: list[dict]) -> list[list[dict]]:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if urlparse(replay.settings.knowledge_retrieve_url).hostname in _LIVE_RETRIEVAL_HOSTS:
+        raise UsageError(
+            "refusing to run: KNOWLEDGE_RETRIEVE_URL is the live retrieval-api, which rewrites follow-up questions "
+            "on klai-fast, a key live chat shares. Start a one-off with deploy/scripts/retrieval-api-oneoff.sh "
+            "and point KNOWLEDGE_RETRIEVE_URL at it."
+        )
     if args.surface == "widget" and args.widget is None:
         raise UsageError("--surface widget needs --widget <json> with " + ", ".join(_WIDGET_FIELDS))
     widget = _read_widget(args.widget) if args.surface == "widget" else None

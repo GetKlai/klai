@@ -32,9 +32,9 @@ answer, the case and the judges that default to the small model) or `klai-judge`
 check, the paraphrases), and the route accepts `klai-ingest` for the round (`_apply_measurement_patches` in
 `meetlat.py`). The calls retrieval-api makes itself cannot be patched from the portal, so
 `deploy/scripts/retrieval-api-oneoff.sh` fixes its model variables to `klai-ingest` (see
-[Measure the retrieval](#measure-the-retrieval)). A round that points at the live retrieval-api (the default
-`KNOWLEDGE_RETRIEVE_URL`) still lets that service rewrite follow-up questions on `klai-fast`, so a round with follow-up
-turns runs against such a one-off. A model call added to the chat path later has to be routed there too;
+[Measure the retrieval](#measure-the-retrieval)). The live retrieval-api would rewrite follow-up questions on
+`klai-fast`, so `run` and `retrieval` refuse to start when `KNOWLEDGE_RETRIEVE_URL` is its compose host `retrieval-api`
+or its container name, and there is no flag to override that: a round always starts with a retrieval-api one-off. A model call added to the chat path later has to be routed there too;
 the test `test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance` fails on any turn that names another model.
 
 ## Run a round
@@ -54,11 +54,13 @@ the test `test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance` fails 
 
    Put the case file next to it as `/opt/klai/oneoff/meetlat/cases.jsonl`. The container user must be able to read both.
 
-2. Run it through the one-off, with the overlay first on `PYTHONPATH` and the backend root after it:
+2. Start a retrieval-api one-off for the round (the checkout's code, or `main`'s when only the portal changes; the
+   command is in [Measure the retrieval](#measure-the-retrieval)), then run through the portal one-off, with the
+   overlay first on `PYTHONPATH`, the backend root after it and `KNOWLEDGE_RETRIEVE_URL` on the retrieval-api one-off:
 
    ```bash
    deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
-     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend \
+     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend KNOWLEDGE_RETRIEVE_URL=http://<one-off-name>:8040 \
      python /out/ov-candidate/scripts/meetlat.py run --surface internal --org <org-slug> \
        --cases /out/cases.jsonl --out /out/round-candidate-1.jsonl --overlay /out/ov-candidate
    ```
@@ -74,7 +76,7 @@ the test `test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance` fails 
 
    ```bash
    deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
-     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend \
+     env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend KNOWLEDGE_RETRIEVE_URL=http://<one-off-name>:8040 \
      python /out/ov-candidate/scripts/meetlat.py run --surface widget --org <org-slug> --widget /out/widget.json \
        --cases /out/widget-cases.jsonl --out /out/widget-candidate-1.jsonl --overlay /out/ov-candidate
    ```
