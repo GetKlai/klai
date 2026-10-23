@@ -45,8 +45,20 @@ groups:
               # detection for the 2026-04-19 class of bug lives in Rule B
               # (path="missing"). Per-service tuning is a follow-up when
               # we've seen a cycle of real production values.
+              #
+              # gitea and vexa12-redis are excluded (2026-10-23). File age is
+              # only a write signal where the service writes continuously, and
+              # these two do not: gitea's newest file changes on a push, so the
+              # probe read 8.6 million seconds (100 days) in the last 14 days,
+              # and vexa12-redis's appendonlydir mtime moves on AOF rotation,
+              # which an idle meeting-bot Redis rarely does (90,496 s now).
+              # Both fired this rule for weeks while nothing was wrong. The
+              # 2026-04-19 class of bug (nothing lands on the volume) is still
+              # caught for them by rule B below. Every other service stayed
+              # under 86,400 s for the whole 14 days, garage-meta only just:
+              # its daily snapshot peaked at 86,363 s, 37 s below the line.
               expr: |
-                max by (service) (klai_persistence_file_age_seconds{path!="missing"}) > 86400
+                max by (service) (klai_persistence_file_age_seconds{path!="missing",service!~"gitea|vexa12-redis"}) > 86400
               instant: true
               queryType: instant
           - refId: threshold

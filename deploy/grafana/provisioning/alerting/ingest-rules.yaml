@@ -6,7 +6,7 @@
 #   R17  pg_qdrant_reconcile_failed   HIGH   PG/Qdrant shadow reconcile
 #                                            found any discrepancy, or the
 #                                            reconcile job itself crashed
-#   R18  pg_qdrant_reconcile_missing  HIGH   no reconcile event in 25h
+#   R18  pg_qdrant_reconcile_missing  HIGH   no reconcile event in 36h
 #        procrastinate_worker_lane_died HIGH a worker lane exited and is
 #                                            being restarted
 #
@@ -84,14 +84,16 @@ groups:
             knowledge-ingest is emitting more than 10 error-level log lines
             per 10 minutes. Common causes: an upstream connector (Confluence,
             HubSpot, Notion) returning 401/429/500, a malformed document
-            blocking a job, or graphiti/Neo4j connectivity issues.
+            blocking a job, or graphiti/FalkorDB connectivity issues.
 
             Triage:
               1. VictoriaLogs query: service:knowledge-ingest AND level:error | sort by(_time) desc | limit 20
               2. Common patterns:
                  - "Job ... failed" → check the failing job's traceback
                  - "401 Unauthorized" → connector secret expired (see CONNECTOR_SECRET_ROTATION.md)
-                 - "Neo4j" or "graphiti" in error → check Neo4j health
+                 - "falkordb" or "graphiti" in error → check FalkorDB health
+                   (docker logs --tail 100 klai-core-falkordb-1; a crash
+                   line is also caught by datastore_process_crashed)
               3. If a single org_id dominates: their connector may be misconfigured.
                  ssh core-01 "docker logs --tail 200 klai-core-knowledge-ingest-1 | grep -i error"
 
@@ -102,6 +104,12 @@ groups:
       # should inspect before choosing a repair path. R18 below is the
       # dead-man's switch for nights where the worker never logs any
       # reconcile event.
+      #
+      # State on 2026-10-23: this has fired every day for 30 days on the same
+      # 17 discrepancies (8 artifacts missing in Qdrant, 9 orphaned in Qdrant,
+      # out of 3,160 active artifacts), unchanged from run to run. The
+      # condition is real and stays an email; it does not page. Cleaning up the
+      # 17 rows is the way to make the alert go quiet.
       - uid: obs-001-pg-qdrant-divergence
         title: pg_qdrant_reconcile_failed
         condition: threshold
@@ -167,7 +175,15 @@ groups:
       # Dead-man's switch for R17. If the periodic task never runs (worker
       # down, task registration broken, periodic deferrer unhealthy), R17
       # sees no failed/error event and remains OK. This rule fires on
-      # absence of any pg_qdrant_reconcile event over 25h.
+      # absence of any pg_qdrant_reconcile event over 36h.
+      #
+      # The window was 25h, which is wrong for this job: the cron fires at
+      # 03:30 UTC but the event is logged when the run FINISHES, and over
+      # 2026-09-23 to 2026-10-23 that ranged from 03:30 to 12:52 UTC. Gaps
+      # between consecutive events reached 26.9h (22 -> 23 October) and 27.4h
+      # (20 -> 21 October), so the rule fired on days the job ran. 36h clears
+      # the worst observed gap by 8.6h and still fires on a missed day (the
+      # 26 -> 28 September gap was 46.8h).
       - uid: obs-001-pg-qdrant-reconcile-missing
         title: pg_qdrant_reconcile_missing
         condition: no_recent_reconcile
@@ -176,7 +192,7 @@ groups:
             datasourceUid: victorialogs
             queryType: stats
             relativeTimeRange:
-              from: 90000
+              from: 129600
               to: 0
             model:
               refId: query
@@ -188,7 +204,7 @@ groups:
           - refId: count
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 90000
+              from: 129600
               to: 0
             model:
               refId: count
@@ -198,7 +214,7 @@ groups:
           - refId: no_recent_reconcile
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 90000
+              from: 129600
               to: 0
             model:
               refId: no_recent_reconcile
@@ -220,10 +236,10 @@ groups:
           service_group: ingest
           alert_type: consistency_reconcile_missing
         annotations:
-          summary: 'PG/Qdrant reconciliation did not run in the last 25h'
+          summary: 'PG/Qdrant reconciliation did not run in the last 36h'
           runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/pg-qdrant-reconcile.md#missing-run-alert'
           description: |
-            No pg_qdrant_reconcile event was logged in the last 25 hours.
+            No pg_qdrant_reconcile event was logged in the last 36 hours.
             The periodic reconcile task may not be registered, the worker may
             be down, or the periodic deferrer may not be running.
 

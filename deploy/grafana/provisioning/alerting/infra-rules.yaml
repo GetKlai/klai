@@ -4,14 +4,17 @@
 # (see policies.yaml).
 #
 #   R12  container_down              CRIT  cAdvisor staleness >2m
-#   R13  container_restart_loop      CRIT  >0 restarts in 15m, sustained 15m
+#   R13  container_restart_loop      CRIT  >=5 restarts in 30m, sustained 5m (pages)
+#   R12b container_down_core         CRIT  a customer-facing container vanished (pages)
 #   R17  core01_disk_usage_high      MED   <15% free on host root, sustained 30m
 #
 # Metric availability notes (probed 2026-04-22 against production VM):
 #   - cAdvisor scrapes with `name` label (not `container`); `name=~"klai-core-.*"`
 #     covers all klai-managed containers.
 #   - cAdvisor does NOT export `container_restarts_total` (deprecated upstream).
-#     Restarts are detected via `changes(container_start_time_seconds[...])`.
+#     Every restart puts the new start time on a NEW series (label
+#     `container_label_restartcount` increments), so `changes()` of one series
+#     is never above 1. Restarts are counted as distinct series per `name`.
 #   - node-exporter runs containerized via Alloy `integrations/unix`. It does
 #     NOT see the host root mountpoint=`/` directly. Instead it shows the
 #     bind-mounts inside its own container (e.g. `/etc/hostname`), all of
@@ -95,34 +98,55 @@ groups:
               4. If container is gone: was this a planned removal? If yes,
                  update klai-core compose; if no, recreate via `docker compose up -d <service>`.
 
-      # ── R13: container_restart_loop ──────────────────────────────────────
-      # changes(container_start_time_seconds[15m]) counts how many times the
-      # start-time value changed in the last 15min — i.e. restart count.
-      # `for: 15m` means the condition must hold for 15 consecutive minutes,
-      # which excludes single planned deploys (one restart drops out of the
-      # 15m window after 15min).
-      - uid: obs-001-container-restart-loop
-        title: container_restart_loop
+      # ── R12b: container_down_core ────────────────────────────────────────
+      # Pages when a customer-facing container is gone. container_down above
+      # keys on `time() - container_last_seen`, which also matches the stale
+      # series of a container that was just recreated and misses a container
+      # that simply vanished from cAdvisor, so it stays an email. This rule
+      # asks the question directly: which of these containers has no series now
+      # (VictoriaMetrics drops a series ~5m after the last scrape). A recreate
+      # keeps the name, so it is not a hit once the new container is scraped.
+      # The set is what a customer notices within minutes: caddy, portal-api,
+      # zitadel (login), litellm and retrieval-api (chat), postgres, redis,
+      # qdrant and falkordb (their stores).
+      # Backtest over 14 days (1m steps): gaps of 2 to 7 minutes per container,
+      # the longest a litellm recreate, so `for: 10m` leaves it at zero hits.
+      # A renamed or retired container must leave this list in the same PR,
+      # or the alert fires for good.
+      - uid: obs-001-container-down-core
+        title: container_down_core
         condition: threshold
         data:
           - refId: query
             datasourceUid: victoriametrics
             queryType: instant
             relativeTimeRange:
-              from: 900
+              from: 10800
               to: 0
             model:
               refId: query
               datasource:
                 type: prometheus
                 uid: victoriametrics
-              expr: 'changes(container_start_time_seconds{name=~"klai-core-.*"}[15m]) > 0'
+              # One absent() per expected container, so the alert stays firing for
+              # as long as the container is missing; a "seen in the last N hours"
+              # comparison went quiet once the container had been gone that long.
+              expr: |
+                absent(container_start_time_seconds{name="klai-core-caddy-1"})
+                or absent(container_start_time_seconds{name="klai-core-portal-api-1"})
+                or absent(container_start_time_seconds{name="klai-core-zitadel-1"})
+                or absent(container_start_time_seconds{name="klai-core-litellm-1"})
+                or absent(container_start_time_seconds{name="klai-core-retrieval-api-1"})
+                or absent(container_start_time_seconds{name="klai-core-postgres-1"})
+                or absent(container_start_time_seconds{name="klai-core-redis-1"})
+                or absent(container_start_time_seconds{name="klai-core-qdrant-1"})
+                or absent(container_start_time_seconds{name="klai-core-falkordb-1"})
               instant: true
               queryType: instant
           - refId: threshold
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 900
+              from: 10800
               to: 0
             model:
               refId: threshold
@@ -135,20 +159,96 @@ groups:
                   type: query
         noDataState: OK
         execErrState: Alerting
-        for: 15m
+        for: 10m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-OBS-001
+          service_group: infra-containers
+          page: "true"
+        annotations:
+          summary: 'Customer-facing container {{ $labels.name }} is gone from cAdvisor'
+          runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#container-down'
+          description: |
+            {{ $labels.name }} has had no cAdvisor series for at least 10
+            minutes: the container is stopped, removed or stuck in a recreate.
+            Customers notice this one.
+
+            Triage:
+              1. ssh core-01 "docker ps -a --filter name={{ $labels.name }}"
+              2. Exited: docker logs --tail 100 {{ $labels.name }}; then
+                 `docker compose up -d <service>`.
+              3. Missing after a deploy: check the deploy run and the compose file.
+
+      # ── R13: container_restart_loop ──────────────────────────────────────
+      # The previous expression, changes(container_start_time_seconds[15m]) > 0
+      # for 15m, could never fire for a real loop: every restart is a new
+      # series (restartcount label), so each series saw at most one change and
+      # none stayed pending for 15m. On 2026-10-23 FalkorDB restarted ~150
+      # times between 03:00 and 10:40 UTC and the rule showed seven separate
+      # pending instances and zero firing.
+      #
+      # Now: count the distinct start-time series per container name that had
+      # a sample in the last 30m. A steady container has 1; a planned
+      # recreate has 2 (old + new); a deploy retry or two more adds up to 4.
+      # 6 or more means at least 5 restarts in 30m. Backtest over 14 days
+      # (1m steps): 421 minutes for falkordb on 2026-10-23 (first at 03:12,
+      # 12 minutes after the loop began) and 51 minutes for litellm on
+      # 2026-10-22 (a 71-restart loop that went unnoticed), nothing else.
+      # Highest value on any ordinary deploy day was 5 (portal-api, four
+      # deploys within 30m), so 6 stays quiet for deploys.
+      # Ceiling: a loop slower than one restart per 6 minutes is not seen.
+      - uid: obs-001-container-restart-loop
+        title: container_restart_loop
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victoriametrics
+            queryType: instant
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              expr: 'count by (name) (last_over_time(container_start_time_seconds{name=~"klai-core-.*"}[30m])) >= 6'
+              instant: true
+              queryType: instant
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
         keepFiringFor: 30m
         isPaused: false
         labels:
           severity: critical
           spec: SPEC-OBS-001
           service_group: infra-containers
+          page: "true"
         annotations:
-          summary: 'Container {{ $labels.name }} is in a restart loop ({{ $value }} restarts in 15m, sustained 15m)'
+          summary: 'Container {{ $labels.name }} is in a restart loop ({{ $value }} start-time series in 30m, sustained 5m)'
           runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#container-restart-loop'
           description: |
-            {{ $labels.name }} has restarted {{ $value }} times in the last 15
-            minutes, and this has been sustained for at least 15 consecutive
-            minutes. This is a restart loop, not a single planned deploy.
+            {{ $labels.name }} has had {{ $value }} distinct start times in the
+            last 30 minutes (a steady container has 1, a planned recreate 2),
+            sustained for at least 5 minutes. This is a restart loop, not a
+            single planned deploy.
 
             Triage:
               1. ssh core-01 "docker logs --tail 200 {{ $labels.name }}"
@@ -294,6 +394,9 @@ groups:
           severity: critical
           spec: SPEC-OBS-001
           service_group: infra-host
+          # A full root disk takes every container down within hours; the
+          # rule has not fired in the last 14 days.
+          page: "true"
         annotations:
           summary: 'core-01 root disk under 8% free — deploys will fail'
           runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#core01-disk-usage-high'

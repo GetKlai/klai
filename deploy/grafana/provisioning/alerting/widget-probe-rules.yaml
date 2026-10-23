@@ -9,10 +9,9 @@
 # Why: on 2026-10-23 the widget answered "Er ging iets mis" from about 03:00 to
 # 10:40 UTC and the first signal was a customer.
 #
-# Both rules carry `page: "true"`. That label is the contract with the relay
-# that pulls the active alerts with page="true" from Grafana's Alertmanager API
-# and sends them to Signal; nothing here delivers to Signal itself. The email
-# route in policies.yaml (component=widget-probe) stays as the second channel.
+# Both rules carry `page: "true"` (the external pager, see policies.yaml);
+# widget_probe_failing also carries autofix="true". The email route in
+# policies.yaml (component=widget-probe) stays as the second channel.
 
 apiVersion: 1
 
@@ -82,6 +81,7 @@ groups:
         labels:
           severity: critical
           page: "true"
+          autofix: "true"
           service_group: portal
           alert_type: synthetic
           component: widget-probe
