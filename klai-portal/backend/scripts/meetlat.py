@@ -2,6 +2,7 @@
 
     meetlat run     --surface internal --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>] [--days <n>]
     meetlat run     --surface widget --org <slug> --widget <widget.json> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>]
+    meetlat retrieval --surface internal|widget --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [same options as run]
     meetlat compare --cases <cases.jsonl> [--json] <round.jsonl>...
 
 The script holds no case data. An internal case is one JSON object per line
@@ -32,6 +33,16 @@ put its own root at the front of sys.path and shadowed the candidate overlay.
 With ``--overlay`` it refuses (exit 2) unless every one of those modules comes
 from under that directory.
 
+``retrieval`` replays the same turns, and for every case with an expected
+article stops each named turn right after its retrieval: it asks retrieval-api
+for the source keys of each stage (``debug_stages``) and writes where the
+expected article stood after search, after the rerank and in the passages the
+chat would have received, plus a summary (recall per stage, MRR of the served
+list, timing of /retrieve) next to the rows. The expected article is the
+case's ``articles`` (URLs); an internal case without them takes the URLs of the
+reply recorded in the conversation, for the classes the knowledge base should
+answer (antwoord, antwoord_kb, dekkend_antwoord). Other cases get a skipped row.
+
 This script never touches sys.path. The caller sets PYTHONPATH, the candidate
 overlay first and the backend root after it (docs/runbooks/meetlat.md). The
 transcripts are real conversations, so ``--out`` must lie outside the repository.
@@ -52,7 +63,7 @@ import sys
 import time
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -65,6 +76,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.core import database
 from app.services import answer_compose, answer_grounding, case_file, retrieval_context
 from app.services.chat_profile import ChatProfile
+from app.services.citations import source_url_key
 from app.services.widget_audit import session_key_from_claims
 
 # The modules whose provenance decides what a round measured.
@@ -99,6 +111,10 @@ _WIDGET_TIMEOUT_SECONDS = 120.0
 _WIDGET_FIELDS = ("wgt_id", "org_id", "kb_ids", "slug", "origin")
 
 _CLASS_FIELDS = ("class", "klasse", "expect")
+# The classes whose answer should come from an article of the knowledge base.
+_ANSWERED_FROM_ARTICLES = ("antwoord", "antwoord_kb", "dekkend_antwoord")
+# What a turn says once its retrieval was recorded: the pipeline is cut short there.
+_PROBE_REPLY = "meetlat retrieval probe"
 _AUTOMATIC_CLASSES = (
     "weigering",
     "antwoord_kb",
@@ -514,16 +530,24 @@ async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
     )
 
 
-async def _replay_internal_conversation(org: Any, thread: Thread, cases: list[dict]) -> AsyncIterator[dict]:
+async def _replay_internal_conversation(
+    org: Any, thread: Thread, cases: list[dict], expected: dict[int, list[str]] | None = None
+) -> AsyncIterator[dict]:
     """The rows of the named turns of one conversation, after every turn before them has stored its case.
 
     A row after an earlier turn that failed carries ``prefix_errors``: it was
-    measured without the memory that turn would have stored.
+    measured without the memory that turn would have stored. With ``expected``
+    (a retrieval round) the named turns are cut short after their retrieval and
+    their row says where the expected articles stood (:func:`_stage_row`).
     """
     named = {case["turn"] for case in cases}
     failed: list[dict] = []
     for u in range(max(named) + 1):
+        if expected is not None and u in named:
+            _arm()
         row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u})
+        if expected is not None and u in named:
+            row = _stage_row(row, expected[u], _take())
         if u in named:
             yield {**row, "prefix_errors": list(failed)} if failed else row
         if "error" in row:
@@ -590,7 +614,7 @@ async def _widget_answer(widget: dict, messages: list[dict], session_id: str) ->
     }
 
 
-async def _replay_widget_turn(widget: dict, case: dict) -> dict:
+async def _replay_widget_turn(widget: dict, case: dict, expected: list[str] | None = None) -> dict:
     """One widget row: the case's own conversation, every earlier visitor turn first for its memory, then the latest.
 
     The history is the case's own, so the turn the route stored stands for the
@@ -621,11 +645,15 @@ async def _replay_widget_turn(widget: dict, case: dict) -> dict:
                 _widget_cases[session_key][1],
             )
     row = {"cid": case["cid"], "u": case["turn"], "ask": messages[-1]["content"][:_ASK_CHARS]}
+    if expected is not None:
+        _arm()
     measured = await _replayed(
         row,
         _from_the_same_memory(_widget_cases, session_key, lambda: _widget_answer(widget, messages, session_id)),
         ("text", "sources", "appointment", "signals", "total_ms"),
     )
+    if expected is not None:
+        measured = _stage_row(measured, expected, _take())
     return {**measured, "prefix_errors": failed} if failed else measured
 
 
@@ -642,12 +670,20 @@ def _rows_inside_checkout(out: Path) -> bool:
 async def _replayer(
     args: argparse.Namespace, widget: dict | None, todo: list[dict]
 ) -> Callable[[list[dict]], AsyncIterator[dict]]:
-    """How the cases of one conversation are replayed: a widget case as the widget, an internal case as its employee."""
+    """How the cases of one conversation are replayed: a widget case as the widget, an internal case as its employee.
+
+    A retrieval round replays only the cases that name an expected article; the others get a skipped row.
+    """
+    retrieving = args.command == "retrieval"
     if widget is not None:
 
         async def replay_widget(cases: list[dict]) -> AsyncIterator[dict]:
             for case in cases:
-                yield await _replay_widget_turn(widget, case)
+                expected = _expected_sources(case) if retrieving else None
+                if retrieving and not expected:
+                    yield _skipped_row(case)
+                else:
+                    yield await _replay_widget_turn(widget, case, expected)
 
         return replay_widget
     org = await replay._load_org(args.org)
@@ -659,7 +695,17 @@ async def _replayer(
             for case in cases:
                 yield {"cid": case["cid"], "u": case["turn"], "error": "conversation_or_profile_not_found"}
             return
-        async for row in _replay_internal_conversation(org, thread, cases):
+        expected = (
+            {c["turn"]: _expected_sources(c, _recorded_reply(thread, c["turn"])) for c in cases} if retrieving else None
+        )
+        if expected is not None:
+            for case in cases:
+                if not expected[case["turn"]]:
+                    yield _skipped_row(case)
+            cases = [case for case in cases if expected[case["turn"]]]
+        if not cases:
+            return
+        async for row in _replay_internal_conversation(org, thread, cases, expected):
             yield row
 
     return replay_internal
@@ -707,6 +753,7 @@ async def _run(args: argparse.Namespace) -> int:
         "overlay": str(overlay.resolve()) if overlay else None,
         "overlay_git": _git_describe(overlay),
         "started_at": datetime.now(UTC).isoformat(),
+        "command": args.command,
         "org": args.org,
         "surface": args.surface,
         "cases": len(cases),
@@ -720,9 +767,11 @@ async def _run(args: argparse.Namespace) -> int:
         flush=True,
     )
     if not todo:
-        return 0
+        return _finish(args, out)
 
     _apply_measurement_patches()
+    if args.command == "retrieval":
+        _install_retrieval_probe()
     replay._route_logs_to(out.with_name(out.name + ".pipeline.log"))
     replay_conversation = await _replayer(args, widget, todo)
     errors = number = 0
@@ -735,6 +784,157 @@ async def _run(args: argparse.Namespace) -> int:
                 handle.flush()
                 print(f"{number}/{len(todo)} {'failed: ' + row['error'] if 'error' in row else 'replayed'}", flush=True)
     print(f"files: {out} ({errors} error row(s))")
+    return _finish(args, out)
+
+
+# --- retrieval -------------------------------------------------------------------------------------------------
+
+# Set by the replay on the turn it measures: whether the probe records, and what the turn's retrieval left.
+_probe: dict[str, Any] = {"armed": False, "record": None}
+
+
+def _arm() -> None:
+    _probe.update(armed=True, record=None)
+
+
+def _take() -> dict | None:
+    record = _probe["record"]
+    _probe.update(armed=False, record=None)
+    return record
+
+
+def _install_retrieval_probe() -> None:
+    """Cut the measured turn short after its retrieval and keep what the retrieval returned.
+
+    ``_call_retrieval`` asks retrieval-api for its ``debug_stages`` and times the call;
+    ``_choose_and_prompt`` (the selection step, the gap event and the prompt) is replaced
+    by a stub that keeps the passages the chat would have received and routes the turn to
+    a fixed reply, so no model writes. Turns that are not armed (the earlier turns, which
+    store the case a follow-up reads) run unchanged.
+    """
+    call, choose = retrieval_context._call_retrieval, retrieval_context._choose_and_prompt
+
+    async def probed_call(t: Any, retrieve_body: dict) -> Any:
+        if not _probe["armed"]:
+            return await call(t, retrieve_body)
+        started = time.perf_counter()
+        result = await call(t, {**retrieve_body, "debug_stages": True})
+        if isinstance(result, dict):
+            _probe["record"] = {
+                "top_k": retrieve_body["top_k"],
+                "retrieve_ms": round((time.perf_counter() - started) * 1000),
+                "api_ms": (result.get("metadata") or {}).get("retrieval_ms"),
+                "stages": result.get("debug_stages"),
+            }
+        return result
+
+    async def probed_choose(t: Any, found: Any) -> Any:
+        if not _probe["armed"]:
+            return await choose(t, found)
+        if _probe["record"] is not None:
+            _probe["record"]["served"] = _distinct_keys(chunk.get("source_url") for chunk in found.chunks)
+        t.turn.refusal = lambda _language: _PROBE_REPLY
+        t.turn.not_in_passages = True
+        return [], "", [], False
+
+    retrieval_context._call_retrieval = probed_call  # type: ignore[assignment]
+    retrieval_context._choose_and_prompt = probed_choose  # type: ignore[assignment]
+
+
+def _distinct_keys(urls: Iterable[Any]) -> list[str]:
+    """The source keys of the URLs, each once in the order seen, normalised the way the evidence pack keys a source."""
+    return list(dict.fromkeys(key for key in map(source_url_key, urls) if key))
+
+
+def _expected_sources(case: dict, recorded_reply: str = "") -> list[str]:
+    """The source keys of the articles the case expects its answer from; empty when it names none.
+
+    Only the classes the knowledge base should answer expect an article. A case
+    names them in ``articles`` (the widget cases do); an internal case without
+    that field falls back to the links of the reply recorded in the conversation.
+    """
+    if _case_class(case) not in _ANSWERED_FROM_ARTICLES:
+        return []
+    urls = case.get("articles") or [url.rstrip(".,;") for url in _URL.findall(recorded_reply)]
+    return _distinct_keys(urls)
+
+
+def _recorded_reply(thread: Thread, u: int) -> str:
+    """The reply that followed the employee's u-th turn in the recorded conversation."""
+    user_turns = [k for k, turn in enumerate(thread.turns) if turn["role"] == "user"]
+    following = thread.turns[user_turns[u] + 1 : user_turns[u] + 2] if u < len(user_turns) else []
+    return following[0]["content"] if following and following[0]["role"] == "assistant" else ""
+
+
+def _skipped_row(case: dict) -> dict:
+    return {"cid": case["cid"], "u": case["turn"], "skipped": "no_expected_source"}
+
+
+def stage_hits(expected: list[str], stages: dict[str, list[str]], served: list[str]) -> dict:
+    """Whether an expected source is among the candidates after search and the reranker's output; its best served rank."""
+    wanted = set(expected)
+    ranks = [rank for rank, key in enumerate(served, 1) if key in wanted]
+    return {
+        "search": bool(wanted & set(stages.get("search", ()))),
+        "rerank": bool(wanted & set(stages.get("rerank", ()))),
+        "served": ranks[0] if ranks else None,
+    }
+
+
+def _stage_row(row: dict, expected: list[str], record: dict | None) -> dict:
+    """The retrieval row of a replayed turn: where the expected articles stood, and the timing of /retrieve."""
+    kept = {field: row[field] for field in ("cid", "k", "u", "mode", "ask", "error") if field in row}
+    if "error" in kept:
+        return kept
+    if record is None or "served" not in record:
+        # A trivial turn or a question about Klai itself searches nothing.
+        return {**kept, "skipped": "turn_did_not_search"}
+    if record["stages"] is None:
+        # An older retrieval-api answers without the field; that is not a miss.
+        return {**kept, "error": "retrieval_api_without_debug_stages"}
+    return {
+        **kept,
+        "expected": len(expected),
+        "top_k": record["top_k"],
+        **stage_hits(expected, record["stages"], record["served"]),
+        "search_n": len(record["stages"].get("search", ())),
+        "retrieve_ms": record["retrieve_ms"],
+        "api_ms": record["api_ms"],
+    }
+
+
+def summarize_stages(rows: list[dict]) -> dict:
+    """Recall at each stage, MRR of the served list and the timing of /retrieve over the measured rows."""
+    measured = [row for row in rows if "search" in row]
+
+    def share(hit: Callable[[dict], bool]) -> float | None:
+        return round(sum(1 for row in measured if hit(row)) / len(measured), 3) if measured else None
+
+    def timing(field: str) -> dict:
+        values = [row[field] for row in measured if row.get(field) is not None]
+        return {"p50": replay._percentile(values, 0.5), "p95": replay._percentile(values, 0.95)}
+
+    return {
+        "cases": len(measured),
+        "skipped": sum(1 for row in rows if "skipped" in row),
+        "errors": sum(1 for row in rows if "error" in row),
+        "recall_search": share(lambda row: row["search"]),
+        "recall_rerank": share(lambda row: row["rerank"]),
+        "recall_served": share(lambda row: row["served"] is not None),
+        "mrr_served": round(sum(1 / row["served"] for row in measured if row["served"]) / len(measured), 3)
+        if measured
+        else None,
+        "retrieve_ms": timing("retrieve_ms"),
+        "api_ms": timing("api_ms"),
+    }
+
+
+def _finish(args: argparse.Namespace, out: Path) -> int:
+    """A retrieval round ends with its summary, printed and written next to the rows."""
+    if args.command == "retrieval":
+        summary = summarize_stages(_read_jsonl(out))
+        out.with_name(out.name + ".summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+        print(json.dumps(summary, indent=2))
     return 0
 
 
@@ -934,20 +1134,26 @@ def _compare(args: argparse.Namespace) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="meetlat", description=(__doc__ or "").split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="replay the cases through the chat pipeline")
-    run.add_argument("--surface", choices=("internal", "widget"), required=True)
-    run.add_argument("--org", required=True, help="org slug")
-    run.add_argument("--cases", type=Path, required=True)
-    run.add_argument("--out", type=Path, required=True)
-    run.add_argument(
-        "--overlay", type=Path, help="directory with the candidate code; every pipeline module must load from it"
-    )
-    run.add_argument("--days", type=int, default=_DEFAULT_DAYS, help="only conversations updated within this many days")
-    run.add_argument(
-        "--widget",
-        type=Path,
-        help="json with " + ", ".join(_WIDGET_FIELDS) + "; the widget a --surface widget round replays as",
-    )
+    for name, text in (
+        ("run", "replay the cases through the chat pipeline"),
+        ("retrieval", "replay only the retrieval of the cases that name an expected article, per stage"),
+    ):
+        replaying = commands.add_parser(name, help=text)
+        replaying.add_argument("--surface", choices=("internal", "widget"), required=True)
+        replaying.add_argument("--org", required=True, help="org slug")
+        replaying.add_argument("--cases", type=Path, required=True)
+        replaying.add_argument("--out", type=Path, required=True)
+        replaying.add_argument(
+            "--overlay", type=Path, help="directory with the candidate code; every pipeline module must load from it"
+        )
+        replaying.add_argument(
+            "--days", type=int, default=_DEFAULT_DAYS, help="only conversations updated within this many days"
+        )
+        replaying.add_argument(
+            "--widget",
+            type=Path,
+            help="json with " + ", ".join(_WIDGET_FIELDS) + "; the widget a --surface widget round replays as",
+        )
     compare = commands.add_parser("compare", help="classify and compare rounds")
     compare.add_argument("--cases", type=Path, required=True)
     compare.add_argument("--json", action="store_true")
@@ -958,7 +1164,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        return asyncio.run(_run(args)) if args.command == "run" else _compare(args)
+        return _compare(args) if args.command == "compare" else asyncio.run(_run(args))
     except UsageError as exc:
         print(f"meetlat: {exc}", file=sys.stderr)
         return 2

@@ -19,7 +19,9 @@ class Settings(BaseSettings):
     litellm_api_key: str = ""
 
     retrieval_candidates: int = 60
-    reranker_candidates: int = 20  # top-N from retrieval sent to reranker (CPU budget)
+    # Top-N of the retrieval candidates the reranker scores. The literature puts the useful
+    # depth at 50 to 100 (docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md).
+    reranker_candidates: int = 60
     # Multi-part fan-out: chunks served per sub-question. Keeps the merged
     # context bounded (6 sub-questions x 4 chunks max).
     sub_query_top_k: int = 4

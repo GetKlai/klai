@@ -94,6 +94,9 @@ class RetrieveRequest(BaseModel):
     # retrieved in 33 of 40 turns but the three-source cap and duplicate
     # sections left a median of five passages from three articles.
     max_sources: int | None = Field(None, ge=1, le=8)
+    # Measurement only (meetlat retrieval): answer with the source keys each
+    # pipeline stage saw, next to the normal response. Off by default.
+    debug_stages: bool = False
 
     @field_validator("conversation_history")
     @classmethod
@@ -241,6 +244,10 @@ class RetrieveResponse(BaseModel):
     # Present only on sub-question fan-out requests: per-question coverage in
     # the caller's sub_queries order.
     sub_results: list[SubQueryResult] | None = None
+    # Only when the request set ``debug_stages``: stage name ("search" = the
+    # candidates after search, "rerank" = what the reranker returned) to the
+    # distinct source keys (``chunk_source_key``) it held. Keys only, no text.
+    debug_stages: dict[str, list[str]] | None = None
 
 
 class Citation(BaseModel):

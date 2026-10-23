@@ -6,6 +6,7 @@ import asyncio
 import math
 import time
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any, cast
@@ -135,6 +136,22 @@ def _ranking_contract_snapshot(
     }
 
 
+def _add_stage_keys(stages: dict[str, list[str]] | None, stage: str, keys: Iterable[str]) -> None:
+    """Add source keys to a stage of the ``debug_stages`` record, each once, in first-seen order."""
+    if stages is None:
+        return
+    seen = stages.setdefault(stage, [])
+    for key in keys:
+        if key and key not in seen:
+            seen.append(key)
+
+
+def _note_stage(
+    stages: dict[str, list[str]] | None, stage: str, chunks: list[dict[str, Any]]
+) -> None:
+    _add_stage_keys(stages, stage, (chunk_source_key(chunk) for chunk in chunks))
+
+
 def _caller_pre_resolved(req: RetrieveRequest) -> bool:
     """Whether the caller already resolved coreference for this request.
 
@@ -234,6 +251,7 @@ async def _retrieve_sub_queries(
     indexed_packs: list[tuple[int, EvidencePack | None]] = []
     merged_chunks: list[ChunkResult] = []
     seen_chunk_ids: set[str] = set()
+    debug_stages: dict[str, list[str]] | None = {} if req.debug_stages else None
     candidates_total = 0
     reranked_total = 0
     failures = 0
@@ -270,6 +288,8 @@ async def _retrieve_sub_queries(
         )
         candidates_total += result.metadata.candidates_retrieved
         reranked_total += result.metadata.reranked_to
+        for stage, keys in (result.debug_stages or {}).items():
+            _add_stage_keys(debug_stages, stage, keys)
         for chunk in result.chunks:
             if chunk.chunk_id in seen_chunk_ids:
                 continue
@@ -344,6 +364,7 @@ async def _retrieve_sub_queries(
         confidence_band=overall_band,
         evidence_pack=merged_pack,
         sub_results=sub_results,
+        debug_stages=debug_stages,
     )
 
 
@@ -446,6 +467,8 @@ class RetrievalPipelineState:
     query_variant_tasks: list[asyncio.Task[list[dict[str, Any]]]] = dataclass_field(
         default_factory=list
     )
+    # The request's ``debug_stages`` record, filled by every pass; None when not asked for.
+    debug_stages: dict[str, list[str]] | None = None
 
 
 async def _resolve_identity_and_telemetry(
@@ -569,6 +592,7 @@ async def _resolve_identity_and_telemetry(
         trace=trace,
         decision_record=decision_record,
         ranking_contract_mode=ranking_contract_mode,
+        debug_stages={} if req.debug_stages else None,
     )
 
 
@@ -604,7 +628,9 @@ def _one_per_parent(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
-async def _query_variant_pass(req: RetrieveRequest, text: str) -> list[dict[str, Any]]:
+async def _query_variant_pass(
+    req: RetrieveRequest, text: str, stages: dict[str, list[str]] | None
+) -> list[dict[str, Any]]:
     """Embed, search and rerank one variant on its own text; top_k results."""
     query_vector, sparse_vector = await asyncio.gather(embed_single(text), embed_sparse(text))
     raw = await search.hybrid_search(
@@ -613,11 +639,13 @@ async def _query_variant_pass(req: RetrieveRequest, text: str) -> list[dict[str,
         settings.retrieval_candidates,
         cast(SparseVector | None, sparse_vector),
     )
+    _note_stage(stages, "search", raw)
     if not raw or not settings.reranker_enabled:
         return _one_per_parent(raw)[: req.top_k]
     reranked = _one_per_parent(
         await reranker.rerank(text, raw[: settings.reranker_candidates], req.top_k * 3)
     )
+    _note_stage(stages, "rerank", reranked)
     if settings.ranking_contract_mode == "active":
         _set_final_rank_scores(reranked)
     return reranked[: req.top_k]
@@ -631,7 +659,9 @@ def _start_query_variant_passes(state: RetrievalPipelineState) -> None:
         if not text or text.lower() in seen:
             continue
         seen.add(text.lower())
-        state.query_variant_tasks.append(asyncio.create_task(_query_variant_pass(state.req, text)))
+        state.query_variant_tasks.append(
+            asyncio.create_task(_query_variant_pass(state.req, text, state.debug_stages))
+        )
 
 
 async def _merge_query_variant_passes(state: RetrievalPipelineState) -> None:
@@ -853,6 +883,7 @@ async def _run_search(state: RetrievalPipelineState) -> None:
 
     state.candidates_retrieved = len(state.raw_results)
     state.decision_record["search_candidates_count"] = state.candidates_retrieved
+    _note_stage(state.debug_stages, "search", state.raw_results)
 
 
 async def _run_link_expand(state: RetrievalPipelineState) -> None:
@@ -974,6 +1005,8 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
             candidates_in=len(state.raw_results),
             candidates_out=state.reranked_to,
         )
+
+    _note_stage(state.debug_stages, "rerank", state.reranked)
 
     # REQ-RANK-01/04: in active mode every serving chunk gets the single
     # ranking truth; in shadow mode the field stays ABSENT on serving
@@ -1485,6 +1518,7 @@ def _build_response(state: RetrievalPipelineState) -> RetrieveResponse:
         ),
         confidence_band=state.confidence_band,
         evidence_pack=state.evidence_pack,
+        debug_stages=state.debug_stages,
     )
 
 

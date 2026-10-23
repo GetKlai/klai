@@ -1087,3 +1087,317 @@ def test_a_retried_internal_turn_reads_the_case_of_the_turn_before_not_its_own_f
     (row,) = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
     assert row["text"] == "answer to second"
     assert seen == [None, {"problem": "after first, attempt 1"}, {"problem": "after first, attempt 1"}]
+
+
+# --- retrieval -------------------------------------------------------------------------------------------------
+
+
+_ART = "https://help.example.com/articles"
+
+
+def test_stage_hits_tell_a_candidate_lost_in_the_rerank_from_one_that_stayed():
+    stages = {"search": [f"{_ART}/a", f"{_ART}/b"], "rerank": [f"{_ART}/b"]}
+
+    lost = meetlat.stage_hits([f"{_ART}/a"], stages, [f"{_ART}/b"])
+    kept = meetlat.stage_hits([f"{_ART}/b"], stages, [f"{_ART}/c", f"{_ART}/b"])
+    absent = meetlat.stage_hits([f"{_ART}/z"], stages, [f"{_ART}/b"])
+
+    assert lost == {"search": True, "rerank": False, "served": None}
+    assert kept == {"search": True, "rerank": True, "served": 2}
+    assert absent == {"search": False, "rerank": False, "served": None}
+
+
+def test_stage_hits_rank_the_best_of_several_expected_articles_among_the_served():
+    served = [f"{_ART}/x", f"{_ART}/b", f"{_ART}/a"]
+
+    assert meetlat.stage_hits([f"{_ART}/a", f"{_ART}/b"], {}, served)["served"] == 2
+
+
+def test_expected_articles_are_keyed_like_the_evidence_pack_keys_a_source():
+    case = {"id": "w-1", "expect": "antwoord", "articles": ["https://Help.example.com/articles/a/", "not a url"]}
+
+    assert meetlat._expected_sources(case) == [f"{_ART}/a"]
+    assert meetlat._distinct_keys(["https://www.help.example.com/articles/a", None, f"{_ART}/a/"]) == [f"{_ART}/a"]
+
+
+@pytest.mark.parametrize(
+    "klass", ["niet_gevonden", "vraag", "doorverwijzing", "weigering", "antwoord_algemeen_gelabeld"]
+)
+def test_a_case_whose_answer_is_not_an_article_expects_none(klass):
+    assert meetlat._expected_sources({"id": "w-1", "expect": klass, "articles": [f"{_ART}/a"]}) == []
+
+
+def test_an_internal_case_without_articles_expects_the_links_of_the_reply_recorded_for_its_turn():
+    thread = _thread("aaaaaaaa-1", ["first", "second"])
+    thread.turns[3]["content"] = f"See [the guide]({_ART}/a/) and {_ART}/b."
+    case = {"cid": "aaaaaaaa", "turn": 1, "expect": "antwoord_kb"}
+
+    assert meetlat._expected_sources(case, meetlat._recorded_reply(thread, 1)) == [f"{_ART}/a", f"{_ART}/b"]
+    assert meetlat._expected_sources(case, meetlat._recorded_reply(thread, 0)) == []
+    assert meetlat._recorded_reply(thread, 5) == ""
+
+
+def _stage_rows():
+    def row(search, rerank, served, ms):
+        return {
+            "cid": "c",
+            "u": 0,
+            "search": search,
+            "rerank": rerank,
+            "served": served,
+            "retrieve_ms": ms,
+            "api_ms": ms,
+        }
+
+    return [
+        row(True, True, 1, 100),
+        row(True, False, None, 200),
+        row(True, True, 4, 300),
+        row(False, False, None, 400),
+        {"cid": "c", "u": 1, "skipped": "no_expected_source"},
+        {"cid": "c", "u": 2, "error": "HTTPException"},
+    ]
+
+
+def test_the_summary_gives_recall_per_stage_and_the_mrr_of_the_served_list():
+    summary = meetlat.summarize_stages(_stage_rows())
+
+    assert summary["cases"] == 4 and summary["skipped"] == 1 and summary["errors"] == 1
+    assert (summary["recall_search"], summary["recall_rerank"], summary["recall_served"]) == (0.75, 0.5, 0.5)
+    assert summary["mrr_served"] == round((1 + 1 / 4) / 4, 3)
+    assert summary["retrieve_ms"] == {"p50": 200, "p95": 400}
+
+
+def test_a_summary_without_measured_rows_has_no_shares():
+    summary = meetlat.summarize_stages([{"cid": "c", "u": 0, "skipped": "no_expected_source"}])
+
+    assert summary["cases"] == 0 and summary["recall_served"] is None and summary["mrr_served"] is None
+
+
+class _PostedRetrieval:
+    """Stands in for httpx.AsyncClient around retrieve_context: keeps the bodies posted, answers with ``payload``."""
+
+    def __init__(self, monkeypatch, payload):
+        self.bodies: list[dict] = []
+        outer = self
+
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return payload
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                return None
+
+            async def post(self, url, json=None, headers=None):
+                outer.bodies.append(json)
+                return Response()
+
+        monkeypatch.setattr("app.services.retrieval_context.httpx.AsyncClient", lambda timeout: Client())
+
+
+def _retrieval_payload():
+    items = [
+        {"chunk_id": "c1", "evidence_id": "E1", "text": "passage", "title": "One", "source_url": f"{_ART}/a/"},
+        {"chunk_id": "c2", "evidence_id": "E2", "text": "passage", "title": "Two", "source_url": f"{_ART}/b"},
+    ]
+    return {
+        "chunks": [],
+        "metadata": {"retrieval_ms": 321.0},
+        "evidence_pack": {"items": items, "sources": []},
+        "debug_stages": {"search": [f"{_ART}/a", f"{_ART}/b", f"{_ART}/c"], "rerank": [f"{_ART}/a"]},
+    }
+
+
+async def _retrieve_with_probe(monkeypatch, *, armed: bool):
+    from app.services import retrieval_context
+    from app.services.retrieval_context import KnowledgeTurn
+
+    posted = _PostedRetrieval(monkeypatch, _retrieval_payload())
+    # Restored at teardown: the probe replaces these two module functions.
+    for name in ("_call_retrieval", "_choose_and_prompt"):
+        monkeypatch.setattr(retrieval_context, name, getattr(retrieval_context, name))
+    monkeypatch.setattr(retrieval_context, "_schedule_gap_event", lambda **_: None)
+
+    async def no_paraphrases(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(retrieval_context, "first_question_variants", no_paraphrases)
+    meetlat._install_retrieval_probe()
+    if armed:
+        meetlat._arm()
+    settings = types.SimpleNamespace(
+        knowledge_retrieve_url="http://retrieval-api",
+        retrieval_api_internal_secret="s",
+        internal_secret="s",
+        kb_images_base_url="",
+    )
+    turn = KnowledgeTurn()
+    result = await retrieval_context.retrieve_context(
+        42, "zorg", ["kb"], [{"role": "user", "content": "How do I do this?"}], settings, top_k=8, knowledge_turn=turn
+    )
+    return posted, turn, result, meetlat._take()
+
+
+@pytest.mark.asyncio
+async def test_the_probe_asks_for_the_stages_keeps_what_the_chat_would_receive_and_stops_the_turn_there(monkeypatch):
+    async def selection_must_not_run(*_args, **_kwargs):
+        raise AssertionError("the selection step ran in a retrieval round")
+
+    monkeypatch.setattr("app.services.retrieval_context.select_passages", selection_must_not_run)
+
+    posted, turn, result, record = await _retrieve_with_probe(monkeypatch, armed=True)
+
+    assert posted.bodies[0]["debug_stages"] is True
+    assert record["stages"] == {"search": [f"{_ART}/a", f"{_ART}/b", f"{_ART}/c"], "rerank": [f"{_ART}/a"]}
+    assert record["served"] == [f"{_ART}/a", f"{_ART}/b"]
+    assert (record["top_k"], record["api_ms"]) == (8, 321.0) and record["retrieve_ms"] >= 0
+    assert result == ([], "", [], False)
+    assert turn.not_in_passages and turn.refusal is not None
+
+
+@pytest.mark.asyncio
+async def test_a_turn_the_probe_is_not_armed_for_is_asked_and_answered_as_in_production(monkeypatch):
+    async def no_selection(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.retrieval_context.select_passages", no_selection)
+
+    posted, turn, result, record = await _retrieve_with_probe(monkeypatch, armed=False)
+
+    assert "debug_stages" not in posted.bodies[0]
+    assert record is None
+    assert turn.refusal is None
+    assert [chunk["chunk_id"] for chunk in result[0]] == ["c1", "c2"]
+
+
+def _retrieval_answer(monkeypatch, *, searches=True):
+    """A replayed turn that leaves a record in the probe when it is armed, as the stubs around retrieve_context do."""
+    asked: list[tuple[str, bool]] = []
+
+    async def new_answer(_org, _profile, messages, _conversation_id):
+        asked.append((messages[-1]["content"], meetlat._probe["armed"]))
+        if meetlat._probe["armed"] and searches:
+            meetlat._probe["record"] = {
+                "top_k": 20,
+                "retrieve_ms": 250,
+                "api_ms": 200.0,
+                "stages": {"search": [f"{_ART}/a", f"{_ART}/b"], "rerank": [f"{_ART}/b"]},
+                "served": [f"{_ART}/c", f"{_ART}/a"],
+            }
+        return {"text": meetlat._PROBE_REPLY, "ttft_ms": 5, "total_ms": 900, "signals": {"decision": "refusal"}}
+
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+    monkeypatch.setattr(meetlat, "_install_retrieval_probe", lambda: None)
+    return asked
+
+
+def _retrieval(tmp_path, cases_rows, overlay, surface="internal"):
+    cases = _write_jsonl(tmp_path / "cases.jsonl", cases_rows)
+    extra = ["--widget", str(tmp_path / "widget.json")] if surface == "widget" else []
+    return meetlat.main(
+        ["retrieval", "--surface", surface, "--org", "brightwater", "--cases", str(cases), "--out", str(tmp_path / "r.jsonl"),
+         "--overlay", str(overlay), *extra]
+    )  # fmt: skip
+
+
+def test_a_retrieval_round_measures_the_named_internal_turn_and_replays_the_earlier_turns_in_full(
+    monkeypatch, tmp_path, capsys
+):
+    thread = _thread("aaaaaaaa-1111", ["first", "second"])
+    thread.turns[3]["content"] = f"See {_ART}/a for this."
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": thread}, [])
+    asked = _retrieval_answer(monkeypatch)
+    cases = [
+        {"cid": "aaaaaaaa", "turn": 1, "expect": "antwoord_kb"},
+        {"cid": "aaaaaaaa", "turn": 0, "expect": "weigering"},
+    ]
+
+    code = _retrieval(tmp_path, cases, overlay)
+
+    rows = {r["u"]: r for r in map(json.loads, (tmp_path / "r.jsonl").read_text().splitlines())}
+    assert code == 0
+    # Turn 0 is replayed for the case turn 1 reads, but only turn 1 is armed.
+    assert asked == [("first", False), ("second", True)]
+    assert rows[0] == {"cid": "aaaaaaaa", "u": 0, "skipped": "no_expected_source"}
+    assert {k: rows[1][k] for k in ("search", "rerank", "served", "expected", "top_k", "retrieve_ms")} == {
+        "search": True, "rerank": False, "served": 2, "expected": 1, "top_k": 20, "retrieve_ms": 250,
+    }  # fmt: skip
+    assert "text" not in rows[1]
+    summary = json.loads((tmp_path / "r.jsonl.summary.json").read_text())
+    assert (summary["cases"], summary["skipped"], summary["recall_served"], summary["mrr_served"]) == (1, 1, 1.0, 0.5)
+    assert json.loads(capsys.readouterr().out.split("files: ")[1].split("\n", 1)[1]) == summary
+    assert json.loads((tmp_path / "r.jsonl.meta.json").read_text())["command"] == "retrieval"
+
+
+def test_a_retrieval_round_that_resumes_summarises_the_rows_of_both_runs(monkeypatch, tmp_path):
+    thread = _thread("aaaaaaaa-1111", ["first", "second"])
+    thread.turns[1]["content"] = f"See {_ART}/a."
+    thread.turns[3]["content"] = f"See {_ART}/b."
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": thread}, [])
+    _retrieval_answer(monkeypatch)
+    cases = [{"cid": "aaaaaaaa", "turn": u, "expect": "antwoord_kb"} for u in (0, 1)]
+    assert _retrieval(tmp_path, cases[:1], overlay) == 0
+
+    assert _retrieval(tmp_path, cases, overlay) == 0
+
+    assert json.loads((tmp_path / "r.jsonl.summary.json").read_text())["cases"] == 2
+
+
+def test_a_turn_that_searched_nothing_is_skipped(monkeypatch, tmp_path):
+    thread = _thread("aaaaaaaa-1111", ["first"])
+    thread.turns[1]["content"] = f"See {_ART}/a."
+    overlay = _stub_run_environment(monkeypatch, tmp_path, {"aaaaaaaa": thread}, [])
+    _retrieval_answer(monkeypatch, searches=False)
+
+    assert _retrieval(tmp_path, [{"cid": "aaaaaaaa", "turn": 0, "expect": "antwoord_kb"}], overlay) == 0
+
+    (row,) = map(json.loads, (tmp_path / "r.jsonl").read_text().splitlines())
+    assert row["skipped"] == "turn_did_not_search"
+
+
+def test_a_retrieval_api_that_answers_without_stages_is_an_error_not_a_miss():
+    record = {"top_k": 8, "retrieve_ms": 10, "api_ms": 9.0, "stages": None, "served": [f"{_ART}/a"]}
+
+    row = meetlat._stage_row({"cid": "c", "u": 0, "mode": "open"}, [f"{_ART}/a"], record)
+
+    assert row == {"cid": "c", "u": 0, "mode": "open", "error": "retrieval_api_without_debug_stages"}
+
+
+def test_a_retrieval_round_on_the_widget_reads_the_expected_articles_from_the_case(monkeypatch, tmp_path):
+    overlay, _sent = _stub_widget_environment(monkeypatch, tmp_path, [])
+    armed: list[bool] = []
+
+    async def widget_answer(_widget, _messages, _session_id):
+        armed.append(meetlat._probe["armed"])
+        if meetlat._probe["armed"]:
+            meetlat._probe["record"] = {
+                "top_k": 8,
+                "retrieve_ms": 120,
+                "api_ms": 90.0,
+                "stages": {"search": [f"{_ART}/a"], "rerank": [f"{_ART}/a"]},
+                "served": [f"{_ART}/a"],
+            }
+        return _widget_answer(meetlat._PROBE_REPLY)
+
+    monkeypatch.setattr(meetlat, "_widget_answer", widget_answer)
+    monkeypatch.setattr(meetlat, "_install_retrieval_probe", lambda: None)
+    cases = [
+        {**_widget_case("w-1", ("first", "second")), "articles": [f"{_ART}/a/"]},
+        {**_widget_case("w-2"), "articles": []},
+        {**_widget_case("w-3", expect="niet_gevonden"), "articles": [f"{_ART}/a"]},
+    ]
+
+    code = _retrieval(tmp_path, cases, overlay, surface="widget")
+
+    rows = {r["cid"]: r for r in map(json.loads, (tmp_path / "r.jsonl").read_text().splitlines())}
+    assert code == 0
+    assert armed == [False, True]
+    assert (rows["w-1"]["search"], rows["w-1"]["rerank"], rows["w-1"]["served"]) == (True, True, 1)
+    assert rows["w-2"]["skipped"] == rows["w-3"]["skipped"] == "no_expected_source"

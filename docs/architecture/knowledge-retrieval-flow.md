@@ -939,7 +939,7 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `KLAI_GAP_SOFT_THRESHOLD` | `0.4` | Reranker score below which gap is "soft" |
 | `KLAI_GAP_DENSE_THRESHOLD` | `0.35` | Dense score fallback for gap detection |
 | `retrieval_candidates` | `60` | Raw candidates fetched from Qdrant |
-| `reranker_candidates` | `20` | Top-N sent to cross-encoder |
+| `reranker_candidates` | `60` | Top-N sent to cross-encoder |
 | `link_expand_enabled` | `true` | 1-hop link expansion + authority boost (SPEC-CRAWLER-003). |
 | `link_expand_seed_k` | `10` | Top-N raw chunks whose `links_to` payload is mined. |
 | `link_expand_max_urls` | `30` | Cap on URLs collected from seed chunks per request. |
