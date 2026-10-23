@@ -103,7 +103,7 @@ async def _run_bulk_enrichment(error: Exception, *, llm_deferred_since: int | No
     enrichment_tasks._register_tasks(app)
     task = app.enrich_document_bulk
 
-    async def _load_and_enrich(artifact_id, resource_key=None):
+    async def _load_and_enrich(artifact_id, resource_key=None, batch_offset=0):
         await enrichment_tasks._enrich_document(
             org_id="org-1",
             kb_slug="kb-1",

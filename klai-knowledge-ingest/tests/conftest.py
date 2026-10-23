@@ -33,6 +33,10 @@ os.environ.setdefault("GITEA_WEBHOOK_SECRET", "test-gitea-webhook-secret-789")
 # disabled. Tests that *want* to exercise the enrichment path patch
 # ``settings.enrichment_enabled = True`` themselves.
 os.environ.setdefault("ENRICHMENT_ENABLED", "false")
+# upsert_chunks embeds sparse vectors; with no sidecar URL the embedder returns
+# None at once instead of waiting out a connect timeout to an address that
+# only exists in production.
+os.environ.setdefault("SPARSE_SIDECAR_URL", "")
 
 
 # ---------------------------------------------------------------------------

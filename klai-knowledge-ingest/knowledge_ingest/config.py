@@ -352,8 +352,13 @@ class Settings(BaseSettings):
     enrichment_model: str = "klai-ingest"
     enrichment_timeout: float = 15.0
     enrichment_max_concurrent: int = 2
-    # Larger docs keep raw chunk vectors; per-chunk LLM fan-out is not viable.
+    # Chunks enriched per task. A larger document is enriched in several
+    # tasks of this size, each queued behind the other documents' work.
     enrichment_max_chunks: int = 200
+    # Documents above this stay on their raw chunks (dense + sparse, no LLM).
+    # 2000 chunks = 10 batches = ~56 min of the whole shared klai-ingest budget
+    # at litellm_klai_fast_rps (0.6) for one document.
+    enrichment_hard_max_chunks: int = 2000
     enrichment_max_document_tokens: int = 2000
     # Sparse embedding sidecar (BGE-M3 FlagEmbedding)
     sparse_sidecar_url: str = "http://172.18.0.1:8001"

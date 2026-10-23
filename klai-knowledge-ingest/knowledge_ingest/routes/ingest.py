@@ -908,6 +908,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         tags=merged_tags if merged_tags else None,
         has_taxonomy=has_taxonomy,
         parent_chunk_ids=parent_chunk_ids,
+        heading_paths=None if req.skip_chunking else [c.heading_path for c in chunks],
     )
 
     # SPEC-KB-022 R4: Taxonomy proposal generation runs in batch mode only —
