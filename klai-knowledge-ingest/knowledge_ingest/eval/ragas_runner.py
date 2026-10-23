@@ -61,27 +61,21 @@ def _rotated(values: list[Any], run_day: date, *, salt: str = "") -> list[Any]:
     return values[offset:] + values[:offset]
 
 
-def _chunk_canary_fields(chunk: dict[str, Any]) -> tuple[str, str]:
-    """Return strong fields and body text for expected_chunks canary matching."""
-    strong_values = [
-        chunk.get("chunk_id"),
-        chunk.get("id"),
-        chunk.get("title"),
-        chunk.get("source_url"),
-    ]
+def _chunk_canary_fields(chunk: dict[str, Any]) -> tuple[set[str], str]:
+    """Return the document identities and body text a canary marker can match.
+
+    A document is identified by its source URL (or, in intake snapshots, its
+    path), which survives re-chunking, re-titling and re-ingest. Titles and
+    chunk ids are deliberately not identities: on 2026-09-10 a help page was
+    re-titled and its title canary read as a retrieval drop for 30 days.
+    """
+    values = [chunk.get("source_url")]
     metadata = chunk.get("metadata")
     if isinstance(metadata, dict):
-        strong_values.extend(
-            [
-                metadata.get("title"),
-                metadata.get("source_url"),
-                metadata.get("path"),
-                metadata.get("kb_slug"),
-            ]
-        )
-    strong = "\n".join(str(v) for v in strong_values if v is not None).lower()
+        values.extend([metadata.get("source_url"), metadata.get("path")])
+    identities = {str(v).strip().lower() for v in values if v}
     body = str(chunk.get("text") or "").lower()
-    return strong, body
+    return identities, body
 
 
 def _canary_allows_body_match(expected: str) -> bool:
@@ -96,10 +90,10 @@ def _expected_chunk_canary(
 ) -> dict[str, Any] | None:
     """Compare expected chunk markers with retrieved chunks.
 
-    Suite YAML canaries are human-readable markers rather than guaranteed
-    internal IDs, so matching is case-insensitive substring matching across
-    stable returned fields. Empty expected_chunks means the query is not a
-    canary and returns None.
+    A marker is either a document identity, equal to a returned chunk's
+    source URL or path, or a passage phrase found in a returned chunk's text.
+    Matching is case-insensitive. Empty expected_chunks means the query is not
+    a canary and returns None.
     """
     if not expected_chunks:
         return None
@@ -111,8 +105,8 @@ def _expected_chunk_canary(
         needle = expected.strip().lower()
         allow_body = _canary_allows_body_match(expected)
         if needle and any(
-            needle in strong or (allow_body and needle in body)
-            for strong, body in searchable_chunks
+            needle in identities or (allow_body and needle in body)
+            for identities, body in searchable_chunks
         ):
             matched.append(expected)
         else:

@@ -1,11 +1,13 @@
-"""Reproduction script for the Voys seed-query suites (SPEC-RAG-EVAL-001 Unit 4).
+"""Sample artifact paths for curating a tenant's seed-query suites (SPEC-RAG-EVAL-001 Unit 4).
 
-Pulls a random sample of 50 artifact paths from the Voys `support` KB and prints
-them grouped by content_type. Use the output as input when hand-curating a fresh
-batch of queries to keep the suites in sync with corpus drift.
+Pulls a random sample of 50 artifact paths from one tenant's `support` KB and
+prints them grouped by content_type. Use the output as input when hand-curating
+a fresh batch of queries to keep the suites in sync with corpus drift.
 
 This script does NOT auto-write YAML — query curation is a human-review step.
-The committed `chat.yaml` and `knowledge_org.yaml` were produced by:
+The tenant suites (`chat.yaml`, `knowledge_org.yaml`) name a customer's
+documents, so they live in the private infra repo and reach knowledge-ingest
+through RAG_EVAL_SUITES_DIR. They were produced by:
 
   1. Running this script against prod (via SSH to core-01)
   2. Reading 50 sampled paths grouped by theme
@@ -13,7 +15,7 @@ The committed `chat.yaml` and `knowledge_org.yaml` were produced by:
 
 Usage (against the dev DB, mirroring prod schema):
 
-  uv run python -m knowledge_ingest.eval.generate_voys_seed_queries
+  uv run python -m knowledge_ingest.eval.sample_seed_paths
 
 Or against prod (read-only):
 
@@ -34,11 +36,11 @@ import asyncio
 
 from knowledge_ingest.db import get_pool
 
-VOYS_ORG_ID = "100000000000000002"
+SEED_ORG_ID = "100000000000000002"
 
 
-async def sample_voys_paths(limit: int = 50) -> list[tuple[str, str]]:
-    """Return up to `limit` random (content_type, path) tuples from Voys's support KB."""
+async def sample_support_paths(limit: int = 50) -> list[tuple[str, str]]:
+    """Return up to `limit` random (content_type, path) tuples from the seed tenant's support KB."""
     pool = await get_pool()
     rows = await pool.fetch(
         """
@@ -49,14 +51,14 @@ async def sample_voys_paths(limit: int = 50) -> list[tuple[str, str]]:
         ORDER BY random()
         LIMIT $2
         """,
-        VOYS_ORG_ID,
+        SEED_ORG_ID,
         limit,
     )
     return [(row["content_type"], row["path"]) for row in rows]
 
 
 async def _main() -> None:
-    samples = await sample_voys_paths(50)
+    samples = await sample_support_paths(50)
     by_type: dict[str, list[str]] = {}
     for content_type, path in samples:
         by_type.setdefault(content_type, []).append(path)

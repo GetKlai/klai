@@ -103,6 +103,17 @@ def test_load_validates_required_fields(tmp_path: Path) -> None:
     assert "bad-q-1" in str(exc_info.value) or "query" in str(exc_info.value).lower()
 
 
+def test_a_suite_without_queries_is_rejected(tmp_path: Path) -> None:
+    """An empty suite would let the nightly run report success over zero questions."""
+    suite_file = tmp_path / "empty.yaml"
+    suite_file.write_text("suite: empty\ndescription: nothing\nqueries: []\n", encoding="utf-8")
+
+    from knowledge_ingest.eval.suite_loader import SuiteValidationError, load_suite
+
+    with pytest.raises(SuiteValidationError, match="no queries"):
+        load_suite(suite_file)
+
+
 # ---------------------------------------------------------------------------
 # Test 3 — optional fields have safe defaults
 # ---------------------------------------------------------------------------

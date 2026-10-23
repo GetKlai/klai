@@ -71,7 +71,11 @@ def load_suite(path: Path, *, require_reference_answer: bool = False) -> Suite:
 
     suite_name = raw.get("suite") or path.stem
     description = raw.get("description", "")
-    raw_queries: list[dict[str, Any]] = raw.get("queries", [])
+    raw_queries: list[dict[str, Any]] = raw.get("queries") or []
+    if not raw_queries:
+        # The tenant suites arrive from private infra; an empty or truncated
+        # file must fail the nightly run instead of completing over zero questions.
+        raise SuiteValidationError(f"Suite {suite_name!r} has no queries.")
 
     queries: list[SuiteQuery] = []
     for i, q in enumerate(raw_queries):

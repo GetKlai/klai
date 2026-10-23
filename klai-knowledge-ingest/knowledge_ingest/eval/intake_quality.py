@@ -1,7 +1,7 @@
 """Score a private intake snapshot using the existing RAGAS YAML suite format.
 
-reference_answer must be a literal source span; expected_chunks must contain one
-unique document URL/path marker. Chunks use chunk_id, text and RAGAS metadata.
+reference_answer must be a literal source span; expected_chunks must contain the one
+document URL or path, matched exactly. Chunks use chunk_id, text and RAGAS metadata.
 Run with --suite PATH --snapshot PATH. Only aggregate results go to stdout.
 This measures answer coverage, not end-to-end answer quality.
 """

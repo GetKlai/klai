@@ -337,6 +337,44 @@ def test_expected_chunks_canary_matches_specific_body_phrase():
     assert canary["passed"] is True
 
 
+def test_expected_chunks_canary_names_a_document_by_its_exact_source_url():
+    """A document canary follows the source URL, not the title or a URL prefix.
+
+    The re-titled document still passes; a title-only marker and a URL that is
+    only a prefix of another document's URL do not.
+    """
+    from knowledge_ingest.eval.ragas_runner import _expected_chunk_canary
+
+    retitled = {
+        "chunk_id": "c1",
+        "title": "Printer: verbind je printer met het netwerk",
+        "source_url": "https://help.example.com/printer",
+        "text": "De netwerkprinter is de aanbevolen opstelling.",
+    }
+    other_page = {
+        "chunk_id": "c2",
+        "title": "FAQ",
+        "source_url": "https://wiki.example.com/nl/52-mobiele-app",
+        "text": "Mobiele app.",
+    }
+
+    canary = _expected_chunk_canary(
+        expected_chunks=[
+            "https://help.example.com/printer",
+            "Printer: verbind je printer met het netwerk",
+            "https://wiki.example.com/nl/52",
+        ],
+        chunks=[retitled, other_page],
+    )
+
+    assert canary is not None
+    assert canary["matched_chunks"] == ["https://help.example.com/printer"]
+    assert canary["missing_chunks"] == [
+        "Printer: verbind je printer met het netwerk",
+        "https://wiki.example.com/nl/52",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Test 8 - expected_chunks canary hard-fail
 # ---------------------------------------------------------------------------
