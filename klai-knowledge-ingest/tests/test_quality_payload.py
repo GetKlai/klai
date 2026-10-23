@@ -14,6 +14,7 @@ def mock_qdrant_client():
     client = AsyncMock()
     client.upsert = AsyncMock()
     client.delete = AsyncMock()
+    client.scroll = AsyncMock(return_value=([], None))
     return client
 
 

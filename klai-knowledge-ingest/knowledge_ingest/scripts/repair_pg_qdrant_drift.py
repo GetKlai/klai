@@ -11,7 +11,7 @@ and Qdrant, and picks the repair from that state, never from the report:
                    points; zero points afterwards is a failure.
     retire         active synced row, no document text, no points. Nothing
                    exists to index it from, so the row is closed with
-                   ``pg_store.soft_delete_artifact``, as a delete would.
+                   one conditional UPDATE on its id while it is still active.
     delete-points  points whose artifact has no active row. The points are
                    deleted by id.
     skip           anything else, with the reason. An active row that owns
@@ -35,6 +35,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 
 from qdrant_client.models import FieldCondition, Filter, MatchValue, PointIdsList
 
@@ -109,23 +110,37 @@ async def _reindex(row: dict) -> None:
             """,
             row["artifact_id"],
         )
-    await rebuild_tasks._rebuild_artifact(
+    outcome = await rebuild_tasks._rebuild_artifact(
         org_id=row["org_id"],
         kb_slug=row["kb_slug"],
         artifact=dict(artifact),
         semaphore=asyncio.Semaphore(1),
     )
+    if outcome != "processed":
+        raise RuntimeError(f"rebuild {outcome}")
     if not await _point_ids(row["artifact_id"]):
         raise RuntimeError("reindex wrote no points")
 
 
 async def _retire(row: dict) -> None:
+    # One conditional statement on the planned id: a newer version of the
+    # same path that became active after the plan is never closed.
     async with tenant_scoped_connection(row["org_id"]) as conn:
-        closed = await pg_store.soft_delete_artifact(
-            conn, row["org_id"], row["kb_slug"], row["path"]
+        closed = await conn.fetchrow(
+            """
+            UPDATE knowledge.artifacts SET belief_time_end = $4
+            WHERE id = $1::uuid AND org_id = $2 AND belief_time_end = $3
+              AND index_status = 'synced'
+              AND coalesce(extra->>'document_text', '') = ''
+            RETURNING id
+            """,
+            row["artifact_id"],
+            row["org_id"],
+            pg_store._SENTINEL,
+            int(time.time()),
         )
-    if [artifact_id for artifact_id, _ in closed] != [row["artifact_id"]]:
-        raise RuntimeError(f"expected to close only this artifact, closed {closed}")
+    if closed is None:
+        raise RuntimeError("artifact is no longer an active synced row without text")
 
 
 async def _delete_points(point_ids: list[str]) -> None:

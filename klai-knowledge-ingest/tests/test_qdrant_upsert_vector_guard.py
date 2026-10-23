@@ -179,3 +179,38 @@ async def test_successful_replace_leaves_only_the_new_points(mem_client):
     await _write_enriched(["enriched 0"])
 
     assert await _texts(mem_client) == ["enriched 0"]
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_writes_of_one_document_never_leave_it_empty(mem_client):
+    """No lock serialises writers of one document: an ingest of a new version
+    and an enrichment, or two enrichment jobs under different queueing locks,
+    can run at once. Point ids are random uuid4s. Each Qdrant call waits until
+    both writers have made it, so both upserts land before either delete, the
+    worst interleaving."""
+    import asyncio
+
+    await _write_raw(["old 0"], artifact_id="art-old")
+    real_upsert, real_delete = mem_client.upsert, mem_client.delete
+    upserts, deletes = asyncio.Barrier(2), asyncio.Barrier(2)
+
+    async def upsert(*args, **kwargs):
+        await upserts.wait()
+        return await real_upsert(*args, **kwargs)
+
+    async def delete(*args, **kwargs):
+        await deletes.wait()
+        return await real_delete(*args, **kwargs)
+
+    with (
+        patch.object(mem_client, "upsert", side_effect=upsert),
+        patch.object(mem_client, "delete", side_effect=delete),
+    ):
+        await asyncio.gather(
+            _write_raw(["a 0", "a 1"], artifact_id="art-a"),
+            _write_raw(["b 0", "b 1"], artifact_id="art-b"),
+        )
+
+    texts = await _texts(mem_client)
+    assert {"a 0", "a 1"} <= set(texts) or {"b 0", "b 1"} <= set(texts), texts
+    assert "old 0" not in texts

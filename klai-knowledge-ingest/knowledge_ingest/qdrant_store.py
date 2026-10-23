@@ -25,11 +25,11 @@ from qdrant_client.models import (  # noqa: E402
     Filter,
     Fusion,
     FusionQuery,
-    HasIdCondition,
     KeywordIndexParams,
     KeywordIndexType,
     MatchAny,
     MatchValue,
+    PointIdsList,
     PointStruct,
     Prefetch,
     Range,
@@ -237,20 +237,41 @@ def _assert_vectors_writable(vectors: list, *, what: str) -> None:
 async def _replace_points(
     client: AsyncQdrantClient, stale: list[FieldCondition], points: list[PointStruct]
 ) -> None:
-    """Write ``points``, then delete every point matching ``stale`` that is not one of them.
+    """Replace the points matching ``stale`` with ``points``, never leaving none.
 
-    The order is the guarantee. Deleting first meant that an upsert which then
-    failed (a timeout, a rejected vector, a worker killed in between) left the
-    document with no points at all while its artifact still read as synced:
-    production, 2026-09-21, a support article that the nightly reconcile
-    reported missing for 30 days. Written first, a failed upsert leaves the
-    previous points in place, and a failed delete leaves both versions until
-    the next write of the same document clears them.
+    Deleting first meant that an upsert which then failed (a timeout, a
+    rejected vector, a worker killed in between) left the document with no
+    points while its artifact still read as synced: production, 2026-09-21, a
+    support article the nightly reconcile reported missing for 30 days.
+
+    So the ids of the existing points are read first, the new points are
+    written, and only those ids are deleted. Nothing serialises two writers of
+    one document (an ingest of a new version next to an enrichment, or two
+    enrichment jobs under different queueing locks), and deleting "everything
+    but my points" let each writer delete the other's. Deleting a snapshot
+    taken before its own upsert, a writer can only remove the other's points
+    if the other upserted before that snapshot, and both cannot have, so one
+    writer's points always survive. The cost is that both may survive until
+    the next write of the document.
     """
+    stale_ids: list = []
+    offset = None
+    while True:
+        found, offset = await client.scroll(
+            COLLECTION,
+            scroll_filter=Filter(must=stale),
+            limit=1000,
+            offset=offset,
+            with_payload=False,
+            with_vectors=False,
+        )
+        stale_ids += [p.id for p in found]
+        if offset is None:
+            break
     if points:
         await client.upsert(COLLECTION, points=points)
-    must_not = [HasIdCondition(has_id=[p.id for p in points])] if points else None
-    await client.delete(COLLECTION, points_selector=Filter(must=stale, must_not=must_not))
+    if stale_ids:
+        await client.delete(COLLECTION, points_selector=PointIdsList(points=stale_ids))
 
 
 async def upsert_chunks(
