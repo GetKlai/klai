@@ -157,11 +157,10 @@ def test_without_variants_one_search_runs(client):
 
 
 def test_a_failing_variant_pass_leaves_the_main_result_alone(client):
-    calls = {"n": 0}
-
-    async def _search(query_vector, req, candidates, sparse_vector=None, **_kwargs):
-        calls["n"] += 1
-        if calls["n"] > 1:
+    async def _search(query_vector, req, candidates, sparse_vector=None, **kwargs):
+        # Only the main pass carries the extra legs; it no longer runs first,
+        # because it waits for them while the variant passes are already searching.
+        if "extra_legs" not in kwargs:
             raise RuntimeError("qdrant down for the variant passes")
         return [_chunk("main", "belplan")]
 

@@ -166,7 +166,7 @@ Operationele toegangspaden en klantidentiteiten blijven in de private opdracht.
 - `klai-knowledge-ingest/knowledge_ingest/adapters/crawler.py`; ook de connectoradapters onder `klai-connector/app/adapters/`.
 - Onder `klai-portal/backend/app/services/`: `docling_client.py`, `kb_upload_poller.py`, `file_upload.py`.
 - `klai-retrieval-api/retrieval_api/services/search.py`; `quality_floor.py` en `quality_boost.py` staan direct onder `retrieval_api/`.
-- `klai-knowledge-ingest/knowledge_ingest/eval/`: `ragas_runner.py`, `suites/*.yaml`, `generate_voys_seed_queries.py` en de toegevoegde `intake_quality.py`.
+- `klai-knowledge-ingest/knowledge_ingest/eval/`: `ragas_runner.py`, `suites/*.yaml`, `sample_seed_paths.py` en de toegevoegde `intake_quality.py`.
 - `docs/audit-ingest-pipeline-2026-05-06/findings.md`.
 - `docs/research/chunk-type-retrieval-value.md`, `knowledge-deduplication-and-conflict-resolution.md`, `knowledge-pipeline-architecture.md` in dezelfde map.
 - `docs/specs/SPEC-KB-JSON-FEED-001/spec.md`.

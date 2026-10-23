@@ -190,6 +190,12 @@ uitbreidbaarheid voor is.
 | **J11** | **Headers + performance** | Op elke route uit J01-J10 | Meet bij elk page-bezoek: HSTS aanwezig, CSP set, X-Frame-Options aanwezig, p99 page-load <3s. Resultaat als HTML-rapport, soft fail |
 | **J12** | **Vexa meeting + transcript** (voys-attached only) | `meet.google.com/new` → `/app/meetings` → `/app/transcribe` | Met de gecaptureerde Google sessie navigeert de spec naar `meet.google.com/new`, leest de Meet-URL, opent een tweede tab op `/app/meetings`, plakt de URL, klikt "+ New meeting". Wacht max 60s tot de Vexa-bot join't (zichtbaar via deelnemerlijst-API). Spreekt 30s "test test test" via een audio-loopback (gegenereerd uit `e2e-fixture.wav` 10× herhaald) of laat browser TTS draaien. Stopt de meeting. Polling op `/api/scribe/transcripts` tot transcript-status = `transcribed`. Assert text bevat "test". Cleanup: transcript delete. Vereist VOYS-ATTACHED-mode (Google sessie nodig); skipt in isolated-tenant. |
 
+**Gebouwd wijkt af van deze tabel:** `J06-widget-answer.spec.ts` is de
+widget-journey (partner-API zoals de klantwidget die aanroept: widget-config
+mint, gestreamde chat, bron, onder 30 s; zie `docs/runbooks/widget-probe.md`),
+niet de scribe-journey hierboven. Scribe krijgt bij bouwen het eerstvolgende
+vrije nummer.
+
 **Bewust niet in scope** voor v1:
 - `/app/docs` (klai-docs) — eigen e2e-spec voor docs-app, aparte runner
 - `/app/transcribe` apart van `/app/scribe` — beide testen levert weinig

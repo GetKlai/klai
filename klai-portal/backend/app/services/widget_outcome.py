@@ -127,7 +127,9 @@ def derive_outcome(
     # handoff, or the assistant referring them to support.
     if has_handoff:
         return "escalated"
-    if last_assistant is not None and last_assistant.content.strip() in _SUPPORT_REFERRAL_TEXTS:
+    # startswith: the application may append its own notice to the referral
+    # (the questions it did not search, knowledge_prompts.py).
+    if last_assistant is not None and last_assistant.content.strip().startswith(tuple(_SUPPORT_REFERRAL_TEXTS)):
         return "escalated"
 
     # 2. Abandoned: ends on an unanswered visitor message — but only once the

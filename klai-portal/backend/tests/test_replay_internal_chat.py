@@ -59,6 +59,14 @@ async def test_pair_judge_reads_both_orders_and_a_disagreement_is_a_tie(
     assert prompts[1].index("NEW-SIDE") < prompts[1].index("OLD-SIDE")
 
 
+def test_without_the_librechat_directory_the_old_path_refuses_instead_of_failing_obscurely(monkeypatch, tmp_path):
+    """A portal-api one-off no longer mounts the tenants' LiteLLM keys, which can call the chat aliases."""
+    monkeypatch.setattr(replay.settings, "librechat_container_data_path", str(tmp_path))
+
+    with pytest.raises(SystemExit, match="does not mount the LibreChat directory"):
+        replay._tenant_litellm_key("brightwater")
+
+
 _VISIBLE_ANSWER = "Je vraagt verlof aan via het formulier op het intranet."
 # The OLD path's footer: longer than NEW's, with lines NEW never renders
 # (the removed LiteLLM hook's _format_visible_agent_activity).

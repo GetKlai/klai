@@ -36,6 +36,18 @@ Use this mode when the request says "test end-to-end", "test e2e", or
 email/password/TOTP login, and cleanup-safe e2e artifacts. If credentials fail,
 fix the credentials; do not fall back to Voys and call that an e2e test.
 
+### Widget journey (J06)
+
+J06 asks the probe widget (`probe-widget`, see
+[`docs/runbooks/widget-probe.md`](../../../../docs/runbooks/widget-probe.md))
+its question through the partner API, as a customer's browser does. It needs
+`E2E_PROBE_WIDGET_ID` (the `wgt_...` id). In CI the id comes from the GitHub
+secret of the same name, and J06 **fails** when it is empty, so a missing
+secret cannot turn the widget check green. Locally J06 skips when the variable
+is unset. Optional overrides, with the probe's defaults in the spec:
+`E2E_PROBE_WIDGET_ORIGIN`, `E2E_PROBE_QUESTION`, `E2E_PROBE_SOURCE_PATTERN`,
+`E2E_PROBE_API_BASE_URL`.
+
 ### TOTP secret setup
 
 The e2e runner needs the raw Base32 TOTP seed in `E2E_TOTP_SECRET`.

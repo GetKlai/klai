@@ -43,7 +43,7 @@ from retrieval_api.models import (
 )
 from retrieval_api.quality_boost import quality_boost
 from retrieval_api.quality_floor import filter_quality_floor
-from retrieval_api.services import coreference, graph_search, reranker, search
+from retrieval_api.services import coreference, graph_search, lookalike, reranker, search
 from retrieval_api.services.diversity import source_aware_select
 from retrieval_api.services.events import emit_event
 from retrieval_api.services.evidence_pack import (
@@ -105,6 +105,7 @@ _SHADOW_PREVIEW_KEYS = (
     "score",
     "quality_score",
     "feedback_count",
+    "product",
 )
 
 
@@ -459,6 +460,8 @@ class RetrievalPipelineState:
     )
     # The request's ``debug_stages`` record, filled by every pass; None when not asked for.
     debug_stages: dict[str, list[str]] | None = None
+    # The translated and alias-expanded legs (search.extra_query_legs), main pass only.
+    extra_legs_task: asyncio.Task[list[tuple[list[float], SparseVector | None]]] | None = None
 
 
 async def _resolve_identity_and_telemetry(
@@ -630,6 +633,9 @@ async def _query_variant_pass(
         cast(SparseVector | None, sparse_vector),
     )
     _note_stage(stages, "search", raw)
+    raw, _ = lookalike.collapse_lookalikes(
+        raw, req.product or "", settings.lookalike_min_similarity
+    )
     if not raw or not settings.reranker_enabled:
         return _one_per_parent(raw)[: req.top_k]
     reranked = _one_per_parent(
@@ -638,6 +644,8 @@ async def _query_variant_pass(
     _note_stage(stages, "rerank", reranked)
     if settings.ranking_contract_mode == "active":
         _set_final_rank_scores(reranked)
+    if req.product:
+        lookalike.boost_product(reranked, req.product, settings.product_boost)
     return reranked[: req.top_k]
 
 
@@ -828,14 +836,21 @@ async def _run_search(state: RetrievalPipelineState) -> None:
     req = state.req
     # 4. Search — Qdrant + Graphiti in parallel (AC-5)
     t_qdrant = time.perf_counter()
-    qdrant_coro = search.hybrid_search(
-        state.query_vector,
-        req,
-        settings.retrieval_candidates,
-        state.sparse_vector,
-        raw_query_vector=state.raw_query_vector,
-        raw_sparse_vector=state.raw_sparse_vector,
-    )
+
+    async def _qdrant() -> list[dict]:
+        # The extra legs started after coreference and ran beside the embedding;
+        # waiting for them here keeps the graph search from waiting too.
+        return await search.hybrid_search(
+            state.query_vector,
+            req,
+            settings.retrieval_candidates,
+            state.sparse_vector,
+            raw_query_vector=state.raw_query_vector,
+            raw_sparse_vector=state.raw_sparse_vector,
+            extra_legs=await state.extra_legs_task if state.extra_legs_task else None,
+        )
+
+    qdrant_coro = _qdrant()
 
     graph_task: asyncio.Task[list[dict]] | None = None
     t_graph: float | None = None
@@ -890,6 +905,11 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
     """Rerank candidates and apply the adjacent post-rerank boosts."""
 
     req = state.req
+    # 4b. Lookalikes of another product collapse into one candidate (plan step 7).
+    state.raw_results, collapsed = lookalike.collapse_lookalikes(
+        state.raw_results, req.product or "", settings.lookalike_min_similarity
+    )
+    state.decision_record["lookalikes_collapsed"] = collapsed
     # 5. Rerank (skip when reranker disabled)
     if state.raw_results and settings.reranker_enabled:
         t_rerank = time.perf_counter()
@@ -940,6 +960,11 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
     else:
         page_context_boosted = state.page_context_candidate_boosted
     state.decision_record["page_context_boosted"] = page_context_boosted
+    if req.product:
+        # A soft preference for the question's product (plan step 7), never a filter.
+        state.decision_record["product_boosted"] = lookalike.boost_product(
+            state.reranked, req.product, settings.product_boost
+        )
 
 
 def _run_quality_floor(state: RetrievalPipelineState) -> None:
@@ -1040,6 +1065,10 @@ def _run_quality_boost(state: RetrievalPipelineState) -> None:
             state.ranking_shadow_preview, _ = _apply_page_context_boost(
                 state.ranking_shadow_preview,
                 state.page_context,
+            )
+        if req.product:
+            lookalike.boost_product(
+                state.ranking_shadow_preview, req.product, settings.product_boost
             )
         state.ranking_shadow_preview, _ = filter_quality_floor(
             state.ranking_shadow_preview, floor=settings.retrieval_quality_floor
@@ -1149,6 +1178,7 @@ def _run_response_build(state: RetrievalPipelineState) -> None:
                     source_url=result.get("source_url"),
                     kb_slug=result.get("kb_slug"),
                     source_label=result.get("source_label"),
+                    product=result.get("product") or None,
                     title=result.get("title"),
                     original_filename=result.get("original_filename"),
                     image_urls=payload_list(result, "image_urls") or None,
@@ -1392,6 +1422,7 @@ async def retrieve(
     state = preamble_result
     _start_query_variant_passes(state)
     await _run_coreference(state)
+    state.extra_legs_task = asyncio.create_task(search.extra_query_legs(state.query_resolved, req))
     await _run_embed(state)
 
     # The retired gate has no runtime work. Its explicit skipped step keeps the

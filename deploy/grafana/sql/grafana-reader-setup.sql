@@ -83,6 +83,18 @@ CREATE OR REPLACE VIEW portal_telemetry_mode_changes AS
 
 GRANT SELECT ON portal_telemetry_mode_changes TO grafana_reader;
 
+-- Support evidence is the one feature that requires telemetry_level=full
+-- (docs/architecture/support-gap-detection.md), and a downgrade purges it
+-- (telemetry_level.py), so a tenant that holds support cases is in full on
+-- purpose. portal_support_cases is category-D RLS and holds customer
+-- conversations; this superuser-owned view exposes only which orgs hold any.
+CREATE OR REPLACE VIEW portal_support_evidence_orgs
+WITH (security_invoker = false, security_barrier = true) AS
+    SELECT DISTINCT org_id
+      FROM portal_support_cases;
+
+GRANT SELECT ON portal_support_evidence_orgs TO grafana_reader;
+
 -- ── Meeting recording and transcript health ─────────────────────────────
 --
 -- vexa_meetings is a category-D RLS table. Its SELECT policy requires the

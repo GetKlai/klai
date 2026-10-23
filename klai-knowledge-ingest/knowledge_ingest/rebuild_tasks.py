@@ -16,7 +16,7 @@ Idempotency
 -----------
 Re-running with unchanged content yields the same output. The LiteLLM proxy
 may cache summary generation; chunking and enrichment are deterministic per
-input. Qdrant upsert uses delete-then-insert per path — no orphans.
+input. Qdrant writes replace the points of each path — no orphans.
 
 Queues
 ------
@@ -97,7 +97,7 @@ def register_rebuild_tasks(procrastinate_app: Any) -> None:
           1. Reads document_text from extra JSONB — skips if absent.
           2. Re-chunks with chunk_markdown_with_parents.
           3. Re-runs _enrich_document (enrichment + TEI + sparse embedding +
-             Qdrant delete-then-upsert).
+             Qdrant replace of the path's points).
           4. Replaces parent_chunks rows in PostgreSQL.
 
         Returns ``{org_id, kb_slug, artifacts_processed, artifacts_skipped,
@@ -334,7 +334,7 @@ async def _rebuild_artifact(
                 await _pg_store.delete_parent_chunks_for_artifact(conn, artifact_id)
 
             # Steps 2-3: enrichment + TEI/sparse embedding + Qdrant
-            # delete-then-upsert. _enrich_document inserts parent_chunks rows
+            # replace of the path's points. _enrich_document inserts parent_chunks rows
             # itself (so it can thread the generated row ids into each
             # child's Qdrant payload as ``parent_chunk_id``) — passing
             # ``parents`` + ``parent_index_per_child`` here is what lights up
@@ -344,7 +344,7 @@ async def _rebuild_artifact(
             # and parent expansion silently degraded to chunk-text-only.
             from knowledge_ingest.enrichment_tasks import _enrich_document
 
-            await _enrich_document(
+            written = await _enrich_document(
                 org_id=org_id,
                 kb_slug=kb_slug,
                 path=path,
@@ -360,6 +360,10 @@ async def _rebuild_artifact(
                 parent_index_per_child=parent_index_per_child,
                 heading_path_per_child=heading_path_per_child,
             )
+            # _enrich_document logs and swallows infra failures, returning
+            # False; without this check the artifact counted as processed.
+            if not written:
+                raise RuntimeError("enrichment wrote no chunks to Qdrant")
 
             logger.info(
                 "rebuild_artifact_processed",

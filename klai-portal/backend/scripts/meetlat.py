@@ -862,6 +862,7 @@ def _install_retrieval_probe() -> None:
                 "retrieve_ms": round((time.perf_counter() - started) * 1000),
                 "api_ms": (result.get("metadata") or {}).get("retrieval_ms"),
                 "stages": result.get("debug_stages"),
+                "product": retrieve_body.get("product") or "",
             }
         else:
             _probe["record"] = {"failed": True}
@@ -873,6 +874,7 @@ def _install_retrieval_probe() -> None:
             return await choose(t, found)
         if _probe["record"] is not None:
             _probe["record"]["served"] = _distinct_keys(chunk.get("source_url") for chunk in found.chunks)
+            _probe["record"]["served_products"] = [chunk.get("product") or "" for chunk in found.chunks]
         _end_turn(t)
         return [], "", [], False
 
@@ -978,7 +980,21 @@ def _stage_row(row: dict, expected: list[str], record: dict | None, *, kb_hosts_
         "search_n": len(record["stages"].get("search", ())),
         "retrieve_ms": record["retrieve_ms"],
         "api_ms": record["api_ms"],
+        **_other_product(record),
     }
+
+
+def _other_product(record: dict) -> dict:
+    """How many served items are labelled with another product than the question's; nothing when it named none.
+
+    A lookalike article of another product (knowledge-base plan, step 7). An
+    item without a label is not counted: unknown is not another product.
+    """
+    product = (record.get("product") or "").casefold()
+    if not product:
+        return {}
+    served = [label.casefold() for label in record.get("served_products") or ()]
+    return {"product": record["product"], "other_product": sum(1 for label in served if label and label != product)}
 
 
 def summarize_stages(rows: list[dict]) -> dict:
@@ -1010,6 +1026,9 @@ def summarize_stages(rows: list[dict]) -> dict:
         else None,
         "retrieve_ms": timing("retrieve_ms"),
         "api_ms": timing("api_ms"),
+        # Turns whose question named a product, and the served items of another product in them.
+        "product_known": sum(1 for row in measured if "other_product" in row),
+        "other_product_served": sum(row.get("other_product", 0) for row in measured),
     }
 
 

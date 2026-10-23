@@ -172,8 +172,9 @@ __all__ = [
 
 # Every fixed user-facing sentence, by name and language code. Dutch and
 # English exist for all of them; German and French only for the strict
-# refusal and its Open-mode hint (the two other languages the internal chat is
-# used in, added 21 October 2026 after a German conversation got the English
+# refusal, its Open-mode hint, the check-unavailable text and the unchecked-
+# questions notice (the two other languages the internal chat is used in,
+# added 21 October 2026 after a German conversation got the English
 # refusal). :func:`fixed_text` picks the language.
 #
 # The helpdesk texts are for the public help-page widget: customer words (no
@@ -258,6 +259,38 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
             "Je ne peux pas consulter la base de connaissances pour le moment, je ne peux donc pas répondre de "
             "manière fiable maintenant. Reposez votre question dans un instant."
         ),
+    },
+    # Added by the application under a reply when the message held more
+    # questions than one search takes (MAX_SUB_QUESTIONS); the writer is told
+    # in the prompt that the application does this, so it never relies on the
+    # model. The intro ends on a colon, the questions follow as bullets, and
+    # "more" names the questions beyond the ones listed.
+    # "Not looked up separately", not "not checked": an Open writer may still
+    # answer such a question from general knowledge, and the notice must stay
+    # true next to that answer.
+    "unchecked_questions_intro": {
+        "nl": (
+            "Deze vragen heb ik niet apart opgezocht, want zoveel vragen in een bericht kan ik niet allemaal "
+            "doorzoeken. Stel ze gerust in een nieuw bericht:"
+        ),
+        "en": (
+            "I did not look these questions up separately, because I cannot search that many questions in one "
+            "message. Feel free to ask them in a new message:"
+        ),
+        "de": (
+            "Diese Fragen habe ich nicht einzeln nachgeschlagen, weil ich nicht so viele Fragen in einer Nachricht "
+            "durchsuchen kann. Stelle sie gern in einer neuen Nachricht:"
+        ),
+        "fr": (
+            "Je n'ai pas recherché ces questions séparément, car je ne peux pas rechercher autant de questions dans "
+            "un seul message. Posez-les dans un nouveau message :"
+        ),
+    },
+    "unchecked_questions_more": {
+        "nl": "En {count} meer.",
+        "en": "And {count} more.",
+        "de": "Und {count} weitere.",
+        "fr": "Et {count} autres.",
     },
     "helpdesk_offer": {
         "nl": "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder.",

@@ -68,13 +68,13 @@ Two modes:
      preview turns, e.g. after an interrupted run or to recheck a prior result.
 
 Run on the server (writes nothing a visitor sees, nothing any report counts).
-klai-core-portal-api-1's image does not carry klai-knowledge-ingest, so copy the two
-curated suite files in first:
+The two curated suites name a customer's documents and live in private infra,
+which syncs them to /opt/klai/rag-eval-suites on core-01; copy them in first:
 
     docker exec klai-core-portal-api-1 mkdir -p /tmp/calibration_suites
-    docker cp klai-knowledge-ingest/knowledge_ingest/eval/suites/chat.yaml \\
+    docker cp /opt/klai/rag-eval-suites/chat.yaml \\
         klai-core-portal-api-1:/tmp/calibration_suites/chat.yaml
-    docker cp klai-knowledge-ingest/knowledge_ingest/eval/suites/knowledge_org.yaml \\
+    docker cp /opt/klai/rag-eval-suites/knowledge_org.yaml \\
         klai-core-portal-api-1:/tmp/calibration_suites/knowledge_org.yaml
     docker exec -w /repo/klai-portal/backend klai-core-portal-api-1 \\
         python scripts/calibrate_confidence_bands.py <widget_uuid> [max_questions]

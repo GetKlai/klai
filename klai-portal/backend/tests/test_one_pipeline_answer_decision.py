@@ -310,6 +310,25 @@ async def test_strict_turn_without_evidence_gets_the_fixed_refusal_without_a_mod
 
 
 @pytest.mark.asyncio
+async def test_a_strict_refusal_without_evidence_leaves_a_log_line(monkeypatch):
+    """On 2026-10-22 J02 failed five runs on "Strict answered TCP/IP" and the
+    Strict turns showed up in the logs only as the absence of a writer: the
+    refusal itself logged nothing, so proving it took a trace of what was missing."""
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        turn = await _turn(
+            monkeypatch,
+            _LiteLLM(),
+            profile=_internal(),
+            retrieval={"evidence_pack": {"items": [], "sources": []}, "confidence_band": "unknown"},
+        )
+
+    assert turn.text == STRICT_REFUSAL
+    assert [log["reason"] for log in logs if log["event"] == "partner_chat_strict_refusal"] == ["no_evidence"]
+
+
+@pytest.mark.asyncio
 async def test_a_strict_refusal_speaks_the_conversations_language_not_the_short_messages(monkeypatch):
     """A German employee got the fixed refusal in another language because the
     detection reads too little in a short message; the case judges the whole

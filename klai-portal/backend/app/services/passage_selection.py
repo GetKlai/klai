@@ -33,7 +33,7 @@ from app.core.config import Settings
 from app.services.quotes import QUOTE_WORD_SHARE as _QUOTE_WORD_SHARE
 from app.services.quotes import WORD as _WORD
 from app.services.quotes import words_stand_in
-from app.services.turn_judge import conversation_excerpt, structured_judge_call
+from app.services.turn_judge import conversation_excerpt, every_field_required, structured_judge_call
 
 logger = structlog.get_logger()
 
@@ -151,19 +151,10 @@ class Evidence(BaseModel):
     quote: str
 
 
-def _every_field_required(schema: dict) -> None:
-    """The strict json_schema the call sends lists every field as required, with no default.
-
-    ``missing`` has a default only for stored records and test fixtures that
-    predate it; the model must still always write it.
-    """
-    for prop in schema["properties"].values():
-        prop.pop("default", None)
-    schema["required"] = list(schema["properties"])
-
-
 class PassageSelection(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra=_every_field_required)
+    # ``missing`` has a default only for stored records and test fixtures that
+    # predate it; the model must still always write it.
+    model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra=every_field_required)
 
     # Field order is the order the model writes in: it states the need and
     # looks up the sentences before it decides. With the verdict first it
@@ -262,6 +253,10 @@ class PassageSelection(BaseModel):
         return bool(self.evidence) and not self.found(chunks)
 
 
+def _product_note(chunk: dict) -> str:
+    return f" (product: {chunk['product']})" if chunk.get("product") else ""
+
+
 async def select_passages(
     messages: list[dict],
     chunks: list[dict],
@@ -269,10 +264,21 @@ async def select_passages(
     *,
     delegated_org_id: str | None = None,
     internal: bool = False,
+    product: str = "",
 ) -> PassageSelection | None:
     passages = "\n\n".join(
-        f"[{number}] {chunk.get('title') or ''}\n{str(chunk.get('text') or '')[:_PASSAGE_CHARS]}"
+        f"[{number}] {chunk.get('title') or ''}{_product_note(chunk) if product else ''}\n"
+        f"{str(chunk.get('text') or '')[:_PASSAGE_CHARS]}"
         for number, chunk in enumerate(chunks, 1)
+    )
+    # The question's product (knowledge-base plan, step 7): a lookalike
+    # article of another product, worded the same, is not evidence. Told to the
+    # model, not filtered in code; see the module docstring.
+    about = (
+        f"The question is about the product {product}. A passage labelled with another product is about "
+        "something else: it is not evidence, however alike its words.\n\n"
+        if product
+        else ""
     )
     # Six calls failed in the week of 14 to 21 October, and without a verdict
     # a source-only turn now answers "not found", so a failed call gets one
@@ -287,7 +293,7 @@ async def select_passages(
             # 1,100 to 2,600 characters, and at the excerpt's 800 the later
             # questions never reached this step.
             user_content=f"Conversation:\n{conversation_excerpt(messages, latest_chars=_LATEST_CHARS)}\n\n"
-            f"Passages:\n{passages}",
+            f"{about}Passages:\n{passages}",
             schema=PassageSelection,
             timeout_seconds=_TIMEOUT_SECONDS + _TIMEOUT_SECONDS_PER_PASSAGE * len(chunks),
             settings=settings,

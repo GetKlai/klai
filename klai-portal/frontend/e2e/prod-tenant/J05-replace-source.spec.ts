@@ -16,6 +16,13 @@
  * Flow: upload a markdown source carrying canary A -> replace it with the
  * same logical document carrying canary B -> assert the KB still holds ONE
  * source, that its content is B, and that A is gone. Then delete it.
+ *
+ * What "synced" proves: the portal's `index_status` is set by knowledge-ingest
+ * once the chunks are embedded and enriched. The knowledge-graph episode runs
+ * afterwards on its own queue (`graphiti_episode_complete` on the artifact's
+ * `extra`), and neither the sources list nor the content endpoint exposes it,
+ * so this journey cannot assert that the graph side finished. J06 covers the
+ * graph's effect on a real answer instead.
  */
 import { test, expect, type Page } from '@playwright/test'
 import { e2ePrefix } from './_lib/fixtures'

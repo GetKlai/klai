@@ -156,6 +156,22 @@ old 30 s timeout until then.
   The hook's `klai_mistral_pool_state_change` lines were missing in that
   window only because the proxy never finished starting; they appeared on
   the first read once it did.
+- **23 Oct 2026, chat down for every tenant from about 10:00 UTC.** Several
+  meetlat measurement rounds ran in parallel on `klai-primary`, `klai-medium`
+  and `klai-fast` with the master key and spent the monthly spending limit
+  of both chat workspaces (`MISTRAL_API_KEY` and `MISTRAL_API_KEY_2`): every
+  chat alias answered 402. Two guards since then.
+  #2006 makes the meetlat CLI route every model it calls to `klai-ingest` or
+  `klai-judge` (the Vibe allowance) and refuse the live retrieval-api. The
+  gateway guard: one-offs run with the `klai-measurement` virtual key
+  instead of the master key, whose model list is `klai-judge` and
+  `klai-ingest` and which has its own 20 USD daily budget, so LiteLLM refuses
+  a chat alias on every key a one-off is handed
+  (`deploy/scripts/litellm-measurement-key.sh`, rule and commands in
+  `docs/runbooks/meetlat.md`). `klai_pii_enforce.py` masks a call on that key
+  for the tenant it names in `_klai_delegated_org_id`, as on the master key;
+  a call that names no tenant is not masked, the same as on any other key
+  without one. The meetlat replay names the tenant on every model call.
 
 ## Related Files
 

@@ -553,6 +553,15 @@ candidates, and 60 adds about 230 ms at p50 over scoring 20 (23 October 2026).
 
 Timeout: 30 seconds. On failure, the top-K Qdrant results are returned unranked.
 
+**Lookalikes and the question's product (knowledge-base plan, step 7).** Before the
+reranker, candidates whose `text_fingerprint` (a b-bit MinHash of word shingles, written
+at ingest) agree on at least `lookalike_min_similarity` (0.7) of their shingles collapse
+into one: the first in search order, unless a later one carries the request's `product`
+and the first does not. After the reranker, every chunk whose `product` matches the
+request's gets `product_boost` (0.05) added to its ranking score; nothing is filtered on
+product. `services/lookalike.py`; the counts are `lookalikes_collapsed` and
+`product_boosted` in the decision record.
+
 ---
 
 ### Step 5a: Quality floor (SPEC-INGEST-LOGIN-WALL-DETECT-001)
@@ -951,7 +960,7 @@ The retrieval pipeline above is exercised nightly by a RAGAS-based evaluation ha
 | Component | File / Path |
 |---|---|
 | Procrastinate task | `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py` (`evaluate_retrieval_quality_nightly`) |
-| Suite YAMLs | `klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml` (60 hand-curated Voys queries) |
+| Suite YAMLs | `chat` and `knowledge_org` in private infra, mounted read-only at `RAG_EVAL_SUITES_DIR`; the repo ships only the synthetic `_sample.yaml` |
 | Storage | `knowledge.rag_eval_results` (migration `deploy/postgres/migrations/014_rag_eval_results.sql`) |
 | Ad-hoc CLI | `python -m knowledge_ingest.eval --suite chat --variant <name>` |
 | Grafana dashboard | `deploy/grafana/provisioning/dashboards/rag-quality.json` |
@@ -1019,4 +1028,4 @@ snapshot: [docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md](kno
 | RAGAS retrieval client | `klai-knowledge-ingest/knowledge_ingest/eval/retrieval_client.py` | Calls `/retrieve` with `X-Internal-Secret`; fail-open on errors (REQ-3) |
 | RAGAS judge client | `klai-knowledge-ingest/knowledge_ingest/eval/judge_client.py` | klai-fast for answer generation + 4 RAGAS metrics |
 | RAGAS storage | `klai-knowledge-ingest/knowledge_ingest/eval/store.py` | asyncpg helper `insert_eval_row()` |
-| RAGAS suite YAMLs | `klai-knowledge-ingest/knowledge_ingest/eval/suites/{chat,knowledge_org}.yaml` | 30 queries each, mix-tagged for SPEC-target stratification |
+| RAGAS suite YAMLs | private infra, mounted at `RAG_EVAL_SUITES_DIR` (repo: synthetic `klai-knowledge-ingest/knowledge_ingest/eval/suites/_sample.yaml`) | mix-tagged for SPEC-target stratification |

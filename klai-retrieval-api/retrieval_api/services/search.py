@@ -7,13 +7,19 @@ with 3-leg RRF fusion. Falls back to 2-leg RRF when sparse vector is unavailable
 from __future__ import annotations
 
 import asyncio
+import json
+import re
+import time
 import warnings
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from klai_chat_prompts.language import identify_surface_language
 from klai_kb_slugs import personal_kb_slug
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
+    Condition,
     FieldCondition,
     Filter,
     Fusion,
@@ -26,6 +32,9 @@ from qdrant_client.models import (
 
 from retrieval_api.config import settings
 from retrieval_api.models import RetrieveRequest
+from retrieval_api.services import coreference
+from retrieval_api.services.events import get_pool
+from retrieval_api.services.tei import embed_single, embed_sparse
 from retrieval_api.util.payload import payload_list
 
 # Qdrant client warns at call-time when an api_key is used over plain HTTP;
@@ -222,6 +231,204 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
     return conditions
 
 
+# The languages of the searched KBs are those of at least a quarter of a sample
+# of their chunks, identified the way the query is. A selection can hold more
+# than one: measured on 23 October 2026, one org's KBs together were 1028 Dutch
+# and 860 English chunks out of 2000, and a sample of 32 split 14 to 15. 128
+# chunks take about 80 ms to identify. Cached for an hour, a failed sample for
+# a minute so a Qdrant hiccup is not repeated on every request.
+_KB_LANGUAGE_SAMPLE = 128
+_KB_LANGUAGE_MIN_SHARE = 0.25
+_KB_LANGUAGE_TTL_SECONDS = 3600.0
+_KB_LANGUAGE_FAILURE_TTL_SECONDS = 60.0
+_KB_LANGUAGE_TIMEOUT = 2.0
+_kb_language_cache: dict[tuple, tuple[float, list[str]]] = {}
+
+# Aliases are a KB setting (portal_knowledge_bases.aliases) the KB owner edits;
+# a minute of staleness is the price of not reading Postgres on every query.
+# Another user's personal KB is left out, as the search's own filter does.
+_ALIAS_TTL_SECONDS = 60.0
+_ALIAS_TIMEOUT = 1.0
+_alias_cache: dict[tuple, tuple[float, list[list[str]]]] = {}
+_ALIAS_SQL = """
+    SELECT kb.aliases
+    FROM portal_knowledge_bases kb
+    JOIN portal_orgs org ON org.id = kb.org_id
+    WHERE org.zitadel_org_id = $1
+      AND (cardinality($2::text[]) = 0 OR kb.slug = ANY($2::text[]))
+      AND (kb.owner_type = 'org' OR kb.owner_user_id = $3)
+"""
+
+# Both caches are keyed by caller-supplied values, so they are bounded; the
+# oldest entry goes first.
+_CACHE_MAX_ENTRIES = 1024
+
+# The whole extra step (KB languages, aliases, translation, embeddings) gets
+# this long; after that its legs are absent and the search runs without them.
+_EXTRA_LEGS_TIMEOUT = 3.0
+
+
+def _cache_get(cache: dict, key: tuple):
+    entry = cache.get(key)
+    return entry[1] if entry is not None and entry[0] > time.monotonic() else None
+
+
+def _cache_put(cache: dict, key: tuple, ttl: float, value: object) -> None:
+    cache.pop(key, None)
+    cache[key] = (time.monotonic() + ttl, value)
+    while len(cache) > _CACHE_MAX_ENTRIES:
+        cache.pop(next(iter(cache)))
+
+
+def _cache_key(request: RetrieveRequest) -> tuple:
+    return (
+        request.org_id,
+        request.scope,
+        request.user_id,
+        tuple(sorted(request.kb_slugs or [])),
+        request.include_owned_private_kbs,
+    )
+
+
+def _kb_selection(request: RetrieveRequest) -> list[str]:
+    """The KB slugs a request searches; empty means every KB of the org."""
+    personal = [personal_kb_slug(request.user_id)] if request.user_id else []
+    if request.scope == "personal":
+        return personal
+    if request.kb_slugs and request.scope == "both":
+        return [*request.kb_slugs, *personal]
+    return list(request.kb_slugs or [])
+
+
+async def _kb_languages(request: RetrieveRequest) -> list[str]:
+    """The languages of the searched KBs, most common first; empty when unknown.
+
+    The sample goes through the search's own scope filter, so it reads only
+    chunks this caller could find.
+    """
+    key = _cache_key(request)
+    cached = _cache_get(_kb_language_cache, key)
+    if cached is not None:
+        return cached
+    scope: list[Condition] = [*_scope_filter(request)]
+    try:
+        points, _ = await asyncio.wait_for(
+            _get_client().scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=Filter(must=scope),
+                limit=_KB_LANGUAGE_SAMPLE,
+                with_payload=["text"],
+                with_vectors=False,
+            ),
+            timeout=_KB_LANGUAGE_TIMEOUT,
+        )
+    except Exception as exc:
+        logger.warning("kb_language_lookup_failed", error=type(exc).__name__)
+        _cache_put(_kb_language_cache, key, _KB_LANGUAGE_FAILURE_TTL_SECONDS, [])
+        return []
+    texts = [(point.payload or {}).get("text") or "" for point in points]
+    votes = Counter(await asyncio.to_thread(lambda: [identify_surface_language(t) for t in texts]))
+    languages = [
+        language
+        for language, count in votes.most_common()
+        if language and count >= _KB_LANGUAGE_MIN_SHARE * len(texts)
+    ]
+    _cache_put(_kb_language_cache, key, _KB_LANGUAGE_TTL_SECONDS, languages)
+    return languages
+
+
+async def _alias_groups(request: RetrieveRequest) -> list[list[str]]:
+    """Every alias group of the searched KBs; empty on any lookup failure."""
+    key = _cache_key(request)
+    cached = _cache_get(_alias_cache, key)
+    if cached is not None:
+        return cached
+    pool = get_pool()
+    if pool is None:
+        return []
+    try:
+        rows = await pool.fetch(
+            _ALIAS_SQL,
+            request.org_id,
+            _kb_selection(request),
+            request.user_id,
+            timeout=_ALIAS_TIMEOUT,
+        )
+    except Exception as exc:
+        logger.warning("kb_alias_lookup_failed", error=type(exc).__name__)
+        return []
+    # asyncpg hands jsonb over as text: the pool registers no JSON codec.
+    groups = [group for row in rows for group in json.loads(row["aliases"])]
+    _cache_put(_alias_cache, key, _ALIAS_TTL_SECONDS, groups)
+    return groups
+
+
+def _mentions(text: str, term: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.IGNORECASE) is not None
+
+
+def expand_with_aliases(query: str, groups: list[list[str]]) -> str | None:
+    """*query* plus the other names of every alias group it mentions, or None."""
+    extra: list[str] = []
+    for group in groups:
+        if any(_mentions(query, term) for term in group):
+            extra += [t for t in group if t not in extra and not _mentions(query, t)]
+    return f"{query} {' '.join(extra)}" if extra else None
+
+
+async def _extra_query_texts(query: str, request: RetrieveRequest) -> list[str]:
+    """The texts of the extra legs: the translated and the alias-expanded query.
+
+    A query whose language is known and is not a language of the KBs is
+    translated once, into their most common language, so a mislabelled query
+    costs at most one call. Logged as language codes and booleans, never text.
+    """
+    query_language = identify_surface_language(query)
+    kb_languages, groups = await asyncio.gather(
+        _kb_languages(request) if query_language else asyncio.sleep(0, []),
+        _alias_groups(request),
+    )
+    translated = None
+    if query_language and kb_languages and query_language not in kb_languages:
+        translated = await coreference.translate(query, kb_languages[0])
+    expanded = expand_with_aliases(query, groups)
+    logger.info(
+        "retrieval_extra_legs",
+        query_language=query_language,
+        kb_languages=",".join(kb_languages),
+        translated_leg=translated is not None,
+        alias_leg=expanded is not None,
+    )
+    return [text for text in (translated, expanded) if text]
+
+
+async def _embedded_extra_legs(
+    query: str, request: RetrieveRequest
+) -> list[tuple[list[float], SparseVector | None]]:
+    texts = await _extra_query_texts(query, request)
+    dense, sparse = await asyncio.gather(
+        asyncio.gather(*map(embed_single, texts)), asyncio.gather(*map(embed_sparse, texts))
+    )
+    return list(zip(dense, sparse, strict=True))
+
+
+async def extra_query_legs(
+    query: str, request: RetrieveRequest
+) -> list[tuple[list[float], SparseVector | None]]:
+    """The dense and sparse vectors of the translated and alias-expanded legs.
+
+    Bounded as a whole by ``_EXTRA_LEGS_TIMEOUT``; a timeout or any failure
+    returns no legs and the search runs as it would without them.
+    """
+    try:
+        return await asyncio.wait_for(
+            _embedded_extra_legs(query, request), timeout=_EXTRA_LEGS_TIMEOUT
+        )
+    except Exception as exc:
+        logger.warning("retrieval_extra_legs_failed", error=type(exc).__name__)
+        return []
+
+
 async def _search_knowledge(
     query_vector: list[float],
     request: RetrieveRequest,
@@ -229,6 +436,7 @@ async def _search_knowledge(
     sparse_vector: SparseVector | None = None,
     raw_query_vector: list[float] | None = None,
     raw_sparse_vector: SparseVector | None = None,
+    extra_legs: list[tuple[list[float], SparseVector | None]] | None = None,
 ) -> list[dict]:
     """3-leg RRF hybrid search on klai_knowledge (named vectors).
 
@@ -244,6 +452,9 @@ async def _search_knowledge(
     against ``raw_query`` + resolved) then promotes the genuinely relevant hit.
     Pass ``raw_query_vector`` only when the rewrite changed the query, so the
     no-rewrite path keeps its 2/3-leg shape and adds no extra Qdrant work.
+
+    ``extra_legs`` (the translated and the alias-expanded query) add a dense
+    ``vector_chunk`` and a ``vector_sparse`` leg each, the same shape.
     """
     client = _get_client()
 
@@ -300,22 +511,17 @@ async def _search_knowledge(
                 filter=query_filter,
             )
         )
+    legs = list(extra_legs or [])
     if raw_query_vector is not None:
+        legs.insert(0, (raw_query_vector, raw_sparse_vector))
+    for dense, sparse in legs:
         prefetch.append(
-            Prefetch(
-                query=raw_query_vector,
-                using="vector_chunk",
-                limit=prefetch_limit,
-                filter=query_filter,
-            )
+            Prefetch(query=dense, using="vector_chunk", limit=prefetch_limit, filter=query_filter)
         )
-        if raw_sparse_vector is not None:
+        if sparse is not None:
             prefetch.append(
                 Prefetch(
-                    query=raw_sparse_vector,
-                    using="vector_sparse",
-                    limit=prefetch_limit,
-                    filter=query_filter,
+                    query=sparse, using="vector_sparse", limit=prefetch_limit, filter=query_filter
                 )
             )
 
@@ -358,6 +564,8 @@ async def _search_knowledge(
             "source_connector_id": r.payload.get("source_connector_id"),
             "kb_slug": r.payload.get("kb_slug"),
             "source_label": r.payload.get("source_label"),
+            "product": r.payload.get("product"),
+            "text_fingerprint": r.payload.get("text_fingerprint"),
             "title": r.payload.get("title"),
             "original_filename": r.payload.get("original_filename"),
             "image_urls": payload_list(r.payload, "image_urls"),
@@ -531,6 +739,7 @@ async def hybrid_search(
     sparse_vector: SparseVector | None = None,
     raw_query_vector: list[float] | None = None,
     raw_sparse_vector: SparseVector | None = None,
+    extra_legs: list[tuple[list[float], SparseVector | None]] | None = None,
 ) -> list[dict]:
     """Run Qdrant search appropriate for the request scope.
 
@@ -538,7 +747,7 @@ async def hybrid_search(
     sparse_vector is forwarded to _search_knowledge for 3-leg RRF.
     raw_query_vector / raw_sparse_vector add pre-rewrite RRF legs (see
     _search_knowledge) and should be passed only when the rewrite changed the
-    query.
+    query. ``extra_legs`` come from ``extra_query_legs`` (main pass only).
     """
     # org, personal, both
     return await _search_knowledge(
@@ -548,4 +757,5 @@ async def hybrid_search(
         sparse_vector,
         raw_query_vector=raw_query_vector,
         raw_sparse_vector=raw_sparse_vector,
+        extra_legs=extra_legs,
     )

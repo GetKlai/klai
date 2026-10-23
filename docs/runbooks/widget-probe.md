@@ -122,13 +122,19 @@ probe question. Nothing here is created by the repo.
 
    ```text
    Probe Bakkerij B.V. is a fictional company used only to test the Klai widget.
-   The support team of Probe Bakkerij is available on working days from 08:15 to 17:45.
-   You can reach the support team at support@probe.example.com.
+   The Proefbrood of Probe Bakkerij is a sourdough loaf. Its dough rises for 18 hours and it is baked for 42 minutes at 230 degrees Celsius.
    ```
 
+   Give the document a filename or title that contains `probe` (for example
+   `probe-support-hours.md`): the e2e journey J06 matches the returned sources
+   on that word.
+
    Wait until the document is ingested (status ready) and retrievable. The default
-   probe question is `Wat zijn de openingstijden van het supportteam van Probe
+   probe question is `Hoe lang rijst het deeg van het Proefbrood van Probe
    Bakkerij?`; if you change the document, set `WIDGET_PROBE_QUESTION` to match.
+   Keep the document a product fact: a question about reaching support is
+   routed as a contact request and answered without sources, which fails the
+   probe for the wrong reason (the first document did exactly that).
 3. **Widget** `probe-widget` on that tenant, with `probe-widget-kb` as its only
    knowledge base and `https://probe.example.com` in `allowed_origins` (or the
    origin you put in `WIDGET_PROBE_ORIGIN`). Use a strict, default profile, like a
@@ -152,7 +158,15 @@ probe question. Nothing here is created by the repo.
    An `ok` also proves the CORS assumption: the probe sends the widget's
    `Origin` and fails with reason `cors` when the response lacks the matching
    `Access-Control-Allow-Origin`.
-6. **Unpause the alerts.** Both rules in
+6. **E2E journey J06.** The prod-tenant suite asks the same question through
+   the same calls (`klai-portal/frontend/e2e/prod-tenant/J06-widget-answer.spec.ts`)
+   after every deploy and nightly. Add the widget id as the GitHub Actions
+   secret `E2E_PROBE_WIDGET_ID` (repository secret, same value as
+   `WIDGET_PROBE_WIDGET_ID`). Without it J06 fails in CI on purpose. If you
+   changed the origin or the question above, also pass `E2E_PROBE_WIDGET_ORIGIN` /
+   `E2E_PROBE_QUESTION` in the workflow's `env:`; the spec defaults match the
+   defaults of the probe.
+7. **Unpause the alerts.** Both rules in
    `deploy/grafana/provisioning/alerting/widget-probe-rules.yaml` ship with
    `isPaused: true`. Once the first `ok` verdict is in VictoriaLogs, set both to
    `isPaused: false` in a PR and check after the deploy that Grafana shows them

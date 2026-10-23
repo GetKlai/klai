@@ -1718,10 +1718,31 @@ async def test_a_tenant_key_cannot_name_a_different_tenant(monkeypatch):
     tenant_key = MagicMock()
     tenant_key.metadata = {}
     tenant_key.user_role = "internal_user"
+    tenant_key.key_alias = "tenant-team-key"
 
     out = await _pre_call(mod, tenant_key, data)
 
     assert _TELEMETRY_IBAN in str(out["messages"])
+
+
+@pytest.mark.asyncio
+async def test_the_measurement_key_masks_the_tenant_it_replays(monkeypatch):
+    """Measurement one-offs run on a virtual key instead of the master key.
+
+    That key is not proxy_admin, so without its own exception a replayed
+    customer turn would carry no org and reach Mistral unmasked.
+    """
+    mod = _load_telemetry_enforcer(monkeypatch)
+    data = _iban_request(mod, monkeypatch, {"_klai_delegated_org_id": _TELEMETRY_ORG})
+    measurement_key = MagicMock()
+    measurement_key.metadata = {}
+    measurement_key.user_role = "internal_user"
+    measurement_key.key_alias = "klai-measurement"
+
+    out = await _pre_call(mod, measurement_key, data)
+
+    assert _TELEMETRY_IBAN not in str(out["messages"])
+    assert "<IBAN_CODE_1>" in str(out["messages"])
 
 
 @pytest.mark.asyncio

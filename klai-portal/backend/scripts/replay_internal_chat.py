@@ -209,7 +209,15 @@ async def _load_org(org_slug: str) -> PortalOrg:
 
 def _tenant_litellm_key(slug: str) -> str:
     """The key the tenant's LibreChat calls LiteLLM with, from the .env provisioning wrote for it."""
-    return _read_dotenv_file(Path(settings.librechat_container_data_path) / slug / ".env")["LITELLM_API_KEY"]
+    env_path = Path(settings.librechat_container_data_path) / slug / ".env"
+    # That key can call every chat alias, so portal-api-oneoff.sh no longer mounts the LibreChat directory: on
+    # 23 Oct 2026 measurement rounds spent the chat workspaces' monthly Mistral limit and took chat down.
+    if not env_path.is_file():
+        raise SystemExit(
+            f"{env_path} is not there. The old path replays on the tenant's own LiteLLM key, which can call the chat "
+            "aliases, and a portal-api one-off does not mount the LibreChat directory that holds it."
+        )
+    return _read_dotenv_file(env_path)["LITELLM_API_KEY"]
 
 
 def _candidates(database: str) -> list[dict]:

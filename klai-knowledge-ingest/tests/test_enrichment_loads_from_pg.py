@@ -538,6 +538,11 @@ async def test_enrich_document_skips_qdrant_write_when_artifact_superseded():
             new_callable=AsyncMock,
         ) as mock_visibility,
         patch(
+            "knowledge_ingest.enrichment_tasks.kb_config.get_kb_aliases",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
             "knowledge_ingest.enrichment_tasks.qdrant_store.upsert_enriched_chunks",
             new_callable=AsyncMock,
         ) as mock_upsert,
