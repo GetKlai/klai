@@ -120,6 +120,27 @@ async def test_enriched_batch_replaces_only_its_own_chunks(mem_client):
     assert all("vector_sparse" in p.vector for p in points)
 
 
+async def test_enriched_batch_leaves_points_of_another_artifact_version_alone(mem_client):
+    await _write_raw(["c0", "c1"])  # artifact "art-1"
+    await qs.upsert_enriched_chunks(
+        org_id=ORG,
+        kb_slug=KB,
+        path=PATH,
+        enriched_chunks=[_enriched("c0")],
+        chunk_vectors=[[0.0, 1.0, 0.0, 0.0]],
+        question_vectors=[None],
+        artifact_id="art-OLD",
+        chunk_offset=0,
+    )
+
+    points = await _points(mem_client)
+    assert sorted((p.payload["artifact_id"], p.payload["chunk_index"]) for p in points) == [
+        ("art-1", 0),
+        ("art-1", 1),
+        ("art-OLD", 0),
+    ]
+
+
 def _artifact() -> dict:
     return {
         "artifact_id": ART,

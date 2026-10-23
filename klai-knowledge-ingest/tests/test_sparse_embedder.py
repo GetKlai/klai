@@ -235,3 +235,23 @@ async def test_embed_sparse_batch_splits_large_input():
     assert results[2] is not None
     assert list(results[2].indices) == [99]
     assert call_count == 2  # 2 sub-batches: [a,b] and [c]
+
+
+@pytest.mark.asyncio
+async def test_embed_sparse_batch_stops_calling_the_sidecar_after_first_failure():
+    """A down sidecar costs one timeout per ingest, not one per remaining batch."""
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=httpx.ConnectTimeout("down"))
+        mock_client_cls.return_value = mock_client
+
+        with patch("knowledge_ingest.sparse_embedder.settings") as mock_settings:
+            mock_settings.sparse_sidecar_url = "http://test:8001"
+            mock_settings.sparse_sidecar_timeout = 5.0
+            mock_settings.sparse_sidecar_batch_size = 2
+            result = await embed_sparse_batch(["a", "b", "c", "d", "e"])
+
+    assert result == [None] * 5
+    assert mock_client.post.await_count == 1

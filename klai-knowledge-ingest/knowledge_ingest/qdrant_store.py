@@ -372,12 +372,15 @@ async def upsert_enriched_chunks(
         FieldCondition(key="path", match=MatchValue(value=path)),
     ]
     if chunk_offset is not None:
-        delete_must.append(
+        # Scoped to this artifact too, so a batch that outlived its artifact
+        # cannot delete the points of the version that replaced it.
+        delete_must += [
+            FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
             FieldCondition(
                 key="chunk_index",
                 range=Range(gte=chunk_offset, lt=chunk_offset + len(enriched_chunks)),
-            )
-        )
+            ),
+        ]
     await client.delete(COLLECTION, points_selector=Filter(must=delete_must))
 
     if not enriched_chunks:

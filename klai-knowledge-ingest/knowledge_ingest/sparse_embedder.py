@@ -20,7 +20,8 @@ async def embed_sparse_batch(texts: list[str]) -> list[SparseVector | None]:
     """
     Embed a list of texts via the FlagEmbedding sidecar.
     Sends texts in batches of settings.sparse_sidecar_batch_size.
-    Never raises -- sidecar failures produce None entries with WARNING log.
+    Never raises -- a sidecar failure produces None entries (this batch and the
+    rest) with one WARNING log.
     """
     if not settings.sparse_sidecar_url:
         return [None] * len(texts)
@@ -46,8 +47,12 @@ async def embed_sparse_batch(texts: list[str]) -> list[SparseVector | None]:
                         )
                     )
         except Exception as exc:
+            # One unanswered batch means the sidecar is down: asking again for
+            # every remaining batch would add a full timeout each to an ingest
+            # that is waiting to write its dense vectors.
             logger.warning("sparse_sidecar_batch_unavailable", error=str(exc))
-            results.extend([None] * len(sub_batch))
+            results.extend([None] * (len(texts) - len(results)))
+            break
 
     return results
 
