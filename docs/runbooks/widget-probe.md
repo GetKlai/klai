@@ -122,8 +122,7 @@ probe question. Nothing here is created by the repo.
 
    ```text
    Probe Bakkerij B.V. is a fictional company used only to test the Klai widget.
-   The support team of Probe Bakkerij is available on working days from 08:15 to 17:45.
-   You can reach the support team at support@probe.example.com.
+   The Proefbrood of Probe Bakkerij is a sourdough loaf. Its dough rises for 18 hours and it is baked for 42 minutes at 230 degrees Celsius.
    ```
 
    Give the document a filename or title that contains `probe` (for example
@@ -131,8 +130,11 @@ probe question. Nothing here is created by the repo.
    on that word.
 
    Wait until the document is ingested (status ready) and retrievable. The default
-   probe question is `Wat zijn de openingstijden van het supportteam van Probe
+   probe question is `Hoe lang rijst het deeg van het Proefbrood van Probe
    Bakkerij?`; if you change the document, set `WIDGET_PROBE_QUESTION` to match.
+   Keep the document a product fact: a question about reaching support is
+   routed as a contact request and answered without sources, which fails the
+   probe for the wrong reason (the first document did exactly that).
 3. **Widget** `probe-widget` on that tenant, with `probe-widget-kb` as its only
    knowledge base and `https://probe.example.com` in `allowed_origins` (or the
    origin you put in `WIDGET_PROBE_ORIGIN`). Use a strict, default profile, like a
