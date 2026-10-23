@@ -66,16 +66,22 @@ groups:
                 -- lives inside it. Verified by
                 -- deploy/scripts/verify-alert-datasource-access.py, which fails
                 -- the deploy if this ever goes blind again.
+                --
+                -- Stuck means: the LATEST switch to full is over 14 days old
+                -- (any earlier switch made a tenant that went back to full
+                -- count as stuck at once), and the tenant holds no support
+                -- evidence. Support cases require full and a downgrade purges
+                -- them, so a tenant that holds any is in full on purpose;
+                -- portal_support_evidence_orgs exposes only org_id.
                 SELECT count(*) AS value
-                  FROM portal_orgs
-                 WHERE telemetry_level = 'full'
-                   AND deleted_at IS NULL
-                   AND id IN (
-                     SELECT org_id
-                       FROM portal_telemetry_mode_changes
-                      WHERE new_level = 'full'
-                        AND created_at < now() - interval '14 days'
-                   )
+                  FROM portal_orgs o
+                 WHERE o.telemetry_level = 'full'
+                   AND o.deleted_at IS NULL
+                   AND (SELECT max(c.created_at)
+                          FROM portal_telemetry_mode_changes c
+                         WHERE c.org_id = o.id
+                           AND c.new_level = 'full') < now() - interval '14 days'
+                   AND o.id NOT IN (SELECT org_id FROM portal_support_evidence_orgs)
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -115,19 +121,23 @@ groups:
           spec: SPEC-PRIVACY-QUERY-SHADOW-001
           domain: privacy
         annotations:
-          summary: 'Tenant in full telemetry mode for >14 days'
+          summary: 'Tenant in full telemetry mode for >14 days without support evidence'
           runbook_url: 'docs/runbooks/telemetry-mode-toggle.md'
           description: |
-            One or more tenants have been in 'full' telemetry mode for
-            longer than 14 days. Full mode persists raw query text in
+            One or more tenants switched to 'full' telemetry mode more than
+            14 days ago and hold no support cases, the one feature that
+            needs full. Full mode persists raw query text in
             operational stores for 7 days per row; an indefinitely-on
             full mode means a rolling 7-day window of raw queries is
             always available to operators.
 
             Triage:
-              1. List the affected tenants:
-                   SELECT slug, name FROM portal_orgs
-                    WHERE telemetry_level = 'full' AND deleted_at IS NULL;
+              1. List the affected tenants (the same conditions as this
+                 rule; a tenant with support cases is excluded on purpose,
+                 flipping it back would purge them):
+                   SELECT o.id, o.slug FROM portal_orgs o
+                    WHERE o.telemetry_level = 'full' AND o.deleted_at IS NULL
+                      AND o.id NOT IN (SELECT org_id FROM portal_support_evidence_orgs);
               2. Check the audit-log for the original "switched to full"
                  reason:
                    SELECT details FROM portal_audit_log
@@ -136,7 +146,8 @@ groups:
                     ORDER BY created_at DESC LIMIT 5;
               3. Confirm with the operator (or tenant-admin via the
                  audit row's operator_kind) whether the debug session is
-                 still active. If not, flip back via:
+                 still active. A downgrade purges the tenant's support
+                 cases (telemetry_level.py). If it is not needed, flip back via:
                    curl -X POST .../internal/admin/orgs/<id>/telemetry-level
                      -d '{"level":"shadow","reason":"closing stale debug session"}'
 
