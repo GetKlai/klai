@@ -23,6 +23,7 @@ import structlog
 from klai_image_storage import ImageStore, download_and_upload_crawl_images
 
 from knowledge_ingest import pg_store, qdrant_store
+from knowledge_ingest.chunker import noise_counts
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import (
     CrawlRateLimitState,
@@ -1999,6 +2000,20 @@ async def _ingest_crawl_result(
             ),
         ),
     )
+
+    if ingest_result.get("status") != "skipped":
+        # Counts only, no text. Logged here and not in the chunker, which runs
+        # again at enrichment and would count every document twice.
+        noise = noise_counts(text)
+        logger.info(
+            "crawl_page_noise",
+            org_id=org_id,
+            kb_slug=kb_slug,
+            url=url,
+            sections=noise.sections,
+            link_blocks_dropped=noise.link_blocks_dropped,
+            stubs_merged=noise.stubs_merged,
+        )
 
     await pg_store.upsert_crawled_page(
         conn,

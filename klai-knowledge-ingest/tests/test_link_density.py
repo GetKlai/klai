@@ -154,3 +154,17 @@ def test_link_density_long_urls_do_not_dilute_density() -> None:
     assert density > LINK_DENSITY_THRESHOLD, (
         f"Short-anchor + long-URL nav must score above {LINK_DENSITY_THRESHOLD}; got {density:.3f}"
     )
+
+
+def test_unclosed_bracket_in_prose_is_not_the_start_of_a_label() -> None:
+    """A stray "[" must not stretch the label across prose up to the next real link."""
+    md = (
+        "Let op [beta: deze functie is nieuw en kan nog veranderen in de komende weken, "
+        "zie ook de [handleiding](/h)"
+    )
+    assert link_density(md) < 0.2
+
+
+def test_label_does_not_span_lines() -> None:
+    md = "Een [losse haak\nen nog een regel tekst die geen label is](/x) en meer proza erachter."
+    assert link_density(md) < 0.2

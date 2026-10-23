@@ -245,6 +245,8 @@ def test_chunk_markdown_with_parents_does_not_emit_code_comment_as_heading():
     children, parents = chunk_markdown_with_parents(text)
     child_heading_paths = {c.heading_path for c in children}
     parent_heading_paths = {p.heading_path for p in parents}
-    # Only the real H1 and Real H1 > Real H2 should appear
-    assert child_heading_paths == {"Real H1", "Real H1 > Real H2"}
-    assert parent_heading_paths == {"Real H1", "Real H1 > Real H2"}
+    # Both real sections are stubs, so they merge into one under the real H2;
+    # the fake headings in the code block must not appear as paths.
+    assert child_heading_paths == {"Real H1 > Real H2"}
+    assert parent_heading_paths == {"Real H1 > Real H2"}
+    assert "# fake H1 in code" in children[0].text
