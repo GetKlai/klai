@@ -92,6 +92,23 @@ def test_without_the_questions_product_the_higher_scoring_lookalike_is_kept(
     assert [c["chunk_id"] for c in rerank.await_args.args[1]] == ["zephyr-forwarding", "invoices"]
 
 
+def test_a_later_candidate_is_compared_with_the_lookalike_that_was_kept(
+    client, sample_retrieve_request
+):
+    # Like the dropped zephyr chunk (50 of 64 positions) but not like the kept
+    # orbit chunk (40 of 64), so it stays a candidate of its own.
+    near_the_dropped_one = "ab" * 50 + "ef" * 14
+    searched = [*SEARCHED, _chunk("zephyr-voicemail", text_fingerprint=near_the_dropped_one)]
+
+    _, rerank = _post(client, {**sample_retrieve_request, "product": "orbit"}, searched=searched)
+
+    assert [c["chunk_id"] for c in rerank.await_args.args[1]] == [
+        "orbit-forwarding",
+        "invoices",
+        "zephyr-voicemail",
+    ]
+
+
 def test_the_product_boost_is_additive_and_never_filters(client, sample_retrieve_request):
     response, _ = _post(
         client,

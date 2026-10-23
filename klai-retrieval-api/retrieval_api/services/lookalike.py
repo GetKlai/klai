@@ -64,6 +64,7 @@ def collapse_lookalikes(
             fingerprints.append(fingerprint)
         elif _same_product(chunk, product) and not _same_product(kept[twin], product):
             kept[twin] = chunk
+            fingerprints[twin] = fingerprint
     return kept, len(candidates) - len(kept)
 
 
