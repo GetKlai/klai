@@ -16,6 +16,8 @@ name: E2E prod-tenant
 #   E2E_USER_EMAIL     e.g. e2e@getklai.com
 #   E2E_USER_PASSWORD  bot password
 #   E2E_TOTP_SECRET    base32 TOTP secret captured during MFA setup
+#   E2E_PROBE_WIDGET_ID  wgt_... id of the probe widget (J06). Unset fails J06,
+#                        it is not skipped; see docs/runbooks/widget-probe.md.
 #
 # docs/testing/test-suite-plan.md §8.
 
@@ -101,6 +103,7 @@ jobs:
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
           E2E_TOTP_SECRET: ${{ secrets.E2E_TOTP_SECRET }}
+          E2E_PROBE_WIDGET_ID: ${{ secrets.E2E_PROBE_WIDGET_ID }}
           PLAYWRIGHT_BROWSER_CHANNEL: chrome
         run: npm run test:e2e:prod
 

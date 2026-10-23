@@ -49,12 +49,17 @@ on:
       # Renovate has not run. Scheduled runs belong to the default branch, so
       # head_branch is main and the job condition below holds.
       - Version drift
+      # The only check that walks the customer paths end to end after a deploy
+      # (login, chat, KB ingest, the widget). It stayed green through the
+      # 2026-10-23 widget outage because no journey asked the widget a
+      # question (J06 does now), and the one run that did fail that morning
+      # notified nobody. Over its last 60 runs (2026-10-22/23) it failed 7
+      # times, none traced to a defect in the test, so it is watched like a deploy.
+      - E2E prod-tenant
     types: [completed]
 
     # Deliberately NOT watched, so the open-issue list stays a list of real
     # breakage:
-    #   - E2E prod-tenant — flaky enough that it would file more noise than
-    #     signal; it cancels itself constantly on concurrent main pushes.
     #   - Semgrep / trivyignore validate / rules-tests / audit compose /
     #     env-scope-guard / tenant-isolation / alerting checks / litellm hook
     #     tests / LibreChat patch tests — these are PR gates. They block the
@@ -78,6 +83,11 @@ jobs:
         with:
           script: |
             const run = context.payload.workflow_run;
+            // A cancelled or skipped run says nothing about health. E2E prod-tenant
+            // is cancelled whenever a newer run supersedes it in its concurrency
+            // group (32 of the last 60 runs), and treating that as "green again"
+            // would close an open failure issue while the suite is still red.
+            if (run.conclusion !== 'failure' && run.conclusion !== 'success') return;
             const failed = run.conclusion === 'failure';
             const title = `CI failure: ${run.name}`;
 
