@@ -557,11 +557,11 @@ actually survive into the served top-K vs. dying at the reranker cut-off — Pha
 ### Step 5: Reranking
 
 **Simple:** The vector search finds broadly relevant chunks quickly, but it's not precise
-enough on its own. Reranking takes the top 20 candidates and scores each one carefully
+enough on its own. Reranking takes the top 60 candidates and scores each one carefully
 against the actual query — comparing the full meaning of both the question and the
 document chunk. This step makes a big difference in which chunks end up at the top.
 
-**Technical:** The top 20 candidates (from the merged Qdrant + graph results) are sent
+**Technical:** The top 60 candidates (`reranker_candidates`, from the merged Qdrant + graph results) are sent
 to a cross-encoder model running on **Infinity** (port 7998 on gpu-01, distinct from TEI
 at 7997 — see [GPU inference services](knowledge-ingest-flow.md#gpu-inference-services--why-three-separate-services-exist)):
 
@@ -577,8 +577,8 @@ POST http://172.18.0.1:7998/v1/rerank
 
 The cross-encoder processes (query, document) pairs jointly — unlike embedding models
 which encode query and document separately. This gives much more accurate relevance
-scores at the cost of being slower. It is only applied to the top 20 candidates, not the
-full 60, to stay within latency budget.
+scores at the cost of being slower. It is applied to the first `reranker_candidates` (60) of the
+candidates, and 60 adds about 230 ms at p50 over scoring 20 (23 October 2026).
 
 Timeout: 30 seconds. On failure, the top-K Qdrant results are returned unranked.
 
@@ -939,7 +939,7 @@ Trailing punctuation and whitespace are ignored. "Ok!" and "Oké." are both triv
 | `KLAI_GAP_SOFT_THRESHOLD` | `0.4` | Reranker score below which gap is "soft" |
 | `KLAI_GAP_DENSE_THRESHOLD` | `0.35` | Dense score fallback for gap detection |
 | `retrieval_candidates` | `60` | Raw candidates fetched from Qdrant |
-| `reranker_candidates` | `20` | Top-N sent to cross-encoder |
+| `reranker_candidates` | `60` | Top-N sent to cross-encoder (env `RERANKER_CANDIDATES`) |
 | `link_expand_enabled` | `true` | 1-hop link expansion + authority boost (SPEC-CRAWLER-003). |
 | `link_expand_seed_k` | `10` | Top-N raw chunks whose `links_to` payload is mined. |
 | `link_expand_max_urls` | `30` | Cap on URLs collected from seed chunks per request. |
