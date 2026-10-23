@@ -1,0 +1,25 @@
+[Unit]
+Description=Klai widget probe (asks the customer widget path a fixed question, logs a verdict)
+Documentation=https://github.com/GetKlai/klai/blob/main/docs/runbooks/widget-probe.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/klai/scripts/widget-probe.py
+# Token mint plus one streamed answer; WIDGET_PROBE_TIMEOUT (45s) applies per
+# socket read, so this is the hard stop for a stream that keeps trickling.
+# A killed run writes no verdict, which widget_probe_missing picks up.
+# deploy-compose.yml only stages this file in /opt/klai/systemd; systemd reads
+# a change after the manual daemon-reload in docs/runbooks/widget-probe.md.
+TimeoutStartSec=120s
+
+# Stdout goes to journald; the script also appends the verdict line to
+# /opt/klai/logs/widget-probe.log, which Alloy ships to VictoriaLogs.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

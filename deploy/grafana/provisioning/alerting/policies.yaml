@@ -11,6 +11,7 @@
 #   - spec=SPEC-INGEST-LOGIN-WALL-DETECT-001     → klai-ops-alerts-email (REQ-08 login-wall)
 #   - spec=SPEC-KB-015                           → klai-ops-alerts-email (feedback-loop health)
 #   - component=mistral-api-probe                → klai-ops-alerts-email (Mistral key state, repeat 1h)
+#   - component=widget-probe                     → klai-ops-alerts-email (customer widget probe, repeat 1h)
 #   - severity=critical                          → klai-ops-alerts-email (any critical rule not matched above)
 #
 # Grouping + repeat_interval tuning per route:
@@ -152,6 +153,22 @@ policies:
         group_by:
           - alertname
           - key_env
+        group_wait: 0s
+        group_interval: 1m
+        repeat_interval: 1h
+        continue: false
+
+      # Customer widget probe (widget-probe-rules.yaml): critical, two failed
+      # verdicts in a row or no verdict for 15 minutes. The rules also carry
+      # page="true" for the Signal relay, which reads Grafana's Alertmanager
+      # API and does not depend on this route; this is the email channel.
+      # group_wait 0s because the probe already debounces (two runs of five
+      # minutes); repeat 1h so an open outage is not silent for hours.
+      - receiver: klai-ops-alerts-email
+        matchers:
+          - component = widget-probe
+        group_by:
+          - alertname
         group_wait: 0s
         group_interval: 1m
         repeat_interval: 1h

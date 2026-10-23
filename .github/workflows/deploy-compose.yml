@@ -20,6 +20,8 @@ on:
       - 'deploy/scripts/**'                       # Public-safe deploy scripts; operator health scripts live in klai-infra
       - 'scripts/mistral-api-probe.sh'            # authenticated provider heartbeat
       - 'deploy/systemd/mistral-api-probe.*'      # its unit + timer, staged in /opt/klai/systemd
+      - 'scripts/widget-probe.py'                 # customer widget probe
+      - 'deploy/systemd/widget-probe.*'           # its unit + timer, staged in /opt/klai/systemd
       - 'scripts/smoke-docker-socket-proxy.sh'    # SPEC-SEC-024 M4.3 — smoke-test
       - '.github/workflows/deploy-compose.yml'
   workflow_dispatch:
@@ -170,6 +172,8 @@ jobs:
             done
             install -m 0755 scripts/mistral-api-probe.sh /opt/klai/scripts/mistral-api-probe.sh.tmp
             mv -f /opt/klai/scripts/mistral-api-probe.sh.tmp /opt/klai/scripts/mistral-api-probe.sh
+            install -m 0755 scripts/widget-probe.py /opt/klai/scripts/widget-probe.py.tmp
+            mv -f /opt/klai/scripts/widget-probe.py.tmp /opt/klai/scripts/widget-probe.py
             test -x /opt/klai/scripts/backup.sh
 
             # The canary's four patch bind-mounts are gone (Phase 3): it runs the
@@ -192,6 +196,10 @@ jobs:
             # docs/runbooks/litellm-provider-auth-failed.md ("Probe unit").
             install -m 0644 deploy/systemd/mistral-api-probe.service /opt/klai/systemd/mistral-api-probe.service
             install -m 0644 deploy/systemd/mistral-api-probe.timer /opt/klai/systemd/mistral-api-probe.timer
+            # Customer widget probe: same one-time symlink install, see
+            # docs/runbooks/widget-probe.md ("Install").
+            install -m 0644 deploy/systemd/widget-probe.service /opt/klai/systemd/widget-probe.service
+            install -m 0644 deploy/systemd/widget-probe.timer /opt/klai/systemd/widget-probe.timer
 
             # SPEC-SEC-024 M4.2 — sync Grafana provisioning. Grafana loads
             # provisioning only at startup, so we need to restart when files
