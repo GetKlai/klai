@@ -101,6 +101,10 @@ groups:
           severity: critical
           spec: SPEC-OBS-001
           service_group: caddy
+          # More than 10 5xx responses in 5 minutes for 5 minutes is customers seeing
+          # errors now. Fired 3 times in the last 14 days, all on 2026-10-22; zero on
+          # the 13 other days.
+          page: "true"
         annotations:
           summary: 'Caddy returned >10 5xx responses over the last 5 min'
           runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#caddy-5xx-surge'

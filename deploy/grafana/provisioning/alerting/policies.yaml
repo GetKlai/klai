@@ -14,6 +14,15 @@
 #   - component=widget-probe                     → klai-ops-alerts-email (customer widget probe, repeat 1h)
 #   - severity=critical                          → klai-ops-alerts-email (any critical rule not matched above)
 #
+# Paging is not a route. A rule that means "a human must act now, day or night,
+# because customers are affected or about to be" carries the label page="true";
+# an external pager reads active, unsilenced alerts with that label from
+# Grafana's Alertmanager API and sends them to the on-call phone. A rule that
+# also carries autofix="true" additionally starts an automated fix attempt,
+# which ends in a draft PR in this public repository; auth, secrets and tenant
+# isolation alerts therefore never carry it. The email routing below is the
+# same for paging and non-paging rules.
+#
 # Grouping + repeat_interval tuning per route:
 #   - SEC/INFRA: repeat 24h — suppress email-floods from a wedged call-path
 #   - OBS heartbeat: repeat 5m — push must arrive every 5 min at Uptime Kuma
@@ -160,7 +169,7 @@ policies:
 
       # Customer widget probe (widget-probe-rules.yaml): critical, two failed
       # verdicts in a row or no verdict for 15 minutes. The rules also carry
-      # page="true" for the Signal relay, which reads Grafana's Alertmanager
+      # page="true" for the external pager, which reads Grafana's Alertmanager
       # API and does not depend on this route; this is the email channel.
       # group_wait 0s because the probe already debounces (two runs of five
       # minutes); repeat 1h so an open outage is not silent for hours.
