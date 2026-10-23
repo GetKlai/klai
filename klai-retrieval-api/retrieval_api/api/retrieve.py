@@ -845,6 +845,7 @@ async def _run_search(state: RetrievalPipelineState) -> None:
         state.sparse_vector,
         raw_query_vector=state.raw_query_vector,
         raw_sparse_vector=state.raw_sparse_vector,
+        query_text=state.query_resolved,
     )
 
     graph_task: asyncio.Task[list[dict]] | None = None

@@ -974,6 +974,9 @@ async def _enrich_document(
             for ec in enriched_chunks:
                 ec.enriched_text += anchor_block
 
+        # KB aliases (product names and their synonyms, plan step 6).
+        kb_config.add_alias_names(enriched_chunks, await kb_config.get_kb_aliases(org_id, kb_slug))
+
         # Step 2: Embed dense (TEI) + sparse (BGE-M3 GPU sidecar) in parallel.
         # Wrapped individually so we get separate tei_ms / sparse_ms despite parallel execution.
         enriched_texts = [ec.enriched_text for ec in enriched_chunks]

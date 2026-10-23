@@ -15,10 +15,18 @@ SQL -- it pins one connection for the lifetime of the service.
 from __future__ import annotations
 
 import asyncio
+import json
+import re
+from typing import TYPE_CHECKING
 
 import asyncpg
 import cachetools
 import structlog
+
+from knowledge_ingest.db import get_pool
+
+if TYPE_CHECKING:
+    from knowledge_ingest.enrichment import EnrichedChunk
 
 logger = structlog.get_logger()
 
@@ -126,3 +134,57 @@ def _on_kb_config_changed(
     if payload in _cache:
         del _cache[payload]
         logger.info("kb_config_cache_evicted", payload=payload)
+
+
+# KB aliases (portal_knowledge_bases.aliases): groups of names for one thing,
+# edited by the KB owner in the portal. The matching below is duplicated in
+# retrieval-api's search service (query expansion); the two are separate
+# deployables with no shared runtime package for it.
+_alias_cache: cachetools.TTLCache = cachetools.TTLCache(maxsize=10_000, ttl=60)
+
+
+async def get_kb_aliases(org_id: str, kb_slug: str) -> list[list[str]]:
+    """The alias groups of one KB; an unknown KB has none.
+
+    Read from the portal's table on the shared database, like
+    ``connector_state`` reads ``portal_connectors``. asyncpg hands jsonb over
+    as text because the pool registers no JSON codec.
+    """
+    key = _cache_key(org_id, kb_slug)
+    if key not in _alias_cache:
+        pool = await get_pool()
+        raw = await pool.fetchval(
+            """
+            SELECT kb.aliases FROM portal_knowledge_bases kb
+            JOIN portal_orgs org ON org.id = kb.org_id
+            WHERE org.zitadel_org_id = $1 AND kb.slug = $2
+            """,
+            org_id,
+            kb_slug,
+        )
+        _alias_cache[key] = json.loads(raw) if raw else []
+    return _alias_cache[key]
+
+
+def _mentions(text: str, term: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.IGNORECASE) is not None
+
+
+def add_alias_names(chunks: list[EnrichedChunk], groups: list[list[str]]) -> None:
+    """Give a chunk that names an alias the group's other names.
+
+    They go into the context prefix, which the reranker reads with the chunk,
+    and into the embedded text, so a question that uses another name for the
+    same product still finds and ranks the chunk.
+    """
+    for chunk in chunks:
+        names: list[str] = []
+        for group in groups:
+            if any(_mentions(chunk.original_text, term) for term in group):
+                names += [
+                    t for t in group if t not in names and not _mentions(chunk.original_text, t)
+                ]
+        if names:
+            line = "Also known as: " + " | ".join(names)
+            chunk.context_prefix = f"{chunk.context_prefix}\n{line}".strip()
+            chunk.enriched_text += f"\n\n{line}"
