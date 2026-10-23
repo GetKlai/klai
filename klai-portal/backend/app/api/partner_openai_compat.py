@@ -39,17 +39,16 @@ _OPENAI_COMPATIBLE_MODEL_ALIASES = {
     "gpt-4.1": "klai-primary",
 }
 _OPENAI_COMPATIBLE_ACCEPTED_MODELS = _OPENAI_COMPATIBLE_MODELS | set(_OPENAI_COMPATIBLE_MODEL_ALIASES)
-# LibreChat's conversation-title prompt ("Please generate a concise, 5-word-or-less
-# title for the conversation ..."), same pattern as the LiteLLM hook's
-# TITLE_GENERATION_RE until that hook is removed.
-_LIBRECHAT_TITLE_RE = re.compile(
-    r"(?:"
-    r"\b(?:generate|write|create|provide|give|summarize)\b"
-    r"(?=[\s\S]{0,240}\b(?:title|name|summary)\b)"
-    r"(?=[\s\S]{0,240}\b(?:conversation|chat)\b)"
-    r"|\b(?:title|name)\s+(?:this|the)\s+(?:conversation|chat)\b"
-    r")",
-    re.IGNORECASE,
+# The whole of LibreChat's title request: its fixed completion prompt around a
+# "User: ...\nAI: ..." transcript, sent as the only message. Read from
+# @librechat/agents title.cjs and run.cjs in LibreChat v0.8.7 (agents 3.2.46)
+# and the pinned v0.8.8 (agents 4.0.1), where "completion" is the default
+# titleMethod and librechat.yaml sets no titlePrompt. The earlier keyword match
+# also took an employee's own message that named a title and a chat, and the
+# title path answers with the general model whatever the mode.
+_LIBRECHAT_TITLE_PROMPT_RE = re.compile(
+    r"Provide a concise, 5-word-or-less title for the conversation, using title case conventions\. "
+    r"Only return the title itself\.\n\nConversation:\nUser: [\s\S]*\nAI: [\s\S]*"
 )
 _OPENAI_COMPAT_MAX_BODY_BYTES = 131_072
 _OPENAI_COMPAT_DEFAULT_MAX_TOKENS = 2048
@@ -903,23 +902,15 @@ def _message_text(content: object) -> str:
 
 
 def _is_librechat_title_request(messages: object) -> bool:
-    if not isinstance(messages, list):
+    if not isinstance(messages, list) or len(messages) != 1:
         return False
-    # The title instruction is either a system/developer message or the final
-    # user message. An earlier user turn asking to "summarize this chat" is a
-    # real question and must not send every later turn past the knowledge base.
-    for index, message in enumerate(messages):
-        if not isinstance(message, dict):
-            continue
-        role = message.get("role")
-        if role not in {"system", "developer"} and not (role == "user" and index == len(messages) - 1):
-            continue
-        text = _message_text(message.get("content"))
-        # The title prompt is short; a long pasted text that happens to say
-        # "summarize this conversation" is a real question.
-        if text and len(text) <= 4000 and _LIBRECHAT_TITLE_RE.search(text):
-            return True
-    return False
+    (message,) = messages
+    return (
+        isinstance(message, dict)
+        and message.get("role") == "user"
+        and isinstance(message.get("content"), str)
+        and _LIBRECHAT_TITLE_PROMPT_RE.fullmatch(message["content"]) is not None
+    )
 
 
 @router.get("/models")
