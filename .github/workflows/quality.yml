@@ -32,6 +32,7 @@ jobs:
       portal_frontend: ${{ steps.filter.outputs.portal_frontend }}
       connector: ${{ steps.filter.outputs.connector }}
       trivyignore: ${{ steps.filter.outputs.trivyignore }}
+      graph_contract: ${{ steps.filter.outputs.graph_contract }}
     steps:
       - uses: actions/checkout@v7
 
@@ -103,6 +104,13 @@ jobs:
               - 'klai-libs/connector-credentials/**'
               - 'klai-libs/image-storage/**'
               - '.github/workflows/klai-connector.yml'
+              - '.github/workflows/quality.yml'
+            graph_contract:
+              - 'klai-knowledge-ingest/**'
+              - 'klai-retrieval-api/**'
+              - 'klai-libs/graphiti-compat/**'
+              - 'deploy/docker-compose.yml'
+              - '.github/workflows/graph-contract.yml'
               - '.github/workflows/quality.yml'
             trivyignore:
               - '**/.trivyignore.yaml'
@@ -178,6 +186,12 @@ jobs:
     uses: ./.github/workflows/validate-trivyignore.yml
     secrets: inherit
 
+  graph-contract:
+    needs: changes
+    if: needs.changes.outputs.graph_contract == 'true'
+    uses: ./.github/workflows/graph-contract.yml
+    secrets: inherit
+
   quality:
     name: quality
     if: always()
@@ -194,6 +208,7 @@ jobs:
       - portal-frontend
       - connector
       - trivyignore
+      - graph-contract
     runs-on: ubuntu-latest
     steps:
       - name: Require every affected workflow to pass

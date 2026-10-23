@@ -1,0 +1,104 @@
+name: Graph contract
+
+# Runs graphiti-core, patched exactly as knowledge-ingest patches it, against a
+# REAL FalkorDB container. Every other graphiti test in this repo uses a fake
+# driver, so a graphiti-core bump that sends FalkorDB a query it cannot survive
+# stays green: on 2026-10-23 graphiti-core 0.31 (Renovate automerge, PR #1880)
+# added an exact-name query that segfaults FalkorDB 4.x on stopword names, and
+# production crash-looped for seven hours behind a green CI.
+#
+# Pull requests reach this workflow through the unfiltered `quality.yml`
+# (workflow_call), which aggregates it into the one required `quality` check.
+# That is what makes it block a Renovate automerge: Renovate merges itself only
+# after every status check is green. Pushes to main run it directly.
+#
+# The FalkorDB image is read from deploy/docker-compose.yml at run time, so a
+# PR that bumps the image is tested against the new image. A static `services:`
+# block would keep testing the old one.
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+    paths:
+      - 'klai-knowledge-ingest/**'
+      - 'klai-retrieval-api/**'
+      - 'klai-libs/graphiti-compat/**'
+      - 'deploy/docker-compose.yml'
+      - '.github/workflows/graph-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  graph-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read the pinned FalkorDB image from the production compose file
+        id: image
+        run: |
+          set -euo pipefail
+          image=$(awk '/^  falkordb:/{f=1; next} f && /^  [A-Za-z0-9_-]+:/{f=0} f && /^    image:/{print $2; exit}' deploy/docker-compose.yml)
+          if ! [[ "$image" =~ ^falkordb/falkordb:[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::could not read a pinned falkordb/falkordb:<tag> image from deploy/docker-compose.yml (got '${image}')"
+            exit 1
+          fi
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "Contract runs against ${image}"
+
+      # The contract runs in the knowledge-ingest environment. retrieval-api
+      # shares the compat package but locks graphiti-core separately; if the two
+      # locks drift, the contract would prove a version retrieval-api does not run.
+      - name: graphiti-core is locked to one version in both services
+        run: |
+          set -euo pipefail
+          locked() { awk '/^name = "graphiti-core"$/{getline; print $3; exit}' "$1/uv.lock" | tr -d '"'; }
+          ingest=$(locked klai-knowledge-ingest)
+          retrieval=$(locked klai-retrieval-api)
+          if [ -z "$ingest" ] || [ "$ingest" != "$retrieval" ]; then
+            echo "::error::graphiti-core locked as '${ingest}' in knowledge-ingest but '${retrieval}' in retrieval-api; bump both so the contract covers what retrieval-api runs"
+            exit 1
+          fi
+          echo "graphiti-core ${ingest} in both services"
+
+      - name: Start FalkorDB
+        env:
+          FALKORDB_IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker run -d --name falkordb -p 6379:6379 "$FALKORDB_IMAGE"
+          for _ in $(seq 1 30); do
+            if docker exec falkordb redis-cli ping 2>/dev/null | grep -q PONG; then
+              docker exec falkordb redis-cli info server | grep -E '^(redis_version|run_id)' || true
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::FalkorDB did not answer PING within 30 s"
+          docker logs falkordb
+          exit 1
+
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Graphiti write and read paths against FalkorDB
+        working-directory: klai-knowledge-ingest
+        env:
+          GRAPH_CONTRACT_FALKORDB_PORT: "6379"
+          # An unreachable server fails the run instead of skipping every test.
+          GRAPH_CONTRACT_REQUIRED: "1"
+        run: uv run --frozen --extra dev pytest tests/graph_contract -q --tb=short -p no:cacheprovider
+
+      - name: FalkorDB log
+        if: failure()
+        run: docker logs falkordb 2>&1 | tail -n 80 || true
