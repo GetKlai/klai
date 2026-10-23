@@ -100,18 +100,6 @@ retrieval_confidence_band_total = Counter(
     "Retrieval responses bucketed by reranker-score confidence band",
     ["band", "org_id"],
 )
-# SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-3 / REQ-8 — link-expansion
-# survival rate. ``hit`` = at least one expanded chunk made the served
-# top-K. ``miss`` = link-expand ran (added ≥ 1 chunk to candidates) but
-# none survived rerank + source-aware-select + quality-boost. Only
-# incremented when link-expand actually contributed candidates; requests
-# with link_expand_count == 0 are not counted.
-retrieval_link_expand_top_k_total = Counter(
-    "retrieval_link_expand_top_k_total",
-    "Link-expand contribution to served top-K (hit/miss per tenant)",
-    ["outcome", "org_id"],
-)
-
 # Issue #71 measurement gate — existing Graphiti graph-leg contribution.
 # ``hit`` = at least one Graphiti result survived to the served top-K.
 # ``miss`` = Graphiti returned candidates but none survived rerank +

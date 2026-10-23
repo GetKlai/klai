@@ -36,7 +36,6 @@ def _populated_trace(level: str = "full") -> RetrievalTrace:
         "source_select": {"source_select_mode": "diversify"},
         "quality_boost_applied": False,
         "evidence_shadow_mode": False,
-        "link_expand": {"enabled": True},
         "confidence_band": "high",
         "total_ms": 10.0,
     }.items():
@@ -64,7 +63,6 @@ def test_decision_record_preserves_all_flat_compatibility_fields() -> None:
             "source_select",
             "quality_boost_applied",
             "evidence_shadow_mode",
-            "link_expand",
             "confidence_band",
             "total_ms",
             "retention_class",
@@ -108,9 +106,6 @@ def test_all_candidate_transform_steps_render_safely_at_every_telemetry_level(
         "rerank": {
             "candidates_in": 4,
             "candidates_out": 3,
-            "link_expand_boost_enabled": True,
-            "link_expand_boost_factor": 1.2,
-            "link_expand_boosted_count": 1,
         },
         "quality_floor": {"candidates_in": 3, "candidates_out": 2, "filtered_count": 1},
         "source_select": {"candidates_in": 2, "candidates_out": 2, "mode": "diversify"},

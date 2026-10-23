@@ -166,7 +166,7 @@ evidence pack keys a source (`klai_citations.source_url_key`: host without `www.
 A row says, for the expected articles together (any one counts):
 
 - `search`: among the candidates after search, before the reranker (`retrieval_candidates`, plus Graphiti facts when that
-  leg is on, and the chunks added by link expansion);
+  leg is on);
 - `rerank`: among what the reranker returned (the best `3 x top_k` of the `reranker_candidates` it scored);
 - `served`: the rank of the best of them among the distinct sources of the evidence pack the chat would receive, or
   `null`. That is the pack before the selection step, which then picks the passages the writer reads.
