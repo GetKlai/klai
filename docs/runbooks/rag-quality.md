@@ -274,3 +274,37 @@ If the injection rate is 0% but the low-confidence band rate is above 20%, there
 - Dashboard panel: `deploy/grafana/provisioning/dashboards/rag-quality.json` (panel id 6, "Low-Confidence")
 - Regression canaries: `klai-knowledge-ingest/knowledge_ingest/eval/suites/chat.yaml` (mix: `brand_bridging`)
 - Roadmap: `docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md`
+
+---
+
+## graph-search-degraded
+
+**Situation:** the alert `retrieval_graph_degraded` has fired. retrieval-api
+logged more than 30 `graph_search_timeout`, `graph_search_failed` or
+`health_check_failed: falkordb` events in 30 minutes. Normal is none. Retrieval
+still returns vector results, but every graph timeout adds the 5 s
+`graph_search_timeout`, and `/health` answers 503 while FalkorDB is unreachable.
+
+### Step 1 — Which of the three events
+
+```text
+container:klai-core-retrieval-api-1 AND (event:graph_search_timeout OR event:graph_search_failed OR event:"health_check_failed: falkordb")
+| stats by (event) count() as n
+```
+
+Mostly `health_check_failed: falkordb` means FalkorDB is down or restarting.
+Mostly `graph_search_timeout` with `/health` fine means FalkorDB is up but slow.
+
+### Step 2 — FalkorDB itself
+
+```bash
+ssh core-01
+docker ps --filter name=klai-core-falkordb-1
+docker logs --tail 100 klai-core-falkordb-1
+```
+
+A `crashed by signal` line, repeating every few minutes, is the 2026-10-23
+incident (signal 11, about 150 restarts between 03:00 and 10:36 UTC). It is
+also reported by `datastore_process_crashed` and `container_restart_loop`.
+Check the persistence file with `/opt/klai/scripts/persistence-smoke.sh falkordb`
+before restarting anything, and keep `/opt/klai/falkordb-data`.

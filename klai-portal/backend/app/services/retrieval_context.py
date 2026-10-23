@@ -534,7 +534,7 @@ def _record_retrieval_band(sink: dict[str, Any] | None, result: dict, *, blocked
     """Put retrieval-api's certainty band for this turn into the audit sink.
 
     That band is the one the LibreChat path acts on: it scores final_rank_score,
-    link-expand and page-context boosts included, which the reranker_score in the
+    page-context boost included, which the reranker_score in the
     chunks handed to the portal does not carry. Re-banding here gave the
     calibration readout a second band that could differ from the one that acted.
     When the safety filter dropped a chunk, the set the service banded never

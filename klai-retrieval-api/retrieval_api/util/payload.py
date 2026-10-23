@@ -2,9 +2,8 @@
 
 SPEC-CRAWLER-005 REQ-04: Qdrant strips empty-list payload keys on upsert,
 so absent and ``[]`` are equivalent at the storage layer. Every retrieval
-consumer of list-shaped payload keys (``anchor_texts``, ``links_to``,
-``image_urls``) MUST read through :func:`payload_list` to avoid silent
-drift between the two shapes.
+consumer of list-shaped payload keys (``entity_names``, ``image_urls``) MUST read
+through :func:`payload_list` to avoid silent drift between the two shapes.
 """
 
 from __future__ import annotations

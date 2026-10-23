@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -191,7 +192,12 @@ async def _turn(
     cases: dict | None = None,
     searchable: tuple[str, ...] = ("handboek",),
     conversation_id: str | None = CONVERSATION,
+    request_body: Callable[[list[dict]], dict] | None = None,
+    models_from_settings: bool = False,
 ) -> _Turn:
+    """``request_body`` builds the body a caller sent from the messages, instead of the default one;
+    ``models_from_settings`` leaves the settings' model names as the caller set them (meetlat's measurement
+    patches) instead of the production ones."""
     from app.api import partner
     from app.api.partner import ChatCompletionsRequest, KnowledgeOptions, chat_completions
     from app.services import answer_compose, retrieval_context, widget_turn
@@ -199,10 +205,9 @@ async def _turn(
     for name, value in {
         "litellm_base_url": LITELLM,
         "litellm_master_key": "key",
-        "extraction_model": "klai-fast",
-        "answer_grounding_model": "klai-medium",
         "knowledge_retrieve_url": RETRIEVAL,
         "retrieval_api_internal_secret": "secret",
+        **({} if models_from_settings else {"extraction_model": "klai-fast", "answer_grounding_model": "klai-medium"}),
     }.items():
         monkeypatch.setattr(partner.settings, name, value)
     monkeypatch.setattr(partner, "internal_turn_settings", AsyncMock(return_value=([], "shadow")))
@@ -247,11 +252,16 @@ async def _turn(
         kb_access={10: "read"},
         rate_limit_rpm=60,
     )
-    request = ChatCompletionsRequest(
-        messages=[*history, {"role": "user", "content": question}],
-        stream=stream,
-        knowledge=KnowledgeOptions(include_sources=include_sources),
-        web_search=web_search,
+    messages = [*history, {"role": "user", "content": question}]
+    request = (
+        partner._parse_knowledge_chat_request(request_body(messages))
+        if request_body is not None
+        else ChatCompletionsRequest(
+            messages=messages,
+            stream=stream,
+            knowledge=KnowledgeOptions(include_sources=include_sources),
+            web_search=web_search,
+        )
     )
     # LibreChat's "Klai AI" endpoint sends the conversation id as a header (deploy/librechat/librechat.yaml).
     headers = {"x-klai-conversation-id": conversation_id} if conversation_id is not None else {}

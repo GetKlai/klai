@@ -55,3 +55,25 @@ async def test_bidirectional_edge_lookup_uses_undirected_falkor_pattern() -> Non
 
     assert "-[e:RELATES_TO]-" in driver.captured_query
     assert "-[e:RELATES_TO]->" not in driver.captured_query
+
+
+@pytest.mark.asyncio
+async def test_node_dedup_patch_passes_arguments_graphiti_adds_through(monkeypatch) -> None:
+    """graphiti-core 0.31 calls _resolve_with_llm(..., clients=...). A patch
+    that only accepted the 0.29 signature failed every LLM-resolved episode
+    with a TypeError from 2026-10-22 18:00 UTC on (graphiti_ingest_failed)."""
+    received = {}
+
+    async def original(*args, **kwargs):
+        received.update(kwargs)
+
+    monkeypatch.setattr(node_operations, "_resolve_with_llm", original)
+    _patch_graphiti._patch_node_dedup()
+    state = SimpleNamespace(resolved_nodes=[], uuid_map={}, duplicate_pairs=[])
+    clients = object()
+
+    await node_operations._resolve_with_llm(
+        None, [], SimpleNamespace(existing_nodes=[]), state, None, None, None, clients=clients
+    )
+
+    assert received["clients"] is clients
