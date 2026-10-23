@@ -313,9 +313,13 @@ def _save_sample(out: Path, samples: list[Sample], count: int, max_turns: int, z
     )
 
 
+# meetlat swaps in a Vibe allowance alias: a measurement round must not bill the keys of real users.
+_REQUEST_MODEL = "klai-primary"
+
+
 def _body(messages: list[dict]) -> dict:
     """The same request body for both paths."""
-    return {"model": "klai-primary", "stream": True, "messages": messages}
+    return {"model": _REQUEST_MODEL, "stream": True, "messages": messages}
 
 
 async def _old_answer(client: httpx.AsyncClient, tenant_key: str, librechat_user_id: str, messages: list[dict]) -> dict:
