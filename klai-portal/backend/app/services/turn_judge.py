@@ -40,6 +40,17 @@ _EXCERPT_TURNS = 6
 _EXCERPT_TURN_CHARS = 800
 
 
+def every_field_required(schema: dict) -> None:
+    """The strict json_schema a call sends lists every field as required, with no default.
+
+    A field added later gets a default so stored records and test fixtures
+    that predate it still validate; the model must still always write it.
+    """
+    for prop in schema["properties"].values():
+        prop.pop("default", None)
+    schema["required"] = list(schema["properties"])
+
+
 async def structured_judge_call[J: BaseModel](
     *,
     name: str,

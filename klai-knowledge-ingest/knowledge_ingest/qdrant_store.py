@@ -42,6 +42,7 @@ from qdrant_client.models import (  # noqa: E402
 from knowledge_ingest import sparse_embedder  # noqa: E402
 from knowledge_ingest.config import settings  # noqa: E402
 from knowledge_ingest.embedder import EMBED_DIM  # noqa: E402
+from knowledge_ingest.utils.content_fingerprint import compute_minhash  # noqa: E402
 
 logger = structlog.get_logger()
 
@@ -143,6 +144,9 @@ async def ensure_collection() -> None:
         "content_label",
         "source_label",
         "heading_path",
+        # Plan step 7: the product label, faceted for the chat's case
+        # (routes/stats.py) and matched by retrieval-api.
+        "product",
     ):
         if field not in indexed_fields:
             await client.create_payload_index(
@@ -334,6 +338,8 @@ async def upsert_chunks(
     points = []
     for i, (chunk, vector, sparse) in enumerate(zip(chunks, vectors, sparse_vectors, strict=True)):
         payload = {**base_payload, "text": chunk, "chunk_index": i}
+        if fingerprint := compute_minhash(chunk):
+            payload["text_fingerprint"] = fingerprint
         if heading_paths is not None and i < len(heading_paths) and heading_paths[i]:
             payload["heading_path"] = heading_paths[i]
         if parent_chunk_ids is not None and i < len(parent_chunk_ids):
@@ -447,6 +453,8 @@ async def upsert_enriched_chunks(
             "questions": ec.questions,
             "chunk_index": (chunk_offset or 0) + i,
         }
+        if fingerprint := compute_minhash(ec.original_text):
+            chunk_payload["text_fingerprint"] = fingerprint
         if getattr(ec, "heading_path", ""):
             chunk_payload["heading_path"] = ec.heading_path
 
@@ -628,6 +636,24 @@ _ALLOWED_METADATA_FIELDS = frozenset(
         "heading_path",
     }
 )
+
+
+async def org_products(org_id: str, limit: int = 50) -> list[str]:
+    """The product labels in an org's shared chunks, most chunks first (plan step 7).
+
+    Private (personal) knowledge bases are left out: the list goes into the
+    prompt of every chat turn of the org, also the help widget's.
+    """
+    response = await get_client().facet(
+        COLLECTION,
+        key="product",
+        facet_filter=Filter(
+            must=[FieldCondition(key="org_id", match=MatchValue(value=org_id))],
+            must_not=[FieldCondition(key="visibility", match=MatchValue(value="private"))],
+        ),
+        limit=limit,
+    )
+    return [str(hit.value) for hit in response.hits]
 
 
 async def search(

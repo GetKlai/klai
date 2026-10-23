@@ -94,6 +94,11 @@ class RetrieveRequest(BaseModel):
     # retrieved in 33 of 40 turns but the three-source cap and duplicate
     # sections left a median of five passages from three articles.
     max_sources: int | None = Field(None, ge=1, le=8)
+    # The product the question is about, one of the ``product`` labels of the
+    # org's chunks (knowledge-base plan, step 7): lookalikes of it win the
+    # collapse before the reranker and its chunks get ``product_boost`` after
+    # it. A preference, never a filter.
+    product: str | None = Field(None, max_length=100)
     # Measurement only (meetlat retrieval): answer with the source keys each
     # pipeline stage saw, next to the normal response. Off by default.
     debug_stages: bool = False
@@ -150,6 +155,7 @@ class ChunkResult(BaseModel):
     source_url: str | None = None  # Canonical URL for this source
     kb_slug: str | None = None  # Knowledge base slug (SPEC-KB-021)
     source_label: str | None = None  # Human-readable source label (SPEC-KB-021)
+    product: str | None = None  # The product the document is about (knowledge-base plan, step 7)
     title: str | None = None  # Document title from Qdrant payload
     original_filename: str | None = None  # Uploaded document filename from ingest metadata
     image_urls: list[str] | None = None  # Presigned S3 URLs for images in this document

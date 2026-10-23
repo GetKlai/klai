@@ -27,7 +27,7 @@ import structlog
 from klai_chat_prompts import check_unavailable_message, no_citable_sources_message
 
 from app.core.config import Settings
-from app.services import case_file
+from app.services import case_file, knowledge_ingest_client
 from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import _is_web_search_tool
 from app.services.chat_safety import _last_user_message
@@ -95,24 +95,31 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
         if inputs.profile.kb_mode == "general":
             # General mode searches nothing, so no step would read the case;
             # it would only hold back the first token.
-            found, retrieval_ms = await timed(_search(inputs, turn, []))
-        elif case_file.is_follow_up(messages) or inputs.pasted_correspondence:
-            # 1. Read. A follow-up searches on the employee's own sentence plus
-            # the case's two queries, as on the widget; that replaced the
-            # internal query rewrite. A pasted mail does too on its first turn:
-            # the rewrite used to distil it into a search query, and a long
-            # mail as the only query buries the article that answers it.
-            case, case_ms = await timed(_read_case(inputs))
-            variants = case.search_variants(_last_user_message(messages) or "") if case else []
-            # 2-3. Search, and select inside retrieve_context (passage_selection.py).
-            found, retrieval_ms = await timed(_search(inputs, turn, variants))
+            found, retrieval_ms = await timed(_search(inputs, turn, [], ""))
         else:
-            # A first question searches on its own words, with the case beside
-            # it. The widget's first-turn paraphrases stay widget-only: they
-            # were measured on the widget's meetlat, not on internal questions.
-            (found, retrieval_ms), (case, case_ms) = await asyncio.gather(
-                timed(_search(inputs, turn, [])), timed(_read_case(inputs))
-            )
+            # The products the org's knowledge is about, as on the widget
+            # (knowledge-base plan, step 7).
+            products = await knowledge_ingest_client.get_products(inputs.auth.zitadel_org_id)
+            latest = _last_user_message(messages) or ""
+            if case_file.is_follow_up(messages) or inputs.pasted_correspondence:
+                # 1. Read. A follow-up searches on the employee's own sentence plus
+                # the case's two queries, as on the widget; that replaced the
+                # internal query rewrite. A pasted mail does too on its first turn:
+                # the rewrite used to distil it into a search query, and a long
+                # mail as the only query buries the article that answers it.
+                case, case_ms = await timed(_read_case(inputs, products))
+                variants = case.search_variants(latest) if case else []
+                product = case.product_label if case else case_file.named_product(latest, products)
+                # 2-3. Search, and select inside retrieve_context (passage_selection.py).
+                found, retrieval_ms = await timed(_search(inputs, turn, variants, product))
+            else:
+                # A first question searches on its own words, with the case beside
+                # it. The widget's first-turn paraphrases stay widget-only: they
+                # were measured on the widget's meetlat, not on internal questions.
+                (found, retrieval_ms), (case, case_ms) = await asyncio.gather(
+                    timed(_search(inputs, turn, [], case_file.named_product(latest, products))),
+                    timed(_read_case(inputs, products)),
+                )
     inputs.case = case
     if turn.passages_chosen:
         inputs.kept_passages = kept_passages_of(found.chunks, inputs.kept_passages)
@@ -130,20 +137,25 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
     return await _write(inputs, turn, found, timing)
 
 
-def _read_case(inputs: InternalInputs) -> Awaitable[case_file.Case | None]:
+def _read_case(inputs: InternalInputs, products: list[str]) -> Awaitable[case_file.Case | None]:
     # The case the previous turn stored, as on the widget, so the language it
     # fixed and the problem it narrowed carry over. No subjects: there is no
     # referral to send an employee to.
     return case_file.update_case(
-        inputs.request.messages, inputs.previous_case, inputs.settings, delegated_org_id=inputs.auth.zitadel_org_id
+        inputs.request.messages,
+        inputs.previous_case,
+        inputs.settings,
+        products=products,
+        delegated_org_id=inputs.auth.zitadel_org_id,
     )
 
 
-async def _search(inputs: InternalInputs, turn: KnowledgeTurn, follow_up_variants: list[str]) -> Found:
+async def _search(inputs: InternalInputs, turn: KnowledgeTurn, follow_up_variants: list[str], product: str) -> Found:
     request, auth, profile = inputs.request, inputs.auth, inputs.profile
     knowledge = request.knowledge
     chunks, system_prompt, trusted_sources, broad = await retrieve_context(
         follow_up_variants=follow_up_variants,
+        product=product,
         kept_passages=inputs.kept_passages,
         answer_signals=inputs.answer_signals,
         org_id=auth.org_id,
