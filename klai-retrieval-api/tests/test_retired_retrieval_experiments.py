@@ -88,8 +88,6 @@ def test_legacy_evidence_environment_cannot_change_served_order(client, sample_r
         mock_settings.reranker_candidates = 20
         mock_settings.reranker_enabled = True
         mock_settings.graphiti_enabled = False
-        mock_settings.link_expand_enabled = False
-        mock_settings.link_expand_score_boost = 1.0
         mock_settings.source_quota_enabled = False
         mock_settings.router_enabled = False
         mock_settings.retrieval_quality_floor = 0.05

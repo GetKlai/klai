@@ -233,18 +233,16 @@ Daarna loopt de pipeline:
    `org` of `both` is.
 4. Qdrant hybrid search met vector_chunk, vector_questions en optioneel
    vector_sparse via RRF.
-6. Optioneel Graphiti search en RRF merge.
-7. Link expansion via `links_to`.
-8. Authority boost, page context boost.
-9. Rerank.
-10. Link-expand score boost.
-11. Quality floor filter.
-12. Source-aware selection.
-13. Feedback quality boost.
-14. Parent-text lookup.
-15. `ChunkResult` output.
-16. Confidence band.
-17. `EvidencePack`.
+5. Optioneel Graphiti search en RRF merge.
+6. Page context boost.
+7. Rerank.
+8. Quality floor filter.
+9. Source-aware selection.
+10. Feedback quality boost.
+11. Parent-text lookup.
+12. `ChunkResult` output.
+13. Confidence band.
+14. `EvidencePack`.
 
 Bronnen:
 
@@ -451,8 +449,8 @@ Belangrijkste codepaden:
 - LibreChat config: `deploy/librechat/librechat.yaml`
 - LibreChat stream source patch: `deploy/librechat/getklai/patches/stream.cjs`
 - Retrieval endpoint (handler op `:82`): `klai-retrieval-api/retrieval_api/api/retrieve.py`
-- ↳ rerank / link-expand / quality-floor: `klai-retrieval-api/retrieval_api/api/ranking.py`
-- ↳ authority / page-context boost: `klai-retrieval-api/retrieval_api/api/page_context.py`
+- ↳ confidence band / RRF merge: `klai-retrieval-api/retrieval_api/api/ranking.py`
+- ↳ page-context boost: `klai-retrieval-api/retrieval_api/api/page_context.py`
 - Retrieval request/response models: `klai-retrieval-api/retrieval_api/models.py`
 - Qdrant filters/search: `klai-retrieval-api/retrieval_api/services/search.py`
 - EvidencePack builder: `klai-retrieval-api/retrieval_api/services/evidence_pack.py`

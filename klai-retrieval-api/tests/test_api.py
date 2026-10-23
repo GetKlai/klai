@@ -136,11 +136,6 @@ class TestRetrieveEndpoint:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_candidates = 20
             mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = True
-            mock_settings.link_expand_seed_k = 10
-            mock_settings.link_expand_max_urls = 30
-            mock_settings.link_expand_candidates = 20
-            mock_settings.link_authority_boost = 0.05
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
@@ -151,7 +146,6 @@ class TestRetrieveEndpoint:
             # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.00
             # raw_query == query → NOT caller-pre-resolved → retrieval-side
             # coreference runs (this test is the coref-runs canary).
             request = {
@@ -215,7 +209,6 @@ class TestRetrieveEndpoint:
             "router",
             "qdrant_search",
             "graph_search",
-            "link_expand",
             "rerank",
             "quality_floor",
             "source_select",
@@ -233,20 +226,14 @@ class TestRetrieveEndpoint:
         }
         assert trace_steps[5]["status"] == "skipped"
         assert trace_steps[5]["skipped_reason"] == "disabled_by_config"
-        assert trace_steps[6]["status"] == "skipped"
-        assert trace_steps[6]["skipped_reason"] == "no_candidate_urls"
-        rerank_step = trace_steps[7]
+        rerank_step = trace_steps[6]
         assert rerank_step["candidates_in"] == 1
         assert rerank_step["candidates_out"] == 1
-        assert rerank_step["link_expand_boost_enabled"] is False
-        assert rerank_step["link_expand_boost_factor"] == 1.0
-        assert rerank_step["link_expand_boosted_count"] == 0
         steps_by_name = {step["name"]: step for step in trace_steps}
         for trace_name, metric_name in (
             ("coreference", "coref"),
             ("embed", "embed"),
             ("qdrant_search", "qdrant"),
-            ("link_expand", "link_expand"),
             ("rerank", "rerank"),
             ("total", "total"),
         ):
@@ -295,7 +282,6 @@ class TestRetrieveEndpoint:
             mock_settings.reranker_enabled = False
             mock_settings.retrieval_candidates = 60
             mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = False
             mock_settings.source_quota_enabled = False
             mock_settings.router_enabled = False
             mock_settings.retrieval_quality_floor = 0.05
@@ -371,13 +357,11 @@ class TestRetrieveEndpoint:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_candidates = 20
             mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = False
             mock_settings.router_enabled = False
             mock_settings.source_quota_enabled = False
             mock_settings.retrieval_quality_floor = 0.05
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.00
             if pre_resolved_shape == "legacy_distinct_raw_query":
                 request = {
                     **sample_retrieve_request,
@@ -471,18 +455,12 @@ class TestConfidenceBandEndToEnd:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_candidates = 20
             mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = True
-            mock_settings.link_expand_seed_k = 10
-            mock_settings.link_expand_max_urls = 30
-            mock_settings.link_expand_candidates = 20
-            mock_settings.link_authority_boost = 0.05
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
             mock_settings.retrieval_quality_floor = 0.05
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.00
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -537,18 +515,12 @@ class TestConfidenceBandEndToEnd:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_candidates = 20
             mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = True
-            mock_settings.link_expand_seed_k = 10
-            mock_settings.link_expand_max_urls = 30
-            mock_settings.link_expand_candidates = 20
-            mock_settings.link_authority_boost = 0.05
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
             mock_settings.retrieval_quality_floor = 0.05
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.00
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -583,18 +555,12 @@ class TestConfidenceBandEndToEnd:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_candidates = 20
             mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = True
-            mock_settings.link_expand_seed_k = 10
-            mock_settings.link_expand_max_urls = 30
-            mock_settings.link_expand_candidates = 20
-            mock_settings.link_authority_boost = 0.05
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
             mock_settings.retrieval_quality_floor = 0.05
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.00
             resp = client.post(
                 "/retrieve",
                 json={**sample_retrieve_request, "kb_narrow": True},
@@ -641,11 +607,6 @@ class TestGraphMetadata:
         ):
             mock_settings.retrieval_candidates = 60
             mock_settings.graphiti_enabled = True
-            mock_settings.link_expand_enabled = True
-            mock_settings.link_expand_seed_k = 10
-            mock_settings.link_expand_max_urls = 30
-            mock_settings.link_expand_candidates = 20
-            mock_settings.link_authority_boost = 0.05
             mock_settings.source_quota_enabled = True
             mock_settings.source_quota_max_per_source = 2
             mock_settings.router_enabled = False
@@ -656,7 +617,6 @@ class TestGraphMetadata:
             # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
             mock_settings.confidence_band_high_threshold = 0.60
             mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.00
             resp = client.post("/retrieve", json=sample_retrieve_request)
 
         assert resp.status_code == 200
@@ -738,8 +698,6 @@ class TestGraphMetadata:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_enabled = False
             mock_settings.graphiti_enabled = True
-            mock_settings.link_expand_enabled = False
-            mock_settings.link_expand_score_boost = 1.00
             mock_settings.source_quota_enabled = False
             mock_settings.router_enabled = False
             mock_settings.retrieval_quality_floor = 0.05
@@ -826,8 +784,6 @@ class TestGraphMetadata:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_enabled = False
             mock_settings.graphiti_enabled = True
-            mock_settings.link_expand_enabled = False
-            mock_settings.link_expand_score_boost = 1.00
             mock_settings.source_quota_enabled = False
             mock_settings.router_enabled = False
             mock_settings.retrieval_quality_floor = 0.05
@@ -912,8 +868,6 @@ class TestRetrievalTraceEndpoint:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_enabled = False
             mock_settings.graphiti_enabled = True
-            mock_settings.link_expand_enabled = False
-            mock_settings.link_expand_score_boost = 1.0
             mock_settings.source_quota_enabled = False
             mock_settings.router_enabled = False
             mock_settings.retrieval_quality_floor = 0.05
@@ -971,8 +925,6 @@ class TestRetrievalTraceEndpoint:
             mock_settings.retrieval_candidates = 60
             mock_settings.reranker_enabled = False
             mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = False
-            mock_settings.link_expand_score_boost = 1.0
             mock_settings.source_quota_enabled = False
             mock_settings.router_enabled = False
             mock_settings.retrieval_quality_floor = 0.05
@@ -983,220 +935,6 @@ class TestRetrievalTraceEndpoint:
         assert response.status_code == 200
         assert response.json()["retrieval_bypassed"] is False
         assert any("retrieval_trace_emit_failed" in item.getMessage() for item in caplog.records)
-
-
-class TestLinkExpandInstrumentation:
-    """F3 phase 1 (audit retrieval-coupling-2026-05-06): verify link-expansion
-    instrumentation captures contribution to served top-k without leaking
-    internal state into the response.
-    """
-
-    def test_link_expanded_flag_does_not_leak_and_boost_is_traced(
-        self, client, sample_retrieve_request, caplog
-    ):
-        """Internal `_link_expanded` flag MUST NOT appear in any ChunkResult field.
-
-        ChunkResult is a Pydantic model with explicit fields. The build loop in
-        retrieve.py:325-360 reads only listed keys, so the underscore-prefixed
-        flag stays internal. This test pins that contract.
-        """
-        import logging
-
-        caplog.set_level(logging.INFO)
-        seed_chunk = {
-            "chunk_id": "seed-1",
-            "text": "Seed text",
-            "score": 0.9,
-            "artifact_id": "a1",
-            "content_type": "kb_article",
-            "context_prefix": None,
-            "scope": "org",
-            "valid_at": None,
-            "invalid_at": None,
-            "ingested_at": None,
-            "assertion_mode": None,
-            "links_to": ["https://example.test/expanded-doc"],
-            "incoming_link_count": 0,
-        }
-        expansion_chunk = {
-            "chunk_id": "expanded-1",
-            "text": "Expanded text",
-            "score": 0.0,
-            "artifact_id": "a2",
-            "content_type": "kb_article",
-            "context_prefix": None,
-            "scope": "org",
-            "valid_at": None,
-            "invalid_at": None,
-            "ingested_at": None,
-            "assertion_mode": None,
-            "incoming_link_count": 50,  # gets authority boost
-            "source_url": "https://example.test/expanded-doc",
-        }
-
-        with (
-            patch(
-                "retrieval_api.api.retrieve.coreference.resolve",
-                new_callable=AsyncMock,
-                return_value="resolved query",
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_single",
-                new_callable=AsyncMock,
-                return_value=[0.1, 0.2],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_sparse",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.search.hybrid_search",
-                new_callable=AsyncMock,
-                return_value=[seed_chunk],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.search.fetch_chunks_by_urls",
-                new_callable=AsyncMock,
-                return_value=[expansion_chunk],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.reranker.rerank",
-                new_callable=AsyncMock,
-                # Reranker returns both seed and expanded — preserves the
-                # `_link_expanded` flag because reranker.rerank does
-                # `candidate.copy()` (shallow copy retains the key).
-                side_effect=lambda query, candidates, top_k: [
-                    {**c, "reranker_score": 0.9 - i * 0.1} for i, c in enumerate(candidates[:top_k])
-                ],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.settings",
-            ) as mock_settings,
-        ):
-            mock_settings.reranker_enabled = True
-            mock_settings.retrieval_candidates = 60
-            mock_settings.reranker_candidates = 20
-            mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = True
-            mock_settings.link_expand_seed_k = 10
-            mock_settings.link_expand_max_urls = 30
-            mock_settings.link_expand_candidates = 20
-            mock_settings.link_authority_boost = 0.05
-            mock_settings.source_quota_enabled = True
-            mock_settings.source_quota_max_per_source = 2
-            mock_settings.router_enabled = False
-            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07: pre-existing mock gap
-            # — fixture didn't set this, so quality_floor compared a real
-            # float to a MagicMock and crashed. Locked in by the cleanup PR.
-            mock_settings.retrieval_quality_floor = 0.05
-            # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
-            mock_settings.confidence_band_high_threshold = 0.60
-            mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.20
-            resp = client.post("/retrieve", json=sample_retrieve_request)
-
-        assert resp.status_code == 200
-        data = resp.json()
-        # Pydantic ChunkResult has no `_link_expanded` field — it should
-        # never appear in the serialized response.
-        for chunk in data["chunks"]:
-            assert "_link_expanded" not in chunk, (
-                f"Internal flag leaked into response: {chunk}. "
-                "F3 phase 1 contract: instrumentation MUST stay internal."
-            )
-        record = next(r for r in caplog.records if "retrieval_decision_record" in r.getMessage())
-        rerank_step = next(step for step in record.msg["trace_steps"] if step["name"] == "rerank")
-        assert rerank_step["link_expand_boost_enabled"] is True
-        assert rerank_step["link_expand_boost_factor"] == 1.2
-        assert rerank_step["link_expand_boosted_count"] == 1
-
-    def test_decision_record_link_expand_block_emitted(
-        self, client, sample_retrieve_request, caplog
-    ):
-        """`decision_record.link_expand` block MUST appear in the log when
-        link-expansion is enabled, with all five required keys."""
-        import logging
-
-        caplog.set_level(logging.INFO)
-
-        with (
-            patch(
-                "retrieval_api.api.retrieve.coreference.resolve",
-                new_callable=AsyncMock,
-                return_value="q",
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_single",
-                new_callable=AsyncMock,
-                return_value=[0.1],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.embed_sparse",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "retrieval_api.api.retrieve.search.hybrid_search",
-                new_callable=AsyncMock,
-                return_value=[],
-            ),
-            patch(
-                "retrieval_api.api.retrieve.settings",
-            ) as mock_settings,
-        ):
-            mock_settings.reranker_enabled = False
-            mock_settings.retrieval_candidates = 60
-            mock_settings.reranker_candidates = 20
-            mock_settings.graphiti_enabled = False
-            mock_settings.link_expand_enabled = True
-            mock_settings.link_expand_seed_k = 10
-            mock_settings.link_expand_max_urls = 30
-            mock_settings.link_expand_candidates = 20
-            mock_settings.link_authority_boost = 0.05
-            mock_settings.source_quota_enabled = True
-            mock_settings.source_quota_max_per_source = 2
-            mock_settings.router_enabled = False
-            # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-07: pre-existing mock gap
-            # — fixture didn't set this, so quality_floor compared a real
-            # float to a MagicMock and crashed. Locked in by the cleanup PR.
-            mock_settings.retrieval_quality_floor = 0.05
-            # SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1 / REQ-3
-            mock_settings.confidence_band_high_threshold = 0.60
-            mock_settings.confidence_band_low_threshold = 0.30
-            mock_settings.link_expand_score_boost = 1.00
-            resp = client.post("/retrieve", json=sample_retrieve_request)
-
-        assert resp.status_code == 200
-
-        # The retrieval_decision_record structlog event MUST be present.
-        # Polish 2026-05-06: dropped the previous `or` in the assertion that
-        # let the test pass when `rec is None`. structlog routes through
-        # stdlib `logging` via ProcessorFormatter, so caplog DOES capture
-        # these records — if it doesn't, the F3 instrumentation contract is
-        # broken and we want the test to fail loudly.
-        record_messages = [r.getMessage() for r in caplog.records]
-        decision_records = [m for m in record_messages if "retrieval_decision_record" in m]
-        assert decision_records, (
-            "retrieval_decision_record log line missing from caplog. "
-            f"Captured records: {record_messages}"
-        )
-
-        # Verify the link_expand block actually appears with its required keys.
-        # The structlog kwargs end up in the record's attribute dict via
-        # ProcessorFormatter — search the record's __dict__ for our keys.
-        rec = next(r for r in caplog.records if "retrieval_decision_record" in r.getMessage())
-        rec_attrs = " ".join(f"{k}={v}" for k, v in rec.__dict__.items())
-        for required_key in (
-            "link_expand",
-            "expanded_in_top_k",
-            "seed_in_top_k",
-            "served_top_k",
-        ):
-            assert required_key in rec_attrs, (
-                f"link_expand block missing required key '{required_key}'. "
-                f"Record attrs: {rec.__dict__}"
-            )
 
 
 class TestHealthEndpoint:

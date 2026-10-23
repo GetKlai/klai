@@ -1011,24 +1011,9 @@ that?" becomes something more specific before embedding.
 fallback). If `settings.graphiti_enabled`, a Graphiti graph search fires concurrently
 and is RRF-merged with the Qdrant results.
 
-**4a. Link-graph enrichment (SPEC-CRAWLER-003, crawled KBs only):** After RRF merge, two
-link-graph signals are applied before reranking:
-
-- **1-hop forward expansion:** The outbound URLs from the top `link_expand_seed_k` (default
-  10) chunks are collected, and Qdrant is queried for any chunks whose `source_url` matches
-  one of those URLs (`fetch_chunks_by_urls()`). Matching chunks are added as candidates with
-  `score=0.0` so they pass through to the reranker, which scores them on actual relevance.
-- **Authority boost:** For every candidate chunk, `score += link_authority_boost × log(1 +
-  incoming_link_count)`. Pages with many inbound links within the KB are editorially
-  important — this boost surfaces them ahead of equally-similar but less-linked pages.
-  Default `link_authority_boost = 0.05` (configurable per deployment).
-
-> **Instrumentation (F3 phase 1, audit retrieval-coupling-2026-05-06):** the
-> `retrieval_decision_record` log entry carries a `link_expand` block measuring how
-> many expanded chunks survive the reranker into the served top-K
-> (`expanded_in_top_k`, `seed_in_top_k`, `expanded_top_k_chunk_ids`). Phase 2 (whether
-> to migrate to RRF-merge across dense/authority/expansion ranklists, recalibrate the
-> coefficient, or disable) is gated on ~7 days of this telemetry.
+**4a. Link-graph enrichment (removed 23 Oct 2026):** the 1-hop expansion and the authority boost were taken out
+of retrieval after a measurement (plan step 8 in `knowledge-base-ingestion-and-retrieval-plan.md`); the `links_to` and
+`incoming_link_count` payload fields are still written at ingest.
 
 **4b. Rerank.** The top candidates are reranked by `infinity-reranker`
 (bge-reranker-v2-m3 on GPU — gpu-01 via SSH tunnel at 172.18.0.1:7998). The reranker applies a cross-attention model that scores
