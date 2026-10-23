@@ -96,7 +96,7 @@ jobs:
           docker logs falkordb
           exit 1
 
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           version: "0.13.1"
           python-version: "3.12"
