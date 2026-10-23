@@ -88,6 +88,12 @@ docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$PORTAL_CON
 
 measurement_key_swap "$env_file" "$PORTAL_CONTAINER"
 
+# The clone still reaches the portal database, which stores tenant secrets encrypted with PORTAL_SECRETS_KEY, the
+# tenants' LiteLLM team keys among them. A fresh key of the same shape (64 hex characters, the 32-byte AES-GCM key
+# app/services/secrets.py expects) passes the startup check and decrypts none of them; the replay path decrypts none.
+rest="$(grep -v '^PORTAL_SECRETS_KEY=' "$env_file" || true)"
+printf '%s\nPORTAL_SECRETS_KEY=%s\n' "$rest" "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" > "$env_file"
+
 network_args=()
 while IFS= read -r net; do
     [[ -n "$net" ]] || continue

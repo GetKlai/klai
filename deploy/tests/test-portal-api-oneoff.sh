@@ -63,7 +63,7 @@ case "$1" in
                 echo "sha256:deadbeef"
                 ;;
             *'{{range .Config.Env}}'*)
-                printf 'FOO=bar\nSENTRY_DSN=https://example.com/1\nGLITCHTIP_DSN=https://example.com/2\nLITELLM_MASTER_KEY=live-master-key\nLITELLM_GENERAL_CHAT_KEY=live-chat-key\nLITELLM_URL=http://litellm:4000\n'
+                printf 'FOO=bar\nSENTRY_DSN=https://example.com/1\nGLITCHTIP_DSN=https://example.com/2\nLITELLM_MASTER_KEY=live-master-key\nLITELLM_GENERAL_CHAT_KEY=live-chat-key\nLITELLM_URL=http://litellm:4000\nPORTAL_SECRETS_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n'
                 ;;
             *'NetworkSettings.Networks'*)
                 printf 'klai-core_default\nklai-core_llm\n'
@@ -170,6 +170,9 @@ check "an unrelated variable survives the clone" \
 
 check "every LiteLLM key in the clone is the measurement key, none is a live one" \
     bash -c 'grep -q "^LITELLM_MASTER_KEY=measurement-test-key$" "$0" && grep -q "^LITELLM_GENERAL_CHAT_KEY=measurement-test-key$" "$0" && ! grep -q "live-" "$0"' "$LAST_ENV_FILE"
+
+check "the clone gets its own PORTAL_SECRETS_KEY of the same shape, so stored tenant secrets stay unreadable" \
+    bash -c '[ "$(grep -c "^PORTAL_SECRETS_KEY=" "$0")" = 1 ] && grep -Eq "^PORTAL_SECRETS_KEY=[0-9a-f]{64}$" "$0" && ! grep -q "^PORTAL_SECRETS_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$" "$0"' "$LAST_ENV_FILE"
 
 check "a LiteLLM setting that is not a key is left as it is" \
     bash -c 'grep -q "^LITELLM_URL=http://litellm:4000$" "$0"' "$LAST_ENV_FILE"

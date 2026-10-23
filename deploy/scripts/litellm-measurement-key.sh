@@ -104,6 +104,12 @@ if [[ -n "$tokens" ]]; then
     [[ "$status" == 200 ]] || { echo "ERROR: /key/delete answered $status: $(head -c 300 "$resp")" >&2; exit 1; }
 fi
 
+# On a host where the Mistral probe has not run yet the state directory does not exist; an existing one keeps its owner.
+key_dir="$(dirname "$KEY_FILE")"
+if [[ ! -d "$key_dir" ]]; then
+    mkdir -p "$key_dir"
+    chown "$KEY_OWNER:$KEY_OWNER" "$key_dir"
+fi
 status="$(call "$master" POST /key/generate "$KEY_BODY")"
 [[ "$status" == 200 ]] || { echo "ERROR: /key/generate answered $status: $(head -c 300 "$resp")" >&2; exit 1; }
 tmp="$(mktemp "$(dirname "$KEY_FILE")/.measurement-key.XXXXXX")"

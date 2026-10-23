@@ -40,10 +40,11 @@ done
 
 # The calls the one-off makes itself (coreference rewrite, graph search, synthesis) run on the Vibe allowance
 # (klai-ingest), never on the keys live chat shares: a measurement round on klai-fast helped spend the Mistral
-# workspaces' monthly limit on 23 Oct 2026 and took chat down for every tenant. Not overridable.
+# workspaces' monthly limit on 23 Oct 2026 and took chat down for every tenant. Not overridable, in any case of the
+# name: the settings read coreference_model=... as COREFERENCE_MODEL.
 for key in COREFERENCE_MODEL GRAPHITI_LLM_MODEL SYNTHESIS_MODEL; do
     for given in "${overrides[@]:-}"; do
-        [[ "${given%%=*}" != "$key" ]] || { echo "ERROR: $key is fixed to klai-ingest for a one-off; drop --env $given." >&2; exit 1; }
+        [[ "$(tr '[:lower:]' '[:upper:]' <<< "${given%%=*}")" != "$key" ]] || { echo "ERROR: $key is fixed to klai-ingest for a one-off; drop --env $given." >&2; exit 1; }
     done
     overrides+=("$key=klai-ingest")
 done
@@ -77,7 +78,7 @@ trap 'rm -f "$env_file"' EXIT
 override_keys="$(printf '%s\n' "${overrides[@]:-}" | cut -d= -f1 | paste -sd'|' -)"
 docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$LIVE_CONTAINER" \
     | grep -Ev '^(SENTRY_DSN|GLITCHTIP[A-Z_]*)=' \
-    | { if [[ -n "$override_keys" ]]; then grep -Ev "^(${override_keys})="; else cat; fi; } \
+    | { if [[ -n "$override_keys" ]]; then grep -Eiv "^(${override_keys})="; else cat; fi; } \
     > "$env_file"
 printf '%s\n' "${overrides[@]:-}" | grep . >> "$env_file" || true
 

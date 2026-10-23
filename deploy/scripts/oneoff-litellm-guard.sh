@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Sourced by portal-api-oneoff.sh and retrieval-api-oneoff.sh: every LiteLLM credential in a one-off is the
-# measurement key, a virtual key that can call klai-judge and klai-ingest only, so nothing run inside the clone can
-# reach a chat alias. On 23 Oct 2026 measurement rounds on the master key spent the chat workspaces' monthly Mistral
-# limit and took chat down for every tenant. The key is created by litellm-measurement-key.sh. No flag skips this.
+# Sourced by portal-api-oneoff.sh and retrieval-api-oneoff.sh: every LITELLM_*KEY variable in a one-off's environment
+# is the measurement key, a virtual key that can call klai-judge and klai-ingest only, so the keys the clone is handed
+# cannot reach a chat alias. On 23 Oct 2026 measurement rounds on the master key spent the chat workspaces' monthly
+# Mistral limit and took chat down for every tenant. The tenants' own LiteLLM keys are kept out by
+# portal-api-oneoff.sh (no /librechat mount, a fresh PORTAL_SECRETS_KEY). The key is created by
+# litellm-measurement-key.sh. No flag skips this.
 
 MEASUREMENT_KEY_FILE="${KLAI_MEASUREMENT_KEY_FILE:-/opt/klai/state/litellm/measurement-key}"
 LITELLM_CONTAINER="${KLAI_LITELLM_CONTAINER:-klai-core-litellm-1}"
@@ -30,11 +32,12 @@ measurement_key_load_and_probe() {
 
 # measurement_key_swap ENV_FILE CONTAINER: replaces the value of every LITELLM_*KEY variable with the measurement key.
 # A measurement key equal to a key the live service holds is that key under another name, and an environment with no
-# LITELLM_*KEY variable means it was renamed and this swap no longer covers it: both refuse.
+# LITELLM_*KEY variable means it was renamed and this swap no longer covers it: both refuse. Names match in any case,
+# because pydantic-settings reads them case-insensitively (litellm_api_key=... sets LITELLM_API_KEY).
 measurement_key_swap() {
     local env_file="$1" container="$2" swapped rc=0
     swapped="$(MEASUREMENT_KEY="$measurement_key" awk '
-        /^LITELLM_[A-Z0-9_]*KEY=/ {
+        toupper(substr($0, 1, index($0, "="))) ~ /^LITELLM_[A-Z0-9_]*KEY=$/ {
             eq = index($0, "=")
             if (substr($0, eq + 1) == ENVIRON["MEASUREMENT_KEY"]) live = 1
             print substr($0, 1, eq) ENVIRON["MEASUREMENT_KEY"]

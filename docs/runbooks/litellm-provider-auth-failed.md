@@ -166,8 +166,12 @@ old 30 s timeout until then.
   gateway guard: one-offs run with the `klai-measurement` virtual key
   instead of the master key, whose model list is `klai-judge` and
   `klai-ingest` and which has its own 20 USD daily budget, so LiteLLM refuses
-  a chat alias whoever calls it (`deploy/scripts/litellm-measurement-key.sh`,
-  rule and commands in `docs/runbooks/meetlat.md`).
+  a chat alias on every key a one-off is handed
+  (`deploy/scripts/litellm-measurement-key.sh`, rule and commands in
+  `docs/runbooks/meetlat.md`). `klai_pii_enforce.py` masks a call on that key
+  for the tenant it names in `_klai_delegated_org_id`, as on the master key;
+  a call that names no tenant is not masked, the same as on any other key
+  without one. The meetlat replay names the tenant on every model call.
 
 ## Related Files
 

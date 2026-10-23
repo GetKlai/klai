@@ -70,7 +70,7 @@ STUB
 
     set +e
     PATH="$tmp/bin:$PATH" KLAI_ONEOFF_HEALTH_TRIES=2 \
-        bash "$SCRIPT" --name "$name" --code "$tmp/code" --env RERANKER_CANDIDATES=60 --env LITELLM_API_KEY=live-master-key >"$tmp/out.log" 2>"$tmp/err.log"
+        bash "$SCRIPT" --name "$name" --code "$tmp/code" --env RERANKER_CANDIDATES=60 --env litellm_api_key=live-master-key >"$tmp/out.log" 2>"$tmp/err.log"
     LAST_RC=$?
     set -e
 
@@ -119,8 +119,10 @@ check "a caller cannot put a pinned model back on a shared key" \
 check "a healthy one-off is not removed" calls_lack "rm -f"
 check "the probe asks the gateway for klai-primary with the key from the file, on stdin" \
     bash -c 'echo "$0" | grep -q "Bearer measurement-test-key" && echo "$0" | grep -q "172.18.0.99:4000/v1/chat/completions" && echo "$0" | grep -q "klai-primary"' "$LAST_CURL_CONFIG"
-check "the LiteLLM key is the measurement key, even when --env names the live one" \
-    bash -c '[ "$(grep -c "^LITELLM_API_KEY=" "$0")" = 1 ] && grep -q "^LITELLM_API_KEY=measurement-test-key$" "$0" && ! grep -q "live-master-key" "$0"' "$LAST_ENV_FILE"
+check "a lower-case model variable cannot put a pinned model back either" \
+    bash -c 'bash "$0" --name x --code /nonexistent --env coreference_model=klai-fast 2>&1 | grep -q "fixed to klai-ingest"' "$SCRIPT"
+check "the LiteLLM key is the measurement key, even when --env names the live one in lower case" \
+    bash -c '[ "$(grep -ci "^LITELLM_API_KEY=" "$0")" = 1 ] && grep -qi "^LITELLM_API_KEY=measurement-test-key$" "$0" && ! grep -q "live-master-key" "$0"' "$LAST_ENV_FILE"
 
 for refused in klai-core-retrieval-api-1 retrieval-api; do
     run_oneoff "$refused" ok

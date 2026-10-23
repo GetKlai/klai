@@ -40,15 +40,17 @@ the test `test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance` fails 
 ### Only with the measurement key
 
 The CLI routing covers meetlat, not an ad-hoc script, a probe or a mistake run in the same clone, so the gateway refuses
-the chat aliases as well. A round runs only on the measurement key, the LiteLLM virtual key `klai-measurement`, whose
-model list is `klai-judge` and `klai-ingest` and which has its own budget of 20 USD a day. Both one-off scripts put it
-in place of every `LITELLM_*KEY` variable in the clone (`LITELLM_MASTER_KEY` and `LITELLM_GENERAL_CHAT_KEY` in
-portal-api, `LITELLM_API_KEY` in retrieval-api), and they refuse to start when `/opt/klai/state/litellm/measurement-key`
-is missing, empty, or holds a key the live service uses. Before cloning, they send one request to `klai-primary` with
-that key and stop unless LiteLLM's key check refuses it (`key_model_access_denied`), so a wider key put in the file by
-hand cannot run a round. The portal one-off also no longer mounts `/librechat`, which holds every tenant's LiteLLM key;
-the old path of `replay_internal_chat.py` replays on such a key and stops with a message inside a one-off. The shared
-logic lives in `deploy/scripts/oneoff-litellm-guard.sh`. There is no flag to skip any of this. The spend also counts against
+the chat aliases as well, for the keys a one-off is handed. A round runs only on the measurement key, the LiteLLM
+virtual key `klai-measurement`, whose model list is `klai-judge` and `klai-ingest` and which has its own budget of 20 USD
+a day. Both one-off scripts put it in place of every `LITELLM_*KEY` variable in the clone's environment, matched in any
+case (`LITELLM_MASTER_KEY` and `LITELLM_GENERAL_CHAT_KEY` in portal-api, `LITELLM_API_KEY` in retrieval-api), and they
+refuse to start when `/opt/klai/state/litellm/measurement-key` is missing, empty, or holds a key the live service uses.
+Before cloning, they send one request to `klai-primary` with that key and stop unless LiteLLM's key check refuses it
+(`key_model_access_denied`), so a wider key put in the file by hand cannot run a round. The tenants' own LiteLLM keys
+stay out of a portal one-off: it does not mount `/librechat`, where each tenant's `.env` holds one (the old path of
+`replay_internal_chat.py`, which replays on such a key, stops with a message there), and it gets a fresh
+`PORTAL_SECRETS_KEY`, so the tenant secrets the portal database stores encrypted cannot be decrypted inside it. The
+shared logic lives in `deploy/scripts/oneoff-litellm-guard.sh`. There is no flag to skip any of this. The spend also counts against
 the aliases' own daily budgets, so a day that spends the full 20 USD on `klai-ingest` stops knowledge-ingest's background
 work until that budget resets as well.
 
@@ -64,8 +66,11 @@ sudo /opt/klai/scripts/litellm-measurement-key.sh --verify  # klai-primary refus
 would come from the router after the key check let the request through.
 
 The key replays real conversations, so `klai_pii_enforce.py` honours the tenant it names (`_klai_delegated_org_id`) on
-the alias `klai-measurement` just as it does on the master key. No round runs before that hook change is deployed:
-until then a replayed turn on this key carries no tenant and reaches Mistral unmasked.
+the alias `klai-measurement` just as it does on the master key. A request on this key that names no tenant is not
+masked, the same as on any other key without a tenant, so whatever runs on it must name one: the meetlat replay does on
+every model call (`test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance` checks it), an ad-hoc script has to
+do it itself. No round runs before that hook change is deployed: until then a replayed turn on this key carries no
+tenant and reaches Mistral unmasked.
 
 ## Run a round
 
