@@ -19,6 +19,7 @@ on:
     paths:
       - 'deploy/scripts/**'
       - 'scripts/mistral-api-probe.sh'
+      - 'scripts/widget-probe.py'
       - 'scripts/check-vexa12-deploy-preconditions.sh'
       - '.github/workflows/**'
       - 'deploy/librechat/tests/**'
@@ -39,6 +40,7 @@ on:
     paths:
       - 'deploy/scripts/**'
       - 'scripts/mistral-api-probe.sh'
+      - 'scripts/widget-probe.py'
       - 'scripts/check-vexa12-deploy-preconditions.sh'
       - '.github/workflows/**'
       - 'deploy/librechat/tests/**'
@@ -110,6 +112,11 @@ jobs:
 
       - name: public script ownership suite
         run: bash deploy/scripts/tests/status-monitoring.test.sh
+
+      # The probe is the only signal that a customer gets an answer; a probe
+      # that mis-reads a good or a bad answer is worse than none.
+      - name: widget probe verdict suite
+        run: bash deploy/scripts/tests/widget-probe.test.sh
 
       - name: compose-up.sh verification suite
         run: bash deploy/scripts/tests/compose-up-verify.test.sh
