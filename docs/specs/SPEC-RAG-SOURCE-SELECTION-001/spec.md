@@ -13,7 +13,7 @@ related:
   - SPEC-RAG-ANSWER-EPISTEMICS-001 (sibling SPEC; independent, shares the Phase 0 observability precondition)
   - SPEC-RAG-EVAL-001 (acceptance criteria use its eval harness)
   - SPEC-PRIVACY-QUERY-SHADOW-001 (REQ-1 must not widen what query text is logged)
-roadmap: docs/architecture/retrieval-improvements-roadmap.md
+roadmap: docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md
 ---
 
 # HISTORY

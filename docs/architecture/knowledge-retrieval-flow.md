@@ -37,7 +37,7 @@
 > For how knowledge is *stored* (ingestion, chunking, embedding), see
 > [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
 >
-> For the **strategic roadmap** (how this stack will evolve to be production-grade) and the **RAGAS evaluation harness** that measures every change, see [retrieval-improvements-roadmap.md](retrieval-improvements-roadmap.md).
+> For the **strategic roadmap** (how this stack will evolve to be production-grade) and the **RAGAS evaluation harness** that measures every change, see [knowledge-base-ingestion-and-retrieval-plan.md](knowledge-base-ingestion-and-retrieval-plan.md).
 
 ---
 
@@ -1006,7 +1006,7 @@ rewriting and taxonomy classifying (which live in the hook) are NOT measured by 
 numbers above. Their effect shows up only on real chat traffic. The +61% precision /
 +154% recall / first-measurable faithfulness come from contextual-retrieval chunks +
 parent-child expansion + the rebuild_kb backfill alone. Detailed roadmap closing
-snapshot: [docs/architecture/retrieval-improvements-roadmap.md](retrieval-improvements-roadmap.md).
+snapshot: [docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md](knowledge-base-ingestion-and-retrieval-plan.md).
 
 **Multi-tenant by design:** every query in a suite YAML carries its own `org_zitadel_id`. v1 ships with Voys-only suites. Adding additional tenants post-launch is a YAML drop-in — no service split, no per-tenant deployment.
 

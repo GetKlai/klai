@@ -11,7 +11,7 @@ related:
   - SPEC-INGEST-RECONCILE-001 (sync reconciliation + skip_reasons this SPEC extends with stale-ref cleanup for feed groups)
   - SPEC-KB-021 (source_label / source_aware_select; json_feed source_label semantics stay unchanged)
   - SPEC-CONNECTOR-CLEANUP-001 (connector-scoped deletion layers; group-doc cleanup must cover the same stores)
-roadmap: docs/architecture/retrieval-improvements-roadmap.md
+roadmap: docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md
 ---
 
 # HISTORY

@@ -10,7 +10,7 @@ related:
   - SPEC-PRIVACY-QUERY-SHADOW-001 (owns telemetry_level off/shadow/full; REQ-8 must not widen what is logged)
   - SPEC-SHIELD-001 (owns the working BSN elfproef this SPEC reuses as a Presidio recognizer)
   - SPEC-CHAT-GUARDRAILS-001 (shipped LLM-safety layer; orthogonal — it has no PII category)
-roadmap: docs/architecture/knowledge-rag-improvement-plan.md
+roadmap: docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md
 ---
 
 # HISTORY

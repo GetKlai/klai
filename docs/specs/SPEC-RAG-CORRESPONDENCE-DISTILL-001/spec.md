@@ -11,7 +11,7 @@ related:
   - SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 (REQ-5 brand-bridging is the direct precedent for a conditional prompt-variant on the same call)
   - SPEC-RAG-EVAL-001 (acceptance criteria use its eval harness + expected_chunks canary contract)
   - PR #1059 (pasted-correspondence detector this SPEC's gating flag reuses)
-roadmap: docs/architecture/retrieval-improvements-roadmap.md
+roadmap: docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md
 ---
 
 # HISTORY

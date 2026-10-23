@@ -7,7 +7,7 @@
 > `GAP-EVID-01` are closed flags-off; `GAP-TEMPORAL-01` remains fixed;
 > `GAP-TENANCY-01` still needs its existing-collection upgrade; and `GAP-INGEST-02`
 > remains closed by removal. See
-> [`knowledge-rag-improvement-plan.md`](knowledge-rag-improvement-plan.md) for the plan
+> [`knowledge-base-ingestion-and-retrieval-plan.md`](knowledge-base-ingestion-and-retrieval-plan.md) for the plan
 > built on this refreshed state.
 > This file captures **Type-B drift**: places where an architecture document
 > describes a richer / more capable design than what is actually implemented
