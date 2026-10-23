@@ -103,17 +103,16 @@ groups:
       # keys on `time() - container_last_seen`, which also matches the stale
       # series of a container that was just recreated and misses a container
       # that simply vanished from cAdvisor, so it stays an email. This rule
-      # asks the question directly: which of these containers had a series in
-      # the last 3h but has none now (VictoriaMetrics drops a series ~5m after
-      # the last scrape). A recreate keeps the name, so it is not a hit.
+      # asks the question directly: which of these containers has no series now
+      # (VictoriaMetrics drops a series ~5m after the last scrape). A recreate
+      # keeps the name, so it is not a hit once the new container is scraped.
       # The set is what a customer notices within minutes: caddy, portal-api,
       # zitadel (login), litellm and retrieval-api (chat), postgres, redis,
       # qdrant and falkordb (their stores).
-      # Backtest over 14 days (1m steps): 2 to 7 minutes per container, the
-      # longest a litellm recreate, so `for: 10m` leaves it at zero hits.
-      # Ceiling: after 3h without a series the container drops out of the
-      # window and the alert resolves although it is still down; container_down
-      # and the Uptime Kuma checks keep covering that case.
+      # Backtest over 14 days (1m steps): gaps of 2 to 7 minutes per container,
+      # the longest a litellm recreate, so `for: 10m` leaves it at zero hits.
+      # A renamed or retired container must leave this list in the same PR,
+      # or the alert fires for good.
       - uid: obs-001-container-down-core
         title: container_down_core
         condition: threshold
@@ -129,10 +128,19 @@ groups:
               datasource:
                 type: prometheus
                 uid: victoriametrics
+              # One absent() per expected container, so the alert stays firing for
+              # as long as the container is missing; a "seen in the last N hours"
+              # comparison went quiet once the container had been gone that long.
               expr: |
-                count by (name) (last_over_time(container_start_time_seconds{name=~"klai-core-(caddy|portal-api|zitadel|litellm|retrieval-api|postgres|redis|qdrant|falkordb)-1"}[3h]))
-                unless
-                count by (name) (container_start_time_seconds{name=~"klai-core-(caddy|portal-api|zitadel|litellm|retrieval-api|postgres|redis|qdrant|falkordb)-1"})
+                absent(container_start_time_seconds{name="klai-core-caddy-1"})
+                or absent(container_start_time_seconds{name="klai-core-portal-api-1"})
+                or absent(container_start_time_seconds{name="klai-core-zitadel-1"})
+                or absent(container_start_time_seconds{name="klai-core-litellm-1"})
+                or absent(container_start_time_seconds{name="klai-core-retrieval-api-1"})
+                or absent(container_start_time_seconds{name="klai-core-postgres-1"})
+                or absent(container_start_time_seconds{name="klai-core-redis-1"})
+                or absent(container_start_time_seconds{name="klai-core-qdrant-1"})
+                or absent(container_start_time_seconds{name="klai-core-falkordb-1"})
               instant: true
               queryType: instant
           - refId: threshold
@@ -163,9 +171,9 @@ groups:
           summary: 'Customer-facing container {{ $labels.name }} is gone from cAdvisor'
           runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#container-down'
           description: |
-            {{ $labels.name }} had a series in the last 3 hours and has had
-            none for at least 10 minutes: the container is stopped, removed or
-            stuck in a recreate. Customers notice this one.
+            {{ $labels.name }} has had no cAdvisor series for at least 10
+            minutes: the container is stopped, removed or stuck in a recreate.
+            Customers notice this one.
 
             Triage:
               1. ssh core-01 "docker ps -a --filter name={{ $labels.name }}"
@@ -233,7 +241,6 @@ groups:
           spec: SPEC-OBS-001
           service_group: infra-containers
           page: "true"
-          autofix: "true"
         annotations:
           summary: 'Container {{ $labels.name }} is in a restart loop ({{ $value }} start-time series in 30m, sustained 5m)'
           runbook_url: 'https://github.com/GetKlai/klai-infra/blob/main/docs/runbooks/platform-recovery.md#container-restart-loop'
