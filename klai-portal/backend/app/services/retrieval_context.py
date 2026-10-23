@@ -444,6 +444,9 @@ class KnowledgeTurn:
     low_confidence: bool = False
     # The sub-questions retrieval fanned out over (at most MAX_SUB_QUESTIONS).
     sub_queries: list[str] = field(default_factory=list)
+    # The questions beyond that limit, never searched. Set once the search ran;
+    # the reply names them (knowledge_prompts.unchecked_questions_notice).
+    unchecked_questions: list[str] = field(default_factory=list)
     # The mode the answer is decided under (answer_judge.decide_answer): the
     # profile's, or "general" for an internal turn that searched nothing.
     answer_mode: KbMode = "strict"
@@ -635,7 +638,6 @@ class _Found:
     retrieval_ms: int
     retrieval_user_id: str | None
     sub_queries: list[str]
-    unchecked_questions: list[str]
 
 
 def _read_turn(
@@ -1020,6 +1022,7 @@ async def _search(t: _Turn) -> _Found | _Result:
         return result
     retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
     chunks, trusted_sources = _usable_evidence(t, result, retrieve_body)
+    t.turn.unchecked_questions = unchecked_questions
     return _Found(
         result=result,
         evidence_pack=result.get("evidence_pack"),
@@ -1028,7 +1031,6 @@ async def _search(t: _Turn) -> _Found | _Result:
         retrieval_ms=retrieval_ms,
         retrieval_user_id=retrieval_user_id,
         sub_queries=sub_queries,
-        unchecked_questions=unchecked_questions,
     )
 
 
@@ -1219,7 +1221,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         broad_mode=broad,
         multi_question=grouped,
         sub_query_results=sub_query_results if grouped else None,
-        unchecked_questions=found.unchecked_questions or None,
+        unchecked_questions=turn.unchecked_questions or None,
     )
 
     if turn.passages_chosen and turn.selection is not None and not broad:
@@ -1231,11 +1233,11 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             question=turn.selection.question
             if not t.internal and turn.multi_question and turn.selection.verdict == "depends"
             else "",
-            unchecked=bool(found.unchecked_questions),
+            unchecked=bool(turn.unchecked_questions),
         )
         # The parts beyond the search limit were never searched; the writer
         # must still see them so it does not answer them from other lines.
-        if unchecked := unchecked_question_blocks(found.unchecked_questions, start_index=len(found.sub_queries) + 1):
+        if unchecked := unchecked_question_blocks(turn.unchecked_questions, start_index=len(found.sub_queries) + 1):
             system_prompt += "\n\n" + "\n\n".join(unchecked)
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
