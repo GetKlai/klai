@@ -41,11 +41,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Read the pinned FalkorDB image from the production compose file
+      - name: Read the pinned FalkorDB image and its FALKORDB_ARGS from the production compose file
         id: image
         run: |
           set -euo pipefail
           image=$(awk '/^  falkordb:/{f=1; next} f && /^  [A-Za-z0-9_-]+:/{f=0} f && /^    image:/{print $2; exit}' deploy/docker-compose.yml)
+          # Production overrides the image's baked FALKORDB_ARGS (TIMEOUT 5000
+          # instead of 1000 among others); the contract must run with the same
+          # limits or it fails queries production accepts.
+          args=$(awk '/^  falkordb:/{f=1; next} f && /^  [A-Za-z0-9_-]+:/{f=0} f && /FALKORDB_ARGS:/{sub(/^[^:]*: */, ""); gsub(/"/, ""); print; exit}' deploy/docker-compose.yml)
+          if [ -z "$args" ]; then
+            echo "::error::could not read FALKORDB_ARGS for the falkordb service from deploy/docker-compose.yml"
+            exit 1
+          fi
+          echo "args=${args}" >> "$GITHUB_OUTPUT"
           if ! [[ "$image" =~ ^falkordb/falkordb:[A-Za-z0-9._-]+$ ]]; then
             echo "::error::could not read a pinned falkordb/falkordb:<tag> image from deploy/docker-compose.yml (got '${image}')"
             exit 1
@@ -71,12 +80,14 @@ jobs:
       - name: Start FalkorDB
         env:
           FALKORDB_IMAGE: ${{ steps.image.outputs.image }}
+          FALKORDB_ARGS: ${{ steps.image.outputs.args }}
         run: |
           set -euo pipefail
-          docker run -d --name falkordb -p 6379:6379 "$FALKORDB_IMAGE"
+          docker run -d --name falkordb -p 6379:6379 -e FALKORDB_ARGS="$FALKORDB_ARGS" "$FALKORDB_IMAGE"
           for _ in $(seq 1 30); do
             if docker exec falkordb redis-cli ping 2>/dev/null | grep -q PONG; then
               docker exec falkordb redis-cli info server | grep -E '^(redis_version|run_id)' || true
+              docker exec falkordb redis-cli GRAPH.CONFIG GET TIMEOUT || true
               exit 0
             fi
             sleep 1
