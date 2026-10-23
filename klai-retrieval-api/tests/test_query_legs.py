@@ -62,8 +62,10 @@ async def _search(client: AsyncMock, *, translation: str | None, aliases=None, q
 
 @pytest.mark.asyncio
 async def test_query_in_another_language_than_the_kb_searches_its_translation_too():
+    # A selection of a Dutch and a smaller English KB: translated into Dutch only.
     translate, embed, prefetch = await _search(
-        _client(DUTCH_CHUNKS), translation="Hoe installeer ik de desktopapplicatie?"
+        _client(DUTCH_CHUNKS * 2 + ENGLISH_CHUNKS[:2]),
+        translation="Hoe installeer ik de desktopapplicatie?",
     )
 
     translate.assert_awaited_once_with(EN_QUERY, "nl")

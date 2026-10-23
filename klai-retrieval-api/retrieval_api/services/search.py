@@ -231,14 +231,18 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
     return conditions
 
 
-# The language of a knowledge base is the language most of a sample of its
-# chunks is written in, identified the way the query is. Cached for an hour per
-# org and KB selection: a knowledge base changes language rarely, and a stale
+# The languages of the searched KBs are those of at least a quarter of a sample
+# of their chunks, identified the way the query is. A selection can hold more
+# than one: measured on 23 October 2026, one org's KBs together were 1028 Dutch
+# and 860 English chunks out of 2000, and a sample of 32 split 14 to 15, so a
+# single "dominant" language flipped with the sample. 128 chunks take about
+# 80 ms to identify. Cached for an hour per org and KB selection: a stale
 # answer only costs or saves one translated leg.
-_KB_LANGUAGE_SAMPLE = 32
+_KB_LANGUAGE_SAMPLE = 128
+_KB_LANGUAGE_MIN_SHARE = 0.25
 _KB_LANGUAGE_TTL_SECONDS = 3600.0
 _KB_LANGUAGE_TIMEOUT = 2.0
-_kb_language_cache: dict[tuple[str, tuple[str, ...]], tuple[float, str | None]] = {}
+_kb_language_cache: dict[tuple[str, tuple[str, ...]], tuple[float, list[str]]] = {}
 
 # Aliases are a KB setting (portal_knowledge_bases.aliases) the KB owner edits;
 # a minute of staleness is the price of not reading Postgres on every query.
@@ -262,12 +266,12 @@ def _kb_selection(request: RetrieveRequest) -> tuple[str, ...]:
     return ()
 
 
-async def _kb_language(request: RetrieveRequest, slugs: tuple[str, ...]) -> str | None:
-    """The dominant language of the searched KBs, or None when unknown.
+async def _kb_languages(request: RetrieveRequest, slugs: tuple[str, ...]) -> list[str]:
+    """The languages of the searched KBs; empty when unknown.
 
-    The sample is read without the visibility filter: only a language code
-    leaves this function, never text, and the code is shared by every caller
-    of the same KB selection. A failed read is not cached.
+    The sample is read without the visibility filter: only language codes
+    leave this function, never text, and they are shared by every caller of
+    the same KB selection. A failed read is not cached.
     """
     key = (request.org_id, slugs)
     cached = _kb_language_cache.get(key)
@@ -291,15 +295,16 @@ async def _kb_language(request: RetrieveRequest, slugs: tuple[str, ...]) -> str 
         )
     except Exception as exc:
         logger.warning("kb_language_lookup_failed", error=type(exc).__name__)
-        return None
-    votes = Counter(
+        return []
+    texts = [(point.payload or {}).get("text") or "" for point in points]
+    votes = Counter(await asyncio.to_thread(lambda: [identify_surface_language(t) for t in texts]))
+    languages = [
         language
-        for point in points
-        if (language := identify_surface_language((point.payload or {}).get("text") or ""))
-    )
-    language = votes.most_common(1)[0][0] if votes else None
-    _kb_language_cache[key] = (time.monotonic() + _KB_LANGUAGE_TTL_SECONDS, language)
-    return language
+        for language, count in votes.most_common()
+        if language and count >= _KB_LANGUAGE_MIN_SHARE * len(texts)
+    ]
+    _kb_language_cache[key] = (time.monotonic() + _KB_LANGUAGE_TTL_SECONDS, languages)
+    return languages
 
 
 async def _alias_groups(request: RetrieveRequest, slugs: tuple[str, ...]) -> list[list[str]]:
@@ -336,30 +341,30 @@ def expand_with_aliases(query: str, groups: list[list[str]]) -> str | None:
 
 
 async def _extra_query_texts(query: str, request: RetrieveRequest) -> list[str]:
-    """The texts of the extra legs: the translated and the alias-expanded query.
+    """The texts of the extra legs: the translated and the alias-expanded queries.
 
-    The translation runs only when the query's language is known and differs
-    from the knowledge base's; the expansion only when an alias matched.
-    Logged as language codes and booleans, never as text.
+    One translation per KB language other than the query's, and only when the
+    query's language is known; the expansion only when an alias matched.
+    Logged as language codes and counts, never as text.
     """
     slugs = _kb_selection(request)
     query_language = identify_surface_language(query)
-    kb_language, groups = await asyncio.gather(
-        _kb_language(request, slugs) if query_language else asyncio.sleep(0, None),
+    kb_languages, groups = await asyncio.gather(
+        _kb_languages(request, slugs) if query_language else asyncio.sleep(0, []),
         _alias_groups(request, slugs),
     )
-    translated = None
-    if query_language and kb_language and query_language != kb_language:
-        translated = await coreference.translate(query, kb_language)
+    targets = [language for language in kb_languages if language != query_language]
+    translations = await asyncio.gather(*(coreference.translate(query, t) for t in targets))
     expanded = expand_with_aliases(query, groups)
     logger.info(
         "retrieval_extra_legs",
         query_language=query_language,
-        kb_language=kb_language,
-        translated_leg=translated is not None,
+        kb_languages=",".join(kb_languages),
+        translated_legs=sum(1 for t in translations if t),
+        translation_failures=sum(1 for t in translations if not t),
         alias_leg=expanded is not None,
     )
-    return [text for text in (translated, expanded) if text]
+    return [text for text in (*translations, expanded) if text]
 
 
 async def _search_knowledge(
