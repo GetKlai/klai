@@ -901,3 +901,27 @@ async def test_duplicate_vector_index_errors_are_success() -> None:
             raise RuntimeError("Property is already indexed")
 
     await klai_graphiti_compat._create_vector_indexes(Driver())
+
+
+@pytest.mark.asyncio
+async def test_exact_name_lookup_never_sends_a_stopword_name_to_falkordb() -> None:
+    """FalkorDB 4.x segfaults on `n.name IN [...]` when a value is a fulltext
+    stopword (FalkorDB/FalkorDB#3348); graphiti 0.31 sends every extracted
+    entity name through that query during dedup."""
+    from graphiti_core.nodes import EntityNode
+
+    apply_falkordb_compat()
+
+    class Driver:
+        provider = GraphProvider.FALKORDB
+        graph_operations_interface = None
+        sent_names: list[str] | None = None
+
+        async def execute_query(self, _cypher, **kwargs):
+            self.sent_names = kwargs["names"]
+            return [], [], None
+
+    driver = Driver()
+    await EntityNode.get_by_names(driver, ["A", "Prijs", "the price", " In "], ["org-1"])
+
+    assert driver.sent_names == ["Prijs", "the price"]

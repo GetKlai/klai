@@ -11,6 +11,7 @@ sanitization: 0.29.3 already owns those behaviors.
 | Database-init wrappers | selected `Graphiti` entry points | Ensures ingest-created tenant databases have indexes before writes | database initialization wrapper tests |
 | ANN candidate search | `edge_similarity_search` and `node_similarity_search` scans | Uses FalkorDB vector indexes for candidate generation with scan fallback for missing/index-shape errors | vector fast-path, fallback, and rebind-coverage tests |
 | ANN index creation | no graphiti vector DDL | Creates the indexes the ANN candidate search requires | vector index creation tests |
+| Stopword-safe exact-name lookup | `EntityNode.get_by_names` | FalkorDB 4.x segfaults when an `n.name IN` value equals a fulltext stopword (FalkorDB#3348) | `test_exact_name_lookup_never_sends_a_stopword_name_to_falkordb` |
 
 Every graphiti-core version bump is a review event for this package: run this
 test suite against the new version FIRST; the rebind-coverage and reach tests
@@ -52,6 +53,7 @@ _edge_search_patched = False
 _vector_search_patched = False
 _driver_clone_patched = False
 _initialization_wrappers_patched = False
+_name_lookup_patched = False
 _ann_candidate_search_enabled = False
 _index_unavailable_until: dict[str, float] = {}
 _vector_fallback_last_logged: dict[str, float] = {}
@@ -77,6 +79,7 @@ def apply_falkordb_compat(
     if ann_candidate_search:
         _patch_vector_candidate_search()
     _patch_driver_clone()
+    _patch_exact_name_lookup()
     if initialize_databases:
         _patch_database_initialization_wrappers()
 
@@ -384,6 +387,37 @@ def _patch_vector_candidate_search() -> None:
 
     _vector_search_patched = True
     logger.info("graphiti_falkor_vector_candidate_search_compat_applied")
+
+
+def _patch_exact_name_lookup() -> None:
+    """Keep stopword names out of graphiti 0.31's exact-name dedup query.
+
+    `MATCH (n:Entity) ... AND n.name IN $names` crashes the whole FalkorDB 4.x
+    server (SIGSEGV in QueryNode_AddChildren) when one name equals a stopword
+    of the Entity fulltext index, case-insensitively. Reproduced on 4.20.6,
+    4.22.1 and 4.22.2; upstream fixed it only in the 6.x engine. On 2026-10-23
+    a connector sync extracted such an entity and FalkorDB restarted over 300
+    times in seven hours. A dropped name still gets semantic dedup candidates.
+    """
+    global _name_lookup_patched
+    if _name_lookup_patched:
+        return
+
+    from graphiti_core.driver.driver import GraphProvider
+    from graphiti_core.driver.falkordb import STOPWORDS
+    from graphiti_core.nodes import EntityNode
+
+    original = EntityNode.get_by_names.__func__
+    stopwords = {word.lower() for word in STOPWORDS}
+
+    async def get_by_names(cls, driver, names, group_ids):
+        if driver.provider == GraphProvider.FALKORDB:
+            names = [name for name in names if name.strip().lower() not in stopwords]
+        return await original(cls, driver, names, group_ids)
+
+    EntityNode.get_by_names = classmethod(get_by_names)
+    _name_lookup_patched = True
+    logger.info("graphiti_falkor_exact_name_lookup_compat_applied")
 
 
 def _vector_database(driver: Any) -> str | None:
