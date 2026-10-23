@@ -119,8 +119,8 @@ async def get_active_artifact_state(
     }
 
 
-async def list_active_synced_artifacts(conn: asyncpg.Connection, created_before: int) -> list[dict]:
-    """Return active artifacts that should have corresponding Qdrant chunks.
+async def list_active_artifacts(conn: asyncpg.Connection, created_before: int) -> list[dict]:
+    """Return active artifacts and their index_status for the PG<->Qdrant reconcile.
 
     ``created_before`` excludes artifacts ingested moments ago whose Qdrant
     writes may legitimately still be in flight — without it the nightly
@@ -133,10 +133,10 @@ async def list_active_synced_artifacts(conn: asyncpg.Connection, created_before:
           id::text AS artifact_id,
           org_id,
           kb_slug,
-          path
+          path,
+          index_status
         FROM knowledge.artifacts
         WHERE belief_time_end = $1
-          AND index_status = 'synced'
           AND created_at <= $2
         ORDER BY org_id, kb_slug, path, id
         """,
@@ -149,6 +149,7 @@ async def list_active_synced_artifacts(conn: asyncpg.Connection, created_before:
             "org_id": str(row["org_id"]),
             "kb_slug": str(row["kb_slug"]),
             "path": str(row["path"]),
+            "index_status": str(row["index_status"]),
         }
         for row in rows
     ]
