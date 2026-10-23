@@ -99,9 +99,9 @@ User types a message (LibreChat | Partner API consumer | chat widget on external
         │         ├── Quality floor (remove explicitly degraded chunks)
         │         ├── Source-aware selection (semantic preference + diversity, SPEC-KB-021)
         │         ├── Quality score boost (feedback signals from Qdrant payload)
-        │         ├── Parent expansion — expand each top-K child to its parent chunk
-        │         │   text via parent_chunk_id (SPEC-RAG-PARENT-CHILD-001)
-        │         └── Return top-K chunks (parent text where expansion succeeded)
+        │         ├── Parent window — the child plus its neighbours inside its parent
+        │         │   (parent_chunk_id, SPEC-RAG-PARENT-CHILD-001), at most 2000 chars
+        │         └── Return top-K chunks (the window where the parent was found)
         │
         ├──▶ Write retrieval log to Redis (fire-and-forget, for feedback correlation)
         │
@@ -329,8 +329,9 @@ text chunks.
 
 Before the call to `/retrieve`, the hook itself does two things: it **rewrites the query
 and classifies it into the multi-KB taxonomy in a single LLM round-trip**. After the
-chunks come back, the retrieval API also runs **parent expansion** — replacing each
-matched child chunk with its larger parent for better LLM context. The original
+chunks come back, the retrieval API also runs a **parent window** — replacing each
+matched child chunk with the child plus its neighbours in the same parent (at most 2000
+characters, the whole parent when it is shorter) for better LLM context. The original
 "coreference resolution" step inside retrieval-api is still there as an internal pass.
 
 ---
