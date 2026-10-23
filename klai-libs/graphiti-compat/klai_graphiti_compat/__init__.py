@@ -11,7 +11,7 @@ sanitization: 0.29.3 already owns those behaviors.
 | Database-init wrappers | selected `Graphiti` entry points | Ensures ingest-created tenant databases have indexes before writes | database initialization wrapper tests |
 | ANN candidate search | `edge_similarity_search` and `node_similarity_search` scans | Uses FalkorDB vector indexes for candidate generation with scan fallback for missing/index-shape errors | vector fast-path, fallback, and rebind-coverage tests |
 | ANN index creation | no graphiti vector DDL | Creates the indexes the ANN candidate search requires | vector index creation tests |
-| Stopword-safe exact-name lookup | `EntityNode.get_by_names` | FalkorDB 4.x segfaults when an `n.name IN` value equals a fulltext stopword (FalkorDB#3348) | `test_exact_name_lookup_never_sends_a_stopword_name_to_falkordb` |
+| Stopword-safe exact-name lookup | `EntityNode.get_by_names` | FalkorDB segfaults when an `n.name IN` value equals a fulltext stopword | `test_exact_name_lookup_never_sends_a_stopword_name_to_falkordb` |
 
 Every graphiti-core version bump is a review event for this package: run this
 test suite against the new version FIRST; the rebind-coverage and reach tests
