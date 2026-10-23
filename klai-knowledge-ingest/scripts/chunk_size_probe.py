@@ -4,8 +4,8 @@ Builds a synthetic help-centre corpus (fictional products, example.com URLs, one
 seeded generator, no source data), cuts it with two or more chunkers, writes each
 arm's children to a scratch Qdrant collection with the production vector layout,
 and asks one question per gold fact through the production retrieval shape:
-dense + sparse legs fused with RRF (60 candidates), the Infinity reranker over the
-top 20, one child per parent and at most two per document, then the top k.
+dense + sparse legs fused with RRF (60 candidates), the Infinity reranker over all
+60, one child per parent and at most two per document, then the top k.
 
 It answers "is the fact in the passages the chat gets, and how much text is that",
 for the chunking alone. It does not run retrieval-api (no router, graph, link
@@ -106,7 +106,7 @@ _FILLER = [
 ]
 _SECTIONS = ["Account", "Security"]
 GENERATOR = "klai-knowledge-ingest/scripts/chunk_size_probe.py"
-RERANK_FROM = 20
+RERANK_FROM = 60
 CANDIDATES = 60
 
 
@@ -300,7 +300,7 @@ async def main() -> None:
             n = len(rows)
             info |= {
                 "recall_candidates_60": round(sum(r["in_candidates"] for r in rows) / n, 3),
-                "recall_reranked_20": round(sum(r["in_reranked"] for r in rows) / n, 3),
+                "recall_reranked": round(sum(r["in_reranked"] for r in rows) / n, 3),
             }
             for k in (4, 8, 20):
                 info[f"recall_served_{k}"] = round(sum(r[f"served_{k}"] for r in rows) / n, 3)
