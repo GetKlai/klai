@@ -179,6 +179,7 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
     assert signals["selection"] == {
         "verdict": "answers",
         "evidence": [{"passage": 1, "quote": "Klik op Belplan wijzigen."}],
+        "missing": "",
         "question": "",
     }
 

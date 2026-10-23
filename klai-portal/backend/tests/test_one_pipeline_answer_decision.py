@@ -28,7 +28,7 @@ import httpx
 import pytest
 import respx
 from helpers import selection_quoting_first_passage
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import check_unavailable_message, no_citable_sources_message
 
 from app.api.partner_dependencies import PartnerAuthContext
 from app.services.case_file import StoredTurn
@@ -408,7 +408,8 @@ async def test_strict_knowledge_turn_whose_selection_chose_nothing_is_refused_be
 
 
 @pytest.mark.asyncio
-async def test_strict_turn_whose_selection_fails_twice_gets_the_strict_refusal_without_a_writer(monkeypatch):
+async def test_strict_turn_whose_selection_fails_twice_says_it_cannot_check_without_a_writer(monkeypatch):
+    """No verdict means the knowledge base was never checked, so not "not found" either."""
     llm = _LiteLLM(selection="")
 
     turn = await _turn(
@@ -418,7 +419,7 @@ async def test_strict_turn_whose_selection_fails_twice_gets_the_strict_refusal_w
         retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
     )
 
-    assert turn.text == STRICT_REFUSAL
+    assert turn.text == check_unavailable_message("nl", helpdesk=False)
     assert len(llm.of("passage_selection")) == 2
     assert llm.of("answer") == []
 

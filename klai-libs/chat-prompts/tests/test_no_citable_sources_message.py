@@ -12,7 +12,13 @@ from __future__ import annotations
 
 import pytest
 
-from klai_chat_prompts import FIXED_TEXTS, contact_reply_again, fixed_text, no_citable_sources_message
+from klai_chat_prompts import (
+    FIXED_TEXTS,
+    check_unavailable_message,
+    contact_reply_again,
+    fixed_text,
+    no_citable_sources_message,
+)
 
 _DUTCH = "Ik kan dit niet betrouwbaar beantwoorden op basis van de beschikbare kennisbronnen."
 _ENGLISH = "I cannot answer this reliably from the available knowledge sources."
@@ -44,6 +50,19 @@ def test_german_and_french_codes_get_their_own_refusal_and_hint(code: str, refus
     # 21 October 2026); the internal chat is used in these two languages too.
     assert no_citable_sources_message(code) == refusal
     assert no_citable_sources_message(code, suggest_open_mode=True).startswith(refusal + hint)
+
+
+@pytest.mark.parametrize(
+    ("code", "hint"), [("nl", " Probeer het in Open-modus"), ("de", " Versuche es im Open-Modus"), ("fr", " Essayez")]
+)
+def test_the_internal_check_unavailable_text_keeps_the_user_s_language_and_points_to_open_mode(
+    code: str, hint: str
+) -> None:
+    # Open keeps every passage after a failed selection, so it can still answer.
+    text = check_unavailable_message(code, helpdesk=False)
+
+    assert hint in text
+    assert text != check_unavailable_message("en", helpdesk=False)
 
 
 @pytest.mark.parametrize("code", ["en", "nl-NL", "DE", "es"])

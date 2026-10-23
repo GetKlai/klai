@@ -188,9 +188,14 @@ def test_expressive_prompt_keeps_the_hard_rules_present():
 # reflows a line, tweaks a word, or accidentally folds the new tone into an
 # existing profile fails here naming exactly the profile that moved.
 _PROFILE_HASHES = {
-    "GROUNDED_CHAT_SYSTEM_PROMPT": "6283830328308dfaa20d04732ab851775cd0fb7ae7d92f583a3ae36d85dd3c00",
+    # re-baselined 2026-10-23, GROUNDED and SUPPORT: the passage selection's note
+    # for the writer is the one owner of "the sources do not cover this"; the
+    # prompt's own missing-answer rules apply only without one.
+    "GROUNDED_CHAT_SYSTEM_PROMPT": "f8f263ca23d09222b5d67143e7d8a8be09a958bfce89c75c6a7e32b35c72a76a",
     "GENERAL_CHAT_SYSTEM_PROMPT": "e51d3bba78ecfcd4c26c8553935756f03afe7d9284f1efd4b44f6d962d62f38a",
-    "OPEN_KB_CHAT_SYSTEM_PROMPT": "2babfcab82348a9ddc90c21e48bc0e7de34a16dee20938fceac7ef9b4f02221b",
+    # re-baselined 2026-10-23, OPEN_KB: the same deferral to the selection's
+    # note as GROUNDED, because the brief also reaches an Open turn.
+    "OPEN_KB_CHAT_SYSTEM_PROMPT": "ac8854382e4556910be32eda7a49102199034b8593f1dab73bb889e71c4e28e6",
     "META_CHAT_SYSTEM_PROMPT": "1123025a36e42e114461db2730421de5f44e686b063a77ba6894fdfd7599bcf5",
     # re-baselined 2026-09-09: escalation section — a matching article no
     # longer cancels the appointment offer.
@@ -205,7 +210,7 @@ _PROFILE_HASHES = {
     # gone and "only the steps the article gives" took its place; the prescribed
     # closer was a statement no article carries, and the rule to write a whole
     # procedure drew invented steps (docs/architecture/chat-quality-history-and-plan.md §8).
-    "SUPPORT_CHAT_SYSTEM_PROMPT": "2562abfe9087a0340b27990c3baa3ed63c49eaf0f76c1870a3aa9dd5a700aa93",
+    "SUPPORT_CHAT_SYSTEM_PROMPT": "61dc4cac61c136104e481710720f5207f06c8c2748cf7612d91fe30f97ec37c2",
     "SUPPORT_BROAD_CHAT_SYSTEM_PROMPT": "12c767503d2479e3b661fbe04b100dae63fe2b494b3521a0b2b8975a0ac9135d",
 }
 _PROFILE_VALUES = {
