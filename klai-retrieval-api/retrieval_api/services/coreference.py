@@ -91,13 +91,9 @@ async def resolve(query: str, history: list[dict], *, telemetry_level: str = "sh
         },
         "retrieval:coreference",
     )
-    headers = {}
-    if settings.litellm_api_key:
-        headers["Authorization"] = f"Bearer {settings.litellm_api_key}"
-
     try:
         resolved = await asyncio.wait_for(
-            _call_llm(body, headers),
+            _call_llm(body, _headers()),
             timeout=settings.coreference_timeout,
         )
         resolved = resolved.strip()
@@ -127,6 +123,66 @@ async def resolve(query: str, history: list[dict], *, telemetry_level: str = "sh
         # F6 audit cleanup (TRY401): exc_info=True preserves traceback.
         logger.warning("coreference_resolution_failed", exc_info=True)
         return query
+
+
+_LANGUAGE_NAMES = {
+    "nl": "Dutch",
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "pt": "Portuguese",
+    "es": "Spanish",
+}
+
+
+async def translate(query: str, language: str) -> str | None:
+    """Return *query* translated into *language* (an ISO 639-1 code), or None.
+
+    Used as one extra search leg when the query is written in another language
+    than the knowledge base: retrievers favour passages in the query's own
+    language 1.3 (OpenAI) to 1.6 (BGE-M3) times (arXiv 2410.01171), so the
+    knowledge base's own wording is searched too. A timeout or any failure
+    returns None and the leg is simply absent. The translation is never logged,
+    whatever the telemetry level, because it is the visitor's question.
+    """
+    body = with_feature_tag(
+        {
+            "model": settings.coreference_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Translate the user's search query into "
+                        f"{_LANGUAGE_NAMES.get(language, language)}. Keep product names, "
+                        "codes and numbers as they are. Never answer the query. "
+                        "Return ONLY the translated query."
+                    ),
+                },
+                {"role": "user", "content": query},
+            ],
+            "stream": False,
+            "temperature": 0.0,
+        },
+        "retrieval:translate",
+    )
+    try:
+        translated = await asyncio.wait_for(
+            _call_llm(body, _headers()), timeout=settings.coreference_timeout
+        )
+    except TimeoutError:
+        logger.warning("query_translation_timed_out")
+        return None
+    except Exception as exc:
+        # The exception type only: an httpx error can carry the request body.
+        logger.warning("query_translation_failed", error=type(exc).__name__)
+        return None
+    return translated.strip() or None
+
+
+def _headers() -> dict[str, str]:
+    if settings.litellm_api_key:
+        return {"Authorization": f"Bearer {settings.litellm_api_key}"}
+    return {}
 
 
 async def _call_llm(body: dict, headers: dict) -> str:

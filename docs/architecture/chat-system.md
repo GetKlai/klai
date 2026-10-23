@@ -62,7 +62,11 @@ Een partner-key loopt dezelfde stappen als de widget in §2.1, met deze verschil
 ## 3. De zoekdienst `/retrieve` (klai-retrieval-api)
 
 - **Coreferentie** draait alleen als de aanroeper het niet zelf deed (`klai-retrieval-api/retrieval_api/api/retrieve.py:138-154`), met `klai-fast` en 3 s (`retrieval_api/config.py:38-39`). Pad B doet het niet zelf, dus elke widget-vervolgvraag met geschiedenis krijgt deze aanroep.
+<<<<<<< HEAD
+- **Zoeken**: dense + sparse embeddings, hybride RRF in Qdrant met een letterlijke leg als de vraag herschreven is (`retrieve.py:700-712`), een vertaalde leg als de taal van de vraag niet een van de talen van de kennisbank is en een leg met de aliassen van de kennisbank als de vraag er een noemt (`services/search.py`, kennisbankplan stap 6, samen hooguit 3 s), graph-search (Graphiti, fail-open); dan herrangschikken (Infinity, fail-open naar Qdrant-volgorde), kwaliteitsvloer, maximaal 2 chunks per bron. Varianten (pad B) krijgen elk een eigen pass en worden na het herrangschikken samengevoegd.
+=======
 - **Zoeken**: dense + sparse embeddings, hybride RRF in Qdrant met een letterlijke leg als de vraag herschreven is (`retrieve.py:700-712`), graph-search (Graphiti, fail-open); dan herrangschikken (Infinity, fail-open naar Qdrant-volgorde), kwaliteitsvloer, maximaal 2 chunks per bron. Varianten (pad B) krijgen elk een eigen pass en worden na het herrangschikken samengevoegd.
+>>>>>>> origin/main
 - **Zekerheidsband** (`retrieval_api/api/ranking.py:20-64`): de hoogste `final_rank_score` over de geserveerde chunks, alleen als er een rerankerscore is. ≥ 0,60 `high`, < 0,30 `low`, daartussen `medium`, anders `unknown` (`retrieval_api/config.py:84-91`). Eén berekening voor beide paden (`retrieve.py:1250`). `answer_signals.top_score` op pad B is de score vóór de boosts en dus níet de score waarop de band beslist.
 - **Evidence pack**: maximaal 3 bronnen, of 5 bij meerdere kennisbanken (`retrieve.py:1264-1268`); beide paden bouwen hun context daaruit.
 - **Telemetrie**: bij niveau `shadow`/`full` een rij in `telemetry.query_shadow` met band, chunk-ids en rerankerscore, zonder vraagtekst (`retrieve.py:1338-1354`).
