@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     retrieval_candidates: int = 60
     # Top-N of the retrieval candidates the reranker scores (env RERANKER_CANDIDATES). It was 20
-    # until 23 October 2026. On the meetlat retrieval cases 60 got the article of 1 of 21 internal
-    # turns back from the reranker in two runs out of two and lost none; the widget cases did not
+    # until 23 October 2026. On the meetlat retrieval cases 60 got the article of 1 of 22 internal
+    # turns back from the reranker in every run and lost none; the widget cases did not
     # change (35 of 36 at both depths). The price is 230 ms at p50 on /retrieve (582 to 812 ms).
     reranker_candidates: int = 60
     # Multi-part fan-out: chunks served per sub-question. Keeps the merged
