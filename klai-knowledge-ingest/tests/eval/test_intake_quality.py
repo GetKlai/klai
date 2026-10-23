@@ -12,7 +12,7 @@ _ANSWER = "Refund requests must be filed within thirty calendar days of purchase
 _GOLD_MARKER = "https://kb.example.com/gold/returns"
 
 
-def _query(qid: str, marker: str = "returns-policy") -> dict[str, Any]:
+def _query(qid: str, marker: str = "kb/returns-policy.md") -> dict[str, Any]:
     return {
         "id": qid,
         "org_zitadel_id": "org-example",

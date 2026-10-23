@@ -2120,6 +2120,10 @@ services:
       # SPEC-RAG-EVAL-001 — RAGAS evaluation harness calls /retrieve on
       # klai-retrieval-api. Same secret the portal uses for /retrieve auth.
       RETRIEVAL_API_INTERNAL_SECRET: ${RETRIEVAL_API_INTERNAL_SECRET}
+      # The nightly eval suites name a customer's documents, so they are not
+      # in this repository: private infra places them in the mounted directory
+      # below. A missing file fails the nightly run, never falls back.
+      RAG_EVAL_SUITES_DIR: /rag-eval-suites
       # SPEC-CRAWLER-004 Fase A — shared Garage S3 image pipeline.
       # Empty GARAGE_S3_ENDPOINT disables image extraction silently.
       GARAGE_S3_ENDPOINT: garage:3900
@@ -2139,6 +2143,8 @@ services:
       # knowledge_ingest/config.py match the compose defaults below.
       KLAI_INGEST_LOGIN_WALL_DETECT_ENABLED: ${KLAI_INGEST_LOGIN_WALL_DETECT_ENABLED:-true}
       KLAI_INGEST_LOGIN_WALL_DETECT_MODE: ${KLAI_INGEST_LOGIN_WALL_DETECT_MODE:-reject}
+    volumes:
+      - /opt/klai/rag-eval-suites:/rag-eval-suites:ro
     networks:
       - klai-net
       - net-postgres

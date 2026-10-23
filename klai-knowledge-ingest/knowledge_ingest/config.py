@@ -536,7 +536,11 @@ class Settings(BaseSettings):
     # rag_eval_embeddings_model: LiteLLM alias for the embeddings model used by
     #   AnswerRelevancy (compares imaginary-question vectors to the user's actual
     #   question). Wraps BGE-M3 on TEI/gpu-01.
-    # rag_eval_suites_dir: directory containing suite YAML files.
+    # rag_eval_suites_dir: directory containing suite YAML files. The default is
+    #   the bundled directory, which holds only the synthetic _sample suite. The
+    #   production suites (chat, knowledge_org) name a customer's documents, so
+    #   they come from private infra via a read-only mount and RAG_EVAL_SUITES_DIR;
+    #   without that mount the nightly run fails on the missing file.
     retrieval_api_url: str = "http://retrieval-api:8040"
     retrieval_internal_secret: str = Field(
         default="",

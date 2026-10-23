@@ -123,9 +123,19 @@ docker exec klai-core-postgres-1 psql -U klai -d klai -c "
 "
 ```
 
-If multiple easy-lookup canaries failed in the same suite, treat it as a
-retrieval regression. If one canary failed, check whether the source content was
-renamed, removed, superseded, or re-ingested with different chunk titles.
+A marker is either a document's exact source URL (Notion pages as
+`https://notion.so/<page-id>`, web pages by their crawled URL) or a passage
+phrase of 16+ characters that must appear in a returned chunk's text. Titles are
+not markers, so a re-titled or re-chunked document does not trip the alert.
+
+Before calling a failure a retrieval regression, check that the target is still
+indexed for the tenant: a URL marker needs Qdrant points with that
+`source_url`, a phrase marker needs a chunk whose `text` contains it. If the
+target is gone (page deleted, moved to a new URL, passage rewritten), the suite
+entry is stale: fix it in the suite YAML in private infra. If the target is
+indexed but not returned, it is a retrieval problem: compare
+`retrieval_decision_record` for the nightly `request_id` with a daytime run of
+the same query.
 
 ### Step 2 — Check retrieval and ingest around the run
 
@@ -151,7 +161,7 @@ new baseline run has no canary failures.
 ### Related
 
 - Alert rule: `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml`
-- Canary suites: `klai-knowledge-ingest/knowledge_ingest/eval/suites/`
+- Canary suites: private infra (`core-01/rag-eval-suites/`), mounted read-only into knowledge-ingest at `RAG_EVAL_SUITES_DIR`; the repo holds only the synthetic `_sample.yaml`
 - Runner: `klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py`
 
 ---
@@ -272,7 +282,7 @@ If the injection rate is 0% but the low-confidence band rate is above 20%, there
 - SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 (historical — SPEC removed in repo cleanup 2026-08-18)
 - Alert rule: `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` (uid: `spec-rag-001-low-confidence-rate`)
 - Dashboard panel: `deploy/grafana/provisioning/dashboards/rag-quality.json` (panel id 6, "Low-Confidence")
-- Regression canaries: `klai-knowledge-ingest/knowledge_ingest/eval/suites/chat.yaml` (mix: `brand_bridging`)
+- Regression canaries: the `chat` suite in private infra (mix: `brand_bridging`)
 - Roadmap: `docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md`
 
 ---

@@ -32,7 +32,13 @@ def _make_retrieval_result(chunks=None):
 
     return RetrievalResult(
         chunks=chunks
-        or [{"id": "c1", "title": "Bubble troubleshoot", "text": "Context text for eval"}],
+        or [
+            {
+                "chunk_id": "c1",
+                "source_url": "https://help.example.com/printer-troubleshoot",
+                "text": "Context text for eval",
+            }
+        ],
         retrieval_ms=150,
         total_tokens=200,
     )
@@ -209,3 +215,81 @@ async def test_run_with_judge_failure() -> None:
         assert None in params, f"Expected faithfulness=None in row {i}"
         float_params = [p for p in params if isinstance(p, float)]
         assert float_params, f"Expected some float metrics in row {i}"
+
+
+@pytest.mark.asyncio
+async def test_nightly_run_reads_its_suite_from_rag_eval_suites_dir(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The production suites live outside the image; RAG_EVAL_SUITES_DIR points at them."""
+    from knowledge_ingest.config import Settings
+
+    (tmp_path / "chat.yaml").write_text(
+        "suite: chat\n"
+        "description: private suite stand-in\n"
+        "queries:\n"
+        "  - id: private-1\n"
+        "    org_zitadel_id: '100000000000000001'\n"
+        "    query: Hoe vraag ik verlof aan?\n"
+        "    reference_answer: Via het personeelsportaal.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RAG_EVAL_SUITES_DIR", str(tmp_path))
+    os.environ.pop("RAG_EVAL_VARIANT", None)
+    pool = _make_pool()
+    app, _connector = _make_app()
+    from knowledge_ingest.eval.ragas_runner import register_eval_tasks
+
+    register_eval_tasks(app)
+    task_fn = app.evaluate_retrieval_quality_nightly  # type: ignore[attr-defined]
+
+    with (
+        patch("knowledge_ingest.eval.store.get_pool", new_callable=AsyncMock, return_value=pool),
+        patch(
+            "knowledge_ingest.eval.retrieval_client.retrieve_chunks",
+            new_callable=AsyncMock,
+            return_value=_make_retrieval_result(),
+        ),
+        patch(
+            "knowledge_ingest.eval.judge_client.generate_answer",
+            new_callable=AsyncMock,
+            return_value="Answer",
+        ),
+        patch(
+            "knowledge_ingest.eval.judge_client.evaluate_query",
+            new_callable=AsyncMock,
+            return_value=_CANNED_METRICS.copy(),
+        ),
+        patch("knowledge_ingest.eval.ragas_runner.settings", Settings(_env_file=None)),
+    ):
+        result = await task_fn(suite="chat")
+
+    assert result["queries_processed"] == 1
+    assert result["rows_written"] == 1
+
+
+@pytest.mark.asyncio
+async def test_nightly_run_without_its_suite_fails_instead_of_running_the_sample() -> None:
+    """Without the private suites mounted, the bundled directory holds only _sample.
+
+    The run must fail on the missing file rather than evaluate nothing or
+    substitute the sample, so a lost mount shows up as a failed job.
+    """
+    app, _connector = _make_app()
+    from knowledge_ingest.eval.ragas_runner import register_eval_tasks
+
+    register_eval_tasks(app)
+    task_fn = app.evaluate_retrieval_quality_nightly  # type: ignore[attr-defined]
+    retrieve = AsyncMock()
+
+    with (
+        patch("knowledge_ingest.eval.retrieval_client.retrieve_chunks", retrieve),
+        patch(
+            "knowledge_ingest.eval.ragas_runner.settings.rag_eval_suites_dir",
+            str(_sample_suite_path().parent),
+        ),
+        pytest.raises(FileNotFoundError, match=r"chat\.yaml"),
+    ):
+        await task_fn(suite="chat")
+
+    retrieve.assert_not_awaited()

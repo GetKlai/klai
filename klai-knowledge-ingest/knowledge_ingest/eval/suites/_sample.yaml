@@ -1,29 +1,36 @@
+# synthetic-data: generator=hand-written seed=0 (invented tenant, invented
+# documents, example.com URLs only).
+#
+# The production suites name a customer's internal documents, so they are not
+# in this repository: the private infra repo places them on the host and
+# RAG_EVAL_SUITES_DIR points the runner at them. This directory only holds this
+# sample, for tests and local runs (`--suite _sample`).
 suite: _sample
 description: Three-query sample suite for TDD. Used by test_ragas_runner_integration.py.
 queries:
-  - id: sample-bubble-1
-    org_zitadel_id: "368884765035593759"
+  - id: sample-printer-1
+    org_zitadel_id: "100000000000000001"
     user_zitadel_id: null
-    query: "Hoe troubleshoot ik Bubble?"
-    reference_answer: "Controleer of de Bubble browserplugin actief is, herstart de browser of plugin en volg de Bubble troubleshoot-stappen voor verbindingsproblemen."
+    query: "Hoe los ik een vastgelopen printer op?"
+    reference_answer: "Zet de printer uit, verwijder het vastgelopen papier, zet hem weer aan en volg de stappen uit de printerhandleiding als de melding blijft."
     expected_topics:
-      - bubble
-      - browser-plugin
+      - printer
+      - storing
     expected_chunks:
-      - "Bubble troubleshoot"
-  - id: sample-uitportering-1
-    org_zitadel_id: "368884765035593759"
+      - "https://help.example.com/printer-troubleshoot"
+  - id: sample-leave-1
+    org_zitadel_id: "100000000000000001"
     user_zitadel_id: null
-    query: "Wat is de procedure voor uitportering?"
-    reference_answer: "Bij uitportering volg je de customer-service procedure voor nummerovername, controleer je de benodigde klantgegevens en verwerk je de porting-out status volgens de interne stappen."
+    query: "Hoe vraag ik verlof aan?"
+    reference_answer: "Verlof vraag je aan in het personeelsportaal; je leidinggevende keurt de aanvraag goed en het saldo wordt daarna bijgewerkt."
     expected_topics:
-      - uitportering
-      - customer-service
-  - id: sample-voicemail-1
-    org_zitadel_id: "368884765035593759"
+      - verlof
+      - personeelsportaal
+  - id: sample-expenses-1
+    org_zitadel_id: "100000000000000001"
     user_zitadel_id: null
-    query: "Hoe stel ik een voicemail in?"
-    reference_answer: "Voicemail instellen gebeurt via de telefonie-instellingen van de gebruiker of extensie; configureer de begroeting, doorschakeling en bereikbaarheid volgens de voicemailprocedure."
+    query: "Hoe declareer ik reiskosten?"
+    reference_answer: "Reiskosten declareer je maandelijks via het declaratieformulier met de bonnen als bijlage; de financiële afdeling betaalt ze uit met het salaris."
     expected_topics:
-      - voicemail
-      - telefonie
+      - declaratie
+      - reiskosten
