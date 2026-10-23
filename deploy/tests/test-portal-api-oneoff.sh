@@ -14,10 +14,18 @@ FAIL=0
 run_oneoff() {
     # $1 = "true"/"false" — what docker inspect reports for .State.Running
     # $2 = "abs" (default; --out <tmp>/out), "rel" (--out out, run from <tmp>/work)
+    # $3 = "ok" (default), "missing" (no measurement key file), "live" (the file holds the live master key)
     local running="$1"
     local out_mode="${2:-abs}"
+    local key_mode="${3:-ok}"
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/bin" "$tmp/out" "$tmp/work"
+
+    export KLAI_MEASUREMENT_KEY_FILE="$tmp/measurement-key"
+    case "$key_mode" in
+        ok) printf 'measurement-test-key' >"$KLAI_MEASUREMENT_KEY_FILE" ;;
+        live) printf 'live-master-key' >"$KLAI_MEASUREMENT_KEY_FILE" ;;
+    esac
 
     export ONEOFF_TEST_TMP="$tmp"
     export ONEOFF_TEST_RUNNING="$running"
@@ -38,7 +46,7 @@ case "$1" in
                 echo "sha256:deadbeef"
                 ;;
             *'{{range .Config.Env}}'*)
-                printf 'FOO=bar\nSENTRY_DSN=https://example.com/1\nGLITCHTIP_DSN=https://example.com/2\n'
+                printf 'FOO=bar\nSENTRY_DSN=https://example.com/1\nGLITCHTIP_DSN=https://example.com/2\nLITELLM_MASTER_KEY=live-master-key\nLITELLM_GENERAL_CHAT_KEY=live-chat-key\nLITELLM_URL=http://litellm:4000\n'
                 ;;
             *'NetworkSettings.Networks'*)
                 printf 'klai-core_default\nklai-core_llm\n'
@@ -82,7 +90,7 @@ STUB
     LAST_ERR="$(cat "$tmp/err.log" 2>/dev/null || true)"
     LAST_TMP="$tmp"
 
-    unset ONEOFF_TEST_TMP ONEOFF_TEST_RUNNING ONEOFF_TEST_UID
+    unset ONEOFF_TEST_TMP ONEOFF_TEST_RUNNING ONEOFF_TEST_UID KLAI_MEASUREMENT_KEY_FILE
 }
 
 check() {
@@ -136,6 +144,12 @@ check "the GlitchTip DSN is dropped from the cloned environment" \
 check "an unrelated variable survives the clone" \
     bash -c 'grep -q "^FOO=bar$" "$0"' "$LAST_ENV_FILE"
 
+check "every LiteLLM key in the clone is the measurement key, none is a live one" \
+    bash -c 'grep -q "^LITELLM_MASTER_KEY=measurement-test-key$" "$0" && grep -q "^LITELLM_GENERAL_CHAT_KEY=measurement-test-key$" "$0" && ! grep -q "live-" "$0"' "$LAST_ENV_FILE"
+
+check "a LiteLLM setting that is not a key is left as it is" \
+    bash -c 'grep -q "^LITELLM_URL=http://litellm:4000$" "$0"' "$LAST_ENV_FILE"
+
 check "the output dir is chowned to the uid the image's process actually runs as" \
     bash -c 'echo "$0" | grep -q -- "exec klai-core-portal-api-1 id -u"' "$LAST_CALLS"
 
@@ -154,6 +168,19 @@ check "docker run was never invoked against a stopped service" \
 
 check "the refusal says why" \
     bash -c 'echo "$0" | grep -qi "not running"' "$LAST_ERR"
+
+for key_mode in missing live; do
+    run_oneoff true abs "$key_mode"
+
+    check "a measurement key file that is $key_mode is a refusal" \
+        test "$LAST_RC" -ne 0
+
+    check "docker run was never invoked when the measurement key is $key_mode" \
+        test -z "$LAST_RUN_LOG"
+
+    check "the refusal for a $key_mode key names the script that creates it" \
+        bash -c 'echo "$0" | grep -q "litellm-measurement-key.sh"' "$LAST_ERR"
+done
 
 echo "─────────────────────────────"
 if [ "$FAIL" -eq 0 ]; then

@@ -37,6 +37,32 @@ check, the paraphrases), and the route accepts `klai-ingest` for the round (`_ap
 or its container name, and there is no flag to override that: a round always starts with a retrieval-api one-off. A model call added to the chat path later has to be routed there too;
 the test `test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance` fails on any turn that names another model.
 
+### Only with the measurement key
+
+The CLI routing covers meetlat, not an ad-hoc script, a probe or a mistake run in the same clone, so the gateway refuses
+the chat aliases as well. A round runs only on the measurement key, the LiteLLM virtual key `klai-measurement`, whose
+model list is `klai-judge` and `klai-ingest` and which has its own budget of 20 USD a day. Both one-off scripts put it
+in place of every `LITELLM_*KEY` variable in the clone (`LITELLM_MASTER_KEY` and `LITELLM_GENERAL_CHAT_KEY` in
+portal-api, `LITELLM_API_KEY` in retrieval-api), and they refuse to start when `/opt/klai/state/litellm/measurement-key`
+is missing, empty, or holds a key the live service uses. There is no flag to skip this. The spend also counts against
+the aliases' own daily budgets, so a day that spends the full 20 USD on `klai-ingest` stops knowledge-ingest's background
+work until that budget resets as well.
+
+The key exists once and survives deploys. To create it, or to replace it after the file was lost (LiteLLM stores only
+its hash), run on core-01:
+
+```bash
+sudo /opt/klai/scripts/litellm-measurement-key.sh           # idempotent; writes the file, owner klai, mode 600
+sudo /opt/klai/scripts/litellm-measurement-key.sh --verify  # klai-primary refused by the key check, klai-ingest 200
+```
+
+`--verify` passes only when `klai-primary` fails on LiteLLM's own `key_model_access_denied` (401/403). A 402 or 429
+would come from the router after the key check let the request through.
+
+The key replays real conversations, so `klai_pii_enforce.py` honours the tenant it names (`_klai_delegated_org_id`) on
+the alias `klai-measurement` just as it does on the master key. No round runs before that hook change is deployed:
+until then a replayed turn on this key carries no tenant and reaches Mistral unmasked.
+
 ## Run a round
 
 1. Build the overlay in the output directory of the one-off (here `/opt/klai/oneoff/meetlat`, mounted as `/out`). It

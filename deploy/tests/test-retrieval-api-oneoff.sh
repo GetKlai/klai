@@ -13,9 +13,16 @@ FAIL=0
 run_oneoff() {
     # $1 = name given to --name; $2 = "ok"/"down" — whether the one-off ever answers /health;
     # $3 = "true"/"false" — what docker inspect reports for the live service's .State.Running
-    local name="$1" health="$2" running="${3:-true}"
+    # $4 = "ok"/"missing"/"live" — the measurement key file holds a key, is absent, or holds the live service's key
+    local name="$1" health="$2" running="${3:-true}" key_mode="${4:-ok}"
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/bin" "$tmp/code/retrieval_api"
+
+    export KLAI_MEASUREMENT_KEY_FILE="$tmp/measurement-key"
+    case "$key_mode" in
+        ok) printf 'measurement-test-key' >"$KLAI_MEASUREMENT_KEY_FILE" ;;
+        live) printf 'live-master-key' >"$KLAI_MEASUREMENT_KEY_FILE" ;;
+    esac
 
     export ONEOFF_TEST_TMP="$tmp" ONEOFF_TEST_HEALTH="$health" ONEOFF_TEST_RUNNING="$running"
 
@@ -29,7 +36,7 @@ case "$1" in
             *'{{.Image}}'*) echo "sha256:deadbeef" ;;
             *'{{.Config.WorkingDir}}'*) echo "/repo/klai-retrieval-api" ;;
             *'.Aliases'*) printf 'retrieval-api\nabc123def456\n' ;;
-            *'{{range .Config.Env}}'*) printf 'FOO=bar\nRERANKER_CANDIDATES=20\nCOREFERENCE_MODEL=klai-fast\nSENTRY_DSN=https://example.com/1\n' ;;
+            *'{{range .Config.Env}}'*) printf 'FOO=bar\nRERANKER_CANDIDATES=20\nCOREFERENCE_MODEL=klai-fast\nLITELLM_API_KEY=live-master-key\nSENTRY_DSN=https://example.com/1\n' ;;
             *'NetworkSettings.Networks'*) printf 'klai-net\nklai-net-postgres\n' ;;
         esac
         ;;
@@ -49,14 +56,14 @@ STUB
 
     set +e
     PATH="$tmp/bin:$PATH" KLAI_ONEOFF_HEALTH_TRIES=2 \
-        bash "$SCRIPT" --name "$name" --code "$tmp/code" --env RERANKER_CANDIDATES=60 >"$tmp/out.log" 2>"$tmp/err.log"
+        bash "$SCRIPT" --name "$name" --code "$tmp/code" --env RERANKER_CANDIDATES=60 --env LITELLM_API_KEY=live-master-key >"$tmp/out.log" 2>"$tmp/err.log"
     LAST_RC=$?
     set -e
 
     LAST_CALLS="$(cat "$tmp/calls.log" 2>/dev/null || true)"
     LAST_ENV_FILE="$tmp/env-file"
     LAST_ERR="$(cat "$tmp/err.log" 2>/dev/null || true)"
-    unset ONEOFF_TEST_TMP ONEOFF_TEST_HEALTH ONEOFF_TEST_RUNNING
+    unset ONEOFF_TEST_TMP ONEOFF_TEST_HEALTH ONEOFF_TEST_RUNNING KLAI_MEASUREMENT_KEY_FILE
 }
 
 check() {
@@ -95,6 +102,8 @@ check "every model of the one-off's own LLM calls is the Vibe alias, whatever th
 check "a caller cannot put a pinned model back on a shared key" \
     bash -c 'bash "$0" --name x --code /nonexistent --env COREFERENCE_MODEL=klai-fast 2>&1 | grep -q "fixed to klai-ingest"' "$SCRIPT"
 check "a healthy one-off is not removed" calls_lack "rm -f"
+check "the LiteLLM key is the measurement key, even when --env names the live one" \
+    bash -c '[ "$(grep -c "^LITELLM_API_KEY=" "$0")" = 1 ] && grep -q "^LITELLM_API_KEY=measurement-test-key$" "$0" && ! grep -q "live-master-key" "$0"' "$LAST_ENV_FILE"
 
 for refused in klai-core-retrieval-api-1 retrieval-api; do
     run_oneoff "$refused" ok
@@ -109,6 +118,15 @@ run_oneoff ra-test down
 
 check "a one-off that never answers /health fails the script" test "$LAST_RC" -ne 0
 check "and is removed, not left running" calls_have "rm -f ra-test"
+
+for key_mode in missing live; do
+    run_oneoff ra-test ok true "$key_mode"
+
+    check "a measurement key file that is $key_mode is a refusal" test "$LAST_RC" -ne 0
+    check "docker create was never invoked when the measurement key is $key_mode" calls_lack "create"
+    check "the refusal for a $key_mode key names the script that creates it" \
+        bash -c 'echo "$0" | grep -q "litellm-measurement-key.sh"' "$LAST_ERR"
+done
 
 run_oneoff ra-test ok false
 

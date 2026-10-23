@@ -298,6 +298,15 @@ _PROXY_ADMIN_ROLE = "proxy_admin"
 # (summarizer.py) on their calls through the proxy.
 _DELEGATED_ORG_ID_KEY = "_klai_delegated_org_id"
 
+# The virtual key measurement one-offs run on instead of the master key
+# (deploy/scripts/litellm-measurement-key.sh, which creates it under this
+# alias). It replays real conversations, so it delegates like the master key:
+# without that, a replayed customer turn carries no org and reaches Mistral
+# unmasked. LiteLLM enforces unique key aliases on /key/generate and
+# /key/update (_enforce_unique_key_alias), so no other key can hold this alias
+# while the measurement key exists.
+MEASUREMENT_KEY_ALIAS = "klai-measurement"
+
 
 def _delegated_org_id(user_api_key_dict: Any, data: dict[str, Any]) -> Any:
     """Tenant identity asserted by the proxy about a call it makes to itself.
@@ -308,7 +317,9 @@ def _delegated_org_id(user_api_key_dict: Any, data: dict[str, Any]) -> Any:
     enforcement skips the request, so the user's text would reach Mistral
     unmasked. The org is known at the call site; it just was not travelling.
 
-    The assertion is honoured ONLY for ``proxy_admin``. A tenant key that puts
+    The assertion is honoured ONLY for ``proxy_admin`` and for the measurement
+    key (``MEASUREMENT_KEY_ALIAS``), which replays real turns on the proxy's
+    behalf. A tenant key that puts
     this field in its request body is ignored, because a body is not
     authenticated and an org id chosen by the caller would let one tenant pick
     another tenant's (possibly laxer) masking policy and misattribute this
@@ -316,7 +327,7 @@ def _delegated_org_id(user_api_key_dict: Any, data: dict[str, Any]) -> Any:
     """
     role = getattr(user_api_key_dict, "user_role", None)
     role = getattr(role, "value", role)  # LitellmUserRoles enum or plain str
-    if role != _PROXY_ADMIN_ROLE:
+    if role != _PROXY_ADMIN_ROLE and getattr(user_api_key_dict, "key_alias", None) != MEASUREMENT_KEY_ALIAS:
         return None
     if not isinstance(data, dict):
         return None
