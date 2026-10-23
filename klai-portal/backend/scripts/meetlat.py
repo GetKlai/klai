@@ -256,7 +256,10 @@ async def _remembered_internal_case(*, org_id: int, user_id: str, conversation_i
 async def _store_internal_case(
     *, org_id: int, user_id: str, conversation_id: str, case: dict | None, kept_passages: list[dict]
 ) -> None:
-    """Stands in for ``keep_internal_case``."""
+    """Stands in for ``keep_internal_case``, which deletes the row of a turn with nothing to keep."""
+    if case is None and not kept_passages:
+        _internal_cases.pop((org_id, user_id, conversation_id), None)
+        return
     _internal_cases[(org_id, user_id, conversation_id)] = case_file.StoredTurn(case, "", kept_passages, None)
 
 

@@ -474,9 +474,23 @@ async def keep_internal_case(
     The case and the passages are text, so they live in ``internal_chat_cases``,
     never in ``internal_chat_turns`` or a log line: a failure is logged with
     the statement's parameters hidden, which a database error prints otherwise.
+    A turn with neither a case nor a kept passage deletes the row, so the next
+    turn reads nothing rather than the case of an older turn, as ``last_case``
+    never reuses one.
     """
+    key = {"org_id": org_id, "user_id": user_id, "conversation_id": conversation_id}
     try:
         async with tenant_scoped_session(org_id) as db:
+            if case is None and not kept_passages:
+                await db.execute(
+                    text(
+                        "DELETE FROM internal_chat_cases WHERE org_id = :org_id "
+                        "AND user_id = :user_id AND conversation_id = :conversation_id"
+                    ),
+                    key,
+                )
+                await db.commit()
+                return
             await db.execute(
                 text(
                     """
@@ -490,13 +504,7 @@ async def keep_internal_case(
                            updated_at = EXCLUDED.updated_at
                     """
                 ),
-                {
-                    "org_id": org_id,
-                    "user_id": user_id,
-                    "conversation_id": conversation_id,
-                    "case_file": json.dumps(case),
-                    "kept_passages": json.dumps(kept_passages),
-                },
+                {**key, "case_file": json.dumps(case), "kept_passages": json.dumps(kept_passages)},
             )
             await db.commit()
     except Exception as exc:

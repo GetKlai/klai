@@ -916,10 +916,8 @@ async def _searchable_kb_slugs(db: AsyncSession, org_id: int, profile: ChatProfi
 
 
 def _keep_internal_case(org_id: int, conversation: _InternalConversation, inputs: InternalInputs) -> None:
-    """Store the turn's case and kept passages for the next turn, beside the reply; nothing when it has neither."""
+    """Store the turn's case and kept passages for the next turn, beside the reply; a turn with neither clears them."""
     case = inputs.case.model_dump() if inputs.case is not None else None
-    if case is None and not inputs.kept_passages:
-        return
     task = asyncio.create_task(
         keep_internal_case(
             org_id=org_id,

@@ -224,6 +224,10 @@ async def _turn(
     async def keep_internal_case(
         *, org_id: int, user_id: str, conversation_id: str, case: dict | None, kept_passages: list[dict]
     ) -> None:
+        # As widget_audit.keep_internal_case: a turn with nothing to keep clears the row.
+        if case is None and not kept_passages:
+            cases.pop((org_id, user_id, conversation_id), None)
+            return
         cases[(org_id, user_id, conversation_id)] = StoredTurn(case, "", kept_passages, None)
 
     monkeypatch.setattr(partner, "last_internal_case", last_internal_case)
@@ -856,6 +860,39 @@ async def test_a_regenerated_follow_up_reads_its_conversation_case_and_overwrite
     assert LEAVE_CASE["problem"] in case_call["messages"][1]["content"]
     (stored,) = cases.values()
     assert stored.case["problem"] == regenerated_case["problem"]
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_after_a_turn_that_kept_nothing_reads_no_case(monkeypatch):
+    """With the conversation id as the key, a turn that stored nothing left the
+    case of the turn before it in place, so the next follow-up read a case two
+    turns old; the widget never reuses an older case."""
+    cases: dict = {}
+    nothing_found = {"evidence_pack": {"items": [], "sources": []}}
+    history: tuple[dict, ...] = ()
+    for llm, question in (
+        (_LiteLLM(case=LEAVE_CASE), QUESTION),
+        # The case call fails and the search keeps no passage: nothing to keep.
+        (_LiteLLM(), "En als mijn leidinggevende niet reageert?"),
+    ):
+        turn = await _turn(
+            monkeypatch, llm, profile=_internal(), retrieval=nothing_found, question=question, history=history,
+            cases=cases,
+        )  # fmt: skip
+        history = (*history, {"role": "user", "content": question}, {"role": "assistant", "content": turn.text})
+
+    third = await _turn(
+        monkeypatch,
+        _LiteLLM(case=LEAVE_CASE),
+        profile=_internal(),
+        retrieval=nothing_found,
+        question="Wie keurt het dan goed?",
+        history=history,
+        cases=cases,
+    )
+
+    (record,) = third.records
+    assert record["case_remembered"] is False
 
 
 # --- Grounding check and repair ---------------------------------------------------

@@ -179,6 +179,16 @@ async def test_a_conversation_keeps_one_row_with_its_latest_turn(pg) -> None:
     assert (stored.case, stored.kept_passages) == (None, [_PASSAGE])
 
 
+async def test_a_turn_with_nothing_to_keep_clears_the_conversation_s_case(pg) -> None:
+    await _keep(901, "u1", "k1")
+    await _keep(901, "u1", "k2")
+
+    await _keep(901, "u1", "k1", case=None, kept_passages=[])
+
+    assert await last_internal_case(org_id=901, user_id="u1", conversation_id="k1") is None
+    assert await _visible_keys(901) == ["k2"]
+
+
 async def test_a_conversation_id_reads_only_the_employee_s_own_case(pg) -> None:
     await _keep(901, "u1", "k1")
 
