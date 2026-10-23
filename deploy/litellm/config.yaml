@@ -161,6 +161,68 @@ model_list:
     tpm: 900000
 
 
+  # Bridge of 23 October 2026: both chat workspaces reached their monthly
+  # spending limit (402 on every key, chat down for every tenant), so each
+  # chat alias gets a third deployment on the Vibe key. klai_mistral_pool
+  # keeps an alias on the lowest order the probe does not call full, so this
+  # order is used only while orders 1 and 2 are full and drops out of use by
+  # itself once the probe sees them ok again. Remove these four blocks when
+  # the limits are raised; they stay harmless until then. Vibe's own budget
+  # caps (klai-judge 30, klai-ingest 20 per day) do not cover these, so each
+  # carries the same 10 USD per day as the chat deployments it stands in for.
+  - model_name: klai-primary
+    litellm_params:
+      model: mistral/mistral-vibe-cli-fast
+      api_key: os.environ/MISTRAL_VIBE_KEY
+      order: 3
+      input_cost_per_token: 1.0e-07
+      cache_read_input_token_cost: 1.0e-08
+      output_cost_per_token: 3.0e-07
+      max_budget: 10
+      budget_duration: 1d
+    rpm: 450
+    tpm: 225000
+
+  - model_name: klai-fast
+    litellm_params:
+      model: mistral/mistral-vibe-cli-fast
+      api_key: os.environ/MISTRAL_VIBE_KEY
+      order: 3
+      input_cost_per_token: 1.0e-07
+      cache_read_input_token_cost: 1.0e-08
+      output_cost_per_token: 3.0e-07
+      max_budget: 10
+      budget_duration: 1d
+    rpm: 450
+    tpm: 225000
+
+  - model_name: klai-medium
+    litellm_params:
+      model: mistral/mistral-vibe-cli-latest
+      api_key: os.environ/MISTRAL_VIBE_KEY
+      order: 3
+      input_cost_per_token: 1.5e-06
+      cache_read_input_token_cost: 1.5e-07
+      output_cost_per_token: 7.5e-06
+      max_budget: 10
+      budget_duration: 1d
+    rpm: 900
+    tpm: 450000
+
+  - model_name: klai-large
+    litellm_params:
+      model: mistral/mistral-vibe-cli-latest
+      api_key: os.environ/MISTRAL_VIBE_KEY
+      order: 3
+      input_cost_per_token: 1.5e-06
+      cache_read_input_token_cost: 1.5e-07
+      output_cost_per_token: 7.5e-06
+      max_budget: 10
+      budget_duration: 1d
+    rpm: 27
+    tpm: 720000
+
+
   # Judge: Mistral Medium 3.5 — portal-api's background Medium work only (webchat
   # judge conversation_judge.py, LibreChat variant librechat_quality_judge.py,
   # support-case analysis support_case_analysis.py, which support gap
