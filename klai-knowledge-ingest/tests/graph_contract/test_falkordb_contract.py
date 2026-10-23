@@ -153,5 +153,12 @@ async def test_search_finds_own_tenant_and_never_another(contract: Contract) -> 
             f"tenancy: search_ other tenant's {name!r}",
             contract.graphiti.search_(name, group_ids=[contract.group_id]),
         )
+        edges = await contract.step(
+            f"tenancy: search other tenant's {name!r}",
+            contract.graphiti.search(name, group_ids=[contract.group_id]),
+        )
+        leaked_edges = {e.uuid for e in combined.edges} | {e.uuid for e in edges}
         assert not {n.uuid for n in combined.nodes} & other_nodes.keys()
+        assert not leaked_edges & other_edges, "another tenant's edge came back"
+        assert leaked_edges <= own_edges
         assert all(n.name not in {"Zephyr Mills", "Lantern Quay"} for n in combined.nodes)

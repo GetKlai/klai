@@ -27,6 +27,7 @@ import pytest_asyncio
 import redis
 import redis.asyncio
 from graphiti_core import Graphiti
+from graphiti_core.driver.falkordb import STOPWORDS
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.edges import EntityEdge
 from graphiti_core.errors import GroupsEdgesNotFoundError
@@ -42,6 +43,8 @@ _PORT = os.environ.get("GRAPH_CONTRACT_FALKORDB_PORT")
 _REQUIRED = os.environ.get("GRAPH_CONTRACT_REQUIRED") == "1"
 _PING_TIMEOUT_S = 10.0
 _EMBEDDING_DIM = 1024
+_MAX_QUERY_WORDS = 128  # graphiti.driver.falkordb.fulltext.MAX_QUERY_LENGTH
+STOPWORDS_LOWER = {word.lower() for word in STOPWORDS}
 
 # run_id of the server the session started against; a crash-and-restart keeps
 # PING working but changes it, and loses every graph.
@@ -175,9 +178,27 @@ class Contract:
             return []
 
     async def expect_search_hit(self, step: str, query: str) -> None:
-        """``search`` and ``search_`` must return this tenant's stored data, and only that."""
-        nodes = {node.uuid for node in await self.step(f"{step}: read nodes", self.stored_nodes())}
-        edges = {edge.uuid for edge in await self.step(f"{step}: read edges", self.stored_edges())}
+        """``search`` and ``search_`` must each return this tenant's stored data, and only that.
+
+        ``query`` is a stored entity name: ``search_`` must return that node, and ``search``
+        (edges only) must return an edge when the node has one.
+        """
+        stored_nodes = await self.step(f"{step}: read nodes", self.stored_nodes())
+        stored_edges = await self.step(f"{step}: read edges", self.stored_edges())
+        nodes = {node.uuid for node in stored_nodes}
+        edges = {edge.uuid for edge in stored_edges}
+        named = {node.uuid for node in stored_nodes if normalise(node.name) == normalise(query)}
+        # Edges are found by full-text or fact similarity, and graphiti's full-text query is
+        # empty for stopword-only text and for 128 words or more, so a fake embedder whose
+        # vectors only match equal text leaves edge search nothing to find for those names.
+        words = normalise(query).split()
+        edge_findable = (
+            any(w not in STOPWORDS_LOWER for w in words) and len(words) < _MAX_QUERY_WORDS
+        )
+        has_edge = edge_findable and any(
+            edge.source_node_uuid in named or edge.target_node_uuid in named
+            for edge in stored_edges
+        )
         found_edges = await self.step(
             f"{step}: search {query[:40]!r}", self.graphiti.search(query, group_ids=[self.group_id])
         )
@@ -185,13 +206,18 @@ class Contract:
             f"{step}: search_ {query[:40]!r}",
             self.graphiti.search_(query, group_ids=[self.group_id]),
         )
-        returned_nodes = {node.uuid for node in combined.nodes}
-        returned_edges = {edge.uuid for edge in combined.edges} | {
-            edge.uuid for edge in found_edges
-        }
-        assert returned_nodes | returned_edges, f"{step}: search for {query[:40]!r} found nothing"
-        assert returned_nodes <= nodes, f"{step}: search_ {query[:40]!r} returned a foreign node"
-        assert returned_edges <= edges, f"{step}: search {query[:40]!r} returned a foreign edge"
+        search_edges = {edge.uuid for edge in found_edges}
+        search_nodes = {node.uuid for node in combined.nodes}
+        search_node_edges = {edge.uuid for edge in combined.edges}
+        assert search_nodes & named, (
+            f"{step}: search_ {query[:40]!r} did not return the stored node"
+        )
+        if has_edge:
+            assert search_edges, f"{step}: search {query[:40]!r} returned no edge"
+            assert search_node_edges, f"{step}: search_ {query[:40]!r} returned no edge"
+        assert search_nodes <= nodes, f"{step}: search_ {query[:40]!r} returned a foreign node"
+        assert search_edges <= edges, f"{step}: search {query[:40]!r} returned a foreign edge"
+        assert search_node_edges <= edges, f"{step}: search_ {query[:40]!r} returned a foreign edge"
 
     async def expect_entities(self, step: str, names: list[str]) -> None:
         stored = {normalise(node.name) for node in await self.step(step, self.stored_nodes())}
