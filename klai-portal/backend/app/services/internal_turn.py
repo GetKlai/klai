@@ -170,7 +170,18 @@ def _route(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, case: case
     language = fixed_language(inputs.request.messages, case, pasted_correspondence=inputs.pasted_correspondence)
     if turn.refusal is not None:
         # Strict with nothing to search, no evidence, or the knowledge base
-        # unreachable (retrieve_context): the fixed text, no model call.
+        # unreachable (retrieve_context): the fixed text, no model call. Logged,
+        # because without a writer the turn otherwise leaves no event to tell a
+        # refused Strict turn from one that never reached portal-api.
+        logger.info(
+            "partner_chat_strict_refusal",
+            org_id=inputs.auth.org_id,
+            reason="kb_unavailable"
+            if "retrieval_failure" in inputs.answer_signals
+            else "no_kb_scope"
+            if inputs.profile.kb_slugs == ()
+            else "no_evidence",
+        )
         return _refusal(inputs, turn, turn.refusal(language), language)
     mark_knowledge_turn_without_evidence(turn, case)
     if turn.not_in_passages and inputs.profile.kb_mode == "strict":

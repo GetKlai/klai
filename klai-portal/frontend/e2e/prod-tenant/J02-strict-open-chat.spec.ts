@@ -7,21 +7,13 @@
  * from general model knowledge.
  */
 import { test, expect, type Page } from '@playwright/test'
-import { getChatFrame } from './_lib/chat'
+import { getChatFrame, hasTcpExplanation, latestReplyText } from './_lib/chat'
 
 test.skip(process.env.E2E_MODE === 'voys-attached', 'Strict/Open smoke mutates the current chat user preference')
 
 type KBPreference = {
   kb_narrow: boolean
   kb_pref_version: number
-}
-
-function hasTcpExplanation(text: string): boolean {
-  return (
-    /TCP\/IP\s+(is|staat|vormt|bestaat|verwijst|betekent)/i.test(text) ||
-    /Transmission Control Protocol/i.test(text) ||
-    /Internet Protocol/i.test(text)
-  )
 }
 
 async function patchMode(page: Page, kbNarrow: boolean): Promise<KBPreference> {
@@ -62,11 +54,16 @@ async function patchMode(page: Page, kbNarrow: boolean): Promise<KBPreference> {
 
 async function askChat(page: Page, prompt: string): Promise<string> {
   const frame = await getChatFrame(page)
+  // Wait for a NEW assistant message that carries a mode marker: matching the
+  // page as a whole could still see the previous turn's reply.
+  const repliesBefore = await frame.locator('.agent-turn').count()
   await frame.locator('#prompt-textarea').fill(prompt)
   await frame.locator('#send-button').click()
   await frame.waitForFunction(
-    () => {
-      const text = document.body.innerText
+    (before) => {
+      const replies = document.querySelectorAll<HTMLElement>('.agent-turn')
+      if (replies.length <= before) return false
+      const text = replies[replies.length - 1].innerText
       return (
         text.includes('Modus: Open, kennisbank met fallback.') ||
         text.includes('Modus: Strict, alleen kennisbank.') ||
@@ -74,11 +71,11 @@ async function askChat(page: Page, prompt: string): Promise<string> {
         text.includes('cannot answer this reliably')
       )
     },
-    null,
+    repliesBefore,
     { timeout: 90_000 },
   )
   await page.waitForTimeout(5_000)
-  return frame.evaluate(() => document.body.innerText)
+  return latestReplyText(frame)
 }
 
 test('J02 - Strict/Open mode reaches LiteLLM chat response without stale mode', async ({ page }) => {

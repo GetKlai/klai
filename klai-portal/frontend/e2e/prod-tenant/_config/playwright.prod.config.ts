@@ -71,6 +71,7 @@ const STORAGE_STATE_VOYS = path.resolve(__dirname, 'storageState.voys.json')
 const STORAGE_STATE = E2E_MODE === 'voys-attached' ? STORAGE_STATE_VOYS : STORAGE_STATE_ISOLATED
 const BROWSER_CHANNEL = process.env.PLAYWRIGHT_BROWSER_CHANNEL
 const RECORD_VIDEO = process.env.PLAYWRIGHT_RECORD_VIDEO === '1'
+const REPORT_DIR = path.resolve(__dirname, '../../../playwright-report-prod-tenant')
 const DESKTOP_CHROME = {
   ...devices['Desktop Chrome'],
   ...(BROWSER_CHANNEL ? { channel: BROWSER_CHANNEL } : {}),
@@ -85,10 +86,14 @@ export default defineConfig({
   workers: 1,
   timeout: 60_000,
   expect: { timeout: 10_000 },
+  // Playwright resolves a reporter path against this config's directory, so a
+  // bare name put the report in _config/ while CI uploads it from the frontend
+  // root: failed runs uploaded no screenshot, trace or page snapshot ("No files
+  // were found", run 39792730793 on 2026-10-22).
   reporter: [
     ['list'],
-    ['html', { outputFolder: 'playwright-report-prod-tenant', open: 'never' }],
-    ['junit', { outputFile: 'playwright-report-prod-tenant/junit.xml' }],
+    ['html', { outputFolder: REPORT_DIR, open: 'never' }],
+    ['junit', { outputFile: path.join(REPORT_DIR, 'junit.xml') }],
   ],
   use: {
     baseURL: process.env.E2E_BASE_URL ?? 'https://e2e.getklai.com',
