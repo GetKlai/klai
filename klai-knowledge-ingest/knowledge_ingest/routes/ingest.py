@@ -62,6 +62,7 @@ from knowledge_ingest.models import (
     UpdateKBVisibilityRequest,
 )
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
+from knowledge_ingest.product_label import derive_product
 from knowledge_ingest.resource_jobs import connector_resource_key
 from knowledge_ingest.source_profiles import (
     SourceKnowledgeProfile,
@@ -883,6 +884,11 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         extra_payload["connector_type"] = req.connector_type
     if req.source_domain:
         extra_payload["source_domain"] = req.source_domain
+    # After the adapter extras, so an adapter cannot set it (product_label.py).
+    extra_payload["product"] = derive_product(
+        {**extra_payload, "path": req.path},
+        await kb_config.get_kb_product_rules(req.org_id, req.kb_slug),
+    )
     enrichment_skip = enrichment_skip_reason(chunk_count=len(texts), extra_payload=extra_payload)
     is_direct_file_upload = req.source_connector_id is None and req.source_type in {
         "file",

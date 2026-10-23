@@ -2,12 +2,14 @@
 Stats routes:
   GET /ingest/v1/graph-stats?org_id={org_id}  - entity/edge counts from FalkorDB
   GET /ingest/v1/source-count?org_id={org_id}&kb_slug={kb_slug}  - artifact count from PostgreSQL
+  GET /ingest/v1/products?org_id={org_id}  - product labels in the org's chunks, from Qdrant
 """
 
 import structlog
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
+from knowledge_ingest import qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.identity import assert_caller_identity_tenant_only
@@ -40,6 +42,20 @@ class GraphStatsResponse(BaseModel):
 
 class SourceCountResponse(BaseModel):
     source_count: int | None = None
+
+
+class ProductsResponse(BaseModel):
+    products: list[str]
+
+
+@router.get("/ingest/v1/products", response_model=ProductsResponse)
+async def get_products(
+    request: Request,
+    org_id: str = Query(..., description="Zitadel org ID"),
+) -> ProductsResponse:
+    """The product labels in an org's chunks, which the chat's case may name (plan step 7)."""
+    verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
+    return ProductsResponse(products=await qdrant_store.org_products(verified_org_id))
 
 
 @router.get("/ingest/v1/source-count", response_model=SourceCountResponse)

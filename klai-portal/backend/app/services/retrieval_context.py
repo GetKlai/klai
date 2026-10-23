@@ -622,6 +622,7 @@ class _Turn:
     follow_up_variants: list[str] | None
     kept_passages: list[dict]
     prompt: Callable[..., str]
+    product: str
 
 
 @dataclass
@@ -665,6 +666,7 @@ def _read_turn(
     knowledge_turn: KnowledgeTurn | None,
     follow_up_variants: list[str] | None,
     kept_passages: list[dict],
+    product: str,
 ) -> _Turn:
     """Step 1: read the request once. The query, the page context, the turn's sink and the prompt builder."""
     cleaned_page_context = _clean_page_context(page_context)
@@ -739,6 +741,7 @@ def _read_turn(
         follow_up_variants=follow_up_variants,
         kept_passages=kept_passages,
         prompt=prompt,
+        product=product,
     )
 
 
@@ -838,6 +841,9 @@ async def _retrieve_body(t: _Turn, sub_queries: list[str], retrieval_user_id: st
     }
     if t.kb_slugs:
         retrieve_body["kb_slugs"] = t.kb_slugs
+    if t.product:
+        # A preference for the question's product, never a filter (knowledge-base plan, step 7).
+        retrieve_body["product"] = t.product
     if t.internal:
         retrieve_body.update(
             user_id=retrieval_user_id,
@@ -932,14 +938,14 @@ async def _call_retrieval(t: _Turn, retrieve_body: dict) -> dict | _Result:
 def _usable_evidence(t: _Turn, result: dict, retrieve_body: dict) -> tuple[list[dict], list[dict[str, Any]]]:
     """The chunks and sources the turn may read: below the Strict floor and unsafe context dropped, the band and the search trace recorded."""
     evidence_pack = result.get("evidence_pack")
-    # The evidence pack items carry no knowledge-base slug; the raw chunks of
-    # the same response do, and a kept passage needs it (_with_kept).
-    slugs = {
-        chunk.get("chunk_id"): chunk.get("kb_slug") for chunk in result.get("chunks") or [] if isinstance(chunk, dict)
-    }
-    chunks = [
-        {**chunk, "kb_slug": slugs.get(chunk.get("chunk_id"))} for chunk in evidence_pack_items_as_chunks(evidence_pack)
-    ]
+    # The evidence pack items carry no knowledge-base slug or product; the raw
+    # chunks of the same response do, and a kept passage needs the slug
+    # (_with_kept), the selection step the product (passage_selection.py).
+    raw = {chunk.get("chunk_id"): chunk for chunk in result.get("chunks") or [] if isinstance(chunk, dict)}
+    chunks = []
+    for chunk in evidence_pack_items_as_chunks(evidence_pack):
+        source = raw.get(chunk.get("chunk_id")) or {}
+        chunks.append({**chunk, "kb_slug": source.get("kb_slug"), "product": source.get("product")})
     trusted_sources = trusted_sources_from_evidence_pack(evidence_pack)
     if t.internal and t.profile.kb_mode == "strict":
         # Strict promises knowledge-base-only answers, so noise-level evidence
@@ -1174,7 +1180,12 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         and not _broad_mode_active(chunks, broad_consent=t.broad_consent)
     ):
         turn.selection = await select_passages(
-            t.messages, selection_chunks, t.settings, delegated_org_id=t.zitadel_org_id, internal=t.internal
+            t.messages,
+            selection_chunks,
+            t.settings,
+            delegated_org_id=t.zitadel_org_id,
+            internal=t.internal,
+            product=t.product,
         )
         if turn.selection is None:
             # A failed selection fails closed where the reply may only come
@@ -1290,6 +1301,10 @@ async def retrieve_context(
     # Help widget: the passages the previous turn chose (kept_passages_of),
     # offered to this turn's selection when the search lost them or found nothing.
     kept_passages: list[dict] | None = None,
+    # The product the question is about, one of the org's product labels
+    # (case_file.py), or "": preferred by retrieval-api and named to the
+    # selection step (knowledge-base plan, step 7).
+    product: str = "",
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:
     """Call retrieval-api and return (chunks, augmented_system_prompt, trusted_sources, broad).
 
@@ -1351,6 +1366,7 @@ async def retrieve_context(
         knowledge_turn=knowledge_turn,
         follow_up_variants=follow_up_variants,
         kept_passages=kept_passages or [],
+        product=product,
     )
     without_search = _without_search(t, retrieval_enabled=retrieval_enabled)
     if without_search is not None:

@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -28,6 +29,10 @@ class PortalKnowledgeBase(Base):
     owner_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="org")
     owner_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_org_role: Mapped[str | None] = mapped_column(Text, nullable=True, server_default="viewer")
+    # [{"prefix": ..., "product": ...}]: which product a document is about, by the
+    # start of its host plus URL path or its path. knowledge-ingest reads this
+    # column directly when it labels a chunk (knowledge_ingest/product_label.py).
+    product_rules: Mapped[list[dict[str, str]]] = mapped_column(JSONB, nullable=False, server_default="[]")
 
 
 class PortalUserKBAccess(Base):

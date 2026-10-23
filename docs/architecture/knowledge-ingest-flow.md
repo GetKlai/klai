@@ -580,6 +580,14 @@ from the ingest request as follows:
 - For meeting transcripts: the literal string `"meetings"`
 - For KB articles: the `kb_slug` value as fallback
 
+**product and text_fingerprint (knowledge-base plan, step 7):** each chunk also carries
+the product its document is about (`product_label.py`: the first matching rule of the
+KB's `product_rules`, else the first segment of a nested crawl URL path or connector
+path, else empty) and a b-bit MinHash of its text (`text_fingerprint`), which
+retrieval-api uses to prefer the question's product and to collapse lookalikes. Chunks
+written before this carry neither until `python -m knowledge_ingest.scripts.product_backfill`
+has run for their org.
+
 **Bron-aware enrichment prompt:** The enrichment prompt in Step A is updated to accept
 three additional context fields: `kb_name` (friendly name of the knowledge base), `connector_type`
 (e.g., "github", "notion", or null), and `source_domain` (the domain for crawls, or null).

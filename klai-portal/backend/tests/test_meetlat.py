@@ -1209,14 +1209,14 @@ def _retrieval_payload():
         {"chunk_id": "c2", "evidence_id": "E2", "text": "passage", "title": "Two", "source_url": f"{_ART}/b"},
     ]
     return {
-        "chunks": [],
+        "chunks": [{"chunk_id": "c1", "product": "orbit"}, {"chunk_id": "c2", "product": "zephyr"}],
         "metadata": {"retrieval_ms": 321.0},
         "evidence_pack": {"items": items, "sources": []},
         "debug_stages": {"search": [f"{_ART}/a", f"{_ART}/b", f"{_ART}/c"], "rerank": [f"{_ART}/a"]},
     }
 
 
-async def _retrieve_with_probe(monkeypatch, *, armed: bool):
+async def _retrieve_with_probe(monkeypatch, *, armed: bool, product: str = ""):
     from app.services import retrieval_context
     from app.services.retrieval_context import KnowledgeTurn
 
@@ -1241,7 +1241,14 @@ async def _retrieve_with_probe(monkeypatch, *, armed: bool):
     )
     turn = KnowledgeTurn()
     result = await retrieval_context.retrieve_context(
-        42, "zorg", ["kb"], [{"role": "user", "content": "How do I do this?"}], settings, top_k=8, knowledge_turn=turn
+        42,
+        "zorg",
+        ["kb"],
+        [{"role": "user", "content": "How do I do this?"}],
+        settings,
+        top_k=8,
+        knowledge_turn=turn,
+        product=product,
     )
     return posted, turn, result, meetlat._take()
 
@@ -1261,6 +1268,34 @@ async def test_the_probe_asks_for_the_stages_keeps_what_the_chat_would_receive_a
     assert (record["top_k"], record["api_ms"]) == (8, 321.0) and record["retrieve_ms"] >= 0
     assert result == ([], "", [], False)
     assert turn.not_in_passages and turn.refusal is not None
+
+
+@pytest.mark.asyncio
+async def test_the_probe_keeps_the_questions_product_and_the_product_of_each_served_item(monkeypatch):
+    posted, _, _, record = await _retrieve_with_probe(monkeypatch, armed=True, product="Orbit")
+
+    assert posted.bodies[0]["product"] == "Orbit"
+    assert (record["product"], record["served_products"]) == ("Orbit", ["orbit", "zephyr"])
+
+
+def test_the_summary_counts_served_items_of_another_product_than_the_questions():
+    record = {
+        "top_k": 8,
+        "retrieve_ms": 10,
+        "api_ms": 9.0,
+        "stages": {"search": [f"{_ART}/a"], "rerank": [f"{_ART}/a"]},
+        "served": [f"{_ART}/a"],
+        "product": "Orbit",
+        "served_products": ["orbit", "zephyr", "", "Zephyr"],
+    }
+    known = meetlat._stage_row({"cid": "c", "u": 0}, [f"{_ART}/a"], record)
+    unknown = meetlat._stage_row({"cid": "c", "u": 1}, [f"{_ART}/a"], {**record, "product": ""})
+
+    summary = meetlat.summarize_stages([known, unknown])
+
+    assert known["other_product"] == 2
+    assert "other_product" not in unknown
+    assert (summary["product_known"], summary["other_product_served"]) == (1, 2)
 
 
 @pytest.mark.asyncio
