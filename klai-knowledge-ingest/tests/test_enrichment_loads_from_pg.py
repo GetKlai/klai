@@ -270,8 +270,8 @@ async def test_load_and_enrich_skips_when_document_text_missing():
 
 
 @pytest.mark.asyncio
-async def test_load_and_enrich_skips_truncated_docling_artifact():
-    """Existing queued jobs for pre-chunked large Docling files soft-skip."""
+async def test_load_and_enrich_skips_docling_artifact_above_hard_ceiling():
+    """Queued jobs for a Docling file above the hard ceiling soft-skip."""
     fake_artifact = {
         "artifact_id": "11111111-2222-3333-4444-555555555555",
         "org_id": "org1",
@@ -288,7 +288,7 @@ async def test_load_and_enrich_skips_truncated_docling_artifact():
         "extra": {
             "document_text": "Preview only",
             "document_text_truncated": True,
-            "docling_chunk_count": 1557,
+            "docling_chunk_count": 2001,
         },
     }
     with (
@@ -605,13 +605,15 @@ async def test_load_and_enrich_skips_superseded_artifact():
 # ---------------------------------------------------------------------------
 
 
-def test_task_variants_only_carry_artifact_id_and_resource_key():
-    """Content stays in PostgreSQL; the ownership fence is the only metadata arg."""
+def test_task_variants_only_carry_artifact_id_resource_key_and_batch_position():
+    """Content stays in PostgreSQL; the ownership fence and the position of a
+    large document's next batch are the only other args."""
     import inspect
 
     from knowledge_ingest import enrichment_tasks
 
     sig = inspect.signature(enrichment_tasks._load_and_enrich)
     params = list(sig.parameters.values())
-    assert [param.name for param in params] == ["artifact_id", "resource_key"]
+    assert [param.name for param in params] == ["artifact_id", "resource_key", "batch_offset"]
     assert params[1].default is None
+    assert params[2].default == 0

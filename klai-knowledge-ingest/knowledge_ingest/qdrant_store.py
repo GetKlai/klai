@@ -31,12 +31,14 @@ from qdrant_client.models import (  # noqa: E402
     MatchValue,
     PointStruct,
     Prefetch,
+    Range,
     SparseIndexParams,
     SparseVector,
     SparseVectorParams,
     VectorParams,
 )
 
+from knowledge_ingest import sparse_embedder  # noqa: E402
 from knowledge_ingest.config import settings  # noqa: E402
 from knowledge_ingest.embedder import EMBED_DIM  # noqa: E402
 
@@ -252,8 +254,12 @@ async def upsert_chunks(
     has_taxonomy: bool = False,
     content_label: list[str] | None = None,
     parent_chunk_ids: list[int | None] | None = None,
+    heading_paths: list[str] | None = None,
 ) -> None:
-    """Upsert raw chunks (before enrichment). Uses vector_chunk named vector.
+    """Upsert raw chunks (before enrichment). Writes vector_chunk and, when the
+    sparse sidecar answers, vector_sparse: no LLM is involved, so every chunk is
+    hybrid-searchable from its first write. A sidecar failure leaves a chunk
+    dense-only (logged by the embedder) and the sparse backfill repairs it.
     Backward compatible: called by the ingest pipeline before enrichment runs.
 
     taxonomy_node_ids: list of matched node ids, [] = no match, absent field = no taxonomy on KB.
@@ -266,6 +272,10 @@ async def upsert_chunks(
     client = get_client()
 
     _assert_vectors_writable(vectors, what="upsert_chunks")
+
+    # Embedded before the delete so a slow sidecar does not widen the window in
+    # which the document has no points.
+    sparse_vectors = await sparse_embedder.embed_sparse_batch(chunks)
 
     # Delete existing points for this document
     await client.delete(
@@ -305,19 +315,18 @@ async def upsert_chunks(
     base_payload.update(_extra_payload_for_qdrant(extra_payload))
 
     points = []
-    for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=False)):
+    for i, (chunk, vector, sparse) in enumerate(zip(chunks, vectors, sparse_vectors, strict=False)):
         payload = {**base_payload, "text": chunk, "chunk_index": i}
+        if heading_paths is not None and i < len(heading_paths) and heading_paths[i]:
+            payload["heading_path"] = heading_paths[i]
         if parent_chunk_ids is not None and i < len(parent_chunk_ids):
             pid = parent_chunk_ids[i]
             if pid is not None:
                 payload["parent_chunk_id"] = int(pid)
-        points.append(
-            PointStruct(
-                id=str(uuid.uuid4()),
-                vector={"vector_chunk": vector},
-                payload=payload,
-            )
-        )
+        named_vectors: dict = {"vector_chunk": vector}
+        if sparse is not None:
+            named_vectors["vector_sparse"] = sparse
+        points.append(PointStruct(id=str(uuid.uuid4()), vector=named_vectors, payload=payload))
     await client.upsert(COLLECTION, points=points)
 
 
@@ -336,10 +345,16 @@ async def upsert_enriched_chunks(
     belief_time_start: int | None = None,
     belief_time_end: int | None = None,
     parent_chunk_ids: list[int | None] | None = None,
+    chunk_offset: int | None = None,
 ) -> None:
     """
     Upsert enriched chunks with named + sparse vectors.
     Deletes existing points for this path first.
+
+    chunk_offset: set when ``enriched_chunks`` is one batch of a larger
+    document. Only the points with ``chunk_index`` in
+    ``[chunk_offset, chunk_offset + len(enriched_chunks))`` are replaced, and the
+    batch keeps its position in the document; the other points stay as they are.
     vector_chunk is always populated; vector_questions is profile-dependent;
     vector_sparse is populated when the sparse sidecar is available.
 
@@ -351,16 +366,19 @@ async def upsert_enriched_chunks(
     _assert_vectors_writable(chunk_vectors, what="upsert_enriched_chunks chunk")
     _assert_vectors_writable(question_vectors, what="upsert_enriched_chunks question")
 
-    await client.delete(
-        COLLECTION,
-        points_selector=Filter(
-            must=[
-                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-                FieldCondition(key="path", match=MatchValue(value=path)),
-            ]
-        ),
-    )
+    delete_must = [
+        FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+        FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+        FieldCondition(key="path", match=MatchValue(value=path)),
+    ]
+    if chunk_offset is not None:
+        delete_must.append(
+            FieldCondition(
+                key="chunk_index",
+                range=Range(gte=chunk_offset, lt=chunk_offset + len(enriched_chunks)),
+            )
+        )
+    await client.delete(COLLECTION, points_selector=Filter(must=delete_must))
 
     if not enriched_chunks:
         return
@@ -403,7 +421,7 @@ async def upsert_enriched_chunks(
             "text_enriched": ec.enriched_text,
             "context_prefix": ec.context_prefix,
             "questions": ec.questions,
-            "chunk_index": i,
+            "chunk_index": (chunk_offset or 0) + i,
         }
         if getattr(ec, "heading_path", ""):
             chunk_payload["heading_path"] = ec.heading_path
@@ -426,6 +444,55 @@ async def upsert_enriched_chunks(
         )
 
     await client.upsert(COLLECTION, points=points)
+
+
+def _artifact_chunks_filter(
+    org_id: str, kb_slug: str, path: str, artifact_id: str, first_chunk: int, end: int | None = None
+) -> Filter:
+    return Filter(
+        must=[
+            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+            FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+            FieldCondition(key="path", match=MatchValue(value=path)),
+            FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id)),
+            FieldCondition(key="chunk_index", range=Range(gte=first_chunk, lt=end)),
+        ]
+    )
+
+
+async def read_chunk_batch(
+    org_id: str, kb_slug: str, path: str, artifact_id: str, offset: int, limit: int
+) -> list[dict]:
+    """Payloads of the artifact's chunks ``offset`` to ``offset + limit``, in order.
+
+    The indexed points are the source of truth for what a batch enriches: a
+    truncated upload keeps only a preview of its text in Postgres, and a
+    re-derived chunking could shift boundaries between two batches of the same
+    document. Points of another artifact version are never returned, so a batch
+    that outlived its artifact finds nothing to overwrite.
+    """
+    points, _ = await get_client().scroll(
+        COLLECTION,
+        scroll_filter=_artifact_chunks_filter(
+            org_id, kb_slug, path, artifact_id, offset, offset + limit
+        ),
+        limit=limit,
+        with_payload=["text", "chunk_index", "heading_path", "parent_chunk_id"],
+        with_vectors=False,
+    )
+    return sorted((p.payload or {} for p in points), key=lambda pl: pl["chunk_index"])
+
+
+async def has_chunks_from(
+    org_id: str, kb_slug: str, path: str, artifact_id: str, first_chunk: int
+) -> bool:
+    """True when the artifact still has a chunk at ``first_chunk`` or later."""
+    result = await get_client().count(
+        COLLECTION,
+        count_filter=_artifact_chunks_filter(org_id, kb_slug, path, artifact_id, first_chunk),
+        exact=True,
+    )
+    return result.count > 0
 
 
 async def delete_document(org_id: str, kb_slug: str, path: str) -> None:

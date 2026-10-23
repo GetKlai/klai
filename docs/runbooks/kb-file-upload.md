@@ -192,29 +192,61 @@ characters, the preview bound has regressed.
 
 ### Large document indexed but enrichment fails or retries
 
-Large Docling documents must stay searchable on raw Docling chunk vectors.
-They should not fan out into hundreds or thousands of LiteLLM enrichment
-requests during ingest. The expected behavior for a truncated Docling preview
-or a document above `enrichment_max_chunks` is:
+Every chunk is written with its dense and its sparse (BGE-M3) vector at ingest,
+without an LLM call, so a large document is hybrid-searchable at once. The
+context sentence and the questions follow in batches: a document above
+`enrichment_max_chunks` (200) is enriched 200 chunks per `enrich_document_bulk`
+task, each next batch queued behind the other documents' work. The chunks come
+from the indexed points, so a truncated Docling preview in Postgres does not
+limit them. Expected log sequence for a 450-chunk document:
 
 ```text
-event=enrichment_enqueue_skipped reason=document_text_truncated
+event=enrichment_complete chunks=200 chunk_offset=0
+event=enrichment_batch_queued batch_offset=200
+event=enrichment_complete chunks=200 chunk_offset=200
+event=enrichment_batch_queued batch_offset=400
+event=enrichment_complete chunks=50 chunk_offset=400
 ```
 
-The artifact extra should include:
+Only a document above `enrichment_hard_max_chunks` (2000 chunks, about 56
+minutes of the shared klai-ingest budget at 0.6 requests per second) is not
+enriched. It keeps its raw chunks and its artifact extra carries:
 
 ```json
 {
   "llm_enrichment_skipped": true,
-  "llm_enrichment_skip_reason": "document_text_truncated",
-  "docling_chunk_count": 1557
+  "llm_enrichment_skip_reason": "too_many_chunks"
 }
 ```
 
-This is not a failed ingest. It means search/RAG uses the raw Docling chunks
-already stored in Qdrant. If enrichment jobs are still retrying for such an
-artifact, the knowledge-ingest image is stale or an old queued job predates
-the policy guard.
+If a batch fails permanently the chain stops there: chunks before it carry
+their context, chunks after it stay raw (still dense and sparse). Requeue the
+artifact with `knowledge_ingest.scripts.requeue_failed_artifacts`; that starts
+over at chunk 0.
+
+### Chunks without a sparse vector
+
+Chunks written before the base ingest embedded sparse vectors, and chunks
+written while the sparse sidecar was down, have only the dense vector, so
+retrieval-api's hybrid search is dense-only for them. Count them per knowledge
+base (read-only; this is the dry run), then repair:
+
+```bash
+docker exec klai-core-knowledge-ingest-1 \
+    python -m knowledge_ingest.scripts.sparse_backfill --org <org_id>
+docker exec klai-core-knowledge-ingest-1 \
+    python -m knowledge_ingest.scripts.sparse_backfill --org <org_id> --execute
+```
+
+The table lists, per knowledge base, the chunks, those with and without a
+sparse vector, and those with a context sentence and with questions. `--execute`
+writes only `vector_sparse` on the points that lack it, in batches of the
+sidecar batch size, and prints the table again. It is safe to rerun or stop;
+`--kb <slug>` limits it to one knowledge base. A sidecar that cannot answer
+shows up as `failed` in the summary and the points stay selected for the next
+run. A container that is not the live one (see `docker run` clone of the
+service) works the same, and is the safer way to run a long backfill because a
+deploy recreates the live container.
 
 ### portal-api container OOM during upload
 

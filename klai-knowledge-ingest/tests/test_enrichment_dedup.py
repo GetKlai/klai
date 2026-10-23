@@ -156,6 +156,7 @@ def _base_patches(mock_app, *, enrichment_enabled: bool = True, graphiti_enabled
             mock_settings.chunk_overlap = 200
             mock_settings.enrichment_enabled = True
             mock_settings.enrichment_max_chunks = 200
+            mock_settings.enrichment_hard_max_chunks = 2000
             mock_settings.taxonomy_centroid_match_threshold = 0.85
             yield types.SimpleNamespace(set_ingest_status=set_ingest_status)
 
@@ -447,22 +448,15 @@ async def test_already_enqueued_same_artifact_does_not_propagate():
 
 
 @pytest.mark.asyncio
-async def test_large_truncated_docling_document_skips_enrichment_enqueue():
-    """A bounded preview for a LARGE pre-chunked Docling file must not start LLM fan-out.
-
-    enrichment_policy.enrichment_skip_reason (enrichment_policy.py:26-35)
-    skips enrichment for a truncated docling upload only when the FULL
-    document's chunk count (``docling_chunk_count``) exceeds
-    ``enrichment_max_chunks`` (200 here). Small truncated docling uploads are
-    deliberately reindexed instead — see the sibling contract
-    test_load_and_enrich_reindexes_small_truncated_docling_artifact
-    (test_enrichment_loads_from_pg.py:317, mock_enrich.assert_awaited_once()).
-    So this skip case must carry a docling_chunk_count above the ceiling.
+async def test_truncated_docling_document_above_old_limit_is_enqueued_for_batches():
+    """A pre-chunked Docling file with 1557 chunks (above the old limit of 200)
+    is queued: enrichment works through it in batches taken from the indexed
+    points, so the bounded preview in Postgres is no reason to skip it.
     """
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
-    mock_app, task_fn, _ = _make_mock_app()
+    mock_app, _, _ = _make_mock_app()
     conn = _make_mock_conn()
     req = IngestRequest(
         org_id="org-3",
@@ -473,16 +467,39 @@ async def test_large_truncated_docling_document_skips_enrichment_enqueue():
         content_type="document",
         skip_chunking=True,
         chunks=["docling chunk one", "docling chunk two"],
-        extra={
-            "document_text_truncated": True,
-            # Full doc had 1557 chunks (> enrichment_max_chunks=200): too big
-            # to re-enrich from the bounded preview, so enrichment is skipped.
-            "docling_chunk_count": 1557,
-        },
+        extra={"document_text_truncated": True, "docling_chunk_count": 1557},
     )
 
     async with _base_patches(mock_app):
         result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
-    task_fn.configure.assert_not_called()
+    mock_app.enrich_document_interactive.configure.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_docling_document_above_hard_ceiling_skips_enrichment_enqueue():
+    """Above enrichment_hard_max_chunks (2000) the document keeps its raw chunks."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, bulk_task, _ = _make_mock_app()
+    conn = _make_mock_conn()
+    req = IngestRequest(
+        org_id="org-3",
+        kb_slug="chemie",
+        path="file:sha256:source",
+        content="Preview only",
+        source_type="file",
+        content_type="document",
+        skip_chunking=True,
+        chunks=["docling chunk one", "docling chunk two"],
+        extra={"document_text_truncated": True, "docling_chunk_count": 2001},
+    )
+
+    async with _base_patches(mock_app):
+        result = await ingest_document(conn, req)
+
+    assert result["status"] == "ok"
+    mock_app.enrich_document_interactive.configure.assert_not_called()
+    bulk_task.configure.assert_not_called()

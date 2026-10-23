@@ -8,7 +8,8 @@ from typing import Any
 
 from knowledge_ingest.config import settings
 
-_DEFAULT_MAX_CHUNKS = 200
+_DEFAULT_BATCH_CHUNKS = 200
+_DEFAULT_HARD_MAX_CHUNKS = 2000
 
 # Version 1 is the implicit, never-stamped legacy ruleset from before #1148.
 # Version 2 is the subject-facts, navigation-page skip, cross-language entity
@@ -33,9 +34,15 @@ def resumable_episode_ids(extra: Mapping[str, Any]) -> list[str]:
     return list(extra.get("graphiti_episode_ids") or [])
 
 
-def _configured_max_chunks() -> int:
-    value = getattr(settings, "enrichment_max_chunks", _DEFAULT_MAX_CHUNKS)
-    return value if isinstance(value, int) else _DEFAULT_MAX_CHUNKS
+def enrichment_batch_size() -> int:
+    """Chunks one enrichment task handles; a larger document takes several tasks."""
+    value = getattr(settings, "enrichment_max_chunks", _DEFAULT_BATCH_CHUNKS)
+    return value if isinstance(value, int) and value > 0 else _DEFAULT_BATCH_CHUNKS
+
+
+def _hard_max_chunks() -> int:
+    value = getattr(settings, "enrichment_hard_max_chunks", _DEFAULT_HARD_MAX_CHUNKS)
+    return value if isinstance(value, int) else _DEFAULT_HARD_MAX_CHUNKS
 
 
 # Markdown image, then markdown link. Images first: "![alt](src)" also ends in
@@ -86,23 +93,24 @@ def enrichment_skip_reason(
     chunk_count: int,
     extra_payload: Mapping[str, Any] | None,
 ) -> str | None:
-    """Return a machine-readable reason when LLM enrichment should be skipped."""
+    """Return a machine-readable reason when LLM enrichment should not run at all.
+
+    Size and truncation only bound the work: a document above
+    ``enrichment_batch_size`` is enriched in batches (see
+    ``enrichment_tasks._load_and_enrich``), so every chunk eventually carries
+    its context sentence and questions. Only a document above the hard ceiling
+    is refused, and it keeps its raw chunks, which already carry the dense and
+    the sparse vector. ``docling_chunk_count`` counts the chunks of a truncated
+    upload, whose stored text is only a preview.
+    """
     extra = extra_payload or {}
-    max_chunks = _configured_max_chunks()
-    if extra.get("document_text_truncated"):
-        docling_chunk_count = extra.get("docling_chunk_count")
-        if docling_chunk_count is None:
-            return "document_text_truncated"
-        try:
-            truncated_chunk_count = int(docling_chunk_count)
-        except (TypeError, ValueError):
-            return "document_text_truncated"
-        if max_chunks > 0 and truncated_chunk_count > max_chunks:
-            return "document_text_truncated"
-
-    if max_chunks > 0 and chunk_count > max_chunks:
+    try:
+        docling_chunk_count = int(extra.get("docling_chunk_count") or 0)
+    except (TypeError, ValueError):
+        docling_chunk_count = 0
+    hard_max = _hard_max_chunks()
+    if hard_max > 0 and max(chunk_count, docling_chunk_count) > hard_max:
         return "too_many_chunks"
-
     return None
 
 

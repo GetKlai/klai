@@ -45,6 +45,7 @@ from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connec
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
+    enrichment_batch_size,
     enrichment_skip_reason,
     resumable_episode_ids,
 )
@@ -162,7 +163,9 @@ def init_app(connector: Any) -> Any:
     return _procrastinate_app
 
 
-async def _load_and_enrich(artifact_id: str, resource_key: str | None = None) -> None:
+async def _load_and_enrich(
+    artifact_id: str, resource_key: str | None = None, batch_offset: int = 0
+) -> None:
     """SPEC-INGEST-CONTENT-PG-001 (audit finding 1): single entry point for
     both enrichment task variants.
 
@@ -177,6 +180,10 @@ async def _load_and_enrich(artifact_id: str, resource_key: str | None = None) ->
     If the artifact has been deleted between enqueue and dequeue (typically
     by the connector purge orchestrator), the function returns silently —
     same soft-skip semantics as ``ingest_graphiti_episode`` uses.
+
+    A document with more chunks than ``enrichment_batch_size`` is enriched in
+    batches, one task per batch (``batch_offset`` is the first chunk of this
+    one); see ``_enrich_next_batch``.
     """
     # SPEC-TI-003-FOLLOWUP-001: lookup-by-artifact_id is a cross-org read --
     # we don't know the org until we have the row. Use cross_org_admin so the
@@ -251,6 +258,15 @@ async def _load_and_enrich(artifact_id: str, resource_key: str | None = None) ->
         )
         await _set_direct_upload_index_status(artifact, "synced")
         return
+    batch_size = enrichment_batch_size()
+    if (
+        batch_offset
+        or max(len(chunks_text), int(extra.get("docling_chunk_count") or 0)) > batch_size
+    ):
+        await _enrich_next_batch(
+            artifact, extra, document_text, title, resource_key, batch_offset, batch_size
+        )
+        return
     parents_serialised: list[dict] = [
         {
             "text": p.text,
@@ -279,6 +295,88 @@ async def _load_and_enrich(artifact_id: str, resource_key: str | None = None) ->
         parent_index_per_child=parent_index_per_child,
         heading_path_per_child=heading_path_per_child,
         resource_key=resource_key,
+    )
+
+
+async def _enrich_next_batch(
+    artifact: dict,
+    extra: dict,
+    document_text: str,
+    title: str,
+    resource_key: str | None,
+    offset: int,
+    size: int,
+) -> None:
+    """Enrich chunks ``offset`` to ``offset + size`` of a large document in place.
+
+    The chunks come from the indexed points (the raw chunks of the base ingest,
+    which already carry the sparse vector), and only those points are replaced,
+    so the rest of the document stays searchable the whole time and its parents
+    stay as the base ingest wrote them. When more chunks remain, the next batch
+    is queued on the bulk lane whatever lane this one ran on: a large document
+    waits its turn behind every other document's first batch instead of holding
+    the interactive lane for its whole length.
+    """
+    org_id, kb_slug, path = artifact["org_id"], artifact["kb_slug"], artifact["path"]
+    artifact_id = artifact["artifact_id"]
+    batch = await qdrant_store.read_chunk_batch(org_id, kb_slug, path, artifact_id, offset, size)
+    if not batch:
+        logger.info(
+            "enrichment_batch_empty",
+            artifact_id=artifact_id,
+            kb_slug=kb_slug,
+            path=path,
+            batch_offset=offset,
+        )
+        return
+    written = await _enrich_document(
+        org_id=org_id,
+        kb_slug=kb_slug,
+        path=path,
+        document_text=document_text,
+        chunks=[pl["text"] for pl in batch],
+        title=title,
+        artifact_id=artifact_id,
+        user_id=artifact["user_id"],
+        extra_payload=extra,
+        synthesis_depth=artifact["synthesis_depth"],
+        content_type=artifact["content_type"] or "unknown",
+        heading_path_per_child=[pl.get("heading_path", "") for pl in batch],
+        resource_key=resource_key,
+        existing_parent_chunk_ids=[pl.get("parent_chunk_id") for pl in batch],
+        chunk_offset=offset,
+    )
+    next_offset = offset + size
+    if not (
+        written
+        and len(batch) == size
+        and await qdrant_store.has_chunks_from(org_id, kb_slug, path, artifact_id, next_offset)
+    ):
+        return
+    from procrastinate.exceptions import AlreadyEnqueued
+
+    try:
+        await (
+            get_app()
+            .enrich_document_bulk.configure(  # type: ignore[attr-defined]
+                queueing_lock=f"{org_id}:{kb_slug}:{path}:{artifact_id}",
+            )
+            .defer_async(
+                artifact_id=artifact_id,
+                batch_offset=next_offset,
+                **({"resource_key": resource_key} if resource_key else {}),
+            )
+        )
+    except AlreadyEnqueued:
+        # A job for this artifact is waiting; it reloads the artifact when it
+        # runs and re-enriches from its own offset, so it covers the tail.
+        logger.info("enrichment_already_queued", artifact_id=artifact_id, path=path)
+    logger.info(
+        "enrichment_batch_queued",
+        artifact_id=artifact_id,
+        kb_slug=kb_slug,
+        path=path,
+        batch_offset=next_offset,
     )
 
 
@@ -460,13 +558,16 @@ def _register_tasks(procrastinate_app: Any) -> None:
         artifact_id: str,
         resource_key: str | None = None,
         llm_deferred_since: int | None = None,
+        batch_offset: int = 0,
     ) -> None:
-        """Enrich chunks for crawl/import jobs (lower priority).
+        """Enrich chunks for crawl/import jobs (lower priority), and every
+        batch after the first of a large document.
 
-        SPEC-INGEST-CONTENT-PG-001: takes only ``artifact_id``.
+        SPEC-INGEST-CONTENT-PG-001: takes only ``artifact_id`` (plus the
+        batch position of a large document).
         """
         try:
-            await _load_and_enrich(artifact_id, resource_key)
+            await _load_and_enrich(artifact_id, resource_key, batch_offset)
         except _EnrichmentDeferred as exc:
             await _defer_after_llm_capacity(
                 enrich_document_bulk,
@@ -475,6 +576,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 llm_deferred_since,
                 artifact_id=artifact_id,
                 resource_key=resource_key,
+                batch_offset=batch_offset,
             )
 
     # Expose task functions via app attributes for use in ingest.py
@@ -747,11 +849,18 @@ async def _enrich_document(
     parent_index_per_child: list[int | None] | None = None,
     heading_path_per_child: list[str] | None = None,
     resource_key: str | None = None,
-) -> None:
+    existing_parent_chunk_ids: list[int | None] | None = None,
+    chunk_offset: int | None = None,
+) -> bool:
     """
     Core enrichment logic shared by both task variants.
     Uses content-type profiles for HyPE decisions and context strategy.
     Errors are logged but do not raise -- raw vectors remain in Qdrant.
+
+    Returns True when the enriched chunks were written. ``chunks`` is one batch
+    of a larger document when ``chunk_offset`` is set (the position of its first
+    chunk); ``existing_parent_chunk_ids`` then carries the parents the base
+    ingest already stored, which are kept as they are.
     """
     # SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: existence-guard.
     # If the source connector has been flipped to ``state='deleting'``
@@ -771,7 +880,7 @@ async def _enrich_document(
                 kb_slug=kb_slug,
                 path=path,
             )
-            return
+            return False
     t_total = time.monotonic()
     logger.info(
         "enrichment_started",
@@ -780,6 +889,7 @@ async def _enrich_document(
         org_id=org_id,
         artifact_id=artifact_id,
         chunks=len(chunks),
+        chunk_offset=chunk_offset,
         depth=synthesis_depth,
         type=content_type,
     )
@@ -902,7 +1012,7 @@ async def _enrich_document(
                     path=path,
                     org_id=org_id,
                 )
-                return
+                return False
 
             extra_payload["visibility"] = await kb_config.get_kb_visibility(conn, org_id, kb_slug)
 
@@ -911,8 +1021,10 @@ async def _enrich_document(
             # Skipped (parent_chunk_ids list of None) when this ingest path was
             # called without parents — keeps backward-compat for any caller that
             # hasn't been switched to chunk_markdown_with_parents yet.
-            parent_chunk_ids: list[int | None] = [None] * len(enriched_chunks)
-            if parents and parent_index_per_child:
+            parent_chunk_ids: list[int | None] = existing_parent_chunk_ids or [None] * len(
+                enriched_chunks
+            )
+            if existing_parent_chunk_ids is None and parents and parent_index_per_child:
                 await pg_store.delete_parent_chunks_for_artifact(conn, artifact_id)
                 inserted_ids = await pg_store.insert_parent_chunks(
                     conn,
@@ -927,7 +1039,7 @@ async def _enrich_document(
         # Step 4: Upsert enriched chunks to Qdrant. This checkpoint is fresh;
         # the earlier pre-LLM check may be served from the <=5s cache.
         if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
-            return
+            return False
         t0 = time.monotonic()
         await qdrant_store.upsert_enriched_chunks(
             org_id=org_id,
@@ -944,6 +1056,7 @@ async def _enrich_document(
             belief_time_start=extra_payload.get("belief_time_start") if extra_payload else None,
             belief_time_end=extra_payload.get("belief_time_end") if extra_payload else None,
             parent_chunk_ids=parent_chunk_ids,
+            chunk_offset=chunk_offset,
         )
         qdrant_ms = int((time.monotonic() - t0) * 1000)
 
@@ -962,6 +1075,7 @@ async def _enrich_document(
             org_id=org_id,
             artifact_id=artifact_id,
             chunks=len(chunks),
+            chunk_offset=chunk_offset,
             enriched=enriched_count,
             depth=synthesis_depth,
             type=content_type,
@@ -972,6 +1086,7 @@ async def _enrich_document(
             qdrant_ms=qdrant_ms,
             total_ms=total_ms,
         )
+        return True
 
     except enrichment.EnrichmentError as exc:
         if is_llm_capacity_error(exc):
@@ -1019,3 +1134,4 @@ async def _enrich_document(
             {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
             "failed",
         )
+    return False
