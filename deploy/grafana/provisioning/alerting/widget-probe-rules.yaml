@@ -74,10 +74,7 @@ groups:
         noDataState: OK
         execErrState: OK
         for: 0s
-        # Paused until the probe widget and WIDGET_PROBE_WIDGET_ID exist
-        # (docs/runbooks/widget-probe.md); before that the missing rule would
-        # fire on the first evaluation. Unpause both in the activation PR.
-        isPaused: true
+        isPaused: false
         labels:
           severity: critical
           page: "true"
@@ -160,10 +157,7 @@ groups:
         execErrState: Alerting
         for: 0s
         keepFiringFor: 10m
-        # Paused until the probe widget and WIDGET_PROBE_WIDGET_ID exist
-        # (docs/runbooks/widget-probe.md); before that the missing rule would
-        # fire on the first evaluation. Unpause both in the activation PR.
-        isPaused: true
+        isPaused: false
         labels:
           severity: critical
           page: "true"
