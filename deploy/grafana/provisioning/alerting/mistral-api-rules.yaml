@@ -36,6 +36,13 @@ groups:
       # probe cannot complete with (401 revoked, 5xx, timeout) is reserve
       # that will not work when the other workspace fills up, and before the
       # rework the single probe rule paged on it too.
+      #
+      # State on 2026-10-23: MISTRAL_API_KEY has been `full` (HTTP 402) on
+      # all but one probe run since 2026-10-22 00:00 UTC (776 of 777), and
+      # MISTRAL_API_KEY_2 went `error` (25 runs) and `full` (3) today. The
+      # condition is real and needs a person to raise a spending limit; while
+      # one key still works LiteLLM routes around the full one, so this stays
+      # an email and does not page. The page is mistral_no_usable_key below.
       - uid: obs-003-mistral-workspace-unavailable
         title: mistral_workspace_unavailable
         condition: threshold
@@ -158,6 +165,10 @@ groups:
           service_group: litellm
           alert_type: synthetic
           component: mistral-api-probe
+          # No key completed a request: chat is down for every tenant. Not a
+          # hypothetical: on 2026-10-23 both workspaces were full (HTTP 402) at
+          # 11:34 UTC and this rule was firing.
+          page: "true"
         annotations:
           summary: 'No usable Mistral key: no MISTRAL_API_KEY* completed a request'
           runbook_url: 'docs/runbooks/litellm-provider-auth-failed.md'

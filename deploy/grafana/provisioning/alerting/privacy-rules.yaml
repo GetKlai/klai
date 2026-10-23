@@ -34,6 +34,10 @@ groups:
     rules:
 
       # ── R1: privacy_tenant_stuck_in_full ───────────────────────────────
+      # State on 2026-10-23: firing since 2026-08-17 with value 1, i.e. one
+      # tenant has been in 'full' for more than 67 days. The rule is right; the
+      # fix is an operator decision (flip the tenant back, or accept it and
+      # shorten the rule's scope). Warning, email only, never a page.
       - uid: spec-priv-001-tenant-stuck-full
         title: privacy_tenant_stuck_in_full
         condition: threshold
