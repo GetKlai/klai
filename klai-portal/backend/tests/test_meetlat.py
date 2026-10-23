@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import meetlat
 import replay_internal_chat as replay
 
+from app.services.chat_profile import ChatProfile
+
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 _BANNER_MODULES = (
     "app.services.internal_turn",
@@ -167,7 +169,9 @@ def _thread(full_id: str, asks: list[str]) -> meetlat.Thread:
     turns = []
     for ask in asks:
         turns += [{"role": "user", "content": ask}, {"role": "assistant", "content": f"earlier reply to {ask}"}]
-    return meetlat.Thread(full_id, object(), "open", turns)
+    return meetlat.Thread(
+        full_id, ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee"), "open", turns
+    )
 
 
 def _run(tmp_path, cases_rows, overlay, *extra):
@@ -986,3 +990,100 @@ def test_a_named_widget_turn_reads_the_case_its_replayed_earlier_turns_stored(mo
     assert seen == [None, {"problem": "after first"}, {"problem": "after second"}]
     assert len(sessions) == 1
     assert opened == []
+
+
+def test_a_named_internal_turn_after_a_failed_memory_turn_says_so_and_compare_counts_it(monkeypatch, tmp_path, capsys):
+    """A turn replayed only for its memory writes no row, so its failure was
+    invisible: the next row looked like a measured follow-up, without the case."""
+    threads = {"aaaaaaaa": _thread("aaaaaaaa-1111", ["first", "second"])}
+    overlay = _stub_run_environment(monkeypatch, tmp_path, threads, [])
+
+    async def new_answer(_org, _profile, messages, _conversation_id):
+        if messages[-1]["content"] == "first":
+            raise ValueError("synthetic failure")
+        return {"text": "Open the settings.", "ttft_ms": 5, "total_ms": 900, "signals": {"decision": "answer"}}
+
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+    cases = [{"cid": "aaaaaaaa", "turn": 1, "class": "antwoord_kb"}]
+
+    assert _run(tmp_path, cases, overlay) == 0
+
+    (row,) = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert row["prefix_errors"] == [{"u": 0, "error": "ValueError"}]
+    capsys.readouterr()
+    assert _json_report(tmp_path, capsys, cases, [[row]])["rounds"][0]["prefix_errors"] == 1
+
+
+def test_a_named_widget_turn_after_a_failed_memory_turn_says_so(monkeypatch, tmp_path):
+    overlay, _ = _stub_widget_environment(monkeypatch, tmp_path, [ValueError("synthetic failure"), _widget_answer()])
+
+    assert _run_widget(tmp_path, [_widget_case("w-1", ("first", "second"))], overlay) == 0
+
+    (row,) = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert row["prefix_errors"] == [{"u": 0, "error": "ValueError"}]
+
+
+def test_a_retried_internal_turn_reads_the_case_of_the_turn_before_not_its_own_first_attempt(monkeypatch, tmp_path):
+    """The route stores the case before the answer streams, so an attempt that
+    met a restart had already replaced the turn before's case with its own."""
+    from contextlib import asynccontextmanager
+
+    from starlette.responses import StreamingResponse
+
+    from app.api import partner
+
+    overlay, _ = _measuring_with_memory(monkeypatch, tmp_path)
+    thread = meetlat.Thread(
+        "aaaaaaaa-0000-4000-8000-000000000001",
+        ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee"),
+        "open",
+        _thread("x", ["first", "second"]).turns,
+    )
+    org = type("Org", (), {"id": 7, "slug": "brightwater", "zitadel_org_id": "zorg"})()
+    seen: list[dict | None] = []
+    attempts: dict[str, int] = {}
+
+    async def load_org(_slug):
+        return org
+
+    async def fetch_threads(_org, _prefixes, _days):
+        return {"aaaaaaaa": thread}
+
+    @asynccontextmanager
+    async def no_session(_org_id):
+        yield None
+
+    async def sleep(_seconds):
+        return None
+
+    async def chat_completions(*, request, http_request, auth, db, profile):
+        """The route's memory steps; the first attempt at "second" stores its case and then loses its stream."""
+        conversation = partner._internal_conversation(http_request, request, auth, profile)
+        assert conversation is not None
+        stored = await partner.last_internal_case(
+            org_id=auth.org_id, user_id=conversation.user_id, conversation_id=conversation.id
+        )
+        seen.append(stored.case if stored else None)
+        ask = request.messages[-1]["content"]
+        attempts[ask] = attempts.get(ask, 0) + 1
+        case = types.SimpleNamespace(model_dump=lambda: {"problem": f"after {ask}, attempt {attempts[ask]}"})
+        partner._keep_internal_case(auth.org_id, conversation, types.SimpleNamespace(case=case, kept_passages=[]))
+        text = "" if ask == "second" and attempts[ask] == 1 else f"answer to {ask}"
+        frame = json.dumps({"choices": [{"index": 0, "delta": {"content": text}}]})
+
+        async def frames():
+            yield f"data: {frame}\n\n".encode()
+
+        return StreamingResponse(frames(), media_type="text/event-stream")
+
+    monkeypatch.setattr(replay, "_load_org", load_org)
+    monkeypatch.setattr(meetlat, "_fetch_threads", fetch_threads)
+    monkeypatch.setattr(replay, "tenant_scoped_session", no_session)
+    monkeypatch.setattr(partner, "chat_completions", chat_completions)
+    monkeypatch.setattr(meetlat.asyncio, "sleep", sleep)
+
+    assert _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 1}], overlay) == 0
+
+    (row,) = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert row["text"] == "answer to second"
+    assert seen == [None, {"problem": "after first, attempt 1"}, {"problem": "after first, attempt 1"}]

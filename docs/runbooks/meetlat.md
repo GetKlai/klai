@@ -72,7 +72,10 @@ loaded from before it replays anything.
    read go to a dictionary in the process, keyed by that conversation, never to the database. The history stays the
    conversation's own (LibreChat's messages, the case's `messages`), so the stored widget turn stands for the reply in
    that history, which is what the route checks before it reads a case. A round therefore replays more turns than it
-   writes rows: for each conversation, its highest named turn plus one.
+   writes rows: for each conversation, its highest named turn plus one. A row written after an earlier turn of its
+   conversation failed carries `prefix_errors` (that turn's `u` and error), because it was measured without that
+   turn's memory, and `compare` counts such rows as "rows with prefix errors". A retried turn starts from the memory
+   the turn found, never from what its own failed attempt stored.
 
    A deploy that lands during a round restarts the gateway or portal-api under it; the round is not protected
    against that, a turn that meets a restart is replayed: a connection error or a timeout before the stream starts, a stream

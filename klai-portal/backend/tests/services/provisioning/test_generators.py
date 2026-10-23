@@ -6,6 +6,7 @@ against the CURRENT behavior before the package extraction.
 """
 
 import textwrap
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -173,3 +174,18 @@ class TestCharacterizeGenerateLibrechatYaml:
         parsed = yaml.safe_load(result)
         assert isinstance(parsed, dict)
         assert "version" in parsed
+
+
+# Without MCP servers the base is dumped as loaded; with one, it is deep-copied and extended first.
+@pytest.mark.parametrize("mcp_servers", [None, {"twenty-crm": {"enabled": True}}])
+def test_the_klai_ai_endpoint_keeps_its_conversation_id_header_in_every_tenant_config(mcp_servers):
+    """portal-api keys the internal chat's case memory on this header; a tenant
+    config that lost it would run without memory and only log a warning."""
+    from app.services.provisioning import _generate_librechat_yaml
+
+    base = Path(__file__).resolve().parents[5] / "deploy" / "librechat" / "librechat.yaml"
+
+    config = yaml.safe_load(_generate_librechat_yaml(base, mcp_servers))
+
+    (endpoint,) = [e for e in config["endpoints"]["custom"] if e["name"] == "Klai AI"]
+    assert endpoint["headers"] == {"X-Klai-Conversation-Id": "{{LIBRECHAT_BODY_CONVERSATIONID}}"}

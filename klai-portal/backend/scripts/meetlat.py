@@ -471,6 +471,27 @@ async def _replayed(row: dict, attempt_turn: Callable[[], Awaitable[dict]], keep
     return {**row, "error": failure}
 
 
+def _from_the_same_memory(
+    store: dict, key: Any, attempt: Callable[[], Awaitable[dict]]
+) -> Callable[[], Awaitable[dict]]:
+    """``attempt``, starting each time from the memory the turn found.
+
+    The route stores a turn's case before its answer has fully arrived, so an
+    attempt that met a restart has already replaced the case of the turn
+    before; a retry that read it would build on its own failed attempt.
+    """
+    before = store.get(key)
+
+    async def again() -> dict:
+        if before is None:
+            store.pop(key, None)
+        else:
+            store[key] = before
+        return await attempt()
+
+    return again
+
+
 async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
     """One internal row. Index k is the position in the readable turns, u the position among the employee's turns."""
     user_turns = [k for k, turn in enumerate(thread.turns) if turn["role"] == "user"]
@@ -480,20 +501,33 @@ async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
     k = user_turns[u]
     messages = [{"role": t["role"], "content": t["content"]} for t in thread.turns[: k + 1]]
     row = {"cid": case["cid"], "k": k, "u": u, "mode": thread.mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
+    profile = thread.profile
+    assert profile is not None and profile.user_id is not None, "replay_internal skips a thread without an employee"
     return await _replayed(
         row,
-        lambda: replay._new_answer(org, thread.profile, messages, thread.cid),  # type: ignore[arg-type]
+        _from_the_same_memory(
+            _internal_cases,
+            (org.id, profile.user_id, thread.cid),
+            lambda: replay._new_answer(org, profile, messages, thread.cid),
+        ),
         ("text", "signals", "total_ms"),
     )
 
 
 async def _replay_internal_conversation(org: Any, thread: Thread, cases: list[dict]) -> AsyncIterator[dict]:
-    """The rows of the named turns of one conversation, after every turn before them has stored its case."""
+    """The rows of the named turns of one conversation, after every turn before them has stored its case.
+
+    A row after an earlier turn that failed carries ``prefix_errors``: it was
+    measured without the memory that turn would have stored.
+    """
     named = {case["turn"] for case in cases}
+    failed: list[dict] = []
     for u in range(max(named) + 1):
         row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u})
         if u in named:
-            yield row
+            yield {**row, "prefix_errors": list(failed)} if failed else row
+        if "error" in row:
+            failed.append({"u": u, "error": row["error"]})
 
 
 def _read_widget(path: Path) -> dict:
@@ -562,27 +596,37 @@ async def _replay_widget_turn(widget: dict, case: dict) -> dict:
     The history is the case's own, so the turn the route stored stands for the
     reply in that history: the route only reads a stored case that belongs
     to the conversation's last answer (``case_file.stored_case_for``), and the
-    replayed reply is not that answer.
+    replayed reply is not that answer. The row carries ``prefix_errors`` when
+    an earlier turn failed, as the internal rows do.
     """
     messages = [{"role": m["role"], "content": m["content"]} for m in case["messages"]]
     users = [k for k, message in enumerate(messages) if message["role"] == "user"]
     session_id = uuid.uuid4().hex
     session_key = session_key_from_claims(org_id=widget["org_id"], wgt_id=widget["wgt_id"], jti=session_id)
     assert session_key is not None, "_read_widget requires org_id and wgt_id"
+    failed: list[dict] = []
     for u, (k, following) in enumerate(itertools.pairwise(users)):
-        earlier = {"cid": case["cid"], "u": u}
-        await _replayed(earlier, lambda k=k: _widget_answer(widget, messages[: k + 1], session_id), ())
+        earlier = await _replayed(
+            {"cid": case["cid"], "u": u},
+            _from_the_same_memory(
+                _widget_cases, session_key, lambda k=k: _widget_answer(widget, messages[: k + 1], session_id)
+            ),
+            (),
+        )
+        if "error" in earlier:
+            failed.append({"u": u, "error": earlier["error"]})
         if session_key in _widget_cases:
             _widget_cases[session_key] = (
                 case_file.last_assistant_message(messages[:following]),
                 _widget_cases[session_key][1],
             )
     row = {"cid": case["cid"], "u": case["turn"], "ask": messages[-1]["content"][:_ASK_CHARS]}
-    return await _replayed(
+    measured = await _replayed(
         row,
-        lambda: _widget_answer(widget, messages, session_id),
+        _from_the_same_memory(_widget_cases, session_key, lambda: _widget_answer(widget, messages, session_id)),
         ("text", "sources", "appointment", "signals", "total_ms"),
     )
+    return {**measured, "prefix_errors": failed} if failed else measured
 
 
 def _rows_inside_checkout(out: Path) -> bool:
@@ -789,6 +833,8 @@ def _round_summary(name: str, rows: dict[tuple[str, int], dict], cases: list[dic
         "hard_facts": {"answers": len(hard_facts), "facts": sum(hard_facts)},
         "median_total_ms": round(statistics.median(latencies)) if latencies else None,
         "errors_or_empty": sum(1 for r in rows.values() if "error" in r or not _text(r)),
+        # Rows measured after an earlier turn of their conversation failed, so without its memory.
+        "prefix_errors": sum(1 for r in rows.values() if r.get("prefix_errors")),
         "selection": dict(selection),
     }
 
@@ -858,7 +904,8 @@ def _format_report(report: dict) -> str:
         lines.append(
             f"  decisions {summary['decisions']}; unsupported {unsupported['sum']} in {unsupported['answers_with']} "
             f"of {unsupported['of']} answers; hard facts outside kb {facts['facts']} in {facts['answers']} answers; "
-            f"median total_ms {summary['median_total_ms']}; error or empty rows {summary['errors_or_empty']}"
+            f"median total_ms {summary['median_total_ms']}; error or empty rows {summary['errors_or_empty']}; "
+            f"rows with prefix errors {summary['prefix_errors']}"
             + (f"; selection {summary['selection']}" if summary["selection"] else "")
         )
     for case in report["reading"]:
