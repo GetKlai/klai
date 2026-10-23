@@ -1533,5 +1533,7 @@ async def test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance(monkeyp
     assert turn.text
     assert {_LiteLLM._kind(body) for body in llm.calls} >= {"answer", "passage_selection", "grounding_check"}
     assert {body["model"] for body in llm.calls} <= _VIBE_ALLOWANCE
+    # A round runs on the measurement key, which LiteLLM masks only for the tenant a call names.
+    assert all((body.get("metadata") or {}).get("_klai_delegated_org_id") for body in llm.calls)
     # The paraphrases run on first widget questions only, so the turn above may not have made that call.
     assert replay.settings.retrieval_paraphrase_model in _VIBE_ALLOWANCE
