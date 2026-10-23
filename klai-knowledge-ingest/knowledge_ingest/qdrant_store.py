@@ -630,10 +630,9 @@ async def org_products(org_id: str, limit: int = 50) -> list[str]:
             must=[FieldCondition(key="org_id", match=MatchValue(value=org_id))],
             must_not=[FieldCondition(key="visibility", match=MatchValue(value="private"))],
         ),
-        # One more than asked, for the empty label that is left out.
-        limit=limit + 1,
+        limit=limit,
     )
-    return [str(hit.value) for hit in response.hits if hit.value][:limit]
+    return [str(hit.value) for hit in response.hits]
 
 
 async def search(

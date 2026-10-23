@@ -1,11 +1,12 @@
 """Operator command: count, and optionally write, the product label of chunks that have none.
 
-Chunks ingested before the product label existed (knowledge-base plan, step 7)
-carry neither ``product`` nor ``text_fingerprint``, so retrieval-api can neither
-prefer them for a question's product nor recognise them as a lookalike. This
-derives both from what the point already holds: the label from its source URL
-or path and the knowledge base's product rules (product_label.py), the
-fingerprint from its text.
+Chunks ingested before the product label existed (knowledge-base plan, step 7),
+or before their knowledge base had a matching product rule, carry no
+``product``, and the older ones no ``text_fingerprint`` either, so retrieval-api
+can neither prefer them for a question's product nor recognise them as a
+lookalike. This derives both from what the point already holds: the label from
+its source URL or path and the knowledge base's product rules
+(product_label.py), the fingerprint from its text.
 
 Usage (inside the running container, or a throwaway clone of it):
 
@@ -17,8 +18,10 @@ Usage (inside the running container, or a throwaway clone of it):
     python -m knowledge_ingest.scripts.product_backfill --org <org_id> --execute
     python -m knowledge_ingest.scripts.product_backfill --org <org_id> --kb <kb_slug> --execute
 
-An empty label is written too: it means the rules and defaults found no
-product, and it keeps the point out of the next run's selection.
+A point no rule matches keeps no label, so a rule added later still labels it
+on the next run. The rules are read once, up front; when they cannot be read
+the run stops before it writes anything, since a label written from a failed
+lookup would never be selected again.
 """
 
 from __future__ import annotations
@@ -44,7 +47,15 @@ from knowledge_ingest.qdrant_store import COLLECTION, get_client
 from knowledge_ingest.utils.content_fingerprint import compute_minhash
 
 _BATCH = 256
-_PAYLOAD = ["kb_slug", "source_type", "source_url", "source_ref", "path", "text"]
+_PAYLOAD = [
+    "kb_slug",
+    "source_type",
+    "source_url",
+    "source_ref",
+    "path",
+    "text",
+    "text_fingerprint",
+]
 
 
 async def backfill_products(
@@ -54,11 +65,13 @@ async def backfill_products(
     *,
     execute: bool,
 ) -> tuple[Counter, Counter]:
-    """Label every in-scope point without a ``product``.
+    """Label, and fingerprint, every in-scope point without a ``product``.
 
-    Returns the counts (``missing`` selected, ``written``) and how many points
-    get each label. Without ``execute`` nothing is written.
+    Returns the counts (``missing`` selected, ``written``) and how many
+    selected points get each label, "" for none. Without ``execute`` nothing
+    is written.
     """
+    rules = await kb_config.org_product_rules(org_id)
     must = [FieldCondition(key="org_id", match=MatchValue(value=org_id))]
     if kb_slug:
         must.append(FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)))
@@ -78,14 +91,18 @@ async def backfill_products(
         operations = []
         for point in points:
             payload = point.payload or {}
-            rules = await kb_config.get_kb_product_rules(org_id, payload.get("kb_slug", ""))
-            update = {"product": derive_product(payload, rules)}
-            if fingerprint := compute_minhash(payload.get("text") or ""):
+            update = {}
+            if product := derive_product(payload, rules.get(payload.get("kb_slug", ""), [])):
+                update["product"] = product
+            if not payload.get("text_fingerprint") and (
+                fingerprint := compute_minhash(payload.get("text") or "")
+            ):
                 update["text_fingerprint"] = fingerprint
-            labels[update["product"]] += 1
-            operations.append(
-                SetPayloadOperation(set_payload=SetPayload(payload=update, points=[point.id]))
-            )
+            labels[product] += 1
+            if update:
+                operations.append(
+                    SetPayloadOperation(set_payload=SetPayload(payload=update, points=[point.id]))
+                )
         result["missing"] += len(points)
         if execute and operations:
             await client.batch_update_points(COLLECTION, update_operations=operations)
