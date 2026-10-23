@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import time
+from collections.abc import Callable
 
 import structlog
 from graphiti_core import Graphiti
@@ -38,6 +40,76 @@ _graphiti_client: Graphiti | None = None
 _PROVENANCE_TIMEOUT = 1.0
 
 _EMPTY_FULLTEXT_QUERY_RE = re.compile(r"\(@group_id:[^)]*\)\s+\(\s*\)(?:\s|['\"]|$)")
+
+# Circuit breaker on the graph leg. From 13 to 22 October 2026 the graph leg
+# failed once in about 26,000 retrieve calls, so three failures inside a
+# minute only happen when FalkorDB itself is down. On 23 October FalkorDB
+# crashed every few minutes and each restart spent 99-105 s reloading its
+# dump, answering nothing meanwhile. A 60 s cooldown lets at most two probes
+# into one reload, each bounded by graph_search_timeout, and finds a recovered
+# graph within a minute.
+_CIRCUIT_FAILURES = 3
+_CIRCUIT_WINDOW_S = 60.0
+_CIRCUIT_COOLDOWN_S = 60.0
+
+
+class _GraphCircuit:
+    """Skip the graph after repeated failures; let one probe through per cooldown.
+
+    Single event loop, so no lock: every method runs without an await in it.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._failures: list[float] = []
+        self._opened_at: float | None = None
+        self._probing = False
+
+    def allow(self) -> bool:
+        if self._opened_at is None:
+            return True
+        if self._probing or self._clock() - self._opened_at < _CIRCUIT_COOLDOWN_S:
+            return False
+        self._probing = True
+        return True
+
+    def record_success(self) -> None:
+        self._failures.clear()
+        self._probing = False
+        if self._opened_at is not None:
+            self._opened_at = None
+            logger.info("graph_circuit_closed")
+
+    def record_failure(self) -> None:
+        now = self._clock()
+        if self._probing:
+            self._probing = False
+            self._opened_at = now
+            logger.warning(
+                "graph_circuit_open", reason="probe_failed", cooldown_s=_CIRCUIT_COOLDOWN_S
+            )
+            return
+        if self._opened_at is not None:
+            # A call that started before the circuit opened; already counted.
+            return
+        self._failures = [t for t in self._failures if now - t < _CIRCUIT_WINDOW_S] + [now]
+        if len(self._failures) >= _CIRCUIT_FAILURES:
+            self._failures.clear()
+            self._opened_at = now
+            logger.warning(
+                "graph_circuit_open",
+                reason="consecutive_failures",
+                failures=_CIRCUIT_FAILURES,
+                window_s=_CIRCUIT_WINDOW_S,
+                cooldown_s=_CIRCUIT_COOLDOWN_S,
+            )
+
+    def release_probe(self) -> None:
+        """A cancelled probe proves nothing; the next call after it may probe."""
+        self._probing = False
+
+
+_circuit = _GraphCircuit()
 
 
 def _get_graphiti() -> Graphiti:
@@ -92,11 +164,22 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
         return []
     if not _has_searchable_text(query):
         return []
+    if not _circuit.allow():
+        return []
 
-    graphiti = _get_graphiti()
     try:
-        return await _search_with_provenance(graphiti, query, org_id, top_k)
+        # Building the client sends a synchronous INFO to FalkorDB (falkordb's
+        # cluster probe, no socket timeout). On the event loop that froze every
+        # request for as long as a reloading FalkorDB took to answer.
+        graphiti = _graphiti_client or await asyncio.wait_for(
+            asyncio.to_thread(_get_graphiti), timeout=settings.graph_search_timeout
+        )
+        results = await _search_with_provenance(graphiti, query, org_id, top_k)
+    except asyncio.CancelledError:
+        _circuit.release_probe()
+        raise
     except TimeoutError:
+        _circuit.record_failure()
         logger.warning(
             "graph_search_timeout",
             org_id=org_id,
@@ -105,12 +188,17 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
         return []
     except Exception as exc:
         if _is_empty_fulltext_query_error(exc):
+            # FalkorDB answered, so this is a healthy graph rejecting the query.
+            _circuit.record_success()
             logger.info("graph_search_skipped_empty_query", org_id=org_id)
             return []
+        _circuit.record_failure()
         # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
         # traceback that the previous `error=str(exc)` dropped (TRY401).
         logger.warning("graph_search_failed", org_id=org_id, exc_info=True)
         return []
+    _circuit.record_success()
+    return results
 
 
 async def _search_with_provenance(
