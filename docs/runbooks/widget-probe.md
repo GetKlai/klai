@@ -126,6 +126,10 @@ probe question. Nothing here is created by the repo.
    You can reach the support team at support@probe.example.com.
    ```
 
+   Give the document a filename or title that contains `probe` (for example
+   `probe-support-hours.md`): the e2e journey J06 matches the returned sources
+   on that word.
+
    Wait until the document is ingested (status ready) and retrievable. The default
    probe question is `Wat zijn de openingstijden van het supportteam van Probe
    Bakkerij?`; if you change the document, set `WIDGET_PROBE_QUESTION` to match.
@@ -152,7 +156,15 @@ probe question. Nothing here is created by the repo.
    An `ok` also proves the CORS assumption: the probe sends the widget's
    `Origin` and fails with reason `cors` when the response lacks the matching
    `Access-Control-Allow-Origin`.
-6. **Unpause the alerts.** Both rules in
+6. **E2E journey J06.** The prod-tenant suite asks the same question through
+   the same calls (`klai-portal/frontend/e2e/prod-tenant/J06-widget-answer.spec.ts`)
+   after every deploy and nightly. Add the widget id as the GitHub Actions
+   secret `E2E_PROBE_WIDGET_ID` (repository secret, same value as
+   `WIDGET_PROBE_WIDGET_ID`). Without it J06 fails in CI on purpose. If you
+   changed the origin or the question above, also pass `E2E_PROBE_WIDGET_ORIGIN` /
+   `E2E_PROBE_QUESTION` in the workflow's `env:`; the spec defaults match the
+   defaults of the probe.
+7. **Unpause the alerts.** Both rules in
    `deploy/grafana/provisioning/alerting/widget-probe-rules.yaml` ship with
    `isPaused: true`. Once the first `ok` verdict is in VictoriaLogs, set both to
    `isPaused: false` in a PR and check after the deploy that Grafana shows them
