@@ -37,6 +37,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ -n "$name" && -n "$code" ]] || usage
+
+# The calls the one-off makes itself (coreference rewrite, graph search, synthesis) run on the Vibe allowance
+# (klai-ingest), never on the keys live chat shares: a measurement round on klai-fast helped spend the Mistral
+# workspaces' monthly limit on 23 Oct 2026 and took chat down for every tenant. Not overridable.
+for key in COREFERENCE_MODEL GRAPHITI_LLM_MODEL SYNTHESIS_MODEL; do
+    for given in "${overrides[@]:-}"; do
+        [[ "${given%%=*}" != "$key" ]] || { echo "ERROR: $key is fixed to klai-ingest for a one-off; drop --env $given." >&2; exit 1; }
+    done
+    overrides+=("$key=klai-ingest")
+done
 [[ -d "$code/retrieval_api" ]] || { echo "ERROR: $code has no retrieval_api package." >&2; exit 1; }
 code="$(cd "$code" && pwd)"
 

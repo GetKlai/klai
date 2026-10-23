@@ -1470,3 +1470,44 @@ def test_the_articles_a_case_names_itself_are_kept_whatever_their_host():
     row = meetlat._stage_row({"cid": "c", "u": 0}, ["https://vendor.example.net/a"], record)
 
     assert (row["expected"], row["search"]) == (1, False)
+
+
+# A round runs on the Vibe allowance, never on the keys real visitors use.
+_VIBE_ALLOWANCE = {"klai-ingest", "klai-judge"}
+
+
+@pytest.mark.parametrize("surface", ["internal", "widget"])
+@pytest.mark.asyncio
+async def test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance(monkeypatch, tmp_path, surface):
+    """On 23 Oct 2026 a round answered on klai-primary and checked on klai-medium and klai-fast, and spent the
+    Mistral workspaces' monthly limit that live chat shares. The multi-part question is the one the internal
+    Strict rule would move to klai-medium, if the request were klai-primary."""
+    from app.api import partner
+    from tests.test_one_pipeline_answer_decision import _internal, _LiteLLM, _pack, _turn
+
+    _measuring_with_memory(monkeypatch, tmp_path)
+    for name in ("extraction_model", "answer_grounding_model", "retrieval_paraphrase_model"):
+        monkeypatch.setattr(replay.settings, name, getattr(replay.settings, name))
+    monkeypatch.setattr(replay, "_REQUEST_MODEL", replay._REQUEST_MODEL)
+    monkeypatch.setattr(partner, "_ALLOWED_MODELS", partner._ALLOWED_MODELS)
+    meetlat._apply_measurement_patches()
+    llm = _LiteLLM()
+    widget = surface == "widget"
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=ChatProfile(surface="widget") if widget else _internal(),
+        question="Hoe vraag ik verlof aan? En wat kost dat?",
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        key_id="wgt_acme" if widget else "key-internal",
+        stream=not widget,
+        request_body=meetlat._widget_body if widget else replay._body,
+        models_from_settings=True,
+    )
+
+    assert turn.text
+    assert {_LiteLLM._kind(body) for body in llm.calls} >= {"answer", "passage_selection", "grounding_check"}
+    assert {body["model"] for body in llm.calls} <= _VIBE_ALLOWANCE
+    # The paraphrases run on first widget questions only, so the turn above may not have made that call.
+    assert replay.settings.retrieval_paraphrase_model in _VIBE_ALLOWANCE
