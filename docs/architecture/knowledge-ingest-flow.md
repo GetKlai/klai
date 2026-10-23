@@ -236,9 +236,9 @@ state per `(org_id, kb_slug, url)`:
   (SHA-256 of extracted markdown), `raw_markdown`, `crawled_at`. Used for deduplication and
   as a content cache for future re-ingest without re-crawling.
 - `page_links` — link graph: `from_url → to_url` pairs with `link_text`, extracted from
-  `result.links['internal']` by crawl4ai. Used by SPEC-CRAWLER-003 for link-graph
-  retrieval enrichment: anchor text augmentation (vocabulary bridging in `enriched_text`),
-  `incoming_link_count` authority boost, and 1-hop forward expansion in the retrieval API.
+  `result.links['internal']` by crawl4ai. Used by SPEC-CRAWLER-003 for anchor text
+  augmentation (vocabulary bridging in `enriched_text`). The retrieval API no longer uses the
+  link graph: the authority boost and the 1-hop forward expansion were removed on 23 Oct 2026.
 
 **Dual-hash deduplication:** both `crawl_url` and the bulk crawler skip ingest in two stages:
 1. `raw_html_hash` unchanged → skip everything (JS/tracking noise ignored)
@@ -423,7 +423,7 @@ potential admin-only repair scripts).
 
 **Empty-list convention (SPEC-CRAWLER-005 REQ-04).** Qdrant strips empty-list payload
 keys on upsert. A page with no inbound links has `anchor_texts` *absent* from its
-payload, not `[]`. Retrieval-api reads list-shaped keys (`anchor_texts`, `links_to`,
+payload, not `[]`. Retrieval-api reads list-shaped keys (`entity_names`,
 `image_urls`) through `retrieval_api/util/payload.py::payload_list()` which treats
 key-absent, `None`, and non-list values all as `[]`, so the two shapes are
 interchangeable at the consumer boundary.
