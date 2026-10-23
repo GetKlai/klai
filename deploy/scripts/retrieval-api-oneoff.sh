@@ -49,14 +49,11 @@ for key in COREFERENCE_MODEL GRAPHITI_LLM_MODEL SYNTHESIS_MODEL; do
 done
 [[ -d "$code/retrieval_api" ]] || { echo "ERROR: $code has no retrieval_api package." >&2; exit 1; }
 
-# And every LiteLLM credential in the clone is the measurement key, a virtual key that can call klai-judge and
-# klai-ingest only, so no model variable or code path inside it can reach a chat alias either. No flag skips this.
-MEASUREMENT_KEY_FILE="${KLAI_MEASUREMENT_KEY_FILE:-/opt/klai/state/litellm/measurement-key}"
-measurement_key="$(cat "$MEASUREMENT_KEY_FILE" 2>/dev/null || true)"
-if [[ -z "$measurement_key" ]]; then
-    echo "ERROR: no LiteLLM measurement key in $MEASUREMENT_KEY_FILE; create it with deploy/scripts/litellm-measurement-key.sh." >&2
-    exit 1
-fi
+# And the clone talks to LiteLLM only with the measurement key, so no model variable or code path inside it can reach
+# a chat alias either (oneoff-litellm-guard.sh).
+# shellcheck source=deploy/scripts/oneoff-litellm-guard.sh
+source "$here/oneoff-litellm-guard.sh"
+measurement_key_load_and_probe
 code="$(cd "$code" && pwd)"
 
 if [[ "$(docker inspect --format '{{.State.Running}}' "$LIVE_CONTAINER" 2>/dev/null || echo false)" != "true" ]]; then
@@ -84,24 +81,8 @@ docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$LIVE_CONTA
     > "$env_file"
 printf '%s\n' "${overrides[@]:-}" | grep . >> "$env_file" || true
 
-# After the overrides, so --env cannot put a live key back. A measurement key equal to a key the live service holds is
-# that key under another name, and an environment with no LITELLM_*KEY means the variable was renamed: both refuse.
-rc=0
-swapped="$(MEASUREMENT_KEY="$measurement_key" awk '
-    /^LITELLM_[A-Z0-9_]*KEY=/ {
-        eq = index($0, "=")
-        if (substr($0, eq + 1) == ENVIRON["MEASUREMENT_KEY"]) live = 1
-        print substr($0, 1, eq) ENVIRON["MEASUREMENT_KEY"]
-        n++
-        next
-    }
-    { print }
-    END { exit live ? 2 : (n ? 0 : 3) }' "$env_file")" || rc=$?
-case "$rc" in
-    0) printf '%s\n' "$swapped" > "$env_file" ;;
-    2) echo "ERROR: $MEASUREMENT_KEY_FILE holds a key $LIVE_CONTAINER uses; recreate it with litellm-measurement-key.sh." >&2; exit 1 ;;
-    *) echo "ERROR: $LIVE_CONTAINER has no LITELLM_*KEY variable to replace with the measurement key." >&2; exit 1 ;;
-esac
+# After the overrides, so --env cannot put a live key back.
+measurement_key_swap "$env_file" "$LIVE_CONTAINER"
 
 image="$(docker inspect --format '{{.Image}}' "$LIVE_CONTAINER")"
 workdir="$(docker inspect --format '{{.Config.WorkingDir}}' "$LIVE_CONTAINER")"

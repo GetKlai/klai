@@ -44,7 +44,11 @@ the chat aliases as well. A round runs only on the measurement key, the LiteLLM 
 model list is `klai-judge` and `klai-ingest` and which has its own budget of 20 USD a day. Both one-off scripts put it
 in place of every `LITELLM_*KEY` variable in the clone (`LITELLM_MASTER_KEY` and `LITELLM_GENERAL_CHAT_KEY` in
 portal-api, `LITELLM_API_KEY` in retrieval-api), and they refuse to start when `/opt/klai/state/litellm/measurement-key`
-is missing, empty, or holds a key the live service uses. There is no flag to skip this. The spend also counts against
+is missing, empty, or holds a key the live service uses. Before cloning, they send one request to `klai-primary` with
+that key and stop unless LiteLLM's key check refuses it (`key_model_access_denied`), so a wider key put in the file by
+hand cannot run a round. The portal one-off also no longer mounts `/librechat`, which holds every tenant's LiteLLM key;
+the old path of `replay_internal_chat.py` replays on such a key and stops with a message inside a one-off. The shared
+logic lives in `deploy/scripts/oneoff-litellm-guard.sh`. There is no flag to skip any of this. The spend also counts against
 the aliases' own daily budgets, so a day that spends the full 20 USD on `klai-ingest` stops knowledge-ingest's background
 work until that budget resets as well.
 

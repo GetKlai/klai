@@ -45,15 +45,10 @@ while [[ $# -gt 0 ]]; do
 done
 [[ $# -gt 0 ]] || usage
 
-# Every LiteLLM credential in the clone is the measurement key, a virtual key that can call klai-judge and klai-ingest
-# only, so nothing run inside it can reach a chat alias: on 23 Oct 2026 measurement rounds on the master key spent the
-# chat workspaces' monthly Mistral limit and took chat down for every tenant. There is no flag to skip this.
-MEASUREMENT_KEY_FILE="${KLAI_MEASUREMENT_KEY_FILE:-/opt/klai/state/litellm/measurement-key}"
-measurement_key="$(cat "$MEASUREMENT_KEY_FILE" 2>/dev/null || true)"
-if [[ -z "$measurement_key" ]]; then
-    echo "ERROR: no LiteLLM measurement key in $MEASUREMENT_KEY_FILE; create it with deploy/scripts/litellm-measurement-key.sh." >&2
-    exit 1
-fi
+# The clone talks to LiteLLM only with the measurement key (oneoff-litellm-guard.sh).
+# shellcheck source=deploy/scripts/oneoff-litellm-guard.sh
+source "$(dirname "${BASH_SOURCE[0]}")/oneoff-litellm-guard.sh"
+measurement_key_load_and_probe
 
 if [[ "$(docker inspect --format '{{.State.Running}}' "$PORTAL_CONTAINER" 2>/dev/null || echo false)" != "true" ]]; then
     echo "ERROR: $PORTAL_CONTAINER is not running; refusing to clone a stopped service." >&2
@@ -91,24 +86,7 @@ docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$PORTAL_CON
     | grep -Ev '^(SENTRY_DSN|GLITCHTIP[A-Z_]*)=' \
     > "$env_file"
 
-# A measurement key equal to a key the live service holds is that key under another name, so it is refused, and so is
-# an environment with no LITELLM_*KEY at all: the variable was renamed and this swap would no longer cover it.
-rc=0
-swapped="$(MEASUREMENT_KEY="$measurement_key" awk '
-    /^LITELLM_[A-Z0-9_]*KEY=/ {
-        eq = index($0, "=")
-        if (substr($0, eq + 1) == ENVIRON["MEASUREMENT_KEY"]) live = 1
-        print substr($0, 1, eq) ENVIRON["MEASUREMENT_KEY"]
-        n++
-        next
-    }
-    { print }
-    END { exit live ? 2 : (n ? 0 : 3) }' "$env_file")" || rc=$?
-case "$rc" in
-    0) printf '%s\n' "$swapped" > "$env_file" ;;
-    2) echo "ERROR: $MEASUREMENT_KEY_FILE holds a key $PORTAL_CONTAINER uses; recreate it with litellm-measurement-key.sh." >&2; exit 1 ;;
-    *) echo "ERROR: $PORTAL_CONTAINER has no LITELLM_*KEY variable to replace with the measurement key." >&2; exit 1 ;;
-esac
+measurement_key_swap "$env_file" "$PORTAL_CONTAINER"
 
 network_args=()
 while IFS= read -r net; do
@@ -119,6 +97,9 @@ done < <(docker inspect --format '{{range $net, $cfg := .NetworkSettings.Network
 mount_args=()
 while IFS='|' read -r mount_type source destination rw; do
     [[ "$mount_type" == "bind" ]] || continue
+    # /librechat holds every tenant's .env with that tenant's LiteLLM key, which can call the chat aliases. A one-off
+    # reads conversations from Mongo and runs the chat path in process, so it has no use for the directory.
+    [[ "$destination" != "/librechat" ]] || continue
     mount_opt="type=bind,source=${source},destination=${destination}"
     [[ "$rw" == "false" ]] && mount_opt="${mount_opt},readonly"
     mount_args+=(--mount "$mount_opt")
