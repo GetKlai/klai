@@ -427,14 +427,12 @@ async def last_case(*, widget_id: str, session_key: str) -> StoredTurn | None:
 INTERNAL_CASE_DAYS = 30
 
 
-async def last_internal_case(*, org_id: int, conversation_key: str, turn_digest: str) -> StoredTurn | None:
-    """The case and kept passages the previous turn of an internal conversation stored; :func:`last_case` for LibreChat.
+async def last_internal_case(*, org_id: int, user_id: str, conversation_id: str) -> StoredTurn | None:
+    """The case and kept passages the latest turn of an internal conversation stored; :func:`last_case` for LibreChat.
 
-    ``turn_digest`` is the digest of the employee's messages before the
-    latest one, so only the row the turn right before this one stored
-    matches: a regenerated or edited turn, and another conversation that
-    opened with the same message, read nothing. The stored turn has no text,
-    because the internal chat keeps no reply; LibreChat does.
+    One row per LibreChat conversation of one employee, so a regenerated
+    turn reads what its own first answer stored. The stored turn has no
+    text, because the internal chat keeps no reply; LibreChat does.
     """
     async with tenant_scoped_session(org_id) as db:
         stored = (
@@ -444,15 +442,15 @@ async def last_internal_case(*, org_id: int, conversation_key: str, turn_digest:
                     SELECT case_file, kept_passages
                       FROM internal_chat_cases
                      WHERE org_id = :org_id
-                       AND conversation_key = :conversation_key
-                       AND turn_digest = :turn_digest
+                       AND user_id = :user_id
+                       AND conversation_id = :conversation_id
                        AND updated_at > now() - make_interval(days => :days)
                     """
                 ),
                 {
                     "org_id": org_id,
-                    "conversation_key": conversation_key,
-                    "turn_digest": turn_digest,
+                    "user_id": user_id,
+                    "conversation_id": conversation_id,
                     "days": INTERNAL_CASE_DAYS,
                 },
             )
@@ -467,8 +465,7 @@ async def keep_internal_case(
     *,
     org_id: int,
     user_id: str,
-    conversation_key: str,
-    turn_digest: str,
+    conversation_id: str,
     case: dict | None,
     kept_passages: list[dict],
 ) -> None:
@@ -477,32 +474,37 @@ async def keep_internal_case(
     The case and the passages are text, so they live in ``internal_chat_cases``,
     never in ``internal_chat_turns`` or a log line: a failure is logged with
     the statement's parameters hidden, which a database error prints otherwise.
+    A turn with neither a case nor a kept passage deletes the row, so the next
+    turn reads nothing rather than the case of an older turn, as ``last_case``
+    never reuses one.
     """
+    key = {"org_id": org_id, "user_id": user_id, "conversation_id": conversation_id}
     try:
         async with tenant_scoped_session(org_id) as db:
+            if case is None and not kept_passages:
+                await db.execute(
+                    text(
+                        "DELETE FROM internal_chat_cases WHERE org_id = :org_id "
+                        "AND user_id = :user_id AND conversation_id = :conversation_id"
+                    ),
+                    key,
+                )
+                await db.commit()
+                return
             await db.execute(
                 text(
                     """
                     INSERT INTO internal_chat_cases
-                           (org_id, user_id, conversation_key, turn_digest, case_file, kept_passages, updated_at)
-                    VALUES (:org_id, :user_id, :conversation_key, :turn_digest,
+                           (org_id, user_id, conversation_id, case_file, kept_passages, updated_at)
+                    VALUES (:org_id, :user_id, :conversation_id,
                             CAST(:case_file AS jsonb), CAST(:kept_passages AS jsonb), now())
-                    ON CONFLICT (org_id, conversation_key) DO UPDATE
-                       SET user_id = EXCLUDED.user_id,
-                           turn_digest = EXCLUDED.turn_digest,
-                           case_file = EXCLUDED.case_file,
+                    ON CONFLICT (org_id, user_id, conversation_id) DO UPDATE
+                       SET case_file = EXCLUDED.case_file,
                            kept_passages = EXCLUDED.kept_passages,
                            updated_at = EXCLUDED.updated_at
                     """
                 ),
-                {
-                    "org_id": org_id,
-                    "user_id": user_id,
-                    "conversation_key": conversation_key,
-                    "turn_digest": turn_digest,
-                    "case_file": json.dumps(case),
-                    "kept_passages": json.dumps(kept_passages),
-                },
+                {**key, "case_file": json.dumps(case), "kept_passages": json.dumps(kept_passages)},
             )
             await db.commit()
     except Exception as exc:

@@ -19,7 +19,13 @@ hand). Widget classes: antwoord, vraag, niet_gevonden and doorverwijzing.
 ``run`` replays those turns through the one chat pipeline (the internal
 surface the way replay_internal_chat.py does, the widget surface through the
 route itself with a preview session token, so the widget's own settings and
-articles apply) and writes one row per turn. Before the first turn
+articles apply) and writes one row per turn. A turn after the first carries
+the case its conversation's earlier turns stored, as in production, so ``run``
+replays every user turn of a conversation up to its highest named turn, in
+order, and writes rows for the named turns only; the earlier turns are
+replayed for their memory. That memory lives in this process, keyed by
+conversation (LibreChat's conversation id; the widget's preview session), and
+never reaches the database. Before the first turn
 it prints which files the pipeline's own modules were loaded from: in October
 2026 three rounds ran the code of main instead of the candidate because a module
 put its own root at the front of sys.path and shadowed the candidate overlay.
@@ -37,6 +43,7 @@ import argparse
 import asyncio
 import hashlib
 import importlib
+import itertools
 import json
 import re
 import statistics
@@ -45,7 +52,7 @@ import sys
 import time
 import uuid
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -56,8 +63,9 @@ import replay_internal_chat as replay
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core import database
-from app.services import answer_compose, answer_grounding, retrieval_context
+from app.services import answer_compose, answer_grounding, case_file, retrieval_context
 from app.services.chat_profile import ChatProfile
+from app.services.widget_audit import session_key_from_claims
 
 # The modules whose provenance decides what a round measured.
 _BANNER_MODULES = (
@@ -207,6 +215,12 @@ def _make_database_read_only(db: Any) -> None:
 
 
 _captured_widget_signals: list[dict | None] = []
+# The case memory of a round, in this process: what a replayed turn stored for
+# the next turn of its conversation. Never the database, which is read-only
+# here and holds the employees' and visitors' own cases.
+_internal_cases: dict[tuple[int, str, str], case_file.StoredTurn] = {}
+# Session key to the latest reply's text and its signals (case, kept passages, decision).
+_widget_cases: dict[str, tuple[str, dict]] = {}
 
 
 async def _capture_widget_turn(**fields: Any) -> None:
@@ -214,19 +228,50 @@ async def _capture_widget_turn(**fields: Any) -> None:
 
     The signals dict is kept by reference, not copied: the check that runs
     after the reply completes it in place, and the row is written once the
-    pending tasks are done.
+    pending tasks are done. The reply is also the session's memory, read by
+    :func:`_remembered_widget_case`.
     """
     if fields.get("role") == "assistant":
-        _captured_widget_signals.append(fields.get("answer_signals"))
+        signals = fields.get("answer_signals")
+        _captured_widget_signals.append(signals)
+        _widget_cases[fields["session_key"]] = (fields.get("content") or "", signals or {})
+
+
+async def _remembered_widget_case(*, session_key: str, **_: object) -> case_file.StoredTurn | None:
+    """Stands in for ``last_case``: the turn the round stored last in this session, as the database row reads."""
+    if session_key not in _widget_cases:
+        return None
+    text, signals = _widget_cases[session_key]
+    kept = signals.get("kept_passages")
+    return case_file.StoredTurn(
+        signals.get("case"), text, kept if isinstance(kept, list) else [], signals.get("decision")
+    )
+
+
+async def _remembered_internal_case(*, org_id: int, user_id: str, conversation_id: str) -> case_file.StoredTurn | None:
+    """Stands in for ``last_internal_case``."""
+    return _internal_cases.get((org_id, user_id, conversation_id))
+
+
+async def _store_internal_case(
+    *, org_id: int, user_id: str, conversation_id: str, case: dict | None, kept_passages: list[dict]
+) -> None:
+    """Stands in for ``keep_internal_case``, which deletes the row of a turn with nothing to keep."""
+    if case is None and not kept_passages:
+        _internal_cases.pop((org_id, user_id, conversation_id), None)
+        return
+    _internal_cases[(org_id, user_id, conversation_id)] = case_file.StoredTurn(case, "", kept_passages, None)
 
 
 def _apply_measurement_patches() -> None:
     """Turn the production pipeline into a measuring one: nothing it does may reach an employee's or visitor's data."""
     _make_database_read_only(database)
     replay.partner.record_internal_turn = replay._capture_internal_turn  # type: ignore[assignment]
-    # A replayed follow-up neither reads the case the employee's own turn stored nor stores one.
-    replay.partner.last_internal_case = replay._no_internal_case  # type: ignore[assignment]
-    replay.partner.keep_internal_case = replay._skip_internal_case  # type: ignore[assignment]
+    # A replayed turn reads and stores its case in this process, never the
+    # employee's or visitor's own case.
+    replay.partner.last_internal_case = _remembered_internal_case  # type: ignore[assignment]
+    replay.partner.keep_internal_case = _store_internal_case  # type: ignore[assignment]
+    replay.partner.last_case = _remembered_widget_case  # type: ignore[assignment]
     replay.partner.record_widget_turn = _capture_widget_turn  # type: ignore[assignment]
     # The retrieval log keys feedback to the chunks of the employee's latest turn,
     # and the gap event feeds the knowledge-gap backlog: neither may see a replay.
@@ -426,6 +471,27 @@ async def _replayed(row: dict, attempt_turn: Callable[[], Awaitable[dict]], keep
     return {**row, "error": failure}
 
 
+def _from_the_same_memory(
+    store: dict, key: Any, attempt: Callable[[], Awaitable[dict]]
+) -> Callable[[], Awaitable[dict]]:
+    """``attempt``, starting each time from the memory the turn found.
+
+    The route stores a turn's case before its answer has fully arrived, so an
+    attempt that met a restart has already replaced the case of the turn
+    before; a retry that read it would build on its own failed attempt.
+    """
+    before = store.get(key)
+
+    async def again() -> dict:
+        if before is None:
+            store.pop(key, None)
+        else:
+            store[key] = before
+        return await attempt()
+
+    return again
+
+
 async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
     """One internal row. Index k is the position in the readable turns, u the position among the employee's turns."""
     user_turns = [k for k, turn in enumerate(thread.turns) if turn["role"] == "user"]
@@ -435,11 +501,33 @@ async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
     k = user_turns[u]
     messages = [{"role": t["role"], "content": t["content"]} for t in thread.turns[: k + 1]]
     row = {"cid": case["cid"], "k": k, "u": u, "mode": thread.mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
+    profile = thread.profile
+    assert profile is not None and profile.user_id is not None, "replay_internal skips a thread without an employee"
     return await _replayed(
         row,
-        lambda: replay._new_answer(org, thread.profile, messages),  # type: ignore[arg-type]
+        _from_the_same_memory(
+            _internal_cases,
+            (org.id, profile.user_id, thread.cid),
+            lambda: replay._new_answer(org, profile, messages, thread.cid),
+        ),
         ("text", "signals", "total_ms"),
     )
+
+
+async def _replay_internal_conversation(org: Any, thread: Thread, cases: list[dict]) -> AsyncIterator[dict]:
+    """The rows of the named turns of one conversation, after every turn before them has stored its case.
+
+    A row after an earlier turn that failed carries ``prefix_errors``: it was
+    measured without the memory that turn would have stored.
+    """
+    named = {case["turn"] for case in cases}
+    failed: list[dict] = []
+    for u in range(max(named) + 1):
+        row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u})
+        if u in named:
+            yield {**row, "prefix_errors": list(failed)} if failed else row
+        if "error" in row:
+            failed.append({"u": u, "error": row["error"]})
 
 
 def _read_widget(path: Path) -> dict:
@@ -453,12 +541,14 @@ def _read_widget(path: Path) -> dict:
     return widget
 
 
-async def _widget_answer(widget: dict, messages: list[dict]) -> dict:
+async def _widget_answer(widget: dict, messages: list[dict], session_id: str) -> dict:
     """One widget turn through the route itself, as the browser sends it: a preview session token, the answer held.
 
     Held (not streamed) so the reply is complete when the response is; the
     signals are read after the tasks the route left behind (the record and
-    the check after the reply) are done.
+    the check after the reply) are done. The turns of one conversation share
+    ``session_id``, which the route turns into the session key its case
+    memory is kept under.
     """
     from app.main import app
     from app.services.widget_auth import generate_session_token
@@ -470,7 +560,7 @@ async def _widget_answer(widget: dict, messages: list[dict]) -> dict:
         replay.settings.widget_jwt_secret,
         widget["slug"],
         is_preview=True,
-        session_id=uuid.uuid4().hex,
+        session_id=session_id,
     )
     _captured_widget_signals.clear()
     started = time.perf_counter()
@@ -501,12 +591,42 @@ async def _widget_answer(widget: dict, messages: list[dict]) -> dict:
 
 
 async def _replay_widget_turn(widget: dict, case: dict) -> dict:
-    """One widget row: the case's own conversation, replayed as the visitor's latest turn."""
+    """One widget row: the case's own conversation, every earlier visitor turn first for its memory, then the latest.
+
+    The history is the case's own, so the turn the route stored stands for the
+    reply in that history: the route only reads a stored case that belongs
+    to the conversation's last answer (``case_file.stored_case_for``), and the
+    replayed reply is not that answer. The row carries ``prefix_errors`` when
+    an earlier turn failed, as the internal rows do.
+    """
     messages = [{"role": m["role"], "content": m["content"]} for m in case["messages"]]
+    users = [k for k, message in enumerate(messages) if message["role"] == "user"]
+    session_id = uuid.uuid4().hex
+    session_key = session_key_from_claims(org_id=widget["org_id"], wgt_id=widget["wgt_id"], jti=session_id)
+    assert session_key is not None, "_read_widget requires org_id and wgt_id"
+    failed: list[dict] = []
+    for u, (k, following) in enumerate(itertools.pairwise(users)):
+        earlier = await _replayed(
+            {"cid": case["cid"], "u": u},
+            _from_the_same_memory(
+                _widget_cases, session_key, lambda k=k: _widget_answer(widget, messages[: k + 1], session_id)
+            ),
+            (),
+        )
+        if "error" in earlier:
+            failed.append({"u": u, "error": earlier["error"]})
+        if session_key in _widget_cases:
+            _widget_cases[session_key] = (
+                case_file.last_assistant_message(messages[:following]),
+                _widget_cases[session_key][1],
+            )
     row = {"cid": case["cid"], "u": case["turn"], "ask": messages[-1]["content"][:_ASK_CHARS]}
-    return await _replayed(
-        row, lambda: _widget_answer(widget, messages), ("text", "sources", "appointment", "signals", "total_ms")
+    measured = await _replayed(
+        row,
+        _from_the_same_memory(_widget_cases, session_key, lambda: _widget_answer(widget, messages, session_id)),
+        ("text", "sources", "appointment", "signals", "total_ms"),
     )
+    return {**measured, "prefix_errors": failed} if failed else measured
 
 
 def _rows_inside_checkout(out: Path) -> bool:
@@ -521,20 +641,36 @@ def _rows_inside_checkout(out: Path) -> bool:
 
 async def _replayer(
     args: argparse.Namespace, widget: dict | None, todo: list[dict]
-) -> Callable[[dict], Awaitable[dict]]:
-    """How one case of this surface is replayed: a widget case as the widget, an internal case as its employee."""
+) -> Callable[[list[dict]], AsyncIterator[dict]]:
+    """How the cases of one conversation are replayed: a widget case as the widget, an internal case as its employee."""
     if widget is not None:
-        return lambda case: _replay_widget_turn(widget, case)
+
+        async def replay_widget(cases: list[dict]) -> AsyncIterator[dict]:
+            for case in cases:
+                yield await _replay_widget_turn(widget, case)
+
+        return replay_widget
     org = await replay._load_org(args.org)
     threads = await _fetch_threads(org, sorted({c["cid"] for c in todo}), args.days)
 
-    async def replay_internal(case: dict) -> dict:
-        thread = threads.get(case["cid"])
+    async def replay_internal(cases: list[dict]) -> AsyncIterator[dict]:
+        thread = threads.get(cases[0]["cid"])
         if thread is None or thread.profile is None:
-            return {"cid": case["cid"], "u": case["turn"], "error": "conversation_or_profile_not_found"}
-        return await _replay_turn(org, thread, case)
+            for case in cases:
+                yield {"cid": case["cid"], "u": case["turn"], "error": "conversation_or_profile_not_found"}
+            return
+        async for row in _replay_internal_conversation(org, thread, cases):
+            yield row
 
     return replay_internal
+
+
+def _conversations(todo: list[dict]) -> list[list[dict]]:
+    """The cases grouped by conversation, in the order the file names them, each group by turn."""
+    groups: dict[str, list[dict]] = {}
+    for case in todo:
+        groups.setdefault(case["cid"], []).append(case)
+    return [sorted(group, key=lambda case: case["turn"]) for group in groups.values()]
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -588,15 +724,16 @@ async def _run(args: argparse.Namespace) -> int:
 
     _apply_measurement_patches()
     replay._route_logs_to(out.with_name(out.name + ".pipeline.log"))
-    replay_case = await _replayer(args, widget, todo)
-    errors = 0
+    replay_conversation = await _replayer(args, widget, todo)
+    errors = number = 0
     with out.open("a") as handle:
-        for number, case in enumerate(todo, 1):
-            row = await replay_case(case)
-            errors += "error" in row
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-            handle.flush()
-            print(f"{number}/{len(todo)} {'failed: ' + row['error'] if 'error' in row else 'replayed'}", flush=True)
+        for cases in _conversations(todo):
+            async for row in replay_conversation(cases):
+                number += 1
+                errors += "error" in row
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                handle.flush()
+                print(f"{number}/{len(todo)} {'failed: ' + row['error'] if 'error' in row else 'replayed'}", flush=True)
     print(f"files: {out} ({errors} error row(s))")
     return 0
 
@@ -696,6 +833,8 @@ def _round_summary(name: str, rows: dict[tuple[str, int], dict], cases: list[dic
         "hard_facts": {"answers": len(hard_facts), "facts": sum(hard_facts)},
         "median_total_ms": round(statistics.median(latencies)) if latencies else None,
         "errors_or_empty": sum(1 for r in rows.values() if "error" in r or not _text(r)),
+        # Rows measured after an earlier turn of their conversation failed, so without its memory.
+        "prefix_errors": sum(1 for r in rows.values() if r.get("prefix_errors")),
         "selection": dict(selection),
     }
 
@@ -765,7 +904,8 @@ def _format_report(report: dict) -> str:
         lines.append(
             f"  decisions {summary['decisions']}; unsupported {unsupported['sum']} in {unsupported['answers_with']} "
             f"of {unsupported['of']} answers; hard facts outside kb {facts['facts']} in {facts['answers']} answers; "
-            f"median total_ms {summary['median_total_ms']}; error or empty rows {summary['errors_or_empty']}"
+            f"median total_ms {summary['median_total_ms']}; error or empty rows {summary['errors_or_empty']}; "
+            f"rows with prefix errors {summary['prefix_errors']}"
             + (f"; selection {summary['selection']}" if summary["selection"] else "")
         )
     for case in report["reading"]:

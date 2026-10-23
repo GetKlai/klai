@@ -7,8 +7,6 @@ Authenticated via partner API keys (Bearer pk_live_...).
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import re
 import time
 import uuid
@@ -820,45 +818,43 @@ async def _previous_turn(
     return case_file.stored_case_for(request.messages, stored)
 
 
+# LibreChat's own conversation id, sent by the "Klai AI" endpoint in deploy/librechat/librechat.yaml.
+CONVERSATION_ID_HEADER = "x-klai-conversation-id"
+
+
 class _InternalConversation(NamedTuple):
-    """How an internal turn finds its conversation's stored case: digests only, no text."""
+    """The key an internal turn's stored case lives under."""
 
-    # The employee (Zitadel subject), so offboarding can forget their cases.
+    # The employee (Zitadel subject): the case is theirs, and offboarding forgets it.
     user_id: str
-    # The employee and the conversation's first message: one row per conversation.
-    key: str
-    # The employee's messages before the latest one: what the previous turn stored as ``current``.
-    previous: str
-    # Every message of the employee's, up to this turn.
-    current: str
+    # LibreChat's conversation id.
+    id: str
 
 
-def _digest(*parts: str) -> str:
-    return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
+def _internal_conversation(
+    http_request: Request, request: ChatCompletionsRequest, auth: PartnerAuthContext, profile: ChatProfile
+) -> _InternalConversation | None:
+    """The conversation of an internal turn: LibreChat's conversation id, bound to the org and the employee.
 
-
-def _internal_conversation(sent: list[dict], profile: ChatProfile) -> _InternalConversation | None:
-    """The conversation of an internal turn, from the messages as LibreChat sent them.
-
-    LibreChat sends no conversation id: the "Klai AI" endpoint in
-    deploy/librechat/librechat.yaml has no headers, and the body is the plain
-    OpenAI request with ``user``. The employee and their first message identify
-    the conversation instead, each message as its whole content, attachments
-    included, so two conversations that open with the same sentence beside
-    different files stay two. Read before a PDF in the latest message becomes
-    text, so the digests rest on what LibreChat sent and not on the conversion.
-    General mode reads no case, so it keeps none.
+    The id comes from the ``X-Klai-Conversation-Id`` header LibreChat resolves
+    from ``{{LIBRECHAT_BODY_CONVERSATIONID}}``, never from the body, and it
+    keys a row only together with the authenticated org and the resolved
+    employee, so a forged id reaches no one else's case. A tenant whose
+    LibreChat config predates the header sends none, and a placeholder
+    LibreChat could not resolve is no UUID: either way the turn has no memory
+    and a follow-up says so in one warning, because a case guessed from the
+    messages would join conversations that only look alike. General mode
+    reads no case, so it keeps none.
     """
-    said = [
-        json.dumps(message.get("content"), sort_keys=True, ensure_ascii=False)
-        for message in sent
-        if message.get("role") == "user"
-    ]
-    if profile.user_id is None or profile.kb_mode == "general" or not said:
+    if profile.user_id is None or profile.kb_mode == "general":
         return None
-    return _InternalConversation(
-        profile.user_id, _digest(profile.user_id, said[0]), _digest(*said[:-1]), _digest(*said)
-    )
+    try:
+        conversation_id = str(uuid.UUID(http_request.headers.get(CONVERSATION_ID_HEADER) or ""))
+    except ValueError:
+        if case_file.is_follow_up(request.messages):
+            logger.warning("internal_chat_conversation_id_missing", org_id=auth.org_id)
+        return None
+    return _InternalConversation(profile.user_id, conversation_id)
 
 
 async def _previous_internal_turn(
@@ -868,12 +864,19 @@ async def _previous_internal_turn(
     profile: ChatProfile,
     conversation: _InternalConversation | None,
 ) -> case_file.StoredTurn | None:
-    # The internal chat's _previous_turn: a read that fails costs this turn its memory and nothing else.
+    """The internal chat's _previous_turn: the case the conversation's latest turn stored.
+
+    A regenerated answer comes with the history LibreChat sent the first time
+    and the same id, so it reads the case its own first answer stored and
+    then overwrites it; with the id as the key that is the conversation's
+    latest case, which is what the turn should build on. A read that fails
+    costs this turn its memory and nothing else.
+    """
     if conversation is None or not case_file.is_follow_up(request.messages):
         return None
     try:
         stored = await last_internal_case(
-            org_id=auth.org_id, conversation_key=conversation.key, turn_digest=conversation.previous
+            org_id=auth.org_id, user_id=conversation.user_id, conversation_id=conversation.id
         )
         if stored is None:
             return None
@@ -913,16 +916,13 @@ async def _searchable_kb_slugs(db: AsyncSession, org_id: int, profile: ChatProfi
 
 
 def _keep_internal_case(org_id: int, conversation: _InternalConversation, inputs: InternalInputs) -> None:
-    """Store the turn's case and kept passages for the next turn, beside the reply; nothing when it has neither."""
+    """Store the turn's case and kept passages for the next turn, beside the reply; a turn with neither clears them."""
     case = inputs.case.model_dump() if inputs.case is not None else None
-    if case is None and not inputs.kept_passages:
-        return
     task = asyncio.create_task(
         keep_internal_case(
             org_id=org_id,
             user_id=conversation.user_id,
-            conversation_key=conversation.key,
-            turn_digest=conversation.current,
+            conversation_id=conversation.id,
             case=case,
             kept_passages=inputs.kept_passages,
         )
@@ -1072,11 +1072,11 @@ async def _widget_or_partner_turn(
 
 async def _internal_chat_turn(
     request: ChatCompletionsRequest,
+    http_request: Request,
     auth: PartnerAuthContext,
     db: AsyncSession,
     profile: ChatProfile,
     *,
-    sent: list[dict],
     pasted_correspondence: bool,
     turn_started: float,
 ) -> Any:
@@ -1088,19 +1088,7 @@ async def _internal_chat_turn(
     if profile.user_id is not None:
         instructions, telemetry_level = await internal_turn_settings(db, auth.org_id, profile.user_id)
         templates_block = build_template_instructions_block(instructions)
-    conversation = _internal_conversation(sent, profile)
-    if conversation is not None:
-        # Digest prefixes only: whether two turns LibreChat sends land in the
-        # same conversation can only be read here, never from the text.
-        logger.info(
-            "internal_chat_conversation",
-            org_id=auth.org_id,
-            key=conversation.key[:8],
-            previous=conversation.previous[:8],
-            current=conversation.current[:8],
-            turns=len(sent),
-            follow_up=case_file.is_follow_up(request.messages),
-        )
+    conversation = _internal_conversation(http_request, request, auth, profile)
     previous = await _previous_internal_turn(request, auth, db, profile, conversation)
     inputs = InternalInputs(
         request=request,
@@ -1147,8 +1135,6 @@ async def chat_completions(
     ``internal_turn``, whose Open and general replies stream as they are written.
     """
     turn_started = time.perf_counter()
-    # The messages as the client sent them; the attachment step below may replace the list.
-    sent = request.messages
     require_permission(auth, "chat")
     # canonical_chat_completions always passes the profile; direct callers get
     # the one their key resolves to. From here on the profile, not the key, is
@@ -1186,10 +1172,10 @@ async def chat_completions(
     else:
         response = await _internal_chat_turn(
             request,
+            http_request,
             auth,
             db,
             profile,
-            sent=sent,
             pasted_correspondence=pasted_correspondence,
             turn_started=turn_started,
         )
