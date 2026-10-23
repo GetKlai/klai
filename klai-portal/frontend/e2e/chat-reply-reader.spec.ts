@@ -40,3 +40,22 @@ test('a general answer in the reply is still caught', async ({ page }) => {
 
   expect(hasTcpExplanation(await latestReplyText(page.mainFrame()))).toBe(true)
 })
+
+// From 2026-10-23 13:51 UTC J02 timed out on every Open turn although the
+// footer was in the reply (run 39992711774): Klai's LibreChat entrypoint folds
+// "Agent activiteit" into a closed <details> (klai-kb-disclosure), and
+// innerText leaves out the body of a closed <details>.
+test('the mode line in a folded Agent activiteit footer is read', async ({ page }) => {
+  await page.setContent(
+    chatPage(
+      'TCP/IP is de verzameling protocollen waarmee computers op internet communiceren.</p>' +
+        '<details class="klai-kb-disclosure klai-kb-disclosure--activity"><summary>' +
+        '<span class="klai-kb-disclosure-title">Agent activiteit</span>' +
+        '<span class="klai-kb-disclosure-count">3 stappen</span></summary>' +
+        '<div class="klai-kb-disclosure-body"><ul><li>Modus: Open, kennisbank met fallback.</li>' +
+        '<li>Antwoord: algemene kennis, niet uit je kennisbank.</li></ul></div></details><p>',
+    ),
+  )
+
+  expect(await latestReplyText(page.mainFrame())).toContain('Modus: Open, kennisbank met fallback.')
+})

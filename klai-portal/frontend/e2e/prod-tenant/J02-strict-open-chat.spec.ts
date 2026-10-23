@@ -59,21 +59,15 @@ async function askChat(page: Page, prompt: string): Promise<string> {
   const repliesBefore = await frame.locator('.agent-turn').count()
   await frame.locator('#prompt-textarea').fill(prompt)
   await frame.locator('#send-button').click()
-  await frame.waitForFunction(
-    (before) => {
-      const replies = document.querySelectorAll<HTMLElement>('.agent-turn')
-      if (replies.length <= before) return false
-      const text = replies[replies.length - 1].innerText
-      return (
-        text.includes('Modus: Open, kennisbank met fallback.') ||
-        text.includes('Modus: Strict, alleen kennisbank.') ||
-        text.includes('niet betrouwbaar beantwoorden') ||
-        text.includes('cannot answer this reliably')
-      )
-    },
-    repliesBefore,
-    { timeout: 90_000 },
-  )
+  // Polled through latestReplyText so the wait reads the reply the way the
+  // assertions do.
+  await expect
+    .poll(async () => ((await frame.locator('.agent-turn').count()) > repliesBefore ? latestReplyText(frame) : ''), {
+      timeout: 90_000,
+    })
+    .toMatch(
+      /Modus: Open, kennisbank met fallback\.|Modus: Strict, alleen kennisbank\.|niet betrouwbaar beantwoorden|cannot answer this reliably/,
+    )
   await page.waitForTimeout(5_000)
   return latestReplyText(frame)
 }
