@@ -315,7 +315,7 @@ async def upsert_chunks(
     base_payload.update(_extra_payload_for_qdrant(extra_payload))
 
     points = []
-    for i, (chunk, vector, sparse) in enumerate(zip(chunks, vectors, sparse_vectors, strict=False)):
+    for i, (chunk, vector, sparse) in enumerate(zip(chunks, vectors, sparse_vectors, strict=True)):
         payload = {**base_payload, "text": chunk, "chunk_index": i}
         if heading_paths is not None and i < len(heading_paths) and heading_paths[i]:
             payload["heading_path"] = heading_paths[i]

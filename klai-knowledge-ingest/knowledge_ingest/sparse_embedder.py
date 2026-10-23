@@ -39,6 +39,12 @@ async def embed_sparse_batch(texts: list[str]) -> list[SparseVector | None]:
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                if len(data["results"]) != len(sub_batch):
+                    # Shifted vectors would land on the wrong chunks.
+                    raise ValueError(
+                        f"sidecar returned {len(data['results'])} results for "
+                        f"{len(sub_batch)} texts"
+                    )
                 for item in data["results"]:
                     results.append(
                         SparseVector(

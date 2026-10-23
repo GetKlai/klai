@@ -55,6 +55,17 @@ def _make_mock_conn() -> MagicMock:
     return conn
 
 
+@pytest.fixture(autouse=True)
+def _document_fits_in_one_batch():
+    """Routing asks Qdrant whether the artifact has more points than one batch."""
+    with patch(
+        "knowledge_ingest.enrichment_tasks.qdrant_store.has_chunks_from",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        yield
+
+
 class _AsyncContext:
     def __init__(self, value):
         self.value = value

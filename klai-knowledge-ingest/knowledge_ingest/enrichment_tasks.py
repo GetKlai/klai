@@ -258,10 +258,12 @@ async def _load_and_enrich(
         )
         await _set_direct_upload_index_status(artifact, "synced")
         return
+    # Route on the points that are indexed, not on a re-chunk of the stored
+    # text: a pre-chunked connector document would otherwise re-chunk to fewer
+    # chunks and have its own chunking replaced by the whole-document path.
     batch_size = enrichment_batch_size()
-    if (
-        batch_offset
-        or max(len(chunks_text), int(extra.get("docling_chunk_count") or 0)) > batch_size
+    if batch_offset or await qdrant_store.has_chunks_from(
+        artifact["org_id"], artifact["kb_slug"], artifact["path"], artifact_id, batch_size
     ):
         await _enrich_next_batch(
             artifact, extra, document_text, title, resource_key, batch_offset, batch_size
@@ -436,7 +438,10 @@ async def _defer_after_llm_capacity(
             window_hours=DEFERRAL_WINDOW_SECONDS // 3600,
             error=str(exc),
         )
-        await _set_direct_upload_index_status(exc.artifact, "failed")
+        # A later batch of a large document is not the document: it stays as
+        # searchable as batch 1 left it.
+        if not task_kwargs.get("batch_offset"):
+            await _set_direct_upload_index_status(exc.artifact, "failed")
         return
     from procrastinate.exceptions import AlreadyEnqueued
 
@@ -1104,16 +1109,18 @@ async def _enrich_document(
         total_ms = int((time.monotonic() - t_total) * 1000)
         logger.exception(
             "enrichment_failed_will_retry",
+            chunk_offset=chunk_offset,
             kb_slug=kb_slug,
             path=path,
             org_id=org_id,
             artifact_id=artifact_id,
             total_ms=total_ms,
         )
-        await _set_direct_upload_index_status(
-            {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-            "failed",
-        )
+        if not chunk_offset:
+            await _set_direct_upload_index_status(
+                {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
+                "failed",
+            )
         raise  # Procrastinate retry handles this
 
     except Exception:
@@ -1128,10 +1135,12 @@ async def _enrich_document(
             path=path,
             org_id=org_id,
             artifact_id=artifact_id,
+            chunk_offset=chunk_offset,
             total_ms=total_ms,
         )
-        await _set_direct_upload_index_status(
-            {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-            "failed",
-        )
+        if not chunk_offset:
+            await _set_direct_upload_index_status(
+                {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
+                "failed",
+            )
     return False

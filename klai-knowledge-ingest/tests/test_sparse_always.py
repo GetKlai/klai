@@ -141,7 +141,7 @@ async def test_enriched_batch_leaves_points_of_another_artifact_version_alone(me
     ]
 
 
-def _artifact() -> dict:
+def _artifact(extra: dict | None = None) -> dict:
     return {
         "artifact_id": ART,
         "org_id": ORG,
@@ -151,15 +151,13 @@ def _artifact() -> dict:
         "content_type": "document",
         "synthesis_depth": 0,
         "belief_time_end": 253402300800,
-        "extra": {
-            "document_text": "Preview only",
-            "document_text_truncated": True,
-            "docling_chunk_count": 5,
-        },
+        "extra": extra or {"document_text": "Preview only", "document_text_truncated": True},
     }
 
 
-async def _run_batch(offset: int, size: int) -> tuple[AsyncMock, MagicMock]:
+async def _run_batch(
+    offset: int, size: int, extra: dict | None = None
+) -> tuple[AsyncMock, MagicMock]:
     from knowledge_ingest import enrichment_tasks
 
     enrich = AsyncMock(return_value=True)
@@ -170,7 +168,7 @@ async def _run_batch(offset: int, size: int) -> tuple[AsyncMock, MagicMock]:
         patch.object(
             enrichment_tasks.pg_store,
             "read_artifact_for_enrichment",
-            AsyncMock(return_value=_artifact()),
+            AsyncMock(return_value=_artifact(extra)),
         ),
         patch.object(enrichment_tasks, "enrichment_batch_size", return_value=size),
         patch.object(enrichment_tasks, "_enrich_document", enrich),
@@ -256,3 +254,69 @@ async def test_backfill_dry_run_counts_and_real_run_writes_only_missing(mem_clie
     kept = {p.payload["text"]: p for p in await _points(mem_client)}
     assert kept["raw"].vector["vector_chunk"] is not None
     assert kept["raw"].payload["context_prefix"] == "ctx"
+
+
+async def test_prechunked_document_routes_on_its_points_not_on_a_rechunk_of_its_text(mem_client):
+    """250 connector chunks whose stored text re-chunks to one must not be replaced."""
+    await _write_raw([f"connector chunk {i}" for i in range(250)])
+
+    enrich, bulk = await _run_batch(offset=0, size=200, extra={"document_text": "One short text."})
+
+    kwargs = enrich.await_args.kwargs
+    assert kwargs["chunk_offset"] == 0
+    assert kwargs["chunks"] == [f"connector chunk {i}" for i in range(200)]
+    bulk.configure.return_value.defer_async.assert_awaited_once_with(
+        artifact_id=ART, batch_offset=200
+    )
+
+
+async def test_sparse_result_count_mismatch_is_a_loud_error_not_a_silent_drop(mem_client):
+    short = AsyncMock(return_value=_sparse_for(["only one"]))
+    with patch.object(qs.sparse_embedder, "embed_sparse_batch", short):
+        with pytest.raises(ValueError):
+            await qs.upsert_chunks(
+                org_id=ORG,
+                kb_slug=KB,
+                path=PATH,
+                chunks=["a", "b"],
+                vectors=[[1.0, 0.0, 0.0, 0.0]] * 2,
+                artifact_id=ART,
+            )
+
+
+async def _fail_enrichment(chunk_offset: int | None) -> AsyncMock:
+    from knowledge_ingest import enrichment_tasks
+
+    status = AsyncMock()
+    with (
+        patch.object(enrichment_tasks, "_set_direct_upload_index_status", status),
+        patch.object(
+            enrichment_tasks.enrichment, "enrich_chunks", AsyncMock(side_effect=RuntimeError("x"))
+        ),
+    ):
+        written = await enrichment_tasks._enrich_document(
+            org_id=ORG,
+            kb_slug=KB,
+            path=PATH,
+            document_text="body",
+            chunks=["body"],
+            title="T",
+            artifact_id=ART,
+            user_id=None,
+            extra_payload={"document_summary": "s", "document_language": "en"},
+            synthesis_depth=0,
+            chunk_offset=chunk_offset,
+        )
+    assert written is False
+    return status
+
+
+async def test_failed_later_batch_leaves_the_document_status_alone():
+    status = await _fail_enrichment(chunk_offset=200)
+    status.assert_not_awaited()
+
+
+async def test_failed_first_batch_or_whole_document_still_sets_failed():
+    for offset in (0, None):
+        status = await _fail_enrichment(chunk_offset=offset)
+        assert status.await_args.args[1] == "failed"
