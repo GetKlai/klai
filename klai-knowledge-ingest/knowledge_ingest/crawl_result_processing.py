@@ -12,6 +12,7 @@ from knowledge_ingest.crawl4ai_types import CrawlResult
 THIN_CONTENT_WORD_COUNT = 100
 _MUSTACHE_TOKEN_RE = re.compile(r"\{\{[^{}]*\}\}")
 _MD_LINK_URL_RE = re.compile(r"\]\([^)]*\)")
+_MD_LINK_RE = re.compile(r"\[[^\]]*\]\([^)]*\)")
 
 
 class _HTMLTextCounter(HTMLParser):
@@ -87,6 +88,37 @@ def strip_unrendered_template_lines(markdown: str) -> str:
     return "\n".join(kept)
 
 
+def restore_pruned_link_labels(fit: str, raw: str) -> str:
+    """Put back link labels that ``PruningContentFilter`` removed from ``fit``.
+
+    The filter scores a wrapper element (``<span><a>..</a></span>``,
+    ``<strong><a>..</a></strong>``) before its children and removes it when it is
+    mostly link text, so fit_markdown reads "Ga naar ." where raw_markdown has
+    "Ga naar [Instellingen](url)". Turning on ``preserve_tags`` for the wrappers
+    instead keeps navigation chrome as well (+63% text on navigation pages,
+    SPEC-RAG-INTAKE-QUALITY-001 section 11), so this restores only the proven case:
+    a fit line whose words, with every link removed, equal those of exactly one raw
+    line that has a link and prose around it. That line is replaced by the raw
+    line; no other raw text comes back.
+    """
+    if not fit or not raw or fit == raw:
+        return fit
+    by_key: dict[tuple[str, ...], set[str]] = {}
+    for line in raw.splitlines():
+        key = _unlinked_words(line)
+        if key and _MD_LINK_RE.search(line):
+            by_key.setdefault(key, set()).add(line)
+    out: list[str] = []
+    for line in fit.splitlines():
+        candidates = by_key.get(_unlinked_words(line), ())
+        out.append(next(iter(candidates)) if len(candidates) == 1 else line)
+    return "\n".join(out) + ("\n" if fit.endswith("\n") else "")
+
+
+def _unlinked_words(line: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"\w+", _MD_LINK_RE.sub(" ", line)))
+
+
 def extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
     """Parse a single page result from the Crawl4AI REST response."""
     markdown = page.get("markdown", "")
@@ -105,6 +137,7 @@ def extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
 
     fit = strip_unrendered_template_lines(fit)
     raw = strip_unrendered_template_lines(raw)
+    fit = restore_pruned_link_labels(fit, raw)
     text = fit or raw
     return CrawlResult(
         url=page.get("url", url),

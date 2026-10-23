@@ -14,7 +14,12 @@ for callers that don't yet need parents.
 import re
 from dataclasses import dataclass, field
 
+import structlog
+
 from knowledge_ingest.document_normalizer import split_frontmatter
+from knowledge_ingest.utils.link_density import link_density
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -204,6 +209,96 @@ def _approx_token_count(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+# A section whose link labels are at least this share of its visible text is a
+# list of links (related articles, menus), not something a question can be
+# answered from. link_density() on whole pages puts articles at 5-10% and
+# navigation-only pages at 80%+; on sections, a synthetic bare list of three
+# links measures 0.86, the same list under a one-line "Zie ook:" 0.74, a list
+# whose items each carry a short description 0.30, and a sentence with one link
+# 0.17. 0.5 sits in the gap between the described list (kept) and the bare
+# one (dropped). A dropped section is dropped from chunking only: its links reach
+# the link graph from the crawl's own link list (page_links), not from the
+# chunks, so links_to and the anchor texts are unaffected.
+LINK_BLOCK_DENSITY = 0.5
+
+# A section with fewer body tokens (heading excluded, _approx_token_count) is a
+# stub: one or two sentences, which embeds as a vague point of its own. On
+# production 20% of the 86k parent chunks hold fewer than 60 tokens, heading
+# included. Docling's HybridChunker merges such peers the same way.
+MIN_SECTION_TOKENS = 50
+
+_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+
+Section = tuple[str, str]  # (heading_path, body)
+
+
+def _parent_path(path: str) -> str:
+    return path.rpartition(" > ")[0]
+
+
+def _drop_link_blocks(sections: list[Section]) -> tuple[list[Section], int]:
+    """Drop link-list sections, unless nothing else would be left of the document.
+
+    An index page that is only links keeps them: it is all there is to retrieve,
+    and an empty chunk list would turn the artifact into "empty document".
+    """
+    kept = [s for s in sections if link_density(_IMAGE_RE.sub("", s[1])) < LINK_BLOCK_DENSITY]
+    if not kept:
+        return sections, 0
+    return kept, len(sections) - len(kept)
+
+
+def _merge_stubs(sections: list[Section]) -> tuple[list[Section], int]:
+    """Merge each stub into the following section of the same parent heading.
+
+    The following section is eligible when it is a sibling of the stub or sits
+    under it. A stub that is the last section of the document goes into the
+    preceding eligible section. A stub with no eligible neighbour, including the
+    only section of a document, stays as it is. Several stubs in a row end up in
+    the first section that is long enough.
+    """
+
+    def eligible(stub_path: str, other_path: str) -> bool:
+        return _parent_path(other_path) in (_parent_path(stub_path), stub_path)
+
+    def title(path: str) -> str:
+        return path.rpartition(" > ")[2]
+
+    def join(*parts: str) -> str:
+        return "\n\n".join(p for p in parts if p)
+
+    out: list[Section] = []
+    merged = 0
+    # A waiting stub: its own path and body, and the text of earlier stubs that
+    # were merged into it and must stay in front of its own body.
+    carry: tuple[str, str, str] | None = None
+    for path, body in sections:
+        lead = ""
+        if carry is not None:
+            stub_path, stub_lead, stub_body = carry
+            if eligible(stub_path, path):
+                # Under the stub's own heading the stub's title is already in the path.
+                title_line = "" if path.startswith(f"{stub_path} > ") else title(stub_path)
+                lead = join(stub_lead, title_line, stub_body)
+                merged += 1
+            else:
+                out.append((stub_path, join(stub_lead, stub_body)))
+            carry = None
+        if _approx_token_count(join(lead, body)) < MIN_SECTION_TOKENS:
+            carry = (path, lead, body)
+        else:
+            out.append((path, join(lead, body)))
+    if carry is not None:
+        stub_path, stub_lead, stub_body = carry
+        if out and eligible(stub_path, out[-1][0]):
+            prev_path, prev_body = out[-1]
+            out[-1] = (prev_path, join(prev_body, stub_lead, title(stub_path), stub_body))
+            merged += 1
+        else:
+            out.append((stub_path, join(stub_lead, stub_body)))
+    return out, merged
+
+
 def chunk_markdown_with_parents(
     content: str,
     child_size: int = CHILD_CHUNK_SIZE_DEFAULT,
@@ -226,6 +321,10 @@ def chunk_markdown_with_parents(
 
     if not sections:
         sections = [("", body)]
+
+    section_count = len(sections)
+    sections, link_blocks_dropped = _drop_link_blocks(sections)
+    sections, stubs_merged = _merge_stubs(sections)
 
     children: list[Chunk] = []
     parents: list[ParentChunk] = []
@@ -268,4 +367,14 @@ def chunk_markdown_with_parents(
                 parent.child_indices.append(child_idx)
                 char_pos += len(child_text)
 
+    # Counts only, no text: the share of noise per knowledge base is the sum of
+    # these over the documents of one org.
+    logger.info(
+        "chunker_noise_removed",
+        sections=section_count,
+        link_blocks_dropped=link_blocks_dropped,
+        stubs_merged=stubs_merged,
+        children=len(children),
+        parents=len(parents),
+    )
     return children, parents
