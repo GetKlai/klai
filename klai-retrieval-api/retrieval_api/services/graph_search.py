@@ -16,6 +16,7 @@ import math
 import re
 import time
 from collections.abc import Callable
+from typing import Literal
 
 import structlog
 from graphiti_core import Graphiti
@@ -56,6 +57,11 @@ _CIRCUIT_COOLDOWN_S = 60.0
 class _GraphCircuit:
     """Skip the graph after repeated failures; let one probe through per cooldown.
 
+    ``allow`` admits a call as an ordinary ``"call"`` or as the cooldown's
+    ``"probe"``, and the caller hands that back with its outcome. Only the
+    probe can close an open circuit: a call admitted before the circuit opened
+    may still finish afterwards, and its success says nothing about now.
+
     Single event loop, so no lock: every method runs without an await in it.
     """
 
@@ -65,24 +71,26 @@ class _GraphCircuit:
         self._opened_at: float | None = None
         self._probing = False
 
-    def allow(self) -> bool:
+    def allow(self) -> Literal["call", "probe"] | None:
         if self._opened_at is None:
-            return True
+            return "call"
         if self._probing or self._clock() - self._opened_at < _CIRCUIT_COOLDOWN_S:
-            return False
+            return None
         self._probing = True
-        return True
+        return "probe"
 
-    def record_success(self) -> None:
-        self._failures.clear()
-        self._probing = False
-        if self._opened_at is not None:
+    def record_success(self, admitted: Literal["call", "probe"]) -> None:
+        if admitted == "probe":
+            self._probing = False
             self._opened_at = None
+            self._failures.clear()
             logger.info("graph_circuit_closed")
+        elif self._opened_at is None:
+            self._failures.clear()
 
-    def record_failure(self) -> None:
+    def record_failure(self, admitted: Literal["call", "probe"]) -> None:
         now = self._clock()
-        if self._probing:
+        if admitted == "probe":
             self._probing = False
             self._opened_at = now
             logger.warning(
@@ -104,9 +112,10 @@ class _GraphCircuit:
                 cooldown_s=_CIRCUIT_COOLDOWN_S,
             )
 
-    def release_probe(self) -> None:
+    def release(self, admitted: Literal["call", "probe"]) -> None:
         """A cancelled probe proves nothing; the next call after it may probe."""
-        self._probing = False
+        if admitted == "probe":
+            self._probing = False
 
 
 _circuit = _GraphCircuit()
@@ -145,6 +154,32 @@ def _get_graphiti() -> Graphiti:
     return _graphiti_client
 
 
+_graphiti_build: asyncio.Task[Graphiti] | None = None
+
+
+def _build_graphiti() -> asyncio.Task[Graphiti]:
+    """The one in-flight client construction, shared by concurrent cold starts.
+
+    Building the client sends a synchronous INFO to FalkorDB (falkordb's
+    cluster probe, no socket timeout). On the event loop that froze every
+    request for as long as a reloading FalkorDB took to answer, so it runs in
+    a thread; callers time out on a shield, never cancelling the build, and a
+    failed build is retried by the next caller.
+    """
+    global _graphiti_build
+    if _graphiti_build is None:
+        _graphiti_build = asyncio.create_task(asyncio.to_thread(_get_graphiti))
+        _graphiti_build.add_done_callback(_forget_graphiti_build)
+    return _graphiti_build
+
+
+def _forget_graphiti_build(task: asyncio.Task[Graphiti]) -> None:
+    global _graphiti_build
+    _graphiti_build = None
+    if not task.cancelled():
+        task.exception()  # retrieved here: every waiter may already have timed out
+
+
 async def close() -> None:
     """Close and clear the lazy Graphiti client during service shutdown."""
     global _graphiti_client
@@ -164,22 +199,20 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
         return []
     if not _has_searchable_text(query):
         return []
-    if not _circuit.allow():
+    admitted = _circuit.allow()
+    if admitted is None:
         return []
 
     try:
-        # Building the client sends a synchronous INFO to FalkorDB (falkordb's
-        # cluster probe, no socket timeout). On the event loop that froze every
-        # request for as long as a reloading FalkorDB took to answer.
         graphiti = _graphiti_client or await asyncio.wait_for(
-            asyncio.to_thread(_get_graphiti), timeout=settings.graph_search_timeout
+            asyncio.shield(_build_graphiti()), timeout=settings.graph_search_timeout
         )
         results = await _search_with_provenance(graphiti, query, org_id, top_k)
     except asyncio.CancelledError:
-        _circuit.release_probe()
+        _circuit.release(admitted)
         raise
     except TimeoutError:
-        _circuit.record_failure()
+        _circuit.record_failure(admitted)
         logger.warning(
             "graph_search_timeout",
             org_id=org_id,
@@ -189,15 +222,15 @@ async def search(query: str, org_id: str, top_k: int = 20) -> list[dict]:
     except Exception as exc:
         if _is_empty_fulltext_query_error(exc):
             # FalkorDB answered, so this is a healthy graph rejecting the query.
-            _circuit.record_success()
+            _circuit.record_success(admitted)
             logger.info("graph_search_skipped_empty_query", org_id=org_id)
             return []
-        _circuit.record_failure()
+        _circuit.record_failure(admitted)
         # SPEC-SEC-HYGIENE-001 REQ-43.3: exc_info=True preserves the
         # traceback that the previous `error=str(exc)` dropped (TRY401).
         logger.warning("graph_search_failed", org_id=org_id, exc_info=True)
         return []
-    _circuit.record_success()
+    _circuit.record_success(admitted)
     return results
 
 

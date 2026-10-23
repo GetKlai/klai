@@ -40,7 +40,11 @@ import knowledge_ingest.qdrant_store as qdrant_store
 from knowledge_ingest import _patch_graphiti
 from knowledge_ingest.build_estimate import maybe_warn_graph_scale, should_check_graph_scale
 from knowledge_ingest.config import settings
-from knowledge_ingest.falkordb_probe import FalkorDBDiedDuringEpisode, falkordb_run_id
+from knowledge_ingest.falkordb_probe import (
+    FalkorDBDiedDuringEpisode,
+    falkordb_run_id,
+    falkordb_run_id_when_back,
+)
 from knowledge_ingest.llm_throttle import (
     NoMediumFallbackTransport,
     TokenBucketLimiter,
@@ -1085,7 +1089,10 @@ async def ingest_episode(
                 break
 
             except Exception as exc:
-                if run_id is not None and await falkordb_run_id() != run_id:
+                # A death needs proof: FalkorDB answering again under a new
+                # run_id. Slow or still silent proves nothing; retry as usual.
+                run_id_after = await falkordb_run_id_when_back() if run_id is not None else None
+                if run_id_after is not None and run_id_after != run_id:
                     # Retrying would replay the write that may have crashed it.
                     logger.warning(
                         "graphiti_falkordb_died_during_episode",

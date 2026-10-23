@@ -50,7 +50,7 @@ from knowledge_ingest.enrichment_policy import (
     resumable_episode_ids,
 )
 from knowledge_ingest.episode_text import split_episode_text
-from knowledge_ingest.falkordb_probe import FalkorDBDiedDuringEpisode
+from knowledge_ingest.falkordb_probe import FalkorDBDiedDuringEpisode, graph_writer_build
 from knowledge_ingest.llm_capacity import (
     DEFERRAL_WINDOW_SECONDS,
     LLMCapacityUnavailable,
@@ -683,15 +683,33 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     org_id=org_id,
                 )
                 return
+            # Deaths and quarantine count only for the build that caused them;
+            # a new version of the document is a new artifact and starts clean.
+            build = graph_writer_build()
+            same_build = artifact["extra"].get("graphiti_quarantine_build") == build
             if artifact["extra"].get("graphiti_quarantined_at"):
-                # graph_refresh and re-syncs enqueue it again; a new version of
-                # the document is a new artifact and starts clean.
+                if same_build:
+                    # graph_refresh and re-syncs enqueue it again.
+                    logger.info(
+                        "graphiti_aborted_quarantined",
+                        artifact_id=artifact_id,
+                        org_id=org_id,
+                    )
+                    return
+                await pg_store.update_artifact_extra(
+                    conn,
+                    artifact_id,
+                    {"graphiti_quarantined_at": None, "graphiti_falkordb_deaths": 0},
+                )
                 logger.info(
-                    "graphiti_aborted_quarantined",
+                    "graphiti_quarantine_released_new_build",
                     artifact_id=artifact_id,
                     org_id=org_id,
+                    quarantined_build=artifact["extra"].get("graphiti_quarantine_build"),
+                    build=build,
                 )
-                return
+            prior_deaths = int(artifact["extra"].get("graphiti_falkordb_deaths") or 0)
+            prior_deaths = prior_deaths if same_build else 0
             if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=False):
                 return
             from knowledge_ingest import graph as graph_module
@@ -796,9 +814,12 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         previous_episode_id=episode_ids[-1] if episode_ids else None,
                     )
                 except FalkorDBDiedDuringEpisode as exc:
-                    deaths = int(artifact["extra"].get("graphiti_falkordb_deaths") or 0) + 1
+                    deaths = prior_deaths + 1
                     quarantine = deaths >= _FALKORDB_DEATHS_BEFORE_QUARANTINE
-                    extra_patch: dict[str, Any] = {"graphiti_falkordb_deaths": deaths}
+                    extra_patch: dict[str, Any] = {
+                        "graphiti_falkordb_deaths": deaths,
+                        "graphiti_quarantine_build": build,
+                    }
                     if quarantine:
                         extra_patch["graphiti_quarantined_at"] = int(time.time())
                     await pg_store.update_artifact_extra(conn, artifact_id, extra_patch)

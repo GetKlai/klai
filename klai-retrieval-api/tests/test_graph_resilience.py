@@ -259,6 +259,59 @@ async def test_after_cooldown_one_probe_runs_and_its_success_closes_the_circuit(
     assert _events(caplog).count("graph_circuit_closed") == 1
 
 
+async def test_a_success_that_started_before_the_circuit_opened_does_not_close_it(
+    clock, monkeypatch, caplog
+):
+    monkeypatch.setattr(graph_search.settings, "graph_search_timeout", 5.0)
+    release = asyncio.Event()
+
+    async def _slow_then_fail(*_a, **_kw):
+        if graphiti.search.await_count == 1:
+            await release.wait()
+            return []
+        raise RuntimeError("falkordb: connection refused")
+
+    graphiti = MagicMock()
+    graphiti.search = AsyncMock(side_effect=_slow_then_fail)
+    with (
+        patch.object(graph_search, "_get_graphiti", return_value=graphiti),
+        caplog.at_level("INFO"),
+    ):
+        early = asyncio.create_task(graph_search.search("refund policy", "org-1"))
+        await asyncio.sleep(0.05)
+        for _ in range(graph_search._CIRCUIT_FAILURES):
+            assert await graph_search.search("refund policy", "org-1") == []
+        release.set()
+        assert await early == []
+        calls = graphiti.search.await_count
+        assert await graph_search.search("refund policy", "org-1") == []
+
+    assert graphiti.search.await_count == calls, "the circuit closed without a probe"
+    assert "graph_circuit_closed" not in _events(caplog)
+
+
+async def test_concurrent_cold_starts_build_one_graph_client(monkeypatch):
+    monkeypatch.setattr(graph_search, "_graphiti_client", None)
+    monkeypatch.setattr(graph_search.settings, "graphiti_enabled", True)
+    monkeypatch.setattr(graph_search.settings, "graph_search_timeout", 5.0)
+    graphiti = MagicMock()
+    graphiti.search = AsyncMock(return_value=[])
+    built: list[int] = []
+
+    def _build():
+        built.append(1)
+        time.sleep(0.2)
+        return graphiti
+
+    with patch.object(graph_search, "_get_graphiti", side_effect=_build):
+        results = await asyncio.gather(
+            *(graph_search.search("refund policy", "org-1") for _ in range(3))
+        )
+
+    assert results == [[], [], []]
+    assert len(built) == 1
+
+
 def test_open_circuit_retrieve_serves_qdrant_results_without_graph_calls(
     client, sample_retrieve_request, clock
 ):

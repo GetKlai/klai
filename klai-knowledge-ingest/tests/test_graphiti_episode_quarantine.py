@@ -83,15 +83,48 @@ async def test_falkordb_restart_during_add_episode_stops_the_inner_retries():
     graphiti.add_episode = AsyncMock(
         side_effect=ConnectionError("Error while reading from falkordb:6379 : (104, reset)")
     )
-    run_ids = AsyncMock(side_effect=["run-before", "run-after-restart"])
 
     with (
-        patch("knowledge_ingest.graph.falkordb_run_id", run_ids),
+        patch("knowledge_ingest.graph.falkordb_run_id", AsyncMock(return_value="run-before")),
+        patch(
+            "knowledge_ingest.graph.falkordb_run_id_when_back",
+            AsyncMock(return_value="run-after-restart"),
+        ),
         pytest.raises(FalkorDBDiedDuringEpisode),
     ):
         await _ingest(graphiti)
 
     assert graphiti.add_episode.await_count == 1
+
+
+@pytest.mark.parametrize("answer_after_failure", ["run-before", None])
+async def test_a_slow_or_unreachable_falkordb_is_no_proof_of_a_death(answer_after_failure):
+    """Same run_id = it never restarted; still no answer after the wait = undecided."""
+    graphiti = AsyncMock()
+    graphiti.add_episode = AsyncMock(side_effect=TimeoutError("read timed out"))
+
+    with (
+        patch("knowledge_ingest.graph.falkordb_run_id", AsyncMock(return_value="run-before")),
+        patch(
+            "knowledge_ingest.graph.falkordb_run_id_when_back",
+            AsyncMock(return_value=answer_after_failure),
+        ),
+    ):
+        assert await _ingest(graphiti) is None
+
+    assert graphiti.add_episode.await_count == 3
+
+
+async def test_run_id_when_back_waits_for_an_answer_within_its_budget(monkeypatch):
+    from knowledge_ingest import falkordb_probe
+
+    monkeypatch.setattr(
+        falkordb_probe, "falkordb_run_id", AsyncMock(side_effect=[None, None, "run-new"])
+    )
+    assert await falkordb_probe.falkordb_run_id_when_back(budget_s=5, interval_s=0) == "run-new"
+
+    monkeypatch.setattr(falkordb_probe, "falkordb_run_id", AsyncMock(return_value=None))
+    assert await falkordb_probe.falkordb_run_id_when_back(budget_s=0.05, interval_s=0.01) is None
 
 
 async def test_falkordb_down_at_start_keeps_the_normal_retries():
@@ -201,6 +234,32 @@ async def test_job_that_kills_falkordb_twice_is_quarantined_and_not_requeued(app
     killer.reset_mock()
     await _run_job(task, artifact, killer, attempts=0)
     killer.assert_not_awaited()
+
+
+async def test_a_new_ingest_build_releases_the_quarantine_once(app, monkeypatch):
+    """A graphiti or FalkorDB-compat fix must get its chance at the document."""
+    task = app.tasks["ingest_graphiti_episode"]
+    artifact = _Artifact()
+    killer = AsyncMock(side_effect=FalkorDBDiedDuringEpisode("connection reset"))
+    monkeypatch.setattr(enrichment_tasks, "graph_writer_build", lambda: "build-old")
+    for attempt in range(2):
+        with pytest.raises(
+            (FalkorDBDiedDuringEpisode, enrichment_tasks.GraphitiEpisodeQuarantined)
+        ):
+            await _run_job(task, artifact, killer, attempts=attempt)
+    assert artifact.extra["graphiti_quarantined_at"]
+
+    monkeypatch.setattr(enrichment_tasks, "graph_writer_build", lambda: "build-new")
+    healthy = AsyncMock(return_value="episode-uuid")
+    with structlog.testing.capture_logs() as logs:
+        await _run_job(task, artifact, healthy, attempts=0)
+        await _run_job(task, artifact, healthy, attempts=0)
+
+    assert healthy.await_count == 2
+    events = [e["event"] for e in logs]
+    assert events.count("graphiti_quarantine_released_new_build") == 1
+    assert not artifact.extra["graphiti_quarantined_at"]
+    assert not artifact.extra["graphiti_falkordb_deaths"]
 
 
 async def test_job_that_finds_falkordb_down_at_start_is_retried_as_before(app):
