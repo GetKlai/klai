@@ -13,6 +13,7 @@ from knowledge_ingest.qdrant_store import upsert_chunks
 def mock_qdrant_client():
     client = AsyncMock()
     client.delete = AsyncMock()
+    client.scroll = AsyncMock(return_value=([], None))
     client.upsert = AsyncMock()
     return client
 

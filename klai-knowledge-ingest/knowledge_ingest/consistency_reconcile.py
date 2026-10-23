@@ -72,14 +72,19 @@ def _diff_inventory(
     qdrant_artifact_counts: Counter[ArtifactKey],
     recent_keys: set[ArtifactKey] | None = None,
 ) -> dict[str, Any]:
-    pg_keys = {
-        key
-        for artifact in pg_artifacts
-        if (key := _artifact_key_from_mapping(artifact)) is not None
-    }
+    # Only a synced artifact promises chunks in Qdrant. Any active artifact
+    # may own them, though: a direct upload whose enrichment failed keeps its
+    # raw chunks by design and stays searchable, so its points are not orphans.
+    active_keys: set[ArtifactKey] = set()
+    pg_keys: set[ArtifactKey] = set()
+    for artifact in pg_artifacts:
+        if (key := _artifact_key_from_mapping(artifact)) is not None:
+            active_keys.add(key)
+            if artifact["index_status"] == "synced":
+                pg_keys.add(key)
     qdrant_keys = set(qdrant_artifact_counts)
     missing_in_qdrant = pg_keys - qdrant_keys
-    orphaned_in_qdrant = qdrant_keys - pg_keys
+    orphaned_in_qdrant = qdrant_keys - active_keys
     if recent_keys:
         # Points belonging to just-created or just-superseded artifacts are
         # in-flight ingest activity, not drift.
@@ -127,14 +132,12 @@ async def _fetch_qdrant_artifact_counts() -> Counter[ArtifactKey]:
 
 
 async def reconcile_pg_qdrant() -> dict[str, Any]:
-    """Compare active synced PG artifacts with distinct Qdrant artifact payloads."""
+    """Compare active PG artifacts with distinct Qdrant artifact payloads."""
     try:
         async with asyncio.timeout(_RECONCILE_TIMEOUT_S):
             cutoff = int(time.time()) - _RECENT_WRITE_TOLERANCE_S
             async with cross_org_admin_connection() as conn:
-                pg_artifacts = await pg_store.list_active_synced_artifacts(
-                    conn, created_before=cutoff
-                )
+                pg_artifacts = await pg_store.list_active_artifacts(conn, created_before=cutoff)
                 recent_artifacts = await pg_store.list_recent_artifact_keys(conn, since=cutoff)
             qdrant_artifact_counts = await _fetch_qdrant_artifact_counts()
     except Exception as exc:

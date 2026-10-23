@@ -315,6 +315,7 @@ async def test_rebuild_kb_propagates_failures_per_artifact(_common_patches):
     async def _side_effect(**kwargs):
         if kwargs.get("artifact_id") == "art-bad":
             raise RuntimeError("LLM timeout")
+        return True
 
     _common_patches["mock_enrich"].side_effect = _side_effect
 
@@ -326,6 +327,24 @@ async def test_rebuild_kb_propagates_failures_per_artifact(_common_patches):
 
     # All three artifacts were attempted
     assert _common_patches["mock_enrich"].call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_rebuild_counts_an_artifact_whose_chunks_were_not_written_as_failed(
+    _common_patches,
+):
+    """_enrich_document swallows an infra failure and returns False. Counting
+    that as processed told the operator the document was rebuilt while Qdrant
+    never received its chunks."""
+    from knowledge_ingest.rebuild_tasks import _rebuild_kb_core
+
+    _common_patches["mock_list"].return_value = [_make_artifact("art-1", "doc.md", "Text")]
+    _common_patches["mock_enrich"].return_value = False
+
+    result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
+
+    assert result["artifacts_processed"] == 0
+    assert result["artifacts_failed"] == 1
 
 
 # ---------------------------------------------------------------------------

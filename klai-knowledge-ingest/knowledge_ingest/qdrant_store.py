@@ -29,6 +29,7 @@ from qdrant_client.models import (  # noqa: E402
     KeywordIndexType,
     MatchAny,
     MatchValue,
+    PointIdsList,
     PointStruct,
     Prefetch,
     Range,
@@ -215,22 +216,15 @@ def _extra_payload_for_qdrant(extra_payload: dict | None) -> dict:
 
 
 def _assert_vectors_writable(vectors: list, *, what: str) -> None:
-    """Refuse a write whose vectors Qdrant would reject, BEFORE deleting.
+    """Refuse a write whose vectors Qdrant would reject, before touching Qdrant.
 
-    Both upsert paths delete the document's existing points first and build
-    the replacements afterwards. So a vector Qdrant will not accept does not
-    fail the write -- it empties the document out of the index and then fails,
-    and the artifact still reads as ingested. Qdrant 1.19.1 rejects an empty
-    dense vector outright (it used to take it), which turns a bad embedding
-    from a broken point into a disappeared document.
+    Qdrant 1.19.1 rejects an empty dense vector outright; 1.19.0 accepted it
+    and stored a broken point. Raising here gives the caller a clear error on
+    either version and leaves the old points exactly where they were.
 
-    Raising here leaves the old points exactly where they were.
-
-    Only emptiness is checked. A wrong DIMENSION is rejected by Qdrant after
-    the delete too, so it carries the same risk -- but enforcing EMBED_DIM
-    here would mean every mocked test in this repo has to carry 1024 floats
-    instead of two, and that is a change of its own rather than part of a
-    version bump.
+    Only emptiness is checked. A wrong DIMENSION is rejected by Qdrant at the
+    upsert, which :func:`_replace_points` runs before any delete, so it cannot
+    empty a document either.
     """
     for index, vector in enumerate(vectors):
         if vector is not None and not vector:
@@ -238,6 +232,46 @@ def _assert_vectors_writable(vectors: list, *, what: str) -> None:
                 f"{what}: empty dense vector at index {index}; refusing to "
                 "delete the existing points for a write Qdrant would reject"
             )
+
+
+async def _replace_points(
+    client: AsyncQdrantClient, stale: list[FieldCondition], points: list[PointStruct]
+) -> None:
+    """Replace the points matching ``stale`` with ``points``, never leaving none.
+
+    Deleting first meant that an upsert which then failed (a timeout, a
+    rejected vector, a worker killed in between) left the document with no
+    points while its artifact still read as synced: production, 2026-09-21, a
+    support article the nightly reconcile reported missing for 30 days.
+
+    So the ids of the existing points are read first, the new points are
+    written, and only those ids are deleted. Nothing serialises two writers of
+    one document (an ingest of a new version next to an enrichment, or two
+    enrichment jobs under different queueing locks), and deleting "everything
+    but my points" let each writer delete the other's. Deleting a snapshot
+    taken before its own upsert, a writer can only remove the other's points
+    if the other upserted before that snapshot, and both cannot have, so one
+    writer's points always survive. The cost is that both may survive until
+    the next write of the document.
+    """
+    stale_ids: list = []
+    offset = None
+    while True:
+        found, offset = await client.scroll(
+            COLLECTION,
+            scroll_filter=Filter(must=stale),
+            limit=1000,
+            offset=offset,
+            with_payload=False,
+            with_vectors=False,
+        )
+        stale_ids += [p.id for p in found]
+        if offset is None:
+            break
+    if points:
+        await client.upsert(COLLECTION, points=points)
+    if stale_ids:
+        await client.delete(COLLECTION, points_selector=PointIdsList(points=stale_ids))
 
 
 async def upsert_chunks(
@@ -273,24 +307,7 @@ async def upsert_chunks(
 
     _assert_vectors_writable(vectors, what="upsert_chunks")
 
-    # Embedded before the delete so a slow sidecar does not widen the window in
-    # which the document has no points.
     sparse_vectors = await sparse_embedder.embed_sparse_batch(chunks)
-
-    # Delete existing points for this document
-    await client.delete(
-        COLLECTION,
-        points_selector=Filter(
-            must=[
-                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-                FieldCondition(key="path", match=MatchValue(value=path)),
-            ]
-        ),
-    )
-
-    if not chunks:
-        return
 
     base_payload = {
         "org_id": org_id,
@@ -327,7 +344,15 @@ async def upsert_chunks(
         if sparse is not None:
             named_vectors["vector_sparse"] = sparse
         points.append(PointStruct(id=str(uuid.uuid4()), vector=named_vectors, payload=payload))
-    await client.upsert(COLLECTION, points=points)
+    await _replace_points(
+        client,
+        [
+            FieldCondition(key="org_id", match=MatchValue(value=org_id)),
+            FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+            FieldCondition(key="path", match=MatchValue(value=path)),
+        ],
+        points,
+    )
 
 
 async def upsert_enriched_chunks(
@@ -348,8 +373,8 @@ async def upsert_enriched_chunks(
     chunk_offset: int | None = None,
 ) -> None:
     """
-    Upsert enriched chunks with named + sparse vectors.
-    Deletes existing points for this path first.
+    Upsert enriched chunks with named + sparse vectors, replacing the
+    existing points for this path (see :func:`_replace_points`).
 
     chunk_offset: set when ``enriched_chunks`` is one batch of a larger
     document. Only the points with ``chunk_index`` in
@@ -381,10 +406,6 @@ async def upsert_enriched_chunks(
                 range=Range(gte=chunk_offset, lt=chunk_offset + len(enriched_chunks)),
             ),
         ]
-    await client.delete(COLLECTION, points_selector=Filter(must=delete_must))
-
-    if not enriched_chunks:
-        return
 
     base_payload: dict = {
         "org_id": org_id,
@@ -446,7 +467,7 @@ async def upsert_enriched_chunks(
             )
         )
 
-    await client.upsert(COLLECTION, points=points)
+    await _replace_points(client, delete_must, points)
 
 
 def _artifact_chunks_filter(

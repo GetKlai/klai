@@ -113,6 +113,7 @@ async def test_upsert_chunks_strips_deny_list_from_qdrant_payload():
 
     mock_client = MagicMock()
     mock_client.delete = AsyncMock(return_value=None)
+    mock_client.scroll = AsyncMock(return_value=([], None))
     mock_client.upsert = AsyncMock(side_effect=_capture_upsert)
 
     with patch("knowledge_ingest.qdrant_store.get_client", return_value=mock_client):
@@ -182,6 +183,7 @@ async def test_upsert_enriched_chunks_strips_deny_list_from_qdrant_payload():
 
     mock_client = MagicMock()
     mock_client.delete = AsyncMock(return_value=None)
+    mock_client.scroll = AsyncMock(return_value=([], None))
     mock_client.upsert = AsyncMock(side_effect=_capture_upsert)
 
     with patch("knowledge_ingest.qdrant_store.get_client", return_value=mock_client):
