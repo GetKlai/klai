@@ -30,7 +30,7 @@ def test_an_echoed_question_cannot_carry_a_markdown_link_or_a_line_break() -> No
 
 
 @pytest.mark.parametrize(
-    ("language", "start"), [("nl", "Deze vragen"), ("de", "Diese Fragen"), ("pt", "I did not check")]
+    ("language", "start"), [("nl", "Deze vragen"), ("de", "Diese Fragen"), ("pt", "I did not look")]
 )
 def test_the_notice_speaks_the_language_of_the_turn(language: str, start: str) -> None:
     assert unchecked_questions_notice(["Hoe zeg ik op?"], language).startswith(start)

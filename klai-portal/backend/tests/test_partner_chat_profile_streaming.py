@@ -265,7 +265,7 @@ async def test_a_streamed_internal_reply_ends_with_the_questions_that_were_not_c
 
     streamed = "".join(f.get("content") or "" for f in _sse_content_frames(b"".join(chunks).decode()))
     notice = "Stel ze gerust in een nieuw bericht:\n- Wat is het supportnummer?\n- Hoe vraag ik een offerte aan?"
-    assert streamed.startswith("Klai ondersteunt SIP-trunking.\n\nDeze vragen heb ik niet nagekeken")
+    assert streamed.startswith("Klai ondersteunt SIP-trunking.\n\nDeze vragen heb ik niet apart opgezocht")
     # The Open turn's footer follows the notice.
     assert notice in streamed
     assert streamed.index("Agent") > streamed.index(notice)

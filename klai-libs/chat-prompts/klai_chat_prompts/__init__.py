@@ -265,22 +265,25 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
     # in the prompt that the application does this, so it never relies on the
     # model. The intro ends on a colon, the questions follow as bullets, and
     # "more" names the questions beyond the ones listed.
+    # "Not looked up separately", not "not checked": an Open writer may still
+    # answer such a question from general knowledge, and the notice must stay
+    # true next to that answer.
     "unchecked_questions_intro": {
         "nl": (
-            "Deze vragen heb ik niet nagekeken, want zoveel vragen in een bericht kan ik niet allemaal apart "
+            "Deze vragen heb ik niet apart opgezocht, want zoveel vragen in een bericht kan ik niet allemaal "
             "doorzoeken. Stel ze gerust in een nieuw bericht:"
         ),
         "en": (
-            "I did not check these questions, because I cannot search that many questions in one message. "
-            "Feel free to ask them in a new message:"
+            "I did not look these questions up separately, because I cannot search that many questions in one "
+            "message. Feel free to ask them in a new message:"
         ),
         "de": (
-            "Diese Fragen habe ich nicht geprüft, weil ich nicht so viele Fragen in einer Nachricht einzeln "
+            "Diese Fragen habe ich nicht einzeln nachgeschlagen, weil ich nicht so viele Fragen in einer Nachricht "
             "durchsuchen kann. Stelle sie gern in einer neuen Nachricht:"
         ),
         "fr": (
-            "Je n'ai pas vérifié ces questions, car je ne peux pas rechercher autant de questions dans un seul "
-            "message. Posez-les dans un nouveau message :"
+            "Je n'ai pas recherché ces questions séparément, car je ne peux pas rechercher autant de questions dans "
+            "un seul message. Posez-les dans un nouveau message :"
         ),
     },
     "unchecked_questions_more": {

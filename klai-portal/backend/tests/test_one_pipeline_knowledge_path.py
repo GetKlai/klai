@@ -294,7 +294,7 @@ _EIGHT_QUESTIONS = "\n".join(
 )
 _SIX_QUESTIONS = "\n".join(_EIGHT_QUESTIONS.splitlines()[:6])
 _UNCHECKED_NOTICE = (
-    "Deze vragen heb ik niet nagekeken, want zoveel vragen in een bericht kan ik niet allemaal apart doorzoeken. "
+    "Deze vragen heb ik niet apart opgezocht, want zoveel vragen in een bericht kan ik niet allemaal doorzoeken. "
     "Stel ze gerust in een nieuw bericht:\n- Wat is het supportnummer?\n- Hoe vraag ik een offerte aan?"
 )
 
@@ -348,7 +348,7 @@ async def test_a_message_within_the_search_limit_has_no_notice(internal_pipeline
         _auth(key_id="wgt_golden"), ChatProfile(surface="widget"), [{"role": "user", "content": _SIX_QUESTIONS}]
     )
 
-    assert "niet nagekeken" not in result["choices"][0]["message"]["content"]
+    assert "niet apart opgezocht" not in result["choices"][0]["message"]["content"]
 
 
 @pytest.mark.asyncio
