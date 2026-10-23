@@ -52,7 +52,9 @@ from datetime import datetime, timezone
 DEFAULTS = {
     "WIDGET_PROBE_BASE_URL": "https://api.getklai.com",
     "WIDGET_PROBE_ORIGIN": "https://probe.example.com",
-    "WIDGET_PROBE_QUESTION": "Wat zijn de openingstijden van het supportteam van Probe Bakkerij?",
+    # A product fact, not a contact question: "when is support open" is
+    # routed as a contact request and answered without sources (2026-10-23).
+    "WIDGET_PROBE_QUESTION": "Hoe lang rijst het deeg van het Proefbrood van Probe Bakkerij?",
     "WIDGET_PROBE_MAX_LATENCY_MS": "30000",
     # Per socket read, so a stalled stream ends the run. The unit allows 90 s.
     "WIDGET_PROBE_TIMEOUT": "45",

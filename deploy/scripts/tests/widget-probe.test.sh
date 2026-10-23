@@ -67,7 +67,7 @@ class H(BaseHTTPRequestHandler):
         source = delta(sources=[{"label": "1", "title": "Probe doc", "url": ""}])
         if MODE == "empty":
             return sse(self, source, delta(content=""), b"[DONE]")
-        frames = [delta(content="Het supportteam is er van 08:15 tot 17:45.")]
+        frames = [delta(content="Het deeg van het Proefbrood rijst 18 uur.")]
         if MODE != "no_sources":
             frames.insert(0, source)
         if MODE == "incomplete":
