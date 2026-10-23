@@ -449,7 +449,8 @@ LLM context — in a single pass:
 
 The content profile defines `chunk_tokens_max` per document type. The chunker converts
 this to characters (`tokens × 4`, `child_chunk_chars`) and uses it as the child size in
-the base ingest, in enrichment and in a rebuild. Effective chunk sizes:
+the base ingest, in enrichment and in a rebuild. These sizes apply to text the chunker cuts
+itself (markdown and text uploads, crawled pages, connector text):
 
 | content_type | chunk_tokens_max | chunk_size (chars) |
 |---|---|---|
@@ -459,6 +460,17 @@ the base ingest, in enrichment and in a rebuild. Effective chunk sizes:
 | `email_thread` | 250 | 1000 |
 | `unknown` | 250 | 1000 |
 | `pdf_document` | 300 | 1200 |
+
+What applies per source when the chunker is not the one cutting:
+
+- **Meeting transcripts** from the portal and scribe arrive pre-chunked (`skip_chunking=True`)
+  in groups of about four speaker turns, at most 400 tokens (`_MAX_TOKENS_PER_CHUNK` in the
+  scribe adapter); the `meeting_transcript` row does not apply to them.
+- **Binary uploads through docling-serve** (pdf, office) arrive pre-chunked from docling-serve's
+  own hybrid chunker with its default size, also `skip_chunking=True`; each chunk is its own
+  parent, so the 2000-character window never cuts them (a chunk over the cap is returned whole).
+- **Anything else without `skip_chunking`** (crawls, the JSON-feed connector, text uploads) goes
+  through the chunker and the table above.
 
 **Step 2 — Embed and store raw vectors.** Each chunk is sent to **TEI** (HuggingFace
 text-embeddings-inference, OpenAI-compatible `/v1/embeddings` endpoint) running **BGE-M3**

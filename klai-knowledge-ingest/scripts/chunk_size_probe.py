@@ -15,7 +15,8 @@ on the real cases. The production collection is never written.
 Run it in a throwaway clone of the knowledge-ingest container (same image, env and
 networks), with this file, the candidate package and the old chunker mounted:
 
-    python chunk_size_probe.py --seed 7 --old-chunker /old/chunker.py --org-id <org>
+    RERANKER_URL=<infinity base url> python chunk_size_probe.py --seed 7 \
+        --old-chunker /old/chunker.py --org-id <org>
 
 Arms: ``old-ingest`` (2000-char children, 200 overlap: what the base ingest cut
 for kb_article), ``old-enriched`` (1200/200: what enrichment re-cut), ``new``
@@ -160,7 +161,7 @@ def cut(module, content: str, size: int | None, overlap: int | None):
 
 
 async def rerank(query: str, passages: list[str]) -> list[int]:
-    url = os.environ.get("RERANKER_URL", "http://172.18.0.1:7998")
+    url = os.environ["RERANKER_URL"]
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             f"{url}/v1/rerank",

@@ -136,18 +136,22 @@ def _split_by_headings(text: str) -> list[tuple[str, str]]:
 
 
 def _fits_whole(text: str, start: int, size: int) -> bool:
-    """True when the paragraph starting at ``start`` is at most ``size`` long.
-
-    Such a paragraph moves whole to the next chunk instead of being cut: the
-    JSON-feed adapter relies on it for record lines of up to 900 chars, which
-    a 1000-char chunk can hold but whose break point may sit before the half.
-    """
+    """True when the paragraph starting at ``start`` is at most ``size`` long."""
     end = text.find("\n\n", start)
     return (len(text) if end == -1 else end) - start <= size
 
 
-def _split_by_size(text: str, size: int, overlap: int) -> list[str]:
-    """Split text into overlapping chunks by character count."""
+def _split_by_size(text: str, size: int, overlap: int, keep_paragraphs: bool = False) -> list[str]:
+    """Split text into overlapping chunks by character count.
+
+    ``keep_paragraphs`` (children only) also breaks at a paragraph boundary before
+    the halfway point when the paragraph after it fits a chunk whole, so it moves
+    to the next chunk instead of being cut: the JSON-feed adapter relies on it for
+    record lines of up to 900 chars in a 1000-char chunk. The early break is taken
+    only when it leaves a chunk of at least ``MIN_SECTION_TOKENS`` (no stub, the
+    same floor ``_merge_stubs`` applies to sections) and moves the window forward
+    by more than ``overlap``, otherwise ``start = end - overlap`` would not advance.
+    """
     if len(text) <= size:
         return [text]
     chunks: list[str] = []
@@ -157,9 +161,12 @@ def _split_by_size(text: str, size: int, overlap: int) -> list[str]:
         if end < len(text):
             # Try to break at paragraph boundary
             break_at = text.rfind("\n\n", start, end)
-            if break_at > start + size // 2 or (
-                break_at > start and _fits_whole(text, break_at + 2, size)
-            ):
+            early = (
+                keep_paragraphs
+                and break_at - start >= max(MIN_SECTION_TOKENS * 4, overlap + 1)
+                and _fits_whole(text, break_at + 2, size)
+            )
+            if break_at > start + size // 2 or early:
                 end = break_at
             else:
                 # Fall back to sentence boundary
@@ -407,7 +414,9 @@ def chunk_markdown_with_parents(
             parent_position += 1
 
             # Now split this parent into children for matching.
-            child_texts = _split_by_size(parent_text, child_size, child_overlap)
+            child_texts = _split_by_size(
+                parent_text, child_size, child_overlap, keep_paragraphs=True
+            )
             for child_text in child_texts:
                 if not child_text.strip():
                     continue
