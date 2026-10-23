@@ -36,7 +36,7 @@ const WIDGET_ID = process.env.E2E_PROBE_WIDGET_ID
 const ORIGIN = process.env.E2E_PROBE_WIDGET_ORIGIN || 'https://probe.example.com'
 const QUESTION =
   process.env.E2E_PROBE_QUESTION ||
-  'Wat zijn de openingstijden van het supportteam van Probe Bakkerij?'
+  'Hoe lang rijst het deeg van het Proefbrood van Probe Bakkerij?'
 const SOURCE_PATTERN = new RegExp(process.env.E2E_PROBE_SOURCE_PATTERN || 'probe', 'i')
 const API_BASE = (process.env.E2E_PROBE_API_BASE_URL || 'https://api.getklai.com').replace(/\/$/, '')
 
