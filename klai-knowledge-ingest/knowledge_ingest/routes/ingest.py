@@ -42,7 +42,7 @@ from knowledge_ingest import (
 from knowledge_ingest.clustering import classify_by_centroid, load_centroids
 from knowledge_ingest.config import settings
 from knowledge_ingest.content_labeler import generate_content_label
-from knowledge_ingest.content_profiles import get_profile
+from knowledge_ingest.content_profiles import child_chunk_chars
 from knowledge_ingest.db import get_pool, tenant_scoped_connection
 from knowledge_ingest.docs_provenance import build_docs_source_extra
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
@@ -499,15 +499,6 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         ]
         parent_index_per_child = list(range(len(texts)))
     else:
-        # Use content profile chunk_tokens_max (converted to chars) when it
-        # differs from the global default.  1 token ≈ 4 chars.
-        profile = get_profile(req.content_type)
-        profile_chunk_chars = profile.chunk_tokens_max * 4
-        chunk_size = (
-            profile_chunk_chars
-            if profile_chunk_chars != settings.chunk_size
-            else settings.chunk_size
-        )
         # SPEC-RAG-PARENT-CHILD-001: produce small "child" chunks for
         # embedding-and-matching plus large "parent" chunks for the LLM
         # response context. Each child carries its parent's index so
@@ -517,8 +508,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         # is absent (REQ-3).
         chunks, parents = chunker.chunk_markdown_with_parents(
             indexable_content,
-            child_size=chunk_size,
-            child_overlap=settings.chunk_overlap,
+            child_size=child_chunk_chars(req.content_type),
         )
         if not chunks:
             return {"status": "skipped", "reason": "empty document", "chunks": 0}

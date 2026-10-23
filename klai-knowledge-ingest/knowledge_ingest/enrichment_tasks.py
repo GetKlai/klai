@@ -40,7 +40,7 @@ from knowledge_ingest import (
     queues,
     sparse_embedder,
 )
-from knowledge_ingest.content_profiles import get_profile
+from knowledge_ingest.content_profiles import child_chunk_chars, get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import (
@@ -244,7 +244,9 @@ async def _load_and_enrich(
     # Re-derive chunks deterministically from the current PG body so
     # Phase-2 always operates on the same content the artifact row claims
     # is current, regardless of what was in flight at enqueue time.
-    children, parents = chunker.chunk_markdown_with_parents(document_text)
+    children, parents = chunker.chunk_markdown_with_parents(
+        document_text, child_size=child_chunk_chars(artifact["content_type"] or "unknown")
+    )
     chunks_text = [c.text for c in children]
     derived_skip = enrichment_skip_reason(chunk_count=len(chunks_text), extra_payload=extra)
     if derived_skip is not None:

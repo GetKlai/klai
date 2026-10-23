@@ -51,10 +51,11 @@ _TOTAL_FETCH_TIMEOUT = 60.0
 _MIN_KNOWLEDGE_CHARS = 50
 _DEFAULT_MAX_RECORDS_PER_DOC = 200
 _DEFAULT_MAX_DOC_CHARS = 120_000
-# kb_article uses child_size=2000 and overlap=200. The chunker only accepts a
-# ``\n\n`` boundary above half the window, so record lines must stay at or below
-# roughly child_size / 2 - overlap. Empirically: 0/200 mid-record splits at 900,
-# versus 132/200 at 1790.
+# kb_article uses child_size=1000 and no overlap. The chunker cuts at a ``\n\n``
+# boundary above half the window, or earlier when the paragraph after it fits a
+# chunk whole, so a record line up to the window size stays in one chunk. Measured
+# at the earlier 2000-char window with 200 overlap: 0/200 mid-record splits at 900,
+# versus 132/200 at 1790; the contract test in knowledge-ingest pins the 900.
 _MAX_RECORD_LINE_CHARS = 900
 _DEFAULT_RECORD_LABEL_FIELDS = ("name", "title", "label", "id")
 _PART_SUFFIX_BUDGET = 32
