@@ -244,11 +244,19 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
     "strict_check_unavailable": {
         "nl": (
             "Ik kan de kennisbank op dit moment niet nakijken, dus ik kan dit nu niet betrouwbaar beantwoorden. "
-            "Probeer het straks nog eens."
+            "Stel je vraag straks nog eens."
         ),
         "en": (
             "I can't check the knowledge base right now, so I cannot answer this reliably at the moment. "
-            "Please try again shortly."
+            "Please ask again shortly."
+        ),
+        "de": (
+            "Ich kann die Wissensdatenbank gerade nicht prüfen, daher kann ich das im Moment nicht zuverlässig "
+            "beantworten. Stelle deine Frage gleich noch einmal."
+        ),
+        "fr": (
+            "Je ne peux pas consulter la base de connaissances pour le moment, je ne peux donc pas répondre de "
+            "manière fiable maintenant. Reposez votre question dans un instant."
         ),
     },
     "helpdesk_offer": {
@@ -480,9 +488,13 @@ def check_unavailable_message(language: object, *, helpdesk: bool) -> str:
     """The fixed reply when the check that decides whether the sources answer could not run.
 
     Not the not-found text: the sources were never checked. ``helpdesk``
-    picks the widget's customer words over the internal chat's.
+    picks the widget's customer words over the internal chat's; the internal
+    text points to Open mode, which keeps every passage after a failed
+    selection and can still answer.
     """
-    return fixed_text("helpdesk_check_unavailable" if helpdesk else "strict_check_unavailable", language)
+    if helpdesk:
+        return fixed_text("helpdesk_check_unavailable", language)
+    return fixed_text("strict_check_unavailable", language) + fixed_text("open_mode_hint", language)
 
 
 # Shared language-detection contract (SPEC-RAG-MULTILINGUAL-CHAT-001
@@ -688,6 +700,9 @@ _OPEN_KB_BODY: Final[str] = (
     "claims faithful to the chunks. When you use general knowledge, do not pretend that "
     "those claims came from the knowledge base.\n\n"
     "## When the KB is weak or empty\n"
+    "When a note 'What the user needs' follows the sources, that note alone says whether they leave part "
+    "of the question open: follow it, and say nothing else about what the knowledge base lacks. Without "
+    "such a note, this section and the rule on a missing answer under How to answer apply.\n"
     "If the retrieved chunks do not contain the answer, say that in the user's language "
     "in one short clause, then give a general answer if the topic allows one. Example "
     "shape: 'I didn't find this in the knowledge base; generally, ...' / 'Ik vind dit "

@@ -193,7 +193,9 @@ _PROFILE_HASHES = {
     # prompt's own missing-answer rules apply only without one.
     "GROUNDED_CHAT_SYSTEM_PROMPT": "f8f263ca23d09222b5d67143e7d8a8be09a958bfce89c75c6a7e32b35c72a76a",
     "GENERAL_CHAT_SYSTEM_PROMPT": "e51d3bba78ecfcd4c26c8553935756f03afe7d9284f1efd4b44f6d962d62f38a",
-    "OPEN_KB_CHAT_SYSTEM_PROMPT": "2babfcab82348a9ddc90c21e48bc0e7de34a16dee20938fceac7ef9b4f02221b",
+    # re-baselined 2026-10-23, OPEN_KB: the same deferral to the selection's
+    # note as GROUNDED, because the brief also reaches an Open turn.
+    "OPEN_KB_CHAT_SYSTEM_PROMPT": "ac8854382e4556910be32eda7a49102199034b8593f1dab73bb889e71c4e28e6",
     "META_CHAT_SYSTEM_PROMPT": "1123025a36e42e114461db2730421de5f44e686b063a77ba6894fdfd7599bcf5",
     # re-baselined 2026-09-09: escalation section — a matching article no
     # longer cancels the appointment offer.

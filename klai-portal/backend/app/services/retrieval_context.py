@@ -1231,6 +1231,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             question=turn.selection.question
             if not t.internal and turn.multi_question and turn.selection.verdict == "depends"
             else "",
+            unchecked=bool(found.unchecked_questions),
         )
         # The parts beyond the search limit were never searched; the writer
         # must still see them so it does not answer them from other lines.

@@ -58,8 +58,8 @@ SELECTION_SYSTEM_PROMPT = (
     "to ask about something the passages do not cover, and not when the steps are the same for each variant. "
     "not_in_passages when there is no evidence. A request for a person or an appointment, a thank-you or a remark about the chat "
     "needs no passage: answers with empty evidence.\n"
-    "missing: only for answers, the part of the visitor's LATEST message that no evidence line covers, in a few "
-    "of their words; an empty string when the evidence covers all of it. Never a part of an earlier message.\n"
+    "missing: only for answers, the part of the need that no evidence line covers, in a few of the visitor's "
+    "words; an empty string when the evidence covers the whole need.\n"
     "question: only for depends, the one question to ask the visitor, in their language, at most fifteen words. "
     "Otherwise an empty string."
 )
@@ -91,8 +91,8 @@ SELECTION_SYSTEM_PROMPT_INTERNAL = (
     "not_in_passages when no passage says anything about the need, and otherwise whenever the evidence is empty. "
     "The one exception: a request to rewrite, review, translate or shorten text already in the conversation, a "
     "request for a person, a thank-you or a remark about the chat needs no passage: answers with empty evidence.\n"
-    "missing: only for answers, the part of the user's LATEST message that no evidence line covers, in a few of "
-    "their words; an empty string when the evidence covers all of it. Never a part of an earlier message.\n"
+    "missing: only for answers, the part of the need that no evidence line covers, in a few of the user's "
+    "words; an empty string when the evidence covers the whole need.\n"
     "question: only for depends, the one question that would settle the variant, in the user's language, at most "
     "fifteen words. Otherwise an empty string."
 )
@@ -244,8 +244,10 @@ class PassageSelection(BaseModel):
         passage and still wrote "not_in_passages" 39 times; the owner expected
         an answer in 31 of those turns and "not found" in 6. The prompt asks
         for the list to be empty when there is no evidence, so a filled list
-        is the model's own finding, and the writer gets those passages with
-        the brief to say what they do not cover. Only a quote of a sentence's
+        is the model's own finding, and the writer gets those passages; the
+        verdict still stands in the brief, which never tells such a writer the
+        lines answer all of it and asks it to name the part they leave open
+        (``_coverage``). Only a quote of a sentence's
         length outranks the verdict: "Dat kan niet." stands in many passages.
         And it must stand as one sentence of the passage (quotes.py), not as
         words scattered over three.
@@ -305,8 +307,46 @@ async def select_passages(
     return None
 
 
+def _coverage(selection: PassageSelection, *, what: str, internal: bool, unchecked: bool) -> str:
+    """The brief's one line on what the sources leave open, decided by the selection, never by the writer.
+
+    Only an "answers" verdict with nothing missing says the lines answer all
+    of it. A "not_in_passages" verdict that a quoted sentence outranked
+    reaches the writer too, but the selection did say the passages do not
+    answer the need, so the reply names what they leave open. A "depends"
+    verdict asks about its open part or covers every variant, and questions
+    beyond the search limit carry their own note, so neither is told the
+    lines answer everything.
+    """
+    verb = "does" if internal else "do"
+    if missing := " ".join(selection.missing.split()):
+        return (
+            f"\nThe {what} {verb} not cover this part: {missing}. After the answer, say that in one sentence, and "
+            "nothing else about what is missing."
+        )
+    if selection.verdict == "not_in_passages":
+        return (
+            "\nThe selection judged these lines may cover only part of it. Give only what they say; if part of it "
+            f"stays open, say after the answer in one sentence which part the {what} {verb} not cover."
+        )
+    if selection.verdict != "answers":
+        return ""
+    if unchecked:
+        return (
+            "\nThese lines answer what was searched; each question marked as not separately searched keeps its "
+            "own note."
+        )
+    return f"\nThese lines answer all of it: do not say that the {what} {'lacks' if internal else 'lack'} anything."
+
+
 def writer_brief(
-    selection: PassageSelection, chunks: list[dict], *, internal: bool, source_only: bool, question: str = ""
+    selection: PassageSelection,
+    chunks: list[dict],
+    *,
+    internal: bool,
+    source_only: bool,
+    question: str = "",
+    unchecked: bool = False,
 ) -> str:
     """Tell the writer what the chosen passages were chosen for, and how closely to keep to them.
 
@@ -326,6 +366,9 @@ def writer_brief(
     3.7 to 4.4 per answer), so Open keeps the lines and the shorter rule. The
     internal chat gets the brief in its own words: its user is an employee
     and the passages are the knowledge base, not help articles.
+
+    ``unchecked`` says questions beyond the search limit follow the brief
+    with their own note.
 
     ``question`` is the selection's variant question on a message with several
     questions: sent as the whole reply it would drop the parts that were
@@ -360,13 +403,7 @@ def writer_brief(
             "price or an amount appears in the reply only when it stands in the lines above; otherwise say that "
             f"the {what} {'does' if internal else 'do'} not give it."
         )
-        + (
-            f"\nThe {what} {'does' if internal else 'do'} not cover this part: {missing}. After the answer, say "
-            "that in one sentence, and nothing else about what is missing."
-            if (missing := " ".join(selection.missing.split()))
-            else f"\nThese lines answer all of it: do not say that the {what} {'lacks' if internal else 'lack'} "
-            "anything."
-        )
+        + _coverage(selection, what=what, internal=internal, unchecked=unchecked)
         + (
             "\nThe employee relays this for someone else; give the steps for each variant the lines name, each "
             "under its own heading, instead of asking which applies."
