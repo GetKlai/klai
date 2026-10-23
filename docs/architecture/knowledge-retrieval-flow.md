@@ -552,6 +552,15 @@ candidates, and 60 adds about 230 ms at p50 over scoring 20 (23 October 2026).
 
 Timeout: 30 seconds. On failure, the top-K Qdrant results are returned unranked.
 
+**Lookalikes and the question's product (knowledge-base plan, step 7).** Before the
+reranker, candidates whose `text_fingerprint` (a b-bit MinHash of word shingles, written
+at ingest) agree on at least `lookalike_min_similarity` (0.7) of their shingles collapse
+into one: the first in search order, unless a later one carries the request's `product`
+and the first does not. After the reranker, every chunk whose `product` matches the
+request's gets `product_boost` (0.05) added to its ranking score; nothing is filtered on
+product. `services/lookalike.py`; the counts are `lookalikes_collapsed` and
+`product_boosted` in the decision record.
+
 ---
 
 ### Step 5a: Quality floor (SPEC-INGEST-LOGIN-WALL-DETECT-001)

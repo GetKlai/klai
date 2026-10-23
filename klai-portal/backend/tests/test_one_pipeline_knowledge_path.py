@@ -280,6 +280,77 @@ async def test_split_internal_turn_reports_its_sub_questions_in_the_footer(inter
     assert "- Deelvragen: 2 apart gezocht." in result["choices"][0]["message"]["content"]
 
 
+_EIGHT_QUESTIONS = "\n".join(
+    [
+        "Wat is de opzegtermijn?",
+        "Hoe zeg ik op namens een klant?",
+        "Wat kost een extra nummer?",
+        "Hoe wijzig ik mijn factuuradres?",
+        "Waar vind ik mijn contract?",
+        "Hoe reset ik mijn wachtwoord?",
+        "Wat is het supportnummer?",
+        "Hoe vraag ik een offerte aan?",
+    ]
+)
+_SIX_QUESTIONS = "\n".join(_EIGHT_QUESTIONS.splitlines()[:6])
+_UNCHECKED_NOTICE = (
+    "Deze vragen heb ik niet apart opgezocht, want zoveel vragen in een bericht kan ik niet allemaal doorzoeken. "
+    "Stel ze gerust in een nieuw bericht:\n- Wat is het supportnummer?\n- Hoe vraag ik een offerte aan?"
+)
+
+
+@pytest.mark.parametrize(
+    ("key_id", "permissions", "profile"),
+    [
+        ("wgt_golden", {"chat": True}, ChatProfile(surface="widget")),
+        ("key-partner", {"chat": True}, ChatProfile(surface="partner")),
+        ("key-internal", INTERNAL_KEY, _internal()),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_message_beyond_the_search_limit_ends_with_the_questions_that_were_not_checked(
+    internal_pipeline, key_id, permissions, profile
+):
+    internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    result = await _chat(
+        _auth(key_id=key_id, permissions=permissions), profile, [{"role": "user", "content": _EIGHT_QUESTIONS}]
+    )
+
+    content = result["choices"][0]["message"]["content"]
+    # The internal chat's sources footer follows the answer, so there the notice sits before it.
+    assert _UNCHECKED_NOTICE in content
+    assert "Hoe reset ik mijn wachtwoord?" not in content.split(_UNCHECKED_NOTICE)[1]
+    if profile.surface != "internal":
+        assert content.endswith(_UNCHECKED_NOTICE)
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_over_a_message_beyond_the_search_limit_names_the_unchecked_questions_too(internal_pipeline):
+    internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(0), "confidence_band": "unknown"}))
+
+    result = await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [{"role": "user", "content": _EIGHT_QUESTIONS}],
+    )
+
+    content = result["choices"][0]["message"]["content"]
+    assert content.startswith("Ik kan dit niet betrouwbaar beantwoorden")
+    assert content.endswith(_UNCHECKED_NOTICE)
+
+
+@pytest.mark.asyncio
+async def test_a_message_within_the_search_limit_has_no_notice(internal_pipeline):
+    internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    result = await _chat(
+        _auth(key_id="wgt_golden"), ChatProfile(surface="widget"), [{"role": "user", "content": _SIX_QUESTIONS}]
+    )
+
+    assert "niet apart opgezocht" not in result["choices"][0]["message"]["content"]
+
+
 @pytest.mark.asyncio
 async def test_pasted_correspondence_in_the_latest_turn_is_not_split(internal_pipeline):
     recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))

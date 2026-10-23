@@ -306,6 +306,7 @@ async def test_ensure_collection_skips_indexes_when_already_present():
         "content_label",
         "source_label",
         "heading_path",
+        "product",
         "valid_from",
         "valid_until",
     }

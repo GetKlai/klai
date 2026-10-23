@@ -7,7 +7,7 @@ no row is rewritten and no RLS policy fires. The Cat-D tenant_isolation policy
 covers the new column.
 
 Revision ID: b4e7c2d9a1f3
-Revises: f9b2d6a4c8e1
+Revises: 7189a6f265d4
 Create Date: 2026-10-23
 """
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 from alembic import op
 
 revision: str = "b4e7c2d9a1f3"
-down_revision: str | None = "f9b2d6a4c8e1"
+down_revision: str | None = "7189a6f265d4"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 

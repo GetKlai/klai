@@ -8,6 +8,7 @@ real against FalkorDB.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import random
 from typing import Any
@@ -33,15 +34,28 @@ def vector_for(text: str, dim: int) -> list[float]:
 
 
 class FakeEmbedder(EmbedderClient):
-    def __init__(self, dim: int) -> None:
+    """Equal text, equal vector; ``similar`` maps a name to the name it should embed like.
+
+    A real embedder puts "Acme Holdings" next to "Acme"; the hash vectors would not,
+    and without a near candidate graphiti never escalates a node to the LLM.
+    """
+
+    def __init__(self, dim: int, similar: dict[str, str] | None = None) -> None:
         self.dim = dim
+        self.similar = similar if similar is not None else {}
+
+    def _vector(self, text: str) -> list[float]:
+        # Case and whitespace barely move a real embedding: "\nTABBED\t" sits next to "tabbed",
+        # which is what lets graphiti find a stored node under a differently written name.
+        text = self.similar.get(text, text)
+        return vector_for(" ".join(text.lower().split()), self.dim)
 
     async def create(self, input_data: Any) -> list[float]:
         text = input_data if isinstance(input_data, str) else "\n".join(map(str, input_data))
-        return vector_for(text, self.dim)
+        return self._vector(text)
 
     async def create_batch(self, input_data_list: list[str]) -> list[list[float]]:
-        return [vector_for(text, self.dim) for text in input_data_list]
+        return [self._vector(text) for text in input_data_list]
 
 
 class FakeCrossEncoder(CrossEncoderClient):
@@ -49,12 +63,25 @@ class FakeCrossEncoder(CrossEncoderClient):
         return [(passage, 1.0 / (index + 1)) for index, passage in enumerate(passages)]
 
 
+def _prompt_list(prompt: str, tag: str) -> list[dict[str, Any]]:
+    """The JSON list graphiti renders between ``<TAG>`` and ``</TAG>`` in a prompt."""
+    start = prompt.index(f"<{tag}>") + len(tag) + 2
+    return json.loads(prompt[start : prompt.index(f"</{tag}>")])
+
+
 class FakeLLM(LLMClient):
-    """Extracts the names in ``entities`` and chains an edge between neighbours."""
+    """Extracts the names in ``entities`` and chains an edge between neighbours.
+
+    ``duplicates`` maps an extracted name to the stored name it is the same entity as.
+    The dedupe answer is read from the prompt graphiti really built, so a node only gets
+    resolved if graphiti sent it, with that candidate, to ``_resolve_with_llm``.
+    """
 
     def __init__(self) -> None:
         super().__init__(LLMConfig(api_key="fake", model="fake"), cache=False)
         self.entities: list[str] = []
+        self.duplicates: dict[str, str] = {}
+        self.dedupe_prompts: list[tuple[list[str], list[str]]] = []
 
     async def _generate_response(
         self,
@@ -88,7 +115,24 @@ class FakeLLM(LLMClient):
                 ]
             }
         if response_model is NodeResolutions:
-            return {"entity_resolutions": []}
+            prompt = messages[-1].content
+            sent = _prompt_list(prompt, "ENTITIES")
+            candidates = {
+                c["name"]: c["candidate_id"] for c in _prompt_list(prompt, "EXISTING ENTITIES")
+            }
+            self.dedupe_prompts.append(([e["name"] for e in sent], list(candidates)))
+            return {
+                "entity_resolutions": [
+                    {
+                        "id": entity["id"],
+                        "name": entity["name"],
+                        "duplicate_candidate_id": candidates.get(
+                            self.duplicates.get(entity["name"], ""), -1
+                        ),
+                    }
+                    for entity in sent
+                ]
+            }
         if response_model is SummarizedEntities:
             return {"summaries": []}
         if response_model is EdgeDuplicate:

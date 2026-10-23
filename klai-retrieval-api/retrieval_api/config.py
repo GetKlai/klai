@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     source_quota_enabled: bool = True
     source_quota_max_per_source: int = 2
     source_preference_boost: float = 0.05
+    # Knowledge-base plan, step 7. The question's product adds this to a
+    # chunk's ranking score after the reranker, the same order as the source
+    # preference above. Two candidates whose text fingerprints agree on this
+    # estimated share of word shingles are lookalikes: on synthetic text the
+    # same article with another product name scored 0.73 or more from 150
+    # words up, and chunks sharing half their text 0.50 or less.
+    product_boost: float = 0.05
+    lookalike_min_similarity: float = 0.7
 
     # SPEC-RAG-EVIDENCE-INTEGRITY-001 REQ-RANK-04 — ranking-contract rollout
     # flag. The contract graduated to "active" on 2026-07-08 after its shadow

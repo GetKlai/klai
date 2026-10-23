@@ -41,6 +41,7 @@ import re
 import numpy as np
 
 __all__ = [
+    "compute_minhash",
     "compute_simhash",
     "hamming_distance",
 ]
@@ -191,3 +192,50 @@ def hamming_distance(a: int, b: int) -> int:
     fixes the threshold at 3; SPEC REQ-09 audits the SQL filter.
     """
     return ((a & _UINT64_MASK) ^ (b & _UINT64_MASK)).bit_count()
+
+
+# ---------------------------------------------------------------------------
+# MinHash over word shingles (knowledge-base plan, step 7)
+# ---------------------------------------------------------------------------
+
+# The SimHash above weighs single words by frequency, so on running text the
+# common words decide most bits: on synthetic Zipf-distributed text of 150
+# words, two unrelated chunks came within 4 bits of each other while two
+# lookalikes (the same article with another product name in four places) were
+# 4 to 9 apart, so no Hamming threshold separates them. A MinHash over
+# three-word shingles estimates their overlap instead: on the same text the
+# lookalikes share at least 73 percent of the positions and chunks that share
+# half their text at most 44 percent. 64 positions of 8 bits (b-bit MinHash)
+# keep the payload field at 128 hex characters. retrieval-api compares two
+# fingerprints by the share of equal positions.
+_MINHASH_SIZE = 64
+_SHINGLE = 3
+# Fixed constants derived from blake2b, so every process and host draws the same permutations.
+_MINHASH_MULTIPLIERS = np.array(
+    [_hash64(f"minhash-a-{i}") | 1 for i in range(_MINHASH_SIZE)], dtype=np.uint64
+)
+_MINHASH_OFFSETS = np.array(
+    [_hash64(f"minhash-b-{i}") for i in range(_MINHASH_SIZE)], dtype=np.uint64
+)
+
+
+def compute_minhash(text: str) -> str:
+    """The 64-position b-bit MinHash of ``text``'s word shingles as hex; "" for empty text.
+
+    @MX:ANCHOR — invariant. Every stored ``text_fingerprint`` is compared to
+    fingerprints computed later: changing the normalisation, the shingle size
+    or the hash constants makes old and new chunks look unrelated until the
+    product backfill has rewritten them.
+    """
+    tokens = _tokenise(_normalise(text))
+    if not tokens:
+        return ""
+    shingles = {
+        " ".join(tokens[i : i + _SHINGLE]) for i in range(max(1, len(tokens) - _SHINGLE + 1))
+    }
+    hashes = np.array([_hash64(shingle) for shingle in shingles], dtype=np.uint64)
+    # uint64 arithmetic wraps, which is the modulo of the universal hash; the
+    # low byte of each minimum is the b-bit value (the high bits of a minimum
+    # are near zero and would match between any two texts).
+    minima = (hashes[:, None] * _MINHASH_MULTIPLIERS + _MINHASH_OFFSETS).min(axis=0)
+    return bytes((minima & np.uint64(0xFF)).astype(np.uint8)).hex()

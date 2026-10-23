@@ -943,10 +943,9 @@ class TestHealthEndpoint:
         with (
             patch("httpx.AsyncClient") as MockHttpxClient,
             patch("qdrant_client.AsyncQdrantClient") as MockQdrant,
-            # FalkorDB health check runs when graphiti_enabled; the default
-            # MagicMock makes db.connection.ping a sync no-op so the check
-            # passes without a live falkordb (matches the qdrant/httpx mocks).
-            patch("falkordb.FalkorDB"),
+            # FalkorDB health check runs when graphiti_enabled; an AsyncMock
+            # client answers PING without a live falkordb.
+            patch("redis.asyncio.Redis", return_value=AsyncMock()),
         ):
             # Mock httpx for TEI and LiteLLM health checks
             mock_http = AsyncMock()

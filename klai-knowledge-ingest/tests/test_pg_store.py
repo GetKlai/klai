@@ -237,7 +237,7 @@ async def test_get_active_artifact_state_only_uses_synced_artifacts():
 
 
 @pytest.mark.asyncio
-async def test_list_active_synced_artifacts_only_returns_synced_active_rows():
+async def test_list_active_artifacts_returns_active_rows_with_their_index_status():
     conn = _make_conn()
     conn.fetch = AsyncMock(
         return_value=[
@@ -246,11 +246,12 @@ async def test_list_active_synced_artifacts_only_returns_synced_active_rows():
                 "org_id": "org-1",
                 "kb_slug": "kb",
                 "path": "page.md",
+                "index_status": "failed",
             }
         ]
     )
 
-    result = await pg_store.list_active_synced_artifacts(conn, created_before=1_700_000_000)
+    result = await pg_store.list_active_artifacts(conn, created_before=1_700_000_000)
 
     assert result == [
         {
@@ -258,11 +259,12 @@ async def test_list_active_synced_artifacts_only_returns_synced_active_rows():
             "org_id": "org-1",
             "kb_slug": "kb",
             "path": "page.md",
+            "index_status": "failed",
         }
     ]
     sql = conn.fetch.call_args[0][0]
     assert "belief_time_end = $1" in sql
-    assert "index_status = 'synced'" in sql
+    assert "index_status = 'synced'" not in sql
     assert "created_at <= $2" in sql
     assert conn.fetch.call_args[0][1] == _SENTINEL
     assert conn.fetch.call_args[0][2] == 1_700_000_000

@@ -18,7 +18,14 @@ import httpx
 import pytest
 import respx
 from helpers import FakeKB, FakeResult, make_partner_auth, selection_quoting_first_passage
-from klai_chat_prompts import appointment_offer_sentence, contact_reply, contact_reply_again, no_citable_sources_message
+from klai_chat_prompts import (
+    appointment_offer_sentence,
+    check_unavailable_message,
+    contact_reply,
+    contact_reply_again,
+    no_citable_sources_message,
+)
+from structlog.testing import capture_logs
 
 from app.services import case_file, chat_safety, query_paraphrase, turn_judge, widget_write
 from app.services.retrieval_context import KnowledgeTurn, kept_passages_of
@@ -109,6 +116,7 @@ def _case(
     return {
         "problem": problem,
         "product": "",
+        "product_label": "",
         "variant": "",
         "tried": [],
         "wants_quote": wants_quote,
@@ -706,7 +714,11 @@ def _retrieval_reply(band: str = "low", items: list[dict] | None = None) -> http
         {"source_url": item["source_url"], "title": item["title"], "evidence_ids": [item["evidence_id"]]}
         for item in items
     ]
-    return httpx.Response(200, json={"confidence_band": band, "evidence_pack": {"items": items, "sources": sources}})
+    # retrieval-api returns the raw chunks beside the pack; they carry what the
+    # pack items do not (the knowledge-base slug, the product).
+    return httpx.Response(
+        200, json={"confidence_band": band, "chunks": items, "evidence_pack": {"items": items, "sources": sources}}
+    )
 
 
 async def _route_turn(
@@ -1189,13 +1201,18 @@ async def test_a_visitor_who_asks_for_a_person_is_not_told_the_articles_lack_an_
     assert litellm.answer_requests == []
 
 
-async def test_a_selection_that_fails_twice_gets_the_not_found_reply_and_no_written_one(monkeypatch):
+async def test_a_selection_that_fails_twice_says_it_cannot_check_not_that_the_articles_lack_it(monkeypatch):
     """Six failed selections in the week of 14 to 21 October each handed the
-    writer every passage; the widget answers only from the source, so without
-    a verdict the visitor gets the honest "not found"."""
-    litellm, text, extras = await _selected_turn(monkeypatch, httpx.ConnectError("boom"))
+    writer every passage, so without a verdict no writer answers. Nor is it
+    "not found": on 2026-10-23 every not-found reply of the Voys widget came
+    from a selection that failed on the model budget, and the articles had
+    never been checked."""
+    with capture_logs() as captured:
+        litellm, text, extras = await _selected_turn(monkeypatch, httpx.ConnectError("boom"))
 
-    assert text == REFUSAL_NL
+    assert text == check_unavailable_message("nl", helpdesk=True)
+    assert text != REFUSAL_NL
+    assert [e["selection_failed"] for e in captured if e["event"] == "partner_chat_not_in_passages"] == [True]
     assert extras["escalation"] == [{"appointment": True}]
     assert litellm.answer_requests == []
     selection_calls = [
@@ -1428,6 +1445,52 @@ async def test_a_follow_up_is_searched_with_the_case_s_queries_beside_the_visito
     body = _retrieve_body(litellm)
     assert body["query"] == "Android"
     assert body["query_variants"] == ["Android-app anonieme beller nummerweergave", "Android-app uitgaand nummer tonen"]
+
+
+@pytest.mark.parametrize(("label", "expected"), [("orbit", "Orbit"), ("Nimbus", "")])
+async def test_the_case_carries_a_product_only_when_it_is_a_known_label(label, expected):
+    """Knowledge-base plan, step 7: a label the org's chunks do not carry would
+    prefer nothing in the search and mislead the selection."""
+    answer = case_file.Case.model_validate({**_case(), "product_label": label})
+    with patch.object(case_file, "structured_judge_call", AsyncMock(return_value=answer)):
+        case = await case_file.update_case(_FOLLOW_UP, None, _settings(), products=["Orbit", "Zephyr"])
+
+    assert case is not None
+    assert case.product_label == expected
+
+
+def test_a_first_question_names_a_product_only_by_a_known_label_in_its_own_words():
+    products = ["Orbit", "Orbit Desk"]
+
+    assert case_file.named_product("Doorschakelen op de Orbit Desk?", products) == "Orbit Desk"
+    assert case_file.named_product("Werkt orbit op Android?", products) == "Orbit"
+    assert case_file.named_product("Een orbital telefoon", products) == ""
+
+
+async def test_a_follow_up_about_a_known_product_prefers_it_in_the_search_and_tells_the_selection(monkeypatch):
+    """A lookalike of another product reads like the answer; the selection is
+    told which product the question is about and which product each passage is."""
+    items = [
+        {**CHUNK_900, "reranker_score": 0.95, "product": "zephyr"},
+        {**_two_articles()[1], "product": "orbit"},
+    ]
+    litellm = _LiteLLM(model_text=ANSWER_900, case={**_case("knowledge"), "product_label": "orbit"})
+    with patch(
+        "app.services.widget_turn.knowledge_ingest_client.get_products",
+        AsyncMock(return_value=["Orbit", "Zephyr"]),
+    ):
+        litellm, _, _ = await _route_turn(monkeypatch, band="high", items=items, litellm=litellm, messages=_FOLLOW_UP)
+
+    assert _retrieve_body(litellm)["product"] == "Orbit"
+    assert "- Orbit\n- Zephyr" in litellm.case_requests[0]["messages"][0]["content"]
+    (selection,) = [
+        body
+        for body in litellm.requests
+        if (body.get("response_format") or {}).get("json_schema", {}).get("name") == "passage_selection"
+    ]
+    content = selection["messages"][-1]["content"]
+    assert "The question is about the product Orbit." in content
+    assert "[1] Factuur betalen (product: zephyr)" in content
 
 
 async def test_the_next_turn_s_case_starts_from_the_stored_one():

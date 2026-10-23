@@ -28,7 +28,7 @@ import httpx
 import pytest
 import respx
 from helpers import selection_quoting_first_passage
-from klai_chat_prompts import no_citable_sources_message
+from klai_chat_prompts import check_unavailable_message, no_citable_sources_message
 
 from app.api.partner_dependencies import PartnerAuthContext
 from app.services.case_file import StoredTurn
@@ -310,6 +310,25 @@ async def test_strict_turn_without_evidence_gets_the_fixed_refusal_without_a_mod
 
 
 @pytest.mark.asyncio
+async def test_a_strict_refusal_without_evidence_leaves_a_log_line(monkeypatch):
+    """On 2026-10-22 J02 failed five runs on "Strict answered TCP/IP" and the
+    Strict turns showed up in the logs only as the absence of a writer: the
+    refusal itself logged nothing, so proving it took a trace of what was missing."""
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        turn = await _turn(
+            monkeypatch,
+            _LiteLLM(),
+            profile=_internal(),
+            retrieval={"evidence_pack": {"items": [], "sources": []}, "confidence_band": "unknown"},
+        )
+
+    assert turn.text == STRICT_REFUSAL
+    assert [log["reason"] for log in logs if log["event"] == "partner_chat_strict_refusal"] == ["no_evidence"]
+
+
+@pytest.mark.asyncio
 async def test_a_strict_refusal_speaks_the_conversations_language_not_the_short_messages(monkeypatch):
     """A German employee got the fixed refusal in another language because the
     detection reads too little in a short message; the case judges the whole
@@ -408,7 +427,8 @@ async def test_strict_knowledge_turn_whose_selection_chose_nothing_is_refused_be
 
 
 @pytest.mark.asyncio
-async def test_strict_turn_whose_selection_fails_twice_gets_the_strict_refusal_without_a_writer(monkeypatch):
+async def test_strict_turn_whose_selection_fails_twice_says_it_cannot_check_without_a_writer(monkeypatch):
+    """No verdict means the knowledge base was never checked, so not "not found" either."""
     llm = _LiteLLM(selection="")
 
     turn = await _turn(
@@ -418,7 +438,7 @@ async def test_strict_turn_whose_selection_fails_twice_gets_the_strict_refusal_w
         retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
     )
 
-    assert turn.text == STRICT_REFUSAL
+    assert turn.text == check_unavailable_message("nl", helpdesk=False)
     assert len(llm.of("passage_selection")) == 2
     assert llm.of("answer") == []
 

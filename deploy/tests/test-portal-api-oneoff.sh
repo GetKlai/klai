@@ -14,10 +14,21 @@ FAIL=0
 run_oneoff() {
     # $1 = "true"/"false" — what docker inspect reports for .State.Running
     # $2 = "abs" (default; --out <tmp>/out), "rel" (--out out, run from <tmp>/work)
+    # $3 = "ok" (default), "missing" (no measurement key file), "live" (the file holds the live master key)
+    # $4 = what the stub gateway answers the probe to klai-primary: "refused" (default, LiteLLM's key check),
+    #      "open" (200: a wider key) or "budget" (402 from the router: the key check let it through)
     local running="$1"
     local out_mode="${2:-abs}"
+    local key_mode="${3:-ok}"
+    export ONEOFF_TEST_GATEWAY="${4:-refused}"
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/bin" "$tmp/out" "$tmp/work"
+
+    export KLAI_MEASUREMENT_KEY_FILE="$tmp/measurement-key"
+    case "$key_mode" in
+        ok) printf 'measurement-test-key' >"$KLAI_MEASUREMENT_KEY_FILE" ;;
+        live) printf 'live-master-key' >"$KLAI_MEASUREMENT_KEY_FILE" ;;
+    esac
 
     export ONEOFF_TEST_TMP="$tmp"
     export ONEOFF_TEST_RUNNING="$running"
@@ -25,12 +36,26 @@ run_oneoff() {
     # stub reports our own uid so the script's `chown` needs no privilege.
     export ONEOFF_TEST_UID="$(id -u)"
 
+    cat >"$tmp/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+cat >> "$ONEOFF_TEST_TMP/curl-config"
+case "$ONEOFF_TEST_GATEWAY" in
+    refused) printf '{"error": {"message": "denied", "type": "key_model_access_denied", "param": "model", "code": "403"}}\n403' ;;
+    open) printf '{"id": "chatcmpl-1", "choices": []}\n200' ;;
+    budget) printf '{"error": {"message": "spent", "type": "budget_exceeded", "code": "402"}}\n402' ;;
+esac
+STUB
+    chmod +x "$tmp/bin/curl"
+
     cat >"$tmp/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$ONEOFF_TEST_TMP/calls.log"
 case "$1" in
     inspect)
         case "$*" in
+            *'.IPAddress'*)
+                echo "172.18.0.99"
+                ;;
             *'{{.State.Running}}'*)
                 echo "$ONEOFF_TEST_RUNNING"
                 ;;
@@ -38,13 +63,13 @@ case "$1" in
                 echo "sha256:deadbeef"
                 ;;
             *'{{range .Config.Env}}'*)
-                printf 'FOO=bar\nSENTRY_DSN=https://example.com/1\nGLITCHTIP_DSN=https://example.com/2\n'
+                printf 'FOO=bar\nSENTRY_DSN=https://example.com/1\nGLITCHTIP_DSN=https://example.com/2\nLITELLM_MASTER_KEY=live-master-key\nLITELLM_GENERAL_CHAT_KEY=live-chat-key\nLITELLM_URL=http://litellm:4000\nPORTAL_SECRETS_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n'
                 ;;
             *'NetworkSettings.Networks'*)
                 printf 'klai-core_default\nklai-core_llm\n'
                 ;;
             *'.Mounts'*)
-                printf 'bind|/opt/klai/data|/data|false\nvolume|klai_somevol|/var/lib/x|true\n'
+                printf 'bind|/opt/klai/data|/data|false\nvolume|klai_somevol|/var/lib/x|true\nbind|/opt/klai/librechat|/librechat|true\n'
                 ;;
         esac
         ;;
@@ -81,8 +106,9 @@ STUB
     LAST_ENV_FILE="$tmp/run-env-file"
     LAST_ERR="$(cat "$tmp/err.log" 2>/dev/null || true)"
     LAST_TMP="$tmp"
+    LAST_CURL_CONFIG="$(cat "$tmp/curl-config" 2>/dev/null || true)"
 
-    unset ONEOFF_TEST_TMP ONEOFF_TEST_RUNNING ONEOFF_TEST_UID
+    unset ONEOFF_TEST_TMP ONEOFF_TEST_RUNNING ONEOFF_TEST_UID KLAI_MEASUREMENT_KEY_FILE ONEOFF_TEST_GATEWAY
 }
 
 check() {
@@ -108,6 +134,12 @@ check "both service networks are attached" \
 
 check "the bind mount is carried over with its read-only flag" \
     bash -c 'echo "$0" | grep -q -- "--mount type=bind,source=/opt/klai/data,destination=/data,readonly"' "$LAST_RUN_LOG"
+
+check "the LibreChat directory with every tenant's LiteLLM key is NOT cloned" \
+    bash -c '! echo "$0" | grep -q -- "/librechat"' "$LAST_RUN_LOG"
+
+check "the probe asks the gateway for klai-primary with the key from the file, on stdin" \
+    bash -c 'echo "$0" | grep -q "Bearer measurement-test-key" && echo "$0" | grep -q "172.18.0.99:4000/v1/chat/completions" && echo "$0" | grep -q "klai-primary"' "$LAST_CURL_CONFIG"
 
 check "a named volume mount is NOT cloned (only bind mounts are)" \
     bash -c '! echo "$0" | grep -q -- "klai_somevol"' "$LAST_RUN_LOG"
@@ -136,6 +168,15 @@ check "the GlitchTip DSN is dropped from the cloned environment" \
 check "an unrelated variable survives the clone" \
     bash -c 'grep -q "^FOO=bar$" "$0"' "$LAST_ENV_FILE"
 
+check "every LiteLLM key in the clone is the measurement key, none is a live one" \
+    bash -c 'grep -q "^LITELLM_MASTER_KEY=measurement-test-key$" "$0" && grep -q "^LITELLM_GENERAL_CHAT_KEY=measurement-test-key$" "$0" && ! grep -q "live-" "$0"' "$LAST_ENV_FILE"
+
+check "the clone gets its own PORTAL_SECRETS_KEY of the same shape, so stored tenant secrets stay unreadable" \
+    bash -c '[ "$(grep -c "^PORTAL_SECRETS_KEY=" "$0")" = 1 ] && grep -Eq "^PORTAL_SECRETS_KEY=[0-9a-f]{64}$" "$0" && ! grep -q "^PORTAL_SECRETS_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$" "$0"' "$LAST_ENV_FILE"
+
+check "a LiteLLM setting that is not a key is left as it is" \
+    bash -c 'grep -q "^LITELLM_URL=http://litellm:4000$" "$0"' "$LAST_ENV_FILE"
+
 check "the output dir is chowned to the uid the image's process actually runs as" \
     bash -c 'echo "$0" | grep -q -- "exec klai-core-portal-api-1 id -u"' "$LAST_CALLS"
 
@@ -154,6 +195,32 @@ check "docker run was never invoked against a stopped service" \
 
 check "the refusal says why" \
     bash -c 'echo "$0" | grep -qi "not running"' "$LAST_ERR"
+
+for key_mode in missing live; do
+    run_oneoff true abs "$key_mode"
+
+    check "a measurement key file that is $key_mode is a refusal" \
+        test "$LAST_RC" -ne 0
+
+    check "docker run was never invoked when the measurement key is $key_mode" \
+        test -z "$LAST_RUN_LOG"
+
+    check "the refusal for a $key_mode key names the script that creates it" \
+        bash -c 'echo "$0" | grep -q "litellm-measurement-key.sh"' "$LAST_ERR"
+done
+
+for gateway in open budget; do
+    run_oneoff true abs ok "$gateway"
+
+    check "a key the gateway does not refuse klai-primary ($gateway) is a refusal" \
+        test "$LAST_RC" -ne 0
+
+    check "docker run was never invoked when the probe got '$gateway'" \
+        test -z "$LAST_RUN_LOG"
+
+    check "the refusal for '$gateway' says the key check did not refuse klai-primary" \
+        bash -c 'echo "$0" | grep -q "did not refuse klai-primary"' "$LAST_ERR"
+done
 
 echo "─────────────────────────────"
 if [ "$FAIL" -eq 0 ]; then

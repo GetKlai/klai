@@ -45,7 +45,8 @@ def registered_tasks(monkeypatch) -> dict[str, dict]:
     enrichment_tasks._register_tasks(app)
     by_queue: dict[str, dict] = {}
     for kwargs in app.task_kwargs:
-        retry = kwargs.get("retry")
+        # The graphiti task wraps its strategy to fail quarantined episodes.
+        retry = getattr(kwargs.get("retry"), "inner", kwargs.get("retry"))
         if isinstance(retry, _RecordingRetryStrategy):
             by_queue[kwargs["queue"]] = retry.kwargs
     return by_queue

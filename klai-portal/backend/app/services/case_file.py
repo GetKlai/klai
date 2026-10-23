@@ -27,6 +27,7 @@ before this step existed.
 
 from __future__ import annotations
 
+import re
 from typing import Literal, NamedTuple
 
 import structlog
@@ -35,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from app.core.config import Settings
 from app.services.chat_safety import _last_user_message
 from app.services.quotes import words_stand_in
-from app.services.turn_judge import conversation_excerpt, structured_judge_call
+from app.services.turn_judge import conversation_excerpt, every_field_required, structured_judge_call
 
 logger = structlog.get_logger()
 
@@ -49,6 +50,8 @@ CASE_SYSTEM_PROMPT = (
     "problem.\n"
     "product: the product, app, device or module the problem is about (for example the Android app, the "
     "Webphone, a Yealink W73H, the dial plan), as far as the visitor has said; otherwise empty.\n"
+    "product_label: the one name from the list of products in the help articles, at the end, that is the case's "
+    "product, copied exactly from that list; empty when the list is empty or no name on it is that product.\n"
     "variant: direction or situation that decides the answer (inbound or outbound, import or export, "
     "temporary or permanent), as far as said; otherwise empty.\n"
     "tried: what the visitor says they already did or checked, as short items; keep earlier items.\n"
@@ -87,10 +90,14 @@ _NO_SUBJECTS = "(none: every subject is handled)"
 
 
 class Case(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra=every_field_required)
 
     problem: str
     product: str
+    # One of the product labels of the org's chunks (knowledge-base plan, step
+    # 7), checked in code (_known_product). The default is for stored cases
+    # and test fixtures that predate it; the model always writes it.
+    product_label: str = ""
     variant: str
     tried: list[str]
     # Each route field follows the quote it rests on: the model writes the
@@ -162,6 +169,7 @@ async def update_case(
     settings: Settings,
     *,
     off_topic_subjects: str = "",
+    products: list[str] | None = None,
     delegated_org_id: str | None = None,
 ) -> Case | None:
     subjects = " ".join(off_topic_subjects.split()) or _NO_SUBJECTS
@@ -177,16 +185,39 @@ async def update_case(
         except ValidationError:
             # A case stored under an older shape of this model: start afresh.
             logger.warning("case_previous_invalid", keys=sorted(previous)[:12])
+    listed = "\n".join(f"- {product}" for product in products or []) or "(none)"
     case = await structured_judge_call(
         name="case_update",
-        system_prompt=f"{CASE_SYSTEM_PROMPT}\n\nSubjects this help chat does not answer:\n{subjects}",
+        system_prompt=f"{CASE_SYSTEM_PROMPT}\n\nSubjects this help chat does not answer:\n{subjects}"
+        f"\n\nProducts in the help articles:\n{listed}",
         user_content=f"Case after the previous turn:\n{previous_text}\n\nConversation:\n{conversation_excerpt(messages)}",
         schema=Case,
         timeout_seconds=_TIMEOUT_SECONDS,
         settings=settings,
         delegated_org_id=delegated_org_id,
     )
-    return None if case is None else _verified_routes(case, _last_user_message(messages) or "")
+    if case is None:
+        return None
+    case = case.model_copy(update={"product_label": _known_product(case.product_label, products or [])})
+    return _verified_routes(case, _last_user_message(messages) or "")
+
+
+def _known_product(label: str, products: list[str]) -> str:
+    """The label as the org's chunks spell it, or "" when the model named one they do not carry."""
+    wanted = " ".join(label.split()).casefold()
+    return next((product for product in products if product.casefold() == wanted), "") if wanted else ""
+
+
+def named_product(text: str, products: list[str]) -> str:
+    """The longest known product label that stands in ``text`` as whole words; "" when none does.
+
+    A first turn searches beside the case call, not after it (widget_turn.py),
+    so its product comes from the visitor's own words.
+    """
+    for product in sorted(products, key=len, reverse=True):
+        if re.search(rf"(?<!\w){re.escape(product)}(?!\w)", text, re.IGNORECASE):
+            return product
+    return ""
 
 
 def _verified_routes(case: Case, latest: str) -> Case:

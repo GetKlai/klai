@@ -45,6 +45,11 @@ while [[ $# -gt 0 ]]; do
 done
 [[ $# -gt 0 ]] || usage
 
+# The clone talks to LiteLLM only with the measurement key (oneoff-litellm-guard.sh).
+# shellcheck source=deploy/scripts/oneoff-litellm-guard.sh
+source "$(dirname "${BASH_SOURCE[0]}")/oneoff-litellm-guard.sh"
+measurement_key_load_and_probe
+
 if [[ "$(docker inspect --format '{{.State.Running}}' "$PORTAL_CONTAINER" 2>/dev/null || echo false)" != "true" ]]; then
     echo "ERROR: $PORTAL_CONTAINER is not running; refusing to clone a stopped service." >&2
     exit 1
@@ -81,6 +86,14 @@ docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$PORTAL_CON
     | grep -Ev '^(SENTRY_DSN|GLITCHTIP[A-Z_]*)=' \
     > "$env_file"
 
+measurement_key_swap "$env_file" "$PORTAL_CONTAINER"
+
+# The clone still reaches the portal database, which stores tenant secrets encrypted with PORTAL_SECRETS_KEY, the
+# tenants' LiteLLM team keys among them. A fresh key of the same shape (64 hex characters, the 32-byte AES-GCM key
+# app/services/secrets.py expects) passes the startup check and decrypts none of them; the replay path decrypts none.
+rest="$(grep -v '^PORTAL_SECRETS_KEY=' "$env_file" || true)"
+printf '%s\nPORTAL_SECRETS_KEY=%s\n' "$rest" "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" > "$env_file"
+
 network_args=()
 while IFS= read -r net; do
     [[ -n "$net" ]] || continue
@@ -90,6 +103,9 @@ done < <(docker inspect --format '{{range $net, $cfg := .NetworkSettings.Network
 mount_args=()
 while IFS='|' read -r mount_type source destination rw; do
     [[ "$mount_type" == "bind" ]] || continue
+    # /librechat holds every tenant's .env with that tenant's LiteLLM key, which can call the chat aliases. A one-off
+    # reads conversations from Mongo and runs the chat path in process, so it has no use for the directory.
+    [[ "$destination" != "/librechat" ]] || continue
     mount_opt="type=bind,source=${source},destination=${destination}"
     [[ "$rw" == "false" ]] && mount_opt="${mount_opt},readonly"
     mount_args+=(--mount "$mount_opt")

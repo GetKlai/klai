@@ -11,7 +11,7 @@ from uuid import UUID
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -132,6 +132,15 @@ class AppKBCreateRequest(BaseModel):
     initial_members: list[InitialMember] | None = None
 
 
+class ProductRule(BaseModel):
+    """Documents whose host plus URL path, or path, starts with ``prefix`` are about ``product``."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    prefix: str = Field(min_length=1, max_length=200)
+    product: str = Field(min_length=1, max_length=64)
+
+
 class AppKBOut(BaseModel):
     id: int
     name: str
@@ -146,6 +155,7 @@ class AppKBOut(BaseModel):
     owner_user_id: str | None
     default_org_role: str | None = None
     aliases: list[list[str]] = []
+    product_rules: list[ProductRule] = []
 
 
 class AppKBsResponse(BaseModel):
@@ -261,6 +271,7 @@ def _kb_out(kb: PortalKnowledgeBase) -> AppKBOut:
         owner_user_id=kb.owner_user_id,
         default_org_role=kb.default_org_role,
         aliases=kb.aliases or [],
+        product_rules=[ProductRule(**rule) for rule in kb.product_rules or []],
     )
 
 
@@ -824,6 +835,9 @@ class AppKBUpdateRequest(BaseModel):
             raise ValueError("an alias term may appear only once")
         return groups
 
+    # Replaces the list; the first matching rule wins (knowledge_ingest/product_label.py).
+    product_rules: list[ProductRule] | None = Field(None, max_length=100)
+
 
 @router.patch("/knowledge-bases/{kb_slug}", response_model=AppKBOut, dependencies=[Depends(get_kb_with_access)])
 async def update_knowledge_base(
@@ -864,6 +878,10 @@ async def update_knowledge_base(
 
     if body.aliases is not None:
         kb.aliases = body.aliases
+    if body.product_rules is not None:
+        # Labels new and re-ingested documents; existing chunks keep theirs
+        # (knowledge_ingest/scripts/product_backfill.py labels only unlabelled ones).
+        kb.product_rules = [rule.model_dump() for rule in body.product_rules]
 
     # expire_on_commit=False keeps all attributes valid after commit — no re-fetch needed.
     # A re-fetch after commit acquires a new connection without app.current_org_id set,

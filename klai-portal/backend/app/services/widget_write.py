@@ -75,6 +75,7 @@ from app.services.chat_safety import (
     without_unsourced_contact_details,
 )
 from app.services.chat_sources import PageContext, _chunk_source_title
+from app.services.knowledge_prompts import unchecked_questions_notice
 from app.services.retrieval_context import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
 from app.services.widget_reply import AnswerUpstreamError, Reply
 from app.trace import get_trace_headers
@@ -380,6 +381,9 @@ async def _settle(
         draft=draft,
         shown=shown,
         blocked=bool(decision.get("output_blocked")),
+        notice=""
+        if decision.get("output_blocked")
+        else unchecked_questions_notice(turn.unchecked_questions, response_language),
         footer=_footer(
             reply, sources, decision, profile=profile, passages=citation_chunks, include_sources=include_sources
         )
@@ -429,22 +433,26 @@ def _sent_text(
     draft: str,
     shown: _StreamedText | None,
     blocked: bool,
+    notice: str,
     footer: str,
     citation_chunks: list[dict] | None,
 ) -> str:
-    """What is sent of the settled reply, with the footer as the last render step.
+    """What is sent of the settled reply: the notice about unchecked questions, then the footer as the last render step.
 
     On a held reply that is the whole reply. A streamed one already showed the
     model's own words up to any link, so only the unseen tail follows; a
     safety block cannot take back what streamed, so the rest of the draft is
-    withheld and the refusal follows it.
+    withheld and the refusal follows it, without the notice. The notice sits
+    before the footer so the footer stays the tail that
+    ``strip_answer_footer_from_text`` cuts from the history.
     """
-    if shown is None:
-        return f"{content.rstrip()}\n\n{footer}" if footer and content else content
-    if blocked:
+    if shown is not None and blocked:
         return f"\n\n{content}"
+    extras = [part for part in (notice, footer) if part]
+    if shown is None:
+        return "\n\n".join([content.rstrip(), *extras]) if extras and content else content
     tail = _unstreamed_tail(content, "".join(shown.emitted), draft, citation_chunks)
-    return f"{tail.rstrip()}\n\n{footer}" if footer else tail
+    return tail.rstrip() + "".join(f"\n\n{part}" for part in extras) if extras else tail
 
 
 async def _generate(

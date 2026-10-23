@@ -31,9 +31,12 @@ OID_A = str(ObjectId())
 OID_B = str(ObjectId())
 OID_UNKNOWN = str(ObjectId())
 
+# What LibreChat v0.8.8 sends to generate a title, read from the pinned image
+# (@librechat/agents 4.0.1, title.cjs, titleMethod "completion"): one user
+# message, no system prompt, no tools.
 _TITLE_PROMPT = (
-    "Please generate a concise, 5-word-or-less title for the conversation, using its same language, "
-    "with no punctuation."
+    "Provide a concise, 5-word-or-less title for the conversation, using title case conventions. "
+    "Only return the title itself.\n\nConversation:\nUser: Hoe vraag ik verlof aan?\nAI: "
 )
 
 
@@ -398,6 +401,38 @@ async def test_internal_title_prompt_goes_to_passthrough_without_retrieval(world
 
     assert result == {"choices": [{"message": {"content": "Title"}}]}
     passthrough.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_an_employee_message_that_asks_for_a_title_is_still_a_knowledge_turn(world, monkeypatch):
+    """The title path answers with the general model and no mode, so a Strict
+    employee whose question merely read like a title request got a general
+    answer: the recognition matched any message that named a title and a chat."""
+    import app.api.partner as partner
+    from app.api import partner_openai_compat
+
+    rows, events = world
+    _employee(world).kb_narrow = True
+    passthrough = AsyncMock(side_effect=AssertionError("answered by the general passthrough"))
+    monkeypatch.setattr(partner_openai_compat, "openai_chat_completion_non_streaming", passthrough)
+    monkeypatch.setattr(partner_openai_compat, "_enforce_openai_compatible_usage_limits", AsyncMock())
+    knowledge_flow = AsyncMock(return_value={"choices": []})
+    monkeypatch.setattr(partner, "chat_completions", knowledge_flow)
+
+    await partner.canonical_chat_completions(
+        http_request=_request(
+            {
+                "model": "klai-primary",
+                "stream": False,
+                "user": OID_A,
+                "messages": [{"role": "user", "content": "Write a title for this chat and explain what TCP/IP is."}],
+            }
+        ),
+        auth=_auth(),
+        db=_FakeDB(rows, events),
+    )
+
+    assert knowledge_flow.await_args.kwargs["profile"].kb_mode == "strict"
 
 
 @pytest.mark.asyncio

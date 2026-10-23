@@ -564,6 +564,8 @@ async def _search_knowledge(
             "source_connector_id": r.payload.get("source_connector_id"),
             "kb_slug": r.payload.get("kb_slug"),
             "source_label": r.payload.get("source_label"),
+            "product": r.payload.get("product"),
+            "text_fingerprint": r.payload.get("text_fingerprint"),
             "title": r.payload.get("title"),
             "original_filename": r.payload.get("original_filename"),
             "image_urls": payload_list(r.payload, "image_urls"),

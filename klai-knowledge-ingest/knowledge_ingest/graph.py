@@ -40,6 +40,11 @@ import knowledge_ingest.qdrant_store as qdrant_store
 from knowledge_ingest import _patch_graphiti
 from knowledge_ingest.build_estimate import maybe_warn_graph_scale, should_check_graph_scale
 from knowledge_ingest.config import settings
+from knowledge_ingest.falkordb_probe import (
+    FalkorDBDiedDuringEpisode,
+    falkordb_run_id,
+    falkordb_run_id_when_back,
+)
 from knowledge_ingest.llm_throttle import (
     NoMediumFallbackTransport,
     TokenBucketLimiter,
@@ -966,6 +971,9 @@ async def ingest_episode(
 
     async with _get_semaphore():
         for attempt in range(max_attempts):
+            # Read inside the semaphore: only this episode's write runs between
+            # the two reads, so a changed run_id points at this document.
+            run_id = await falkordb_run_id()
             try:
                 logger.info(
                     "graphiti_episode_start",
@@ -1081,6 +1089,19 @@ async def ingest_episode(
                 break
 
             except Exception as exc:
+                # A death needs proof: FalkorDB answering again under a new
+                # run_id. Slow or still silent proves nothing; retry as usual.
+                run_id_after = await falkordb_run_id_when_back() if run_id is not None else None
+                if run_id_after is not None and run_id_after != run_id:
+                    # Retrying would replay the write that may have crashed it.
+                    logger.warning(
+                        "graphiti_falkordb_died_during_episode",
+                        artifact_id=artifact_id,
+                        org_id=org_id,
+                        attempt=attempt + 1,
+                        error=str(exc),
+                    )
+                    raise FalkorDBDiedDuringEpisode(str(exc)) from exc
                 if attempt < max_attempts - 1:
                     retry_reason, wait = _graphiti_retry_delay(exc, attempt)
                     logger.warning(

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -72,6 +73,41 @@ async def get_graph_stats(org_id: str) -> dict[str, int | None]:
     except Exception:
         logger.warning("Could not fetch graph stats from knowledge-ingest (org=%s)", org_id, exc_info=True)
         return {"entity_count": None, "edge_count": None}
+
+
+_PRODUCTS_TTL_SECONDS = 300.0
+_products_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+async def get_products(org_id: str) -> list[str]:
+    """The product labels in the org's chunks (knowledge-base plan, step 7), cached for five minutes.
+
+    Read on the chat path before the case, so one attempt on the derived-read
+    budget and no retries. A failure is cached like an answer: an unreachable
+    knowledge-ingest costs one turn its product preference, not every turn a
+    second of waiting.
+    """
+    cached = _products_cache.get(org_id)
+    if cached is not None and time.monotonic() - cached[0] < _PRODUCTS_TTL_SECONDS:
+        return cached[1]
+    products: list[str] = []
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.knowledge_ingest_url,
+            headers={
+                "X-Internal-Secret": settings.knowledge_ingest_secret,
+                "X-Caller-Service": "portal-api",
+                **get_trace_headers(),
+            },
+            timeout=_DERIVED_READ_TIMEOUT,
+        ) as client:
+            resp = await client.get("/ingest/v1/products", params={"org_id": org_id})
+            resp.raise_for_status()
+            products = [str(product) for product in resp.json()["products"]]
+    except Exception:
+        logger.warning("Could not fetch product labels from knowledge-ingest (org=%s)", org_id, exc_info=True)
+    _products_cache[org_id] = (time.monotonic(), products)
+    return products
 
 
 async def get_source_count(org_id: str, kb_slug: str) -> int | None:

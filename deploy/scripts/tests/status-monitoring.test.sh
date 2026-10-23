@@ -12,6 +12,8 @@ for name in push-health.sh gpu-health.sh audit-monitor-coverage.sh push-componen
     printf '#!/usr/bin/env bash\necho private\n' > "$tmp/dest/$name"
 done
 printf '#!/usr/bin/env bash\necho current\n' > "$tmp/source/backup.sh"
+# retrieval-api-oneoff.sh bind-mounts this helper from the synced directory.
+printf 'print("launch")\n' > "$tmp/source/retrieval-api-oneoff-launch.py"
 awk '/# Sync public-safe deploy scripts/{copy=1} /test -x \/opt\/klai\/scripts\/backup.sh/{copy=0} copy' \
     "$WORKFLOW" | sed -e "s#deploy/scripts#$tmp/source#g" \
         -e "s#/opt/klai/scripts#$tmp/dest#g" > "$tmp/sync.sh"
@@ -23,6 +25,7 @@ for name in push-health.sh gpu-health.sh audit-monitor-coverage.sh push-componen
     fi
 done
 grep -qx 'echo current' "$tmp/dest/backup.sh"
+grep -qx 'print("launch")' "$tmp/dest/retrieval-api-oneoff-launch.py"
 
 printf 'MISTRAL_API_KEY=provider-key\nMISTRAL_API_KEY_2=provider-key-two\nMISTRAL_VIBE_KEY=vibe-key\nKUMA_TOKEN_MISTRAL=heartbeat-token\n' > "$tmp/env"
 # Answers PROVIDER_STATUS for MISTRAL_API_KEY and PROVIDER_STATUS_2 for

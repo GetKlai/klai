@@ -68,12 +68,14 @@ def test_diff_inventory_reports_missing_and_orphaned_artifacts():
             "kb_slug": "kb",
             "path": "present.md",
             "artifact_id": "art-present",
+            "index_status": "synced",
         },
         {
             "org_id": "org-1",
             "kb_slug": "kb",
             "path": "missing.md",
             "artifact_id": "art-missing",
+            "index_status": "synced",
         },
     ]
     qdrant_counts = Counter(
@@ -93,6 +95,35 @@ def test_diff_inventory_reports_missing_and_orphaned_artifacts():
     assert report["discrepancies_total"] == 2
     assert report["missing_sample"][0]["artifact_id"] == "art-missing"
     assert report["orphaned_sample"][0]["artifact_id"] == "art-orphan"
+
+
+def test_points_of_an_active_artifact_whose_enrichment_failed_are_not_orphans():
+    """A direct upload whose enrichment failed keeps its raw chunks in Qdrant
+    by design and stays searchable; its row reads index_status=failed. Eight
+    such artifacts were reported as orphaned every night for 30 days
+    (2026-09/10), and deleting their points would have removed live documents."""
+    pg_artifacts = [
+        {
+            "org_id": "org-1",
+            "kb_slug": "kb",
+            "path": "upload.pdf",
+            "artifact_id": "art-failed",
+            "index_status": "failed",
+        },
+        {
+            "org_id": "org-1",
+            "kb_slug": "kb",
+            "path": "never-indexed.pdf",
+            "artifact_id": "art-failed-empty",
+            "index_status": "failed",
+        },
+    ]
+    qdrant_counts = Counter({ArtifactKey("org-1", "kb", "upload.pdf", "art-failed"): 3})
+
+    report = _diff_inventory(pg_artifacts, qdrant_counts)
+
+    assert report["orphaned_in_qdrant"] == 0
+    assert report["missing_in_qdrant"] == 0
 
 
 @pytest.mark.asyncio
@@ -167,7 +198,7 @@ def _patched_reconcile_env(
             return_value=_ctx(),
         ),
         patch(
-            "knowledge_ingest.consistency_reconcile.pg_store.list_active_synced_artifacts",
+            "knowledge_ingest.consistency_reconcile.pg_store.list_active_artifacts",
             new_callable=AsyncMock,
             return_value=pg_artifacts,
         ),
@@ -193,6 +224,7 @@ async def test_reconcile_pg_qdrant_logs_failed_status_on_discrepancy():
                 "kb_slug": "kb",
                 "path": "missing.md",
                 "artifact_id": "art-missing",
+                "index_status": "synced",
             }
         ],
         recent_artifacts=[],
@@ -227,6 +259,7 @@ async def test_reconcile_pg_qdrant_logs_ok_status_when_inventories_match():
                 "kb_slug": "kb",
                 "path": "present.md",
                 "artifact_id": "art-present",
+                "index_status": "synced",
             }
         ],
         recent_artifacts=[],
@@ -285,7 +318,7 @@ async def test_reconcile_pg_qdrant_logs_error_status_and_reraises_on_crash():
             return_value=_ctx(),
         ),
         patch(
-            "knowledge_ingest.consistency_reconcile.pg_store.list_active_synced_artifacts",
+            "knowledge_ingest.consistency_reconcile.pg_store.list_active_artifacts",
             new_callable=AsyncMock,
             side_effect=RuntimeError("pg down"),
         ),
