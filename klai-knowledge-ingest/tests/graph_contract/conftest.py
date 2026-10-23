@@ -94,12 +94,28 @@ def _apply_ingest_patches() -> None:
 class Contract:
     """One tenant graph plus the checks every step must pass."""
 
-    def __init__(self, graphiti: Graphiti, llm: FakeLLM, group_id: str, probe: Any) -> None:
+    def __init__(
+        self,
+        graphiti: Graphiti,
+        llm: FakeLLM,
+        embedder: FakeEmbedder,
+        group_id: str,
+        probe: Any,
+        groups: list[str],
+    ) -> None:
         self.graphiti = graphiti
         self.llm = llm
+        self.embedder = embedder
         self.group_id = group_id
         self._probe = probe
+        self._groups = groups
         self._episode = 0
+        groups.append(group_id)
+
+    def other_tenant(self) -> Contract:
+        """A second tenant graph on the same server, cleaned up with this one."""
+        group_id = f"{self.group_id[:-8]}{uuid.uuid4().hex[:8]}"
+        return Contract(self.graphiti, self.llm, self.embedder, group_id, self._probe, self._groups)
 
     async def assert_alive(self, step: str, cause: BaseException | None = None) -> None:
         try:
@@ -158,6 +174,25 @@ class Contract:
         except GroupsEdgesNotFoundError:
             return []
 
+    async def expect_search_hit(self, step: str, query: str) -> None:
+        """``search`` and ``search_`` must return this tenant's stored data, and only that."""
+        nodes = {node.uuid for node in await self.step(f"{step}: read nodes", self.stored_nodes())}
+        edges = {edge.uuid for edge in await self.step(f"{step}: read edges", self.stored_edges())}
+        found_edges = await self.step(
+            f"{step}: search {query[:40]!r}", self.graphiti.search(query, group_ids=[self.group_id])
+        )
+        combined = await self.step(
+            f"{step}: search_ {query[:40]!r}",
+            self.graphiti.search_(query, group_ids=[self.group_id]),
+        )
+        returned_nodes = {node.uuid for node in combined.nodes}
+        returned_edges = {edge.uuid for edge in combined.edges} | {
+            edge.uuid for edge in found_edges
+        }
+        assert returned_nodes | returned_edges, f"{step}: search for {query[:40]!r} found nothing"
+        assert returned_nodes <= nodes, f"{step}: search_ {query[:40]!r} returned a foreign node"
+        assert returned_edges <= edges, f"{step}: search {query[:40]!r} returned a foreign edge"
+
     async def expect_entities(self, step: str, names: list[str]) -> None:
         stored = {normalise(node.name) for node in await self.step(step, self.stored_nodes())}
         missing = [n for n in names if normalise(n) and normalise(n) not in stored]
@@ -173,23 +208,26 @@ async def contract(request: pytest.FixtureRequest) -> AsyncIterator[Contract]:
 
     probe = redis.asyncio.Redis(host=_HOST, port=int(_PORT))
     llm = FakeLLM()
+    embedder = FakeEmbedder(_EMBEDDING_DIM)
     graphiti = Graphiti(
         graph_driver=FalkorDriver(host=_HOST, port=int(_PORT)),
         llm_client=llm,
-        embedder=FakeEmbedder(_EMBEDDING_DIM),
+        embedder=embedder,
         cross_encoder=FakeCrossEncoder(),
     )
-    label = "".join(ch if ch.isalnum() else "-" for ch in request.node.name.lower())[:40]
-    group_id = f"contract-{label}-{uuid.uuid4().hex[:8]}".strip("-")
-    helper = Contract(graphiti, llm, group_id, probe)
+    label = "".join(ch for ch in request.node.name.lower() if ch.isalnum())[:30]
+    group_id = f"contract{label}{uuid.uuid4().hex[:8]}"
+    groups: list[str] = []
+    helper = Contract(graphiti, llm, embedder, group_id, probe, groups)
     await helper.assert_alive(f"start of {request.node.name}")
     try:
         yield helper
     finally:
-        try:
-            await probe.execute_command("GRAPH.DELETE", group_id)
-        except redis.RedisError:
-            pass  # graph never created, or the server is already gone and reported above
+        for group in groups:
+            try:
+                await probe.execute_command("GRAPH.DELETE", group)
+            except redis.RedisError:
+                pass  # graph never created, or the server is already gone and reported above
         await graphiti.close()
         await probe.aclose()
         monkeypatch.undo()
