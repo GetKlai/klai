@@ -12,7 +12,7 @@ related:
   - SPEC-RAG-SOURCE-SELECTION-001 (sibling; independent fix, shares the Phase 0 observability precondition, and its Phase 3 narrows the assertive register this SPEC constrains)
   - SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 (the abstain gate that did not fire because the band read `high`)
   - SPEC-RAG-EVAL-001 (acceptance criteria use its eval harness)
-roadmap: docs/architecture/retrieval-improvements-roadmap.md
+roadmap: docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md
 ---
 
 # HISTORY

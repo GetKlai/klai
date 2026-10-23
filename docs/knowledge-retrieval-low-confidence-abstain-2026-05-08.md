@@ -7,7 +7,7 @@
 
 > Quick capture of the work that landed in main on 2026-05-07/08 across PRs
 > #516, #517, #518. Move/restructure into the right doc home later.
-> Companion to [retrieval-improvements-roadmap.md](architecture/retrieval-improvements-roadmap.md)
+> Companion to [knowledge-base-ingestion-and-retrieval-plan.md](architecture/knowledge-base-ingestion-and-retrieval-plan.md)
 > which describes the Tier 1+2 baseline this builds on.
 
 ---
@@ -194,7 +194,7 @@ deploy/
 
 docs/
   runbooks/rag-quality.md        # +1 section (triage for the new alert)
-  architecture/retrieval-improvements-roadmap.md  # untouched (Tier 3 still gated on production traces)
+  architecture/knowledge-base-ingestion-and-retrieval-plan.md  # untouched (Tier 3 still gated on production traces)
 
 NO migrations, NO docker-compose changes, NO new services, NO SOPS env updates required.
 ```
@@ -219,7 +219,7 @@ These were out of scope for the merge gate; depend on production traces:
 - Conservative defaults (`link_expand_score_boost=1.00` ships dormant) — SPEC ships safe even if the SPEC author miscalibrated thresholds
 - Threshold-validators at startup catch misconfig early (low must be < high)
 - Pydantic `Optional[ConfidenceBand]` field — older clients (klai-portal, mcp) ignore the new field gracefully
-- Reading the existing `retrieval-improvements-roadmap.md` BEFORE proposing — caught that 4 of the originally-proposed SPECs were already shipped (Tier 1+2 SHIPPED 2026-05-05). Pitfall captured as `spec-scope-without-roadmap-check (MED)` in [process-rules.md](../.claude/rules/klai/pitfalls/process-rules.md).
+- Reading the existing `knowledge-base-ingestion-and-retrieval-plan.md` BEFORE proposing — caught that 4 of the originally-proposed SPECs were already shipped (Tier 1+2 SHIPPED 2026-05-05). Pitfall captured as `spec-scope-without-roadmap-check (MED)` in [process-rules.md](../.claude/rules/klai/pitfalls/process-rules.md).
 
 ### Didn't work first time (cleaned up in #517)
 - Grafana panel third series queried `litellm_low_confidence_injection_total` — a Prometheus counter that doesn't exist (litellm-hook has no `prometheus_client` dependency). Fixed in #517: re-pointed to `retrieval_confidence_band_total{band=~"low|unknown"}`.
@@ -239,7 +239,7 @@ These were out of scope for the merge gate; depend on production traces:
 ## Forward links (out of scope for this work, but adjacent)
 
 - **Privacy / retention work** (just starting, 2026-05-08): three-mode telemetry config per tenant (`off` / `shadow` / `full`), 7-day default retention on query-text in VictoriaLogs, embeddings-as-shadow-values for system improvement without raw query storage. Will land as `SPEC-PRIVACY-QUERY-SHADOW-001` (or similar) — see in-progress audit at `.moai/specs/SPEC-PRIVACY-*` once written.
-- **Tier 3 roadmap** (deferred until 4 weeks of production traces, per `retrieval-improvements-roadmap.md`):
+- **Tier 3 roadmap** (deferred until 4 weeks of production traces, per `knowledge-base-ingestion-and-retrieval-plan.md`):
   - HyDE if short-tech-query precision plateaus
   - GraphRAG community summaries if cross-doc synthesis demand emerges
   - Agentic RAG with query decomposition if multi-hop demand emerges

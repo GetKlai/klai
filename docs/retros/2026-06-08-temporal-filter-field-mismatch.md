@@ -32,7 +32,7 @@ dead: it now matches the written fields, making it *working* defense-in-depth
 for the one case physical deletion cannot cover (a Qdrant delete that fails
 after the PG commit — that residual is the dual-store consistency gap,
 `GAP-SYNC-01`). Remaining loose ends, tracked in
-`docs/architecture/knowledge-rag-improvement-plan.md` (theme A1):
+`docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md` (theme A1):
 same-path replacement ingest now records the PG `superseded_by` chain,
 `valid_from`/`valid_until` have Qdrant integer payload indexes, and regression
 tests cover the delete-then-upsert behavior. The remaining loose end is

@@ -11,7 +11,7 @@ related:
   - SPEC-PLATFORM-ADMIN-001 (owns the Klai-staff console this SPEC extends — do not build a second one)
   - SPEC-PRIVACY-QUERY-SHADOW-001 (telemetry_level is the closest per-org setting; its DB→service→endpoint→hook→tab chain is the template)
   - SPEC-SEC-CORS-001 (portal admin endpoint conventions)
-roadmap: docs/architecture/knowledge-rag-improvement-plan.md
+roadmap: docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md
 ---
 
 # HISTORY

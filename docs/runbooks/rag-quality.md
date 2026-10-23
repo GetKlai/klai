@@ -91,7 +91,7 @@ This runs the same suite synchronously and prints per-query results. Cheaper tha
 ### Related
 
 - SPEC-RAG-EVAL-001 (historical — SPEC removed in repo cleanup 2026-08-18)
-- Roadmap: `docs/architecture/retrieval-improvements-roadmap.md`
+- Roadmap: `docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md`
 
 ---
 
@@ -273,4 +273,4 @@ If the injection rate is 0% but the low-confidence band rate is above 20%, there
 - Alert rule: `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml` (uid: `spec-rag-001-low-confidence-rate`)
 - Dashboard panel: `deploy/grafana/provisioning/dashboards/rag-quality.json` (panel id 6, "Low-Confidence")
 - Regression canaries: `klai-knowledge-ingest/knowledge_ingest/eval/suites/chat.yaml` (mix: `brand_bridging`)
-- Roadmap: `docs/architecture/retrieval-improvements-roadmap.md`
+- Roadmap: `docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md`

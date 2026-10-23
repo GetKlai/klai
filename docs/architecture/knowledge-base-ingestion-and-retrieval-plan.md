@@ -1,0 +1,117 @@
+# Kennisbank: ingestion en retrieval, stand en verbeterplan
+
+Stand 23 oktober 2026. Dit document vervangt de twee eerdere plannen (mei en juni 2026); wat daaruit gebouwd en gemeten is staat in §6. Het chatpad zelf (zaak, keuzestap, schrijver, controle) staat in [chat-system.md](chat-system.md) en [chat-quality-history-and-plan.md](chat-quality-history-and-plan.md); dit plan gaat over wat er vóór de chat gebeurt: hoe artikelen de index in gaan en hoe passages eruit komen.
+
+Afkortingen voor paden: KI = `klai-knowledge-ingest/knowledge_ingest`, RA = `klai-retrieval-api/retrieval_api`, PB = `klai-portal/backend/app`.
+
+## 1. Waarom nu
+
+Twee weken werk aan het chatpad (september en oktober) hebben de chat zover gebracht dat de meetlat vooral nog zoekfouten laat zien. Het duidelijkste geval: een vraag naar een Windows-app waarvan het antwoord in een artikel over een anders genoemd product staat. De zoekdienst biedt tien passages aan die het woord Windows geen van alle noemen, de keuzestap zegt terecht "staat er niet in", en het juiste artikel verschijnt alleen als de productnaam in de vraag staat. Geen enkele verbetering aan de keuzestap of de schrijver kan dat oplossen; de ingestion en de retrieval wel.
+
+Daarnaast liet het chatwerk drie structurele dingen zien die bij de index horen: passages die alleen uit lijsten met gerelateerde links bestaan, passages van één zin, en passages van een ander product die met hoge score bovenaan komen (een zesde van de verkeerd beoordeelde gevallen in de nulmeting van september was zo'n "lookalike"). En we meten het antwoord, niet de retrieval: of het juiste artikel überhaupt tussen de kandidaten zat, weet niemand.
+
+## 2. Hoe het systeem nu werkt
+
+### Ingestion
+
+- **Bronnen.** Crawls via crawl4ai 0.9.5 (`KI/crawl4ai_config.py`, standaard 200 pagina's, `PruningContentFilter` op 0,45, navigatie en voettekst uitgesloten, links blijven staan). Uploads: `.md/.txt/.csv` direct, binaire formaten via docling-serve 1.37 met zijn HybridChunker, waarvan elke chunk een eigen parent wordt (`PB/services/docling_client.py`, `KI/routes/ingest.py`). Connectoren (GitHub, Notion, Airtable, Confluence, Google Drive, Microsoft, JSON-feed) parsen binaire bestanden met Unstructured. Transcripten komen al per spreekbeurt gechunkt binnen.
+- **Document, sectie, parent, kind.** Een document is een artefactrij per kennisbank en pad. Een sectie is een kopblok (`#` tot `###`). Een parent is een sectie of een blok van maximaal 6000 tekens daaruit, zonder overlap, in Postgres. Een kind is het stuk dat wordt ingebed en gevonden: eerst gesplitst op koppen, dan op alinea- of zingrens, 300 tot 800 tokens afhankelijk van het inhoudsprofiel, met 200 tekens overlap (`KI/chunker.py`, `KI/content_profiles.py`).
+- **Wat er in de embedding gaat.** Koptitelpad plus kindtekst; de verrijking zet er een LLM-contextzin voor (`KI/enrichment.py`), voegt ankerteksten van inkomende links toe als "ook bekend als", en bedt per chunk synthetische vragen apart in (HyPE). Ruwe chunks worden eerst alleen dense weggeschreven; de verrijking overschrijft ze daarna met dense plus sparse plus vragen. **De verrijking wordt overgeslagen boven 200 chunks per document en bij afgekapte documenten** (`KI/enrichment_policy.py`); die chunks blijven dense-only, zonder contextzin en zonder vragen.
+- **Modellen en opslag.** Dense BGE-M3 (1024) via TEI, sparse BGE-M3 via een eigen sidecar, Qdrant 1.19 met drie benoemde vectoren per punt (`vector_chunk`, `vector_questions`, `vector_sparse`) en de eigenaar als partitiesleutel. De payload draagt titel, bron-URL, koptitelpad, kennisbank, zichtbaarheid, geldigheidsdata, tags, taxonomie, links en linkteksten; de documenttaal staat bewust niet in de payload.
+- **Beheer.** Gelijke inhoudshash slaat de ingest over; een nieuwe versie sluit de oude artefactrij en schrijft alle punten van het pad opnieuw; verouderde pagina's worden met een rem opgeruimd (bulkverwijdering stopt bij te veel 404's of een gehalveerde lijst). Dedupe is alleen de exacte hash. PII-maskering bij ingest is er niet; Presidio zit alleen in de chat-guardrails.
+
+### Retrieval
+
+- **Wat de chat stuurt** (`PB/services/retrieval_context.py`): de letterlijke vraag, eigenaar, bereik, `top_k` (8 widget, 20 intern), gespreksgeschiedenis, hooguit 8 bronnen; op een eerste beurt twee parafrasen, op een vervolgbeurt de zoekvragen uit de zaak; bij deelvragen een eigen pijplijn per deelvraag.
+- **Zoeken** (`RA/services/search.py`): hybride in Qdrant met RRF over chunk-, vraag- en sparse-vector, 60 kandidaten; een coreferentie-herschrijving met `klai-fast` als de aanroeper die niet al deed, met de ruwe vraag als extra been; Graphiti-grafzoeken wordt in de RRF meegenomen; gelinkte chunks worden bijgevoegd (hooguit 20).
+- **Reranken en kiezen** (`RA/services/reranker.py`, `RA/api/retrieve.py`): `bge-reranker-v2-m3` op Infinity over **de top 20 kandidaten**, de passage is contextzin plus kindtekst; daarna één kind per parent, hooguit twee per bron, een kwaliteitsvloer en een feedbackboost; de parent-tekst vervangt het kind voor de chat. De zekerheidsband is de hoogste rerankerscore: hoog boven 0,60, laag onder 0,30.
+- **Bewijspakket**: passages `E1..` met tekst, titel, koptitelpad, URL en scores; bronnen `S1..`; `no_citable_reason`. Geen resultaatcache.
+
+### Meting
+
+RAGAS draait 's nachts op twee suites (30 vragen voor de bedrijfskennisbank), met eigen gegenereerde antwoorden, dus niet op een van beide chatpaden. De meetlat (`PB/scripts/meetlat.py`) meet het antwoord van de chat op 109 widgetgevallen en 36 interne beurten. Gat-events (`portal_retrieval_gaps`: hard, zacht, inhoud) tellen beurten zonder of met zwakke passages en worden opnieuw gescoord na een opslag of sync. Wat ontbreekt: een maat per stap van de retrieval (zat het juiste artikel in de 60 kandidaten, in de 20 die de reranker zag, in de passages die de chat kreeg).
+
+## 3. Wat de stand van de techniek zegt
+
+Online onderzoek van 23 oktober 2026, primaire bronnen in §7. Leverancierscijfers zijn als zodanig gemarkeerd.
+
+- **Hybride zoeken** (dense plus sparse, RRF) wint betrouwbaar van BM25 en van dense alleen: op MIRACL 69,2 dense tegen 70,4 dense+sparse en 71,5 met alle drie de BGE-M3-modi; op lange documenten (MLDR) 52,5 tegen 64,8. Op een financiële tekst-en-tabelset: recall@5 0,59 dense, 0,70 hybride, 0,82 hybride plus reranker.
+- **Rerankerdiepte** doet ertoe: recall@5 0,46 bij 20 kandidaten, 0,83 bij 50, 0,89 bij 100 (één benchmark). Anthropic rerankt 150 kandidaten naar 20 (leverancier). `bge-reranker-v2-m3` evalueert zijn modelkaart op de top 100.
+- **Contextuele chunks** (een korte contextzin per chunk, Anthropic): 35 procent minder gemiste passages in de top 20, 49 procent met contextuele BM25 erbij, 67 procent met reranker (leverancier, niet onafhankelijk herhaald). doc2query zonder filter hallucineert; gefilterd tot 16 procent winst.
+- **Chunkgrootte**: recursief splitsen op 200 tokens zonder overlap verslaat de 800/400-standaard op precisie bij gelijke recall (Chroma); semantisch chunken geeft geen betrouwbare winst boven vaste grootte; korte feitvragen vragen 64 tot 128 tokens, lange antwoorden 512 tot 1024. Parent/child ("klein zoeken, groot teruggeven") is de gangbare vorm in Dify, LlamaIndex en Docling.
+- **Vraagexpansie** (parafrasen, HyDE, multi-query) helpt zwakke retrievers en schaadt sterke (11 technieken, 12 datasets, 24 retrievers); HyDE's winst komt deels uit benchmarklekkage. Geen gecontroleerde studie voor helpcentra gevonden.
+- **Taal**: retrievers geven documenten in de taal van de vraag 1,3 (OpenAI) tot 1,6 keer (BGE-M3) voorrang; cross-linguaal verliest dus terrein, ook met sterke meertalige modellen. Qwen3-Embedding en multilingual-e5 scoren op MTEB-meertalig hoger dan BGE-M3 (70,6 en 63,2 tegen 59,6), maar BGE-M3 wint op MIRACL en levert dense, sparse en late-interaction in één model.
+- **Grafen en bomen**: op eenvoudige feitvragen evenaart gewone RAG-met-reranker GraphRAG, voor een fractie van de tokens (879 tegen 100.832 per vraag voor LightRAG); grafen winnen alleen op meerstapsredeneren; RAPTOR-samenvattingsbomen zijn de goedkoopste graf-achtige winst; grafbouw kost tot 40 keer meer tokens. Geen onafhankelijke meting op helpcentra.
+- **Lange context in plaats van RAG** wint op exacte feiten (56 tegen 49 procent), RAG is gelijkwaardig op open "hoe"-vragen en veel goedkoper.
+- **Citeren**: zelfs de beste modellen citeren in de helft van de gevallen onvolledig (ALCE); eerst passages kiezen en dan schrijven ("select-then-generate") geeft fijnmazige citaten en minder controlewerk. Dat is wat onze keuzestap doet.
+- **Evaluatie**: RAGAS meet contextprecisie, contextrecall, trouw en relevantie, geen recall@k of MRR; LlamaIndex' retrievereval wel (hit rate, MRR, nDCG). Positiebias van LLM-rechters is reëel.
+- **Beheer**: volwassen stacks (RAGFlow, Onyx, Kotaemon, Haystack, Dify) leveren hybride zoeken, reranking, parent/child en incrementele sync; Dify verwijdert URL's en e-mailadressen bij ingest; exacte duplicaten zijn zeldzaam in open corpora (0,16 procent) maar gewoon in bedrijfssets (24 procent).
+
+## 4. Vergelijking
+
+**Waar we voorlopen.** Contextzin, synthetische vragen, hybride RRF over drie vectoren, reranker, parent/child, bewijspakket, geldigheidsdata en versiebeheer, isolatie per eigenaar in de vectorstore, en de keuzestap met in code geverifieerde citaten: dat is meer dan RAGFlow, Onyx, Dify of Kotaemon standaard leveren, en het is de combinatie die de literatuur als bewezen aanmerkt.
+
+**Waar we achterlopen.**
+
+1. *Afstelling.* De reranker ziet 20 van 60 kandidaten; de literatuur wijst op 50 tot 100. De passages naar de chat zijn parent-blokken tot 6000 tekens; de literatuur wijst op kleine stukken met een beperkt venster.
+2. *Consistentie.* Grote documenten (meer dan 200 chunks) en afgekapte documenten draaien dense-only, zonder contextzin, zonder vragen en zonder sparse vector, terwijl juist daar de hybride winst het grootst is.
+3. *Hygiëne van de index.* Linklijsten, navigatieblokken en stompjes van één zin worden passages; de crawl-chunker voegt kleine stukken niet samen zoals Docling dat doet; linktekst ontbreekt in zes van tien beurten ("Ga naar ."); dedupe herkent alleen exacte kopieën, dus lookalikes van een ander product blijven.
+4. *Taal en vocabulaire.* Geen vertaald zoekbeen bij een vraag in een andere taal dan de kennisbank; synoniemen alleen via toevallige linkteksten; het eigen architectuurdocument noemt cosinus onbetrouwbaar voor productnamen.
+5. *Meting.* Geen recall per stap; RAGAS meet geen chatpad; de meetlat meet het antwoord.
+6. *Onbewezen onderdelen.* Grafzoeken en linkexpansie draaien mee zonder dat hun bijdrage ooit apart is gemeten, terwijl de literatuur daar geen winst voor eenvoudige feitvragen vindt.
+
+## 5. Plan
+
+In deze volgorde, omdat stap 1 de maat levert voor alle andere. Elke stap is één verticale slice met een PR, een rij in §6 met de meting, en de gates van de betrokken dienst.
+
+| # | Stap | Wat | Waarom (bewijs) | Meting | Omvang |
+|---|---|---|---|---|---|
+| 1 | Retrievalmeting | Uit de meetlatgevallen het verwachte artikel per vraag afleiden (uit de bron-URL van het verwachte antwoord) en per stap meten: recall@60 na zoeken, recall@20 na reranken, aanwezig in de passages naar de chat; als `meetlat` subcommando of eigen script in `KI/eval` | Zonder deze maat is elke andere stap een mening; LlamaIndex' retrievereval en de rerankerdiepte-benchmark laten zien dat juist de stap vóór het reranken beslist | De maat zelf, op de 109 widget- en 36 interne gevallen | M |
+| 2 | Rerankerdiepte | `rerank_candidates` van 20 naar 60, en `retrieval_candidates` zo nodig naar 100; latentie meten op de GPU-reranker | Recall@5 0,46 bij 20 tegen 0,83 bij 50 kandidaten; Anthropic rerankt 150 | Stap 1 vóór en na; de Windows-app-vraag als eerste proef; p95 van `/retrieve` | S |
+| 3 | Sparse en context altijd | De sparse vector in de basisingest (geen LLM nodig); de contextzin en vragen als begrensde wachtrij per document in plaats van overslaan boven 200 chunks | Hybride wint 1 tot 12 punten, het meest op lange documenten; de verrijking is nu uitgerekend afwezig waar hij het meest oplevert | Aandeel chunks met sparse vector en contextzin per kennisbank (nu onbekend); stap 1 | M |
+| 4 | Ruis uit de index | Chunks met hoge linkdichtheid of zonder lopende zin weglaten; stukken onder een vaste lengte samenvoegen met hun buur onder dezelfde kop (zoals Docling's HybridChunker); linktekst herstellen in de crawl-output | Een derde van de beurten had een passage van een ander product bovenaan; zes van tien beurten een gat in de linktekst | Aantal passages zonder lopende zin per ronde; stap 1 | M |
+| 5 | Kleinere stukken naar de chat | Kinderen van 200 tot 300 tokens; naar de chat een venster van kind plus buren (of een parent-plafond van ongeveer 2000 tekens) in plaats van het parent-blok tot 6000 | Kleine chunks winnen op precisie bij gelijke recall; de keuzestap verifieert per citaat en heeft geen hele secties nodig; de interne keuzestap leest nu 13 tot 22 lange passages | Stap 1; de meetlat op beide oppervlakken (keuzestap-uitval, duur per beurt) | M |
+| 6 | Taal en aliassen | Een vertaald zoekbeen (`klai-fast`) wanneer de vraagtaal afwijkt van de taal van de kennisbank, als extra RRF-been naast de ruwe vraag; een kleine aliaslijst per kennisbank (productnamen en synoniemen) die in de contextzin én in de vraag wordt meegenomen | Taalbias 1,3 tot 1,6; cosinus onbetrouwbaar voor productnamen; de Windows-app-vraag | Stap 1 op de anderstalige en de productnaam-gevallen | M |
+| 7 | Lookalikes | Productlabel per artikel (uit URL-pad of kennisbank) in de payload; bijna-duplicaten herkennen met MinHash op chunks; het product uit de zaak laten meewegen in reranking of keuze | Een zesde van de fout beoordeelde gevallen was een lookalike; bedrijfssets zitten vol bijna-duplicaten | Aandeel lookalikes in de top 3 per ronde; stap 1 | L |
+| 8 | Graf en linkexpansie bewijzen of weghalen | Stap 1 draaien met en zonder Graphiti-RRF en zonder linkexpansie | Grafen voegen op feitvragen niets toe en kosten veel; wat niets oplevert gaat eruit | Stap 1; kosten en latentie per vraag | S (meting), M (verwijderen) |
+
+Wat we niet doen, met reden: GraphRAG of LightRAG uitbreiden (geen bewijs voor helpcentra, honderdvoudige tokenkosten); semantisch chunken (geen betrouwbare winst); een ander embeddingmodel (BGE-M3 levert dense, sparse en late interaction in één, en verliest alleen op MTEB-gemiddelden); "hele kennisbank in de context" (wint op exacte feiten, past niet bij citaten en kosten per beurt); PII-maskering bij ingest voor publieke helpcentra (wel een besluit voor Drive- en Notion-connectoren met persoonsgegevens, zie §8).
+
+## 6. Uitkomsten per stap
+
+Eén rij per stap zodra er gemeten is, in dezelfde vorm als §8 van het chatplan: stap, datum, verwachting, uitkomst met cijfers, besluit. Een stap zonder meting krijgt geen rij. De eerste rijen zijn wat de twee eerdere plannen hebben opgeleverd, zodat de evolutie hier doorloopt.
+
+| Stap | Datum | Verwachting | Uitkomst | Besluit |
+|---|---|---|---|---|
+| Meetharnas (RAGAS-suites, variantlabels, canaries) | mei 2026 | Elke retrievalwijziging wordt gemeten vóór ze live gaat | Nachtelijke suites van 30 vragen per kennisbank; in juni zijn een verplicht referentieantwoord en een canary-op-verwachte-chunks toegevoegd die een kapotte run rood maken in plaats van stil | Gebouwd; meet de retrieval met eigen antwoorden, geen van beide chatpaden (§2) |
+| Contextuele chunks plus parent/child | mei 2026 | Minder gemiste passages en meer context voor de schrijver | Op de chatsuite van 30 vragen: contextprecisie van 0,23 naar 0,37, contextrecall van 0,25 naar 0,64, trouw voor het eerst meetbaar op 0,81 | Uitgerold, de kern van de huidige ingestion |
+| Vraagherschrijving en taxonomieclassificatie in de LiteLLM-hook | mei 2026 | Betere vraag en smaller zoekbereik | Niet meetbaar in het harnas (dat sloeg de hook over); met de hook op 21 oktober 2026 verwijderd, de zaak in het chatpad nam de herschrijving over | Weg |
+| Temporele correctheid en consistentie Postgres-Qdrant | juni 2026 | Geen verouderde of wees-chunks in de index | Geldigheidsdata met dubbel filter, verwijderen-dan-schrijven in beide winkels, een nachtelijke alleen-lezen telling met alert | Gebouwd |
+| Bewijsniveaus en retrievalpoort | juni 2026 | Antwoorden alleen bij sterk bewijs | Beide buiten dienst gesteld: de enige afnemer van de scores was de laag zelf | Weg; niet heractiveren zonder nieuwe productvraag |
+| GraphRAG-uitbreidingen | juni 2026 | Beter op meerstapsvragen | Uitgesteld op literatuur (gewone RAG wint op feitvragen); §3 bevestigt dat in oktober | Niet doen |
+
+## 7. Bronnen
+
+Primaire bronnen van het onderzoek van 23 oktober 2026; datum is die van de publicatie of het arXiv-nummer.
+
+- BGE-M3: hybride en meertalige cijfers, MIRACL, MLDR, MKQA. https://arxiv.org/html/2402.03216 (2024-02)
+- Rerankerdiepte en hybride op tekst-en-tabel. https://arxiv.org/html/2604.01733 (2026-04)
+- Contextual retrieval (leverancier). https://www.anthropic.com/news/contextual-retrieval (2024-09)
+- doc2query met filter. https://arxiv.org/abs/2301.03266 (2023-01)
+- Chunkgrootte (Chroma). https://www.trychroma.com/research/evaluating-chunking (2024-07); vraagtype en chunkgrootte https://arxiv.org/abs/2505.21700 (2025-05); semantisch chunken https://arxiv.org/abs/2410.13070 (2024-10); late chunking https://arxiv.org/html/2409.04701 (2024-09)
+- Docling en zijn HybridChunker. https://arxiv.org/abs/2501.17887 (2025-01), https://docling-project.github.io/docling/concepts/chunking/
+- Vraagexpansie versus retrieversterkte. https://arxiv.org/abs/2309.08541 (2023-09); HyDE-lekkage https://arxiv.org/abs/2504.14175 (2025-04); RAG-Fusion https://arxiv.org/abs/2402.03367 (2024-01)
+- Taalbias van retrievers. https://arxiv.org/html/2410.01171 (2024-10)
+- Embeddingmodellen: Qwen3-Embedding https://arxiv.org/html/2506.05176 (2025-06); jina-embeddings-v3 https://arxiv.org/html/2409.10173 (2024-09)
+- Grafen: GraphRAG-Bench https://arxiv.org/html/2506.05690 (2025-06); RAG versus GraphRAG https://arxiv.org/html/2502.11371 (2025-02); verenigd kader en RAPTOR https://arxiv.org/html/2503.04338 (2025-03), https://arxiv.org/html/2401.18059 (2024-01)
+- Lange context versus RAG. https://arxiv.org/html/2501.01880 (2024-12); https://arxiv.org/abs/2407.16833 (2024-07)
+- Citeren: ALCE https://arxiv.org/abs/2305.14627 (2023-05); select-then-generate https://arxiv.org/abs/2403.17104 (2024-03)
+- Evaluatie: RAGAS https://arxiv.org/abs/2309.15217 (2023-09) en https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/; ARES https://arxiv.org/abs/2311.09476 (2023-11); LlamaIndex retrievereval https://developers.llamaindex.ai/python/framework/module_guides/evaluating/
+- Stacks: RAGFlow https://github.com/infiniflow/ragflow; Onyx https://github.com/onyx-dot-app/onyx; Kotaemon https://github.com/Cinnamon/kotaemon; Dify https://docs.dify.ai/en/use-dify/knowledge/create-knowledge/chunking-and-cleaning-text; Haystack https://docs.haystack.deepset.ai/docs/documentwriter
+- Duplicaten in corpora. https://arxiv.org/abs/2605.09611 (2026-05)
+- Qdrant hybride en fusie. https://qdrant.tech/documentation/concepts/hybrid-queries/
+
+## 8. Besluiten voor de eigenaar
+
+- PII-maskering bij ingest voor connectoren die interne documenten ophalen (Drive, Notion, Confluence): nu geen; Presidio bestaat al voor de chat. Een besluit, geen techniek.
+- Of de aliaslijst per kennisbank (stap 6) in de portal door de eigenaar zelf te beheren is, of door ons bij onboarding wordt gevuld.

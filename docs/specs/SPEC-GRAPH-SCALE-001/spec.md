@@ -11,7 +11,7 @@ related:
   - SPEC-RAG-GRAPH-CITE-002 (episode naming; unaffected by this SPEC, but its rename path is a consumer of the graph this SPEC keeps intact during migration)
   - GetKlai/klai#1148 (canonical-English entity names across knowledge bases — the reason sub-tenant partitioning is a real trade-off, not a free lever)
   - GetKlai/klai#1214 (edge fulltext O(hits × entities) fix in klai-libs/graphiti-compat — precedent for the patch mechanism this SPEC extends)
-roadmap: docs/architecture/retrieval-improvements-roadmap.md
+roadmap: docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md
 ---
 
 # HISTORY
