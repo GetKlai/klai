@@ -12,7 +12,8 @@ from knowledge_ingest.crawl4ai_types import CrawlResult
 THIN_CONTENT_WORD_COUNT = 100
 _MUSTACHE_TOKEN_RE = re.compile(r"\{\{[^{}]*\}\}")
 _MD_LINK_URL_RE = re.compile(r"\]\([^)]*\)")
-_MD_LINK_RE = re.compile(r"\[[^\]]*\]\([^)]*\)")
+# Not an image: "![alt](src)" is not a link to restore.
+_MD_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\([^)]*\)")
 
 
 class _HTMLTextCounter(HTMLParser):

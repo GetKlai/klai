@@ -14,12 +14,8 @@ for callers that don't yet need parents.
 import re
 from dataclasses import dataclass, field
 
-import structlog
-
 from knowledge_ingest.document_normalizer import split_frontmatter
 from knowledge_ingest.utils.link_density import link_density
-
-logger = structlog.get_logger()
 
 
 @dataclass
@@ -236,26 +232,42 @@ def _parent_path(path: str) -> str:
     return path.rpartition(" > ")[0]
 
 
+def _without_code(text: str) -> str:
+    """Text with fenced code blocks cut out: Markdown shown as an example is not a link."""
+    parts: list[str] = []
+    pos = 0
+    for start, end in _find_code_block_ranges(text):
+        parts.append(text[pos:start])
+        pos = end
+    parts.append(text[pos:])
+    return "".join(parts)
+
+
 def _drop_link_blocks(sections: list[Section]) -> tuple[list[Section], int]:
     """Drop link-list sections, unless nothing else would be left of the document.
 
     An index page that is only links keeps them: it is all there is to retrieve,
     and an empty chunk list would turn the artifact into "empty document".
     """
-    kept = [s for s in sections if link_density(_IMAGE_RE.sub("", s[1])) < LINK_BLOCK_DENSITY]
+    kept = [
+        s
+        for s in sections
+        if link_density(_IMAGE_RE.sub("", _without_code(s[1]))) < LINK_BLOCK_DENSITY
+    ]
     if not kept:
         return sections, 0
     return kept, len(sections) - len(kept)
 
 
 def _merge_stubs(sections: list[Section]) -> tuple[list[Section], int]:
-    """Merge each stub into the following section of the same parent heading.
+    """Merge each stub into a neighbour of the same parent heading.
 
-    The following section is eligible when it is a sibling of the stub or sits
-    under it. A stub that is the last section of the document goes into the
-    preceding eligible section. A stub with no eligible neighbour, including the
-    only section of a document, stays as it is. Several stubs in a row end up in
-    the first section that is long enough.
+    A stub goes into the following section when that is a sibling of the stub or
+    sits under it. When there is no such section (the stub is the last one under
+    its parent heading, or the last of the document), it goes into the preceding
+    sibling instead. A stub with no eligible neighbour, including the only
+    section of a document, stays as it is. Several stubs in a row end up in the
+    first section that is long enough.
     """
 
     def eligible(stub_path: str, other_path: str) -> bool:
@@ -274,6 +286,18 @@ def _merge_stubs(sections: list[Section]) -> tuple[list[Section], int]:
 
     out: list[Section] = []
     merged = 0
+
+    def settle(stub: tuple[str, str, str]) -> None:
+        """Place a stub that has no following section to join: backward or alone."""
+        nonlocal merged
+        stub_path, stub_lead, stub_body = stub
+        if out and eligible(stub_path, out[-1][0]):
+            prev_path, prev_body = out[-1]
+            out[-1] = (prev_path, join(prev_body, stub_lead, title(stub_path), stub_body))
+            merged += 1
+        else:
+            out.append((stub_path, join(stub_lead, stub_body)))
+
     # A waiting stub: its own path and body, and the text of earlier stubs that
     # were merged into it and must stay in front of its own body.
     carry: tuple[str, str, str] | None = None
@@ -287,21 +311,37 @@ def _merge_stubs(sections: list[Section]) -> tuple[list[Section], int]:
                 lead = join(stub_lead, title_line, stub_body)
                 merged += 1
             else:
-                out.append((stub_path, join(stub_lead, stub_body)))
+                settle(carry)
             carry = None
         if _approx_token_count(join(lead, body)) < MIN_SECTION_TOKENS:
             carry = (path, lead, body)
         else:
             out.append((path, join(lead, body)))
     if carry is not None:
-        stub_path, stub_lead, stub_body = carry
-        if out and eligible(stub_path, out[-1][0]):
-            prev_path, prev_body = out[-1]
-            out[-1] = (prev_path, join(prev_body, stub_lead, title(stub_path), stub_body))
-            merged += 1
-        else:
-            out.append((stub_path, join(stub_lead, stub_body)))
+        settle(carry)
     return out, merged
+
+
+@dataclass
+class NoiseCounts:
+    sections: int
+    link_blocks_dropped: int
+    stubs_merged: int
+
+
+def _clean_sections(body: str) -> tuple[list[Section], NoiseCounts]:
+    sections = _split_by_headings(body) if body.strip() else []
+    if not sections:
+        sections = [("", body)]
+    total = len(sections)
+    sections, dropped = _drop_link_blocks(sections)
+    sections, merged = _merge_stubs(sections)
+    return sections, NoiseCounts(total, dropped, merged)
+
+
+def noise_counts(content: str) -> NoiseCounts:
+    """What chunking removes from ``content``, for the caller to log once."""
+    return _clean_sections(split_frontmatter(content)[1])[1]
 
 
 def chunk_markdown_with_parents(
@@ -321,15 +361,7 @@ def chunk_markdown_with_parents(
     Section boundaries are preserved: a parent never spans two markdown
     headings (children inside a section all share that section's parent).
     """
-    _, body = split_frontmatter(content)
-    sections = _split_by_headings(body) if body.strip() else []
-
-    if not sections:
-        sections = [("", body)]
-
-    section_count = len(sections)
-    sections, link_blocks_dropped = _drop_link_blocks(sections)
-    sections, stubs_merged = _merge_stubs(sections)
+    sections, _ = _clean_sections(split_frontmatter(content)[1])
 
     children: list[Chunk] = []
     parents: list[ParentChunk] = []
@@ -372,14 +404,4 @@ def chunk_markdown_with_parents(
                 parent.child_indices.append(child_idx)
                 char_pos += len(child_text)
 
-    # Counts only, no text: the share of noise per knowledge base is the sum of
-    # these over the documents of one org.
-    logger.info(
-        "chunker_noise_removed",
-        sections=section_count,
-        link_blocks_dropped=link_blocks_dropped,
-        stubs_merged=stubs_merged,
-        children=len(children),
-        parents=len(parents),
-    )
     return children, parents

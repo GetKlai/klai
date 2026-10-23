@@ -28,7 +28,9 @@ LINK_DENSITY_THRESHOLD: float = 0.40
 
 # Markdown link: ``[anchor text](url)``. Captures the anchor text only —
 # the url is discarded for density calculation.
-_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+# The label may not contain "[" or a newline: a stray "[" in prose must not
+# stretch a label across text up to the next real link.
+_MD_LINK_RE = re.compile(r"\[([^\[\]\n]*)\]\(([^)\n]+)\)")
 
 
 def link_density(markdown: str) -> float:

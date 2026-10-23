@@ -80,3 +80,10 @@ def test_a_line_that_also_occurs_without_a_link_is_left_alone() -> None:
     fit = "Open nu.\nOpen nu.\n"
 
     assert _extract(fit, raw).fit_markdown == fit
+
+
+def test_an_image_is_not_a_link_to_restore() -> None:
+    raw = "Zie ![schermafdruk](https://example.com/s.png) nu.\n"
+    fit = "Zie schermafdruk nu.\n"
+
+    assert _extract(fit, raw).fit_markdown == fit
