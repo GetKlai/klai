@@ -120,10 +120,11 @@ def test_reranker_sees_as_many_candidates_as_the_setting_says(client, sample_ret
 
 
 def test_reranker_candidates_default_to_sixty_and_follow_the_environment(monkeypatch):
+    monkeypatch.delenv("RERANKER_CANDIDATES", raising=False)
     assert Settings().reranker_candidates == 60
 
-    monkeypatch.setenv("RERANKER_CANDIDATES", "100")
-    assert Settings().reranker_candidates == 100
+    monkeypatch.setenv("RERANKER_CANDIDATES", "20")
+    assert Settings().reranker_candidates == 20
 
 
 @pytest.mark.parametrize("flag", [True, False])

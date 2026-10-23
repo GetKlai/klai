@@ -23,7 +23,12 @@ asyncpg.create_pool = _read_only_pool
 import retrieval_api.api.retrieve as retrieve  # noqa: E402  (after the pool patch: nothing may connect before it)
 import retrieval_api.main as main  # noqa: E402
 
-retrieve.emit_event = lambda *args, **kwargs: None
-retrieve.write_shadow = lambda *args, **kwargs: None
+
+def _skip(*_args, **_kwargs):
+    return None
+
+
+retrieve.emit_event = _skip
+retrieve.write_shadow = _skip
 
 uvicorn.run(main.app, host="0.0.0.0", port=int(os.environ.get("PORT", "8040")))  # noqa: S104 - container-internal

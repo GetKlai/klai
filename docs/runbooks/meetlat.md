@@ -6,6 +6,8 @@ live outside the repository, in the output directory of a throwaway portal-api c
 
 - `run` replays the user turns named in a case file through the one chat pipeline and writes one row per turn.
 - `compare` classifies the rows of one or more rounds against the case file and prints the verdicts and a reading section.
+- `retrieval` replays the same turns but only their retrieval, and says per stage whether the article a case expects was
+  there ([Measure the retrieval](#measure-the-retrieval)).
 
 A case is one JSON object per line: `cid` (first 8 characters of a conversation id), `turn` (index of the user turn),
 `class` (`weigering`, `antwoord_kb`, `dekkend_antwoord`, `antwoord_algemeen_gelabeld` or `weigering_feiten`) and,
@@ -123,3 +125,56 @@ never judged automatically: it is counted as "te lezen". The reading section lis
 the text, plus any e-mail addresses, amounts and URLs in it. `--json` prints the same as one JSON object.
 
 Keep the output in the output directory: the rows hold real answers.
+
+## Measure the retrieval
+
+`retrieval` takes the options of `run` and replays every turn only up to retrieval-api's answer. It sends the request the
+chat sends (`retrieval_context._retrieve_body`) with `debug_stages: true`, keeps what comes back, and stops the turn
+there: the selection step, the writer and the grounding check never run, so a round takes minutes and spends none of the
+`klai-medium` budget that live answers share. The earlier turns of a conversation are cut short the same way, because
+the case they store for a follow-up does not depend on the reply.
+
+A case is measured when it names the article its answer should come from and its class is `antwoord`, `antwoord_kb` or
+`dekkend_antwoord`; every other case gets a `skipped` row. The expected article is the case's `articles` (a list of URLs,
+as the widget cases carry them); an internal case without it takes the links in the reply recorded in the LibreChat
+conversation for that turn, so check that those replies cite the article the owner expects. URLs are compared as the
+evidence pack keys a source (`klai_citations.source_url_key`: host without `www.`, path without the trailing slash).
+
+A row says, for the expected articles together (any one counts):
+
+- `search`: among the candidates after search, before the reranker (`retrieval_candidates`, plus Graphiti facts when that
+  leg is on; the linked chunks added afterwards are not counted);
+- `rerank`: among what the reranker returned (the best `3 x top_k` of the `reranker_candidates` it scored);
+- `served`: the rank of the best of them among the distinct sources of the passages the chat would receive, or `null`.
+
+The first two stages include the query variants (the widget's two paraphrases, a follow-up's case queries), because their
+candidates reach the served list too. retrieval-api answers `debug_stages` only when the request sets it, with source keys
+and no text; an older retrieval-api answers without it and the row becomes an `error`, not a miss.
+
+Next to the rows the round writes `<out>.summary.json` and prints it: `recall_search`, `recall_rerank`, `recall_served`,
+`mrr_served` (mean of `1/rank` in the served list, 0 where absent) and p50 and p95 of the time of `/retrieve` as the
+portal saw it (`retrieve_ms`) and as retrieval-api reports it (`api_ms`). The summary is the comparison: run the same
+cases against two settings and put the summaries side by side. It covers all rows in the file, so a resumed round
+summarises both runs.
+
+To measure a retrieval-api change before it merges, start the checkout's retrieval-api beside the live one and point the
+portal one-off at it with `KNOWLEDGE_RETRIEVE_URL`. `deploy/scripts/retrieval-api-oneoff.sh` clones the live service's
+image, environment and networks, mounts the checkout's `retrieval_api` package over the image's, opens its Postgres pool
+read-only, skips the product event and the shadow write, and publishes no port:
+
+```bash
+git -C <checkout> archive <candidate-ref> klai-retrieval-api/retrieval_api | tar -x -C "$stage"
+deploy/scripts/retrieval-api-oneoff.sh --name ra-depth60 --code "$stage"/klai-retrieval-api \
+  --env RERANKER_CANDIDATES=60 --env GRAPHITI_ENABLED=false
+deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
+  env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend KNOWLEDGE_RETRIEVE_URL=http://ra-depth60:8040 \
+  python /out/ov-candidate/scripts/meetlat.py retrieval --surface widget --org <org-slug> --widget /out/widget.json \
+    --cases /out/cases.jsonl --out /out/retrieval-depth60.jsonl --overlay /out/ov-candidate
+docker rm -f ra-depth60
+```
+
+Both one-offs share the live Qdrant, Redis, the reranker GPU and the LiteLLM gateway, so run rounds one after the other
+when the timing matters. Container names carry a timestamp to the second: start two portal one-offs a few seconds apart.
+FalkorDB crashed every few minutes on 23 October 2026 (exit code 139), so with the graph leg on a round measures a
+search that sometimes lacks its graph facts and waits for the 5 s graph timeout. Set `GRAPHITI_ENABLED=false` on the
+one-off when the comparison is about something else, and measure the leg itself separately (plan step 8).

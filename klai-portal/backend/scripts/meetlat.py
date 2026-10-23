@@ -797,7 +797,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 # --- retrieval -------------------------------------------------------------------------------------------------
 
-# Set by the replay on the turn it measures: whether the probe records, and what the turn's retrieval left.
+# Set by the replay around each turn of a retrieval round: whether the probe records, and what the turn's retrieval left.
 _probe: dict[str, Any] = {"armed": False, "record": None}
 
 
@@ -812,13 +812,12 @@ def _take() -> dict | None:
 
 
 def _install_retrieval_probe() -> None:
-    """Cut the measured turn short after its retrieval and keep what the retrieval returned.
+    """Cut an armed turn short after its retrieval and keep what the retrieval returned.
 
     ``_call_retrieval`` asks retrieval-api for its ``debug_stages`` and times the call;
     ``_choose_and_prompt`` (the selection step, the gap event and the prompt) is replaced
     by a stub that keeps the passages the chat would have received and routes the turn to
-    a fixed reply, so no model writes. Turns that are not armed (the earlier turns, which
-    store the case a follow-up reads) run unchanged.
+    a fixed reply, so no model writes. A turn that is not armed runs unchanged.
     """
     call, choose = retrieval_context._call_retrieval, retrieval_context._choose_and_prompt
 
