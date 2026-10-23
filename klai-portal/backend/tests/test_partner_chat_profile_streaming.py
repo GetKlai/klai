@@ -243,6 +243,35 @@ async def test_open_internal_profile_yields_multiple_content_frames(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_a_streamed_internal_reply_ends_with_the_questions_that_were_not_checked(monkeypatch):
+    from app.services.retrieval_context import KnowledgeTurn
+
+    events = [{"choices": [{"delta": {"content": "Klai ondersteunt SIP-trunking."}}]}]
+    monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
+
+    chunks = await streamed_reply_frames(
+        messages=[
+            {"role": "user", "content": "Ondersteunt Klai SIP-trunking en hoe vraag ik dat aan voor mijn bedrijf?"}
+        ],
+        model="klai-primary",
+        temperature=0.7,
+        system_prompt="prompt",
+        settings=_settings(),
+        profile=ChatProfile(surface="internal", kb_mode="open"),
+        knowledge_turn=KnowledgeTurn(
+            answer_mode="open", unchecked_questions=["Wat is het supportnummer?", "Hoe vraag ik een offerte aan?"]
+        ),
+    )
+
+    streamed = "".join(f.get("content") or "" for f in _sse_content_frames(b"".join(chunks).decode()))
+    notice = "Stel ze gerust in een nieuw bericht:\n- Wat is het supportnummer?\n- Hoe vraag ik een offerte aan?"
+    assert streamed.startswith("Klai ondersteunt SIP-trunking.\n\nDeze vragen heb ik niet apart opgezocht")
+    # The Open turn's footer follows the notice.
+    assert notice in streamed
+    assert streamed.index("Agent") > streamed.index(notice)
+
+
+@pytest.mark.asyncio
 async def test_live_turn_never_streams_a_model_written_link_and_never_repeats_the_answer(monkeypatch):
     events = [
         {"choices": [{"delta": {"content": "Vraag verlof aan via "}}]},

@@ -37,6 +37,7 @@ from app.services.chat_safety import _last_user_message, output_safety_violation
 from app.services.chat_sources import PageContext
 from app.services.clarify_gate import already_asked
 from app.services.gap_classification import classify_gap
+from app.services.knowledge_prompts import unchecked_questions_notice
 from app.services.off_topic_referral import off_topic_referral
 from app.services.passage_selection import plain_question
 from app.services.pasted_correspondence import latest_user_turn_has_correspondence
@@ -471,7 +472,14 @@ def fixed_reply(
     refused: bool,
     appointment: bool = True,
 ) -> Reply:
-    """A reply decided in code: recorded like any other, with the appointment button unless told otherwise."""
+    """A reply decided in code: recorded like any other, with the appointment button unless told otherwise.
+
+    It names the questions the search did not take, like a written reply does
+    (``widget_write._sent_text``): a "not found" over eight questions says
+    nothing about the seventh and eighth otherwise.
+    """
+    if notice := unchecked_questions_notice(turn.unchecked_questions, language):
+        text = f"{text}\n\n{notice}"
     inputs.answer_signals.update(
         decision=decision,
         sources_count=0,
