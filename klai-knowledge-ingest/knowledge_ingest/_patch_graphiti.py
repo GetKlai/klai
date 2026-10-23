@@ -38,27 +38,14 @@ def _patch_node_dedup() -> None:
 
     original = node_operations._resolve_with_llm
 
-    async def patched(
-        llm_client,
-        extracted_nodes,
-        indexes,
-        state,
-        episode=None,
-        previous_episodes=None,
-        entity_types=None,
-    ):
+    # Everything after `state` is passed through untouched: graphiti 0.31 added
+    # a keyword-only `clients`, and a copy of the 0.29 signature rejected it,
+    # failing every LLM-resolved episode from 2026-10-22 18:00 UTC on.
+    async def patched(llm_client, extracted_nodes, indexes, state, *args, **kwargs):
         lower_to_node = {node.name.lower(): node for node in indexes.existing_nodes}
         exact_names = {node.name for node in indexes.existing_nodes}
 
-        result = await original(
-            llm_client,
-            extracted_nodes,
-            indexes,
-            state,
-            episode=episode,
-            previous_episodes=previous_episodes,
-            entity_types=entity_types,
-        )
+        result = await original(llm_client, extracted_nodes, indexes, state, *args, **kwargs)
 
         for index, resolved in enumerate(state.resolved_nodes):
             if resolved is None:
