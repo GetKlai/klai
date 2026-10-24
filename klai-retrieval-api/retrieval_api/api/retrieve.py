@@ -962,9 +962,10 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
     state.decision_record["page_context_boosted"] = page_context_boosted
     if req.product:
         # A soft preference for the question's product (plan step 7), never a filter.
-        state.decision_record["product_boosted"] = lookalike.boost_product(
-            state.reranked, req.product, settings.product_boost
-        )
+        (
+            state.decision_record["product_boosted"],
+            state.decision_record["product_boost_reason"],
+        ) = lookalike.boost_product(state.reranked, req.product, settings.product_boost)
 
 
 def _run_quality_floor(state: RetrievalPipelineState) -> None:

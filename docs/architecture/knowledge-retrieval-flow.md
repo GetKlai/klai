@@ -558,9 +558,12 @@ reranker, candidates whose `text_fingerprint` (a b-bit MinHash of word shingles,
 at ingest) agree on at least `lookalike_min_similarity` (0.7) of their shingles collapse
 into one: the first in search order, unless a later one carries the request's `product`
 and the first does not. After the reranker, every chunk whose `product` matches the
-request's gets `product_boost` (0.05) added to its ranking score; nothing is filtered on
-product. `services/lookalike.py`; the counts are `lookalikes_collapsed` and
-`product_boosted` in the decision record.
+request's gets `product_boost` (0.05) added to its ranking score, but only when at least
+one candidate is labelled with another product: an unlabelled chunk is neutral, so a
+single labelled knowledge base beside unlabelled ones is not preferred. Nothing is
+filtered on product. `services/lookalike.py`; the counts are `lookalikes_collapsed` and
+`product_boosted` in the decision record, with `product_boost_reason` (`applied` or
+`no_alternative`).
 
 ---
 

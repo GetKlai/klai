@@ -1467,9 +1467,22 @@ def test_a_first_question_names_a_product_only_by_a_known_label_in_its_own_words
     assert case_file.named_product("Een orbital telefoon", products) == ""
 
 
-async def test_a_follow_up_about_a_known_product_prefers_it_in_the_search_and_tells_the_selection(monkeypatch):
+def test_a_single_known_label_is_never_the_question_s_product():
+    """A list of one is not a choice: with one labelled knowledge base beside
+    unlabelled ones the case named that label for nearly every question and the
+    search preferred it over the right answers (plan §6, 24 October 2026)."""
+    assert case_file._known_product("Orbit", ["Orbit"]) == ""
+    assert case_file._known_product("Orbit", ["Orbit", "Zephyr"]) == "Orbit"
+    assert case_file.named_product("Doorschakelen op de Orbit?", ["Orbit"]) == ""
+
+
+@pytest.mark.parametrize(("products", "expected"), [(["Orbit", "Zephyr"], "Orbit"), (["Orbit"], "")])
+async def test_a_follow_up_about_a_known_product_prefers_it_in_the_search_and_tells_the_selection(
+    monkeypatch, products, expected
+):
     """A lookalike of another product reads like the answer; the selection is
-    told which product the question is about and which product each passage is."""
+    told which product the question is about and which product each passage is.
+    With a single known label nothing is preferred and the selection is told nothing."""
     items = [
         {**CHUNK_900, "reranker_score": 0.95, "product": "zephyr"},
         {**_two_articles()[1], "product": "orbit"},
@@ -1477,20 +1490,20 @@ async def test_a_follow_up_about_a_known_product_prefers_it_in_the_search_and_te
     litellm = _LiteLLM(model_text=ANSWER_900, case={**_case("knowledge"), "product_label": "orbit"})
     with patch(
         "app.services.widget_turn.knowledge_ingest_client.get_products",
-        AsyncMock(return_value=["Orbit", "Zephyr"]),
+        AsyncMock(return_value=products),
     ):
         litellm, _, _ = await _route_turn(monkeypatch, band="high", items=items, litellm=litellm, messages=_FOLLOW_UP)
 
-    assert _retrieve_body(litellm)["product"] == "Orbit"
-    assert "- Orbit\n- Zephyr" in litellm.case_requests[0]["messages"][0]["content"]
+    assert _retrieve_body(litellm).get("product", "") == expected
+    assert "\n".join(f"- {product}" for product in products) in litellm.case_requests[0]["messages"][0]["content"]
     (selection,) = [
         body
         for body in litellm.requests
         if (body.get("response_format") or {}).get("json_schema", {}).get("name") == "passage_selection"
     ]
     content = selection["messages"][-1]["content"]
-    assert "The question is about the product Orbit." in content
-    assert "[1] Factuur betalen (product: zephyr)" in content
+    assert ("The question is about the product Orbit." in content) == bool(expected)
+    assert ("[1] Factuur betalen (product: zephyr)" in content) == bool(expected)
 
 
 async def test_the_next_turn_s_case_starts_from_the_stored_one():

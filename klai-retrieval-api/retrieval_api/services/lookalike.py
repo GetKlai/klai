@@ -8,7 +8,8 @@ it is about (``product``) and a b-bit MinHash of its text
 knowledge_ingest/utils/content_fingerprint.py). Before the reranker, near-
 identical candidates collapse into one, so lookalikes no longer fill the slots
 side by side; after it, the chunks of the question's product get a small
-additive bonus. Nothing is ever dropped for its product alone.
+additive bonus, but only when another product's chunk is among the candidates.
+Nothing is ever dropped for its product alone.
 """
 
 from __future__ import annotations
@@ -68,14 +69,22 @@ def collapse_lookalikes(
     return kept, len(candidates) - len(kept)
 
 
-def boost_product(chunks: list[dict], product: str, boost: float) -> int:
-    """Boost the chunks about ``product`` additively and re-sort; the number boosted.
+def boost_product(chunks: list[dict], product: str, boost: float) -> tuple[int, str]:
+    """Boost the chunks about ``product`` additively and re-sort; the number boosted and why.
+
+    Only a chunk labelled with another product is an alternative; an
+    unlabelled chunk is neutral. Without an alternative nothing is boosted
+    ("no_alternative"): one labelled help centre beside an unlabelled wiki
+    otherwise lifts every labelled chunk over the wiki's answers, which cost
+    the meetlat up to three served cases of 22 on 24 October 2026.
 
     The ranking truth (``final_rank_score``) when the ranking contract is
     active, else the reranker score, as the page-context boost does; with the
     contract active the reranker score itself, and with it the confidence
     band, stays as the reranker gave it.
     """
+    if not any(chunk.get("product") and not _same_product(chunk, product) for chunk in chunks):
+        return 0, "no_alternative"
     boosted = 0
     for chunk in chunks:
         if not _same_product(chunk, product):
@@ -89,4 +98,4 @@ def boost_product(chunks: list[dict], product: str, boost: float) -> int:
         boosted += 1
     if boosted:
         chunks.sort(key=lambda c: ranking_score(c, "reranker_score", "score"), reverse=True)
-    return boosted
+    return boosted, "applied"
