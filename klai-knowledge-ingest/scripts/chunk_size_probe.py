@@ -21,6 +21,37 @@ networks), with this file, the candidate package and the old chunker mounted:
 Arms: ``old-ingest`` (2000-char children, 200 overlap: what the base ingest cut
 for kb_article), ``old-enriched`` (1200/200: what enrichment re-cut), ``new``
 (the current chunker defaults, kb_article profile).
+
+Context-prefix arms (``--prefix-arm raw|cheap|about|all``, new chunker only, no
+``--old-chunker`` needed): does a prefix that costs no per-chunk model call retrieve
+as well as the per-chunk model sentence? Each child is embedded and reranked as
+``"{prefix}\n\n{text}"``, the way enrichment.py and the retrieval-api reranker do.
+
+    RERANKER_URL=<infinity base url> python chunk_size_probe.py --seed 7 \
+        --prefix-arm all --org-id <org>
+
+- ``prefix-raw``: no prefix. The chunk already starts with its heading path (the
+  chunker prepends it), so this is the production chunk without a model sentence.
+- ``prefix-cheap``: document title and heading path (title added only when the path
+  does not start with it) plus the first sentence of the document summary. The
+  summary is one model call per document in production and a fixture field here
+  (``summary``); nothing per chunk.
+- ``prefix-about``: stands in for the per-chunk model sentence with the generator's
+  own "this passage explains the <setting> of <product>" sentence for the paragraphs
+  in the chunk. It is built from the ground truth of the corpus, so it is an upper
+  bound on what a model sentence can say, not a measurement of one.
+
+Extra metrics per arm: ``recall_candidates_top8`` and ``mrr_candidates`` (the RRF
+order before the reranker, 60 candidates) and ``mrr_served`` (rank of the first
+offered passage that holds the fact, after the reranker, one child per parent and
+at most two per document). ``recall_served_8`` is the share of questions whose fact
+is in the 8 offered passages. One seed per run; run two seeds and compare. The
+corpus text and questions per seed are unchanged by the prefix fields.
+
+This corpus is saturated for the prefix arms (every arm finds the fact in the 60
+candidates and in the offered 8, MRR within one or two questions in 200), so it
+cannot show what a per-chunk model sentence adds; the follow-up is a shadow
+collection of one real knowledge base measured with the meetlat retrieval cases.
 """
 
 from __future__ import annotations
@@ -112,7 +143,14 @@ CANDIDATES = 60
 
 
 def generate(seed: int, products: int, per_article_questions: int):
-    """Return (articles, questions). Fully determined by the arguments."""
+    """Return (articles, questions). Fully determined by the arguments.
+
+    An article is a dict: ``path``, ``title``, ``content``, ``summary`` (what the one
+    per-document model call would return) and ``passages`` (one per paragraph, with
+    the ``about`` sentence that stands in for the per-chunk model sentence). Summary
+    and about sentences are derived from the draws already made, never from a new one,
+    so a seed still yields the same text and questions as before they existed.
+    """
     rng = random.Random(seed)  # noqa: S311 - a seeded corpus generator, not security
     names: set[str] = set()
     while len(names) < products:
@@ -120,7 +158,7 @@ def generate(seed: int, products: int, per_article_questions: int):
     articles, questions = [], []
     for product in sorted(names):
         lines = [f"# {product} help", ""]
-        facts = []
+        facts, passages = [], []
         pool = rng.sample(_SETTINGS, len(_SETTINGS))
         for i, section in enumerate(_SECTIONS):
             lines += [f"## {section}", ""]
@@ -130,18 +168,69 @@ def generate(seed: int, products: int, per_article_questions: int):
                 sentences = [*rng.sample(_FILLER, 4), fact, *rng.sample(_FILLER, 3)]
                 # The fact sits at a random place in its paragraph, not always in the middle.
                 rng.shuffle(sentences)
-                lines += [
-                    f"The {setting} controls how {product} behaves here. " + " ".join(sentences),
-                    "",
-                ]
+                opening = f"The {setting} controls how {product} behaves here."
+                paragraph = f"{opening} " + " ".join(sentences)
+                lines += [paragraph, ""]
                 facts.append((setting, fact))
+                passages.append(
+                    {
+                        "setting": setting,
+                        "product": product,
+                        "opening": opening,
+                        "text": paragraph,
+                        "about": f"This passage explains the {setting} of {product}.",
+                    }
+                )
         path = f"probe/{product.lower().replace(' ', '-')}"
-        articles.append((path, f"{product} help", "\n".join(lines)))
+        summary = (
+            f"Help page for {product} covering its account and security settings. "
+            f"It explains the {pool[0]}, the {pool[10]} and other values."
+        )
+        articles.append(
+            {
+                "path": path,
+                "title": f"{product} help",
+                "content": "\n".join(lines),
+                "summary": summary,
+                "passages": passages,
+            }
+        )
         for setting, fact in rng.sample(facts, per_article_questions):
             questions.append(
                 {"q": f"What is the {setting} in {product}?", "gold": fact, "path": path}
             )
     return articles, questions
+
+
+def first_sentence(text: str) -> str:
+    return text.split(". ")[0].rstrip(".") + "."
+
+
+def cheap_prefix(title: str, heading_path: str, summary: str) -> str:
+    """Document title, heading path and first summary sentence; no per-chunk model call.
+
+    The chunker's heading path usually starts with the title (the H1), so the title is
+    only added when it does not.
+    """
+    path = (
+        heading_path if heading_path.startswith(title) else f"{title} > {heading_path}".rstrip(" >")
+    )
+    return f"{path}. {first_sentence(summary)}"
+
+
+def about_for_chunk(chunk_text: str, passages: list[dict]) -> str:
+    """Stand-in for the per-chunk model sentence: what the passages in this chunk are about.
+
+    Built from the generator's ground truth, so it is an upper bound on what a model
+    sentence can say. Raises when no paragraph opens in the chunk, because a silent
+    empty prefix would turn the arm into the raw arm.
+    """
+    inside = [p for p in passages if p["opening"] in chunk_text]
+    if not inside:
+        raise RuntimeError(f"no paragraph opens in chunk: {chunk_text[:80]!r}")
+    names = [f"the {p['setting']}" for p in inside]
+    joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return f"This passage explains {joined} of {inside[0]['product']}."
 
 
 def load_old_chunker(path: str):
@@ -180,12 +269,29 @@ async def rerank(query: str, passages: list[str]) -> list[int]:
     ]
 
 
-async def build_arm(client, collection, arm, module, size, overlap, articles, org_id):
+def context_prefix(kind: str, article: dict, child) -> str:
+    if kind == "cheap":
+        return cheap_prefix(article["title"], child.heading_path, article["summary"])
+    if kind == "about":
+        return about_for_chunk(child.text, article["passages"])
+    return ""
+
+
+def passage(payload: dict) -> str:
+    """What the reranker reads: prefix plus text, as retrieval-api builds it."""
+    prefix = payload["context_prefix"]
+    return f"{prefix}\n\n{payload['text']}" if prefix else payload["text"]
+
+
+async def build_arm(
+    client, collection, arm, module, size, overlap, articles, org_id, prefix="none"
+):
     texts, payloads = [], []
-    for path, title, content in articles:
-        children, _ = cut(module, content, size, overlap)
+    for article in articles:
+        path, title = article["path"], article["title"]
+        children, _ = cut(module, article["content"], size, overlap)
         for child in children:
-            texts.append(child.text)
+            prefix_text = context_prefix(prefix, article, child)
             payloads.append(
                 {
                     "org_id": org_id,
@@ -194,9 +300,12 @@ async def build_arm(client, collection, arm, module, size, overlap, articles, or
                     "title": title,
                     "source_url": f"https://example.com/{path}",
                     "text": child.text,
+                    "context_prefix": prefix_text,
                     "parent": f"{path}#{child.parent_index}",
                 }
             )
+            # Embedded as production does: "{context_prefix}\n\n{text}" (enrichment.py).
+            texts.append(passage(payloads[-1]))
     dense = await embedder.embed(texts)
     sparse = await sparse_embedder.embed_sparse_batch(texts)
     points = [
@@ -210,6 +319,14 @@ async def build_arm(client, collection, arm, module, size, overlap, articles, or
     for i in range(0, len(points), 128):
         await client.upsert(collection, points=points[i : i + 128])
     return {"chunks": len(texts), "mean_chars": round(statistics.mean(len(t) for t in texts))}
+
+
+def reciprocal_rank(gold: str, passages: list[dict]) -> float:
+    """1/rank of the first passage that holds the gold sentence, 0 when none does."""
+    for rank, c in enumerate(passages, start=1):
+        if gold in c["text"]:
+            return 1 / rank
+    return 0.0
 
 
 async def ask(client, collection, arm, org_id, question, ks):
@@ -235,9 +352,13 @@ async def ask(client, collection, arm, org_id, question, ks):
     )
     candidates = [p.payload for p in result.points]
     gold = question["gold"]
-    out = {"in_candidates": any(gold in c["text"] for c in candidates)}
+    out = {
+        "in_candidates": any(gold in c["text"] for c in candidates),
+        "in_candidates_8": any(gold in c["text"] for c in candidates[:8]),
+        "rr_candidates": reciprocal_rank(gold, candidates),
+    }
     top = candidates[:RERANK_FROM]
-    order = await rerank(question["q"], [c["text"] for c in top]) if top else []
+    order = await rerank(question["q"], [passage(c) for c in top]) if top else []
     ranked = [top[i] for i in order]
     out["in_reranked"] = any(gold in c["text"] for c in ranked)
     seen_parent, per_path, served = set(), {}, []
@@ -247,6 +368,7 @@ async def ask(client, collection, arm, org_id, question, ks):
         seen_parent.add(c["parent"])
         per_path[c["path"]] = per_path.get(c["path"], 0) + 1
         served.append(c)
+    out["rr_served"] = reciprocal_rank(gold, served)
     for k in ks:
         top_k = served[:k]
         out[f"served_{k}"] = any(gold in c["text"] for c in top_k)
@@ -260,19 +382,34 @@ async def main() -> None:
     parser.add_argument("--products", type=int, default=40)
     parser.add_argument("--per-article", type=int, default=5)
     parser.add_argument(
-        "--old-chunker", required=True, help="chunker.py of the code before this change"
+        "--old-chunker", help="chunker.py of the code before this change (chunker arms only)"
+    )
+    parser.add_argument(
+        "--prefix-arm",
+        choices=["raw", "cheap", "about", "all"],
+        help="run the context-prefix arms on the new chunker instead of the chunker arms",
     )
     parser.add_argument("--org-id", required=True)
     parser.add_argument("--keep", action="store_true", help="keep the scratch collection")
     args = parser.parse_args()
 
     articles, questions = generate(args.seed, args.products, args.per_article)
-    old = load_old_chunker(args.old_chunker)
-    arms = {
-        "old-ingest": (old, 2000, 200),
-        "old-enriched": (old, 1200, 200),
-        "new": (new_chunker, child_chunk_chars("kb_article"), None),
-    }
+    new_size = child_chunk_chars("kb_article")
+    if args.prefix_arm:
+        wanted = ["raw", "cheap", "about"] if args.prefix_arm == "all" else [args.prefix_arm]
+        arms = {
+            f"prefix-{kind}": (new_chunker, new_size, None, "none" if kind == "raw" else kind)
+            for kind in wanted
+        }
+    else:
+        if not args.old_chunker:
+            parser.error("--old-chunker is required unless --prefix-arm is given")
+        old = load_old_chunker(args.old_chunker)
+        arms = {
+            "old-ingest": (old, 2000, 200, "none"),
+            "old-enriched": (old, 1200, 200, "none"),
+            "new": (new_chunker, new_size, None, "none"),
+        }
     collection = f"chunkprobe_{args.seed}_{uuid.uuid4().hex[:6]}"
     client = get_client()
     await client.create_collection(
@@ -291,9 +428,9 @@ async def main() -> None:
         "arms": {},
     }
     try:
-        for arm, (module, size, overlap) in arms.items():
+        for arm, (module, size, overlap, prefix) in arms.items():
             info = await build_arm(
-                client, collection, arm, module, size, overlap, articles, args.org_id
+                client, collection, arm, module, size, overlap, articles, args.org_id, prefix
             )
             rows = [
                 await ask(client, collection, arm, args.org_id, q, (4, 8, 20)) for q in questions
@@ -301,7 +438,10 @@ async def main() -> None:
             n = len(rows)
             info |= {
                 "recall_candidates_60": round(sum(r["in_candidates"] for r in rows) / n, 3),
+                "recall_candidates_top8": round(sum(r["in_candidates_8"] for r in rows) / n, 3),
+                "mrr_candidates": round(sum(r["rr_candidates"] for r in rows) / n, 3),
                 "recall_reranked": round(sum(r["in_reranked"] for r in rows) / n, 3),
+                "mrr_served": round(sum(r["rr_served"] for r in rows) / n, 3),
             }
             for k in (4, 8, 20):
                 info[f"recall_served_{k}"] = round(sum(r[f"served_{k}"] for r in rows) / n, 3)
