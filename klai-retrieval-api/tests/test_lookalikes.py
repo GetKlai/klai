@@ -10,7 +10,9 @@ from __future__ import annotations
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
 
-from retrieval_api.services.lookalike import boost_product
+import pytest
+
+from retrieval_api.services.lookalike import demote_other_products
 
 # Two b-bit MinHash fingerprints that agree on 54 of 64 positions (a lookalike)
 # and one that agrees with neither.
@@ -111,7 +113,7 @@ def test_a_later_candidate_is_compared_with_the_lookalike_that_was_kept(
     ]
 
 
-def test_the_product_boost_is_additive_and_never_filters(client, sample_retrieve_request):
+def test_another_product_s_chunk_is_demoted_and_never_filtered(client, sample_retrieve_request):
     response, _ = _post(
         client,
         {**sample_retrieve_request, "product": "Orbit", "top_k": 5},
@@ -131,35 +133,47 @@ def test_the_product_boost_is_additive_and_never_filters(client, sample_retrieve
         "unlabelled",
         "orbit-far",
     ]
-    assert chunks[0]["score"] == 0.58 + 0.05
-    assert chunks[0]["reranker_score"] == 0.58
-    assert chunks[0]["product"] == "orbit"
+    assert chunks[0]["score"] == 0.58
+    assert chunks[1]["score"] == pytest.approx(0.60 - 0.05)
+    assert chunks[1]["reranker_score"] == 0.60
+    assert chunks[1]["product"] == "zephyr"
 
 
-def _labelled_and_unlabelled(*products: str) -> list[dict]:
-    return [
-        _chunk("wiki-forwarding", reranker_score=0.60),
-        *(
-            _chunk(f"{product}-{rank}", product=product, reranker_score=0.58 - rank / 100)
-            for rank, product in enumerate(products)
-        ),
-        _chunk("wiki-voicemail", reranker_score=0.55),
+def _ranked(*chunks: tuple[str, str, float]) -> list[dict]:
+    return [_chunk(name, product=product, reranker_score=score) for name, product, score in chunks]
+
+
+def test_without_another_product_among_the_candidates_nothing_moves():
+    """One labelled help centre beside an unlabelled wiki: a boost lifted every
+    labelled chunk over the wiki's answers (plan §6, 24 October 2026)."""
+    chunks = _ranked(("wiki-1", "", 0.60), ("orbit-1", "orbit", 0.58), ("wiki-2", "", 0.55))
+    before = [(c["chunk_id"], c["reranker_score"]) for c in chunks]
+
+    assert demote_other_products(chunks, "Orbit", 0.05) == (0, "no_other_product")
+    assert [(c["chunk_id"], c["reranker_score"]) for c in chunks] == before
+
+
+def test_only_another_product_s_chunks_sink_and_unlabelled_ones_keep_their_place():
+    chunks = _ranked(
+        ("wiki-1", "", 0.60),
+        ("orbit-1", "orbit", 0.58),
+        ("zephyr-1", "zephyr", 0.57),
+        ("wiki-2", "", 0.55),
+    )
+
+    assert demote_other_products(chunks, "Orbit", 0.05) == (1, "applied")
+    assert [(c["chunk_id"], c["reranker_score"]) for c in chunks] == [
+        ("wiki-1", 0.60),
+        ("orbit-1", 0.58),
+        ("wiki-2", 0.55),
+        ("zephyr-1", pytest.approx(0.57 - 0.05)),
     ]
 
 
-def test_unlabelled_chunks_are_neutral_so_one_product_alone_is_not_preferred():
-    """One labelled help centre beside an unlabelled wiki lifted every labelled
-    chunk over the wiki's answers (plan §6, 24 October 2026)."""
-    chunks = _labelled_and_unlabelled("orbit", "orbit")
+def test_another_product_s_chunk_falls_below_the_question_s_only_by_the_arithmetic():
+    chunks = _ranked(("zephyr-1", "zephyr", 0.60), ("orbit-1", "orbit", 0.58))
+
+    demote_other_products(chunks, "Orbit", 0.05)
+
     order = [c["chunk_id"] for c in chunks]
-
-    assert boost_product(chunks, "Orbit", 0.05) == (0, "no_alternative")
-    assert [c["chunk_id"] for c in chunks] == order
-    assert chunks[1]["reranker_score"] == 0.58
-
-
-def test_a_chunk_of_another_product_makes_the_preference_apply():
-    chunks = _labelled_and_unlabelled("orbit", "orbit", "zephyr")
-
-    assert boost_product(chunks, "Orbit", 0.05) == (2, "applied")
-    assert [c["chunk_id"] for c in chunks][:2] == ["orbit-0", "orbit-1"]
+    assert (order.index("zephyr-1") > order.index("orbit-1")) == (0.60 - 0.05 < 0.58)

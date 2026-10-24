@@ -96,8 +96,8 @@ class RetrieveRequest(BaseModel):
     max_sources: int | None = Field(None, ge=1, le=8)
     # The product the question is about, one of the ``product`` labels of the
     # org's chunks (knowledge-base plan, step 7): lookalikes of it win the
-    # collapse before the reranker and its chunks get ``product_boost`` after
-    # it. A preference, never a filter.
+    # collapse before the reranker, and after it the chunks of another product
+    # lose ``product_boost``. A preference, never a filter.
     product: str | None = Field(None, max_length=100)
     # Measurement only (meetlat retrieval): answer with the source keys each
     # pipeline stage saw, next to the normal response. Off by default.

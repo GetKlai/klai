@@ -557,13 +557,12 @@ Timeout: 30 seconds. On failure, the top-K Qdrant results are returned unranked.
 reranker, candidates whose `text_fingerprint` (a b-bit MinHash of word shingles, written
 at ingest) agree on at least `lookalike_min_similarity` (0.7) of their shingles collapse
 into one: the first in search order, unless a later one carries the request's `product`
-and the first does not. After the reranker, every chunk whose `product` matches the
-request's gets `product_boost` (0.05) added to its ranking score, but only when at least
-one candidate is labelled with another product: an unlabelled chunk is neutral, so a
-single labelled knowledge base beside unlabelled ones is not preferred. Nothing is
-filtered on product. `services/lookalike.py`; the counts are `lookalikes_collapsed` and
-`product_boosted` in the decision record, with `product_boost_reason` (`applied` or
-`no_alternative`).
+and the first does not. After the reranker, every chunk labelled with another product
+than the request's loses `product_boost` (0.05) from its ranking score; unlabelled chunks
+and the request's own keep theirs, so their order among each other never changes.
+Nothing is filtered on product. `services/lookalike.py`; the counts are
+`lookalikes_collapsed` and `other_product_demoted` in the decision record, with
+`product_preference_reason` (`applied` or `no_other_product`).
 
 ---
 
