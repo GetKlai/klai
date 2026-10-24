@@ -16,18 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
-from typing import TYPE_CHECKING
 
 import asyncpg
 import cachetools
 import structlog
 
 from knowledge_ingest.db import get_pool
-
-if TYPE_CHECKING:
-    from knowledge_ingest.enrichment import EnrichedChunk
-
 
 logger = structlog.get_logger()
 
@@ -149,8 +143,8 @@ async def get_kb_product_rules(org_id: str, kb_slug: str) -> list[dict[str, str]
     ``connector_state`` reads ``portal_connectors``. asyncpg hands jsonb over
     as text because the pool registers no JSON codec. A database error (the
     portal migration not yet run, a blip) leaves the document without a label
-    rather than failing the ingest, which a later ingest or the product
-    backfill corrects; the empty answer is cached like any other, so it is
+    rather than failing the ingest, which a later ingest or kb_patch
+    corrects; the empty answer is cached like any other, so it is
     logged once per KB per minute.
     """
     key = _cache_key(org_id, kb_slug)
@@ -175,28 +169,28 @@ async def get_kb_product_rules(org_id: str, kb_slug: str) -> list[dict[str, str]
     return _product_rules_cache[key]
 
 
-async def org_product_rules(org_id: str) -> dict[str, list[dict[str, str]]]:
-    """The product rules of every KB of one org, by slug; uncached, and a database error raises.
+async def org_kb_settings(org_id: str) -> dict[str, tuple[list[list[str]], list[dict[str, str]]]]:
+    """The alias groups and product rules of every KB of one org, by slug.
 
-    For the product backfill, which writes only unlabelled points and so could
-    never correct a label it wrote from a failed lookup.
+    Uncached, and a database error raises: for scripts/kb_patch.py, which must
+    not rewrite a knowledge base from settings it failed to read.
     """
     pool = await get_pool()
     rows = await pool.fetch(
         """
-        SELECT kb.slug, kb.product_rules FROM portal_knowledge_bases kb
+        SELECT kb.slug, kb.aliases, kb.product_rules FROM portal_knowledge_bases kb
         JOIN portal_orgs org ON org.id = kb.org_id
         WHERE org.zitadel_org_id = $1
         """,
         org_id,
     )
-    return {row["slug"]: json.loads(row["product_rules"]) for row in rows}
+    return {
+        row["slug"]: (json.loads(row["aliases"]), json.loads(row["product_rules"])) for row in rows
+    }
 
 
 # KB aliases (portal_knowledge_bases.aliases): groups of names for one thing,
-# edited by the KB owner in the portal. The matching below is duplicated in
-# retrieval-api's search service (query expansion); the two are separate
-# deployables with no shared runtime package for it.
+# edited by the KB owner in the portal; applied to chunks by cheap_layer.py.
 _alias_cache: cachetools.TTLCache = cachetools.TTLCache(maxsize=10_000, ttl=60)
 
 
@@ -228,27 +222,3 @@ async def get_kb_aliases(org_id: str, kb_slug: str) -> list[list[str]]:
             raw = None
         _alias_cache[key] = json.loads(raw) if raw else []
     return _alias_cache[key]
-
-
-def _mentions(text: str, term: str) -> bool:
-    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.IGNORECASE) is not None
-
-
-def add_alias_names(chunks: list[EnrichedChunk], groups: list[list[str]]) -> None:
-    """Give a chunk that names an alias the group's other names.
-
-    They go into the context prefix, which the reranker reads with the chunk,
-    and into the embedded text, so a question that uses another name for the
-    same product still finds and ranks the chunk.
-    """
-    for chunk in chunks:
-        names: list[str] = []
-        for group in groups:
-            if any(_mentions(chunk.original_text, term) for term in group):
-                names += [
-                    t for t in group if t not in names and not _mentions(chunk.original_text, t)
-                ]
-        if names:
-            line = "Also known as: " + " | ".join(names)
-            chunk.context_prefix = f"{chunk.context_prefix}\n{line}".strip()
-            chunk.enriched_text += f"\n\n{line}"

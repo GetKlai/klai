@@ -879,8 +879,8 @@ async def update_knowledge_base(
     if body.aliases is not None:
         kb.aliases = body.aliases
     if body.product_rules is not None:
-        # Labels new and re-ingested documents; existing chunks keep theirs
-        # (knowledge_ingest/scripts/product_backfill.py labels only unlabelled ones).
+        # Labels new and re-ingested documents; existing chunks follow after an
+        # operator runs knowledge_ingest/scripts/kb_patch.py (docs/runbooks/kb-patch.md).
         kb.product_rules = [rule.model_dump() for rule in body.product_rules]
 
     # expire_on_commit=False keeps all attributes valid after commit — no re-fetch needed.

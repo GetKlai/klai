@@ -1,4 +1,4 @@
-"""Product label and text fingerprint per chunk, and their backfill (knowledge-base plan, step 7).
+"""Product label and text fingerprint per chunk (knowledge-base plan, step 7).
 
 Synthetic data only: fictional products on example.com.
 """
@@ -13,7 +13,6 @@ from qdrant_client.models import Distance, PointStruct, VectorParams
 
 import knowledge_ingest.qdrant_store as qs
 from knowledge_ingest.product_label import derive_product
-from knowledge_ingest.scripts import product_backfill
 from knowledge_ingest.utils.content_fingerprint import compute_minhash
 
 ORG, KB = "org-test", "kb-test"
@@ -131,81 +130,3 @@ async def test_product_list_holds_only_the_orgs_shared_labels(mem_client):
         ],
     )
     assert await qs.org_products(ORG) == ["orbit", "zephyr"]
-
-
-def _point(n: int, payload: dict) -> PointStruct:
-    base = {"org_id": ORG, "kb_slug": KB, "text": _ARTICLE.format(p=f"P{n}")}
-    return PointStruct(id=n, vector={"vector_chunk": [1.0, 0.0]}, payload={**base, **payload})
-
-
-def _payloads(points) -> dict:
-    return {p.id: p.payload for p in points}
-
-
-async def test_backfill_dry_run_counts_and_real_run_writes_only_missing_labels(mem_client):
-    await mem_client.upsert(
-        qs.COLLECTION,
-        points=[
-            _point(1, {"source_type": "crawl", "source_url": "https://help.example.com/orbit/a"}),
-            # No rule matches: no label, but the fingerprint for the lookalike collapse.
-            _point(2, {"source_type": "crawl", "source_url": "https://help.example.com/nl/b"}),
-            # Already labelled: left alone, also when the rules would say otherwise now.
-            _point(
-                4,
-                {
-                    "source_type": "crawl",
-                    "source_url": "https://help.example.com/orbit/c",
-                    "product": "kept",
-                },
-            ),
-            # Another tenant is out of scope.
-            _point(
-                5,
-                {
-                    "org_id": "org-other",
-                    "source_type": "crawl",
-                    "source_url": "https://help.example.com/orbit/d",
-                },
-            ),
-        ],
-    )
-    rules = {KB: [{"prefix": "help.example.com/orbit/", "product": "Orbit"}]}
-    with patch.object(
-        product_backfill.kb_config, "org_product_rules", AsyncMock(return_value=rules)
-    ):
-        dry, labels = await product_backfill.backfill_products(mem_client, ORG, execute=False)
-        assert (dry["missing"], dry["written"]) == (2, 0)
-        assert labels == {"Orbit": 1, "": 1}
-        untouched = _payloads((await mem_client.scroll(qs.COLLECTION, with_payload=True))[0])
-        assert "product" not in untouched[1]
-
-        done, _ = await product_backfill.backfill_products(mem_client, ORG, execute=True)
-        assert done["written"] == 2
-        # The unlabelled point stays selected, so a rule added later still labels it.
-        again, _ = await product_backfill.backfill_products(mem_client, ORG, execute=True)
-        assert (again["missing"], again["written"]) == (1, 0)
-
-    after = _payloads((await mem_client.scroll(qs.COLLECTION, with_payload=True))[0])
-    assert after[1]["product"] == "Orbit"
-    assert after[1]["text_fingerprint"] == compute_minhash(after[1]["text"])
-    assert "product" not in after[2]
-    assert after[2]["text_fingerprint"] == compute_minhash(after[2]["text"])
-    assert after[4]["product"] == "kept"
-    assert "text_fingerprint" not in after[4]
-    assert "product" not in after[5]
-
-
-async def test_backfill_stops_without_writing_when_the_rules_cannot_be_read(mem_client):
-    await mem_client.upsert(
-        qs.COLLECTION,
-        points=[_point(1, {"source_type": "crawl", "source_url": "https://help.example.com/a/b"})],
-    )
-    failing = AsyncMock(side_effect=OSError("database unreachable"))
-    with (
-        patch.object(product_backfill.kb_config, "org_product_rules", failing),
-        pytest.raises(OSError),
-    ):
-        await product_backfill.backfill_products(mem_client, ORG, execute=True)
-
-    after = _payloads((await mem_client.scroll(qs.COLLECTION, with_payload=True))[0])
-    assert "text_fingerprint" not in after[1]
