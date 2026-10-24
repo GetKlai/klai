@@ -916,7 +916,10 @@ async def _judge(
         citation_chunks=citation_chunks,
         response_language=response_language,
         force_escalation=force_escalation,
-        unanswered=not conversational and (not knowledge_turn.passages_chosen or bool(knowledge_turn.open_parts)),
+        # Unanswered is the selection's call: a part it left open, or no
+        # selection at all (no passages, or none it could read). A selection
+        # that lists no part (a thank-you) asked nothing of the articles.
+        unanswered=not conversational and (bool(knowledge_turn.open_parts) or knowledge_turn.selection is None),
         offered_by_model=model_offered_appointment,
         helpdesk=helpdesk,
     )
@@ -951,8 +954,8 @@ def _decided(
     """What the visitor gets for the decision: the composed reply, a refusal, or the model's own words.
 
     ``unanswered``: the turn is not conversational and did not answer from the
-    articles, because the selection chose no passage or left a part the
-    visitor asked open (``KnowledgeTurn.open_parts``).
+    articles, because no selection ran or it left a part the visitor asked
+    open (``KnowledgeTurn.open_parts``).
     """
     refused = bool(decision.get(_NO_CITABLE_SOURCES_DECISION_KEY))
     if outcome == "refusal":

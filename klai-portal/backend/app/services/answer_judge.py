@@ -62,8 +62,10 @@ def decide_answer(
       the internal chat has no button, so there it only records the decision.
       An escalation or a conversational turn never gets it.
     * Without a source: the statement check decides. Statements the articles do
-      not carry, or a check that failed (``grounding`` is None), get the
-      refusal; otherwise the text is shown.
+      not carry get the refusal; otherwise the text is shown. A check that
+      failed (``grounding`` is None) refuses too, except on a conversational
+      turn: "Ja, ik spreek Engels" states nothing about the organisation, and
+      the check failed on 15 of 54 turns when it was measured.
 
     Safety blocks and broad-mode answers never get here.
     """
@@ -73,7 +75,9 @@ def decide_answer(
         return "answer" if has_sources else "general_knowledge"
     if has_sources:
         return "partial_answer" if open_part and not escalation and not conversational else "answer"
-    if grounding is None or grounding == _UNSUPPORTED_GROUNDING:
+    if grounding is None:
+        return "answer" if conversational else "refusal"
+    if grounding == _UNSUPPORTED_GROUNDING:
         return "refusal"
     return "answer"
 

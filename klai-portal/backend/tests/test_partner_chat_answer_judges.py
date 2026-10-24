@@ -28,6 +28,8 @@ from klai_chat_prompts import (
 from structlog.testing import capture_logs
 
 from app.services import case_file, chat_safety, query_paraphrase, turn_judge, widget_write
+from app.services.answer_judge import decide_answer
+from app.services.passage_selection import Evidence, Part, PassageSelection
 from app.services.retrieval_context import KnowledgeTurn, kept_passages_of
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
@@ -110,7 +112,10 @@ def _selection(verdict: str, *evidence: tuple[int, str], question: str = "") -> 
 
 def _chosen_turn(*open_parts: str) -> KnowledgeTurn:
     """A turn whose selection chose passages, and left these asks of the visitor open."""
-    return KnowledgeTurn(passages_chosen=True, open_parts=list(open_parts))
+    selection = PassageSelection(
+        need="", parts=[Part(ask="", evidence=[Evidence(passage=1, quote="")])], varies=False, question=""
+    )
+    return KnowledgeTurn(selection=selection, passages_chosen=True, open_parts=list(open_parts))
 
 
 def _case(
@@ -1176,6 +1181,40 @@ async def test_the_button_follows_the_selections_open_part(monkeypatch, post_ans
     prompt = _system_prompt_sent(litellm)
     assert ("do not cover this part" in prompt) is not post_answered
     assert ("kan ik mijn factuur ook per post krijgen" in prompt) is not post_answered
+
+
+async def test_a_thank_you_after_found_passages_gets_no_appointment_button(monkeypatch):
+    """A thank-you asks nothing of the articles: the selection lists no part and
+    the writer answers without a source. Retrieval still found strong passages,
+    so the turn is not "conversational" (that needs a gap), and treating "no
+    passage chosen" as unanswered put the button and the booking sentence under
+    "Graag gedaan!"."""
+    litellm = _LiteLLM(
+        model_text="Graag gedaan!",
+        case=_case("chat"),
+        selection={"need": "", "parts": [], "varies": False, "question": ""},
+    )
+
+    _, text, extras = await _route_turn(
+        monkeypatch, question="Top, dank je wel, dat werkte!", band="high", items=_two_articles(), litellm=litellm
+    )
+
+    assert text == "Graag gedaan!"
+    assert extras["escalation"] == []
+
+
+@pytest.mark.parametrize("conversational", [True, False])
+def test_a_failed_check_refuses_an_uncited_reply_but_not_small_talk(conversational):
+    outcome = decide_answer(
+        kb_mode="strict",
+        has_sources=False,
+        escalation=False,
+        conversational=conversational,
+        open_part=False,
+        grounding=None,
+    )
+
+    assert outcome == ("answer" if conversational else "refusal")
 
 
 async def test_a_verdict_whose_quoted_sentence_is_not_in_the_passage_counts_as_not_found(monkeypatch):
