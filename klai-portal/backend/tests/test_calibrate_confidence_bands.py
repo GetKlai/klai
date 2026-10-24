@@ -45,17 +45,17 @@ def test_librechat_questions_are_real_openings_from_the_widget_tenants_own_datab
     assert questions == ["Hoe stel ik een belgroep in?", "Wat is SRAPS?"]
 
 
-def test_the_score_strip_table_counts_what_the_answer_judge_said(capsys):
+def test_the_score_strip_table_counts_complete_and_partial_answers(capsys):
     rows = [
-        {"top_score": 0.45, "decision": "answer", "unsupported": 0, "verdict": "answered"},
-        {"top_score": 0.42, "decision": "partial_answer", "unsupported": 1, "verdict": "not_answered"},
-        {"top_score": 0.48, "decision": "partial_answer", "unsupported": 0, "verdict": "partial"},
-        {"top_score": 0.9, "decision": "answer", "unsupported": 0, "verdict": "answered"},
-        {"top_score": None, "decision": "off_topic", "unsupported": None, "verdict": None},
+        {"top_score": 0.45, "decision": "answer", "unsupported": 0},
+        {"top_score": 0.42, "decision": "partial_answer", "unsupported": 1},
+        {"top_score": 0.48, "decision": "partial_answer", "unsupported": 0},
+        {"top_score": 0.9, "decision": "answer", "unsupported": 0},
+        {"top_score": None, "decision": "off_topic", "unsupported": None},
     ]
     cal._print_score_strips(rows)
 
     out = capsys.readouterr().out
     strip = next(line for line in out.splitlines() if line.startswith("0.4-0.5"))
-    assert strip.split() == ["0.4-0.5", "3", "3", "2/3", "1/3", "1/3", "1/3"]
+    assert strip.split() == ["0.4-0.5", "3", "3", "2/3", "1/3", "2/3"]
     assert "4 turns with a score" in out

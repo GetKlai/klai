@@ -41,11 +41,12 @@ SIGNALS: list[ObservabilitySignal] = [
         service="portal-api (widget)",
         purpose={
             "nl": (
-                "Per widgetantwoord het oordeel van beide controles achteraf: of het de vraag "
-                "beantwoordt, en of de artikelen de uitspraken dragen. Laat zien waarom een bezoeker "
-                "een antwoord, een weigering of een afspraakknop kreeg."
+                "Per widgetantwoord de beslissing en het oordeel van de uitsprakencontrole: of de "
+                "artikelen de uitspraken dragen. Laat zien waarom een bezoeker een antwoord, een "
+                "weigering of een afspraakknop kreeg; de knop volgt uit de delen die de keuzestap "
+                "openliet."
             ),
-            "en": "Per widget answer, the verdict of both checks after writing: whether it answers the question, and whether the articles carry its statements. Shows why a visitor got an answer, a refusal or an appointment button.",
+            "en": "Per widget answer, the decision and the statement check's verdict: whether the articles carry its statements. Shows why a visitor got an answer, a refusal or an appointment button; the button follows from the parts the selection step left open.",
         },
         how_to_read='VictoriaLogs: service:portal-api AND "partner_chat_answer_judge"',
         read_automatically=False,

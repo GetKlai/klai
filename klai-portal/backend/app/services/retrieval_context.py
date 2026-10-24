@@ -36,6 +36,7 @@ from klai_chat_prompts.language import (
 
 from app.core.config import Settings
 from app.core.database import tenant_scoped_session
+from app.services.answer_check import user_texts
 from app.services.chat_profile import ChatProfile, KbMode
 from app.services.chat_prompting import (
     _append_page_context_to_prompt,
@@ -462,6 +463,10 @@ class KnowledgeTurn:
     not_in_passages: bool = False
     # The writer's passages are the selection's, not everything retrieval found.
     passages_chosen: bool = False
+    # The parts the visitor asked that no found sentence answers, in the
+    # visitor's words (PassageSelection.open_parts). The one value the brief's
+    # "not covered" sentence, the record and the appointment button read.
+    open_parts: list[str] = field(default_factory=list)
     # The grounding check that runs after the reply (an Open turn, or a reply
     # written from chosen passages); the per-turn record waits for it.
     grounding_check: asyncio.Task[None] | None = None
@@ -1124,21 +1129,32 @@ def _register_gap(t: _Turn, found: _Found) -> None:
     )
 
 
-def _selection_signal(selection: PassageSelection | None, *, internal: bool) -> dict[str, Any]:
-    """The selection's verdict for the record; quotes and the question are text, which the internal record never keeps.
+def _selection_signal(turn: KnowledgeTurn, chunks: list[dict], *, internal: bool) -> dict[str, Any]:
+    """The selection for the record; quotes, asks and the question are text, which the internal record never keeps.
 
     An internal turn records the verdict and the passage numbers (the
     internal meetlat tunes the selection on that verdict); the widget's record
-    keeps the quotes as well (widget_audit.record_widget_turn).
+    keeps each part's ask and quotes, and the parts left open, as well
+    (widget_audit.record_widget_turn).
     """
+    selection = turn.selection
     if selection is None:
         return {"failed": "no_verdict_after_retry"}
     if internal:
-        return {"verdict": selection.verdict, "passages": [item.passage for item in selection.evidence]}
+        return {
+            "verdict": selection.verdict(chunks),
+            "passages": [item.passage for part in selection.parts for item in part.evidence],
+        }
     return {
-        "verdict": selection.verdict,
-        "evidence": [{"passage": item.passage, "quote": item.quote[:200]} for item in selection.evidence],
-        "missing": selection.missing[:200],
+        "verdict": selection.verdict(chunks),
+        "parts": [
+            {
+                "ask": part.ask[:200],
+                "evidence": [{"passage": item.passage, "quote": item.quote[:200]} for item in part.evidence],
+            }
+            for part in selection.parts
+        ],
+        "open": [ask[:200] for ask in turn.open_parts],
         "question": selection.question[:200],
     }
 
@@ -1196,10 +1212,11 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             # selections in that week).
             turn.selection_failed = True
             turn.not_in_passages = source_only
-        if t.answer_signals is not None:
-            t.answer_signals["selection"] = _selection_signal(turn.selection, internal=t.internal)
         if turn.selection is not None:
             turn.not_in_passages = turn.selection.not_in_passages(selection_chunks)
+            turn.open_parts = turn.selection.open_parts(selection_chunks, user_texts(t.messages))
+        if t.answer_signals is not None:
+            t.answer_signals["selection"] = _selection_signal(turn, selection_chunks, internal=t.internal)
         chosen = turn.selection.chosen(selection_chunks) if turn.selection else []
         if chosen and not turn.not_in_passages:
             turn.passages_chosen = True
@@ -1242,9 +1259,10 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             internal=t.internal,
             source_only=source_only,
             question=turn.selection.question
-            if not t.internal and turn.multi_question and turn.selection.verdict == "depends"
+            if not t.internal and turn.multi_question and turn.selection.varies
             else "",
             unchecked=bool(turn.unchecked_questions),
+            open_parts=turn.open_parts,
         )
         # The parts beyond the search limit were never searched; the writer
         # must still see them so it does not answer them from other lines.

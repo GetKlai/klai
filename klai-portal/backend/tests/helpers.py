@@ -162,7 +162,12 @@ def selection_quoting_first_passage(body: dict) -> dict:
     """
     content = body["messages"][1]["content"]
     first_line = content.split("Passages:\n[1] ", 1)[1].split("\n", 2)[1]
-    return {"need": "", "evidence": [{"passage": 1, "quote": first_line}], "verdict": "answers", "question": ""}
+    return {
+        "need": "",
+        "parts": [{"ask": "vraag", "evidence": [{"passage": 1, "quote": first_line}]}],
+        "varies": False,
+        "question": "",
+    }
 
 
 async def streamed_reply_frames(*, include_sources: bool = True, **kwargs: Any) -> list[bytes]:
