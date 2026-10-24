@@ -58,8 +58,10 @@ SELECTION_SYSTEM_PROMPT = (
     "to ask about something the passages do not cover, and not when the steps are the same for each variant. "
     "not_in_passages when there is no evidence. A request for a person or an appointment, a thank-you or a remark about the chat "
     "needs no passage: answers with empty evidence.\n"
-    "missing: only for answers, the part of the need that no evidence line covers, in a few of the visitor's "
-    "words; an empty string when the evidence covers the whole need.\n"
+    "missing: only for answers, a part of what the visitor asked that no evidence line answers, in a few of the "
+    "visitor's words. Never a fact about the visitor's own situation or setup (whether something is switched on, "
+    "installed, configured or already tried), never a check the visitor can do, and never a part the evidence "
+    "already answers. An empty string when the evidence answers everything asked; when in doubt, empty.\n"
     "question: only for depends, the one question to ask the visitor, in their language, at most fifteen words. "
     "Otherwise an empty string."
 )
@@ -91,8 +93,11 @@ SELECTION_SYSTEM_PROMPT_INTERNAL = (
     "not_in_passages when no passage says anything about the need, and otherwise whenever the evidence is empty. "
     "The one exception: a request to rewrite, review, translate or shorten text already in the conversation, a "
     "request for a person, a thank-you or a remark about the chat needs no passage: answers with empty evidence.\n"
-    "missing: only for answers, the part of the need that no evidence line covers, in a few of the user's "
-    "words; an empty string when the evidence covers the whole need.\n"
+    "missing: only for answers, a part of what the user asked that no evidence line answers, in a few of the "
+    "user's words. Never a fact about the situation of the user or the customer they help (whether something is "
+    "switched on, installed, configured or already tried), never a check they can do, and never a part the "
+    "evidence already answers. An empty string when the evidence answers everything asked; when in doubt, "
+    "empty.\n"
     "question: only for depends, the one question that would settle the variant, in the user's language, at most "
     "fifteen words. Otherwise an empty string."
 )
@@ -327,8 +332,8 @@ def _coverage(selection: PassageSelection, *, what: str, internal: bool, uncheck
     verb = "does" if internal else "do"
     if missing := " ".join(selection.missing.split()):
         return (
-            f"\nThe {what} {verb} not cover this part: {missing}. After the answer, say that in one sentence, and "
-            "nothing else about what is missing."
+            f"\nThe {what} {verb} not cover this part: {missing}. After the answer, say in one sentence that the "
+            f"{what} {verb} not cover it, naming that part, and nothing else about what is missing."
         )
     if selection.verdict == "not_in_passages":
         return (
