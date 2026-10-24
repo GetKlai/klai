@@ -47,6 +47,11 @@ offered passage that holds the fact, after the reranker, one child per parent an
 at most two per document). ``recall_served_8`` is the share of questions whose fact
 is in the 8 offered passages. One seed per run; run two seeds and compare. The
 corpus text and questions per seed are unchanged by the prefix fields.
+
+This corpus is saturated for the prefix arms (every arm finds the fact in the 60
+candidates and in the offered 8, MRR within one or two questions in 200), so it
+cannot show what a per-chunk model sentence adds; the follow-up is a shadow
+collection of one real knowledge base measured with the meetlat retrieval cases.
 """
 
 from __future__ import annotations
