@@ -55,6 +55,19 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
   measurement alongside (logs, counters, an eval you can run), measure on real
   traffic, and adjust from there. What still gates a rollout is safety, not
   measurement: a fail-closed direction, a security boundary, a migration order.
+- **production knowledge data is rewritten only with approval per run** — A
+  re-ingest, `rebuild_kb`, a backfill with `--execute`, a crawl start or a
+  deferred enrichment job on production never runs on an agent's own
+  initiative and never as a step inside a measurement or driver script. The
+  order is fixed: unit tests on the operation, a dry run on production that
+  only counts and shows the first changes, the user's yes for that one run in
+  his own words, one knowledge base as a trial with a measurement after it,
+  then the rest. On 2026-10-24 a full rebuild of a customer's largest
+  knowledge base (2,422 documents) was chained behind a measurement round
+  without asking; it was stopped after 21 documents. A setting that derives
+  from stored text (aliases, product labels, sparse vectors, embeddings) is
+  applied as a payload-and-vector patch on the affected chunks, never by
+  redoing the model work of the whole knowledge base.
 - **verify-changes-landed** — Before reporting done: `git diff --stat` (right
   files?), service health/logs (running new code?), and a Playwright
   click-through for any UI change (real user flow works?).
