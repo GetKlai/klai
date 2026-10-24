@@ -21,6 +21,23 @@ Do **not** run for:
 - Retrieval-only changes (reranker tuning, search weight adjustments)
 - Portal UI changes
 - Connector changes that do not alter chunk content
+- A changed KB setting that derives from stored text (see below)
+
+---
+
+## Before a rebuild: is a cheap-layer patch enough?
+
+A rebuild redoes the model work of every document: the document summary, the
+context sentence and the HyPE questions, tens of thousands of LLM calls for a
+large knowledge base. Most setting changes do not touch that work. The alias
+groups and product rules of a knowledge base only feed the cheap layer of a
+chunk (the "Also known as" line, the `product` label, the `text_fingerprint`,
+and the dense and sparse vectors of the embedded text), which
+`knowledge_ingest/scripts/kb_patch.py` recomputes with zero model calls,
+re-embedding only the chunks whose embedded text changed. Use that, via
+[kb-patch.md](kb-patch.md), whenever the change is to `aliases` or
+`product_rules`. A rebuild is for a change to how chunks are cut or how the
+model work is done, as in the table above.
 
 ---
 

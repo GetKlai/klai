@@ -29,6 +29,7 @@ from fastapi import APIRouter, HTTPException, Request
 from klai_kb_slugs import episode_name, personal_kb_slug
 
 from knowledge_ingest import (
+    cheap_layer,
     chunker,
     embedder,
     kb_config,
@@ -62,7 +63,6 @@ from knowledge_ingest.models import (
     UpdateKBVisibilityRequest,
 )
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
-from knowledge_ingest.product_label import derive_product
 from knowledge_ingest.resource_jobs import connector_resource_key
 from knowledge_ingest.source_profiles import (
     SourceKnowledgeProfile,
@@ -874,15 +874,17 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         extra_payload["connector_type"] = req.connector_type
     if req.source_domain:
         extra_payload["source_domain"] = req.source_domain
-    # Only a product rule of the KB names a product (product_label.py), so an
-    # adapter extra cannot set one. No match leaves the key out: the product
-    # backfill selects unlabelled points, so a rule added later still applies.
+    # The cheap layer of the document (cheap_layer.py): only a product rule of
+    # the KB names a product, so an adapter extra cannot set one, and the
+    # cheap_layer_version lets kb_patch find these chunks when a setting changes.
     extra_payload.pop("product", None)
-    if product := derive_product(
-        {**extra_payload, "path": req.path},
-        await kb_config.get_kb_product_rules(req.org_id, req.kb_slug),
-    ):
-        extra_payload["product"] = product
+    extra_payload.update(
+        cheap_layer.cheap_fields(
+            {**extra_payload, "path": req.path},
+            await kb_config.get_kb_aliases(req.org_id, req.kb_slug),
+            await kb_config.get_kb_product_rules(req.org_id, req.kb_slug),
+        )
+    )
     enrichment_skip = enrichment_skip_reason(chunk_count=len(texts), extra_payload=extra_payload)
     is_direct_file_upload = req.source_connector_id is None and req.source_type in {
         "file",

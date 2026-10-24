@@ -31,6 +31,7 @@ from typing import Any
 import structlog
 
 from knowledge_ingest import (
+    cheap_layer,
     chunker,
     embedder,
     enrichment,
@@ -1051,8 +1052,15 @@ async def _enrich_document(
             for ec in enriched_chunks:
                 ec.enriched_text += anchor_block
 
-        # KB aliases (product names and their synonyms, plan step 6).
-        kb_config.add_alias_names(enriched_chunks, await kb_config.get_kb_aliases(org_id, kb_slug))
+        # The cheap layer (aliases, product label, cheap_layer_version), computed
+        # exactly as scripts/kb_patch.py recomputes it on stored chunks.
+        cheap_layer.apply_to_enriched_chunks(
+            enriched_chunks,
+            extra_payload,
+            path,
+            await kb_config.get_kb_aliases(org_id, kb_slug),
+            await kb_config.get_kb_product_rules(org_id, kb_slug),
+        )
 
         # Step 2: Embed dense (TEI) + sparse (BGE-M3 GPU sidecar) in parallel.
         # Wrapped individually so we get separate tei_ms / sparse_ms despite parallel execution.

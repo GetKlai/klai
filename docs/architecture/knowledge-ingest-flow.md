@@ -600,8 +600,18 @@ lookalikes, and, when one of the KB's `product_rules` matches its host plus URL 
 its path, the product its document is about (`product_label.py`), which retrieval-api
 uses to prefer the question's product. Without a matching rule there is no label: a
 first URL segment or folder is a language or section code as often as a product.
-Chunks written before this, or before a matching rule existed, are labelled by
-`python -m knowledge_ingest.scripts.product_backfill`.
+
+**Two layers per chunk:** what a chunk stores comes in two kinds. The model layer
+(document summary, context sentence, HyPE questions; `enrichment.py`, `contextual.py`)
+is expensive and does not change when a knowledge-base setting does. The cheap layer
+(`cheap_layer.py`) follows from the stored text and the KB's `aliases` and
+`product_rules`: the "Also known as" line in `context_prefix` and `text_enriched`, the
+`product` label, the `text_fingerprint`, the dense and sparse vectors of the embedded
+text, and `cheap_layer_version`, a hash of the two settings that produced them. Ingest
+and enrichment compute it with `cheap_layer.cheap_fields`; after a settings change,
+`python -m knowledge_ingest.scripts.kb_patch` recomputes it for the points whose
+version is out of date, with no model call ([runbook](../runbooks/kb-patch.md)), so a
+settings change never needs `rebuild_kb`.
 
 **Bron-aware enrichment prompt:** The enrichment prompt in Step A is updated to accept
 three additional context fields: `kb_name` (friendly name of the knowledge base), `connector_type`
