@@ -448,7 +448,7 @@ def question_reply(
     selection = turn.selection
     asks = (
         selection is not None
-        and selection.verdict == "depends"
+        and selection.must_ask_variant
         and turn.passages_chosen
         and not turn.multi_question
         and plain_question(selection.question)
@@ -460,7 +460,7 @@ def question_reply(
         org_id=inputs.auth.org_id,
         wgt_id=inputs.auth.key_id,
         fired=asks,
-        reason=selection.verdict if selection else "no_selection",
+        reason=("depends" if selection.must_ask_variant else "answers") if selection else "no_selection",
     )
     if not asks or selection is None:
         return None

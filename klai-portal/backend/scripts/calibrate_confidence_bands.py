@@ -495,7 +495,6 @@ async def _fetch_window(widget_id: str, since: datetime, until: datetime) -> lis
                 "decision": signals.get("decision"),
                 "unsupported": signals.get("unsupported"),
                 "top_score": signals.get("top_score"),
-                "verdict": signals.get("verdict"),
             }
         )
     return out
@@ -581,16 +580,17 @@ def _print_analysis(rows: list[dict]) -> None:
 # fires on classify_gap "soft", every reranker score under 0.4). Grounded is
 # not relevant: an answer can be fully carried by an article about a
 # neighbouring subject. So per strip of the turn's own top_score (the
-# pre-boost reranker score, see module docstring) this adds the answer judge's
-# verdict, already recorded on every turn: does the reply answer the question.
+# pre-boost reranker score, see module docstring) this adds the decision,
+# already recorded on every turn: a plain answer, or a partial one (the
+# selection left a part the visitor asked open) with the appointment button.
 _SCORE_STRIPS = (0.0, 0.3, 0.4, 0.5, 0.6, 1.01)
 
 
 def _print_score_strips(rows: list[dict]) -> None:
     scored = [r for r in rows if isinstance(r.get("top_score"), int | float)]
     print(f"\n=== BY TOP SCORE STRIP ({len(scored)} turns with a score) ===")
-    print("Verdict and grounding are the judges' reading of the draft, before any repair.")
-    print(f"{'strip':<12}{'n':>5}{'answered':>10}{'grounded':>10}{'answers q':>12}{'partial':>10}{'not answered':>14}")
+    print("Grounding is the statement check's reading of the draft; partial is the selection's open part.")
+    print(f"{'strip':<12}{'n':>5}{'answered':>10}{'grounded':>10}{'complete':>10}{'partial':>10}")
     for lo, hi in pairwise(_SCORE_STRIPS):
         items = [r for r in scored if lo <= r["top_score"] < hi]
         if not items:
@@ -598,12 +598,10 @@ def _print_score_strips(rows: list[dict]) -> None:
         answered = [r for r in items if r["decision"] in _ANSWERED_DECISIONS]
         judged = [r for r in answered if isinstance(r["unsupported"], int)]
         grounded = sum(1 for r in judged if r["unsupported"] == 0)
-        verdicts = [r["verdict"] for r in answered if r.get("verdict")]
-        count = {v: sum(1 for x in verdicts if x == v) for v in ("answered", "partial", "not_answered")}
-        n_v = len(verdicts)
+        partial = sum(1 for r in answered if r["decision"] == "partial_answer")
         print(
             f"{f'{lo:.1f}-{min(hi, 1.0):.1f}':<12}{len(items):>5}{len(answered):>10}{f'{grounded}/{len(judged)}':>10}"
-            f"{f'{count["answered"]}/{n_v}':>12}{f'{count["partial"]}/{n_v}':>10}{f'{count["not_answered"]}/{n_v}':>14}"
+            f"{f'{len(answered) - partial}/{len(answered)}':>10}{f'{partial}/{len(answered)}':>10}"
         )
 
 

@@ -158,12 +158,12 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
             {"chunks": [], "evidence_pack": {"items": [chunk], "sources": []}, "confidence_band": "high"}
         ),
     )
-    from app.services.passage_selection import Evidence, PassageSelection
+    from app.services.passage_selection import Evidence, Part, PassageSelection
 
     selection = PassageSelection(
         need="belplan wijzigen",
-        evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")],
-        verdict="answers",
+        parts=[Part(ask="belplan wijzigen", evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")])],
+        must_ask_variant=False,
         question="",
     )
     signals: dict[str, Any] = {}
@@ -178,8 +178,8 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
     assert signals["search"]["found"] == [{"title": "Belplan", "url": "https://help.example.com/belplan", "score": 0.9}]
     assert signals["selection"] == {
         "verdict": "answers",
-        "evidence": [{"passage": 1, "quote": "Klik op Belplan wijzigen."}],
-        "missing": "",
+        "parts": [{"ask": "belplan wijzigen", "evidence": [{"passage": 1, "quote": "Klik op Belplan wijzigen."}]}],
+        "open": [],
         "question": "",
     }
 
@@ -223,12 +223,15 @@ async def test_a_message_with_two_questions_is_written_from_the_chosen_passages_
             }
         ),
     )
-    from app.services.passage_selection import Evidence, PassageSelection
+    from app.services.passage_selection import Evidence, Part, PassageSelection
 
     selection = PassageSelection(
         need="belplan wijzigen; een tweede nummer",
-        evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")],
-        verdict="answers",
+        parts=[
+            Part(ask="Hoe wijzig ik mijn belplan?", evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")]),
+            Part(ask="Hoe kom ik aan een tweede telefoonnummer?", evidence=[]),
+        ],
+        must_ask_variant=False,
         question="",
     )
     signals: dict[str, Any] = {}
@@ -237,6 +240,7 @@ async def test_a_message_with_two_questions_is_written_from_the_chosen_passages_
 
     select.assert_awaited_once()
     assert "Klik op Belplan wijzigen." in prompt
+    assert "do not cover this part: Hoe kom ik aan een tweede telefoonnummer. After the answer" in prompt
     assert other["text"] not in prompt
     assert "[Question" not in prompt
     assert signals["multi_question"] is True

@@ -9,14 +9,22 @@ had to undo that. With this step in front, on the same passages, replies that
 were mostly unsupported went from 19 to 1 and unsupported statements from 32%
 to 16% of all statements.
 
-One call on the checker model returns a closed verdict and, per passage it
-relies on, the sentence that carries the answer; code checks that sentence
-against the passage and decides the route. The writer then reads only the
-chosen passages. No
+One call on the checker model lists the parts the visitor asked and, per part,
+the sentence of a passage that carries the answer; code checks each sentence
+against its passage and derives everything else from that one structure:
+whether anything is answered, which asked parts stay open (the brief's one
+sentence and the appointment button), and whether the steps depend on a
+variant. The writer then reads only the chosen passages. No
 filter on product or passage length in code: both were tried in the same
 measurement and cost answers whose only source was such a passage.
 
-A failed call is tried once more; with still no verdict, a source-only turn
+There is no second owner of "answered". Until 2026-10-24 the model also wrote
+a verdict word and a free-text gap, and a light judge read the written reply
+again to decide the button: on the widget meetlat the free-text gap named the
+visitor's own situation in 4 of 18 cases, and in production the light judge
+disagreed with the selection's "answers" on 15 of about 255 written replies.
+
+A failed call is tried once more; with still no selection, a source-only turn
 (the widget, internal Strict) answers "not found" (retrieval_context), because
 a writer handed every passage is how an invented answer got through.
 """
@@ -42,28 +50,30 @@ SELECTION_SYSTEM_PROMPT = (
     "Work in this order.\n"
     "need: in one sentence, what the visitor wants to know or do now. Use the earlier turns to understand a short "
     "latest message; an answer to the assistant's own question narrows the visitor's earlier question, it does not "
-    "replace it. When the message asks several questions, the one sentence names each part.\n"
-    "evidence: go through the passages and copy, word for word, the sentence or step that tells the visitor how to "
-    "do it or gives the fact they asked for, with the passage number: for one question at most three passages, "
-    "one sentence each; for a message with several questions one sentence per answered part, at most six lines in "
-    "total. "
-    "Copy only sentences that carry the how or the fact. A sentence that merely says something exists, is "
-    "supported or is available does not tell how to do it and is not evidence. A sentence saying that what the "
-    "visitor wants is not possible or no longer supported IS the fact they need. Leave the list empty when there "
-    "is no such sentence. It must be about the same product, device and direction (import is not export, inbound "
-    "is not outbound, the mobile app is not a desk phone).\n"
-    "verdict: answers when the evidence covers the need or a clear part of it; a missing part is no reason to ask "
-    "or to refuse, name it under missing. depends only when you copied evidence from "
-    "passages whose steps DIFFER per variant (device, app) and the conversation does not say which applies; never "
-    "to ask about something the passages do not cover, and not when the steps are the same for each variant. "
-    "not_in_passages when there is no evidence. A request for a person or an appointment, a thank-you or a remark about the chat "
-    "needs no passage: answers with empty evidence.\n"
-    "missing: only for answers, a part of what the visitor asked that no evidence line answers, in a few of the "
-    "visitor's words. Never a fact about the visitor's own situation or setup (whether something is switched on, "
-    "installed, configured or already tried), never a check the visitor can do, and never a part the evidence "
-    "already answers. An empty string when the evidence answers everything asked; when in doubt, empty.\n"
-    "question: only for depends, the one question to ask the visitor, in their language, at most fifteen words. "
-    "Otherwise an empty string."
+    "replace it.\n"
+    "parts: one entry per question the visitor asks now, at most six; a message with one question has one part. A "
+    "request for a person or an appointment, a thank-you or a remark about the chat asks nothing of the articles: "
+    "then parts is empty.\n"
+    "ask: the question of this part, copied word for word from the visitor's own messages (from the earlier turn it "
+    "narrows when the latest message is short). Only what the visitor asked: never a fact about their own situation "
+    "or setup (whether something is switched on, installed, configured or already tried), never a check they can "
+    "do.\n"
+    "evidence: for this part, go through the passages and copy, word for word, the sentence or step that tells the "
+    "visitor how to do it or gives the fact they asked for, with the passage number: at most three sentences per "
+    "part and six in total. Copy only sentences that carry the how or the fact. A sentence that merely says "
+    "something exists, is supported or is available does not tell how to do it and is not evidence. A sentence "
+    "saying that what the visitor wants is not possible or no longer supported IS the fact they need. It must be "
+    "about the same product, device and direction (import is not export, inbound is not outbound, the mobile app "
+    "is not a desk phone), and about the same feature: a sentence about another feature or setting that only "
+    "shares words with the question is not evidence. Leave the list empty when no passage has such a sentence; the "
+    "visitor is then told that part is not covered, which is better than an answer about something else.\n"
+    "must_ask_variant: true only when you cannot give the visitor the steps without knowing their variant (device, "
+    "app): the evidence you copied gives different steps for different variants and the conversation does not say "
+    "which applies. False when one set of steps or one fact answers the question, when the variants differ only in "
+    "what the visitor did not ask about, and when the visitor describes a problem whose checks hold for every "
+    "variant. Never to ask about something the passages do not cover.\n"
+    "question: only when must_ask_variant is true, the one question to ask the visitor, in their language, at most fifteen "
+    "words. Otherwise an empty string."
 )
 
 # The internal chat's own words for the same step. Its user is an employee
@@ -77,29 +87,26 @@ SELECTION_SYSTEM_PROMPT_INTERNAL = (
     "You prepare a colleague's answer from the knowledge base. You get the conversation and numbered passages. "
     "The user is an employee: they may relay a customer's question, ask what something is or whether it exists, "
     "or ask you to rewrite, review or shorten text that is already in the conversation. Work in this order.\n"
-    "need: in one sentence, what the user needs now. Use the earlier turns to understand a short latest message. "
-    "When the message asks several things, the one sentence names each part.\n"
-    "evidence: go through the passages and copy, word for word, the sentence that answers the need, with the "
-    "passage number: the step that tells how to do it, the fact asked for, the sentence that says what something "
-    "is or which options exist, or the sentence that says it is not possible or no longer supported. For one "
-    "question at most three passages, one sentence each; for several questions one sentence per answered part, "
-    "at most six lines in total. Copy only sentences about the same product, device and direction (import is "
-    "not export, inbound is not outbound, the mobile app is not a desk phone). Leave the list empty when no "
-    "passage says anything about the need.\n"
-    "verdict: answers when the evidence covers the need or a clear part of it; a missing part is no reason to "
-    "refuse, name it under missing. depends only when you copied evidence "
-    "from passages whose steps or availability DIFFER per variant (device, app) and the conversation does not say "
-    "which applies. "
-    "not_in_passages when no passage says anything about the need, and otherwise whenever the evidence is empty. "
-    "The one exception: a request to rewrite, review, translate or shorten text already in the conversation, a "
-    "request for a person, a thank-you or a remark about the chat needs no passage: answers with empty evidence.\n"
-    "missing: only for answers, a part of what the user asked that no evidence line answers, in a few of the "
-    "user's words. Never a fact about the situation of the user or the customer they help (whether something is "
-    "switched on, installed, configured or already tried), never a check they can do, and never a part the "
-    "evidence already answers. An empty string when the evidence answers everything asked; when in doubt, "
-    "empty.\n"
-    "question: only for depends, the one question that would settle the variant, in the user's language, at most "
-    "fifteen words. Otherwise an empty string."
+    "need: in one sentence, what the user needs now. Use the earlier turns to understand a short latest message.\n"
+    "parts: one entry per thing the user asks now, at most six; a message with one question has one part. A "
+    "request to rewrite, review, translate or shorten text already in the conversation, a request for a person, a "
+    "thank-you or a remark about the chat needs no passage: then parts is empty.\n"
+    "ask: the question of this part, copied word for word from the user's own messages (from the earlier turn it "
+    "narrows when the latest message is short). Only what the user asked: never a fact about the situation of the "
+    "user or the customer they help (whether something is switched on, installed, configured or already tried), "
+    "never a check they can do.\n"
+    "evidence: for this part, go through the passages and copy, word for word, the sentence that answers it, with "
+    "the passage number: the step that tells how to do it, the fact asked for, the sentence that says what "
+    "something is or which options exist, or the sentence that says it is not possible or no longer supported. At "
+    "most three sentences per part and six in total. Copy only sentences about the same product, device and "
+    "direction (import is not export, inbound is not outbound, the mobile app is not a desk phone). Leave the list "
+    "empty when no passage says anything about this part; a sentence about another feature or setting that only "
+    "shares words with the question is not about it.\n"
+    "must_ask_variant: true only when the evidence you copied gives different steps or availability for different "
+    "variants (device, app), the conversation does not say which applies, and one set of steps or one fact cannot "
+    "answer the question.\n"
+    "question: only when must_ask_variant is true, the one question that would settle the variant, in the user's language, at "
+    "most fifteen words. Otherwise an empty string."
 )
 
 # The checker's own budget on the widget is 4 s for a reply that lists every
@@ -116,9 +123,6 @@ _LATEST_CHARS = 4000
 _LINE_END = re.compile(r"\n|(?<=[.!?])\s+")
 _LINE_WORD_SHARE = 0.6
 _MAX_LINES_PER_QUOTE = 6
-# A quote that outranks a "not in the passages" verdict must be a sentence,
-# not a few common words; the 39 measured cases all quoted whole sentences.
-_OVERRIDE_MIN_WORDS = 5
 # The selection's question goes out as the whole reply, so it has to look like
 # a question and nothing else: one line, a question mark, no link or code.
 _QUESTION_MAX_CHARS = 200
@@ -156,70 +160,83 @@ class Evidence(BaseModel):
     quote: str
 
 
-class PassageSelection(BaseModel):
-    # ``missing`` has a default only for stored records and test fixtures that
-    # predate it; the model must still always write it.
+class Part(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra=every_field_required)
 
-    # Field order is the order the model writes in: it states the need and
-    # looks up the sentences before it decides. With the verdict first it
-    # refused answerable questions in 7 of 24 repeats on read cases; in this
-    # order, with the prompt above, 0 of 32, and on the 108 stored turns it was
-    # not tuned on it turned no answer the owner called good into "not found".
-    need: str
+    ask: str
     evidence: list[Evidence]
-    verdict: Literal["answers", "depends", "not_in_passages"]
-    # The one owner of "the articles do not cover this": the writer names a
-    # gap only when this says one. Left to the writer, a widget follow-up on
-    # 2026-10-23 opened a complete answer with "this is not in the help
-    # articles" (request 5a0fbc3d), which the visitor read as a contradiction.
-    missing: str = ""
+
+
+def _found(evidence: list[Evidence], chunks: list[dict]) -> list[tuple[dict, str]]:
+    """Per quoted sentence that really stands in its passage: the passage, and the passage's own words for it.
+
+    The quote is checked in code: "this part is answered" is only as good as
+    the sentence it can point at. What travels on is never the model's copy
+    but the lines of the passage it matches, so a word the model changed while
+    copying cannot reach the writer.
+    """
+    pairs: list[tuple[dict, str]] = []
+    for item in evidence:
+        quote = _WORD.findall(item.quote.lower())
+        if not quote:
+            continue
+        # The sentence is the evidence; the passage number is the model's
+        # weakest output. Retrieval hands over up to seven near-identical
+        # sections of one article, and in two meetlat turns (both replay
+        # rounds, 2026-10-13) the model copied the right sentence and
+        # numbered the wrong section, which turned an answer into "not
+        # found". The pointed passage first; otherwise the best-matching
+        # section of the same article (same source, or title without one),
+        # never another article, whose like-worded sentence could be about
+        # another product.
+        if not 0 < item.passage <= len(chunks):
+            continue
+        pointed = chunks[item.passage - 1]
+        if _share(quote, pointed) >= _QUOTE_WORD_SHARE:
+            chunk = pointed
+        else:
+            same_article = [c for c in chunks if _article(c) == _article(pointed)]
+            best = max(same_article, key=lambda c: _share(quote, c), default=None)
+            if best is None or _share(quote, best) < _QUOTE_WORD_SHARE:
+                continue
+            chunk = best
+        text = str(chunk.get("text") or "")
+        wanted = set(quote)
+        lines = [" ".join(line.split()) for line in _LINE_END.split(text)]
+        own = [
+            line
+            for line in lines
+            if (words := _WORD.findall(line.lower()))
+            and sum(word in wanted for word in words) >= _LINE_WORD_SHARE * len(words)
+        ]
+        pairs.append((chunk, " ".join(own[:_MAX_LINES_PER_QUOTE])))
+    return pairs
+
+
+class PassageSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra=every_field_required)
+
+    # Field order is the order the model writes in: it states the need,
+    # lists the parts with the sentences it finds for each, and only then
+    # decides whether the steps vary. With a verdict word first it refused
+    # answerable questions in 7 of 24 repeats on read cases; with the evidence
+    # first, 0 of 32, and on the 108 stored turns it was not tuned on it turned
+    # no answer the owner called good into "not found". There is no verdict
+    # field any more: code derives it from the parts (``verdict``).
+    need: str
+    parts: list[Part]
+    must_ask_variant: bool
     question: str
 
-    def found(self, chunks: list[dict]) -> list[tuple[dict, str]]:
-        """Per quoted sentence that really stands in its passage: the passage, and the passage's own words for it.
+    def verdict(self, chunks: list[dict]) -> Literal["answers", "depends", "not_in_passages"]:
+        """The one word the record, the log and the routing read, derived from the parts and checked in code."""
+        if self.not_in_passages(chunks):
+            return "not_in_passages"
+        return "depends" if self.must_ask_variant and self.found(chunks) else "answers"
 
-        The quote is checked in code: a verdict that a passage answers is only
-        as good as the sentence it can point at. What travels on is never the
-        model's copy but the lines of the passage it matches, so a word the
-        model changed while copying cannot reach the writer.
-        """
-        pairs: list[tuple[dict, str]] = []
-        for item in self.evidence:
-            quote = _WORD.findall(item.quote.lower())
-            if not quote:
-                continue
-            # The sentence is the evidence; the passage number is the model's
-            # weakest output. Retrieval hands over up to seven near-identical
-            # sections of one article, and in two meetlat turns (both replay
-            # rounds, 2026-10-13) the model copied the right sentence and
-            # numbered the wrong section, which turned an answer into "not
-            # found". The pointed passage first; otherwise the best-matching
-            # section of the same article (same source, or title without one),
-            # never another article, whose like-worded sentence could be about
-            # another product.
-            if not 0 < item.passage <= len(chunks):
-                continue
-            pointed = chunks[item.passage - 1]
-            if _share(quote, pointed) >= _QUOTE_WORD_SHARE:
-                chunk = pointed
-            else:
-                same_article = [c for c in chunks if _article(c) == _article(pointed)]
-                best = max(same_article, key=lambda c: _share(quote, c), default=None)
-                if best is None or _share(quote, best) < _QUOTE_WORD_SHARE:
-                    continue
-                chunk = best
-            text = str(chunk.get("text") or "")
-            wanted = set(quote)
-            lines = [" ".join(line.split()) for line in _LINE_END.split(text)]
-            own = [
-                line
-                for line in lines
-                if (words := _WORD.findall(line.lower()))
-                and sum(word in wanted for word in words) >= _LINE_WORD_SHARE * len(words)
-            ]
-            pairs.append((chunk, " ".join(own[:_MAX_LINES_PER_QUOTE])))
-        return pairs
+    def found(self, chunks: list[dict]) -> list[tuple[dict, str]]:
+        """The quoted sentences of every part that stand in their passage (``_found``)."""
+        return _found([item for part in self.parts for item in part.evidence], chunks)
 
     def chosen(self, chunks: list[dict]) -> list[dict]:
         """The passages with a quoted sentence found back in them, without the same text twice.
@@ -233,29 +250,30 @@ class PassageSelection(BaseModel):
         return list(picked.values())
 
     def not_in_passages(self, chunks: list[dict]) -> bool:
-        """No passage answers: no quoted sentence stands in a passage, or, without any quote, the verdict says so.
+        """The visitor asked something and no quoted sentence of any part stands in a passage.
 
-        A verified quote outranks the verdict word. In five replay rounds of
-        the meetlat (2026-10-13) the model copied a sentence that stood in a
-        passage and still wrote "not_in_passages" 39 times; the owner expected
-        an answer in 31 of those turns and "not found" in 6. The prompt asks
-        for the list to be empty when there is no evidence, so a filled list
-        is the model's own finding, and the writer gets those passages; the
-        verdict still stands in the brief, which never tells such a writer the
-        lines answer all of it and asks it to name the part they leave open
-        (``_coverage``). Only a quote of a sentence's
-        length outranks the verdict: "Dat kan niet." stands in many passages.
-        And it must stand as one sentence of the passage (quotes.py), not as
-        words scattered over three.
+        No parts (a thank-you, a request for a person, a remark about the
+        chat) asks nothing of the articles and is never "not found" here.
         """
-        if self.verdict == "not_in_passages":
-            strong = [item for item in self.evidence if len(_WORD.findall(item.quote)) >= _OVERRIDE_MIN_WORDS]
-            return not any(
-                words_stand_in(item.quote, str(chunk.get("text") or ""))
-                for chunk, _ in self.model_copy(update={"evidence": strong}).found(chunks)
-                for item in strong
-            )
-        return bool(self.evidence) and not self.found(chunks)
+        return bool(self.parts) and not self.found(chunks)
+
+    def open_parts(self, chunks: list[dict], visitor_texts: list[str]) -> list[str]:
+        """The asks no sentence answers, that the visitor really wrote.
+
+        An ask counts only when its words stand in one of the visitor's own
+        messages (all turns: a short follow-up narrows an earlier question).
+        What the model wrote under ``ask`` that the visitor did not say, a
+        fact about their setup, is never named to them and never adds the
+        appointment button. The free-text gap this replaces named the
+        visitor's own situation in 4 of 18 widget meetlat cases, and once
+        answered "Ja." and then said the same part was not stated.
+        """
+        asks = [
+            " ".join(part.ask.split()).rstrip(" ?!.")
+            for part in self.parts
+            if not _found(part.evidence, chunks) and any(words_stand_in(part.ask, text) for text in visitor_texts)
+        ]
+        return list(dict.fromkeys(ask for ask in asks if ask))
 
 
 def _product_note(chunk: dict) -> str:
@@ -306,10 +324,10 @@ async def select_passages(
             delegated_org_id=delegated_org_id,
         )
         if selection is not None:
-            # Counts and the closed verdict only; the missing fact is the visitor's words.
+            # Counts and the closed verdict only; the asks are the visitor's words.
             logger.info(
                 "passage_selection",
-                verdict=selection.verdict,
+                verdict=selection.verdict(chunks),
                 offered=len(chunks),
                 chosen=len(selection.chosen(chunks)),
             )
@@ -318,29 +336,21 @@ async def select_passages(
     return None
 
 
-def _coverage(selection: PassageSelection, *, what: str, internal: bool, unchecked: bool) -> str:
+def _coverage(selection: PassageSelection, *, what: str, internal: bool, unchecked: bool, open_parts: list[str]) -> str:
     """The brief's one line on what the sources leave open, decided by the selection, never by the writer.
 
-    Only an "answers" verdict with nothing missing says the lines answer all
-    of it. A "not_in_passages" verdict that a quoted sentence outranked
-    reaches the writer too, but the selection did say the passages do not
-    answer the need, so the reply names what they leave open. A "depends"
-    verdict asks about its open part or covers every variant, and questions
-    beyond the search limit carry their own note, so neither is told the
-    lines answer everything.
+    The asks no found sentence answers (``open_parts``) are the only gap the
+    writer names. A "depends" turn asks about its variant or covers every
+    one, and questions beyond the search limit carry their own note, so
+    neither is told the lines answer everything.
     """
     verb = "does" if internal else "do"
-    if missing := " ".join(selection.missing.split()):
+    if open_parts:
         return (
-            f"\nThe {what} {verb} not cover this part: {missing}. After the answer, say in one sentence that the "
-            f"{what} {verb} not cover it, naming that part, and nothing else about what is missing."
+            f"\nThe {what} {verb} not cover this part: {'; '.join(open_parts)}. After the answer, say in one "
+            f"sentence that the {what} {verb} not cover it, naming that part, and nothing else about what is missing."
         )
-    if selection.verdict == "not_in_passages":
-        return (
-            "\nThe selection judged these lines may cover only part of it. Give only what they say; if part of it "
-            f"stays open, say after the answer in one sentence which part the {what} {verb} not cover."
-        )
-    if selection.verdict != "answers":
+    if selection.must_ask_variant:
         return ""
     if unchecked:
         return (
@@ -358,6 +368,7 @@ def writer_brief(
     source_only: bool,
     question: str = "",
     unchecked: bool = False,
+    open_parts: list[str] | None = None,
 ) -> str:
     """Tell the writer what the chosen passages were chosen for, and how closely to keep to them.
 
@@ -379,7 +390,9 @@ def writer_brief(
     and the passages are the knowledge base, not help articles.
 
     ``unchecked`` says questions beyond the search limit follow the brief
-    with their own note.
+    with their own note. ``open_parts`` are the asks of the visitor that no
+    found sentence answers (``PassageSelection.open_parts``): the one gap the
+    reply may name.
 
     ``question`` is the selection's variant question on a message with several
     questions: sent as the whole reply it would drop the parts that were
@@ -414,11 +427,11 @@ def writer_brief(
             "price or an amount appears in the reply only when it stands in the lines above; otherwise say that "
             f"the {what} {'does' if internal else 'do'} not give it."
         )
-        + _coverage(selection, what=what, internal=internal, unchecked=unchecked)
+        + _coverage(selection, what=what, internal=internal, unchecked=unchecked, open_parts=open_parts or [])
         + (
             "\nThe employee relays this for someone else; give the steps for each variant the lines name, each "
             "under its own heading, instead of asking which applies."
-            if internal and selection.verdict == "depends"
+            if internal and selection.verdict(chunks) == "depends"
             else ""
         )
         + (f"\nFor the part that depends on it, ask: {' '.join(question.split())}" if question else "")

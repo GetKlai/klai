@@ -39,7 +39,12 @@ LITELLM = "http://litellm.example.com"
 RETRIEVAL = "http://retrieval.example.com"
 INTERNAL_KEY = {"chat": True, "internal_chat": True}
 STRICT_REFUSAL = no_citable_sources_message("nl", suggest_open_mode=True)
-NOT_IN_PASSAGES = {"need": "verlof aanvragen", "evidence": [], "verdict": "not_in_passages", "question": ""}
+NOT_IN_PASSAGES = {
+    "need": "verlof aanvragen",
+    "parts": [{"ask": "Hoe vraag ik verlof aan?", "evidence": []}],
+    "must_ask_variant": False,
+    "question": "",
+}
 
 ARTICLE = "Je vraagt verlof aan in het HR-portaal onder Verlof. Je leidinggevende keurt de aanvraag binnen twee werkdagen goed."
 ANSWER = "Je vraagt verlof aan in het HR-portaal onder Verlof. Je leidinggevende keurt de aanvraag goed."
@@ -89,7 +94,6 @@ class _LiteLLM:
         answer: str = ANSWER,
         *,
         question: str = "",
-        judge: dict | None = None,
         grounding: dict | None = None,
         repaired: str = "",
         selection: dict | str | None = None,
@@ -97,7 +101,6 @@ class _LiteLLM:
     ) -> None:
         self.answer = answer
         self.question = question
-        self.judge = judge or {"grounding": "all_in_articles", "verdict": "answered"}
         self.grounding = grounding or _supported(answer)
         self.repaired = repaired
         # The selection step (passage_selection.py). By default it quotes
@@ -126,7 +129,6 @@ class _LiteLLM:
         kind = self._kind(body)
         replies: dict[str, Any] = {
             "clarify_question": {"question": self.question},
-            "answer_judge": self.judge,
             "grounding_check": self.grounding,
             "repair": self.repaired,
             "rewrite": "",
@@ -306,7 +308,7 @@ async def test_strict_turn_without_evidence_gets_the_fixed_refusal_without_a_mod
     turn = await _turn(monkeypatch, llm, profile=_internal(), retrieval={**retrieval, "confidence_band": "unknown"})
 
     assert turn.text == STRICT_REFUSAL
-    assert llm.of("answer") == [] and llm.of("answer_judge") == [] and llm.of("grounding_check") == []
+    assert llm.of("answer") == [] and llm.of("grounding_check") == []
 
 
 @pytest.mark.asyncio
@@ -364,7 +366,6 @@ async def test_a_strict_refusal_speaks_the_conversations_language_not_the_short_
 async def test_strict_draft_that_the_articles_do_not_carry_gets_the_strict_refusal(monkeypatch, stream):
     llm = _LiteLLM(
         UNRELATED,
-        judge={"grounding": "some_not_in_articles", "verdict": "not_answered"},
         grounding=_unsupported(UNRELATED),
     )
 
@@ -397,7 +398,7 @@ async def test_strict_turn_whose_passages_do_not_answer_gets_the_strict_refusal_
 
     assert turn.text == STRICT_REFUSAL
     assert len(llm.of("passage_selection")) == 1
-    assert llm.of("answer") == [] and llm.of("answer_judge") == [] and llm.of("grounding_check") == []
+    assert llm.of("answer") == [] and llm.of("grounding_check") == []
     selection = turn.records[0]["selection"]
     assert selection["verdict"] == "not_in_passages" and "evidence" not in selection and "question" not in selection, (
         "the internal record keeps the verdict and passage numbers, never text"
@@ -412,7 +413,7 @@ async def test_strict_knowledge_turn_whose_selection_chose_nothing_is_refused_be
     llm = _LiteLLM(
         UNRELATED + " Parkeren is gratis op zondag.",
         grounding=_unsupported(UNRELATED, "Parkeren is gratis op zondag."),
-        selection={"need": "verlof aanvragen", "evidence": [], "verdict": "answers", "question": ""},
+        selection={"need": "verlof aanvragen", "parts": [], "must_ask_variant": False, "question": ""},
     )
 
     turn = await _turn(
@@ -564,7 +565,7 @@ async def test_an_internal_rewrite_request_keeps_the_passages(monkeypatch):
     that needs no passage (rewrite text already in the conversation); the
     writer still sees the passages, and no brief of chosen lines."""
     llm = _LiteLLM(
-        selection={"need": "een mail van het vorige antwoord", "evidence": [], "verdict": "answers", "question": ""}
+        selection={"need": "een mail van het vorige antwoord", "parts": [], "must_ask_variant": False, "question": ""}
     )
 
     await _turn(
@@ -616,7 +617,7 @@ async def test_a_turn_that_searched_nothing_is_never_refused_for_a_missing_sourc
     turn = await _turn(monkeypatch, llm, profile=profile, question=question)
 
     assert turn.text == UNRELATED
-    assert llm.of("answer_judge") == [] and llm.of("grounding_check") == []
+    assert llm.of("grounding_check") == []
 
 
 # --- Variants: steps per variant internally; weak sources by the gap ---
@@ -675,8 +676,13 @@ async def test_a_relayed_question_gets_the_steps_per_variant_instead_of_a_questi
         grounding=_supported(answer),
         selection={
             "need": "gemiste oproepen zien",
-            "evidence": [{"passage": 1, "quote": IPHONE_STEP}, {"passage": 2, "quote": ANDROID_STEP}],
-            "verdict": "depends",
+            "parts": [
+                {
+                    "ask": "hoe zet hij dat aan",
+                    "evidence": [{"passage": 1, "quote": IPHONE_STEP}, {"passage": 2, "quote": ANDROID_STEP}],
+                }
+            ],
+            "must_ask_variant": True,
             "question": "Heeft de klant een iPhone of een Android-telefoon?",
         },
     )
@@ -1273,11 +1279,9 @@ async def test_every_litellm_call_of_an_internal_and_a_widget_turn_carries_the_o
     )
 
     kinds = {_LiteLLM._kind(body) for body in internal.calls}
-    assert kinds >= {"case_update", "passage_selection", "answer", "answer_judge", "grounding_check"}
+    assert kinds >= {"case_update", "passage_selection", "answer", "grounding_check"}
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in internal.calls)
-    assert {"passage_selection", "answer", "answer_judge", "grounding_check"} <= {
-        _LiteLLM._kind(b) for b in widget.calls
-    }
+    assert {"passage_selection", "answer", "grounding_check"} <= {_LiteLLM._kind(b) for b in widget.calls}
     assert all(body["metadata"]["_klai_delegated_org_id"] == "zorg-acme" for body in widget.calls)
 
 
@@ -1484,7 +1488,6 @@ _GOLDEN_STRICT_RECORD = {
     "selection": {"verdict": "answers", "passages": [1]},
     "judge_failed": ["case"],
     "grounding": "all_in_articles",
-    "verdict": "answered",
     "decision": "answer",
     "top_score": 0.82,
     "gap_type": None,

@@ -121,7 +121,7 @@ def _link_key(url: str) -> str | None:
         return None
 
 
-def _user_texts(messages: list[dict]) -> list[str]:
+def user_texts(messages: list[dict]) -> list[str]:
     texts = []
     for message in messages:
         if message.get("role") != "user":
@@ -158,7 +158,7 @@ def check_hard_facts(text: str, chunks: list[dict] | None, messages: list[dict])
     currency plus value), and that notation is the statement's text.
     """
     carriers = [(str(chunk.get("text") or ""), source_url_key(chunk.get("source_url"))) for chunk in chunks or []]
-    carriers += [(user_text, None) for user_text in _user_texts(messages)]
+    carriers += [(user_text, None) for user_text in user_texts(messages)]
     statements = []
     for kind, facts_in in _HARD_FACTS.items():
         held = [

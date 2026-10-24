@@ -19,7 +19,6 @@ checked afterwards for the record only.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import time
@@ -54,7 +53,7 @@ from app.services.answer_compose import (
 from app.services.answer_epistemics import pop_answer_contract_stream_text, strip_answer_contract_markers
 from app.services.answer_footer import render_answer_footer
 from app.services.answer_grounding import check_statements, grounding_budget
-from app.services.answer_judge import AnswerJudgement, decide_answer, is_clarifying_question, judge_answer
+from app.services.answer_judge import decide_answer, is_clarifying_question
 from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import (
     _augment_messages_with_system_prompt,
@@ -733,7 +732,8 @@ def _open_answer(
         has_sources=bool(sources),
         escalation=False,
         conversational=False,
-        judgement=None,
+        open_part=False,
+        grounding=None,
     )
     logger.info("partner_chat_answer_judge", org_id=org_id, decision=outcome, kb_mode=answer_mode)
     if answer_signals is not None:
@@ -799,15 +799,16 @@ async def _judge(
     delegated_org_id: str | None,
     helpdesk: bool,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3: the answer judge, then the one decision.
+    """SPEC-RAG-ANSWER-JUDGES-001 REQ-2/REQ-3: the statement check, then the one decision.
 
-    The judge sees the draft after the marker and link stripper, exactly the
+    The check sees the draft after the marker and link stripper, exactly the
     text the visitor would get. An empty result (the model wrote nothing) has
-    nothing to judge and keeps the composer's refusal; a consented broad-mode
-    answer is not judged either.
+    nothing to check and keeps the composer's refusal; a consented broad-mode
+    answer is not checked either.
 
     An uncited answer keeps only an appointment offer that the backend forced
-    or the model's own words make; a partial answer always gets one.
+    or the model's own words make, or one the turn calls for because it did
+    not answer from the articles; a partial answer always gets one.
     """
     if decision.get("broad_mode") == "answer":
         return content, sources, decision
@@ -850,19 +851,15 @@ async def _judge(
     chosen = bool(citation_chunks) and all(chunk.get(_CHOSEN_PASSAGE_KEY) for chunk in citation_chunks or [])
     deferred = chosen and bool(sources) and answer_signals is not None
     checks_started = time.perf_counter()
-    light_judge = judge_answer(
-        messages=messages, draft=safe_text, articles=articles, settings=settings, delegated_org_id=delegated_org_id
-    )
     if deferred and answer_signals is not None:
         # The writer read only passages the selection step chose and cited
         # one, and after writing nothing changes such a reply (below), so the
         # statement check is measurement and runs after the reply went out. On
         # the critical path it cost 1.6 s median of a 6.2 s written turn in the
-        # first week of real traffic; the light judge, which decides the
-        # appointment button, costs 0.4 s. An uncited reply keeps the check on
-        # the path: without a source its statements decide between showing and
+        # first week of real traffic. An uncited reply keeps the check on the
+        # path: without a source its statements decide between showing and
         # refusing (decide_answer).
-        judgement, grounding = await light_judge, None
+        grounding = None
         knowledge_turn.grounding_check = _check_answer_later(
             question=_last_user_message(messages) or "",
             draft=safe_text,
@@ -874,62 +871,55 @@ async def _judge(
             keep_statements=helpdesk,
         )
     else:
-        # Both checks read the same draft and run together, so the heavier one
-        # costs its own 2.1 s median once and nothing on top of the light judge.
-        judgement, grounding = await asyncio.gather(
-            light_judge,
-            check_statements(
-                question=_last_user_message(messages) or "",
-                draft=safe_text,
-                articles=articles,
-                settings=settings,
-                org_id=org_id,
-                timeout_seconds=grounding_budget("widget" if helpdesk else "internal"),
-                delegated_org_id=delegated_org_id,
-            ),
+        grounding = await check_statements(
+            question=_last_user_message(messages) or "",
+            draft=safe_text,
+            articles=articles,
+            settings=settings,
+            org_id=org_id,
+            timeout_seconds=grounding_budget("widget" if helpdesk else "internal"),
+            delegated_org_id=delegated_org_id,
         )
     checks_ms = _elapsed_ms(checks_started)
-    if judgement is not None and grounding is not None:
-        # The statement-level check decides grounding: measured against 54
-        # hand-checked answers it catches 96% where the light judge caught 22%.
-        judgement = judgement.model_copy(update={"grounding": _grounding_label(grounding)})
+    label = _grounding_label(grounding) if grounding is not None else None
     outcome = decide_answer(
         kb_mode="strict",
         has_sources=bool(sources),
         escalation=force_escalation,
         conversational=conversational,
-        judgement=judgement,
+        open_part=bool(knowledge_turn.open_parts),
+        grounding=label,
     )
-    verdicts = judgement.model_dump() if judgement is not None else {}
     logger.info(
         "partner_chat_answer_judge",
         org_id=org_id,
         decision=outcome,
-        judge_failed=judgement is None,
+        grounding=label,
         grounding_checked=grounding is not None,
         checks_ms=checks_ms,
         unsupported=len(grounding.unsupported) if grounding is not None else None,
-        **verdicts,
     )
     if answer_signals is not None:
-        answer_signals.update(verdicts, decision=outcome)
+        answer_signals["decision"] = outcome
         if not deferred:
             # The internal record keeps signals, never text (record_internal_turn).
             _grounding_signals(answer_signals, grounding, keep_statements=helpdesk)
-        if judgement is None:
-            answer_signals.setdefault("judge_failed", []).append("answer")
+            if label is not None:
+                answer_signals["grounding"] = label
     return _decided(
         outcome,
         content,
         sources,
         decision,
         safe_text=safe_text,
-        judgement=judgement,
         grounding=grounding,
         citation_chunks=citation_chunks,
         response_language=response_language,
         force_escalation=force_escalation,
-        conversational=conversational,
+        # Unanswered is the selection's call: a part it left open, or no
+        # selection at all (no passages, or none it could read). A selection
+        # that lists no part (a thank-you) asked nothing of the articles.
+        unanswered=not conversational and (bool(knowledge_turn.open_parts) or knowledge_turn.selection is None),
         offered_by_model=model_offered_appointment,
         helpdesk=helpdesk,
     )
@@ -953,16 +943,20 @@ def _decided(
     decision: dict[str, Any],
     *,
     safe_text: str,
-    judgement: AnswerJudgement | None,
     grounding: AnswerCheck | None,
     citation_chunks: list[dict] | None,
     response_language: str | None,
     force_escalation: bool,
-    conversational: bool,
+    unanswered: bool,
     offered_by_model: bool,
     helpdesk: bool,
 ) -> tuple[str, list[dict], dict[str, Any]]:
-    """What the visitor gets for the judges' outcome: the composed reply, a refusal, or the model's own words."""
+    """What the visitor gets for the decision: the composed reply, a refusal, or the model's own words.
+
+    ``unanswered``: the turn is not conversational and did not answer from the
+    articles, because no selection ran or it left a part the visitor asked
+    open (``KnowledgeTurn.open_parts``).
+    """
     refused = bool(decision.get(_NO_CITABLE_SOURCES_DECISION_KEY))
     if outcome == "refusal":
         if refused:
@@ -984,11 +978,9 @@ def _decided(
         # at all: they repeated their question, got the backend refusal with the
         # button, and then had to ask how to book.
         # Not on a conversational turn: decide_answer deliberately treats one as an
-        # answer even when the light judge calls it unanswered, and a button under
-        # "graag gedaan" offers help with nothing.
+        # answer, and a button under "graag gedaan" offers help with nothing.
         # The internal chat has no button to offer.
-        dead_end = not conversational and judgement is not None and judgement.verdict != "answered"
-        if helpdesk and (force_escalation or dead_end or (offered_by_model and _text_offers_appointment(safe_text))):
+        if helpdesk and (force_escalation or unanswered or (offered_by_model and _text_offers_appointment(safe_text))):
             decision["escalation"] = _appointment_escalation()
     if outcome == "partial_answer" and helpdesk:
         decision["escalation"] = _appointment_escalation()
@@ -1011,18 +1003,17 @@ def _decided(
         # or was skipped), so the writer read everything retrieval found. A
         # reply in which the check then supports nothing is not shown.
         return _refusal("grounding_nothing_left", response_language, citation_chunks, helpdesk=helpdesk)
-    # A reply without a source that the judge does not call an answer is the
+    # A reply without a source that does not answer from the articles is the
     # visitor's dead end, and the button under it is the way out. The profile
     # and the weak-source rule ask the model to say so; measured on the owner's
     # review of real answers, 5 of 15 such replies did not. The sentence is
     # ours, so it is there whenever the button is. Not behind a question: the
     # visitor is asked something, not sent away. Not under a reply that kept
-    # its source: a judge may add the button to such a reply, never change it.
+    # its source: the button may be added to such a reply, its text never changes.
     if (
         not sources
         and decision.get("escalation")
-        and judgement is not None
-        and judgement.verdict != "answered"
+        and unanswered
         and not _text_offers_appointment(content)
         and not is_clarifying_question(content)
     ):

@@ -1,7 +1,7 @@
 """SPEC-RAG-ANSWER-JUDGES-001 REQ-1 to REQ-4 on the widget path, through the public entries.
 
-Only HTTP is mocked: LiteLLM (answer model and both judges) and retrieval-api.
-The composer, the stripper, the judge parsing, the decision function and the
+Only HTTP is mocked: LiteLLM (answer model and the checks) and retrieval-api.
+The composer, the stripper, the check parsing, the decision function and the
 prompt assembly all run for real, because a helper-level test on this boundary
 stayed green once already while the reported user path was broken.
 """
@@ -28,6 +28,8 @@ from klai_chat_prompts import (
 from structlog.testing import capture_logs
 
 from app.services import case_file, chat_safety, query_paraphrase, turn_judge, widget_write
+from app.services.answer_judge import decide_answer
+from app.services.passage_selection import Evidence, Part, PassageSelection
 from app.services.retrieval_context import KnowledgeTurn, kept_passages_of
 from app.services.widget_reply import Reply, reply_body, reply_frames
 from app.services.widget_write import write_reply
@@ -79,10 +81,6 @@ def _json_reply(payload: dict) -> httpx.Response:
     return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(payload)}}]})
 
 
-def _answer_verdict(verdict: str = "answered", *, claims: bool = False) -> dict:
-    return {"verdict": verdict, "grounding": "some_not_in_articles" if claims else "all_in_articles"}
-
-
 def _grounding(*unsupported: str, supported: tuple[str, ...] = (), contradicted: bool = False) -> dict:
     """The statement-level check: every statement with the article text behind it."""
     support = "contradicted" if contradicted else "not_in_articles"
@@ -95,13 +93,29 @@ def _grounding(*unsupported: str, supported: tuple[str, ...] = (), contradicted:
 
 
 def _selection(verdict: str, *evidence: tuple[int, str], question: str = "") -> dict:
-    """The selection step's reply: the verdict, and per passage the sentence it points at."""
+    """The selection step's reply: one part, and per passage the sentence it points at.
+
+    ``verdict`` says what the selection amounts to: "answers" with evidence is
+    an answered part, "answers" without any is a turn that asks nothing of the
+    articles (a thank-you), "not_in_passages" is a part without evidence, and
+    "depends" is an answered part whose steps vary per variant.
+    """
+    quotes = [{"passage": number, "quote": quote} for number, quote in evidence]
+    asked = bool(quotes) or verdict == "not_in_passages"
     return {
         "need": "",
-        "evidence": [{"passage": number, "quote": quote} for number, quote in evidence],
-        "verdict": verdict,
+        "parts": [{"ask": "vraag", "evidence": quotes}] if asked else [],
+        "must_ask_variant": verdict == "depends",
         "question": question,
     }
+
+
+def _chosen_turn(*open_parts: str) -> KnowledgeTurn:
+    """A turn whose selection chose passages, and left these asks of the visitor open."""
+    selection = PassageSelection(
+        need="", parts=[Part(ask="", evidence=[Evidence(passage=1, quote="")])], must_ask_variant=False, question=""
+    )
+    return KnowledgeTurn(selection=selection, passages_chosen=True, open_parts=list(open_parts))
 
 
 def _case(
@@ -136,7 +150,6 @@ class _LiteLLM:
         self,
         *,
         model_text: str,
-        answer_judge: Any = None,
         grounding: Any = None,
         repaired: str = "",
         referral: str = "",
@@ -155,21 +168,10 @@ class _LiteLLM:
         self.selection = selection
         self.referral = referral
         self.question = question
-        self.answer_judge = answer_judge if answer_judge is not None else _answer_verdict()
-        # The statement-level check decides grounding, so by default it mirrors
-        # the light judge's label: a test that says claims=True gets one
-        # unsupported statement, anything else a fully supported draft.
-        if grounding is None:
-            light = self.answer_judge if isinstance(self.answer_judge, dict) else {}
-            grounding = (
-                _grounding(model_text)
-                if light.get("grounding") == "some_not_in_articles"
-                else _grounding(supported=(model_text,))
-            )
-        self.grounding = grounding
+        # The statement-level check decides grounding; by default it supports the whole draft.
+        self.grounding = grounding if grounding is not None else _grounding(supported=(model_text,))
         self.repaired = repaired
         self.answer_requests: list[dict] = []
-        self.judge_requests: list[dict] = []
         self.grounding_requests: list[dict] = []
         self.repair_requests: list[dict] = []
         self.requests: list[dict] = []
@@ -192,14 +194,7 @@ class _LiteLLM:
         return httpx.Response(200, json={"choices": [{"index": 0, "message": message, "finish_reason": "stop"}]})
 
     def _structured(self, schema: str | None, body: dict) -> httpx.Response | None:
-        """The judges, told apart by the schema name each one sends; None for the answer and repair calls."""
-        if schema == "answer_judge":
-            self.judge_requests.append(body)
-            if isinstance(self.answer_judge, Exception):
-                raise self.answer_judge
-            if isinstance(self.answer_judge, httpx.Response):
-                return self.answer_judge
-            return _json_reply(self.answer_judge)
+        """The checks, told apart by the schema name each one sends; None for the answer and repair calls."""
         if schema == "clarify_question":
             return _json_reply({"question": self.question})
         if schema == "off_topic_referral":
@@ -221,6 +216,8 @@ class _LiteLLM:
             self.grounding_requests.append(body)
             if isinstance(self.grounding, Exception):
                 raise self.grounding
+            if isinstance(self.grounding, httpx.Response):
+                return self.grounding
             return _json_reply(self.grounding)
         return None
 
@@ -301,32 +298,28 @@ def _with_900_sources() -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("stream", [True, False])
-@pytest.mark.parametrize("verdict", ["not_answered", "partial"])
-async def test_a_judge_that_doubts_an_answer_with_sources_adds_the_button_and_never_removes_it(stream, verdict):
-    # Replayed on nine real Voys questions on 2026-09-17, letting this verdict
-    # remove answers with sources produced 7 "not found" out of 18 answers. Only
-    # a statement the articles do not support changes the text, and then it is
-    # repaired rather than removed (see the grounding tests below).
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict(verdict))
+async def test_an_open_part_adds_the_button_and_never_removes_the_sources(stream):
+    # Replayed on nine real customer questions on 2026-09-17, letting a model's
+    # opinion remove answers with sources produced 7 "not found" out of 18
+    # answers. A part the visitor asked that no sentence answers adds the
+    # button (decide_answer); the text and the sources stay.
+    litellm = _LiteLLM(model_text=ANSWER_900)
+    turn = _chosen_turn("hoe ik die incasso storneer")
 
-    text, signals, extras = await _answer(litellm, stream=stream, **_with_900_sources())
+    text, signals, extras = await _answer(litellm, stream=stream, knowledge_turn=turn, **_with_900_sources())
 
     assert text == ANSWER_900
     assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
     assert extras["escalation"] == [{"appointment": True}]
     assert signals["decision"] == "partial_answer"
     assert signals["refused"] is False
-    # The judge read the visitor's own question and the article the model had.
-    judge_input = litellm.judge_requests[0]["messages"][1]["content"]
-    assert "Visitor (LATEST message): " + QUESTION_900 in judge_input
-    assert "### Factuur betalen" in judge_input
 
 
 @pytest.mark.parametrize("stream", [True, False])
 async def test_answered_draft_with_sources_is_shown_with_its_sources(stream):
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("answered"))
+    litellm = _LiteLLM(model_text=ANSWER_900)
 
-    text, signals, extras = await _answer(litellm, stream=stream, **_with_900_sources())
+    text, signals, extras = await _answer(litellm, stream=stream, knowledge_turn=_chosen_turn(), **_with_900_sources())
 
     assert text == ANSWER_900
     assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
@@ -342,7 +335,7 @@ async def test_a_widget_answer_reaches_the_visitor_without_dashes(stream):
         ANSWER_900.replace(".", " \u2014 kijk eerst of de factuur open staat.", 1)
         + " Bereikbaar 9\u201317 uur \u2013 ook op zaterdag."
     )
-    litellm = _LiteLLM(model_text=answer, answer_judge=_answer_verdict("answered"))
+    litellm = _LiteLLM(model_text=answer)
 
     text, _, _ = await _answer(litellm, stream=stream, **_with_900_sources())
 
@@ -350,17 +343,6 @@ async def test_a_widget_answer_reaches_the_visitor_without_dashes(stream):
     assert " \u2013 " not in text
     assert "9\u201317" in text
     assert ", kijk eerst of de factuur open staat" in text
-
-
-async def test_partial_answer_keeps_its_sources_and_gets_the_appointment_button():
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("partial"))
-
-    text, signals, extras = await _answer(litellm, stream=True, **_with_900_sources())
-
-    assert text == ANSWER_900
-    assert extras["sources"]
-    assert extras["escalation"] == [{"appointment": True}]
-    assert signals["decision"] == "partial_answer"
 
 
 # ─── The statement-level grounding check and its repair ─────────────────
@@ -450,7 +432,6 @@ async def test_a_failed_grounding_check_leaves_the_answer_alone():
 async def test_a_clarifying_question_is_not_repaired():
     litellm = _LiteLLM(
         model_text=CLARIFYING_QUESTION,
-        answer_judge=_answer_verdict("not_answered"),
         grounding=_grounding("Gaat het om je factuur of om je abonnement?"),
     )
 
@@ -470,7 +451,7 @@ async def test_a_turn_wrongly_called_conversational_keeps_its_sources():
     ergens een doorschakeling in zit?") came back as the fixed refusal because
     its sources were dropped.
     """
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("answered"))
+    litellm = _LiteLLM(model_text=ANSWER_900)
 
     text, signals, extras = await _answer(litellm, stream=True, conversational=True, **_with_900_sources())
 
@@ -479,10 +460,10 @@ async def test_a_turn_wrongly_called_conversational_keeps_its_sources():
     assert signals["decision"] == "answer"
 
 
-async def test_uncited_draft_without_claims_is_shown_as_before_the_judges():
+async def test_uncited_draft_without_claims_is_shown_as_before_the_checks():
     # The original claims rule: text without a source that states nothing about
     # the organisation reaches the visitor.
-    litellm = _LiteLLM(model_text="Dat kan ik niet vinden.", answer_judge=_answer_verdict("not_answered"))
+    litellm = _LiteLLM(model_text="Dat kan ik niet vinden.")
 
     text, signals, _ = await _answer(litellm, stream=True)
 
@@ -501,7 +482,6 @@ async def test_an_uncited_dead_end_carries_the_appointment_button():
     """
     litellm = _LiteLLM(
         model_text="Dat staat niet in onze helpartikelen. Laat het gerust weten als je vastloopt.",
-        answer_judge=_answer_verdict("not_answered"),
     )
 
     text, _, extras = await _answer(litellm, stream=True)
@@ -517,7 +497,7 @@ async def test_an_uncited_dead_end_carries_the_appointment_button():
 
 async def test_a_dead_end_that_names_the_appointment_is_left_as_written():
     written = "Dat staat niet in onze helpartikelen. Plan gerust een afspraak met een collega."
-    litellm = _LiteLLM(model_text=written, answer_judge=_answer_verdict("not_answered"))
+    litellm = _LiteLLM(model_text=written)
 
     text, _, _ = await _answer(litellm, stream=True)
 
@@ -529,7 +509,7 @@ async def test_the_record_says_what_the_visitor_was_shown(stream):
     """A review of stored answers could not see that the button was under a
     reply, what tone the turn judge heard, or that a planned question was never
     asked: none of it was stored."""
-    litellm = _LiteLLM(model_text="Je vindt dit onder Beheer.", answer_judge=_answer_verdict("not_answered"))
+    litellm = _LiteLLM(model_text="Je vindt dit onder Beheer.")
     signals: dict[str, Any] = {"planned_question": True}
 
     await _answer(litellm, stream=stream, sentiment="negative", answer_signals=signals)
@@ -541,9 +521,9 @@ async def test_the_record_says_what_the_visitor_was_shown(stream):
 
 async def test_an_uncited_reply_that_answers_keeps_no_button():
     """The button means "this went nowhere"; on an answer it would read as one."""
-    litellm = _LiteLLM(model_text="Graag gedaan!", answer_judge=_answer_verdict("answered"))
+    litellm = _LiteLLM(model_text="Graag gedaan!")
 
-    _, _, extras = await _answer(litellm, stream=True)
+    _, _, extras = await _answer(litellm, stream=True, knowledge_turn=_chosen_turn())
 
     assert not extras.get("escalation")
 
@@ -551,7 +531,7 @@ async def test_an_uncited_reply_that_answers_keeps_no_button():
 async def test_a_question_that_carries_a_claim_is_refused():
     litellm = _LiteLLM(
         model_text="Bedoel je je abonnement van 5 euro per maand?",
-        answer_judge=_answer_verdict("not_answered", claims=True),
+        grounding=_grounding("Je abonnement kost 5 euro per maand."),
     )
 
     text, _, _ = await _answer(litellm, stream=True)
@@ -561,9 +541,12 @@ async def test_a_question_that_carries_a_claim_is_refused():
 
 @pytest.mark.parametrize(("claims", "shown"), [(False, True), (True, False)])
 async def test_uncited_answer_is_shown_only_without_unsupported_claims(claims, shown):
-    litellm = _LiteLLM(model_text="Graag gedaan, fijne dag!", answer_judge=_answer_verdict("answered", claims=claims))
+    litellm = _LiteLLM(
+        model_text="Graag gedaan, fijne dag!",
+        grounding=_grounding("Wij zijn dagelijks bereikbaar.") if claims else None,
+    )
 
-    text, signals, extras = await _answer(litellm, stream=True)
+    text, signals, extras = await _answer(litellm, stream=True, knowledge_turn=_chosen_turn())
 
     assert text == ("Graag gedaan, fijne dag!" if shown else REFUSAL_NL)
     assert (signals["grounding"] == "some_not_in_articles") is claims
@@ -575,28 +558,28 @@ async def test_uncited_answer_is_shown_only_without_unsupported_claims(claims, s
 @pytest.mark.parametrize(
     "failure",
     [
-        httpx.ReadTimeout("judge too slow"),
+        httpx.ReadTimeout("check too slow"),
         httpx.Response(500, json={"error": "upstream"}),
-        httpx.Response(200, json={"choices": [{"message": {"content": "answered, I think"}}]}),
+        httpx.Response(200, json={"choices": [{"message": {"content": "supported, I think"}}]}),
     ],
     ids=["timeout", "http_500", "garbage_json"],
 )
 @pytest.mark.parametrize("with_sources", [True, False])
-async def test_failed_answer_judge_shows_the_composed_answer_only_with_sources(failure, with_sources):
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=failure)
+async def test_a_failed_statement_check_shows_the_composed_answer_only_with_sources(failure, with_sources):
+    litellm = _LiteLLM(model_text=ANSWER_900, grounding=failure)
     overrides = _with_900_sources() if with_sources else {}
 
     text, signals, extras = await _answer(litellm, stream=False, **overrides)
 
     assert text == (ANSWER_900 if with_sources else REFUSAL_NL)
     assert bool(extras["sources"]) is with_sources
-    assert signals["judge_failed"] == ["answer"]
+    assert signals["judge_failed"] == ["grounding"]
     assert "verdict" not in signals
 
 
-async def test_escalation_keeps_its_reply_and_button_whatever_the_verdict():
+async def test_escalation_keeps_its_reply_and_button_whatever_the_selection_left_open():
     reply = "Je kunt met de knop hieronder een afspraak maken met een medewerker."
-    litellm = _LiteLLM(model_text=reply, answer_judge=_answer_verdict("not_answered", claims=False))
+    litellm = _LiteLLM(model_text=reply)
 
     text, signals, extras = await _answer(litellm, stream=True, force_escalation=True)
 
@@ -608,23 +591,22 @@ async def test_escalation_keeps_its_reply_and_button_whatever_the_verdict():
 @pytest.mark.parametrize(("claims", "shown"), [(True, False), (False, True)])
 async def test_conversational_reply_is_shown_only_without_unsupported_claims(claims, shown):
     reply = "Wij rekenen 5 euro." if claims else "Graag gedaan!"
-    litellm = _LiteLLM(model_text=reply, answer_judge=_answer_verdict("not_answered", claims=claims))
+    litellm = _LiteLLM(model_text=reply, grounding=_grounding(reply) if claims else None)
 
     text, signals, extras = await _answer(litellm, stream=False, conversational=True)
 
     assert text == (reply if shown else REFUSAL_NL)
     assert signals["refused"] is not shown
     if shown:
-        # A conversational turn is an answer by design, even when the light judge
-        # calls it unanswered, so the dead-end button may not appear under it:
+        # A conversational turn is an answer by design, even when no passage was
+        # chosen, so the dead-end button may not appear under it:
         # "graag gedaan" with an offer to book reads as help with nothing.
         assert not extras.get("escalation")
 
 
-async def test_passed_reply_is_stripped_of_links_before_the_judge_and_the_visitor_see_it():
+async def test_passed_reply_is_stripped_of_links_before_the_check_and_the_visitor_see_it():
     litellm = _LiteLLM(
         model_text="Kijk eventueel op https://evil.example.com/phish of www.voys.nl/hulp [1]. " + CLARIFYING_QUESTION,
-        answer_judge=_answer_verdict("not_answered"),
     )
 
     text, _, _ = await _answer(litellm, stream=True)
@@ -632,25 +614,25 @@ async def test_passed_reply_is_stripped_of_links_before_the_judge_and_the_visito
     assert CLARIFYING_QUESTION in text
     for artifact in ("http", "evil.example", "voys.nl", "[1]"):
         assert artifact not in text
-    assert "evil.example" not in litellm.judge_requests[0]["messages"][1]["content"]
+    assert "evil.example" not in litellm.grounding_requests[0]["messages"][1]["content"]
 
 
-async def test_answer_judge_does_not_run_on_a_broad_mode_answer():
+async def test_the_statement_check_does_not_run_on_a_broad_mode_answer():
     litellm = _LiteLLM(model_text="DECT is een standaard voor draadloze telefonie.")
 
     _, signals, _ = await _answer(litellm, stream=True, broad_mode=True)
 
-    assert litellm.judge_requests == []
+    assert litellm.grounding_requests == []
     assert "decision" not in signals
 
 
-async def test_safety_blocked_turn_is_never_judged(monkeypatch):
+async def test_safety_blocked_turn_is_never_checked(monkeypatch):
     monkeypatch.setattr(widget_write, "output_safety_violation", lambda text: "prompt_injection")
     litellm = _LiteLLM(model_text=CLARIFYING_QUESTION)
 
     await _answer(litellm, stream=True)
 
-    assert litellm.judge_requests == []
+    assert litellm.grounding_requests == []
 
 
 # ─── The question judge ─────────────────────────────────────────────────
@@ -759,7 +741,6 @@ async def _route_turn(
     litellm = litellm or _LiteLLM(
         model_text=CLARIFYING_QUESTION,
         case=case,
-        answer_judge=_answer_verdict("not_answered"),
         referral=referral,
         question=question_written,
     )
@@ -819,10 +800,10 @@ async def test_a_thank_you_with_weak_articles_is_not_told_to_say_nothing_was_fou
 async def test_a_cited_reply_from_chosen_passages_is_checked_after_it_went_out(stream):
     """The writer read only passages the selection chose and cited one: nothing
     changes such a reply after writing, so the statement check is measurement
-    and runs after the reply, with the light judge alone on the path."""
+    and runs after the reply, with nothing but the writer on the path."""
     from app.services.retrieval_context import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
 
-    litellm = _LiteLLM(model_text=ANSWER_900, answer_judge=_answer_verdict("answered"))
+    litellm = _LiteLLM(model_text=ANSWER_900)
     turn = KnowledgeTurn()
     chosen = {**_with_900_sources(), "citation_chunks": [{**CHUNK_900, _CHOSEN_PASSAGE_KEY: True}]}
 
@@ -841,7 +822,7 @@ async def test_an_uncited_reply_from_chosen_passages_keeps_the_check_on_the_path
     """Without a source the statements decide between showing and refusing, so the check waits."""
     from app.services.retrieval_context import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
 
-    litellm = _LiteLLM(model_text="Dat regel je onder Beheer.", answer_judge=_answer_verdict("not_answered"))
+    litellm = _LiteLLM(model_text="Dat regel je onder Beheer.")
     turn = KnowledgeTurn()
     uncited = {**_with_900_sources(), "citation_chunks": [{**CHUNK_900, _CHOSEN_PASSAGE_KEY: True}]}
 
@@ -1050,7 +1031,6 @@ DELEGATED = {"_klai_delegated_org_id": "zit-org-42"}
 # feature that made it -- LiteLLM_SpendLogs.request_tags, from metadata.tags).
 _TAG_FOR_KIND = {
     "query_paraphrase": "portal:query-paraphrase",
-    "answer_judge": "portal:answer-judge",
     "off_topic_referral": "portal:off-topic-referral",
     "passage_selection": "portal:passage-selection",
     "case_update": "portal:case-update",
@@ -1092,7 +1072,6 @@ async def test_every_litellm_call_of_an_answered_widget_turn_names_the_tenant(mo
         "passage_selection",
         "case_update",
         "answer",
-        "answer_judge",
         "grounding_check",
     }
     assert calls == [(kind, _delegated_with_tag(kind)) for kind, _ in calls]
@@ -1157,6 +1136,85 @@ async def test_the_writer_reads_only_the_passages_that_answer(monkeypatch):
     # And it is told which sentence answers: with only the passage in hand the
     # writer still built a complete-looking procedure around it.
     assert "- Een incasso storneer je binnen acht weken via je eigen bank." in prompt
+
+
+_TWO_QUESTIONS = "Hoe storneer ik een incasso? En kan ik mijn factuur ook per post krijgen?"
+_STORNO = "Een incasso storneer je binnen acht weken via je eigen bank."
+
+
+def _two_part_selection(*, post_answered: bool) -> dict:
+    """The selection of `_TWO_QUESTIONS`: the first part is answered by article 2, the second by article 1 or by nothing."""
+    post = [{"passage": 1, "quote": "Je betaalt je factuur via automatische incasso."}] if post_answered else []
+    return {
+        "need": "",
+        "parts": [
+            {"ask": "Hoe storneer ik een incasso", "evidence": [{"passage": 2, "quote": _STORNO}]},
+            {"ask": "kan ik mijn factuur ook per post krijgen", "evidence": post},
+        ],
+        "must_ask_variant": False,
+        "question": "",
+    }
+
+
+@pytest.mark.parametrize("post_answered", [False, True])
+async def test_the_button_follows_the_selections_open_part(monkeypatch, post_answered):
+    """One owner of "answered": a sourced reply gets the appointment button when
+    a part the visitor asked has no sentence, and no button when every part has
+    one. The light judge that used to decide this disagreed with the selection
+    on 15 of about 255 written replies, so the only calls on the path now are
+    the selection, the case, the writer and the check after the reply."""
+    litellm = _LiteLLM(model_text=_STORNO, selection=_two_part_selection(post_answered=post_answered))
+
+    _, text, extras = await _route_turn(
+        monkeypatch, question=_TWO_QUESTIONS, band="high", items=_two_articles(), litellm=litellm
+    )
+
+    assert _STORNO in text
+    assert extras["sources"], "the reply keeps its source either way"
+    assert extras["escalation"] == ([] if post_answered else [{"appointment": True}])
+    assert {_call_kind(body) for body in litellm.requests} == {
+        "passage_selection",
+        "case_update",
+        "answer",
+        "grounding_check",
+    }
+    prompt = _system_prompt_sent(litellm)
+    assert ("do not cover this part" in prompt) is not post_answered
+    assert ("kan ik mijn factuur ook per post krijgen" in prompt) is not post_answered
+
+
+async def test_a_thank_you_after_found_passages_gets_no_appointment_button(monkeypatch):
+    """A thank-you asks nothing of the articles: the selection lists no part and
+    the writer answers without a source. Retrieval still found strong passages,
+    so the turn is not "conversational" (that needs a gap), and treating "no
+    passage chosen" as unanswered put the button and the booking sentence under
+    "Graag gedaan!"."""
+    litellm = _LiteLLM(
+        model_text="Graag gedaan!",
+        case=_case("chat"),
+        selection={"need": "", "parts": [], "must_ask_variant": False, "question": ""},
+    )
+
+    _, text, extras = await _route_turn(
+        monkeypatch, question="Top, dank je wel, dat werkte!", band="high", items=_two_articles(), litellm=litellm
+    )
+
+    assert text == "Graag gedaan!"
+    assert extras["escalation"] == []
+
+
+@pytest.mark.parametrize("conversational", [True, False])
+def test_a_failed_check_refuses_an_uncited_reply_but_not_small_talk(conversational):
+    outcome = decide_answer(
+        kb_mode="strict",
+        has_sources=False,
+        escalation=False,
+        conversational=conversational,
+        open_part=False,
+        grounding=None,
+    )
+
+    assert outcome == ("answer" if conversational else "refusal")
 
 
 async def test_a_verdict_whose_quoted_sentence_is_not_in_the_passage_counts_as_not_found(monkeypatch):
@@ -1816,11 +1874,11 @@ def test_the_contact_gate_reads_dotted_numbers_keeps_the_next_sentence_and_drops
     assert "\n1.\n" not in f"\n{gated}\n"
 
 
-async def test_the_judges_cannot_hand_the_visitor_the_ungated_draft(monkeypatch):
-    """The judges may return the draft instead of the composed text; that text
+async def test_the_checks_cannot_hand_the_visitor_the_ungated_draft(monkeypatch):
+    """The decision may return the draft instead of the composed text; that text
     passes the same gate."""
     reply = "Bel ons op 03 303 4020. Dan kijken we mee."
-    litellm = _LiteLLM(model_text=reply, answer_judge=_answer_verdict("answered"), grounding=httpx.ConnectError("x"))
+    litellm = _LiteLLM(model_text=reply, grounding=httpx.ConnectError("x"))
 
     text, _, _ = await _answer(litellm, stream=False)
 
