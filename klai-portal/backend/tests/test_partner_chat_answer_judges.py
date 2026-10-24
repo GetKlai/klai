@@ -299,7 +299,7 @@ def _with_900_sources() -> dict[str, Any]:
 
 @pytest.mark.parametrize("stream", [True, False])
 async def test_an_open_part_adds_the_button_and_never_removes_the_sources(stream):
-    # Replayed on nine real Voys questions on 2026-09-17, letting a model's
+    # Replayed on nine real customer questions on 2026-09-17, letting a model's
     # opinion remove answers with sources produced 7 "not found" out of 18
     # answers. A part the visitor asked that no sentence answers adds the
     # button (decide_answer); the text and the sources stay.
