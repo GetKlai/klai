@@ -18,7 +18,10 @@ touches the summary, context sentence or HyPE questions. Never use
 ## Order (AGENTS.md: production knowledge data is rewritten only with approval per run)
 
 Run inside the knowledge-ingest container (see [rebuild-kb.md](rebuild-kb.md)
-for how to reach it). The steps are fixed and none is skipped:
+for how to reach it), at least a minute after the setting changed: ingest
+caches the settings for 60 s, so a chunk written in that window carries the old
+settings and the old version and is picked up by the next run. The steps are
+fixed and none is skipped:
 
 1. **Unit tests** on the branch that is deployed:
    `cd klai-knowledge-ingest && uv run --frozen --extra dev pytest -q tests/test_cheap_layer.py`.
@@ -31,9 +34,11 @@ for how to reach it). The steps are fixed and none is skipped:
    It stops before anything else when the settings cannot be read from Postgres.
 3. **The user's yes** for that one run, in his own words, after he has seen the
    dry-run output. A yes for an earlier run does not carry over.
-4. **One knowledge base as a trial**, with the `INGEST_OK=1` prefix:
+4. **One knowledge base as a trial**, with `INGEST_OK=1`. `--execute` refuses
+   to run (exit 2) without it. The local prefix satisfies the operator
+   machine's PreToolUse guard, and `-e` carries it into the container:
    ```bash
-   INGEST_OK=1 python -m knowledge_ingest.scripts.kb_patch --org <zitadel org id> --kb <slug> --execute
+   INGEST_OK=1 ssh core-01 'docker exec -e INGEST_OK=1 klai-core-knowledge-ingest-1 python -m knowledge_ingest.scripts.kb_patch --org <zitadel org id> --kb <slug> --execute'
    ```
    Then measure: run the dry run again (it must report 0 points out of date
    for that KB), and run the retrieval measurement that motivated the setting
@@ -54,3 +59,7 @@ for how to reach it). The steps are fixed and none is skipped:
   later full run picks those points up again.
 - A batch whose sparse vector the sidecar does not return raises before it is
   written. The run is safe to repeat after the sidecar is back.
+- A batch is written vectors first, then the text fields, then the version.
+  When a point disappears mid-batch (a concurrent re-ingest) the call fails,
+  and no surviving point carries new text or the new version next to its old
+  vectors; rerun the patch to finish the batch.

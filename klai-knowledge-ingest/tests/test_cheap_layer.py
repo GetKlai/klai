@@ -5,6 +5,7 @@ Synthetic data only: invented products on example.com.
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -199,6 +200,69 @@ async def test_a_changed_setting_reembeds_only_the_points_whose_text_changed(mem
     assert after[2].payload["text_enriched"] == f"Context.\n\n{OTHER}"
     assert "product" not in after[3].payload
     assert after[3].payload["text_enriched"] == f"Context.\n\n{NAMING}"
+
+
+async def test_a_failed_batch_never_leaves_new_text_or_version_on_old_vectors(
+    mem_client, embedders
+):
+    """A re-ingest deletes a point between the scroll and the write: the batch
+    fails, and what survives is redone by the next run instead of stranded."""
+    await mem_client.upsert(qs.COLLECTION, points=[_point(n, NAMING) for n in (1, 2, 3)])
+    write = mem_client.batch_update_points
+
+    async def reingest_in_between(*args, **kwargs):
+        await mem_client.delete(qs.COLLECTION, points_selector=[2])
+        return await write(*args, **kwargs)
+
+    version = cheap_layer.layer_version(GROUPS, RULES)
+    new_vector = _unit(_dense([f"Context.\n\n{NAMING}\n\n{ALIAS}"])[0])
+    with _settings(GROUPS, RULES):
+        with (
+            patch.object(mem_client, "batch_update_points", new=reingest_in_between),
+            pytest.raises(Exception),  # noqa: B017 - the error type differs per Qdrant client
+        ):
+            await kb_patch.patch_org(mem_client, ORG, execute=True)
+        survivors = await _stored(mem_client)
+        assert set(survivors) == {1, 3}
+        for point in survivors.values():
+            stamped = point.payload.get("cheap_layer_version") == version
+            if stamped or point.payload["text_enriched"].endswith(ALIAS):
+                assert point.vector["vector_chunk"] == pytest.approx(new_vector)
+
+        await kb_patch.patch_org(mem_client, ORG, execute=True)
+
+    for point in (await _stored(mem_client)).values():
+        assert point.payload["cheap_layer_version"] == version
+        assert point.vector["vector_chunk"] == pytest.approx(new_vector)
+
+
+async def test_only_aliases_leaves_the_version_so_a_full_run_still_removes_a_stale_label(
+    mem_client, embedders
+):
+    stale = {"source_url": "https://help.example.com/nl/install", "product": "Orbit"}
+    await mem_client.upsert(qs.COLLECTION, points=[_point(1, NAMING, **stale)])
+    with _settings(GROUPS, RULES):
+        await kb_patch.patch_org(mem_client, ORG, only="aliases", execute=True)
+        aliased = (await _stored(mem_client))[1].payload
+        assert aliased["text_enriched"].endswith(ALIAS)
+        assert "cheap_layer_version" not in aliased
+
+        await kb_patch.patch_org(mem_client, ORG, execute=True)
+
+    after = (await _stored(mem_client))[1].payload
+    assert "product" not in after
+    assert after["cheap_layer_version"] == cheap_layer.layer_version(GROUPS, RULES)
+
+
+def test_execute_without_ingest_ok_writes_nothing_and_exits_2(monkeypatch):
+    monkeypatch.delenv("INGEST_OK", raising=False)
+    monkeypatch.setattr(sys, "argv", ["kb_patch", "--org", ORG, "--execute"])
+    run = AsyncMock()
+    with patch.object(kb_patch, "patch_org", run), pytest.raises(SystemExit) as stopped:
+        kb_patch.main()
+
+    assert stopped.value.code == 2
+    run.assert_not_awaited()
 
 
 async def test_the_patch_makes_no_llm_call(mem_client, embedders):

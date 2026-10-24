@@ -417,6 +417,33 @@ async def test_crawl_path_extra_payload_carries_source_domain_and_label():
 
 
 @pytest.mark.asyncio
+async def test_raw_ingest_stamps_the_cheap_layer_kb_patch_compares_against():
+    """The raw chunks carry the product and the cheap_layer_version of the
+    settings they were written with, so kb_patch finds them after a change."""
+    from knowledge_ingest import cheap_layer
+
+    groups = [["Orbit Desk", "softphone"]]
+    rules = [{"prefix": "docs/", "product": "Orbit"}]
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest.kb_config.get_kb_aliases",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ),
+        patch(
+            "knowledge_ingest.routes.ingest.kb_config.get_kb_product_rules",
+            new_callable=AsyncMock,
+            return_value=rules,
+        ),
+    ):
+        _, update_extra_mock = await _run_with_mocks(_build_request(), _MockProcApp())
+
+    extra_payload = _captured_extra_payload(update_extra_mock)
+    assert extra_payload["product"] == "Orbit"
+    assert extra_payload["cheap_layer_version"] == cheap_layer.layer_version(groups, rules)
+
+
+@pytest.mark.asyncio
 async def test_extra_payload_visibility_is_authoritative_from_kb_config():
     """req.extra cannot override visibility — the kb_config value wins.
 

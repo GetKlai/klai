@@ -224,8 +224,10 @@ def compute_minhash(text: str) -> str:
 
     @MX:ANCHOR — invariant. Every stored ``text_fingerprint`` is compared to
     fingerprints computed later: changing the normalisation, the shingle size
-    or the hash constants makes old and new chunks look unrelated until the
-    product backfill has rewritten them.
+    or the hash constants makes old and new chunks look unrelated until every
+    stored fingerprint is recomputed. scripts/kb_patch.py does not do that: it
+    writes a fingerprint only where a chunk has none, so such a change needs
+    its own explicit refresh of every ``text_fingerprint``.
     """
     tokens = _tokenise(_normalise(text))
     if not tokens:

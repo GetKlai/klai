@@ -17,9 +17,9 @@ Usage (inside the running container, or a throwaway clone of it):
     # Read-only: per KB, how many points would change per field, and the first ten.
     python -m knowledge_ingest.scripts.kb_patch --org <org_id> [--kb <kb_slug>]
 
-    # Write them. Safe to rerun and to stop: a patched point carries the
-    # current cheap_layer_version and is not selected again.
-    python -m knowledge_ingest.scripts.kb_patch --org <org_id> --kb <kb_slug> --execute
+    # Write them (INGEST_OK=1 is required). Safe to rerun and to stop: a
+    # patched point carries the current cheap_layer_version and is not selected again.
+    INGEST_OK=1 python -m knowledge_ingest.scripts.kb_patch --org <org_id> --kb <kb_slug> --execute
 
 ``--only aliases`` or ``--only products`` recomputes one part; it checks every
 point in scope and writes no ``cheap_layer_version``, since the other part was
@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -158,7 +159,13 @@ async def _patch_kb(
 
 
 async def _write(client: AsyncQdrantClient, updates: list[tuple]) -> None:
-    """Embed the changed texts, then write payloads and vectors in one call.
+    """Embed the changed texts, then write vectors, payloads and the version stamp, in that order.
+
+    Qdrant applies the operations of one call in order and keeps the ones before
+    a failure (a point deleted by a concurrent re-ingest fails its operation).
+    Vectors go first and ``cheap_layer_version`` last, so a point never carries
+    the current version, or new text, next to its old vectors: whatever a
+    failure leaves behind is selected and redone by the next run.
 
     A sparse vector the sidecar did not return raises before anything is
     written: a new dense vector next to the old sparse one would leave the two
@@ -171,7 +178,16 @@ async def _write(client: AsyncQdrantClient, updates: list[tuple]) -> None:
     if any(vector is None for vector in sparse):
         raise RuntimeError("sparse sidecar returned no vector; nothing written for this batch")
     operations: list = []
+    if reembed:
+        vectors = [
+            PointVectors(id=pid, vector={"vector_chunk": d, "vector_sparse": s})
+            for (pid, _), d, s in zip(reembed, dense, sparse, strict=True)
+        ]
+        operations.append(UpdateVectorsOperation(update_vectors=UpdateVectors(points=vectors)))
+    stamps: dict[str, list] = {}
     for pid, payload, deleted, _ in updates:
+        if version := payload.pop("cheap_layer_version", None):
+            stamps.setdefault(version, []).append(pid)
         if payload:
             operations.append(
                 SetPayloadOperation(set_payload=SetPayload(payload=payload, points=[pid]))
@@ -180,12 +196,12 @@ async def _write(client: AsyncQdrantClient, updates: list[tuple]) -> None:
             operations.append(
                 DeletePayloadOperation(delete_payload=DeletePayload(keys=deleted, points=[pid]))
             )
-    if reembed:
-        vectors = [
-            PointVectors(id=pid, vector={"vector_chunk": d, "vector_sparse": s})
-            for (pid, _), d, s in zip(reembed, dense, sparse, strict=True)
-        ]
-        operations.append(UpdateVectorsOperation(update_vectors=UpdateVectors(points=vectors)))
+    operations += [
+        SetPayloadOperation(
+            set_payload=SetPayload(payload={"cheap_layer_version": version}, points=pids)
+        )
+        for version, pids in stamps.items()
+    ]
     await client.batch_update_points(COLLECTION, update_operations=operations)
 
 
@@ -213,7 +229,14 @@ def main() -> None:
     parser.add_argument("--kb", help="limit to one knowledge base slug")
     parser.add_argument("--only", choices=["aliases", "products", "all"], default="all")
     parser.add_argument("--execute", action="store_true", help="embed and write the changes")
-    asyncio.run(_main(parser.parse_args()))
+    args = parser.parse_args()
+    # The user's yes for this one run (docs/runbooks/kb-patch.md) is carried as
+    # INGEST_OK=1; without it a write is refused before anything is read.
+    if args.execute and os.environ.get("INGEST_OK") != "1":
+        parser.exit(
+            2, "kb_patch: --execute needs INGEST_OK=1, set after the user's yes for this run\n"
+        )
+    asyncio.run(_main(args))
 
 
 if __name__ == "__main__":
