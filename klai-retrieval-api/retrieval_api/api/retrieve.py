@@ -645,7 +645,7 @@ async def _query_variant_pass(
     if settings.ranking_contract_mode == "active":
         _set_final_rank_scores(reranked)
     if req.product:
-        lookalike.boost_product(reranked, req.product, settings.product_boost)
+        lookalike.demote_other_products(reranked, req.product, settings.product_boost)
     return reranked[: req.top_k]
 
 
@@ -962,9 +962,10 @@ async def _run_rerank(state: RetrievalPipelineState) -> None:
     state.decision_record["page_context_boosted"] = page_context_boosted
     if req.product:
         # A soft preference for the question's product (plan step 7), never a filter.
-        state.decision_record["product_boosted"] = lookalike.boost_product(
-            state.reranked, req.product, settings.product_boost
-        )
+        (
+            state.decision_record["other_product_demoted"],
+            state.decision_record["product_preference_reason"],
+        ) = lookalike.demote_other_products(state.reranked, req.product, settings.product_boost)
 
 
 def _run_quality_floor(state: RetrievalPipelineState) -> None:
@@ -1067,7 +1068,7 @@ def _run_quality_boost(state: RetrievalPipelineState) -> None:
                 state.page_context,
             )
         if req.product:
-            lookalike.boost_product(
+            lookalike.demote_other_products(
                 state.ranking_shadow_preview, req.product, settings.product_boost
             )
         state.ranking_shadow_preview, _ = filter_quality_floor(

@@ -203,17 +203,27 @@ async def update_case(
 
 
 def _known_product(label: str, products: list[str]) -> str:
-    """The label as the org's chunks spell it, or "" when the model named one they do not carry."""
+    """The label as the org's chunks spell it, or "" when the model named one they do not carry.
+
+    Also "" when the org knows fewer than two labels (counted case-blind, so two
+    knowledge bases spelling one label differently stay one), because a list of
+    one is not a choice: the model then named that label for nearly every question.
+    """
     wanted = " ".join(label.split()).casefold()
-    return next((product for product in products if product.casefold() == wanted), "") if wanted else ""
+    if not wanted or len({product.casefold() for product in products}) < 2:
+        return ""
+    return next((product for product in products if product.casefold() == wanted), "")
 
 
 def named_product(text: str, products: list[str]) -> str:
     """The longest known product label that stands in ``text`` as whole words; "" when none does.
 
     A first turn searches beside the case call, not after it (widget_turn.py),
-    so its product comes from the visitor's own words.
+    so its product comes from the visitor's own words. Like _known_product it
+    names none when the org knows fewer than two labels.
     """
+    if len({product.casefold() for product in products}) < 2:
+        return ""
     for product in sorted(products, key=len, reverse=True):
         if re.search(rf"(?<!\w){re.escape(product)}(?!\w)", text, re.IGNORECASE):
             return product

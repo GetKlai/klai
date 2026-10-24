@@ -7,8 +7,9 @@ it is about (``product``) and a b-bit MinHash of its text
 (``text_fingerprint``, 64 positions of one byte, as hex; see
 knowledge_ingest/utils/content_fingerprint.py). Before the reranker, near-
 identical candidates collapse into one, so lookalikes no longer fill the slots
-side by side; after it, the chunks of the question's product get a small
-additive bonus. Nothing is ever dropped for its product alone.
+side by side; after it, the chunks labelled with another product sink by a
+small amount. Unlabelled chunks and the question's own keep their scores and
+their order among each other. Nothing is ever dropped for its product alone.
 """
 
 from __future__ import annotations
@@ -68,25 +69,33 @@ def collapse_lookalikes(
     return kept, len(candidates) - len(kept)
 
 
-def boost_product(chunks: list[dict], product: str, boost: float) -> int:
-    """Boost the chunks about ``product`` additively and re-sort; the number boosted.
+def demote_other_products(chunks: list[dict], product: str, amount: float) -> tuple[int, str]:
+    """Lower the chunks labelled with a product other than ``product``; how many and why.
+
+    A demotion, not a boost of the question's product: a boost lifted every
+    labelled chunk over the unlabelled ones, and with one labelled help centre
+    beside an unlabelled wiki that cost the meetlat up to three served cases
+    of 22 on 24 October 2026. An unlabelled chunk is no other product.
 
     The ranking truth (``final_rank_score``) when the ranking contract is
-    active, else the reranker score, as the page-context boost does; with the
-    contract active the reranker score itself, and with it the confidence
-    band, stays as the reranker gave it.
+    active, else the reranker score, as the page-context boost does. With the
+    contract active the reranker score itself stays, but the confidence band
+    follows the ranking score, so when the best evidence is another product's
+    the band can fall; that is accepted, since the band then describes
+    evidence for the wrong product.
     """
-    boosted = 0
+    demoted = 0
     for chunk in chunks:
-        if not _same_product(chunk, product):
+        if not chunk.get("product") or _same_product(chunk, product):
             continue
         key = next(
             key
             for key in ("final_rank_score", "reranker_score", "score")
             if isinstance(chunk.get(key), (int, float))
         )
-        chunk[key] += boost
-        boosted += 1
-    if boosted:
-        chunks.sort(key=lambda c: ranking_score(c, "reranker_score", "score"), reverse=True)
-    return boosted
+        chunk[key] -= amount
+        demoted += 1
+    if not demoted:
+        return 0, "no_other_product"
+    chunks.sort(key=lambda c: ranking_score(c, "reranker_score", "score"), reverse=True)
+    return demoted, "applied"
