@@ -173,11 +173,15 @@ def register_consistency_reconcile_task(procrastinate_app: Any) -> None:
     )
     @procrastinate_app.task(
         name="knowledge_ingest.consistency_reconcile.reconcile_pg_qdrant_periodic",
-        # RAG_EVAL = the nightly batch lane. The full-collection Qdrant scroll
-        # may hold a worker slot for minutes; it must not sit on the
-        # latency-sensitive I/O lane (INGEST_KB) where user-triggered ingest
-        # work queues behind it (adversarial review 2026-06-11).
-        queue=queues.RAG_EVAL,
+        # MAINTENANCE: its own worker slot for control work. Not the I/O lane,
+        # where the full-collection Qdrant scroll held user-triggered ingest
+        # behind it for minutes (adversarial review 2026-06-11), and not the
+        # LLM lane (RAG_EVAL), where procrastinate takes the oldest job across
+        # enrich-bulk and graphiti-bulk: the 03:30 run waited 4 to 9 hours
+        # behind bulk LLM work (finished 07:56-12:08 from 2026-10-19 to 10-23).
+        # The scroll uses no LLM; holding the slot for minutes only delays the
+        # next zombie-recovery pass by as much.
+        queue=queues.MAINTENANCE,
         retry=procrastinate.RetryStrategy(max_attempts=1),
         queueing_lock="pg-qdrant-reconcile",
     )

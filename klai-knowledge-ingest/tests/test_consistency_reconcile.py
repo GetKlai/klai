@@ -349,9 +349,13 @@ def test_register_consistency_reconcile_task_registers_periodic_batch_task():
     assert task_kwargs["name"] == (
         "knowledge_ingest.consistency_reconcile.reconcile_pg_qdrant_periodic"
     )
-    # Nightly batch lane — the full-collection scroll must not hold a slot
-    # on the latency-sensitive I/O lane (adversarial review 2026-06-11).
-    assert task_kwargs["queue"] == "rag-eval"
+    # Maintenance lane: not the I/O lane (the scroll held user ingest for
+    # minutes, 2026-06-11) and not the LLM lane, where it waited 4-9 hours
+    # behind bulk enrichment and graph work (2026-10-19 to 10-23).
+    from knowledge_ingest import queues
+
+    assert task_kwargs["queue"] == queues.MAINTENANCE
+    assert queues.MAINTENANCE not in queues.LLM_QUEUES + queues.IO_QUEUES
     assert task_kwargs["queueing_lock"] == "pg-qdrant-reconcile"
     assert task_kwargs["retry"] is not None
     assert hasattr(app, "reconcile_pg_qdrant_periodic")
