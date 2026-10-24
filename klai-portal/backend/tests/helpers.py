@@ -165,7 +165,7 @@ def selection_quoting_first_passage(body: dict) -> dict:
     return {
         "need": "",
         "parts": [{"ask": "vraag", "evidence": [{"passage": 1, "quote": first_line}]}],
-        "varies": False,
+        "must_ask_variant": False,
         "question": "",
     }
 

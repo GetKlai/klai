@@ -163,7 +163,7 @@ async def test_the_turn_record_keeps_the_search_and_the_selection(monkeypatch):
     selection = PassageSelection(
         need="belplan wijzigen",
         parts=[Part(ask="belplan wijzigen", evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")])],
-        varies=False,
+        must_ask_variant=False,
         question="",
     )
     signals: dict[str, Any] = {}
@@ -231,7 +231,7 @@ async def test_a_message_with_two_questions_is_written_from_the_chosen_passages_
             Part(ask="Hoe wijzig ik mijn belplan?", evidence=[Evidence(passage=1, quote="Klik op Belplan wijzigen.")]),
             Part(ask="Hoe kom ik aan een tweede telefoonnummer?", evidence=[]),
         ],
-        varies=False,
+        must_ask_variant=False,
         question="",
     )
     signals: dict[str, Any] = {}

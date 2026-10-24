@@ -18,10 +18,12 @@ _SECTIONS = [
 
 
 def _selection(
-    *evidence: Evidence, need: str = "", ask: str = "vraag", varies: bool = False, question: str = ""
+    *evidence: Evidence, need: str = "", ask: str = "vraag", must_ask_variant: bool = False, question: str = ""
 ) -> PassageSelection:
     """A selection with one part: the visitor's ask and the sentences found for it."""
-    return PassageSelection(need=need, parts=[Part(ask=ask, evidence=list(evidence))], varies=varies, question=question)
+    return PassageSelection(
+        need=need, parts=[Part(ask=ask, evidence=list(evidence))], must_ask_variant=must_ask_variant, question=question
+    )
 
 
 def test_a_quote_under_the_wrong_passage_number_counts_for_the_passage_that_carries_it():
@@ -70,7 +72,7 @@ def test_nothing_is_not_found_unless_the_visitor_asked_something_and_no_part_has
     assert asked.verdict(_SECTIONS) == "not_in_passages"
 
     # A thank-you, a request for a person or a remark about the chat asks nothing of the articles.
-    thanks = PassageSelection(need="", parts=[], varies=False, question="")
+    thanks = PassageSelection(need="", parts=[], must_ask_variant=False, question="")
     assert thanks.not_in_passages(_SECTIONS) is False
     assert thanks.verdict(_SECTIONS) == "answers"
 
@@ -78,7 +80,7 @@ def test_nothing_is_not_found_unless_the_visitor_asked_something_and_no_part_has
     varying = PassageSelection(
         need="",
         parts=[Part(ask="a", evidence=[]), Part(ask="b", evidence=[Evidence(passage=2, quote=_STEP)])],
-        varies=True,
+        must_ask_variant=True,
         question="Welke headset?",
     )
     assert varying.not_in_passages(_SECTIONS) is False
@@ -154,7 +156,7 @@ def test_a_part_the_visitor_did_not_ask_is_never_named_as_not_covered():
             Part(ask="Hoe sluit ik de headset aan op mijn toestel?", evidence=[Evidence(passage=2, quote=_STEP)]),
             Part(ask="Staat het basisstation aan", evidence=[]),
         ],
-        varies=False,
+        must_ask_variant=False,
         question="",
     )
 
@@ -175,7 +177,7 @@ def test_an_asked_part_no_sentence_answers_is_the_one_gap_the_writer_names_after
             Part(ask="Hoe sluit ik de headset aan", evidence=[Evidence(passage=2, quote=_STEP)]),
             Part(ask="hoe laad ik de headset op", evidence=[Evidence(passage=9, quote="Laad hem draadloos op.")]),
         ],
-        varies=False,
+        must_ask_variant=False,
         question="",
     )
 
@@ -192,7 +194,7 @@ def test_a_depends_verdict_that_asks_about_one_part_never_claims_the_lines_answe
     selection = _selection(
         Evidence(passage=2, quote=_STEP),
         need="Hoe de headset aansluit en hoe hij oplaadt.",
-        varies=True,
+        must_ask_variant=True,
         question=question,
     )
 

@@ -42,7 +42,7 @@ STRICT_REFUSAL = no_citable_sources_message("nl", suggest_open_mode=True)
 NOT_IN_PASSAGES = {
     "need": "verlof aanvragen",
     "parts": [{"ask": "Hoe vraag ik verlof aan?", "evidence": []}],
-    "varies": False,
+    "must_ask_variant": False,
     "question": "",
 }
 
@@ -413,7 +413,7 @@ async def test_strict_knowledge_turn_whose_selection_chose_nothing_is_refused_be
     llm = _LiteLLM(
         UNRELATED + " Parkeren is gratis op zondag.",
         grounding=_unsupported(UNRELATED, "Parkeren is gratis op zondag."),
-        selection={"need": "verlof aanvragen", "parts": [], "varies": False, "question": ""},
+        selection={"need": "verlof aanvragen", "parts": [], "must_ask_variant": False, "question": ""},
     )
 
     turn = await _turn(
@@ -564,7 +564,9 @@ async def test_an_internal_rewrite_request_keeps_the_passages(monkeypatch):
     """ "Answers with empty evidence" is the selection's word for a request
     that needs no passage (rewrite text already in the conversation); the
     writer still sees the passages, and no brief of chosen lines."""
-    llm = _LiteLLM(selection={"need": "een mail van het vorige antwoord", "parts": [], "varies": False, "question": ""})
+    llm = _LiteLLM(
+        selection={"need": "een mail van het vorige antwoord", "parts": [], "must_ask_variant": False, "question": ""}
+    )
 
     await _turn(
         monkeypatch,
@@ -680,7 +682,7 @@ async def test_a_relayed_question_gets_the_steps_per_variant_instead_of_a_questi
                     "evidence": [{"passage": 1, "quote": IPHONE_STEP}, {"passage": 2, "quote": ANDROID_STEP}],
                 }
             ],
-            "varies": True,
+            "must_ask_variant": True,
             "question": "Heeft de klant een iPhone of een Android-telefoon?",
         },
     )

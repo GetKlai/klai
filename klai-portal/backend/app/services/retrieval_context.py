@@ -1259,7 +1259,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             internal=t.internal,
             source_only=source_only,
             question=turn.selection.question
-            if not t.internal and turn.multi_question and turn.selection.varies
+            if not t.internal and turn.multi_question and turn.selection.must_ask_variant
             else "",
             unchecked=bool(turn.unchecked_questions),
             open_parts=turn.open_parts,

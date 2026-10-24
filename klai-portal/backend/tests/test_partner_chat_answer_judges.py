@@ -105,7 +105,7 @@ def _selection(verdict: str, *evidence: tuple[int, str], question: str = "") -> 
     return {
         "need": "",
         "parts": [{"ask": "vraag", "evidence": quotes}] if asked else [],
-        "varies": verdict == "depends",
+        "must_ask_variant": verdict == "depends",
         "question": question,
     }
 
@@ -113,7 +113,7 @@ def _selection(verdict: str, *evidence: tuple[int, str], question: str = "") -> 
 def _chosen_turn(*open_parts: str) -> KnowledgeTurn:
     """A turn whose selection chose passages, and left these asks of the visitor open."""
     selection = PassageSelection(
-        need="", parts=[Part(ask="", evidence=[Evidence(passage=1, quote="")])], varies=False, question=""
+        need="", parts=[Part(ask="", evidence=[Evidence(passage=1, quote="")])], must_ask_variant=False, question=""
     )
     return KnowledgeTurn(selection=selection, passages_chosen=True, open_parts=list(open_parts))
 
@@ -1151,7 +1151,7 @@ def _two_part_selection(*, post_answered: bool) -> dict:
             {"ask": "Hoe storneer ik een incasso", "evidence": [{"passage": 2, "quote": _STORNO}]},
             {"ask": "kan ik mijn factuur ook per post krijgen", "evidence": post},
         ],
-        "varies": False,
+        "must_ask_variant": False,
         "question": "",
     }
 
@@ -1192,7 +1192,7 @@ async def test_a_thank_you_after_found_passages_gets_no_appointment_button(monke
     litellm = _LiteLLM(
         model_text="Graag gedaan!",
         case=_case("chat"),
-        selection={"need": "", "parts": [], "varies": False, "question": ""},
+        selection={"need": "", "parts": [], "must_ask_variant": False, "question": ""},
     )
 
     _, text, extras = await _route_turn(

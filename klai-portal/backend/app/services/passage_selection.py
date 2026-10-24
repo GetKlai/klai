@@ -64,12 +64,15 @@ SELECTION_SYSTEM_PROMPT = (
     "something exists, is supported or is available does not tell how to do it and is not evidence. A sentence "
     "saying that what the visitor wants is not possible or no longer supported IS the fact they need. It must be "
     "about the same product, device and direction (import is not export, inbound is not outbound, the mobile app "
-    "is not a desk phone). Leave the list empty when no passage has such a sentence; the visitor is then told that "
-    "part is not covered.\n"
-    "varies: true only when you copied evidence from passages whose steps DIFFER per variant (device, app) and the "
-    "conversation does not say which applies; false when the steps are the same for each variant, and never to ask "
-    "about something the passages do not cover.\n"
-    "question: only when varies is true, the one question to ask the visitor, in their language, at most fifteen "
+    "is not a desk phone), and about the same feature: a sentence about another feature or setting that only "
+    "shares words with the question is not evidence. Leave the list empty when no passage has such a sentence; the "
+    "visitor is then told that part is not covered, which is better than an answer about something else.\n"
+    "must_ask_variant: true only when you cannot give the visitor the steps without knowing their variant (device, "
+    "app): the evidence you copied gives different steps for different variants and the conversation does not say "
+    "which applies. False when one set of steps or one fact answers the question, when the variants differ only in "
+    "what the visitor did not ask about, and when the visitor describes a problem whose checks hold for every "
+    "variant. Never to ask about something the passages do not cover.\n"
+    "question: only when must_ask_variant is true, the one question to ask the visitor, in their language, at most fifteen "
     "words. Otherwise an empty string."
 )
 
@@ -97,10 +100,12 @@ SELECTION_SYSTEM_PROMPT_INTERNAL = (
     "something is or which options exist, or the sentence that says it is not possible or no longer supported. At "
     "most three sentences per part and six in total. Copy only sentences about the same product, device and "
     "direction (import is not export, inbound is not outbound, the mobile app is not a desk phone). Leave the list "
-    "empty when no passage says anything about this part.\n"
-    "varies: true only when you copied evidence from passages whose steps or availability DIFFER per variant "
-    "(device, app) and the conversation does not say which applies.\n"
-    "question: only when varies is true, the one question that would settle the variant, in the user's language, at "
+    "empty when no passage says anything about this part; a sentence about another feature or setting that only "
+    "shares words with the question is not about it.\n"
+    "must_ask_variant: true only when the evidence you copied gives different steps or availability for different "
+    "variants (device, app), the conversation does not say which applies, and one set of steps or one fact cannot "
+    "answer the question.\n"
+    "question: only when must_ask_variant is true, the one question that would settle the variant, in the user's language, at "
     "most fifteen words. Otherwise an empty string."
 )
 
@@ -220,14 +225,14 @@ class PassageSelection(BaseModel):
     # field any more: code derives it from the parts (``verdict``).
     need: str
     parts: list[Part]
-    varies: bool
+    must_ask_variant: bool
     question: str
 
     def verdict(self, chunks: list[dict]) -> Literal["answers", "depends", "not_in_passages"]:
         """The one word the record, the log and the routing read, derived from the parts and checked in code."""
         if self.not_in_passages(chunks):
             return "not_in_passages"
-        return "depends" if self.varies and self.found(chunks) else "answers"
+        return "depends" if self.must_ask_variant and self.found(chunks) else "answers"
 
     def found(self, chunks: list[dict]) -> list[tuple[dict, str]]:
         """The quoted sentences of every part that stand in their passage (``_found``)."""
@@ -345,7 +350,7 @@ def _coverage(selection: PassageSelection, *, what: str, internal: bool, uncheck
             f"\nThe {what} {verb} not cover this part: {'; '.join(open_parts)}. After the answer, say in one "
             f"sentence that the {what} {verb} not cover it, naming that part, and nothing else about what is missing."
         )
-    if selection.varies:
+    if selection.must_ask_variant:
         return ""
     if unchecked:
         return (
