@@ -78,9 +78,11 @@ def demote_other_products(chunks: list[dict], product: str, amount: float) -> tu
     of 22 on 24 October 2026. An unlabelled chunk is no other product.
 
     The ranking truth (``final_rank_score``) when the ranking contract is
-    active, else the reranker score, as the page-context boost does; with the
-    contract active the reranker score itself, and with it the confidence
-    band, stays as the reranker gave it.
+    active, else the reranker score, as the page-context boost does. With the
+    contract active the reranker score itself stays, but the confidence band
+    follows the ranking score, so when the best evidence is another product's
+    the band can fall; that is accepted, since the band then describes
+    evidence for the wrong product.
     """
     demoted = 0
     for chunk in chunks:

@@ -560,7 +560,9 @@ into one: the first in search order, unless a later one carries the request's `p
 and the first does not. After the reranker, every chunk labelled with another product
 than the request's loses `product_boost` (0.05) from its ranking score; unlabelled chunks
 and the request's own keep theirs, so their order among each other never changes.
-Nothing is filtered on product. `services/lookalike.py`; the counts are
+The reranker score itself stays, but the confidence band follows the ranking score, so
+when the best evidence is another product's the band can fall; that is accepted, since
+the band then describes evidence for the wrong product. Nothing is filtered on product. `services/lookalike.py`; the counts are
 `lookalikes_collapsed` and `other_product_demoted` in the decision record, with
 `product_preference_reason` (`applied` or `no_other_product`).
 

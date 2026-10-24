@@ -1474,6 +1474,9 @@ def test_a_single_known_label_is_never_the_question_s_product():
     assert case_file._known_product("Orbit", ["Orbit"]) == ""
     assert case_file._known_product("Orbit", ["Orbit", "Zephyr"]) == "Orbit"
     assert case_file.named_product("Doorschakelen op de Orbit?", ["Orbit"]) == ""
+    # Two knowledge bases spelling the same label differently are still one product.
+    assert case_file._known_product("Orbit", ["Orbit", "orbit"]) == ""
+    assert case_file.named_product("Doorschakelen op de Orbit?", ["Orbit", "orbit"]) == ""
 
 
 @pytest.mark.parametrize(("products", "expected"), [(["Orbit", "Zephyr"], "Orbit"), (["Orbit"], "")])
