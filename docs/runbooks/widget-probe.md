@@ -6,7 +6,7 @@ Alerts: `widget_probe_failing`, `widget_probe_missing` (both `severity=critical`
 ## Meaning
 
 A systemd timer on core-01 asks the customer widget path one fixed question
-every 5 minutes and logs a verdict. It walks the calls a customer's browser
+every 30 minutes and logs a verdict. A failed turn is asked once more after 30 seconds before the verdict counts. It walks the calls a customer's browser
 makes (`klai-widget/src/api/widget-config.ts`, `chat-stream.ts`):
 
 1. `GET https://api.getklai.com/partner/v1/widget-config?id=<widget id>` with an
@@ -53,11 +53,11 @@ and change `WIDGET_PROBE_MAX_LATENCY_MS` (in the env file) if normal traffic mov
 ## Confirm
 
 ```text
-_time:30m service:widget-probe event:widget_probe | sort by (_time) desc | limit 10
+_time:3h service:widget-probe event:widget_probe | sort by (_time) desc | limit 10
 ```
 
-`widget_probe_failing` fires when the last two verdicts are `fail`;
-`widget_probe_missing` when no verdict arrived for 15 minutes. Both carry
+`widget_probe_failing` fires when the last verdict is `fail` (both turns of the run failed);
+`widget_probe_missing` when no verdict arrived for 65 minutes. Both carry
 `page="true"`, which the external pager reads from Grafana's Alertmanager API.
 
 ## What to check first

@@ -2,7 +2,8 @@
 #
 # The systemd timer `widget-probe.timer` asks the real widget path (token mint
 # at /partner/v1/widget-config, then a streamed /partner/v1/chat/completions
-# turn on the probe tenant) one fixed question every 5 minutes. The script
+# turn on the probe tenant) one fixed question every 30 minutes, asking once
+# more after 30 s when the first turn fails. The script
 # appends one verdict line to `/opt/klai/logs/widget-probe.log` (fields
 # status ok|fail, reason, http_status, latency_ms, has_sources, answer_chars);
 # Alloy ships it to VictoriaLogs as `service:widget-probe event:widget_probe`.
@@ -21,11 +22,11 @@ groups:
     folder: Klai
     interval: 1m
     rules:
-      # Two of the last two verdicts failed. `sort | limit 2` takes the two
-      # newest lines inside the 12m window, so the rule keeps firing until a
-      # probe run sees the widget answer again, and one bad run alone (a
-      # slow turn, a deploy restart) never pages. Fewer than two lines in the
-      # window counts fewer than two fails; that case belongs to the missing rule.
+      # The newest verdict failed. A verdict is already two turns (the script
+      # asks again after a failed turn), so one slow turn or a deploy restart
+      # never pages. `sort | limit 1` keeps the rule firing until a run sees
+      # the widget answer again; the 35m window holds one 30-minute run, and
+      # no line at all belongs to the missing rule.
       - uid: obs-widget-probe-failing
         title: widget_probe_failing
         condition: threshold
@@ -34,7 +35,7 @@ groups:
             datasourceUid: victorialogs
             queryType: stats
             relativeTimeRange:
-              from: 720
+              from: 2100
               to: 0
             model:
               refId: query
@@ -42,15 +43,15 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: |
-                _time:12m service:widget-probe event:widget_probe
+                _time:35m service:widget-probe event:widget_probe
                   | sort by (_time) desc
-                  | limit 2
+                  | limit 1
                   | stats count() if (status:fail) as fails
               queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 720
+              from: 2100
               to: 0
             model:
               refId: reduce
@@ -60,7 +61,7 @@ groups:
           - refId: threshold
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 720
+              from: 2100
               to: 0
             model:
               refId: threshold
@@ -83,17 +84,17 @@ groups:
           alert_type: synthetic
           component: widget-probe
         annotations:
-          summary: 'Customer widget is not answering: the last two probe runs failed'
+          summary: 'Customer widget is not answering: the last probe run failed twice'
           runbook_url: 'docs/runbooks/widget-probe.md'
           description: |
-            The last two widget probe verdicts were fail: a visitor asking the
+            The last widget probe verdict was fail, on both turns of the run: a visitor asking the
             probe widget a question got no good answer (reason in the verdict:
             http, unreachable, timeout, stream_error, empty_answer,
             no_sources or latency). Real customers see the same.
 
             What to check first, in VictoriaLogs:
               1. The verdicts and their reasons:
-                 _time:30m service:widget-probe event:widget_probe | sort by (_time) desc | limit 10
+                 _time:3h service:widget-probe event:widget_probe | sort by (_time) desc | limit 10
               2. Where a turn spends its time (retrieval_ms high = retrieval or graph stall):
                  _time:30m service:portal-api event:partner_chat_turn_timing | sort by (_time) desc | limit 20
               3. Graph search timing out (FalkorDB, the 2026-10-23 cause):
@@ -103,11 +104,11 @@ groups:
               5. Caddy answering 5xx in front of portal-api:
                  _time:30m service:caddy status:5* | stats by (status) count() as n
 
-      # No verdict line for 15 minutes: the probe itself is dead (timer,
+      # No verdict line for 65 minutes: the probe itself is dead (timer,
       # unit, env file, Alloy or VictoriaLogs), which leaves the widget
       # unwatched. noDataState Alerting so an empty answer from the datasource
-      # pages too. Three missed 5-minute runs is the shortest window that does
-      # not trip on one slow run (the unit allows 120s).
+      # pages too. Two missed 30-minute runs plus the 300 s the unit allows,
+      # so one run that ends late never trips it.
       - uid: obs-widget-probe-missing
         title: widget_probe_missing
         condition: threshold
@@ -116,7 +117,7 @@ groups:
             datasourceUid: victorialogs
             queryType: stats
             relativeTimeRange:
-              from: 900
+              from: 3900
               to: 0
             model:
               refId: query
@@ -124,13 +125,13 @@ groups:
                 type: victoriametrics-logs-datasource
                 uid: victorialogs
               expr: |
-                _time:15m service:widget-probe event:widget_probe
+                _time:65m service:widget-probe event:widget_probe
                   | stats count() as n
               queryType: stats
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 900
+              from: 3900
               to: 0
             model:
               refId: reduce
@@ -140,7 +141,7 @@ groups:
           - refId: threshold
             datasourceUid: __expr__
             relativeTimeRange:
-              from: 900
+              from: 3900
               to: 0
             model:
               refId: threshold
@@ -165,10 +166,10 @@ groups:
           alert_type: synthetic
           component: widget-probe
         annotations:
-          summary: 'Widget probe has written no verdict for 15 minutes'
+          summary: 'Widget probe has written no verdict for 65 minutes'
           runbook_url: 'docs/runbooks/widget-probe.md'
           description: |
-            No widget probe verdict reached VictoriaLogs in 15 minutes, so
+            No widget probe verdict reached VictoriaLogs in 65 minutes, so
             nobody is watching the customer widget.
 
             What to check first on core-01:
