@@ -287,7 +287,7 @@ services:
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
     logging: *log-rotation
-    image: getmeili/meilisearch:v1.55.0
+    image: getmeili/meilisearch:v1.56.0
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
