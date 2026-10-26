@@ -56,8 +56,9 @@ DEFAULTS = {
     # routed as a contact request and answered without sources (2026-10-23).
     "WIDGET_PROBE_QUESTION": "Hoe lang rijst het deeg van het Proefbrood van Probe Bakkerij?",
     "WIDGET_PROBE_MAX_LATENCY_MS": "30000",
-    # Per socket read, so a stalled stream ends the run. The unit allows 90 s.
+    # Per socket read, so a stalled stream ends the run. The unit allows 300 s for two turns.
     "WIDGET_PROBE_TIMEOUT": "45",
+    "WIDGET_PROBE_RETRY_AFTER_S": "30",
     "WIDGET_PROBE_LOG_FILE": "/opt/klai/logs/widget-probe.log",
 }
 
@@ -173,17 +174,14 @@ def probe(cfg):
     return status, "".join(answer), sources
 
 
-def main():
-    cfg = load_config()
+def run_once(cfg):
+    """One turn on the widget path: (reason, http_status, answer, sources, latency_ms)."""
     started = time.monotonic()
     http_status, answer, sources, reason = 0, "", 0, "ok"
-    if not cfg.get("WIDGET_PROBE_WIDGET_ID"):
-        reason = "config"
-    else:
-        try:
-            http_status, answer, sources = probe(cfg)
-        except Fail as f:
-            reason, http_status = f.reason, f.http_status
+    try:
+        http_status, answer, sources = probe(cfg)
+    except Fail as f:
+        reason, http_status = f.reason, f.http_status
     latency_ms = round((time.monotonic() - started) * 1000)
     if reason == "ok":
         if not answer.strip():
@@ -192,6 +190,22 @@ def main():
             reason = "no_sources"
         elif latency_ms > int(cfg["WIDGET_PROBE_MAX_LATENCY_MS"]):
             reason = "latency"
+    return reason, http_status, answer, sources, latency_ms
+
+
+def main():
+    cfg = load_config()
+    if not cfg.get("WIDGET_PROBE_WIDGET_ID"):
+        reason, http_status, answer, sources, latency_ms = "config", 0, "", 0, 0
+    else:
+        # A failed turn is asked once more before it counts, so one slow turn
+        # or a deploy restart never pages and the alert can fire on a single
+        # verdict. Every run is a full chat turn with model calls; at one run
+        # per 30 minutes that is 48 turns a day instead of 288 at 5 minutes.
+        reason, http_status, answer, sources, latency_ms = run_once(cfg)
+        if reason != "ok":
+            time.sleep(int(cfg["WIDGET_PROBE_RETRY_AFTER_S"]))
+            reason, http_status, answer, sources, latency_ms = run_once(cfg)
     line = json.dumps(
         {
             "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

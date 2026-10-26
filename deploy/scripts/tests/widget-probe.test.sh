@@ -37,6 +37,8 @@ def sse(h, *payloads):
 def delta(**d):
     return {"choices": [{"index": 0, "delta": d}]}
 
+POSTS = 0
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
@@ -58,7 +60,10 @@ class H(BaseHTTPRequestHandler):
                 or self.headers.get("Origin") != "https://probe.example.com"
                 or body.get("stream") is not True or not body.get("messages")):
             self.send_response(401); self.end_headers(); return
-        if MODE == "http500":
+        global POSTS
+        POSTS += 1
+        # "flaky": the first turn fails and the retry answers, as after a deploy restart.
+        if MODE == "http500" or (MODE == "flaky" and POSTS == 1):
             self.send_response(500); self.end_headers(); return
         if MODE == "slow":
             time.sleep(1.5)
@@ -91,7 +96,7 @@ run() {
     url="http://127.0.0.1:$(cat "$port_file")"
     [[ "$mode" != unreachable ]] || url="http://127.0.0.1:1"
     out=$(env WIDGET_PROBE_BASE_URL="$url" WIDGET_PROBE_WIDGET_ID="$SECRET_ID" \
-        WIDGET_PROBE_ORIGIN="https://probe.example.com" WIDGET_PROBE_LOG_FILE="$tmp/log" \
+        WIDGET_PROBE_ORIGIN="https://probe.example.com" WIDGET_PROBE_LOG_FILE="$tmp/log" WIDGET_PROBE_RETRY_AFTER_S=0 \
         KLAI_ENV_FILE="$tmp/no-such-env" "$@" python3 -I "$PROBE" 2>&1) || true
     kill "$stub_pid" 2>/dev/null || true; wait "$stub_pid" 2>/dev/null || true; stub_pid=""
     got=$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d["status"], d["reason"])' <<< "$out" 2>/dev/null || echo "unparsable: $out")
@@ -116,6 +121,7 @@ assert d["http_status"] == 200 and d["has_sources"] is True and d["answer_chars"
 assert d["service"] == "widget-probe" and d["event"] == "widget_probe" and d["latency_ms"] >= 0 and d["ts"], d
 PY
 run http500 fail http
+run flaky ok ok WIDGET_PROBE_MAX_LATENCY_MS=5000
 run no_sources fail no_sources
 run empty fail empty_answer
 run stream_error fail stream_error

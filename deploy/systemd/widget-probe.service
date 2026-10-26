@@ -14,7 +14,7 @@ ExecStart=/opt/klai/scripts/widget-probe.py
 # A killed run writes no verdict, which widget_probe_missing picks up.
 # deploy-compose.yml only stages this file in /opt/klai/systemd; systemd reads
 # a change after the manual daemon-reload in docs/runbooks/widget-probe.md.
-TimeoutStartSec=120s
+TimeoutStartSec=300s
 
 # Stdout goes to journald; the script also appends the verdict line to
 # /opt/klai/logs/widget-probe.log, which Alloy ships to VictoriaLogs.

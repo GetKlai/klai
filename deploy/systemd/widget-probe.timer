@@ -1,10 +1,10 @@
 [Unit]
-Description=Run the Klai widget probe every 5 minutes
+Description=Run the Klai widget probe every 30 minutes
 Requires=widget-probe.service
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=5min
+OnUnitActiveSec=30min
 AccuracySec=15s
 Persistent=true
 Unit=widget-probe.service
