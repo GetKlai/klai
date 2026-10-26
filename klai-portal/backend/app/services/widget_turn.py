@@ -130,15 +130,16 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
         # A turn that chooses nothing (a contact request, "not found") keeps
         # the conversation's evidence for the next one.
         inputs.answer_signals["kept_passages"] = inputs.kept_passages
-    # The products the org's articles are about, which the case may name and
-    # the search and the selection prefer (knowledge-base plan, step 7).
+    # The product the visitor names, which the search and the selection
+    # prefer (knowledge-base plan, step 7).
     products = await knowledge_ingest_client.get_products(inputs.auth.zitadel_org_id)
+    product = case_file.product_from_messages(messages, products)
     latest = _last_user_message(messages) or ""
     with retrieval_upstream_errors(inputs.auth.org_id):
         if case_file.is_follow_up(messages):
             # 1. Read. The case's queries go into a follow-up's search, so the
             # case comes first.
-            case, case_ms = await timed(_read_case(inputs, products))
+            case, case_ms = await timed(_read_case(inputs))
             _keep_case(inputs, case)
             # 2. Route in code. A person, contact or an appointment needs no
             # articles, so that route is decided before the search (plan §5,
@@ -147,7 +148,6 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
                 return _contact_request_reply(inputs, turn, case)
             # 3-4. Search, and select inside retrieve_context (passage_selection.py).
             variants = case.search_variants(latest) if case else []
-            product = case.product_label if case else case_file.named_product(latest, products)
             found, retrieval_ms = await timed(_search(inputs, turn, variants, product))
         else:
             # A first question keeps its two paraphrases and runs the case
@@ -157,11 +157,9 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
             # step could ask which one applies; with the case's queries alone
             # two of the six expected clarifying questions were answered
             # instead (plan §8, step M).
-            # The case's product label comes too late for this search, so the
-            # product is a label the visitor's own words name.
             (found, retrieval_ms), (case, case_ms) = await asyncio.gather(
-                timed(_search(inputs, turn, [], case_file.named_product(latest, products))),
-                timed(_read_case(inputs, products)),
+                timed(_search(inputs, turn, [], product)),
+                timed(_read_case(inputs)),
             )
             _keep_case(inputs, case)
     # Feedback on a reply finds its retrieval under rl:{org}:{key}, so the log
@@ -178,7 +176,7 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
     return await _write(inputs, turn, found, routed, sentiment=case.sentiment if case else None, timing=timing)
 
 
-def _read_case(inputs: TurnInputs, products: list[str]) -> Awaitable[case_file.Case | None]:
+def _read_case(inputs: TurnInputs) -> Awaitable[case_file.Case | None]:
     # The case is the one reading of the turn (case_file.py): what the
     # visitor wants, their tone, whether the subject is one this widget
     # answers, and the queries for a follow-up's search. It replaced the
@@ -188,7 +186,6 @@ def _read_case(inputs: TurnInputs, products: list[str]) -> Awaitable[case_file.C
         inputs.previous_case,
         inputs.settings,
         off_topic_subjects=inputs.off_topic_subjects,
-        products=products,
         delegated_org_id=inputs.auth.zitadel_org_id,
     )
 

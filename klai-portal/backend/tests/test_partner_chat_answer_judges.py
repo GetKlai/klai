@@ -130,7 +130,6 @@ def _case(
     return {
         "problem": problem,
         "product": "",
-        "product_label": "",
         "variant": "",
         "tried": [],
         "wants_quote": wants_quote,
@@ -1505,18 +1504,6 @@ async def test_a_follow_up_is_searched_with_the_case_s_queries_beside_the_visito
     assert body["query_variants"] == ["Android-app anonieme beller nummerweergave", "Android-app uitgaand nummer tonen"]
 
 
-@pytest.mark.parametrize(("label", "expected"), [("orbit", "Orbit"), ("Nimbus", "")])
-async def test_the_case_carries_a_product_only_when_it_is_a_known_label(label, expected):
-    """Knowledge-base plan, step 7: a label the org's chunks do not carry would
-    prefer nothing in the search and mislead the selection."""
-    answer = case_file.Case.model_validate({**_case(), "product_label": label})
-    with patch.object(case_file, "structured_judge_call", AsyncMock(return_value=answer)):
-        case = await case_file.update_case(_FOLLOW_UP, None, _settings(), products=["Orbit", "Zephyr"])
-
-    assert case is not None
-    assert case.product_label == expected
-
-
 def test_a_first_question_names_a_product_only_by_a_known_label_in_its_own_words():
     products = ["Orbit", "Orbit Desk"]
 
@@ -1529,42 +1516,73 @@ def test_a_single_known_label_is_never_the_question_s_product():
     """A list of one is not a choice: with one labelled knowledge base beside
     unlabelled ones the case named that label for nearly every question and the
     search preferred it over the right answers (plan §6, 24 October 2026)."""
-    assert case_file._known_product("Orbit", ["Orbit"]) == ""
-    assert case_file._known_product("Orbit", ["Orbit", "Zephyr"]) == "Orbit"
     assert case_file.named_product("Doorschakelen op de Orbit?", ["Orbit"]) == ""
     # Two knowledge bases spelling the same label differently are still one product.
-    assert case_file._known_product("Orbit", ["Orbit", "orbit"]) == ""
     assert case_file.named_product("Doorschakelen op de Orbit?", ["Orbit", "orbit"]) == ""
 
 
-@pytest.mark.parametrize(("products", "expected"), [(["Orbit", "Zephyr"], "Orbit"), (["Orbit"], "")])
-async def test_a_follow_up_about_a_known_product_prefers_it_in_the_search_and_tells_the_selection(
-    monkeypatch, products, expected
+_ZEPHYR_FIRST = "Ik bel via de Zephyr en de klant ziet een anonieme beller. Hoe los ik dit op?"
+
+
+@pytest.mark.parametrize(
+    ("messages", "products", "expected"),
+    [
+        # The case model reads Orbit in every case below, the visitor names no product
+        # here: on the widget the model gave the second product to 10 of 37
+        # help-centre questions (plan §6, 24 October 2026).
+        (_FOLLOW_UP, ["Orbit", "Zephyr"], ""),
+        ([{"role": "user", "content": _ZEPHYR_FIRST}], ["Orbit", "Zephyr"], "Zephyr"),
+        ([{"role": "user", "content": _ZEPHYR_FIRST}, *_FOLLOW_UP[1:]], ["Orbit", "Zephyr"], "Zephyr"),
+        ([{"role": "user", "content": _ZEPHYR_FIRST}, *_FOLLOW_UP[1:]], ["Zephyr"], ""),
+    ],
+)
+async def test_the_question_s_product_is_one_the_visitor_names_and_never_the_case_model_s(
+    monkeypatch, messages, products, expected
 ):
     """A lookalike of another product reads like the answer; the selection is
     told which product the question is about and which product each passage is.
-    With a single known label nothing is preferred and the selection is told nothing."""
+    That product is a known label in the visitor's own words, the latest message
+    first and else an earlier one; with a single known label nothing is preferred."""
     items = [
         {**CHUNK_900, "reranker_score": 0.95, "product": "zephyr"},
         {**_two_articles()[1], "product": "orbit"},
     ]
-    litellm = _LiteLLM(model_text=ANSWER_900, case={**_case("knowledge"), "product_label": "orbit"})
+    litellm = _LiteLLM(model_text=ANSWER_900, case={**_case("knowledge", "Orbit anonieme beller"), "product": "Orbit"})
     with patch(
         "app.services.widget_turn.knowledge_ingest_client.get_products",
         AsyncMock(return_value=products),
     ):
-        litellm, _, _ = await _route_turn(monkeypatch, band="high", items=items, litellm=litellm, messages=_FOLLOW_UP)
+        litellm, _, _ = await _route_turn(monkeypatch, band="high", items=items, litellm=litellm, messages=messages)
 
-    assert _retrieve_body(litellm).get("product", "") == expected
-    assert "\n".join(f"- {product}" for product in products) in litellm.case_requests[0]["messages"][0]["content"]
+    body = _retrieve_body(litellm)
+    assert body.get("product", "") == expected
+    if len(messages) > 1:
+        # The case was read and used: its query ran, its product did not.
+        assert body["query_variants"] == ["Orbit anonieme beller"]
     (selection,) = [
         body
         for body in litellm.requests
         if (body.get("response_format") or {}).get("json_schema", {}).get("name") == "passage_selection"
     ]
     content = selection["messages"][-1]["content"]
-    assert ("The question is about the product Orbit." in content) == bool(expected)
+    assert ("The question is about the product" in content) == bool(expected)
+    assert (f"The question is about the product {expected}." in content) == bool(expected)
     assert ("[1] Factuur betalen (product: zephyr)" in content) == bool(expected)
+
+
+async def test_a_case_stored_with_the_retired_product_label_still_starts_the_next_turn():
+    stored = {**_case("knowledge", problem="De klant ziet een anonieme beller."), "product_label": "Orbit"}
+    seen: dict[str, Any] = {}
+
+    async def fake_call(**kwargs):
+        seen.update(kwargs)
+        return None
+
+    with patch.object(case_file, "structured_judge_call", fake_call):
+        await case_file.update_case(_FOLLOW_UP, stored, _settings())
+
+    assert "De klant ziet een anonieme beller." in seen["user_content"]
+    assert "product_label" not in seen["user_content"]
 
 
 async def test_the_next_turn_s_case_starts_from_the_stored_one():

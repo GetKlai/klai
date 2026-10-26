@@ -97,9 +97,9 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
             # it would only hold back the first token.
             found, retrieval_ms = await timed(_search(inputs, turn, [], ""))
         else:
-            # The products the org's knowledge is about, as on the widget
-            # (knowledge-base plan, step 7).
+            # The product the employee names, as on the widget (knowledge-base plan, step 7).
             products = await knowledge_ingest_client.get_products(inputs.auth.zitadel_org_id)
+            product = case_file.product_from_messages(messages, products)
             latest = _last_user_message(messages) or ""
             if case_file.is_follow_up(messages) or inputs.pasted_correspondence:
                 # 1. Read. A follow-up searches on the employee's own sentence plus
@@ -107,9 +107,8 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
                 # internal query rewrite. A pasted mail does too on its first turn:
                 # the rewrite used to distil it into a search query, and a long
                 # mail as the only query buries the article that answers it.
-                case, case_ms = await timed(_read_case(inputs, products))
+                case, case_ms = await timed(_read_case(inputs))
                 variants = case.search_variants(latest) if case else []
-                product = case.product_label if case else case_file.named_product(latest, products)
                 # 2-3. Search, and select inside retrieve_context (passage_selection.py).
                 found, retrieval_ms = await timed(_search(inputs, turn, variants, product))
             else:
@@ -117,8 +116,8 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
                 # it. The widget's first-turn paraphrases stay widget-only: they
                 # were measured on the widget's meetlat, not on internal questions.
                 (found, retrieval_ms), (case, case_ms) = await asyncio.gather(
-                    timed(_search(inputs, turn, [], case_file.named_product(latest, products))),
-                    timed(_read_case(inputs, products)),
+                    timed(_search(inputs, turn, [], product)),
+                    timed(_read_case(inputs)),
                 )
     inputs.case = case
     if turn.passages_chosen:
@@ -137,7 +136,7 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
     return await _write(inputs, turn, found, timing)
 
 
-def _read_case(inputs: InternalInputs, products: list[str]) -> Awaitable[case_file.Case | None]:
+def _read_case(inputs: InternalInputs) -> Awaitable[case_file.Case | None]:
     # The case the previous turn stored, as on the widget, so the language it
     # fixed and the problem it narrowed carry over. No subjects: there is no
     # referral to send an employee to.
@@ -145,7 +144,6 @@ def _read_case(inputs: InternalInputs, products: list[str]) -> Awaitable[case_fi
         inputs.request.messages,
         inputs.previous_case,
         inputs.settings,
-        products=products,
         delegated_org_id=inputs.auth.zitadel_org_id,
     )
 
