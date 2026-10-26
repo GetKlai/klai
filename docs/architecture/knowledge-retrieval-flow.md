@@ -565,6 +565,12 @@ when the best evidence is another product's the band can fall; that is accepted,
 the band then describes evidence for the wrong product. Nothing is filtered on product. `services/lookalike.py`; the counts are
 `lookalikes_collapsed` and `other_product_demoted` in the decision record, with
 `product_preference_reason` (`applied` or `no_other_product`).
+The portal sends `product` only when one of the org's product labels stands as a whole word in
+the user's own messages, the latest first and on a follow-up else the previous user message (a
+new question starts without one), and
+the org knows at least two labels (`case_file.product_from_messages`, widget and internal chat
+alike). The case model does not choose it: asked to pick one of two labels it gave the wrong
+product to questions that named neither (24 October 2026).
 
 ---
 

@@ -50,8 +50,6 @@ CASE_SYSTEM_PROMPT = (
     "problem.\n"
     "product: the product, app, device or module the problem is about (for example the Android app, the "
     "Webphone, a Yealink W73H, the dial plan), as far as the visitor has said; otherwise empty.\n"
-    "product_label: the one name from the list of products in the help articles, at the end, that is the case's "
-    "product, copied exactly from that list; empty when the list is empty or no name on it is that product.\n"
     "variant: direction or situation that decides the answer (inbound or outbound, import or export, "
     "temporary or permanent), as far as said; otherwise empty.\n"
     "tried: what the visitor says they already did or checked, as short items; keep earlier items.\n"
@@ -94,10 +92,6 @@ class Case(BaseModel):
 
     problem: str
     product: str
-    # One of the product labels of the org's chunks (knowledge-base plan, step
-    # 7), checked in code (_known_product). The default is for stored cases
-    # and test fixtures that predate it; the model always writes it.
-    product_label: str = ""
     variant: str
     tried: list[str]
     # Each route field follows the quote it rests on: the model writes the
@@ -169,7 +163,6 @@ async def update_case(
     settings: Settings,
     *,
     off_topic_subjects: str = "",
-    products: list[str] | None = None,
     delegated_org_id: str | None = None,
 ) -> Case | None:
     subjects = " ".join(off_topic_subjects.split()) or _NO_SUBJECTS
@@ -178,18 +171,18 @@ async def update_case(
         try:
             # Stored before out_of_scope (12 October) or the quotes and the
             # language (21 October) existed: those are judged afresh on the
-            # latest message anyway.
+            # latest message anyway. A case stored between 23 and 26 October
+            # carries product_label, which the case no longer has (product_from_messages).
+            stored = {key: value for key, value in previous.items() if key != "product_label"}
             previous_text = Case.model_validate(
-                {"out_of_scope": False, "wants_quote": "", "out_of_scope_quote": "", "language": "", **previous}
+                {"out_of_scope": False, "wants_quote": "", "out_of_scope_quote": "", "language": "", **stored}
             ).model_dump_json()
         except ValidationError:
             # A case stored under an older shape of this model: start afresh.
             logger.warning("case_previous_invalid", keys=sorted(previous)[:12])
-    listed = "\n".join(f"- {product}" for product in products or []) or "(none)"
     case = await structured_judge_call(
         name="case_update",
-        system_prompt=f"{CASE_SYSTEM_PROMPT}\n\nSubjects this help chat does not answer:\n{subjects}"
-        f"\n\nProducts in the help articles:\n{listed}",
+        system_prompt=f"{CASE_SYSTEM_PROMPT}\n\nSubjects this help chat does not answer:\n{subjects}",
         user_content=f"Case after the previous turn:\n{previous_text}\n\nConversation:\n{conversation_excerpt(messages)}",
         schema=Case,
         timeout_seconds=_TIMEOUT_SECONDS,
@@ -198,29 +191,36 @@ async def update_case(
     )
     if case is None:
         return None
-    case = case.model_copy(update={"product_label": _known_product(case.product_label, products or [])})
     return _verified_routes(case, _last_user_message(messages) or "")
 
 
-def _known_product(label: str, products: list[str]) -> str:
-    """The label as the org's chunks spell it, or "" when the model named one they do not carry.
+def product_from_messages(messages: list[dict], products: list[str]) -> str:
+    """The product the user names: a known label in the latest user message, else in the one it follows.
 
-    Also "" when the org knows fewer than two labels (counted case-blind, so two
-    knowledge bases spelling one label differently stay one), because a list of
-    one is not a choice: the model then named that label for nearly every question.
+    The question's product (knowledge-base plan, step 7) rests on the user's
+    own words only. The case model, asked to pick one of two product labels,
+    gave the second product to 10 of 37 help-centre questions that named
+    neither, and the search then demoted the only articles that answered
+    (plan §6, 24 October 2026). A follow-up ("and on Android?") keeps the
+    product of the message it follows; a new question starts without one, so
+    the look-back stops at the previous user message instead of the whole
+    conversation.
     """
-    wanted = " ".join(label.split()).casefold()
-    if not wanted or len({product.casefold() for product in products}) < 2:
+    users = [_last_user_message([message]) or "" for message in messages if message.get("role") == "user"]
+    if not users:
         return ""
-    return next((product for product in products if product.casefold() == wanted), "")
+    if product := named_product(users[-1], products):
+        return product
+    return named_product(users[-2], products) if is_follow_up(messages) else ""
 
 
 def named_product(text: str, products: list[str]) -> str:
     """The longest known product label that stands in ``text`` as whole words; "" when none does.
 
-    A first turn searches beside the case call, not after it (widget_turn.py),
-    so its product comes from the visitor's own words. Like _known_product it
-    names none when the org knows fewer than two labels.
+    Also "" when the org knows fewer than two labels (counted case-blind, so two
+    knowledge bases spelling one label differently stay one), because a list of
+    one is not a choice: with one labelled knowledge base beside unlabelled ones
+    that label was preferred over the right answers (plan §6, 24 October 2026).
     """
     if len({product.casefold() for product in products}) < 2:
         return ""

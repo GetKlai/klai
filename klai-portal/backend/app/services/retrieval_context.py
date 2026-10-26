@@ -1321,8 +1321,8 @@ async def retrieve_context(
     # Help widget: the passages the previous turn chose (kept_passages_of),
     # offered to this turn's selection when the search lost them or found nothing.
     kept_passages: list[dict] | None = None,
-    # The product the question is about, one of the org's product labels
-    # (case_file.py), or "": preferred by retrieval-api and named to the
+    # The product the user names, one of the org's product labels
+    # (case_file.product_from_messages), or "": preferred by retrieval-api and named to the
     # selection step (knowledge-base plan, step 7).
     product: str = "",
 ) -> tuple[list[dict], str, list[dict[str, Any]], bool]:

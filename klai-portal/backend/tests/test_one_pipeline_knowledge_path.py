@@ -532,6 +532,52 @@ async def test_internal_follow_up_searches_its_own_words_with_the_cases_queries_
     assert "raw_query" not in body and "coreference_resolved" not in body
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("earlier", "expected"),
+    [("Hoe werkt verlof in het Rooster?", "Rooster"), ("Hoe werkt het verlofsysteem?", "")],
+)
+async def test_internal_follow_up_takes_its_product_from_the_employee_s_words_not_the_case(
+    internal_pipeline, monkeypatch, earlier, expected
+):
+    """The case model named the wrong one of two products for questions that named
+    neither (plan §6, 24 October 2026); an earlier message naming one carries it."""
+    import app.services.internal_turn as internal_turn
+
+    monkeypatch.setattr(
+        internal_turn.knowledge_ingest_client, "get_products", AsyncMock(return_value=["Rooster", "Salaris"])
+    )
+    recorder = _Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"})
+    recorder.case = {
+        "problem": "verlof aanvragen",
+        "product": "Salaris",
+        "variant": "",
+        "tried": [],
+        "wants_quote": "",
+        "wants": "knowledge",
+        "out_of_scope_quote": "",
+        "out_of_scope": False,
+        "sentiment": "neutral",
+        "language": "nl",
+        "queries": ["verlof aanvragen", "verlofaanvraag indienen"],
+    }
+    internal_pipeline(recorder)
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [
+            {"role": "user", "content": earlier},
+            {"role": "assistant", "content": "Je vraagt verlof aan via het menu."},
+            {"role": "user", "content": "Hoe vraag ik verlof aan?"},
+        ],
+    )
+
+    body = recorder.retrieve_bodies[0]
+    assert body["query_variants"] == ["verlof aanvragen", "verlofaanvraag indienen"]
+    assert body.get("product", "") == expected
+
+
 # --- one trivial gate --------------------------------------------------------------
 
 
