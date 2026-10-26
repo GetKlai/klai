@@ -195,19 +195,23 @@ async def update_case(
 
 
 def product_from_messages(messages: list[dict], products: list[str]) -> str:
-    """The product the user names: a known label in the latest user message, else in the nearest earlier one.
+    """The product the user names: a known label in the latest user message, else in the one it follows.
 
     The question's product (knowledge-base plan, step 7) rests on the user's
     own words only. The case model, asked to pick one of two product labels,
     gave the second product to 10 of 37 help-centre questions that named
     neither, and the search then demoted the only articles that answered
-    (plan §6, 24 October 2026). An earlier message keeps a follow-up ("and on
-    Android?") on the product the conversation started with.
+    (plan §6, 24 October 2026). A follow-up ("and on Android?") keeps the
+    product of the message it follows; a new question starts without one, so
+    the look-back stops at the previous user message instead of the whole
+    conversation.
     """
-    for message in reversed(messages):
-        if message.get("role") == "user" and (product := named_product(_last_user_message([message]) or "", products)):
-            return product
-    return ""
+    users = [_last_user_message([message]) or "" for message in messages if message.get("role") == "user"]
+    if not users:
+        return ""
+    if product := named_product(users[-1], products):
+        return product
+    return named_product(users[-2], products) if is_follow_up(messages) else ""
 
 
 def named_product(text: str, products: list[str]) -> str:

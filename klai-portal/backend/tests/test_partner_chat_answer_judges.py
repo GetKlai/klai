@@ -1534,6 +1534,19 @@ _ZEPHYR_FIRST = "Ik bel via de Zephyr en de klant ziet een anonieme beller. Hoe 
         ([{"role": "user", "content": _ZEPHYR_FIRST}], ["Orbit", "Zephyr"], "Zephyr"),
         ([{"role": "user", "content": _ZEPHYR_FIRST}, *_FOLLOW_UP[1:]], ["Orbit", "Zephyr"], "Zephyr"),
         ([{"role": "user", "content": _ZEPHYR_FIRST}, *_FOLLOW_UP[1:]], ["Zephyr"], ""),
+        # Orbit named two user turns back, then a new standalone question: the
+        # look-back stops at the message the latest one follows.
+        (
+            [
+                {"role": "user", "content": "Hoe werkt de Orbit?"},
+                {"role": "assistant", "content": "Je belt via de app."},
+                {"role": "user", "content": "En op Android?"},
+                {"role": "assistant", "content": "Ook via de app."},
+                {"role": "user", "content": "Hoe vraag ik verlof aan?"},
+            ],
+            ["Orbit", "Zephyr"],
+            "",
+        ),
     ],
 )
 async def test_the_question_s_product_is_one_the_visitor_names_and_never_the_case_model_s(
