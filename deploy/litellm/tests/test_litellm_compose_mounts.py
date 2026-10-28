@@ -45,7 +45,13 @@ def test_litellm_prisma_migrations_are_preflight_gated():
     assert "Refusing to recreate litellm" in compose_up_text
     assert "if has_service litellm; then" in compose_up_text
     assert '[[ -z "$SERVICE" || "$SERVICE" == "litellm" ]]' not in compose_up_text
-    assert "- 'deploy/docker-compose.yml'" in litellm_deploy_text
+    # Since 2026-10-28 (#2118) a compose change reaches core-01 only through
+    # deploy-compose.yml, which keeps the .prev copies and the data-store
+    # snapshots; this workflow runs after a green sync and must never copy the
+    # compose file itself.
+    assert "- 'deploy/docker-compose.yml'" not in litellm_deploy_text
+    assert "workflows: ['Sync docker-compose.yml + config + smoke-test to core-01']" in litellm_deploy_text
+    assert "rsync -av deploy/docker-compose.yml" not in litellm_deploy_text
     env_drift_text = ENV_DRIFT_SCRIPT.read_text(encoding="utf-8")
     assert "awk '$0 != \"litellm\"'" in env_drift_text
     assert "no env-drift services resolved; refusing an all-services compose up" in env_drift_text
