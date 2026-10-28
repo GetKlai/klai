@@ -835,7 +835,22 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
     word_threshold = max(20, int(without_cookies.word_count * 0.05))
     byte_threshold = max(1000, int(without_cookies.byte_size * 0.05))
     status_split = with_cookies.status_code != without_cookies.status_code
-    significant = status_split or word_diff > word_threshold or byte_diff > byte_threshold
+    # A size difference misses a site whose menu dwarfs the article: one
+    # customer wiki answers 9,300 words to an anonymous visitor of which the
+    # login gate is a single line, so the unlocked article stays under the 5%
+    # threshold. The gate itself is the proof, judged by the same classifier
+    # the keep-alive applies on every tick, so the wizard and the keep-alive
+    # cannot disagree about one session.
+    from knowledge_ingest.routes.crawl_sync import _classify_probe
+
+    gated_without = not _classify_probe(without_cookies, None)[0]
+    gated_with = not _classify_probe(with_cookies, None)[0]
+    significant = (
+        status_split
+        or (gated_without and not gated_with)
+        or word_diff > word_threshold
+        or byte_diff > byte_threshold
+    ) and not gated_with
 
     match_reasons = [
         f"with_cookies_status={with_cookies.status_code}",
@@ -843,6 +858,10 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
         f"word_diff={word_diff} (threshold={word_threshold})",
         f"byte_diff={byte_diff} (threshold={byte_threshold})",
     ]
+    if gated_with:
+        match_reasons.append("login_gate_still_present_with_cookies")
+    elif gated_without:
+        match_reasons.append("login_gate_removed_by_cookies")
 
     if not significant:
         # Cookies have no measurable effect. The wizard MUST NOT green-light
