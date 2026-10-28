@@ -51,7 +51,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         max_pages: int = 200,
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
-        rate_limit: float = 2.0,
+        rate_limit: float = 1.0,
         content_selector: str | None = None,
         login_indicator_selector: str | None = None,
         connector_id: str | None = None,

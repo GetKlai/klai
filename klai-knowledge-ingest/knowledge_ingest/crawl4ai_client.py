@@ -178,7 +178,7 @@ async def _fetch_sitemap_document(
     try:
         pacing_session = _current_host_pacing_session.get()
         if pacing_session is not None and pacing_session.key == crawl_gate_key(sitemap_url):
-            await pacing_session.acquire(1)
+            await pacing_session.acquire()
         resp = await client.get(sitemap_url, headers=_auth_headers())
         resp.raise_for_status()
     except Exception as exc:
@@ -928,7 +928,7 @@ async def _crawl_sync(
         and payload_urls
         and pacing_session.key == crawl_gate_key(payload_urls[0])
     ):
-        await pacing_session.acquire(len(payload_urls))
+        await pacing_session.acquire()
     async with _crawl4ai_request_semaphore:
         resp = await client.post(
             f"{settings.crawl4ai_api_url}/crawl",
@@ -1037,7 +1037,7 @@ async def crawl_page(
     selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     retry_relaxed_on_thin: bool = False,
-    rate_limit: float | None = 2.0,
+    rate_limit: float | None = 1.0,
 ) -> CrawlResult:
     """Crawl one page while participating in the process-wide host schedule."""
     async with _host_pacing_scope(url, rate_limit):
@@ -1599,7 +1599,7 @@ async def sample_linked_pages(
     selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     max_pages: int = 5,
-    rate_limit: float | None = 2.0,
+    rate_limit: float | None = 1.0,
 ) -> LinkedPageSample:
     """Fetch pages linked from ``seed`` and count how many carry real content.
 
@@ -1658,7 +1658,6 @@ async def crawl_site(
     max_pages: int = 200,
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
-    login_indicator_selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     rate_limit: float | None = None,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
@@ -1698,7 +1697,6 @@ async def crawl_site(
             max_pages=max_pages,
             include_patterns=include_patterns,
             exclude_patterns=exclude_patterns,
-            login_indicator_selector=login_indicator_selector,
             cookies=cookies,
             rate_limit=rate_limit,
             cancel_check=cancel_check,
@@ -1714,7 +1712,6 @@ async def _crawl_site_in_host_scope(
     max_pages: int = 200,
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
-    login_indicator_selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     rate_limit: float | None = None,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
@@ -1753,10 +1750,7 @@ async def _crawl_site_in_host_scope(
     """
     parsed = urlparse(start_url)
     base_domain = parsed.netloc.lower()
-    crawler_config = build_crawl_config(
-        selector,
-        login_indicator_selector=login_indicator_selector,
-    )
+    crawler_config = build_crawl_config(selector)
     restored = await checkpoint.load() if checkpoint is not None else None
     current_rate_limit = restored.get("current_rate_limit", rate_limit) if restored else rate_limit
     if rate_limit_state is not None:
@@ -2270,11 +2264,8 @@ async def _fetch_seed_page(
 ) -> CrawlResult:
     """Fetch ``start_url`` once with the SAME config the bulk path uses.
 
-    Distinct from ``crawl_page`` because crawl_page rebuilds config from
-    ``selector`` only — it has no knob for ``login_indicator_selector``,
-    so reusing it for the seed would silently strip auth-wall detection
-    and let the seed succeed on a login page (extracting login-form
-    anchors as BFS seeds, then auth-failing every URL in the bulk).
+    Distinct from ``crawl_page``, which rebuilds the config from ``selector``
+    only.
     """
     payload: dict[str, Any] = {
         "urls": [start_url],
@@ -3144,7 +3135,7 @@ _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS = 3
 # "start pacing because the site just complained" begins from the same
 # baseline a normal crawl would have used anyway, rather than an
 # arbitrary new number.
-_UNPACED_SLOWDOWN_STARTING_RATE_LIMIT = 2.0
+_UNPACED_SLOWDOWN_STARTING_RATE_LIMIT = 1.0
 
 
 def _lower_rate_limit_for_slowdown(current_rate_limit: float | None) -> float:
@@ -3162,7 +3153,8 @@ def _lower_rate_limit_for_slowdown(current_rate_limit: float | None) -> float:
         if current_rate_limit is not None
         else _UNPACED_SLOWDOWN_STARTING_RATE_LIMIT
     )
-    return max(MIN_DOMAIN_RATE_LIMIT, baseline / 2)
+    # The floor never lifts a rate above the one in effect.
+    return max(min(MIN_DOMAIN_RATE_LIMIT, baseline), baseline / 2)
 
 
 # Reason codes that mean "the target site just told us to back off" —
@@ -3301,10 +3293,10 @@ async def _chunked_bulk_fetch_with_session(
 
     ``pacing_session`` additionally paces the chunks client-side. crawl4ai's
     server ignores our ``mean_delay`` / ``semaphore_count`` config, so
-    ``host_pacing.HostGateRegistry`` owns the real weighted-burst schedule.
-    ``HostPacingSession.acquire`` returns the allowed chunk size after
-    enforcing the gap from the prior request; an unpaced session retains the
-    historical chunk size.
+    ``host_pacing.HostGateRegistry`` owns the real schedule. Every chunk is
+    one URL (a multi-URL request is fetched concurrently by crawl4ai's
+    dispatcher, see ``host_pacing``), and ``HostPacingSession.acquire``
+    enforces the ``1 / rate`` gap from the prior request.
 
     Each chunk request uses the fixed
     ``settings.crawl_bulk_base_timeout_seconds`` httpx timeout — see that
@@ -3390,8 +3382,8 @@ async def _chunked_bulk_fetch_with_session(
                 not_attempted_urls=len(remaining_urls),
             )
             break
-        chunk_size = await pacing_session.acquire(len(urls) - chunk_start)
-        chunk_urls = urls[chunk_start : chunk_start + chunk_size]
+        await pacing_session.acquire()
+        chunk_urls = urls[chunk_start : chunk_start + 1]
         payload: dict[str, Any] = {
             "urls": chunk_urls,
             "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
@@ -3589,7 +3581,7 @@ def _build_candidate_set(
 
     ``include_start_url`` controls whether ``start_url`` is added as the
     first candidate. ``crawl_site`` sets it to ``False`` because the seed
-    is fetched separately (with full config including login_indicator) and
+    is fetched separately (with the full config) and
     re-submitting it in the bulk would be a redundant fetch. Even when
     excluded, ``start_url``'s canonical form is recorded in the dedupe
     ``seen`` set so a sitemap entry that points back to the homepage
@@ -3658,7 +3650,7 @@ def _build_candidate_set(
     return ordered
 
 
-async def crawl_dom_summary(url: str, rate_limit: float | None = 2.0) -> list[dict] | None:
+async def crawl_dom_summary(url: str, rate_limit: float | None = 1.0) -> list[dict] | None:
     """Extract a DOM summary while participating in the shared host schedule."""
     async with _host_pacing_scope(url, rate_limit):
         return await _crawl_dom_summary_in_host_scope(url)

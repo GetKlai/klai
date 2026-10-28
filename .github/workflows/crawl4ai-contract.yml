@@ -1,0 +1,54 @@
+name: crawl4ai contract
+
+# Runs the crawl config knowledge-ingest sends against the crawl4ai image we
+# deploy. Bumping the crawl4ai pin or editing the config is the only way the two
+# drift apart, and on 2026-10-23 a bump to 0.9.5 made crawl4ai refuse our
+# JavaScript wait_for with HTTP 400: six nights of 0-page crawls behind a green
+# CI. The image is built from deploy/crawl4ai because the deployed tag is built
+# on core-01 and never pushed to a registry.
+#
+# crawl4ai-config-contract.sh fails against 0.9.5 until the config is fixed;
+# that is the bug it was written for.
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/crawl4ai/**'
+      - 'deploy/docker-compose.yml'
+      - 'deploy/tests/crawl4ai-config-contract.sh'
+      - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_config.py'
+      - '.github/workflows/crawl4ai-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/crawl4ai/**'
+      - 'deploy/docker-compose.yml'
+      - 'deploy/tests/crawl4ai-config-contract.sh'
+      - 'klai-knowledge-ingest/knowledge_ingest/crawl4ai_config.py'
+      - '.github/workflows/crawl4ai-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  config-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.4"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Build the crawl4ai image from deploy/crawl4ai
+        run: docker build -t crawl4ai-contract:ci deploy/crawl4ai
+
+      - name: The production crawl config is accepted by crawl4ai
+        run: sh deploy/tests/crawl4ai-config-contract.sh crawl4ai-contract:ci

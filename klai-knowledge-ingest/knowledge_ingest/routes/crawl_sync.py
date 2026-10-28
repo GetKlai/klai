@@ -259,7 +259,9 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         max_pages=req.max_pages,
         include_patterns=include_patterns,
         exclude_patterns=exclude_patterns,
-        rate_limit=2.0,
+        # One request per second per host; see host_pacing for the 2026-10-28
+        # 429 incident behind this default.
+        rate_limit=1.0,
         content_selector=req.content_selector,
         login_indicator_selector=req.login_indicator,
         # REQ-05.4: connector_id only — plaintext cookies never enter the
@@ -286,7 +288,7 @@ def _crawl_sync_error(row: Mapping[str, Any]) -> str | None:
     """Return the stable error code exposed to polling callers."""
     if row.get("error"):
         return str(row["error"])
-    if row.get("status") != _FAILED_PARTIAL_STATUS:
+    if row.get("status") not in (_FAILED_PARTIAL_STATUS, "failed"):
         return None
 
     summary = row.get("error_summary")
@@ -297,7 +299,7 @@ def _crawl_sync_error(row: Mapping[str, Any]) -> str | None:
             return _FAILED_PARTIAL_STATUS
     if isinstance(summary, Mapping) and summary.get("reason"):
         return str(summary["reason"])
-    return _FAILED_PARTIAL_STATUS
+    return str(row["status"])
 
 
 @router.get(

@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   DataTable,
@@ -9,8 +10,26 @@ import {
 } from '@/components/ui/data-table'
 import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
 import * as m from '@/paraglide/messages'
-import { useOrgKnowledgeBases } from '../-hooks'
-import type { OrgKnowledgeBase } from '../-types'
+import { useAuth } from '@/lib/auth'
+import { apiFetch } from '@/lib/apiFetch'
+
+interface OrgKnowledgeBase {
+  id: number
+  name: string
+  slug: string
+  owner_type: string
+}
+
+function useOrgKnowledgeBases() {
+  const auth = useAuth()
+
+  return useQuery({
+    queryKey: ['app-knowledge-bases-for-widgets'],
+    queryFn: async () =>
+      apiFetch<{ knowledge_bases: OrgKnowledgeBase[] }>('/api/app/knowledge-bases?owner_type=org'),
+    enabled: auth.isAuthenticated,
+  })
+}
 
 interface Props {
   value: number[]
@@ -19,10 +38,10 @@ interface Props {
 }
 
 /**
- * Widget KB selector - multi-select checkbox list.
- * Widgets only have read access, so there's no access level column.
+ * Org-KB selector - multi-select checkbox list shared by widgets and Slack.
+ * Both only get read access to org KBs, so there's no access level column.
  */
-export function KbAccessEditor({ value, onChange, disabled = false }: Props) {
+export function OrgKbChecklist({ value, onChange, disabled = false }: Props) {
   const { data: kbsData, isLoading } = useOrgKnowledgeBases()
   const kbs: OrgKnowledgeBase[] = (kbsData?.knowledge_bases ?? []).filter(
     (kb) => kb.owner_type === 'org',

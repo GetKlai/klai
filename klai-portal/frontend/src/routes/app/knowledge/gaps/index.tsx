@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeft, FileText } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, FileText, ListChecks } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
@@ -171,6 +171,12 @@ export function GapsPage() {
         <Link to="/app/knowledge/gaps/support-cases">
           <FileText className="h-4 w-4 mr-2" />
           {m.support_cases_action_open()}
+        </Link>
+      </Button>
+      <Button variant="outline" size="sm" asChild>
+        <Link to="/app/knowledge/gaps/clusters">
+          <ListChecks className="h-4 w-4 mr-2" />
+          {m.gaps_clusters_title()}
         </Link>
       </Button>
       <Button variant="outline" size="sm" asChild>

@@ -303,10 +303,16 @@ def compute_domain_rate_limit_update(
         return None
 
     if had_congestion:
+        # The rate in effect is never above the job's default: the adapter caps
+        # a stored override at it (a 2.0 left by the former default would
+        # otherwise halve to 1.0 and slow nothing down), and the floor never
+        # lifts a rate above what was in effect.
         effective_rate_limit = (
-            state.rate_limit if state.rate_limit is not None else default_rate_limit
+            min(state.rate_limit, default_rate_limit)
+            if state.rate_limit is not None
+            else default_rate_limit
         )
-        lowered = max(MIN_DOMAIN_RATE_LIMIT, effective_rate_limit / 2)
+        lowered = max(min(MIN_DOMAIN_RATE_LIMIT, effective_rate_limit), effective_rate_limit / 2)
         return DomainRateLimitState(rate_limit=lowered, clean_streak=0, last_congestion_at=now)
 
     if state.rate_limit is None:

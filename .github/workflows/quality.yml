@@ -25,6 +25,7 @@ jobs:
       retrieval_api: ${{ steps.filter.outputs.retrieval_api }}
       knowledge_mcp: ${{ steps.filter.outputs.knowledge_mcp }}
       mailer: ${{ steps.filter.outputs.mailer }}
+      slack: ${{ steps.filter.outputs.slack }}
       knowledge_ingest: ${{ steps.filter.outputs.knowledge_ingest }}
       scribe_api: ${{ steps.filter.outputs.scribe_api }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -71,6 +72,11 @@ jobs:
               - 'klai-libs/log-utils/**'
               - 'klai-libs/webhook-replay/**'
               - '.github/workflows/klai-mailer.yml'
+              - '.github/workflows/quality.yml'
+            slack:
+              - 'klai-slack/**'
+              - 'klai-libs/log-utils/**'
+              - '.github/workflows/klai-slack.yml'
               - '.github/workflows/quality.yml'
             knowledge_ingest:
               - 'klai-knowledge-ingest/**'
@@ -144,6 +150,12 @@ jobs:
     uses: ./.github/workflows/klai-mailer.yml
     secrets: inherit
 
+  slack:
+    needs: changes
+    if: needs.changes.outputs.slack == 'true'
+    uses: ./.github/workflows/klai-slack.yml
+    secrets: inherit
+
   knowledge-ingest:
     needs: changes
     if: needs.changes.outputs.knowledge_ingest == 'true'
@@ -201,6 +213,7 @@ jobs:
       - retrieval-api
       - knowledge-mcp
       - mailer
+      - slack
       - knowledge-ingest
       - scribe-api
       - docs

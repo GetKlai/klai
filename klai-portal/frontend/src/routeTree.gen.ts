@@ -61,6 +61,7 @@ import { Route as AdminPlatformIndexRouteImport } from './routes/admin/platform/
 import { Route as AdminPlatformNewRouteImport } from './routes/admin/platform/new'
 import { Route as AdminPlatformOnboardingHowtoRouteImport } from './routes/admin/platform/onboarding-howto'
 import { Route as AdminProfilesIndexRouteImport } from './routes/admin/profiles/index'
+import { Route as AdminSlackIndexRouteImport } from './routes/admin/slack/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminWidgetsIndexRouteImport } from './routes/admin/widgets/index'
@@ -113,6 +114,8 @@ import { Route as AppKnowledgeGapsGroupKeyRouteImport } from './routes/app/knowl
 import { Route as AdminPlatformFeedbackItemsItemIdRouteImport } from './routes/admin/platform/feedback.items.$itemId'
 import { Route as AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport } from './routes/admin/platform/feedback.submissions.$submissionId'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
+import { Route as AppKnowledgeGapsClustersIndexRouteImport } from './routes/app/knowledge/gaps/clusters.index'
+import { Route as AppKnowledgeGapsClustersClusterKeyRouteImport } from './routes/app/knowledge/gaps/clusters.$clusterKey'
 import { Route as AppKnowledgeGapsSupportCasesIndexRouteImport } from './routes/app/knowledge/gaps/support-cases.index'
 import { Route as AppKnowledgeGapsSupportCasesCaseIdRouteImport } from './routes/app/knowledge/gaps/support-cases.$caseId'
 
@@ -376,6 +379,11 @@ const AdminPlatformOnboardingHowtoRoute =
 const AdminProfilesIndexRoute = AdminProfilesIndexRouteImport.update({
   id: '/profiles/',
   path: '/profiles/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminSlackIndexRoute = AdminSlackIndexRouteImport.update({
+  id: '/slack/',
+  path: '/slack/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
@@ -661,6 +669,18 @@ const AppKnowledgeKbSlugEditConnectorConnectorIdRoute =
     path: '/knowledge/$kbSlug/edit-connector/$connectorId',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppKnowledgeGapsClustersIndexRoute =
+  AppKnowledgeGapsClustersIndexRouteImport.update({
+    id: '/knowledge/gaps/clusters/',
+    path: '/knowledge/gaps/clusters/',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
+const AppKnowledgeGapsClustersClusterKeyRoute =
+  AppKnowledgeGapsClustersClusterKeyRouteImport.update({
+    id: '/knowledge/gaps/clusters/$clusterKey',
+    path: '/knowledge/gaps/clusters/$clusterKey',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppKnowledgeGapsSupportCasesIndexRoute =
   AppKnowledgeGapsSupportCasesIndexRouteImport.update({
     id: '/knowledge/gaps/support-cases/',
@@ -740,6 +760,7 @@ export interface FileRoutesByFullPath {
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/platform/': typeof AdminPlatformIndexRoute
   '/admin/profiles/': typeof AdminProfilesIndexRoute
+  '/admin/slack/': typeof AdminSlackIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
@@ -779,7 +800,9 @@ export interface FileRoutesByFullPath {
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  '/app/knowledge/gaps/clusters/$clusterKey': typeof AppKnowledgeGapsClustersClusterKeyRoute
   '/app/knowledge/gaps/support-cases/$caseId': typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  '/app/knowledge/gaps/clusters/': typeof AppKnowledgeGapsClustersIndexRoute
   '/app/knowledge/gaps/support-cases/': typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 export interface FileRoutesByTo {
@@ -843,6 +866,7 @@ export interface FileRoutesByTo {
   '/admin/mcps': typeof AdminMcpsIndexRoute
   '/admin/platform': typeof AdminPlatformIndexRoute
   '/admin/profiles': typeof AdminProfilesIndexRoute
+  '/admin/slack': typeof AdminSlackIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/admin/widgets': typeof AdminWidgetsIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
@@ -882,7 +906,9 @@ export interface FileRoutesByTo {
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  '/app/knowledge/gaps/clusters/$clusterKey': typeof AppKnowledgeGapsClustersClusterKeyRoute
   '/app/knowledge/gaps/support-cases/$caseId': typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  '/app/knowledge/gaps/clusters': typeof AppKnowledgeGapsClustersIndexRoute
   '/app/knowledge/gaps/support-cases': typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 export interface FileRoutesById {
@@ -952,6 +978,7 @@ export interface FileRoutesById {
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/platform/': typeof AdminPlatformIndexRoute
   '/admin/profiles/': typeof AdminProfilesIndexRoute
+  '/admin/slack/': typeof AdminSlackIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
@@ -991,7 +1018,9 @@ export interface FileRoutesById {
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug_/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  '/app/knowledge/gaps/clusters/$clusterKey': typeof AppKnowledgeGapsClustersClusterKeyRoute
   '/app/knowledge/gaps/support-cases/$caseId': typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  '/app/knowledge/gaps/clusters/': typeof AppKnowledgeGapsClustersIndexRoute
   '/app/knowledge/gaps/support-cases/': typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 export interface FileRouteTypes {
@@ -1062,6 +1091,7 @@ export interface FileRouteTypes {
     | '/admin/mcps/'
     | '/admin/platform/'
     | '/admin/profiles/'
+    | '/admin/slack/'
     | '/admin/users/'
     | '/admin/widgets/'
     | '/app/docs/'
@@ -1101,7 +1131,9 @@ export interface FileRouteTypes {
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
+    | '/app/knowledge/gaps/clusters/$clusterKey'
     | '/app/knowledge/gaps/support-cases/$caseId'
+    | '/app/knowledge/gaps/clusters/'
     | '/app/knowledge/gaps/support-cases/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -1165,6 +1197,7 @@ export interface FileRouteTypes {
     | '/admin/mcps'
     | '/admin/platform'
     | '/admin/profiles'
+    | '/admin/slack'
     | '/admin/users'
     | '/admin/widgets'
     | '/app/docs'
@@ -1204,7 +1237,9 @@ export interface FileRouteTypes {
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
+    | '/app/knowledge/gaps/clusters/$clusterKey'
     | '/app/knowledge/gaps/support-cases/$caseId'
+    | '/app/knowledge/gaps/clusters'
     | '/app/knowledge/gaps/support-cases'
   id:
     | '__root__'
@@ -1273,6 +1308,7 @@ export interface FileRouteTypes {
     | '/admin/mcps/'
     | '/admin/platform/'
     | '/admin/profiles/'
+    | '/admin/slack/'
     | '/admin/users/'
     | '/admin/widgets/'
     | '/app/docs/'
@@ -1312,7 +1348,9 @@ export interface FileRouteTypes {
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
+    | '/app/knowledge/gaps/clusters/$clusterKey'
     | '/app/knowledge/gaps/support-cases/$caseId'
+    | '/app/knowledge/gaps/clusters/'
     | '/app/knowledge/gaps/support-cases/'
   fileRoutesById: FileRoutesById
 }
@@ -1706,6 +1744,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProfilesIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/slack/': {
+      id: '/admin/slack/'
+      path: '/slack'
+      fullPath: '/admin/slack/'
+      preLoaderRoute: typeof AdminSlackIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/users/': {
       id: '/admin/users/'
       path: '/users'
@@ -2070,6 +2115,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/knowledge/gaps/clusters/': {
+      id: '/app/knowledge/gaps/clusters/'
+      path: '/knowledge/gaps/clusters'
+      fullPath: '/app/knowledge/gaps/clusters/'
+      preLoaderRoute: typeof AppKnowledgeGapsClustersIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/gaps/clusters/$clusterKey': {
+      id: '/app/knowledge/gaps/clusters/$clusterKey'
+      path: '/knowledge/gaps/clusters/$clusterKey'
+      fullPath: '/app/knowledge/gaps/clusters/$clusterKey'
+      preLoaderRoute: typeof AppKnowledgeGapsClustersClusterKeyRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/knowledge/gaps/support-cases/': {
       id: '/app/knowledge/gaps/support-cases/'
       path: '/knowledge/gaps/support-cases'
@@ -2139,6 +2198,7 @@ interface AdminRouteRouteChildren {
   AdminMcpsIndexRoute: typeof AdminMcpsIndexRoute
   AdminPlatformIndexRoute: typeof AdminPlatformIndexRoute
   AdminProfilesIndexRoute: typeof AdminProfilesIndexRoute
+  AdminSlackIndexRoute: typeof AdminSlackIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminWidgetsIndexRoute: typeof AdminWidgetsIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
@@ -2178,6 +2238,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminMcpsIndexRoute: AdminMcpsIndexRoute,
   AdminPlatformIndexRoute: AdminPlatformIndexRoute,
   AdminProfilesIndexRoute: AdminProfilesIndexRoute,
+  AdminSlackIndexRoute: AdminSlackIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminWidgetsIndexRoute: AdminWidgetsIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,
@@ -2285,7 +2346,9 @@ interface AppRouteRouteChildren {
   AppKnowledgeActivityIndexRoute: typeof AppKnowledgeActivityIndexRoute
   AppKnowledgeGapsIndexRoute: typeof AppKnowledgeGapsIndexRoute
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  AppKnowledgeGapsClustersClusterKeyRoute: typeof AppKnowledgeGapsClustersClusterKeyRoute
   AppKnowledgeGapsSupportCasesCaseIdRoute: typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  AppKnowledgeGapsClustersIndexRoute: typeof AppKnowledgeGapsClustersIndexRoute
   AppKnowledgeGapsSupportCasesIndexRoute: typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 
@@ -2321,8 +2384,11 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppKnowledgeGapsIndexRoute: AppKnowledgeGapsIndexRoute,
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute:
     AppKnowledgeKbSlugEditConnectorConnectorIdRoute,
+  AppKnowledgeGapsClustersClusterKeyRoute:
+    AppKnowledgeGapsClustersClusterKeyRoute,
   AppKnowledgeGapsSupportCasesCaseIdRoute:
     AppKnowledgeGapsSupportCasesCaseIdRoute,
+  AppKnowledgeGapsClustersIndexRoute: AppKnowledgeGapsClustersIndexRoute,
   AppKnowledgeGapsSupportCasesIndexRoute:
     AppKnowledgeGapsSupportCasesIndexRoute,
 }
