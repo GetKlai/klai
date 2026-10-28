@@ -33,7 +33,7 @@ def test_every_widget_build_input_selects_portal_quality_and_deploy() -> None:
     filters_source = next(
         step["with"]["filters"]
         for step in quality["jobs"]["changes"]["steps"]
-        if step.get("uses") == "dorny/paths-filter@v4"
+        if str(step.get("uses", "")).startswith("dorny/paths-filter@")
     )
     filters = yaml.safe_load(filters_source)
     assert "klai-widget/**" in filters["portal_frontend"]
