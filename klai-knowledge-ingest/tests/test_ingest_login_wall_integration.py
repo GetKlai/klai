@@ -461,8 +461,8 @@ class TestInvalidModeFailsSafe:
 class TestAuthenticatedPathPreserved:
     """AC-04.4 (Phase C): existing AuthWallDetected behaviour is unchanged.
 
-    When ``login_indicator_selector`` is set AND result.success=False, we
-    still raise the original ``AuthWallDetected`` (NOT
+    When ``login_indicator_selector`` matches an element of the fetched HTML,
+    we still raise the original ``AuthWallDetected`` (NOT
     ``AnonymousAuthWallDetected``). This preserves the BFS-halting behaviour
     that SPEC-CRAWLER-004 relies on.
     """
@@ -473,12 +473,11 @@ class TestAuthenticatedPathPreserved:
 
         failed_result = CrawlResult(
             url="https://wiki.example/private",
-            fit_markdown="",
-            raw_markdown="",
-            html="",
-            word_count=0,
-            success=False,
-            error_message="wait_for timeout",
+            fit_markdown="Log in to continue",
+            raw_markdown="Log in to continue",
+            html='<html><body><form id="login-form"></form></body></html>',
+            word_count=4,
+            success=True,
         )
         pool, pg, ingest, lg = _patch_chain()
         with (

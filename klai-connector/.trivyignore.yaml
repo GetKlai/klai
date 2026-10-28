@@ -23,3 +23,15 @@ vulnerabilities:
       ncurses-using TUI. Re-evaluate when Debian's security tracker
       records a fixed_version for trixie.
     expired_at: 2027-03-25
+  - id: CVE-2026-112940
+    statement: |
+      filelock 3.32.7, ReadWriteLock: SQLite reopens the lock database by
+      name, so a planted symlink or journal file can redirect a write. Fixed
+      only in filelock 4.2.1, and unstructured (latest 0.27.35) requires
+      filelock<4, so lock file maintenance cannot move it. Not reachable:
+      the only filelock call in the image is unstructured's plain FileLock
+      in unstructured/nlp/tokenize.py, klai-connector imports none, and
+      ReadWriteLock is never constructed. pip-audit ignores the same ID in
+      .github/workflows/klai-connector.yml. Remove both when unstructured
+      allows filelock 4.
+    expired_at: 2027-01-28

@@ -1217,52 +1217,6 @@ async def test_crawl_site_does_not_double_fetch_start_url(
     assert urls_submitted == ["https://example.com/page-a"]
 
 
-# ---------------------------------------------------------------------------
-# Followup PR — login_indicator_selector is propagated to the seed config.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_seed_config_carries_login_indicator(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Seed fetch MUST use the same crawler_config (incl. login_indicator) as bulk.
-
-    Regression guard: an earlier implementation used ``crawl_page(start_url)``
-    for the seed, and ``crawl_page`` builds its own config without the
-    login_indicator kwarg. That meant for auth-walled sites the seed
-    "succeeded" on the login page, the BFS link list became
-    login-form anchors, and the bulk ran into AUTH_ERROR on every URL.
-    """
-    captured_seed_config: dict[str, Any] = {}
-
-    async def _fake_seed(
-        *,
-        crawler_config: dict[str, Any],
-        **_kwargs: Any,
-    ) -> CrawlResult:
-        captured_seed_config.update(crawler_config)
-        return _seed("https://wiki.example")
-
-    monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed)
-    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", lambda _base: _async_return([]))
-
-    async def _fake_post(self: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
-        request = httpx.Request("POST", url)
-        return httpx.Response(200, json={"results": []}, request=request)
-
-    with patch("httpx.AsyncClient.post", new=_fake_post):
-        await crawl4ai_client.crawl_site(
-            start_url="https://wiki.example",
-            login_indicator_selector="#loginForm",
-        )
-
-    # The seed config MUST reflect the login_indicator: build_crawl_config
-    # negates the wait_for expression with the indicator selector when set.
-    wait_for = captured_seed_config.get("wait_for", "")
-    assert "#loginForm" in wait_for, (
-        f"seed config did not propagate login_indicator_selector — wait_for was {wait_for!r}"
-    )
-
-
 def _async_return(value: Any):
     """Wrap a value in an awaitable so it can be used as an async stub return."""
 

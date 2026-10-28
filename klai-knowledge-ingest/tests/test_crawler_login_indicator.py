@@ -6,8 +6,8 @@ Covers REQ-02.3 and AC-02.3:
   one ``crawl_jobs`` row with ``status='failed'`` and
   ``error='auth_wall_detected: {selector}'``.
 - No follow-up pages are ingested after the first auth-walled page.
-- The wait_for JS built by ``build_crawl_config`` negates the selector
-  so crawl4ai fails closed when the indicator is present.
+- The indicator is matched against the fetched HTML (crawl4ai 0.9.5 refuses
+  the JS wait_for that used to carry it).
 """
 
 from __future__ import annotations
@@ -23,57 +23,35 @@ from knowledge_ingest.adapters.crawler import (
     _ingest_crawl_result,
     run_crawl_job,
 )
-from knowledge_ingest.crawl4ai_client import CrawlResult, build_crawl_config
+from knowledge_ingest.crawl4ai_client import CrawlResult
+from knowledge_ingest.crawl_result_processing import html_has_element
 from knowledge_ingest.utils.auth_wall_detector import AuthWallSignal
 from tests.conftest import connection_factory_for
 
 
-class TestBuildCrawlConfigWithLoginIndicator:
-    """The config builder injects the selector into the wait_for expression."""
-
-    def test_no_login_indicator_uses_base_wait(self) -> None:
-        cfg = build_crawl_config(selector=None)
-        # No negation clause: the wait_for prep block uses querySelectorAll,
-        # but the login-indicator pattern (!document.querySelector) is absent.
-        assert "!document.querySelector(" not in cfg["wait_for"]
-
-    def test_login_indicator_negates_wait_for(self) -> None:
-        cfg = build_crawl_config(selector=None, login_indicator_selector="#login-form")
-        wait = cfg["wait_for"]
-        assert "!document.querySelector('#login-form')" in wait
-        # Base word-count condition must still be ANDed in.
-        assert "innerText.trim().split" in wait
-
-    def test_single_quote_in_selector_is_escaped(self) -> None:
-        """A selector with a single quote must not break out of the JS string."""
-        cfg = build_crawl_config(
-            selector=None,
-            login_indicator_selector="a[title='Log in']",
-        )
-        # We escape single quotes so the injected JS remains well-formed.
-        assert r"a[title=\'Log in\']" in cfg["wait_for"]
+class _StopAfterCheck(Exception):
+    pass
 
 
 class TestIngestCrawlResultAuthWall:
     """_ingest_crawl_result raises AuthWallDetected when appropriate."""
 
     @pytest.mark.asyncio()
-    async def test_failed_result_with_selector_raises_auth_wall(self) -> None:
-        failed = CrawlResult(
+    async def test_login_indicator_in_fetched_html_raises_auth_wall(self) -> None:
+        walled = CrawlResult(
             url="https://wiki.example/page",
-            fit_markdown="",
-            raw_markdown="",
-            html="",
-            word_count=0,
-            success=False,
-            error_message="wait_for timeout",
+            fit_markdown="Log in to continue",
+            raw_markdown="Log in to continue",
+            html='<html><body><form id="login-form" class="a b"></form></body></html>',
+            word_count=4,
+            success=True,
         )
         mock_conn = MagicMock()
         with pytest.raises(AuthWallDetected) as excinfo:
             await _ingest_crawl_result(
                 mock_conn,
-                failed,
-                url=failed.url,
+                walled,
+                url=walled.url,
                 org_id="org",
                 kb_slug="support",
                 login_indicator_selector="#login-form",
@@ -82,7 +60,46 @@ class TestIngestCrawlResultAuthWall:
         assert excinfo.value.selector == "#login-form"
 
     @pytest.mark.asyncio()
-    async def test_failed_result_without_selector_raises_generic(self) -> None:
+    async def test_an_indicator_in_the_stripped_header_is_not_a_login_wall(self) -> None:
+        """The indicator is matched on crawl4ai's cleaned HTML (after excluded_tags
+        and excluded_selector), as the page-side check ran after the same chrome
+        removal; a user menu that only lives in the header never ends a crawl."""
+        logged_in = CrawlResult(
+            url="https://wiki.example/page",
+            fit_markdown="Article body with enough words to be a page.",
+            raw_markdown="Article body with enough words to be a page.",
+            html=(
+                '<html><body><header><div class="user-menu">me</div></header>'
+                "<main>Article</main></body></html>"
+            ),
+            cleaned_html="<html><body><main>Article</main></body></html>",
+            word_count=9,
+            success=True,
+        )
+        seen: list[str] = []
+
+        def matcher(html: str, selector: str) -> bool:
+            seen.append(html)
+            raise _StopAfterCheck
+
+        with (
+            patch("knowledge_ingest.adapters.crawler.html_has_element", side_effect=matcher),
+            pytest.raises(_StopAfterCheck),
+        ):
+            await _ingest_crawl_result(
+                MagicMock(),
+                logged_in,
+                url=logged_in.url,
+                org_id="org",
+                kb_slug="support",
+                login_indicator_selector=".user-menu",
+            )
+        assert seen == [logged_in.cleaned_html]
+        assert html_has_element(logged_in.html, ".user-menu") is True
+        assert html_has_element(logged_in.cleaned_html, ".user-menu") is False
+
+    @pytest.mark.asyncio()
+    async def test_failed_result_raises_generic_even_with_selector(self) -> None:
         failed = CrawlResult(
             url="https://example/page",
             fit_markdown="",
@@ -100,7 +117,7 @@ class TestIngestCrawlResultAuthWall:
                 url=failed.url,
                 org_id="org",
                 kb_slug="support",
-                login_indicator_selector=None,
+                login_indicator_selector="#login-form",
             )
 
 
@@ -121,11 +138,11 @@ class TestRunCrawlJobAuthWall:
         )
         walled = CrawlResult(
             url="https://wiki.example/b",
-            fit_markdown="",
-            raw_markdown="",
-            html="",
-            word_count=0,
-            success=False,
+            fit_markdown="Log in",
+            raw_markdown="Log in",
+            html='<html><body><form id="login-form"></form></body></html>',
+            word_count=2,
+            success=True,
         )
         never_reached = CrawlResult(
             url="https://wiki.example/c",
@@ -176,7 +193,7 @@ class TestRunCrawlJobAuthWall:
             ),
             patch(
                 "knowledge_ingest.adapters.crawler._ingest_crawl_result",
-                new=AsyncMock(return_value=None),
+                new=AsyncMock(side_effect=[None, AuthWallDetected("#login-form")]),
             ) as ingest_mock,
         ):
             await run_crawl_job(
@@ -188,21 +205,10 @@ class TestRunCrawlJobAuthWall:
                 login_indicator_selector="#login-form",
             )
 
-        # The happy page must have been ingested exactly once.
-        assert ingest_mock.call_count == 1
+        # The walled page raises, so the third page is never attempted.
+        assert ingest_mock.call_count == 2
         # SPEC-TI-003-FOLLOWUP-001: _ingest_crawl_result(conn, result, url, org, kb, ...)
-        ingest_mock.assert_awaited_with(
-            mock_conn,
-            happy,
-            happy.url,
-            "org",
-            "support",
-            stored=None,
-            login_indicator_selector="#login-form",
-            authenticated_context=True,
-            connector_id=None,
-            resource_key=None,
-        )
+        assert [c.args[1] for c in ingest_mock.await_args_list] == [happy, walled]
 
         # Verify at least one UPDATE marked the job as failed with auth_wall_detected.
         update_calls = mock_conn.execute.await_args_list
