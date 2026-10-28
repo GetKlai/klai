@@ -871,6 +871,55 @@ services:
       - klai-net
       - net-redis
 
+  # ─── rollback-canary (weekly proof that the auto-rollback path works) ───
+  # SPEC-INFRA-AUTO-ROLLBACK-001 slice S7. rollback-rehearsal.yml deploys a good
+  # image, then a deliberately broken one, through deploy-with-rollback.sh and
+  # asserts the good one is serving again. No customer traffic, no data, no
+  # published port, no secrets.
+  #
+  # The image is a host-local tag: the rehearsal tags whatever it deploys as
+  # klai/rollback-canary:1.0-local-261028-0000 on core-01, and nothing pushes or
+  # pulls it. The tag only has to look like the on-host build convention
+  # (<version>-local-YYMMDD-HHMM) because check-image-tags.sh rejects a bare
+  # `:local` for a third-party namespace and scan-pinned-images.yml skips exactly
+  # this form; the version and date in it never change. The command is set here,
+  # not by the image, so a good image must carry busybox httpd and a bad one
+  # (debian, no httpd) exits at once and crash-loops, which is the failure gate 1
+  # of the script exists to catch.
+  #
+  # profiles keeps it out of every bulk `compose up` and `compose config
+  # --services` (the env-drift sweep in deploy-compose.yml): on a host where the
+  # rehearsal has never run there is no local image, and an unpullable image in
+  # the sweep would fail every compose deploy. The rehearsal sets
+  # COMPOSE_PROFILES itself; a container left running while the profile is
+  # inactive is not an orphan to `--remove-orphans`.
+  rollback-canary:
+    profiles: ["rollback-rehearsal"]
+    logging: *log-rotation
+    image: klai/rollback-canary:1.0-local-261028-0000
+    restart: unless-stopped
+    command: ["sh", "-c", "echo ok > /tmp/index.html && exec httpd -f -p 8080 -h /tmp"]
+    user: "65534:65534"
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - klai-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32M
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   # ─── klai-slack (Klai in Slack, SPEC-SLACK-001) ──────────────────────────
   # Bolt for Python behind Caddy `/slack/*` on the api. host. Talks to Slack
   # over HTTPS and to portal-api over klai-net (Partner API + /internal/slack/*).

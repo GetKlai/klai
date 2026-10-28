@@ -129,6 +129,11 @@ jobs:
       - name: deploy-with-rollback suite
         run: bash deploy/scripts/tests/deploy-with-rollback.test.sh
 
+      # The weekly rehearsal's verdict logic: a bad image that deploys as
+      # healthy must end red, not green.
+      - name: rollback-rehearsal assertion suite
+        run: bash deploy/scripts/tests/rollback-rehearsal-assert.test.sh
+
       - name: LibreChat regenerate suite
         run: bash deploy/scripts/tests/tenant-config-regenerate.test.sh
 
