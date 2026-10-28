@@ -681,7 +681,7 @@ class TestSignInChain:
             patch(
                 "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
                 new_callable=AsyncMock,
-                return_value=_creds(cookies, auth_chain_hosts=["idp.example.com"]),
+                return_value=_creds(cookies),
             ),
             patch("knowledge_ingest.routes.crawl_sync.validate_url_pinned", side_effect=_validated),
             patch(
@@ -692,7 +692,10 @@ class TestSignInChain:
         ):
             resp = client.post(
                 "/ingest/v1/crawl/keep-alive",
-                json=_post(url="https://wiki.example.com/docs/page"),
+                json={
+                    **_post(url="https://wiki.example.com/docs/page"),
+                    "auth_chain_hosts": ["idp.example.com"],
+                },
             )
         assert resp.status_code == 200
         return resp.json(), store, mock_logger

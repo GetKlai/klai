@@ -223,7 +223,6 @@ async def test_the_jar_write_is_bound_to_the_blob_the_probe_read() -> None:
         kek_hex,
         [{"name": "sid", "value": "pasted", "domain": "wiki.example.com", "path": "/"}],
         auth_headers={"X-Example": "unchanged"},
-        auth_chain_hosts=["idp.example.com"],
     )
     jar = CookieJar(stored.payload["cookies"], "wiki.example.com")
     jar.merge_set_cookies("https://wiki.example.com/a", ["sid=issued; Path=/"])
@@ -243,7 +242,6 @@ async def test_the_jar_write_is_bound_to_the_blob_the_probe_read() -> None:
     payload = _written_payload(pool, kek_hex, stored.dek_enc)
     assert payload["cookies"][0]["value"] == "issued"
     assert payload["auth_headers"] == {"X-Example": "unchanged"}
-    assert payload["auth_chain_hosts"] == ["idp.example.com"]
 
 
 def test_the_jar_keeps_each_cookie_with_its_own_host() -> None:

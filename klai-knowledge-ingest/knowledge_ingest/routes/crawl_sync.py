@@ -469,6 +469,10 @@ class CrawlKeepAliveRequest(BaseModel):
     connector_id: uuid.UUID
     org_id: str
     url: str
+    # The other hosts the site signs in through, from the connector config
+    # (WebcrawlerConfig.auth_chain_hosts). Empty means the keep-alive never
+    # follows a redirect off the site's own host.
+    auth_chain_hosts: list[str] = Field(default_factory=list)
 
 
 class CrawlKeepAliveResponse(BaseModel):
@@ -813,9 +817,7 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
 
     jar = CookieJar(stored.payload["cookies"], validated.hostname)
     own_host = {(jar.base_host, urlparse(req.url).port or 443)}
-    chain_hosts = own_host | {
-        (str(host).lower(), 443) for host in stored.payload.get("auth_chain_hosts") or []
-    }
+    chain_hosts = own_host | {(host.lower(), 443) for host in req.auth_chain_hosts}
     chain_walked = False
     result: _ProbeResponse | None = None
     final = req.url
