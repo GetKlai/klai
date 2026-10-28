@@ -124,6 +124,11 @@ jobs:
       - name: env-drift recreate suite
         run: bash deploy/scripts/tests/compose-env-drift-recreate.test.sh
 
+      # The rollback path only runs when a deploy has already failed, so it is
+      # the one branch production never exercises by accident.
+      - name: deploy-with-rollback suite
+        run: bash deploy/scripts/tests/deploy-with-rollback.test.sh
+
       - name: LibreChat regenerate suite
         run: bash deploy/scripts/tests/tenant-config-regenerate.test.sh
 
