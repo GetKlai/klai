@@ -53,6 +53,7 @@ fx="$FIXTURES"
 printf '%s\n' "$*" >> "$fx/compose_up_argv"
 n=$(wc -l < "$fx/compose_up_argv")
 rc=$(sed -n "${n}p" "$fx/compose_up_rcs"); [[ -n "$rc" ]] || rc=$(tail -n1 "$fx/compose_up_rcs")
+[[ ! -e "$fx/compose_sleep" ]] || sleep 2
 echo "compose-up stub call $n rc=$rc"
 exit "$rc"
 STUB
@@ -61,6 +62,7 @@ STUB
 cat > "$work/error-watch.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FIXTURES/watch_argv"
+date -u +%s > "$FIXTURES/watch_ran_at"
 echo "error-watch stub: exit $(cat "$FIXTURES/watch_rc")"
 exit "$(cat "$FIXTURES/watch_rc")"
 STUB
@@ -182,10 +184,38 @@ check "helper not called" test ! -s "$fx/watch_argv"
 
 echo "# gate 4: error-watch clean -> deployed"
 new_case watchok "0" "200"
+touch "$fx/compose_sleep"
 run_script --probe http://retrieval-api:8040/health --error-watch 300
 check "exit 0" test "$rc" = 0
 check "helper called once with service, deploy time and window" grep -Eqx 'retrieval-api [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z --window 300' "$fx/watch_argv"
+check "the watch starts when the recreate starts, not after the gates" test "$(( $(cat "$fx/watch_ran_at") - $(date -u -d "$(awk '{print $2}' "$fx/watch_argv")" +%s 2>/dev/null || date -u -j -f %Y-%m-%dT%H:%M:%SZ "$(awk '{print $2}' "$fx/watch_argv")" +%s) ))" -ge 2
 check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
+
+echo "# gate 4: the helper is missing -> nothing is deployed"
+new_case watchmissing "0" "200"
+rc_out=$(cd "$work" && KLAI_ERROR_WATCH="$work/nope.sh" KLAI_COMPOSE_DIR="$fx/opt" KLAI_DEPLOY_LOCK_DIR="$fx" KLAI_DOCKER_BIN="$work/docker" KLAI_COMPOSE_UP="$work/compose-up.sh" \
+      bash "$target" retrieval-api ghcr.io/getklai/retrieval-api:abc123 --error-watch 300 2>&1); rc=$?
+check "exit 1" test "$rc" = 1
+check "says which file is missing" grep -q 'nope.sh to be executable; nothing deployed' <<< "$rc_out"
+check "docker and compose-up never ran" test ! -s "$fx/docker_argv" -a ! -s "$fx/compose_up_argv"
+
+echo "# gate 4: the helper breaks with another code (exit 2) -> deploy kept, loud error"
+new_case watchbroken "0" "200"
+echo 2 > "$fx/watch_rc"
+run_script --probe http://retrieval-api:8040/health --error-watch 300
+check "exit 0" test "$rc" = 0
+check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
+check "::error:: names the exit code" grep -q '::error::retrieval-api error watch broke (exit 2)' <<< "$out"
+check "no rollback" test "$(count_lines "$fx/compose_up_argv")" = 1
+
+echo "# gate 4: the lock wait grows with the watch"
+new_case watchlock "0" "200"
+( exec 9>"$fx/klai-deploy-retrieval-api.lock"; flock -w 5 9; sleep 3 ) &
+holder=$!
+sleep 0.3
+LOCK_WAIT=1 run_script --error-watch 5
+wait "$holder"
+check "a queued deploy waits for the lock plus the watch time" test "$rc" = 0
 
 echo "# gate 4: error-watch breach (exit 3) -> one rollback, gate error-rate"
 new_case watchbreach "0 0" "200"

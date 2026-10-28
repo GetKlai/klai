@@ -13,9 +13,9 @@
 #                  every service in scope. caddy has no error level for its own
 #                  failures, so it counts `status:5*` access-log lines instead.
 #   <deployed-at>  epoch seconds or UTC `YYYY-MM-DDTHH:MM:SSZ`.
-#   --window       seconds after <deployed-at> to keep watching (default 900, the
-#                  15 minutes the threshold was measured over). 0 = one check of
-#                  everything logged so far.
+#   --window       seconds after <deployed-at> to keep watching (default 300;
+#                  the caller holds the per-service deploy lock for this long).
+#                  0 = one check of everything logged so far.
 #   --threshold    error lines that count as a breach (default 10).
 #
 # A breach is BOTH of
@@ -32,8 +32,9 @@
 #   0  the window closed without a breach
 #   3  breach; the count and the threshold are printed
 #   1  the query failed (no credentials, VictoriaLogs unreachable, a reply that
-#      is not a count) or bad arguments. Fail open: the caller keeps the deploy,
-#      because an observability outage is not evidence against the new image.
+#      is not well-formed JSON with a count) or bad arguments. Fail open: the
+#      caller keeps the deploy, because an observability outage is not evidence
+#      against the new image.
 #
 # VictoriaLogs is only on Docker's `monitoring` network, so the query runs in a
 # throwaway curl container there. The basic-auth pair is read from
@@ -48,9 +49,10 @@ ENV_FILE="${KLAI_ENV_FILE:-$KLAI_DIR/.env}"
 VL_URL="${KLAI_VICTORIALOGS_URL:-http://victorialogs:9428}"
 VL_NETWORK="${KLAI_VICTORIALOGS_NETWORK:-monitoring}"
 CURL_IMAGE="${KLAI_CURL_IMAGE:-curlimages/curl:8.11.1}"
+PYTHON="${KLAI_PYTHON:-python3}"
 POLL_INTERVAL="${KLAI_ERROR_WATCH_INTERVAL:-30}"
 # Consecutive failed polls tolerated before giving up; one dropped query in a
-# 15-minute watch is not an outage.
+# watch is not an outage.
 MAX_QUERY_FAILURES=3
 
 usage() {
@@ -62,7 +64,7 @@ usage() {
 SERVICE="$1"
 DEPLOYED_AT="$2"
 shift 2
-WINDOW=900
+WINDOW=300
 THRESHOLD=10
 while (( $# > 0 )); do
     case "$1" in
@@ -113,12 +115,20 @@ count_between() {
         "$DOCKER" run --rm -i --network "$VL_NETWORK" "$CURL_IMAGE" \
             -sS -f -K - --max-time 20 --data-urlencode "query=$query" \
             "$VL_URL/select/logsql/stats_query" 2>&1)" || { echo "error-watch: query failed: ${reply:0:200}" >&2; return 1; }
-    # Compact JSON from VictoriaLogs; the patterns also accept spaces.
-    grep -Eq '"status" *: *"success"' <<< "$reply" || { echo "error-watch: unexpected reply: ${reply:0:200}" >&2; return 1; }
-    # An empty result list means no matching line.
-    if grep -Eq '"result" *: *\[\]' <<< "$reply"; then echo 0; return 0; fi
-    reply="$(sed -n 's/.*"value" *: *\[[0-9.]*, *"\([0-9][0-9]*\)".*/\1/p' <<< "$reply")"
-    [[ -n "$reply" ]] || { echo "error-watch: reply carries no count" >&2; return 1; }
+    # Anything but a well-formed success reply is a query error, so a truncated
+    # or mangled body can never read as a clean window. stats_query without a
+    # by() clause answers with no series (no match) or exactly one.
+    reply="$("$PYTHON" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    assert d["status"] == "success" and isinstance(d["data"]["result"], list)
+    r = d["data"]["result"]
+    assert len(r) <= 1
+    print(int(r[0]["value"][1]) if r else 0)
+except Exception:
+    sys.exit(1)
+' <<< "$reply")" || { echo "error-watch: reply is not a well-formed count: ${reply:0:200}" >&2; return 1; }
     echo "$reply"
 }
 

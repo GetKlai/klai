@@ -49,15 +49,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != expected:
             return self.reply(401, "unauthorized")
         deployed = open(os.path.join(state, "deployed_iso")).read().strip()
-        window_end = re.search(r"_time:\[[^,]+, ([^)]+)\)", query).group(1)
-        # The "before" query ends exactly at the deploy; the "after" query ends later.
-        value = pop("before" if window_end == deployed else "after")
+        flt = open(os.path.join(state, "expected_filter")).read().strip()
+        m = re.fullmatch(re.escape(flt) + r" AND _time:\[([^,]+), ([^)]+)\) \| stats count\(\) as n", query)
+        if not m:
+            return self.bad("filter/shape: " + query)
+        start, end = m.groups()
+        if end == deployed:
+            # "before" query: same length as the span since the deploy, ending at the deploy.
+            kind = "before"
+            if start >= deployed:
+                return self.bad("before-window starts at or after the deploy: " + query)
+        else:
+            # "after" query: starts exactly at the deploy time, ends after it.
+            kind = "after"
+            if start != deployed or end <= deployed:
+                return self.bad("after-window must start at the deploy time: " + query)
+        value = pop(kind)
         if value == "ERR":
             return self.reply(500, "boom")
+        if value == "TRUNC":
+            return self.reply(200, '{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,"42"')
+        if value == "NOSTATUS":
+            return self.reply(200, json.dumps({"data": {"result": []}}))
+        if value == "TWOSERIES":
+            return self.reply(200, json.dumps({"status": "success", "data": {"result": [{"value": [1, "1"]}, {"value": [1, "2"]}]}}))
         if value == "JUNK":
             return self.reply(200, "<html>not json</html>")
         result = [] if value == "0" else [{"metric": {"__name__": "n"}, "value": [1, value]}]
         self.reply(200, json.dumps({"status": "success", "data": {"resultType": "vector", "result": result}}))
+    def bad(self, why):
+        open(os.path.join(state, "bad_query"), "a").write(why + "\n")
+        self.reply(400, "bad query: " + why)
     def reply(self, code, text):
         self.send_response(code); self.end_headers(); self.wfile.write(text.encode())
     def log_message(self, *a): pass
@@ -77,7 +99,7 @@ printf '%s\n' 'OTHER=1' 'VICTORIALOGS_AUTH_USER=vluser' "VICTORIALOGS_AUTH_PASSW
 
 # new_case <after sequence> [<before sequence>]
 new_case() {
-    rm -f "$STATE"/*.n "$STATE/queries.log" "$STATE/docker_argv"
+    rm -f "$STATE"/*.n "$STATE/queries.log" "$STATE/docker_argv" "$STATE/bad_query"
     printf '%s\n' $1 > "$STATE/after"
     printf '%s\n' ${2:-0} > "$STATE/before"
     deployed=$(date -u +%s)
@@ -88,6 +110,8 @@ new_case() {
 # run_watch <service> [extra args]; sets rc and out.
 run_watch() {
     local svc="$1"; shift
+    if [[ "$svc" == caddy ]]; then echo "service:caddy AND status:5*" > "$STATE/expected_filter"
+    else echo "service:$svc AND level:error" > "$STATE/expected_filter"; fi
     out=$(KLAI_DOCKER_BIN="$work/docker" KLAI_CURL_IMAGE=curlimages/curl:test KLAI_ENV_FILE="${ENV_FILE:-$work/env}" \
           KLAI_VICTORIALOGS_URL="http://127.0.0.1:$(cat "$STATE/port")" KLAI_ERROR_WATCH_INTERVAL=1 \
           bash "$target" "$svc" "$deployed" "$@" 2>&1)
@@ -104,6 +128,7 @@ new_case "3"
 run_watch portal-api --window 0
 check "exit 0" test "$rc" = 0
 check "says clean with the count" grep -q 'portal-api clean: 3 error lines' <<< "$out"
+check "every query had the right filter and window bounds" test ! -e "$STATE/bad_query"
 check "queries the service's error level" grep -q 'service:portal-api AND level:error AND _time:\[' "$STATE/queries.log"
 check "runs curl on the monitoring network" grep -q -- '--network monitoring curlimages/curl:test' "$STATE/docker_argv"
 printf '%s' "$out" > "$work/out.txt"
@@ -140,6 +165,7 @@ echo "# caddy counts 5xx access-log lines"
 new_case "42" "1"
 run_watch caddy --window 0
 check "exit 3" test "$rc" = 3
+check "caddy queries had the right filter and window bounds" test ! -e "$STATE/bad_query"
 check "queries status:5*" grep -q 'service:caddy AND status:5\*' "$STATE/queries.log"
 
 echo "# query errors never look like a breach"
@@ -160,10 +186,18 @@ check "no credentials leaked into the message" bash -c '! grep -q wrong <<< "$0"
 run_watch ../etc --window 0
 check "a service name that is not a plain label exits 1" test "$rc" = 1
 
+echo "# a reply that only looks like success is a query error"
+for body in TRUNC NOSTATUS TWOSERIES; do
+    new_case "$body"
+    run_watch portal-api --window 0
+    check "$body exits 1" test "$rc" = 1
+done
+
 echo "# polling over a window"
 new_case "0 25" "0"
 run_watch portal-api --window 3
 check "a breach on a later poll exits 3" test "$rc" = 3
+check "later polls still start at the deploy time" test ! -e "$STATE/bad_query"
 new_case "ERR 3 3 3" "0"
 run_watch portal-api --window 2
 check "one dropped query in the window is tolerated" test "$rc" = 0
