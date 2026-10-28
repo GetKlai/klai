@@ -68,13 +68,20 @@ for store in "${stores[@]}"; do
     echo "==> $store keeps no state; nothing to rehearse"
     continue
   fi
+  # A restore writes the whole store into new volumes on the same disk, and a
+  # fresh snapshot writes it once more.
+  if ! { mkdir -p "$DS_BACKUP_ROOT" && ds_disk_ok "$store"; }; then
+    echo "::error::$store: not enough disk to rehearse its restore"
+    failed+=("$store")
+    event "$store" failed "" || failed+=("event-log")
+    continue
+  fi
   dir="$(latest_snapshot "$store")"
   fresh=0
   if [[ -z "$dir" ]]; then
     echo "==> $store has no snapshot; taking one"
     DS_SNAPSHOTS=()
-    if mkdir -p "$DS_BACKUP_ROOT" && ds_disk_ok "$store" \
-        && ds_snapshot "$store" "$RB_DIR/docker-compose.yml" "$RB_DIR/docker-compose.yml"; then
+    if ds_snapshot "$store" "$RB_DIR/docker-compose.yml" "$RB_DIR/docker-compose.yml"; then
       dir="${DS_SNAPSHOTS[0]}"
       fresh=1
     else

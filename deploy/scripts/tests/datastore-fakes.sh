@@ -9,14 +9,15 @@
 #
 # Other engines: fake/eng/<container> is the store's data as key=value lines
 # (points= for Qdrant, keys= and graphs= for Redis and FalkorDB, queues= for
-# RabbitMQ, fcv= and dbs= for Mongo, indexes= for Meilisearch, buckets= for
-# Garage). A compose service's container is cid-<service>. A cold copy, a
+# RabbitMQ, fcv=, dbs= and colls= for Mongo, indexes= for Meilisearch, buckets= for
+# Garage, objects= per bucket). A compose service's container is cid-<service>. A cold copy, a
 # BGSAVE and a definitions export copy that file into the snapshot; a restore
 # copies it back. The fake answers the HTTP, redis-cli, mongosh and rabbitmqctl
 # calls in the shapes real Qdrant 1.19/1.20, Redis 8.10, Meilisearch 1.55,
 # Mongo 8.0, RabbitMQ 4.4 and Garage 2.4 produced on 2026-10-28.
 # Switches: fake/probe_red (a live store's facts fail until it is restored),
-# fake/corrupt_snapshot (a snapshot taken now does not read back).
+# fake/corrupt_snapshot (a snapshot taken now does not read back),
+# fake/stop_fails (docker compose stop exits 1).
 
 ds_fakes_install() {
   local bin="$1"
@@ -104,7 +105,10 @@ in_store() {
         *mongosh*)
           red "$t" && [[ "$JS" == *listDatabases* ]] && exit 1
           case "$JS" in
-            *listDatabases*) echo "fcv $(get "$t" fcv)"; for a in $(get "$t" dbs); do echo "db $a"; done ;;
+            *listDatabases*)
+              echo "fcv $(get "$t" fcv)"
+              for a in $(get "$t" dbs); do echo "db $a"; done
+              for a in $(get "$t" colls); do echo "collection ${a%%:*}"; echo "count ${a%%:*} ${a##*:}"; done ;;
             *featureCompatibilityVersion*) get "$t" fcv ;;
             *ping*) echo 1 ;;
           esac ;;
@@ -154,6 +158,8 @@ run() {
         if [[ -n "$(get "$t" points)" ]]; then echo '{"result":{"collections":[{"name":"klai_knowledge"}]}}'; else echo '{"result":{"collections":[]}}'; fi ;;
       6333/collections/*/points/count) echo "{\"result\":{\"count\":$(get "$t" points)}}" ;;
       3903/health) echo ok ;;
+      3903/v2/GetBucketInfo*)
+        a=" $(get "$t" objects) "; a="${a#* "${path#*id=}":}"; echo "{\"objects\":${a%% *}}" ;;
       3903/v2/ListBuckets)
         python3 -c 'import json, sys; print(json.dumps([{"id": b, "globalAliases": [b + "-alias"], "localAliases": []} for b in sys.argv[1:]]))' $(get "$t" buckets) ;;
     esac
@@ -184,7 +190,8 @@ if [[ "$1" == compose ]]; then
   case "$1" in
     exec) shift; [[ "$1" == -T ]] && shift; t="$1"; shift; in_store "$t" "$@" ;;
     ps) for a in "$@"; do [[ "$a" == -* || "$a" == ps ]] || { echo "cid-$a"; : > "$F/compose_svc_$a"; }; done ;;
-    stop|start) : ;;
+    stop) [[ ! -e "$F/stop_fails" ]] ;;
+    start) : ;;
     up) svc="${!#}"; img_of "$svc" > "$F/running/$svc" ;;
   esac
 elif [[ "$1" == exec ]]; then
@@ -234,11 +241,11 @@ ds_fakes_engines() {
   mkdir -p "$f"
   printf 'points=120\n' > "$f/qdrant"
   printf 'indexes=tenant_a_messages:40 tenant_a_convos:9\n' > "$f/meilisearch"
-  printf 'fcv=8.0\ndbs=admin config tenant_a tenant_b\n' > "$f/mongodb"
+  printf 'fcv=8.0\ndbs=admin config tenant_a tenant_b\ncolls=tenant_a.messages:40 tenant_b.messages:7\n' > "$f/mongodb"
   printf 'keys=57\n' > "$f/redis"
   printf 'keys=4\n' > "$f/vexa12-redis"
   printf 'keys=0\n' > "$f/crm-redis"
   printf 'keys=31\ngraphs=tenant_a tenant_b\n' > "$f/falkordb"
-  printf 'buckets=b1 b2\n' > "$f/garage"
+  printf 'buckets=b1 b2\nobjects=b1:12 b2:3\n' > "$f/garage"
   printf 'queues=nuq_scrape nuq_crawl\n' > "$f/firecrawl-rabbitmq"
 }

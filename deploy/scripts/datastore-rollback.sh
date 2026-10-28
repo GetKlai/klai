@@ -479,8 +479,20 @@ for uid, s in json.load(sys.stdin)["indexes"].items():
     print("index", uid)
     print("count", uid, s["numberOfDocuments"])')" || return 1 ;;
     mongo)
+      # Document counts per collection, so empty collections fail the probe.
+      # config holds session and transaction bookkeeping that changes on its own.
       out="$(ds_mongo "$t" 'print("fcv " + db.adminCommand({getParameter: 1, featureCompatibilityVersion: 1}).featureCompatibilityVersion.version);
-        db.adminCommand({listDatabases: 1, nameOnly: true}).databases.forEach(function (d) { if (d.name !== "local") print("db " + d.name); });')" || return 1 ;;
+        db.adminCommand({listDatabases: 1, nameOnly: true}).databases.forEach(function (d) {
+          if (d.name === "local") return;
+          print("db " + d.name);
+          if (d.name === "config") return;
+          var s = db.getSiblingDB(d.name);
+          s.getCollectionInfos({type: "collection"}, {nameOnly: true}).forEach(function (c) {
+            if (c.name.indexOf("system.") === 0) return;
+            print("collection " + d.name + "." + c.name);
+            print("count " + d.name + "." + c.name + " " + s.getCollection(c.name).countDocuments({}));
+          });
+        });')" || return 1 ;;
     redis|falkordb)
       n="$(ds_rcli "$t" INFO keyspace)" && [[ "$n" == *Keyspace* ]] || return 1
       # Keys without a TTL only: an expiring key can lapse between snapshot and count.
@@ -495,7 +507,11 @@ import json, sys
 for b in json.load(sys.stdin):
     print("bucket", b["id"])
     for a in b.get("globalAliases", []):
-        print("alias", a)')" || return 1 ;;
+        print("alias", a)')" || return 1
+      for n in $(awk '$1 == "bucket" { print $2 }' <<< "$out"); do
+        c="$(ds_garage "$t" "/v2/GetBucketInfo?id=$n" | python3 -c 'import json, sys; print(json.load(sys.stdin)["objects"])')" || return 1
+        out+=$'\n'"count $n $c"
+      done ;;
     rabbitmq)
       n="$(ds_rmq "$t" rabbitmqctl -q list_queues --no-table-headers name)" || return 1
       out="$(sed '/^$/d; s/^/queue /' <<< "$n")" ;;
@@ -570,7 +586,8 @@ ds_cold_copy() {
   cid="$(ds_ctr "$name")" && [[ -n "$cid" ]] || return 1
   for p in $(ds_paths "$engine"); do rel+=("${p#/}"); done
   echo "snapshot: $name stopped for a cold copy of $(ds_paths "$engine")"
-  ds_compose stop -t 120 "$name" || return 1
+  # A stop that reports an error may still have stopped the store.
+  ds_compose stop -t 120 "$name" || { ds_compose start "$name"; return 1; }
   docker run --rm --volumes-from "$cid:ro" -v "$dir:/out" "$DS_TOOL_IMAGE" tar -cf /out/volume.tar -C / "${rel[@]}" || rc=1
   ds_compose start "$name" || rc=1
   return "$rc"

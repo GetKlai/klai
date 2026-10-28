@@ -528,6 +528,14 @@ check "  report gate" mongo-fcv "$(report gate)"
 check "  report outcome" rollback_failed "$(report outcome)"
 check "  nothing restored, new compose file left in place" "0 mongo:8.0.35" "$(calls 'volumes-from cid-mongodb -v') $(image_of_case mongodb)"
 check "  failure flag written" yes "$([[ -e "$case_dir/.compose-rollback-failed" ]] && echo yes || echo no)"
+check "  baseline holds document counts per collection" "count tenant_a.messages 40,count tenant_b.messages 7" "$(grep '^count ' "$(snapdir mongodb)/baseline.facts" | paste -sd, -)"
+
+# A cold copy whose stop reports an error still starts the store again.
+new_case stop_fails
+: > "$case_dir/fake/stop_fails"
+run_driver "$QDRANT_BUMP"
+check "qdrant stop fails during the snapshot -> exit 4, gate snapshot" "4 snapshot" "$rc $(report gate)"
+check "  store started again, nothing copied" "1 0" "$(calls 'compose .* start qdrant') $(calls 'tar -cf')"
 
 # A snapshot that does not read back refuses the sync before anything changed.
 new_case engine_snapshot_unreadable

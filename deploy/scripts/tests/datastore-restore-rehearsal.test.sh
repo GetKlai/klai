@@ -125,12 +125,13 @@ check "  every store reported, redis failed" "qdrant ok,redis failed,firecrawl-r
 check "  the difference is printed" 1 "$(grep -c '^< count keys 57' "$case_dir/out")"
 check "  the run names the failed store" 1 "$(grep -c 'rehearsal failed for: redis$' "$case_dir/out")"
 
-# --- a fresh snapshot that cannot be taken counts as a failed store ------------
+# --- no room for the throwaway volumes: failed, existing snapshot or not ------
 new_case no_disk
+old_snapshot redis redis dump.rdb 'count keys 57' > /dev/null
 echo 1 > "$case_dir/fake/df_avail"
-run_rehearsal qdrant
-check "no disk for a fresh snapshot -> exit 1, nothing stopped" "1 0" "$rc $(calls 'stop -t 120 qdrant')"
-check "  event failed" "qdrant failed" "$(events)"
+run_rehearsal redis qdrant
+check "no disk -> exit 1, nothing stopped, no throwaway" "1 0 0" "$rc $(calls 'stop -t 120 qdrant') $(calls 'docker run -d')"
+check "  both reported failed" "redis failed,qdrant failed" "$(events)"
 
 # --- a name outside the inventory is refused ----------------------------------
 new_case unknown
