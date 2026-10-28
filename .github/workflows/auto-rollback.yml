@@ -142,7 +142,7 @@ jobs:
       - name: Roll back on core-01
         id: replay
         if: steps.replay-start.outcome == 'success'
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
         with:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
@@ -169,7 +169,7 @@ jobs:
         id: rollback-report
         if: always() && steps.replay.outcome == 'failure'
         continue-on-error: true
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
         with:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
@@ -194,7 +194,7 @@ jobs:
       - name: Upload rollback report
         if: always() && steps.keep.outputs.found == 'true'
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: rollback-report
           path: rollback-report.json

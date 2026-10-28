@@ -33,7 +33,7 @@ jobs:
     outputs:
       targets: ${{ steps.parse.outputs.targets }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Install yq
         run: |
@@ -114,7 +114,7 @@ jobs:
     steps:
       # Checkout is required so trivy-action can find .trivy.yaml
       # (`trivy-config:` resolves relative to repo root).
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Sanitize image name for artefact
         id: safe
@@ -165,7 +165,7 @@ jobs:
           done
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
         if: always() && hashFiles(format('trivy-{0}.sarif', steps.safe.outputs.name)) != ''
         with:
           sarif_file: 'trivy-${{ steps.safe.outputs.name }}.sarif'

@@ -36,7 +36,7 @@ jobs:
   no-shared-env-file:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Test env-file scope scanner
         run: python3 -B -m unittest deploy/tests/test_check_env_file_scope.py

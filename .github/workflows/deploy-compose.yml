@@ -55,7 +55,7 @@ jobs:
       rollback-report: ${{ steps.keep-report.outputs.report }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # A version pin that lives in two places drifts: the compose image
       # is what production runs, the litellm-tests workflow pin is what CI
@@ -132,7 +132,7 @@ jobs:
         run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Sync docker-compose.yml + config + run smoke-test
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
         with:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
@@ -491,7 +491,7 @@ jobs:
         id: rollback-report
         if: always()
         continue-on-error: true
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
         with:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
@@ -517,7 +517,7 @@ jobs:
       - name: Upload rollback report
         continue-on-error: true
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: rollback-report
           path: rollback-report.json
@@ -539,7 +539,7 @@ jobs:
     steps:
       - name: Mint a token for the Klai Renovate app
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
         with:
           app-id: ${{ secrets.RENOVATE_APP_ID }}
           private-key: ${{ secrets.RENOVATE_PRIVATE_KEY }}
@@ -548,7 +548,7 @@ jobs:
 
       # Full history: the range runs from the last green sync to the rolled-back
       # commit. The app token stays in the checkout for the branch push.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: main
           fetch-depth: 0

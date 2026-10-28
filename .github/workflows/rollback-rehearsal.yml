@@ -53,7 +53,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Deploy good, deploy bad, assert rollback on core-01
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
         with:
           host: ${{ secrets.CORE01_HOST }}
           username: klai

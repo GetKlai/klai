@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Validate LibreChat patches
         run: sh deploy/librechat/check-patch-drift.sh
@@ -42,7 +42,7 @@ jobs:
         run: bash deploy/scripts/tests/tenant-config-regenerate.test.sh
 
       - name: Sync base config and patches to core-01
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
         with:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
