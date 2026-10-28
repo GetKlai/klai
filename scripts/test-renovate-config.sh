@@ -235,4 +235,28 @@ assert_line "$docs_workflow" \
   '    needs: quality-docs' \
   'docs build-and-push must remain gated by its own quality job'
 
+# SPEC-INFRA-AUTO-ROLLBACK-001 S5: after a compose rollback of a Renovate bump,
+# scripts/renovate-revert-after-rollback.py excludes the exact version above this
+# anchor. Without the anchor the revert PR cannot be made; a synthetic entry must
+# land inside packageRules and exclude that version only, so the next one flows.
+assert_line "$config" \
+  '    // End of the rolled-back versions: scripts/renovate-revert-after-rollback.py inserts above this line.' \
+  'the rolled-back versions anchor must stay in packageRules'
+if ! python3 - "$repo_root" <<'PY'
+import importlib.util, re, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("revert", root / "scripts/renovate-revert-after-rollback.py")
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+out = mod.add_exclusion((root / "renovate.json5").read_text(), "example/synthetic", "v9.9.9", "synthetic")
+entry, anchor = out.index("matchDepNames: ['example/synthetic']"), out.index(mod.ANCHOR)
+raw = re.search(r"allowedVersions: '!/(.*)/',", out[entry:]).group(1).replace("\\\\", "\\")
+ok = entry < anchor < out.index("\n  ],\n", anchor) and re.match(raw, "v9.9.9") and not re.match(raw, "v9.9.10")
+sys.exit(0 if ok else 1)
+PY
+then
+  echo 'FAIL: a rolled-back version must be excluded exactly, inside packageRules, above the anchor' >&2
+  exit 1
+fi
+
 echo 'Renovate configuration contracts: PASS'

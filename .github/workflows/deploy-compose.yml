@@ -51,6 +51,8 @@ jobs:
     # config to core-01. A deliberate dispatch on main still works.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      rollback-report: ${{ steps.keep-report.outputs.report }}
 
     steps:
       - uses: actions/checkout@v7
@@ -490,6 +492,7 @@ jobs:
           script: cat /opt/klai/deploy-reports/compose.json 2>/dev/null || true
 
       - name: Keep rollback report
+        id: keep-report
         continue-on-error: true
         if: always()
         env:
@@ -500,6 +503,7 @@ jobs:
           report="$(printf '%s\n' "$REPORT" | grep -m1 '^{' || true)"
           if printf '%s' "$report" | jq -e --arg since "$STARTED" '.ts >= $since and .outcome != "deployed"' >/dev/null 2>&1; then
             printf '%s\n' "$report" > rollback-report.json
+            echo "report=$report" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload rollback report
@@ -511,3 +515,45 @@ jobs:
           path: rollback-report.json
           retention-days: 30
           if-no-files-found: ignore
+
+  # SPEC-INFRA-AUTO-ROLLBACK-001 S5: after a rollback the host runs the previous
+  # compose file but main still names the bad version, so the next compose change
+  # would deploy it again. When the rolled-back range holds Renovate image bumps,
+  # this opens one PR (with the Klai Renovate app token, so CI runs on it) that
+  # puts those image lines back and excludes each exact version in renovate.json5,
+  # and arms auto-merge. Our own commits are never reverted (decision D3); a
+  # rollback without a Renovate bump does nothing. Rules and edge cases:
+  # scripts/renovate-revert-after-rollback.py.
+  renovate-revert:
+    needs: sync-compose
+    if: always() && fromJSON(needs.sync-compose.outputs.rollback-report || '{}').kind == 'compose'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint a token for the Klai Renovate app
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_PRIVATE_KEY }}
+          owner: GetKlai
+          repositories: klai
+
+      # Full history: the range runs from the last green sync to the rolled-back
+      # commit. The app token stays in the checkout for the branch push.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Open the revert PR for rolled-back Renovate bumps
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ needs.sync-compose.outputs.rollback-report }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+        run: |
+          printf '%s\n' "$REPORT" > "$RUNNER_TEMP/rollback-report.json"
+          python3 scripts/renovate-revert-after-rollback.py --report "$RUNNER_TEMP/rollback-report.json" \
+            --run-id "$GITHUB_RUN_ID" --run-url "$RUN_URL" --workflow "$WORKFLOW"

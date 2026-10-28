@@ -37,6 +37,8 @@ on:
       - 'scripts/tests/check-version-drift.test.sh'
       - 'scripts/check-expand-contract.py'
       - 'scripts/tests/test_check_expand_contract.py'
+      - 'scripts/renovate-revert-after-rollback.py'
+      - 'scripts/tests/test_renovate_revert_after_rollback.py'
   push:
     branches: [main]
     paths:
@@ -60,6 +62,8 @@ on:
       - 'scripts/tests/check-version-drift.test.sh'
       - 'scripts/check-expand-contract.py'
       - 'scripts/tests/test_check_expand_contract.py'
+      - 'scripts/renovate-revert-after-rollback.py'
+      - 'scripts/tests/test_renovate_revert_after_rollback.py'
 
 permissions:
   contents: read
@@ -92,6 +96,11 @@ jobs:
       # every scheduled run failed for 18 hours before anyone saw it.
       - name: Renovate configuration contracts
         run: sh scripts/test-renovate-config.sh
+
+      # Opens the revert PR after a compose rollback of a Renovate bump; it only
+      # runs once a deploy has already failed, so this is its first execution.
+      - name: Renovate revert after rollback suite
+        run: python3 -m unittest scripts/tests/test_renovate_revert_after_rollback.py
 
       # The drift alarm is what makes a stuck Renovate update visible; a filter
       # that stops matching would silence it without any run turning red.
