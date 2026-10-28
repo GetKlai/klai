@@ -155,7 +155,7 @@ async def test_sample_counts_only_pages_with_real_content() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sample_issues_exactly_one_bulk_request() -> None:
+async def test_sample_hands_all_linked_pages_to_one_paced_fetch() -> None:
     """The whole point: one parallel batch, no seed re-fetch, no sitemap probe."""
     seed = _seed(*[f"https://example.com/a/b/{i}" for i in range(5)])
     bulk = AsyncMock(
@@ -167,7 +167,7 @@ async def test_sample_issues_exactly_one_bulk_request() -> None:
         await sample_linked_pages(seed, max_pages=5)
     assert bulk.await_count == 1
     assert len(bulk.await_args.kwargs["urls"]) == 5
-    assert bulk.await_args.kwargs["rate_limit"] == 2.0
+    assert bulk.await_args.kwargs["rate_limit"] == 1.0
 
 
 @pytest.mark.asyncio

@@ -865,7 +865,7 @@ async def run_crawl_job(
     max_pages: int = 200,
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
-    rate_limit: float = 2.0,
+    rate_limit: float = 1.0,
     content_selector: str | None = None,
     login_indicator_selector: str | None = None,
     cookies: list[dict] | None = None,
@@ -1034,7 +1034,11 @@ async def run_crawl_job(
                         domain=domain,
                     )
         stored_rate_limit = domain_rate_limit_state.rate_limit
-        effective_rate_limit = stored_rate_limit if stored_rate_limit is not None else rate_limit
+        # A stored rate above this job's default (left by the former 2.0 req/s
+        # default) must not outpace the default.
+        effective_rate_limit = (
+            min(stored_rate_limit, rate_limit) if stored_rate_limit is not None else rate_limit
+        )
         if stored_rate_limit is not None:
             logger.info(
                 "crawl_domain_rate_limit_applied",

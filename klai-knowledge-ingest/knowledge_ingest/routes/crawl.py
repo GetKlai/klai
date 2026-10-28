@@ -213,11 +213,12 @@ _SAMPLE_PAGE_BUDGET = 5
 # than the thin-content verdict the sample is meant to improve on. On expiry
 # we keep the single-page verdict.
 #
-# The sample is ONE bulk request that crawl4ai dispatches in parallel, so the
-# cost is roughly the slowest page (bounded by crawl4ai's own 30s
-# page_timeout) rather than the sum. 35s leaves headroom above that ceiling
-# for request overhead without letting a pathological page stall the preview.
-_SAMPLE_TIMEOUT_SECONDS = 35.0
+# Since 2026-10-28 every /crawl request carries one URL and requests to one
+# host are a second apart, so the sample is up to five renders in a row plus
+# four seconds of pacing, each also waiting on the shared one-request slot
+# behind any running crawl. 90 s covers five slow pages; past it the preview
+# keeps the single-page verdict.
+_SAMPLE_TIMEOUT_SECONDS = 90.0
 # Two usable pages is enough signal that the site has real content behind the
 # hub. One could be a fluke (e.g. a single "about" page on an empty shell).
 _SAMPLE_MIN_USABLE = 2

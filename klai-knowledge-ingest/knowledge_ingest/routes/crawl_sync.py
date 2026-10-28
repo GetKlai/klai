@@ -259,7 +259,9 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         max_pages=req.max_pages,
         include_patterns=include_patterns,
         exclude_patterns=exclude_patterns,
-        rate_limit=2.0,
+        # One request per second per host; see host_pacing for the 2026-10-28
+        # 429 incident behind this default.
+        rate_limit=1.0,
         content_selector=req.content_selector,
         login_indicator_selector=req.login_indicator,
         # REQ-05.4: connector_id only — plaintext cookies never enter the

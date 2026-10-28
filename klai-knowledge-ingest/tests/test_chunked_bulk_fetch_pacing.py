@@ -1,14 +1,13 @@
-"""Client-side crawl pacing: burst-size derivation and inter-chunk gaps.
+"""Client-side crawl pacing: the gap between single-URL requests.
 
 crawl4ai's REST server builds its own ``MemoryAdaptiveDispatcher`` and
 ignores the ``mean_delay`` / ``semaphore_count`` we set on
 ``CrawlerRunConfig`` (measured live: 8 URLs with ``mean_delay=2.0``
-finished in 3.2s instead of the predicted 16s). A single bulk request is
+finished in 3.2s instead of the predicted 16s). A multi-URL request is
 one burst on the target site (16 URLs completed within 330ms of each
-other). Real rate limiting can therefore only happen client-side, via two
-knobs: how many URLs go in one request (the burst) and how long we wait
-between requests (the gap). This module tests both knobs in isolation,
-with no network calls.
+other), so every request carries one URL and real rate limiting happens
+client-side through the gap between requests. This module tests that gap
+in isolation, with no network calls.
 """
 
 from __future__ import annotations
@@ -129,8 +128,7 @@ async def test_slow_chunk_is_not_further_delayed(monkeypatch: pytest.MonkeyPatch
     than the required gap, no additional sleep must be inserted."""
     clock = _install_virtual_clock(monkeypatch)
     rate_limit = 1.0
-    burst = 10
-    gap = burst / rate_limit
+    gap = 1 / rate_limit
     # Chunk itself "takes" longer than the gap.
     monkeypatch.setattr(
         crawl4ai_client,
@@ -138,7 +136,7 @@ async def test_slow_chunk_is_not_further_delayed(monkeypatch: pytest.MonkeyPatch
         _fake_crawl_sync_factory(clock, chunk_duration=gap * 2),
     )
 
-    urls = [f"https://example.com/p{i}" for i in range(burst * 2)]
+    urls = [f"https://example.com/p{i}" for i in range(2)]
 
     await crawl4ai_client._chunked_bulk_fetch(
         urls=urls,
@@ -158,16 +156,15 @@ async def test_fast_chunk_sleeps_exactly_the_remaining_gap(
     exactly the difference — not the full gap again."""
     clock = _install_virtual_clock(monkeypatch)
     rate_limit = 1.0
-    burst = 10
-    gap = burst / rate_limit
-    chunk_duration = 2.0
+    gap = 1 / rate_limit
+    chunk_duration = 0.4
     monkeypatch.setattr(
         crawl4ai_client,
         "_crawl_sync",
         _fake_crawl_sync_factory(clock, chunk_duration=chunk_duration),
     )
 
-    urls = [f"https://example.com/p{i}" for i in range(burst * 2)]
+    urls = [f"https://example.com/p{i}" for i in range(2)]
 
     await crawl4ai_client._chunked_bulk_fetch(
         urls=urls,
@@ -181,13 +178,13 @@ async def test_fast_chunk_sleeps_exactly_the_remaining_gap(
 
 
 # ---------------------------------------------------------------------------
-# D. rate_limit=None must be a complete no-op: identical chunking and zero
-# sleeps, matching current (pre-pacing) behaviour exactly.
+# D. rate_limit=None must add no sleeps; the request shape stays one URL
+# per request.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_no_rate_limit_means_no_behaviour_change(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_no_rate_limit_means_no_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = _install_virtual_clock(monkeypatch)
     calls: list[int] = []
 
@@ -209,7 +206,7 @@ async def test_no_rate_limit_means_no_behaviour_change(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
 
-    num_urls = 250  # spans 3 chunks at the historical fixed size of 100
+    num_urls = 3
     urls = [f"https://example.com/p{i}" for i in range(num_urls)]
 
     fetch = await crawl4ai_client._chunked_bulk_fetch(
@@ -221,51 +218,6 @@ async def test_no_rate_limit_means_no_behaviour_change(monkeypatch: pytest.Monke
 
     assert fetch.failed == {}
     assert len(fetch.raw_results) == num_urls
-    assert calls == [100, 100, 50]
+    assert calls == [1, 1, 1]
     assert clock.sleeps == []
     assert clock.now == 0.0
-
-
-# ---------------------------------------------------------------------------
-# E. The burst is genuinely bounded — the property that prevents 429s.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_no_request_exceeds_the_computed_burst_size(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _install_virtual_clock(monkeypatch)
-    request_sizes: list[int] = []
-
-    async def _fake_crawl_sync(
-        _client: httpx.AsyncClient, payload: dict[str, Any]
-    ) -> dict[str, Any]:
-        request_sizes.append(len(payload["urls"]))
-        return {
-            "results": [
-                {
-                    "url": u,
-                    "success": True,
-                    "markdown": "content",
-                    "links": {"internal": []},
-                }
-                for u in payload["urls"]
-            ]
-        }
-
-    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
-
-    rate_limit = 0.25
-    expected_burst = 3
-    urls = [f"https://example.com/p{i}" for i in range(expected_burst * 4 + 1)]
-
-    await crawl4ai_client._chunked_bulk_fetch(
-        urls=urls,
-        crawler_config={},
-        cookies=None,
-        rate_limit=rate_limit,
-    )
-
-    assert request_sizes, "no requests were made"
-    assert all(size <= expected_burst for size in request_sizes)

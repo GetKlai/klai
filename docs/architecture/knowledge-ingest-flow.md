@@ -361,8 +361,10 @@ The github + notion adapters in klai-connector keep using their own
 candidates from the union of `sitemap.xml` + a one-shot BFS seed of `start_url`'s
 internal links (canonicalised, deduped, capped at `max_pages` with sitemap-priority
 on the cap). The candidate list — minus `start_url` itself, which is already
-fetched as the seed — is submitted in **one** `POST /crawl` bulk call to crawl4ai,
-whose server-side `MemoryAdaptiveDispatcher` handles concurrency. This replaces an
+fetched as the seed — is fetched with one `POST /crawl` request **per URL**, paced at
+one request per second per host (`host_pacing.py`). A multi-URL request runs through
+crawl4ai's `MemoryAdaptiveDispatcher` with 20 parallel sessions that the request cannot
+change, which on 2026-10-28 made an external host answer 429 to 71 of 244 fetches. This replaces an
 earlier design that fanned out `crawl_page` calls in an unbounded `asyncio.gather`
 loop and silently dropped ~80% of pages on `help.voys.nl` (Bug A in the SPEC's
 motivation section). A repo-wide CI lint rule

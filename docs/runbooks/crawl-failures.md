@@ -63,6 +63,10 @@ Against that night:
 
 For `crawler_config_rejected`: check the crawl4ai image tag in `deploy/docker-compose.yml`, run `sh deploy/tests/crawl4ai-config-contract.sh` and read the body it prints, and compare against the crawl4ai release notes for the version the image runs.
 
+## Politeness towards crawled hosts
+
+Each crawl4ai request carries one URL and a host receives at most one request per second, halved (down to 0.2 per second) after a 429 or anti-bot response and raised again after clean crawls. Do not batch URLs per request to speed a crawl up: crawl4ai fetches a multi-URL request with 20 parallel sessions, which caused 71 429s in 244 fetches on 2026-10-28.
+
 ## crawl_jobs_silent: dead scheduler
 
 The scheduler is klai-connector's APScheduler; see `docs/runbooks/connector-schedules.md`. Check its log for `Scheduler refreshed with N scheduled connectors` and for errors on that connector. Sources scheduled weekly, or not at all, are not covered by this alert.
