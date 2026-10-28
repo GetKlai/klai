@@ -73,6 +73,8 @@ on:
 permissions:
   contents: read
   issues: write
+  # Reads the rollback-report artifact of the failed run (SPEC-INFRA-AUTO-ROLLBACK-001).
+  actions: read
 
 jobs:
   notice:
@@ -123,7 +125,44 @@ jobs:
               return;
             }
 
-            const body = [
+            // SPEC-INFRA-AUTO-ROLLBACK-001 S4: a deploy that rolled itself back
+            // uploads its report as the `rollback-report` artifact. It is read
+            // here as untrusted text: only two outcomes are accepted, and every
+            // value is flattened to one short code-span-safe line before it is
+            // put in an issue. A missing or unreadable artifact leaves the issue
+            // exactly as it was before; the failure is still reported.
+            const ROLLBACK_LABELS = {
+              rolled_back: { name: 'auto-rollback', color: 'fbca04', description: 'Deploy failed and the previous version was put back automatically' },
+              rollback_failed: { name: 'rollback-failed', color: 'b60205', description: 'Deploy failed and the automatic rollback failed too: a human is needed now' },
+            };
+            const flat = (v) => String(v ?? '').replace(/[\r\n`]/g, ' ').slice(0, 200);
+            let report = null;
+            try {
+              const { data: listed } = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+                name: 'rollback-report',
+              });
+              const artifact = listed.artifacts.find((a) => !a.expired);
+              if (artifact) {
+                const { data: zip } = await github.rest.actions.downloadArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id,
+                  archive_format: 'zip',
+                });
+                const zipPath = require('path').join(process.env.RUNNER_TEMP, 'rollback-report.zip');
+                require('fs').writeFileSync(zipPath, Buffer.from(zip));
+                const parsed = JSON.parse(require('child_process').execFileSync('unzip', ['-p', zipPath], { encoding: 'utf8' }));
+                if (ROLLBACK_LABELS[parsed.outcome]) report = parsed;
+                else core.warning(`rollback-report has an unknown outcome: ${flat(parsed.outcome)}`);
+              }
+            } catch (err) {
+              core.warning(`could not read the rollback-report artifact: ${flat(err.message)}`);
+            }
+
+            const lines = [
               `**${run.name}** failed on \`main\`.`,
               '',
               `- Run: ${run.html_url}`,
@@ -134,21 +173,55 @@ jobs:
               '(pitfall: previous-deploy-failure-blocks-yours).',
               '',
               'Closes itself automatically when this workflow next succeeds on `main`.',
-            ].join('\n');
+            ];
+            if (report) {
+              lines.push(
+                '',
+                report.outcome === 'rollback_failed'
+                  ? '**Automatic rollback failed. Production may be broken: a human is needed now.**'
+                  : '**Rolled back automatically.** The previous version is serving again; the failing version is still on `main`.',
+                '',
+                `- Service: \`${flat(report.service)}\` (\`${flat(report.kind)}\`)`,
+                `- Outcome: \`${flat(report.outcome)}\``,
+                `- Failed gate: \`${flat(report.gate)}\``,
+                `- From: \`${flat(report.from)}\``,
+                `- To: \`${flat(report.to)}\``,
+                `- Commit: \`${flat(report.commit)}\``,
+                `- Time: \`${flat(report.ts)}\``,
+                `- Log on core-01: \`${flat(report.log)}\``,
+              );
+            }
+            const body = lines.join('\n');
 
+            const base = { owner: context.repo.owner, repo: context.repo.repo };
+            let number;
             if (existing) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: existing.number,
-                body,
-              });
+              number = existing.number;
+              await github.rest.issues.createComment({ ...base, issue_number: number, body });
             } else {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title,
-                body,
-                labels: ['ci-failure'],
-              });
+              ({ data: { number } } = await github.rest.issues.create({ ...base, title, body, labels: ['ci-failure'] }));
+            }
+
+            // The labels follow the latest failure: a failure without a report
+            // (an ordinary red deploy) must not keep an older rollback label.
+            const dropLabel = async (name) => {
+              try {
+                await github.rest.issues.removeLabel({ ...base, issue_number: number, name });
+              } catch (err) {
+                if (err.status !== 404) throw err; // 404 = the issue did not carry it
+              }
+            };
+            if (!report) {
+              if (existing) for (const l of Object.values(ROLLBACK_LABELS)) await dropLabel(l.name);
+            } else {
+              // Swap, do not accumulate.
+              const want = ROLLBACK_LABELS[report.outcome];
+              const other = report.outcome === 'rolled_back' ? ROLLBACK_LABELS.rollback_failed : ROLLBACK_LABELS.rolled_back;
+              try {
+                await github.rest.issues.createLabel({ ...base, ...want });
+              } catch (err) {
+                if (err.status !== 422) throw err; // 422 = the label already exists
+              }
+              await github.rest.issues.addLabels({ ...base, issue_number: number, labels: [want.name] });
+              await dropLabel(other.name);
             }

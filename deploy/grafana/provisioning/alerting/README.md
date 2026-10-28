@@ -20,6 +20,7 @@ into Grafana at startup or after `docker compose up -d grafana` (recreate).
 | `portal-events-rules.yaml` | FLUSHALL failure (LogsQL via VictoriaLogs) | OBS-001-R14 |
 | `librechat-rules.yaml` | LibreChat chat.health_failed spike | OBS-001-R15 |
 | `ingest-rules.yaml` | Knowledge-ingest error rate spike | OBS-001-R16 |
+| `auto-rollback-rules.yaml` | Deploy rolled back or rollback failed (mail), weekly rollback rehearsal missing | SPEC-INFRA-AUTO-ROLLBACK-001 |
 | `heartbeat-rules.yaml` | Synthetic always-fires rule → heartbeat-kuma webhook every 5 min | OBS-001-R22 |
 
 > Rule-file names above marked "OBS-001" are added by SPEC-OBS-001 and land in
