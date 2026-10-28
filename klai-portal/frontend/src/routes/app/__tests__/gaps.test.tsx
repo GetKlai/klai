@@ -167,6 +167,18 @@ beforeEach(() => {
 })
 
 describe('GapsPage list', () => {
+  it('links to the weekly cluster list and offers no decided-groups toggle', async () => {
+    mockGaps([gapItem()])
+
+    render(<Wrapper><GapsPage /></Wrapper>)
+
+    await waitForRow()
+    const link = screen.getByRole('link', { name: /weeklijst uit de chat|weekly list from the chat/i })
+    expect(link.getAttribute('href')).toBe('/app/knowledge/gaps/clusters')
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(gapsFetchUrls().every((url) => !url.includes('include_decided'))).toBe(true)
+  })
+
   it('shows automatic and review rows together in one flat list, sorted as returned', async () => {
     mockGaps([gapItem({ source: 'review' }), gapItem({ query_text: 'Andere vraag', source: 'automatic' })])
 
@@ -311,7 +323,7 @@ describe('GapsPage list', () => {
     await waitForRow('How do I export my invoices?')
     const hrefs = Array.from(container.querySelectorAll('a')).map((a) => a.getAttribute('href') ?? '')
     for (const href of hrefs) expect(href).not.toContain('invoices')
-    const detailHrefs = hrefs.filter((href) => /^\/app\/knowledge\/gaps\/[^/]+$/.test(href) && href !== '/app/knowledge/gaps/support-cases')
+    const detailHrefs = hrefs.filter((href) => /^\/app\/knowledge\/gaps\/[^/]+$/.test(href) && href !== '/app/knowledge/gaps/support-cases' && href !== '/app/knowledge/gaps/clusters')
     expect(detailHrefs.length).toBeGreaterThan(0)
     for (const href of detailHrefs) expect(href).toMatch(/^\/app\/knowledge\/gaps\/[0-9a-f]{16}$/)
   })
