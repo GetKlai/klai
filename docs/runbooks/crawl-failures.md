@@ -76,7 +76,9 @@ klai-connector calls the keep-alive (`POST /ingest/v1/crawl/keep-alive` on knowl
 - `crawl_keepalive_session_reminted hosts=[…]`: the chain signed the session in again; nothing to do.
 - `crawl_keepalive_session_logged_out reason=chain_broken_at:<host>`: the chain reached a host we hold no cookies for, so its session has to be pasted. `reason=embedded_login_gate` (or another wall reason) after a walked chain means every host answered but the page stayed walled; the session at the identity host has expired too. `reason=redirect_left_host:<host>` names a host that is not in `auth_chain_hosts`.
 
-The owner must paste cookies for every host in the chain, not only for the site itself. The portal wizard does not ask for those yet; that is the next step of this work.
+The owner must paste cookies for every host in the chain, not only for the site itself; the crawler wizard takes them per sign-in host.
+
+Two alerts (`crawl-session-rules.yaml`, component `crawl`) watch this. `crawl_session_chain_broken` fires on `chain_broken_at:<host>` within 2 hours: the label `reason` names the host, and the owner pastes that host's cookies in the connector wizard. It fires once per transition (the log line is not repeated while the connector stays logged out), so a source that stays broken is then only visible through the crawl alerts above. `crawl_session_cookie_expiring` fires when `crawl_keepalive_cookie_expiring` (logged on every tick, never with the cookie value) names a cookie of the site or a chain host that lapses within 7 days; paste fresh cookies for that host before the `expires` date and the alert clears.
 
 ## crawl_jobs_silent: dead scheduler
 

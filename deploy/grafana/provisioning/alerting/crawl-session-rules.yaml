@@ -1,0 +1,168 @@
+# Crawl session alerts: the sign-in chain of a stored session.
+#
+# Routed via component=crawl -> klai-ops-alerts-email (policies.yaml).
+#
+#   R1  crawl_session_chain_broken     CRITICAL  the keep-alive walked a sign-in chain
+#                                                and reached a host we hold no cookies
+#                                                for
+#   R2  crawl_session_cookie_expiring  WARNING   a stored cookie of the site or of a
+#                                                chain host lapses within 7 days
+#
+# Why: a wiki that signs in through a second host stayed logged out from
+# 2026-09-28 (every probe ended in embedded_login_gate) and the first signal
+# was crawls ingesting nothing. The keep-alive in knowledge-ingest
+# (routes/crawl_sync.py, every 30 minutes per connector) now logs both events
+# below. Runbook: docs/runbooks/crawl-failures.md.
+#
+# Both read VictoriaLogs (service:knowledge-ingest), so deploy/scripts/
+# verify-alert-datasource-access.py, which only reads Postgres rules, has
+# nothing to check here.
+#
+# Known ceiling of R1: crawl_keepalive_session_logged_out is logged once per
+# connector on the transition to logged-out, not on every tick (an in-memory
+# flag, reset when knowledge-ingest restarts). The 2h window therefore fires
+# once and resolves by itself while the chain stays broken; the 24h repeat in
+# the policy does not re-send it. The crawl_jobs and success-below-baseline
+# rules in crawl-rules.yaml keep reporting a source that stays broken.
+# R2 has no such gap: the event is logged on every tick until the cookie is
+# replaced, and the series disappears when the owner pastes a fresh one.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: crawl-session
+    folder: Klai
+    interval: 5m
+    rules:
+      - uid: crawl-session-chain-broken
+        title: crawl_session_chain_broken
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                service:knowledge-ingest event:crawl_keepalive_session_logged_out reason:~"^chain_broken_at:" _time:2h
+                  | stats by (connector_id, reason) count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: false
+        labels:
+          severity: critical
+          component: crawl
+          service_group: knowledge
+        annotations:
+          summary: 'Sign-in chain of connector {{ $labels.connector_id }} is broken ({{ $labels.reason }}): the cookies of that host are missing'
+          runbook_url: 'docs/runbooks/crawl-failures.md'
+          description: |
+            The keep-alive of web connector {{ $labels.connector_id }} tried to
+            sign its stored session in again and got stuck at a host it holds no
+            cookies for ({{ $labels.reason }}, the part after the colon is the
+            host). Until the owner pastes that host's cookies in the connector
+            wizard, the session lapses and crawls of this source fail on the
+            login wall.
+
+              service:knowledge-ingest event:crawl_keepalive_session_logged_out connector_id:"{{ $labels.connector_id }}" | sort by (_time) desc | limit 5
+
+            Runbook: docs/runbooks/crawl-failures.md.
+
+      - uid: crawl-session-cookie-expiring
+        title: crawl_session_cookie_expiring
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                service:knowledge-ingest event:crawl_keepalive_cookie_expiring _time:24h
+                  | stats by (connector_id, host, expires) count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: false
+        labels:
+          severity: warning
+          component: crawl
+          service_group: knowledge
+        annotations:
+          summary: 'Cookie of {{ $labels.host }} (connector {{ $labels.connector_id }}) expires on {{ $labels.expires }}: paste fresh cookies before then'
+          runbook_url: 'docs/runbooks/crawl-failures.md'
+          description: |
+            A stored cookie for {{ $labels.host }} lapses at {{ $labels.expires }}
+            (within 7 days or already past). Nothing renews a pasted cookie that
+            its host does not re-issue, so the owner of web connector
+            {{ $labels.connector_id }} has to paste fresh cookies for that host
+            in the connector wizard before that date. The alert clears when the
+            cookie is replaced.
+
+              service:knowledge-ingest event:crawl_keepalive_cookie_expiring connector_id:"{{ $labels.connector_id }}" | sort by (_time) desc | limit 5
+
+            Runbook: docs/runbooks/crawl-failures.md.

@@ -28,6 +28,7 @@ tick for a connector that stayed logged out. The tests below pin all four.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
 
@@ -738,3 +739,82 @@ class TestSignInChain:
         assert all(host != "evil.example.net" for host, _cookie in site.requests)
         jar = store.await_args.kwargs["jar"]
         assert jar.jar_for_host("idp.example.com") == {"idp_session": "idp-rotated"}
+
+
+class TestCookieExpiryAlert:
+    """A pasted session cookie that is about to lapse cannot be renewed by the
+    keep-alive (no host re-issues it), so each tick names it at error level
+    until the owner pastes a fresh one. Only the name and the date are logged."""
+
+    def _tick(self, cookies: list[dict]) -> MagicMock:
+        pool = _make_pool()
+        mock_logger = MagicMock()
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch("knowledge_ingest.routes.crawl_sync.logger", mock_logger),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
+                new_callable=AsyncMock,
+                return_value=_creds(cookies),
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
+                new_callable=AsyncMock,
+                return_value=_VALIDATED,
+            ),
+            patch(
+                "knowledge_ingest.routes.crawl_sync._probe_fetch",
+                new_callable=AsyncMock,
+                return_value=_probe(200, text="Welcome to the handbook. " * 20),
+            ),
+        ):
+            client.post(
+                "/ingest/v1/crawl/keep-alive",
+                json={**_post(), "auth_chain_hosts": ["idp.example.com"]},
+            )
+        return mock_logger
+
+    @staticmethod
+    def _in(days: int) -> str:
+        return (datetime.now(UTC) + timedelta(days=days, hours=1)).isoformat()
+
+    def test_a_cookie_expiring_within_seven_days_is_logged_at_error(self) -> None:
+        mock_logger = self._tick(
+            [
+                {
+                    "name": "idp_session",
+                    "value": "secret-1",
+                    "domain": "idp.example.com",
+                    "expires": self._in(3),
+                },
+                {
+                    "name": "wiki_session",
+                    "value": "secret-2",
+                    "domain": "wiki.example.com",
+                    "expires": self._in(30),
+                },
+                {
+                    "name": "other",
+                    "value": "secret-3",
+                    "domain": "elsewhere.example.net",
+                    "expires": self._in(1),
+                },
+                {
+                    "name": "no_expiry",
+                    "value": "secret-4",
+                    "domain": "wiki.example.com",
+                    "expires": None,
+                },
+            ]
+        )
+
+        expiring = [
+            c
+            for c in mock_logger.error.call_args_list
+            if c.args[0] == "crawl_keepalive_cookie_expiring"
+        ]
+        assert len(expiring) == 1
+        assert expiring[0].kwargs["host"] == "idp.example.com"
+        assert expiring[0].kwargs["name"] == "idp_session"
+        assert expiring[0].kwargs["days_left"] == 3
+        assert "secret" not in repr(mock_logger.mock_calls)

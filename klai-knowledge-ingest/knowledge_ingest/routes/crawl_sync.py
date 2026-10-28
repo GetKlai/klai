@@ -25,6 +25,7 @@ import re
 import time
 import uuid
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any
@@ -758,6 +759,42 @@ def _log_probe_result(
     )
 
 
+_COOKIE_EXPIRY_WARN = timedelta(days=7)
+
+
+def _log_expiring_cookies(
+    connector_id: str, org_id: str, jar: CookieJar, chain_hosts: set[tuple[str, int]]
+) -> None:
+    """Name every cookie of the site or a chain host that lapses within a week.
+
+    Nothing re-issues a pasted cookie on its own, so the owner has to paste a
+    fresh one before the date; the alert reads this event. Only the name and
+    the date are logged, never the value.
+    """
+    hosts = {host for host, _port in chain_hosts}
+    now = datetime.now(UTC)
+    for cookie in jar.cookies:
+        host = str(cookie.get("domain") or jar.base_host).lower().lstrip(".")
+        if host not in hosts or not cookie.get("expires"):
+            continue
+        try:
+            expires = datetime.fromisoformat(str(cookie["expires"]))
+        except ValueError:
+            continue
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=UTC)
+        if expires - now <= _COOKIE_EXPIRY_WARN:
+            logger.error(
+                "crawl_keepalive_cookie_expiring",
+                connector_id=connector_id,
+                org_id=org_id,
+                host=host,
+                name=cookie.get("name"),
+                expires=expires.isoformat(),
+                days_left=(expires - now).days,
+            )
+
+
 @router.post("/ingest/v1/crawl/keep-alive", response_model=CrawlKeepAliveResponse)
 async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
     """Touch a connector's stored session, and sign it in again when it lapsed.
@@ -818,6 +855,7 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
     jar = CookieJar(stored.payload["cookies"], validated.hostname)
     own_host = {(jar.base_host, urlparse(req.url).port or 443)}
     chain_hosts = own_host | {(host.lower(), 443) for host in req.auth_chain_hosts}
+    _log_expiring_cookies(str(req.connector_id), req.org_id, jar, chain_hosts)
     chain_walked = False
     result: _ProbeResponse | None = None
     final = req.url
