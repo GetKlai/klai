@@ -57,7 +57,11 @@ def test_litellm_prisma_migrations_are_preflight_gated():
     # file may force it (2026-10-28: three idle recreates in a row, one rollback).
     assert litellm_deploy_text.count("compose-up.sh --force-recreate litellm") == 1
     assert 'if [ "${{ steps.sync.outputs.changed }}" != 0 ]' in litellm_deploy_text
-    assert "retry rsync -ai deploy/litellm/" in litellm_deploy_text
+    # Content comparison, not size and mtime: a checkout touches every mtime,
+    # and a same-size edit shows as a timestamp-only line without -c.
+    assert "retry rsync -aic deploy/litellm/" in litellm_deploy_text
+    assert "grep -E '^[<>]f'" in litellm_deploy_text
+    assert "grep -vc ' tests/'" in litellm_deploy_text
     env_drift_text = ENV_DRIFT_SCRIPT.read_text(encoding="utf-8")
     assert "awk '$0 != \"litellm\"'" in env_drift_text
     assert "no env-drift services resolved; refusing an all-services compose up" in env_drift_text

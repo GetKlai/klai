@@ -106,10 +106,15 @@ jobs:
         run: |
           set -o pipefail
           source "$RUNNER_TEMP/ssh-retry.sh"
-          # -i itemizes every change; a line starting with >f or cf is a file
-          # whose content was sent (attribute-only and directory lines are not).
-          retry rsync -ai deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/ | tee "$RUNNER_TEMP/rsync.log"
-          changed=$(grep -cE '^[>c]f' "$RUNNER_TEMP/rsync.log" || true)
+          # -c compares content, not size and mtime: a checkout gives every
+          # file a new mtime, and a same-size edit to a hook file would show
+          # as a timestamp-only line without it (verified with rsync -ai on
+          # 2026-10-28). With -c, -i marks a file whose content differs or is
+          # new with < (or > on some builds) in the first column and leaves a
+          # mtime-only update as ".f..t". The tests directory is synced but
+          # never imported by the container.
+          retry rsync -aic deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/ | tee "$RUNNER_TEMP/rsync.log"
+          changed=$(grep -E '^[<>]f' "$RUNNER_TEMP/rsync.log" | grep -vc ' tests/' || true)
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
           echo "hook files with new content: $changed"
           # SPEC-SEC-SERVICE-AUTH-002 removed the vendored ZitadelTokenClient;
