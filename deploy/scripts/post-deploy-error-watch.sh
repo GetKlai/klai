@@ -47,7 +47,10 @@ KLAI_DIR="${KLAI_COMPOSE_DIR:-/opt/klai}"
 DOCKER="${KLAI_DOCKER_BIN:-docker}"
 ENV_FILE="${KLAI_ENV_FILE:-$KLAI_DIR/.env}"
 VL_URL="${KLAI_VICTORIALOGS_URL:-http://victorialogs:9428}"
-VL_NETWORK="${KLAI_VICTORIALOGS_NETWORK:-monitoring}"
+# The Docker network VictoriaLogs sits on is klai-monitoring (compose network
+# `monitoring` with `name: klai-monitoring`); `monitoring` did not exist on
+# core-01 and gave "no verdict" on the first three watched deploys (2026-10-28).
+VL_NETWORK="${KLAI_VICTORIALOGS_NETWORK:-klai-monitoring}"
 CURL_IMAGE="${KLAI_CURL_IMAGE:-curlimages/curl:8.11.1}"
 PYTHON="${KLAI_PYTHON:-python3}"
 POLL_INTERVAL="${KLAI_ERROR_WATCH_INTERVAL:-30}"

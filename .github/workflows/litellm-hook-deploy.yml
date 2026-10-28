@@ -5,13 +5,26 @@ on:
     branches: [main]
     paths:
       - 'deploy/litellm/**'
-      - 'deploy/docker-compose.yml'
-      - 'deploy/scripts/compose-up.sh'
       - '.github/workflows/litellm-hook-deploy.yml'
+  # A compose change reaches core-01 through deploy-compose.yml only (it keeps
+  # the .prev copies, takes the data-store snapshots and runs the gates, slice
+  # S3/S8a). Until 2026-10-28 this workflow also ran on deploy/docker-compose.yml
+  # and rsynced the file itself, faster than the sync, so the sync saw no
+  # change, kept no previous copy and took no snapshot. It now runs after a
+  # green sync and recreates LiteLLM from the file the sync installed.
+  workflow_run:
+    workflows: ['Sync docker-compose.yml + config + smoke-test to core-01']
+    types: [completed]
+    branches: [main]
+
+# Never beside the compose sync: both recreate containers on core-01.
+concurrency:
+  group: deploy-compose-core-01
+  cancel-in-progress: false
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
 
     steps:
@@ -95,13 +108,7 @@ jobs:
           # SPEC-SEC-SERVICE-AUTH-002 removed the vendored ZitadelTokenClient;
           # the rsync above has no --delete, so drop the now-orphaned host file.
           retry ssh klai@${{ secrets.CORE01_HOST }} 'rm -f /opt/klai/litellm/klai_service_auth.py'
-          retry rsync -av deploy/docker-compose.yml klai@${{ secrets.CORE01_HOST }}:/opt/klai/docker-compose.yml
-          # --inplace would let a concurrent service deploy read a half-written
-          # script; rsync's default is write-to-temp-then-rename, so the swap is
-          # atomic. Kept explicit because compose-up.sh now decides whether a
-          # deploy counts as successful.
-          retry rsync -av deploy/scripts/compose-up.sh klai@${{ secrets.CORE01_HOST }}:/opt/klai/scripts/compose-up.sh
-          retry ssh klai@${{ secrets.CORE01_HOST }} "chmod 0755 /opt/klai/scripts/compose-up.sh"
+          # docker-compose.yml and compose-up.sh are installed by deploy-compose.yml.
 
       # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3 — use the canonical
       # compose-up wrapper (already used by caddy, klai-connector,

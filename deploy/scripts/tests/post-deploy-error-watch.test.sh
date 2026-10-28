@@ -130,7 +130,7 @@ check "exit 0" test "$rc" = 0
 check "says clean with the count" grep -q 'portal-api clean: 3 error lines' <<< "$out"
 check "every query had the right filter and window bounds" test ! -e "$STATE/bad_query"
 check "queries the service's error level" grep -q 'service:portal-api AND level:error AND _time:\[' "$STATE/queries.log"
-check "runs curl on the monitoring network" grep -q -- '--network monitoring curlimages/curl:test' "$STATE/docker_argv"
+check "runs curl on the klai-monitoring network" grep -q -- '--network klai-monitoring curlimages/curl:test' "$STATE/docker_argv"
 printf '%s' "$out" > "$work/out.txt"
 check "no credentials in the output or the container argv" bash -c '! grep -q p4ss "$0" "$1"' "$STATE/docker_argv" "$work/out.txt"
 
