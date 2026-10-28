@@ -759,5 +759,18 @@
       matchPackageNames: ['langchain-community'],
       allowedVersions: '<0.4.2',
     },
+
+    // ---------------------------------------------------------------------
+    // Exact versions rolled back on core-01 (SPEC-INFRA-AUTO-ROLLBACK-001 S5).
+    //
+    // When the compose sync rolls back a Renovate image bump, deploy-compose.yml
+    // runs scripts/renovate-revert-after-rollback.py, which opens a PR that puts
+    // the image line back and excludes that one version here, so main does not
+    // redeploy it and Renovate does not propose it again. Each entry excludes
+    // exact versions only; the next release still flows. A package that already
+    // has a ceiling above is refused, because a second allowedVersions rule
+    // replaces the first instead of adding to it.
+    // ---------------------------------------------------------------------
+    // End of the rolled-back versions: scripts/renovate-revert-after-rollback.py inserts above this line.
   ],
 }
