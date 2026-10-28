@@ -33,6 +33,16 @@ env:
   # Opt in early to Node 24 for all JS-based actions (Node 20 EOL Sept 2026)
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+# One sync at a time. Two runs started 5 s apart on 2026-10-28 (b5d01a88d and
+# 811900b91): both worked in the same fixed clone directory, the second's
+# `rm -rf` took the first run's working directory away mid-sync (rsync:
+# getcwd(): No such file or directory), and both recreated containers on
+# core-01 at once. Queued, never cancelled: a cancelled sync could leave the
+# host half-synced.
+concurrency:
+  group: deploy-compose-core-01
+  cancel-in-progress: false
+
 jobs:
   sync-compose:
     # Production sync over SSH. Guarded on main for the same reason as every
@@ -119,10 +129,13 @@ jobs:
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
             set -e
-            cd /tmp && rm -rf klai-compose-sync
+            # A directory of its own per run, so a run that overlaps (or a
+            # leftover from a killed one) can never delete this run's cwd.
+            SYNC_DIR="$(mktemp -d /tmp/klai-compose-sync.XXXXXX)"
+            rm -rf /tmp/klai-compose-sync
             git clone --depth=1 --filter=blob:none --sparse \
-              https://github.com/GetKlai/klai.git klai-compose-sync
-            cd klai-compose-sync
+              https://github.com/GetKlai/klai.git "$SYNC_DIR"
+            cd "$SYNC_DIR"
             # SPEC-SEC-024 M4.2 + M4.3: also pull Grafana provisioning and
             # public-safe deploy scripts. Operator monitoring scripts
             # (push-health, gpu-health, monitor coverage) are owned by
@@ -409,7 +422,7 @@ jobs:
             rsync -a scripts/smoke-docker-socket-proxy.sh /opt/klai/scripts/
             chmod +x /opt/klai/scripts/smoke-docker-socket-proxy.sh
 
-            cd /tmp && rm -rf klai-compose-sync
+            cd /tmp && rm -rf "$SYNC_DIR"
             echo "docker-compose.yml + grafana provisioning + scripts synced to /opt/klai/"
 
             # SPEC-MCP-RETRIEVAL-001 env-drift recreate, then the firewall
