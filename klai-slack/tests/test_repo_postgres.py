@@ -43,6 +43,7 @@ async def engine(migrated: None) -> AsyncIterator[None]:
     yield
     async with db.session() as s:
         for table in (
+            "pending_links",
             "processed_events",
             "turns",
             "thread_scopes",
@@ -123,3 +124,28 @@ async def test_scope_rows_and_purge(engine: None) -> None:
         for table in ("thread_scopes", "turns", "slack_bots", "slack_installations"):
             count = (await s.execute(text(f"SELECT count(*) FROM {table}"))).scalar_one()  # noqa: S608
             assert count == 0, table
+
+
+async def test_pending_link_is_encrypted_single_use_and_purged_after_20_minutes(
+    engine: None,
+) -> None:
+    async with db.session() as s:
+        await repo.add_pending_link(s, "state-old", "link-token-old")
+        await repo.add_pending_link(s, "state-new", "link-token-new")
+        await repo.add_pending_link(s, "state-pop", "link-token-pop")
+    async with db.session() as s:
+        await s.execute(
+            text(
+                "UPDATE pending_links SET created_at = now() - interval '21 minutes' "
+                "WHERE state = 'state-old'"
+            )
+        )
+        raw = await s.execute(text("SELECT string_agg(token_enc, ',') FROM pending_links"))
+        assert "link-token" not in raw.scalar_one()
+    async with db.session() as s:
+        assert await repo.pop_pending_link(s, "state-pop") == "link-token-pop"
+        assert await repo.pop_pending_link(s, "state-pop") is None
+        await repo.purge_expired(s)
+    async with db.session() as s:
+        states = (await s.execute(text("SELECT state FROM pending_links"))).scalars().all()
+    assert states == ["state-new"]

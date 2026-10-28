@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.crypto import decrypt, encrypt
 from app.models import (
     ChannelDefault,
+    PendingLink,
     ProcessedEvent,
     ThreadScope,
     Turn,
@@ -27,6 +28,8 @@ from app.models import (
 
 TURN_RETENTION = timedelta(days=30)
 EVENT_RETENTION = timedelta(hours=24)
+# Twice the 10-minute Bolt OAuth state lifetime: past that the callback is refused anyway.
+PENDING_LINK_RETENTION = timedelta(minutes=20)
 
 
 # --- workspace link --------------------------------------------------------
@@ -68,6 +71,19 @@ async def save_link(
 def link_api_key(link: WorkspaceLink) -> str:
     """The decrypted Klai partner key of a link. Never log the result."""
     return decrypt(link.klai_api_key_enc)
+
+
+async def add_pending_link(session: AsyncSession, state: str, token: str) -> None:
+    session.add(PendingLink(state=state, token_enc=encrypt(token)))
+
+
+async def pop_pending_link(session: AsyncSession, state: str) -> str | None:
+    """Delete the pending link of an OAuth state and return its decrypted portal token."""
+    result = await session.execute(
+        delete(PendingLink).where(PendingLink.state == state).returning(PendingLink.token_enc)
+    )
+    token_enc = result.scalar_one_or_none()
+    return None if token_enc is None else decrypt(token_enc)
 
 
 # --- knowledge-base scope --------------------------------------------------
@@ -242,9 +258,13 @@ async def purge_team(session: AsyncSession, team_id: str) -> None:
 
 
 async def purge_expired(session: AsyncSession) -> None:
-    """Retention per spec §6.1: turns after 30 days, dedupe rows after 24 hours."""
+    """Retention per spec §6.1: turns after 30 days, dedupe rows after 24 hours, pending
+    portal links after 20 minutes."""
     now = datetime.now(UTC)
     await session.execute(delete(Turn).where(Turn.created_at < now - TURN_RETENTION))
     await session.execute(
         delete(ProcessedEvent).where(ProcessedEvent.received_at < now - EVENT_RETENTION)
+    )
+    await session.execute(
+        delete(PendingLink).where(PendingLink.created_at < now - PENDING_LINK_RETENTION)
     )

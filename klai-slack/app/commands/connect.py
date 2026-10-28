@@ -19,6 +19,7 @@ from app.clients.portal import (
     PortalUnavailable,
 )
 from app.commands.context import CommandContext
+from app.services.linking import store_link
 from app.services.slack_users import is_workspace_admin
 
 logger = structlog.get_logger()
@@ -85,32 +86,14 @@ async def run(ctx: CommandContext) -> None:
     if result is None:
         return
 
-    try:
-        async with db.session() as s:
-            await repo.save_link(
-                s,
-                team_id=team_id,
-                org_id=result.org_id,
-                org_name=result.org_name,
-                api_key=api_key,
-                key_id=result.key_id,
-                linked_by_slack_user_id=user_id,
-            )
-    except Exception:
-        # The portal already recorded the link; release it so the portal shows
-        # "revoked" with a re-link action instead of a link this service lacks.
-        logger.exception("slack_connect_store_failed", org_id=result.org_id)
-        try:
-            await ctx.portal.unlink(team_id)
-        except PortalUnavailable:
-            logger.exception("slack_connect_compensating_unlink_failed", org_id=result.org_id)
+    stored = await store_link(
+        ctx.portal, team_id=team_id, result=result, api_key=api_key, linked_by_slack_user_id=user_id
+    )
+    if not stored:
         await _say(ctx, STORE_FAILED)
         return
 
     count = len(result.kb_ids)
-    logger.info(
-        "slack_workspace_linked", org_id=result.org_id, key_id=result.key_id, kb_count=count
-    )
     await _say(
         ctx,
         LINKED.format(

@@ -20,6 +20,7 @@ dependencies = [
     # SPEC-LOGGING-EXTRACT-001 / SPEC-SEC-INTERNAL-001: shared setup_logging,
     # RequestContextMiddleware, verify_shared_secret, sanitize_response_body.
     "klai-log-utils",
+    "pyjwt>=2.12",
 ]
 
 [project.optional-dependencies]
