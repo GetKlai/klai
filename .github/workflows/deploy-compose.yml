@@ -98,6 +98,8 @@ jobs:
           bash deploy/scripts/tests/compose-up-verify.test.sh
           # compose-rollback.sh is sourced by the sync step below.
           bash deploy/scripts/tests/compose-rollback.test.sh
+          # Its data half: snapshot before, restore on red (S8a).
+          bash deploy/scripts/tests/datastore-rollback.test.sh
           # The env-drift sweep at the end of the sync step, installed here too.
           bash deploy/scripts/tests/compose-env-drift-recreate.test.sh
           # Installed here with the other deploy scripts; service workflows call it.
@@ -166,6 +168,11 @@ jobs:
             # failed). Helper and rules: deploy/scripts/compose-rollback.sh.
             source deploy/scripts/compose-rollback.sh
             rb_init "$(git rev-parse HEAD)"
+            # S8a: a Postgres image change, or one of an app that migrates its
+            # own database (Twenty, GlitchTip, Zitadel), is dumped first, while
+            # nothing has changed yet. Short on disk (twice the volume size) or a
+            # failed dump ends the run here, exit 4, with every file untouched.
+            ds_snapshot_changed /opt/klai/docker-compose.yml deploy/docker-compose.yml
             # Write-then-rename, not `cp` in place. cp truncates the target and
             # then writes it, and portal-api.yml and litellm-hook-deploy.yml run
             # `docker compose` against this same file — both can fire on the same
@@ -436,6 +443,10 @@ jobs:
             # the script; it was installed by the deploy/scripts loop above, so
             # it is the version from this commit.
             rb_gate compose compose-up-verification /opt/klai/scripts/compose-env-drift-recreate.sh
+            # S8a: per snapshot of this run, recreate a changed store's consumers
+            # (they hold pools to the old container) and probe its tables. Red
+            # restores the snapshot within 30 minutes of it.
+            ds_gates
 
             # SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test. Prints
             # [OK]/[FAIL] per probe; warns on non-zero exit but does NOT

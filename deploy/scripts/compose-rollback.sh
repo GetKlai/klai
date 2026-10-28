@@ -34,12 +34,19 @@
 # rb_init, because from then on the .prev copies belong to that sync, and a
 # replay removes it so the same sync is never undone twice.
 #
+# Data stores (slice S8a, datastore-rollback.sh, sourced below): an image change
+# of a Postgres store or of an app that migrates its own database is dumped
+# before the sync changes anything, and a red gate within 30 minutes restores
+# the dumps together with the files. Past the window nothing is restored (gate
+# restore-window); an inventory entry this sync does not snapshot (LiteLLM)
+# restores nothing either (gate self-migrating-image).
+#
 # Known ceilings
 #   - Failures before the first recreate (the file copies, bash -n) are outside
 #     the gates: containers are untouched and the next sync copies the files again.
 #   - LiteLLM is recreated by litellm-hook-deploy.yml and left out of the
 #     env-drift sweep, so a compose-file restore does not recreate it. Its image
-#     changes already block any restore (RB_SELF_MIGRATING_IMAGES).
+#     changes block any restore (see above).
 #   - rb_keep copies before the content comparison, so an unchanged file is
 #     restored to identical content; that only matters if another deploy wrote
 #     the same file in between.
@@ -56,21 +63,15 @@ RB_MARKER="$RB_DIR/.compose-commit"
 RB_FAILED_FLAG="$RB_DIR/.compose-rollback-failed"
 RB_STATE="$RB_DIR/.compose-prev-state"
 
-# Images that migrate their own database when they start: Twenty (`upgrade` on
-# start), LiteLLM (USE_PRISMA_MIGRATE), GlitchTip (`manage.py migrate`), Zitadel
-# (start-from-init). Putting the old image back on the newer schema can leave it
-# running against tables it does not understand, and restoring the compose file
-# would also point a later `up -d` at the old tag. So when one of these changed
-# in this sync nothing is restored; the run reports rollback_failed and a human
-# decides (until S8 snapshots their databases). Matched on the image repository.
-RB_SELF_MIGRATING_IMAGES='twentycrm/twenty|berriai/litellm|glitchtip/glitchtip|zitadel/zitadel'
-
 RB_KEPT=()
 RB_NEW=()
 RB_TOUCHED=()
 RB_FROM="none"
 RB_TO=""
 RB_LOG=""
+
+# shellcheck source=deploy/scripts/datastore-rollback.sh
+source "$(dirname "${BASH_SOURCE[0]}")/datastore-rollback.sh"
 
 rb_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 rb_json() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
@@ -118,15 +119,20 @@ rb_restore() {
   return "$rc"
 }
 
-# 0 when an image of RB_SELF_MIGRATING_IMAGES differs between the compose file
-# this sync replaced and the one it installed.
-rb_self_migrating_changed() {
-  local old="$RB_DIR/docker-compose.yml.prev" new="$RB_DIR/docker-compose.yml"
-  [[ -f "$old" ]] || return 1
-  ! diff -q <(rb_self_migrating_images "$old") <(rb_self_migrating_images "$new") >/dev/null
-}
-rb_self_migrating_images() {
-  grep -E '^[[:space:]]+image:' "$1" | grep -E "$RB_SELF_MIGRATING_IMAGES" | sort || true
+# 0 when a data store or self-migrating app changed in this sync without a
+# snapshot of this run: LiteLLM (its own workflow migrates it), or a path that
+# skipped ds_snapshot_changed. Putting the old image back on a newer schema can
+# leave it running against tables it does not understand.
+rb_unsnapshotted_change() {
+  local name dir
+  while read -r name; do
+    [[ -n "$name" ]] || continue
+    for dir in "${DS_SNAPSHOTS[@]}"; do
+      [[ "$(ds_meta "$dir" name)" == "$name" ]] && continue 2
+    done
+    return 0
+  done < <(ds_changed "$RB_DIR/docker-compose.yml.prev" "$RB_DIR/docker-compose.yml")
+  return 1
 }
 
 # The recreate path of the sync, over the restored files: services recreated
@@ -163,6 +169,8 @@ rb_finish() {
         for f in "${RB_KEPT[@]}"; do printf 'kept=%s\n' "$f"; done
         for f in "${RB_NEW[@]}"; do printf 'new=%s\n' "$f"; done
         for f in "${RB_TOUCHED[@]}"; do printf 'touched=%s\n' "$f"; done
+        # The data snapshots of this sync, so a replay restores them within R4's window.
+        for f in "${DS_SNAPSHOTS[@]}"; do printf 'snapshot=%s\n' "$f"; done
       } > "$RB_STATE" ;;
     rolled_back)
       code=3
@@ -174,7 +182,9 @@ rb_finish() {
       code=4
       rm -f "$RB_STATE"
       # Keep the first failure's commit and gate; later runs only report.
-      [[ -e "$RB_FAILED_FLAG" ]] || printf 'commit=%s gate=%s\n' "$RB_TO" "$gate" > "$RB_FAILED_FLAG" ;;
+      # disk-headroom and snapshot end the run before any file is replaced, so
+      # the host is still in its verified state and gets no flag.
+      [[ -e "$RB_FAILED_FLAG" || "$gate" == disk-headroom || "$gate" == snapshot ]] || printf 'commit=%s gate=%s\n' "$RB_TO" "$gate" > "$RB_FAILED_FLAG" ;;
   esac
   if (( code != 0 )); then
     event="$(printf '{"service":"auto-rollback","level":"error","event":"auto_rollback","outcome":"%s","deploy_service":"%s","gate":"%s","commit":"%s","_time":"%s"}' \
@@ -203,6 +213,7 @@ rb_replay() {
   RB_KEPT=()
   RB_NEW=()
   RB_TOUCHED=()
+  DS_SNAPSHOTS=()
   while IFS='=' read -r key val; do
     case "$key" in
       from) RB_FROM="$val" ;;
@@ -210,6 +221,7 @@ rb_replay() {
       kept) RB_KEPT+=("$val") ;;
       new) RB_NEW+=("$val") ;;
       touched) RB_TOUCHED+=("$val") ;;
+      snapshot) DS_SNAPSHOTS+=("$val") ;;
     esac
   done < "$RB_STATE"
   mkdir -p "$RB_REPORT_DIR"
@@ -230,12 +242,18 @@ rb_gate() {
     echo "::error::an earlier sync ended rollback_failed ($(cat "$RB_FAILED_FLAG")); the files on the host were never verified, so nothing is restored"
     rb_finish "$service" previous-state-unverified rollback_failed
   fi
-  if rb_self_migrating_changed; then
-    echo "::error::an image that migrates its own database changed in this sync; restoring files alone could leave it on a schema it does not understand. Nothing restored."
+  if rb_unsnapshotted_change; then
+    echo "::error::an image that migrates its own database changed in this sync without a snapshot; restoring files alone could leave it on a schema it does not understand. Nothing restored."
     rb_finish "$service" self-migrating-image rollback_failed
+  fi
+  # R4: data only within 30 minutes of its snapshot; files without their data
+  # would put the old image on the new schema, so past the window nothing.
+  if ! ds_in_window; then
+    rb_finish "$service" restore-window rollback_failed
   fi
   if {
     rb_restore \
+      && ds_restore_all \
       && rb_recreate \
       && { (( reverify == 0 )) || "$@"; }
   } > >(tee -a "$RB_LOG") 2>&1; then

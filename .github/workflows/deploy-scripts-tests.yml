@@ -153,6 +153,11 @@ jobs:
       - name: rollback-since replay suite
         run: bash deploy/scripts/tests/rollback-since.test.sh
 
+      # Its data half: a restore that drops the wrong database, or restores past
+      # the 30-minute window, loses customer writes.
+      - name: datastore rollback suite
+        run: bash deploy/scripts/tests/datastore-rollback.test.sh
+
       - name: LibreChat regenerate suite
         run: bash deploy/scripts/tests/tenant-config-regenerate.test.sh
 
