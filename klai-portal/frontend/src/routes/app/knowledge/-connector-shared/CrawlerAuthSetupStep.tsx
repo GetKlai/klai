@@ -10,7 +10,7 @@ import type { CookieRow } from '../$kbSlug/-kb-types'
 import { AuthProbeFeedback } from '../-connector-feedback'
 import type { AuthGuardSuggestion, AuthProbeResult } from '../-connector-types'
 import { buildCrawlerCookies, detectAuthChainHosts, type CrawlerAuthPayload } from './api'
-import { hostOf, isManualRow } from './cookieHosts'
+import { hostOf, isManualRow, ownerHost } from './cookieHosts'
 
 type CookieSetupMode = {
   kind: 'cookies'
@@ -193,7 +193,17 @@ export function CrawlerAuthSetupStep({
               onChange={mode.onChange}
               idPrefix={`${mode.idPrefix}-${baseHost}`}
             />
-            {authChainHosts.map((host) => (
+            {/* A second sign-in host is asked for only once the site's own
+                cookies did not pass the check, or when cookies for it are
+                already stored: for most sites the own cookies keep the
+                session alive and a second box reads as a second login. */}
+            {authChainHosts
+              .filter(
+                (host) =>
+                  (result !== null && result.classification !== 'auth_ok') ||
+                  mode.rows.some((row) => ownerHost(row, baseHost, authChainHosts) === host),
+              )
+              .map((host) => (
               <div key={host} className="space-y-2 border-t border-gray-200 pt-3">
                 <p className="text-sm font-medium text-gray-900">
                   {m.admin_connectors_webcrawler_cookies_chain_title({ host })}
@@ -207,7 +217,7 @@ export function CrawlerAuthSetupStep({
                   idPrefix={`${mode.idPrefix}-${host}`}
                 />
               </div>
-            ))}
+              ))}
             {chainCheckFailed && (
               <p className="text-xs text-[var(--color-destructive)]">
                 {m.admin_connectors_webcrawler_cookies_chain_failed()}
