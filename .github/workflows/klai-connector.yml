@@ -49,24 +49,9 @@ jobs:
       # rationale. This service carried a vulnerable h2 + pypdf for weeks with
       # nothing scanning it. --skip-editable: internal klai-libs are editable
       # path deps, not PyPI releases to query by distribution name.
-      #
-      # The three filelock entries are fixed only in 4.2.1, and unstructured
-      # (0.27.35, the latest) still requires filelock<4. None is reachable
-      # here: CVE-2026-112907 and CVE-2026-112913 are Windows-only, and
-      # CVE-2026-112940 is in ReadWriteLock, while the only filelock call in
-      # the dependency tree is unstructured's plain FileLock in
-      # unstructured/nlp/tokenize.py and klai-connector imports none. Remove
-      # them when unstructured allows filelock 4; lock file maintenance then
-      # moves filelock and pip-audit stops reporting it.
       - name: Dependency vulnerability scan (pip-audit)
-        run: >
-          uv run --with pip-audit pip-audit --skip-editable
-          --ignore-vuln CVE-2026-112907
-          --ignore-vuln CVE-2026-112913
-          --ignore-vuln CVE-2026-112940
+        run: uv run --with pip-audit pip-audit --skip-editable
 
-      # These 413 tests lived in the repo since the service was created but
-      # never ran in CI — only ruff did, so a regression could ship unnoticed.
       - name: Test (pytest)
         run: uv run pytest -q --tb=short
 

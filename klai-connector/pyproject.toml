@@ -119,3 +119,10 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.9",
 ]
+
+[tool.uv]
+# unstructured pins filelock<4 but only calls FileLock(path, timeout=-1)
+# (unstructured/nlp/tokenize.py), which filelock 4 still provides. The whole
+# 3.x line carries thirteen advisories fixed only in 4.2.1 (CVE-2026-1129xx),
+# so the upper bound is overridden instead of ignoring each advisory.
+override-dependencies = ["filelock>=4.2.1"]
