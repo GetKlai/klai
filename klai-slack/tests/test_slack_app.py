@@ -9,7 +9,7 @@ from slack_bolt.request.async_request import AsyncBoltRequest
 from app import repo
 from app.clients.portal import PortalClient, PortalUnavailable
 from app.config import get_settings
-from app.slack_app import build_slack_app, dedupe_events, teardown_team
+from app.slack_app import build_oauth_settings, build_slack_app, dedupe_events, teardown_team
 
 EVENT = {
     "type": "event_callback",
@@ -94,7 +94,9 @@ async def test_teardown_unlinks_and_purges(
 def test_oauth_settings_match_the_manifest_contract() -> None:
     """Spec §7.4: exactly these bot scopes, and the public install/redirect URLs."""
     store = SimpleNamespace()
-    app = build_slack_app(get_settings(), store, store, PortalClient("http://p", "s"))  # pyright: ignore[reportArgumentType]
+    portal = PortalClient("http://p", "s")
+    oauth_settings = build_oauth_settings(get_settings(), store, store, portal)  # pyright: ignore[reportArgumentType]
+    app = build_slack_app(get_settings(), oauth_settings, portal)
     oauth = app.oauth_flow
     assert oauth is not None
     assert sorted(oauth.settings.scopes or []) == sorted(

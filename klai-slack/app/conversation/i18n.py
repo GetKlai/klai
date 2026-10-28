@@ -19,8 +19,8 @@ NL: dict[str, str] = {
     "placeholder_one": "Ik zoek in 1 kennisbank…",
     "placeholder_many": "Ik zoek in {n} kennisbanken…",
     "not_linked": (
-        "Klai is nog niet gekoppeld aan deze Slack-workspace. Een workspace-beheerder "
-        "koppelt Klai met `/klai connect` en de Slack-sleutel uit de Klai-portal."
+        "Klai is nog niet gekoppeld aan deze Slack-workspace. Een Klai-beheerder "
+        "koppelt Klai vanuit de Klai-portal (Beheer → Slack)."
     ),
     "no_kbs": (
         "Er zijn nog geen kennisbanken vrijgegeven voor Slack. Vraag je Klai-beheerder "
@@ -95,10 +95,7 @@ NL: dict[str, str] = {
     ),
     "home_connected": "Verbonden met Klai-organisatie *{org}*.",
     "home_not_linked": "*Nog niet gekoppeld.*",
-    "home_connect_hint": (
-        "Een workspace-beheerder koppelt Klai met `/klai connect pk_live_…` en de "
-        "Slack-sleutel uit de <{portal_url}|Klai-portal> (Beheer > Slack)."
-    ),
+    "home_connect_hint": "Koppel Klai vanuit de <{portal_url}|Klai-portal> (Beheer → Slack).",
     "home_kbs": "*Vrijgegeven kennisbanken*",
     "home_kbs_manage": "<{portal_url}|Beheren in de Klai-portal>",
     "home_kbs_none": "Nog geen kennisbanken vrijgegeven.",
@@ -137,8 +134,8 @@ EN: dict[str, str] = {
     "placeholder_one": "Searching 1 knowledge base…",
     "placeholder_many": "Searching {n} knowledge bases…",
     "not_linked": (
-        "Klai is not linked to this Slack workspace yet. A workspace admin links Klai "
-        "with `/klai connect` and the Slack key from the Klai portal."
+        "Klai is not linked to this Slack workspace yet. A Klai admin links Klai from "
+        "the Klai portal (Admin → Slack)."
     ),
     "no_kbs": (
         "No knowledge bases have been released for Slack yet. Ask your Klai admin to "
@@ -207,10 +204,7 @@ EN: dict[str, str] = {
     ),
     "home_connected": "Connected to Klai organisation *{org}*.",
     "home_not_linked": "*Not linked yet.*",
-    "home_connect_hint": (
-        "A workspace admin links Klai with `/klai connect pk_live_…` and the Slack key "
-        "from the <{portal_url}|Klai portal> (Admin > Slack)."
-    ),
+    "home_connect_hint": "Link Klai from the <{portal_url}|Klai portal> (Admin → Slack).",
     "home_kbs": "*Released knowledge bases*",
     "home_kbs_manage": "<{portal_url}|Manage in the Klai portal>",
     "home_kbs_none": "No knowledge bases released yet.",

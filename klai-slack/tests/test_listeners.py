@@ -225,12 +225,23 @@ async def test_home_tab_publishes_status_kbs_and_channel_defaults(
     assert "https://my.getklai.com/admin/slack" in text
 
 
-async def test_home_tab_unlinked_shows_connect_hint(store: Store, slack: FakeSlack) -> None:
+async def test_home_tab_unlinked_points_to_the_portal(store: Store, slack: FakeSlack) -> None:
     store.link = None
     event = {"type": "app_home_opened", "user": "U1", "channel": "D1", "tab": "home"}
     await listeners.on_app_home_opened(body={"team_id": "T1"}, event=event, client=slack)  # pyright: ignore[reportArgumentType]
-    text = json.dumps(slack.named("views_publish")[0]["view"])
-    assert "Nog niet gekoppeld" in text and "/klai connect" in text
+    text = json.dumps(slack.named("views_publish")[0]["view"], ensure_ascii=False)
+    assert "Nog niet gekoppeld" in text
+    assert "Koppel Klai vanuit de <https://my.getklai.com/admin/slack|Klai-portal>" in text
+    assert "(Beheer → Slack)" in text
+    assert "/klai connect" not in text
+
+
+async def test_help_when_unlinked_points_to_the_portal(store: Store, slack: FakeSlack) -> None:
+    store.link = None
+    said: list[str] = []
+    await SUBCOMMANDS["help"].run(_ctx(slack, "help", said))
+    assert "Klai-portal (Beheer → Slack)" in said[0]
+    assert "/klai connect" not in said[0]
 
 
 def test_home_view_stays_within_block_kit_limits() -> None:

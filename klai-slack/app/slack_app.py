@@ -13,7 +13,7 @@ from slack_bolt.request.async_request import AsyncBoltRequest
 from slack_sdk.oauth.installation_store.async_installation_store import AsyncInstallationStore
 from slack_sdk.oauth.state_store.async_state_store import AsyncOAuthStateStore
 
-from app import commands, db, repo
+from app import commands, db, portal_link, repo
 from app.clients.portal import PortalClient, PortalUnavailable
 from app.config import Settings
 from app.conversation import listeners
@@ -32,6 +32,7 @@ BOT_SCOPES = [
     "assistant:write",
 ]
 INSTALL_PATH = "/slack/install"
+CONNECT_PATH = "/slack/connect"
 REDIRECT_PATH = "/slack/oauth_redirect"
 
 
@@ -70,26 +71,35 @@ async def teardown_team(team_id: str, portal: PortalClient, reason: str) -> None
     logger.info("slack_team_purged", team_id=team_id, reason=reason)
 
 
-def build_slack_app(
+def build_oauth_settings(
     settings: Settings,
     installation_store: AsyncInstallationStore,
     state_store: AsyncOAuthStateStore,
     portal: PortalClient,
+) -> AsyncOAuthSettings:
+    """Shared by Bolt's install flow and ``/slack/connect``, so both send Slack the same
+    scopes, redirect URI and state."""
+    return AsyncOAuthSettings(
+        client_id=settings.slack_client_id,
+        client_secret=settings.slack_client_secret,
+        scopes=BOT_SCOPES,
+        install_path=INSTALL_PATH,
+        redirect_uri_path=REDIRECT_PATH,
+        redirect_uri=f"{settings.public_base_url.rstrip('/')}{REDIRECT_PATH}",
+        installation_store=installation_store,
+        installation_store_bot_only=True,
+        state_store=state_store,
+        callback_options=portal_link.callback_options(portal, settings.portal_internal_secret),
+    )
+
+
+def build_slack_app(
+    settings: Settings, oauth_settings: AsyncOAuthSettings, portal: PortalClient
 ) -> AsyncApp:
     app = AsyncApp(
         signing_secret=settings.slack_signing_secret,
         process_before_response=False,
-        oauth_settings=AsyncOAuthSettings(
-            client_id=settings.slack_client_id,
-            client_secret=settings.slack_client_secret,
-            scopes=BOT_SCOPES,
-            install_path=INSTALL_PATH,
-            redirect_uri_path=REDIRECT_PATH,
-            redirect_uri=f"{settings.public_base_url.rstrip('/')}{REDIRECT_PATH}",
-            installation_store=installation_store,
-            installation_store_bot_only=True,
-            state_store=state_store,
-        ),
+        oauth_settings=oauth_settings,
     )
     app.middleware(dedupe_events)
 
