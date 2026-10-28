@@ -81,7 +81,7 @@ groups:
           alert_type: auto_rollback
         annotations:
           summary: '{{ if eq $labels.outcome "rollback_failed" }}ROLLBACK FAILED, human needed now: {{ $labels.deploy_service }} (gate {{ $labels.gate }}){{ else }}Rolled back automatically: {{ $labels.deploy_service }} (gate {{ $labels.gate }}){{ end }}'
-          runbook_url: 'docs/runbooks/auto-rollback.md#a-deploy-was-rolled-back'
+          runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/auto-rollback.md#a-deploy-was-rolled-back'
           description: |
             Service: {{ $labels.deploy_service }}
             Failed gate: {{ $labels.gate }}
@@ -163,7 +163,7 @@ groups:
           alert_type: synthetic
         annotations:
           summary: 'No passing rollback rehearsal for 8 days: nothing proves automatic rollback still works'
-          runbook_url: 'docs/runbooks/auto-rollback.md#the-weekly-rehearsal-is-missing'
+          runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/auto-rollback.md#the-weekly-rehearsal-is-missing'
           description: |
             The weekly Rollback rehearsal workflow (rollback-rehearsal.yml) writes
             an event:rollback_rehearsal outcome:ok line when a bad image was rolled

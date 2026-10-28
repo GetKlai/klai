@@ -181,13 +181,13 @@ jobs:
                   ? '**Automatic rollback failed. Production may be broken: a human is needed now.**'
                   : '**Rolled back automatically.** The previous version is serving again; the failing version is still on `main`.',
                 '',
-                `- Service: \`${flat(report.service)}\` (${flat(report.kind)})`,
+                `- Service: \`${flat(report.service)}\` (\`${flat(report.kind)}\`)`,
                 `- Outcome: \`${flat(report.outcome)}\``,
                 `- Failed gate: \`${flat(report.gate)}\``,
                 `- From: \`${flat(report.from)}\``,
                 `- To: \`${flat(report.to)}\``,
                 `- Commit: \`${flat(report.commit)}\``,
-                `- Time: ${flat(report.ts)}`,
+                `- Time: \`${flat(report.ts)}\``,
                 `- Log on core-01: \`${flat(report.log)}\``,
               );
             }
@@ -202,8 +202,19 @@ jobs:
               ({ data: { number } } = await github.rest.issues.create({ ...base, title, body, labels: ['ci-failure'] }));
             }
 
-            if (report) {
-              // The label follows the latest failure: swap, do not accumulate.
+            // The labels follow the latest failure: a failure without a report
+            // (an ordinary red deploy) must not keep an older rollback label.
+            const dropLabel = async (name) => {
+              try {
+                await github.rest.issues.removeLabel({ ...base, issue_number: number, name });
+              } catch (err) {
+                if (err.status !== 404) throw err; // 404 = the issue did not carry it
+              }
+            };
+            if (!report) {
+              if (existing) for (const l of Object.values(ROLLBACK_LABELS)) await dropLabel(l.name);
+            } else {
+              // Swap, do not accumulate.
               const want = ROLLBACK_LABELS[report.outcome];
               const other = report.outcome === 'rolled_back' ? ROLLBACK_LABELS.rollback_failed : ROLLBACK_LABELS.rolled_back;
               try {
@@ -212,9 +223,5 @@ jobs:
                 if (err.status !== 422) throw err; // 422 = the label already exists
               }
               await github.rest.issues.addLabels({ ...base, issue_number: number, labels: [want.name] });
-              try {
-                await github.rest.issues.removeLabel({ ...base, issue_number: number, name: other.name });
-              } catch (err) {
-                if (err.status !== 404) throw err; // 404 = the issue did not carry it
-              }
+              await dropLabel(other.name);
             }
