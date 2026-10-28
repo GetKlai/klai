@@ -174,11 +174,7 @@ jobs:
             # own database (Twenty, GlitchTip, Zitadel), is dumped first, while
             # nothing has changed yet. Short on disk (twice the volume size) or a
             # failed dump ends the run here, exit 4, with every file untouched.
-            # Traced once (2026-10-28) because two proof runs saw no change where every
-            # replication outside the workflow did; remove the trace once explained.
-            set -x
             ds_snapshot_changed /opt/klai/docker-compose.yml deploy/docker-compose.yml
-            set +x
             # Visible in the run log even when nothing changed, so a missed data-store
             # change (the 2026-10-28 umami proof found none without a trace) is
             # diagnosable from the log alone.

@@ -2615,7 +2615,7 @@ services:
   # schema that the restored dump would collide with.
   umami-postgres:
     logging: *log-rotation
-    image: postgres:18.6-alpine@sha256:83148c0bc09eac4d598b70a61e1404d0212b76c95c504bfd6c81a4c59ec91792
+    image: postgres:18.6-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
