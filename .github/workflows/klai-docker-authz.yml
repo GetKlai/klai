@@ -184,6 +184,7 @@ jobs:
           script: |
             set -e
             source /opt/klai/.env
-            docker pull ghcr.io/getklai/klai-docker-authz:latest
             # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
-            /opt/klai/scripts/compose-up.sh klai-docker-authz
+            # SPEC-INFRA-AUTO-ROLLBACK-001: deploys the exact sha, rolls back on a red gate.
+            test -x /opt/klai/scripts/deploy-with-rollback.sh
+            /opt/klai/scripts/deploy-with-rollback.sh klai-docker-authz ghcr.io/getklai/klai-docker-authz:${{ github.sha }} --probe http://klai-docker-authz:2375/health --probe-network klai-socket-proxy

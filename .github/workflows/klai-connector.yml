@@ -201,6 +201,7 @@ jobs:
           script: |
             set -e
             source /opt/klai/.env
-            docker pull ghcr.io/getklai/klai-connector:latest
             # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
-            /opt/klai/scripts/compose-up.sh klai-connector
+            # SPEC-INFRA-AUTO-ROLLBACK-001: deploys the exact sha, rolls back on a red gate.
+            test -x /opt/klai/scripts/deploy-with-rollback.sh
+            /opt/klai/scripts/deploy-with-rollback.sh klai-connector ghcr.io/getklai/klai-connector:${{ github.sha }} --probe http://klai-connector:8200/health

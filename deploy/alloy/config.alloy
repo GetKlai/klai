@@ -83,6 +83,21 @@ loki.source.file "widget_probe" {
   forward_to = [loki.process.extract_level.receiver]
 }
 
+// deploy-with-rollback.sh appends one JSON line per rolled-back or failed deploy
+// (SPEC-INFRA-AUTO-ROLLBACK-001); the Grafana rule alerts on event:auto_rollback.
+local.file_match "auto_rollback" {
+  path_targets = [{
+    __path__ = "/opt/klai/logs/auto-rollback.log",
+    service  = "auto-rollback",
+    host     = "core-01",
+  }]
+}
+
+loki.source.file "auto_rollback" {
+  targets    = local.file_match.auto_rollback.targets
+  forward_to = [loki.process.extract_level.receiver]
+}
+
 // ─── Extract log level from JSON ────────────────────────────────────────────
 
 loki.process "extract_level" {

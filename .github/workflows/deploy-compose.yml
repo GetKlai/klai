@@ -88,6 +88,8 @@ jobs:
           bash deploy/scripts/tests/compose-up-verify.test.sh
           # The env-drift sweep at the end of the sync step, installed here too.
           bash deploy/scripts/tests/compose-env-drift-recreate.test.sh
+          # Installed here with the other deploy scripts; service workflows call it.
+          bash deploy/scripts/tests/deploy-with-rollback.test.sh
           # The orphan audit decides which live containers look abandoned. A
           # class it does not know reads as a wees — that is the librechat-voys
           # incident. This job also installs it, so its tests belong here.
