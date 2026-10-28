@@ -9,12 +9,16 @@ clarifying question, a request for a person or a partial answer, or answered
 on a weak search (gap_type ``soft``).
 
 Turns are grouped on topic without a model, on one of two anchors. A turn the
-search answered in part (``article_misses_part``, ``weak_match``,
-``variant_unclear``) is anchored on the best article it found
-(``source_url_key``): an owner fixes one article, not one wording, and the case's
-problem text varies per visitor while the article they matched does not. Every
-other turn (``no_article``, ``contact_wish``, a best article without url) has no
-article to anchor on and is grouped on the product the case named plus the three
+search found an article that fell short (``article_misses_part``,
+``variant_unclear``) is anchored on that article (``source_url_key`` of its
+url without query string and fragment, so tracking parameters do not split it):
+an owner fixes one article, not one wording, and the case's problem text varies
+per visitor while the article they matched does not. A ``weak_match`` is not
+anchored: its search scored below the weak-search threshold, so the top article
+is weak evidence of the topic, and one generic page can be the top hit of
+unrelated questions, which one decision would then hide together. Every other
+turn (``no_article``, ``contact_wish``, ``weak_match``, a best article without
+url) is grouped on the product the case named plus the three
 longest content words of the case's problem (the visitor's search when the
 problem holds no content word). Words are lower-cased, chat filler is a
 stopword, and a trailing "en" or "s" is stripped from a word when at least four
@@ -76,7 +80,7 @@ _TOPIC_WORDS = 3
 _MIN_WORD = 3
 # Letters that must stay after a plural or infinitive ending is stripped.
 _MIN_STEM = 4
-_ANCHORED_KINDS = frozenset({"article_misses_part", "weak_match", "variant_unclear"})
+_ANCHORED_KINDS = frozenset({"article_misses_part", "variant_unclear"})
 # Longer than any Dutch or English word an owner would write about; an IBAN
 # without spaces, a token or a hash is longer.
 _MAX_WORD = 24
@@ -93,11 +97,11 @@ _STOPWORDS = frozenset(
     aan alle als bij dan dat de deze die dit door een en er geen heb hebben het hoe ik in is je jij kan
     kun kunt maar met mijn moet naar niet nog of om ons onze ook op te tot u uw van voor waar wanneer
     waarom wat wel werkt wil wordt worden zijn zou graag mogelijk iets zet doe gaat krijg vind
-    bezoeker bezoekers klant klanten gebruiker gebruikers weten weet lukt lukken willen wilt kunnen
+    bezoeker bezoekers klant klanten weten weet lukt lukken willen wilt kunnen
     mag mogen moeten zouden zal zullen heeft had hadden ben bent was waren werd wij we jullie
     ze zij hij haar hun hem mij me jouw wie welke welk hier daar toch al even erg zeer heel veel
     meer minder anders ander andere nieuw nieuwe opnieuw via vraag vragen vraagt aanvragen toevoegen
-    wijzigen instellen instelling bijvoorbeeld krijgen krijgt doen maken gaan komen helpen hulp
+    wijzigen instellen bijvoorbeeld krijgen krijgt doen maken gaan komen helpen hulp
     dus want omdat dank bedankt hallo
     the and are can does for from get
     have how not our that this what when where which who why will with you your about into there
@@ -181,7 +185,8 @@ def _anchor(signals: Mapping[str, Any]) -> tuple[str, dict] | None:
     if not found or gap_kind(signals) not in _ANCHORED_KINDS:
         return None
     article = max(found, key=_score)
-    url_key = source_url_key(article.get("url"))
+    url = article.get("url")
+    url_key = source_url_key(url.split("#")[0].split("?")[0] if isinstance(url, str) else url)
     return (url_key, article) if url_key else None
 
 

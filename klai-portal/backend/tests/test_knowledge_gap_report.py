@@ -316,8 +316,7 @@ def test_two_wordings_on_the_same_article_share_one_cluster() -> None:
         ),
         _widget(
             minutes=2,
-            decision="answer",
-            gap_type="soft",
+            decision="partial_answer",
             problem="muziek tijdens het doorverbinden",
             found=_article("muziek/", "Wachtmuziek", host="www.help.example.com"),
         ),
@@ -327,6 +326,69 @@ def test_two_wordings_on_the_same_article_share_one_cluster() -> None:
     cluster = _only(build_clusters(turns, {}))
 
     assert (cluster["count"], cluster["topic"], cluster["decidable"]) == (3, "Wachtmuziek", True)
+
+
+def test_tracking_parameters_and_fragments_do_not_split_one_article() -> None:
+    base = "https://help.example.com/muziek"
+    turns = [
+        _widget(
+            minutes=i,
+            decision="partial_answer",
+            problem=problem,
+            found=[{"title": "Wachtmuziek", "url": url, "score": 0.7}],
+        )
+        for i, (problem, url) in enumerate(
+            [
+                ("wachtmuziek", base),
+                ("geluid", f"{base}?utm_source=nieuwsbrief&utm_medium=mail"),
+                ("tune", f"{base}?utm_source=social#instellen"),
+            ]
+        )
+    ]
+
+    assert _only(build_clusters(turns, {}))["count"] == 3
+
+
+def test_a_weak_match_stays_a_word_cluster_even_with_an_article_url() -> None:
+    """The top hit of a weak search is weak evidence of the topic: two unrelated
+    questions that both landed on one generic page must not share a cluster."""
+    turns = [
+        _widget(
+            decision="answer", gap_type="soft", problem="faxnummer koppelen", found=_article("algemeen", "Algemeen")
+        ),
+        _widget(
+            decision="answer", gap_type="soft", problem="voicemail transcriptie", found=_article("algemeen", "Algemeen")
+        ),
+    ]
+
+    clusters = build_clusters(turns, {})
+
+    assert sorted((c["topic"], c["count"]) for c in clusters) == [
+        ("faxnummer koppelen", 1),
+        ("transcriptie voicemail", 1),
+    ]
+
+
+def test_the_same_article_under_two_products_is_two_clusters() -> None:
+    found = _article("muziek", "Wachtmuziek")
+    turns = [
+        _widget(decision="partial_answer", product="Wolkcentrale", found=found),
+        _widget(decision="partial_answer", product="Kantoorlijn", found=found),
+    ]
+
+    clusters = build_clusters(turns, {})
+
+    assert len(clusters) == 2
+    assert len({c["cluster_key"] for c in clusters}) == 2
+
+
+def test_a_word_whose_stem_is_a_stopword_is_dropped_and_other_stems_are_kept() -> None:
+    # "mogelijks" is no stopword itself, its stem "mogelijk" is.
+    assert topic_words("mogelijks oproepen") == ["oproepen"]
+
+
+def test_user_and_settings_words_are_topic_words_but_customer_is_filler() -> None:
+    assert topic_words("klanten gebruikers instellingen") == ["gebruikers", "instellingen"]
 
 
 def test_a_turn_without_an_article_to_anchor_on_is_grouped_on_its_words() -> None:
