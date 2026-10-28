@@ -170,6 +170,49 @@ def test_auth_probe_no_diff_returns_auth_failed_still_walled(
     assert body["auth_guard"] is None
 
 
+_MENU_HTML = "<nav>" + " ".join(
+    f'<a href="https://example.com/nl/{i}">Artikel {i}</a>' for i in range(900)
+)
+_GATE_LINE = (
+    '<h2><a href="https://example.com/login?redirect_to=https://example.com/nl/article">'
+    "Log in</a> when you want to read this article</h2>"
+)
+_GATE_HTML = _MENU_HTML + "</nav><main>" + _GATE_LINE + "</main>"
+_UNLOCKED_HTML = _GATE_HTML.replace(
+    _GATE_LINE, "<h1>Article</h1><p>" + " ".join(["word"] * 120) + "</p>"
+)
+
+
+def test_auth_probe_accepts_cookies_that_remove_the_login_gate_on_a_menu_heavy_page(
+    client: TestClient,
+) -> None:
+    """A page whose menu dwarfs the article changes size by less than the 5%
+    threshold when it unlocks, but the login gate is gone: that is proof of
+    authentication, the same proof the keep-alive uses on every tick."""
+    gated = _probe(word_count=2000, byte_size=90000, text=_GATE_HTML)
+    unlocked = _probe(word_count=2060, byte_size=91500, text=_UNLOCKED_HTML)
+    with _patch_probe_fetch(with_cookies=unlocked, without_cookies=gated):
+        resp = client.post(
+            "/ingest/v1/crawl/auth-probe",
+            json={"url": "https://example.com/nl/article", "cookies": _COOKIES_FOR_EXAMPLE_COM},
+        )
+    body = resp.json()
+    assert body["classification"] == "auth_ok"
+    assert "login_gate_removed_by_cookies" in body["match_reasons"]
+
+
+def test_auth_probe_names_the_gate_when_cookies_leave_it_in_place(client: TestClient) -> None:
+    gated = _probe(word_count=2000, byte_size=90000, text=_GATE_HTML)
+    with _patch_probe_fetch(with_cookies=gated, without_cookies=gated):
+        resp = client.post(
+            "/ingest/v1/crawl/auth-probe",
+            json={"url": "https://example.com/nl/article", "cookies": _COOKIES_FOR_EXAMPLE_COM},
+        )
+    body = resp.json()
+    assert body["classification"] == "auth_failed_still_walled"
+    assert "login_gate_still_present_with_cookies" in body["match_reasons"]
+
+
 def test_auth_probe_tiny_diff_under_threshold_is_still_walled(
     client: TestClient,
 ) -> None:
