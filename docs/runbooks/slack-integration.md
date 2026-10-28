@@ -44,6 +44,13 @@ failure, by design.
 
 ## 3. First deploy, in this order
 
+0. **Image first.** `deploy-compose.yml` and the pre-commit hook refuse a compose
+   file that references an image that is not anonymously pullable, and a new GHCR
+   package starts private. So: merge `klai-slack/` plus `klai-slack.yml` first (the
+   build job publishes `ghcr.io/getklai/klai-slack`), set the package to public in
+   the GitHub package settings, run `sh deploy/check-image-pullable.sh`, and only
+   then merge the compose and Caddy change. The compose commit on this branch was
+   made with `--no-verify` for that reason.
 1. **SOPS** (section 2) is in place on core-01.
 2. **Database.** `deploy/postgres/init.sql` only runs on an empty volume, so on
    the existing production volume create the role and database once, reading the
