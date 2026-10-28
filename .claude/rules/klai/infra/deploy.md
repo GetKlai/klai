@@ -103,10 +103,14 @@ Just `git push`. The workflow rsyncs + force-recreates. ~30s end-
 to-end. A red gate (SPEC-INFRA-AUTO-ROLLBACK-001 S3,
 `deploy/scripts/compose-rollback.sh`) restores the `*.prev` copies the
 run made, recreates and verifies once more, and still ends the job red:
-exit 3 = rolled back, exit 4 = rollback failed (needs a human). Exception:
-when a self-migrating image (Twenty, LiteLLM, GlitchTip, Zitadel) changed in
-the same sync nothing is restored and the run ends 4 with gate
-`self-migrating-image`; recovery is then a human decision.
+exit 3 = rolled back, exit 4 = rollback failed (needs a human). A Postgres
+image change, or one of Twenty, GlitchTip or Zitadel (they migrate their own
+database), is dumped first (`deploy/scripts/datastore-rollback.sh`, S8a); a red
+gate within 30 minutes restores the dumps with the files, later restores
+nothing (gate `restore-window`). Too little disk for the dump (twice the
+volume) refuses the sync before any file changes (gate `disk-headroom`). A
+LiteLLM image change is migrated by its own workflow, so nothing is restored
+(gate `self-migrating-image`).
 
 ### When you change a Class A-dir file
 
