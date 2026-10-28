@@ -8,8 +8,6 @@ from typing import Any
 from slack_bolt.async_app import AsyncRespond
 from slack_sdk.web.async_client import AsyncWebClient
 
-from app.clients.portal import PortalClient
-
 
 @dataclass(frozen=True)
 class CommandContext:
@@ -17,4 +15,3 @@ class CommandContext:
     command: dict[str, Any]
     client: AsyncWebClient
     respond: AsyncRespond
-    portal: PortalClient

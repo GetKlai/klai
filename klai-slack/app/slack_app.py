@@ -113,6 +113,6 @@ def build_slack_app(
 
     app.event("app_uninstalled")(on_app_uninstalled)
     app.event("tokens_revoked")(on_tokens_revoked)
-    commands.register(app, portal)
+    commands.register(app)
     listeners.register(app)
     return app

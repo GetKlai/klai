@@ -20,8 +20,7 @@ class PortalError(Exception):
 
 
 class LinkKeyInvalid(PortalError):
-    """The credential is refused: 404 on ``link`` (unknown or non-slack key), 401 on
-    ``link_oauth`` (link token invalid or expired)."""
+    """401: the link token is invalid or expired."""
 
 
 class _CodedError(PortalError):
@@ -31,13 +30,12 @@ class _CodedError(PortalError):
 
 
 class LinkForbidden(_CodedError):
-    """403: ``feature_not_unlocked`` (the org lacks the ``slack`` unlock) or, on
-    ``link_oauth``, ``not_admin`` (the user who started the link is no longer an
-    active admin of the org)."""
+    """403: ``feature_not_unlocked`` (the org lacks the ``slack`` unlock) or
+    ``not_admin`` (the user who started the link is no longer an active admin)."""
 
 
 class LinkConflict(_CodedError):
-    """409: ``org_already_linked``, ``team_already_linked`` or (``link_oauth``) ``token_used``."""
+    """409: ``org_already_linked``, ``team_already_linked`` or ``token_used``."""
 
 
 class PortalUnavailable(PortalError):
@@ -95,28 +93,6 @@ class PortalClient:
                 )
             return response
 
-    async def link(
-        self, api_key: str, team_id: str, team_name: str, slack_user_id: str
-    ) -> LinkResult:
-        response = await self._request(
-            "POST",
-            "/internal/slack/link",
-            json={
-                "api_key": api_key,
-                "team_id": team_id,
-                "team_name": team_name,
-                "slack_user_id": slack_user_id,
-            },
-            redact=api_key,
-        )
-        body = _link_body(response, invalid_status=404)
-        return LinkResult(
-            org_id=int(body["org_id"]),
-            org_name=str(body["org_name"]),
-            key_id=str(body["key_id"]),
-            kb_ids=[int(kb_id) for kb_id in body["kb_ids"]],
-        )
-
     async def link_oauth(
         self, token: str, team_id: str, team_name: str, slack_user_id: str
     ) -> OAuthLinkResult:
@@ -132,7 +108,7 @@ class PortalClient:
             },
             redact=token,
         )
-        body = _link_body(response, invalid_status=401)
+        body = _link_body(response)
         return OAuthLinkResult(
             org_id=int(body["org_id"]),
             org_name=str(body["org_name"]),
@@ -148,8 +124,8 @@ class PortalClient:
             raise PortalUnavailable(f"unlink returned {response.status_code}")
 
 
-def _link_body(response: httpx.Response, *, invalid_status: int) -> dict[str, Any]:
-    if response.status_code == invalid_status:
+def _link_body(response: httpx.Response) -> dict[str, Any]:
+    if response.status_code == 401:
         raise LinkKeyInvalid
     if response.status_code == 403:
         raise LinkForbidden(_error_code(response))

@@ -15,8 +15,8 @@ The browser lands back on ``return_url`` with ``?slack=`` set to ``connected``,
 ``already_linked`` (portal 409), ``denied`` (cancelled in Slack, the org lacks
 the ``slack`` unlock, or the admin who started it no longer is one) or
 ``failed`` (anything else; start again from the portal). An OAuth callback
-without a pending link is a plain ``/slack/install`` and keeps Bolt's own pages,
-so ``/klai connect`` stays usable.
+without a pending link is a plain ``/slack/install`` and keeps Bolt's own pages;
+that workspace stays unlinked until an admin connects it from the portal.
 """
 
 from __future__ import annotations
