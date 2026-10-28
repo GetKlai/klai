@@ -563,31 +563,31 @@
     },
     {
       description:
-        'Majors of GitHub Actions automerge, but only for the actions a pull \
-        request run executes: checkout, setup-node, setup-python, setup-uv, \
-        upload-artifact, paths-filter, ast-grep and the CodeQL SARIF upload. \
-        A major that breaks one of them turns quality red and never merges; \
-        SHA pinning (helpers:pinGitHubActionDigests) means what merges is the \
-        exact commit CI just ran. NOT covered, so still manual: appleboy/*, \
+        'Majors of GitHub Actions automerge, but only for the actions that a \
+        pull request run itself executes: checkout, setup-node, setup-python, \
+        setup-uv, paths-filter and ast-grep. A major that breaks one of them \
+        turns quality red and never merges; SHA pinning \
+        (helpers:pinGitHubActionDigests) means what merges is the exact \
+        commit CI just ran. NOT covered, so still manual: appleboy/*, \
         webfactory/ssh-agent, docker/* (login, buildx, build-push), \
-        create-github-app-token, renovatebot/github-action and github-script. \
-        They run only on main or on a schedule, with deploy keys, registry \
-        credentials or the Renovate app token, so the first run of a new major \
-        would be the production run. aquasecurity/* is not matched either: \
-        its lookups use the git-tags override above. Same for the ubuntu \
-        runner image, which is not an action.',
+        create-github-app-token, renovatebot/github-action and github-script, \
+        which run only on main or on a schedule with deploy keys, registry \
+        credentials or the Renovate app token; and upload-artifact and \
+        github/codeql-action, whose steps sit in push-to-main or scheduled \
+        jobs or run on a PR only when a job has already failed. The first \
+        run of a new major of any of these would be the production run. \
+        aquasecurity/* is not matched either: its lookups use the git-tags \
+        override above. Same for the ubuntu runner image, which is not an \
+        action.',
       matchManagers: ['github-actions'],
       matchDatasources: ['github-tags', 'github-releases'],
       matchPackageNames: [
         'actions/checkout',
         'actions/setup-node',
         'actions/setup-python',
-        'actions/upload-artifact',
         'astral-sh/setup-uv',
         'dorny/paths-filter',
         'ast-grep/action',
-        'github/codeql-action',
-        'github/codeql-action/**',
       ],
       matchUpdateTypes: ['major'],
       automerge: true,
@@ -620,8 +620,12 @@
         every pull request. Every optional-dependencies and dependency-groups \
         entry in this repo is the `dev` extra, which is why the depType is \
         enough; a runtime extra added later has to be named here first. NOT \
-        covered: `project.dependencies` (runtime) and build-system.requires.',
+        covered: `project.dependencies` (runtime), build-system.requires and \
+        klai-libs/*, whose own dev group no workflow installs (the service \
+        workflows install the service\'s group), so a major there would merge \
+        without any test having run it.',
       matchManagers: ['pep621'],
+      matchFileNames: ['!klai-libs/**'],
       matchDepTypes: [
         'dependency-groups',
         'project.optional-dependencies',

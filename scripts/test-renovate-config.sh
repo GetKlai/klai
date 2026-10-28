@@ -173,14 +173,20 @@ def names(chunk, key):
     return re.findall(r"'([^']+)'", m.group(1)) if m else []
 
 # Majors of an action automerge only when a pull request run executes it. The
-# deploy, registry and token actions run first on main, so they stay manual.
+# deploy, registry, token, artifact and SARIF-upload steps run first on main (or
+# only after a failure), so they stay manual.
 allow = next((c for c in chunks if "matchManagers: ['github-actions']" in c and "matchUpdateTypes: ['major']" in c and "automerge: true" in c), "")
 allowed = names(allow, "matchPackageNames")
 if "actions/checkout" not in allowed:
     fail.append("actions/checkout majors must automerge (CI runs it on every pull request)")
 for name in allowed:
-    if re.match(r"(appleboy|webfactory|docker|renovatebot|aquasecurity)/|actions/(create-github-app-token|github-script)", name):
+    if re.match(r"(appleboy|webfactory|docker|renovatebot|aquasecurity)/|github/codeql-action|actions/(create-github-app-token|github-script|upload-artifact)", name):
         fail.append(f"{name} majors must stay manual: no pull request run executes it")
+# Python dev groups: a klai-libs/* group is installed by no workflow, so a major
+# there would merge without a test having run it.
+py = next((c for c in chunks if "matchManagers: ['pep621']" in c and "matchUpdateTypes: ['major']" in c and "automerge: true" in c), "")
+if "!klai-libs/**" not in names(py, "matchFileNames"):
+    fail.append("pep621 dev majors must exclude klai-libs/** (no workflow runs a lib's own dev group)")
 dev = next((c for c in chunks if "matchDepTypes: ['devDependencies']" in c), "")
 if "automerge: true" not in dev or "matchUpdateTypes: ['major']" not in dev:
     fail.append("npm devDependencies majors must automerge")

@@ -23,7 +23,8 @@
 set -euo pipefail
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-if [ "$#" -gt 0 ]; then files=("$@"); else files=("$repo_root"/.github/workflows/*.yml); fi
+shopt -s nullglob
+if [ "$#" -gt 0 ]; then files=("$@"); else files=("$repo_root"/.github/workflows/*.y{,a}ml); fi
 
 # Prints the commit SHA a tag points at, following annotated tag objects.
 tag_commit() {
