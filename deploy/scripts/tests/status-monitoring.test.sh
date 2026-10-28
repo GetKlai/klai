@@ -14,9 +14,15 @@ done
 printf '#!/usr/bin/env bash\necho current\n' > "$tmp/source/backup.sh"
 # retrieval-api-oneoff.sh bind-mounts this helper from the synced directory.
 printf 'print("launch")\n' > "$tmp/source/retrieval-api-oneoff-launch.py"
-awk '/# Sync public-safe deploy scripts/{copy=1} /test -x \/opt\/klai\/scripts\/backup.sh/{copy=0} copy' \
-    "$WORKFLOW" | sed -e "s#deploy/scripts#$tmp/source#g" \
-        -e "s#/opt/klai/scripts#$tmp/dest#g" > "$tmp/sync.sh"
+# The extracted fragment calls rb_keep from compose-rollback.sh, which the real
+# step sources earlier; this test is about which files get installed, not about
+# their .prev copies.
+{
+    echo 'rb_keep() { :; }'
+    awk '/# Sync public-safe deploy scripts/{copy=1} /test -x \/opt\/klai\/scripts\/backup.sh/{copy=0} copy' \
+        "$WORKFLOW" | sed -e "s#deploy/scripts#$tmp/source#g" \
+            -e "s#/opt/klai/scripts#$tmp/dest#g"
+} > "$tmp/sync.sh"
 bash -e "$tmp/sync.sh"
 for name in push-health.sh gpu-health.sh audit-monitor-coverage.sh push-component-health.sh; do
     if ! grep -qx 'echo private' "$tmp/dest/$name"; then
