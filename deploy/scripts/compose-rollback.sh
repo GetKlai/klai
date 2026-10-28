@@ -21,6 +21,22 @@
 # the report (<reports>/compose.json, also printed as "ROLLBACK_REPORT <json>")
 # and the auto_rollback event follow the contract of deploy-with-rollback.sh.
 #
+# A rollback_failed run leaves $RB_DIR/.compose-rollback-failed (commit and
+# gate). While it exists the files on the host are a state nobody verified, so
+# the next red gate restores nothing (a .prev made now would be the failing
+# state) and reports rollback_failed with gate previous-state-unverified. A
+# green run (rb_deployed) removes it.
+#
+# Known ceilings
+#   - Failures before the first recreate (the file copies, bash -n) are outside
+#     the gates: containers are untouched and the next sync copies the files again.
+#   - LiteLLM is recreated by litellm-hook-deploy.yml and left out of the
+#     env-drift sweep, so a compose-file restore does not recreate it. Its image
+#     changes already block any restore (RB_SELF_MIGRATING_IMAGES).
+#   - rb_keep copies before the content comparison, so an unchanged file is
+#     restored to identical content; that only matters if another deploy wrote
+#     the same file in between.
+#
 # Tests: deploy/scripts/tests/compose-rollback.test.sh
 
 # Seams for the test-suite; production keeps every default.
@@ -30,6 +46,7 @@ RB_REPORT_DIR="${KLAI_DEPLOY_REPORTS:-$RB_DIR/deploy-reports}"
 RB_EVENT_LOG="${KLAI_AUTO_ROLLBACK_LOG:-$RB_DIR/logs/auto-rollback.log}"
 # The commit the compose state on the host was last synced from; the "from" of the ledger.
 RB_MARKER="$RB_DIR/.compose-commit"
+RB_FAILED_FLAG="$RB_DIR/.compose-rollback-failed"
 
 # Images that migrate their own database when they start: Twenty (`upgrade` on
 # start), LiteLLM (USE_PRISMA_MIGRATE), GlitchTip (`manage.py migrate`), Zitadel
@@ -41,6 +58,7 @@ RB_MARKER="$RB_DIR/.compose-commit"
 RB_SELF_MIGRATING_IMAGES='twentycrm/twenty|berriai/litellm|glitchtip/glitchtip|zitadel/zitadel'
 
 RB_KEPT=()
+RB_NEW=()
 RB_TOUCHED=()
 RB_FROM="none"
 RB_TO=""
@@ -52,6 +70,7 @@ rb_json() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 rb_init() {
   RB_TO="$1"
   RB_KEPT=()
+  RB_NEW=()
   RB_TOUCHED=()
   RB_FROM="$(cat "$RB_MARKER" 2>/dev/null || true)"
   RB_FROM="${RB_FROM:-none}"
@@ -66,7 +85,8 @@ rb_init() {
 rb_keep() {
   local f
   for f in "$@"; do
-    [[ -e "$f" ]] || continue
+    # A path this run creates has nothing to copy; a restore removes it again.
+    if [[ ! -e "$f" ]]; then RB_NEW+=("$f"); continue; fi
     rm -rf "$f.prev"
     cp -a "$f" "$f.prev" || return 1
     RB_KEPT+=("$f")
@@ -77,6 +97,7 @@ rb_touched() { RB_TOUCHED+=("$@"); }
 
 rb_restore() {
   local f rc=0
+  for f in "${RB_NEW[@]}"; do rm -rf "$f" || rc=1; done
   for f in "${RB_KEPT[@]}"; do
     if [[ -d "$f.prev" ]]; then
       rsync -ac --delete "$f.prev/" "$f/" || rc=1
@@ -124,9 +145,12 @@ rb_finish() {
     "$(rb_json "$gate")" "$outcome" "$ts" "$(rb_json "$RB_LOG")")"
   printf '%s\n' "$report" > "$RB_REPORT_DIR/compose.json"
   case "$outcome" in
-    deployed) printf '%s\n' "$RB_TO" > "$RB_MARKER" ;;
+    deployed) printf '%s\n' "$RB_TO" > "$RB_MARKER"; rm -f "$RB_FAILED_FLAG" ;;
     rolled_back) code=3 ;;
-    *) code=4 ;;
+    *)
+      code=4
+      # Keep the first failure's commit and gate; later runs only report.
+      [[ -e "$RB_FAILED_FLAG" ]] || printf 'commit=%s gate=%s\n' "$RB_TO" "$gate" > "$RB_FAILED_FLAG" ;;
   esac
   if (( code != 0 )); then
     event="$(printf '{"service":"auto-rollback","level":"error","event":"auto_rollback","outcome":"%s","deploy_service":"%s","gate":"%s","commit":"%s","_time":"%s"}' \
@@ -151,6 +175,10 @@ rb_gate() {
   if "$@" > >(tee -a "$RB_LOG") 2>&1; then return 0; fi
 
   echo "::error::gate '$gate' is red for $service; rolling back the compose sync"
+  if [[ -e "$RB_FAILED_FLAG" ]]; then
+    echo "::error::an earlier sync ended rollback_failed ($(cat "$RB_FAILED_FLAG")); the files on the host were never verified, so nothing is restored"
+    rb_finish "$service" previous-state-unverified rollback_failed
+  fi
   if rb_self_migrating_changed; then
     echo "::error::an image that migrates its own database changed in this sync; restoring files alone could leave it on a schema it does not understand. Nothing restored."
     rb_finish "$service" self-migrating-image rollback_failed

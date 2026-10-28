@@ -65,7 +65,8 @@ run_driver() {
 set -e
 source "$helper"
 rb_init bbb222
-rb_keep "\$KLAI_COMPOSE_DIR/docker-compose.yml" "\$KLAI_COMPOSE_DIR/caddy/Caddyfile" "\$KLAI_COMPOSE_DIR/grafana/provisioning"
+rb_keep "\$KLAI_COMPOSE_DIR/docker-compose.yml" "\$KLAI_COMPOSE_DIR/caddy/Caddyfile" "\$KLAI_COMPOSE_DIR/grafana/provisioning" "\$KLAI_COMPOSE_DIR/caddy/created-by-sync.conf"
+echo "created" > "\$KLAI_COMPOSE_DIR/caddy/created-by-sync.conf"
 printf '%s' "$new_compose" > "\$KLAI_COMPOSE_DIR/docker-compose.yml"
 echo "new caddyfile" > "\$KLAI_COMPOSE_DIR/caddy/Caddyfile"
 echo "new rule" > "\$KLAI_COMPOSE_DIR/grafana/provisioning/rule.yaml"
@@ -92,6 +93,8 @@ fail() {
 check() { if [[ "$2" == "$3" ]]; then echo "  ok   $1"; else fail "$1 (expected '$2', got '$3')"; fi; }
 file_is() { check "$1" "$2" "$(cat "$case_dir/$3")"; }
 count_calls() { grep -c -- "$1" "$case_dir/fixtures/calls" || true; }
+call_order() { cut -d' ' -f1 "$case_dir/fixtures/calls" | paste -sd' ' -; }
+exists() { if [[ -e "$case_dir/$1" ]]; then echo yes; else echo no; fi; }
 ledger_last() { tail -n1 "$case_dir/deploy-ledger.log" | cut -f2-; }
 report() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$case_dir/deploy-reports/compose.json" "$1"; }
 reaches_end() { if grep -q REACHED_END "$case_dir/out"; then echo yes; else echo no; fi; }
@@ -111,6 +114,8 @@ check "  nothing recreated" 0 "$(count_calls '^compose-up')"
 check "  ledger" $'compose\tcompose\taaa111\tbbb222\tbbb222\tdeployed' "$(ledger_last)"
 check "  report outcome" deployed "$(report outcome)"
 file_is "  marker moves to the new commit" bbb222 .compose-commit
+check "  file created by the sync stays" yes "$(exists caddy/created-by-sync.conf)"
+check "  no failure flag" no "$(exists .compose-rollback-failed)"
 
 # AT-b1: a red recreate puts the .prev files back, recreates and verifies again.
 new_case at_b1
@@ -122,7 +127,9 @@ file_is "  Caddyfile restored" "old caddyfile" caddy/Caddyfile
 file_is "  grafana file restored" "old rule" grafana/provisioning/rule.yaml
 check "  grafana file added by the sync removed" no "$([[ -e "$case_dir/grafana/provisioning/added.yaml" ]] && echo yes || echo no)"
 check "  config service recreated through compose-up.sh" "compose-up --no-pull --force-recreate caddy" "$(grep '^compose-up' "$case_dir/fixtures/calls")"
-check "  sweep ran twice (failed, then verified on the restored files)" 2 "$(count_calls '^sweep')"
+check "  after the restore: config service recreated, then the sweep ran again" "sweep compose-up sweep" "$(call_order)"
+check "  second sweep saw the restored compose file" 1 "$(grep -c 'caddy:2.9' <<< "$(grep '^sweep' "$case_dir/fixtures/calls" | tail -n1)")"
+check "  file created by the sync removed" no "$(exists caddy/created-by-sync.conf)"
 check "  ledger" $'compose\tcompose\taaa111\tbbb222\tbbb222\trolled_back' "$(ledger_last)"
 for key in service kind from to commit gate outcome ts log; do
     report "$key" > /dev/null || fail "  report lacks key $key"
@@ -171,6 +178,25 @@ check "  report outcome" rollback_failed "$(report outcome)"
 check "  ledger" $'compose\tcrm\taaa111\tbbb222\tbbb222\trollback_failed' "$(ledger_last)"
 check "  auto_rollback event logged" 1 "$(grep -c '"event":"auto_rollback","outcome":"rollback_failed"' "$case_dir/logs/auto-rollback.log")"
 file_is "  marker keeps the previous commit" aaa111 .compose-commit
+check "  failure flag written" "commit=bbb222 gate=self-migrating-image" "$(cat "$case_dir/.compose-rollback-failed")"
+
+# After a rollback_failed the files on the host are unverified: a red gate
+# restores nothing, and a green run clears the flag.
+new_case flag_blocks_restore
+echo "commit=ccc333 gate=compose-up-verification" > "$case_dir/.compose-rollback-failed"
+run_driver "${NEW_COMPOSE}  bad: BAD"$'\n' 'rb_gate compose compose-up-verification "$KLAI_COMPOSE_DIR/scripts/'$SWEEP'"'
+check "red gate with the flag present -> exit 4" 4 "$rc"
+file_is "  nothing restored" "new caddyfile" caddy/Caddyfile
+check "  nothing recreated, sweep not repeated" "sweep" "$(call_order)"
+check "  report gate" previous-state-unverified "$(report gate)"
+check "  report outcome" rollback_failed "$(report outcome)"
+file_is "  flag keeps the first failure" "commit=ccc333 gate=compose-up-verification" .compose-rollback-failed
+
+new_case flag_cleared_by_green
+echo "commit=ccc333 gate=compose-up-verification" > "$case_dir/.compose-rollback-failed"
+run_driver "$NEW_COMPOSE" 'rb_gate compose compose-up-verification "$KLAI_COMPOSE_DIR/scripts/'$SWEEP'"'
+check "green run with the flag present -> exit 0" 0 "$rc"
+check "  flag removed" no "$(exists .compose-rollback-failed)"
 
 # R6: when the restored state is red as well there is no second round.
 new_case one_attempt
@@ -178,7 +204,8 @@ new_case one_attempt
 run_driver "$NEW_COMPOSE" 'rb_gate compose compose-up-verification "$KLAI_COMPOSE_DIR/scripts/'$SWEEP'"'
 check "restored state red too -> exit 4" 4 "$rc"
 file_is "  files were restored before the verdict" "old caddyfile" caddy/Caddyfile
-check "  sweep ran exactly twice, never a third time" 2 "$(count_calls '^sweep')"
+check "  exactly three calls: sweep, recreate, sweep; no third round" "sweep compose-up sweep" "$(call_order)"
+check "  failure flag written with commit and gate" "commit=bbb222 gate=compose-up-verification" "$(cat "$case_dir/.compose-rollback-failed")"
 check "  report gate is the original gate" compose-up-verification "$(report gate)"
 check "  report outcome" rollback_failed "$(report outcome)"
 
