@@ -188,4 +188,4 @@ jobs:
             # `docker compose up -d` with image-tag + resource-limit checks.
             # SPEC-INFRA-AUTO-ROLLBACK-001: deploys the exact sha, rolls back on a red gate.
             test -x /opt/klai/scripts/deploy-with-rollback.sh
-            /opt/klai/scripts/deploy-with-rollback.sh scribe-api ghcr.io/getklai/scribe-api:${{ github.sha }}
+            /opt/klai/scripts/deploy-with-rollback.sh scribe-api ghcr.io/getklai/scribe-api:${{ github.sha }} --probe http://scribe-api:8020/health

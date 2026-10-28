@@ -33,6 +33,10 @@ pop() {
 case "$1" in
   compose)
     [[ "$2" == "ps" ]] || { echo "stub: unexpected compose args: $*" >&2; exit 90; }
+    # Real compose finds the stack from the working directory; the ssh step
+    # starts in the deploy user's home, so the script has to cd on its own.
+    [[ "$(pwd -P)" == "$(cd "$KLAI_COMPOSE_DIR" && pwd -P)" ]] \
+        || { echo "stub: compose ps outside $KLAI_COMPOSE_DIR (cwd $PWD)" >&2; exit 1; }
     [[ -f "$fx/running_cid" ]] && cat "$fx/running_cid"; exit 0 ;;
   inspect) echo "sha256:0123456789abcdef0123456789abcdef"; exit 0 ;;
   tag|pull) exit 0 ;;
@@ -54,19 +58,43 @@ exit "$rc"
 STUB
 chmod +x "$work/docker" "$work/compose-up.sh"
 
+# The script needs flock(1). Linux has it; elsewhere emulate `flock -w N 9` on
+# the inherited descriptor so the lock cases still run.
+if ! command -v flock >/dev/null 2>&1; then
+    mkdir -p "$work/bin"
+    cat > "$work/bin/flock" <<'STUB'
+#!/usr/bin/env python3
+import fcntl, sys, time
+wait = float(sys.argv[2]) if sys.argv[1] == "-w" else 0
+fd = int(sys.argv[-1])
+end = time.time() + wait
+while True:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        sys.exit(0)
+    except OSError:
+        if time.time() >= end:
+            sys.exit(1)
+        time.sleep(0.05)
+STUB
+    chmod +x "$work/bin/flock"
+    export PATH="$work/bin:$PATH"
+fi
+
 # new_case <name> <compose-up rcs, space separated> <probe codes, space separated>
 new_case() {
     fx="$work/$1"; mkdir -p "$fx"
     export FIXTURES="$fx"
     printf '%s\n' $2 > "$fx/compose_up_rcs"
     printf '%s\n' ${3:-200} > "$fx/probe_codes"
+    mkdir -p "$fx/opt"
     echo "oldcontainer1" > "$fx/running_cid"
     : > "$fx/docker_argv"; : > "$fx/compose_up_argv"
 }
 
 # run_script [extra args]; sets rc, out, and the path variables below.
 run_script() {
-    out=$(KLAI_COMPOSE_DIR="$fx/opt" KLAI_DOCKER_BIN="$work/docker" KLAI_COMPOSE_UP="$work/compose-up.sh" \
+    out=$(cd "$work" && KLAI_COMPOSE_DIR="$fx/opt" KLAI_DEPLOY_LOCK_DIR="$fx" KLAI_DEPLOY_LOCK_WAIT="${LOCK_WAIT:-5}" KLAI_DOCKER_BIN="$work/docker" KLAI_COMPOSE_UP="$work/compose-up.sh" \
           KLAI_PROBE_TIMEOUT=0 KLAI_PROBE_INTERVAL=0 GITHUB_SHA=abc123 \
           bash "$target" retrieval-api ghcr.io/getklai/retrieval-api:abc123 "$@" 2>"$fx/stderr")
     rc=$?
@@ -97,6 +125,8 @@ check "exact sha pulled, tagged as compose tag" has_line "$fx/docker_argv" "tag 
 check "compose-up runs without a registry pull" has_line "$fx/compose_up_argv" "--no-pull retrieval-api"
 check "one compose-up call" test "$(count_lines "$fx/compose_up_argv")" = 1
 check "ledger file is 0644" test "$(stat -c %a "$ledger" 2>/dev/null || stat -f %Lp "$ledger")" = 644
+
+check "probe runs on the default network" grep -q '^run --rm --network klai-net ' "$fx/docker_argv"
 
 echo "# AT-a1: compose-up red -> previous retagged, exit 3"
 new_case a1 "1 0" "200"
@@ -143,6 +173,30 @@ check "exit 4" test "$rc" = 4
 check "gate no-previous-image" grep -q '"gate":"no-previous-image"' "$report"
 check "ledger from is none" grep -q $'\tretrieval-api\tnone\t' "$ledger"
 check "no rollback attempted" test "$(count_lines "$fx/compose_up_argv")" = 1
+
+echo "# probe network option"
+new_case net "0" "200"
+run_script --probe http://klai-docker-authz:2375/health --probe-network klai-socket-proxy
+check "exit 0" test "$rc" = 0
+check "probe runs on the named network" grep -q '^run --rm --network klai-socket-proxy ' "$fx/docker_argv"
+
+echo "# per-service lock"
+new_case lockwait "0" "200"
+( exec 9>"$fx/klai-deploy-retrieval-api.lock"; flock -w 5 9; sleep 1 ) &
+holder=$!
+sleep 0.3
+run_script
+wait "$holder"
+check "a second deploy waits for the first, then runs" test "$rc" = 0
+new_case locktimeout "0" "200"
+( exec 9>"$fx/klai-deploy-retrieval-api.lock"; flock -w 5 9; sleep 3 ) &
+holder=$!
+sleep 0.3
+LOCK_WAIT=1 run_script
+wait "$holder"
+check "exit 1 when the lock stays held" test "$rc" = 1
+check "says why" grep -q 'another deploy of retrieval-api' "$fx/stderr"
+check "nothing was touched" test ! -s "$fx/docker_argv"
 
 if (( failures > 0 )); then
     echo "$failures check(s) failed"

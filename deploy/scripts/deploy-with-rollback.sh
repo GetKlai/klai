@@ -6,11 +6,13 @@
 #
 # Usage:
 #   deploy-with-rollback.sh <compose-service> <image-ref-with-sha>
-#                           [--probe <url>] [--compose-tag <tag>]
+#                           [--probe <url>] [--probe-network <net>] [--compose-tag <tag>]
 #
 #   <image-ref-with-sha>  ghcr.io/getklai/<image>:<git sha>, the tag the build
 #                         workflow pushed. Rule R1: the exact sha is deployed,
 #                         never :latest from the registry.
+#   --probe-network       docker network the probe runs on (default klai-net; a
+#                         service that is not on klai-net names its own).
 #   --compose-tag         the image reference deploy/docker-compose.yml uses for
 #                         the service. Default: the image-ref repository with
 #                         :latest, which is what every service in scope uses.
@@ -47,6 +49,11 @@ set -uo pipefail
 KLAI_DIR="${KLAI_COMPOSE_DIR:-/opt/klai}"
 DOCKER="${KLAI_DOCKER_BIN:-docker}"
 COMPOSE_UP="${KLAI_COMPOSE_UP:-$KLAI_DIR/scripts/compose-up.sh}"
+# A second deploy of the same service waits for the first instead of overwriting
+# its klai/<svc>:previous. Separate from compose-up.sh's own lock, which is taken
+# later by the nested call and would otherwise deadlock on this one.
+LOCK_DIR="${KLAI_DEPLOY_LOCK_DIR:-/tmp}"
+LOCK_WAIT="${KLAI_DEPLOY_LOCK_WAIT:-600}"
 LEDGER="${KLAI_DEPLOY_LEDGER:-$KLAI_DIR/deploy-ledger.log}"
 REPORT_DIR="${KLAI_DEPLOY_REPORTS:-$KLAI_DIR/deploy-reports}"
 # Alloy tails this file (deploy/alloy/config.alloy, same pattern as the probes).
@@ -58,7 +65,7 @@ PROBE_NETWORK="${KLAI_PROBE_NETWORK:-klai-net}"
 CURL_IMAGE="${KLAI_CURL_IMAGE:-curlimages/curl:8.11.1}"
 
 usage() {
-    echo "usage: ${0##*/} <compose-service> <image-ref-with-sha> [--probe <url>] [--compose-tag <tag>]" >&2
+    echo "usage: ${0##*/} <compose-service> <image-ref-with-sha> [--probe <url>] [--probe-network <net>] [--compose-tag <tag>]" >&2
     exit 1
 }
 
@@ -71,11 +78,24 @@ COMPOSE_TAG=""
 while (( $# > 0 )); do
     case "$1" in
         --probe)       (( $# >= 2 )) || usage; PROBE_URL="$2"; shift 2 ;;
+        --probe-network) (( $# >= 2 )) || usage; PROBE_NETWORK="$2"; shift 2 ;;
         --compose-tag) (( $# >= 2 )) || usage; COMPOSE_TAG="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
 [[ "$IMAGE_REF" == *:* ]] || usage
+# The ssh step starts in the deploy user's home directory, and `docker compose
+# ps` finds the stack from the working directory.
+cd "$KLAI_DIR" || exit 1
+if ! command -v flock >/dev/null 2>&1; then
+    echo "ERROR: flock not found; refusing to deploy $SERVICE without the per-service lock" >&2
+    exit 1
+fi
+exec 9>"$LOCK_DIR/klai-deploy-$SERVICE.lock"
+if ! flock -w "$LOCK_WAIT" 9; then
+    echo "ERROR: another deploy of $SERVICE held $LOCK_DIR/klai-deploy-$SERVICE.lock for ${LOCK_WAIT}s; not starting" >&2
+    exit 1
+fi
 COMPOSE_TAG="${COMPOSE_TAG:-${IMAGE_REF%:*}:latest}"
 COMMIT="${GITHUB_SHA:-${IMAGE_REF##*:}}"
 PREVIOUS_TAG="klai/$SERVICE:previous"

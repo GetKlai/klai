@@ -186,4 +186,4 @@ jobs:
             # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
             # SPEC-INFRA-AUTO-ROLLBACK-001: deploys the exact sha, rolls back on a red gate.
             test -x /opt/klai/scripts/deploy-with-rollback.sh
-            /opt/klai/scripts/deploy-with-rollback.sh retrieval-api ghcr.io/getklai/retrieval-api:${{ github.sha }} --compose-tag klai/retrieval-api:local
+            /opt/klai/scripts/deploy-with-rollback.sh retrieval-api ghcr.io/getklai/retrieval-api:${{ github.sha }} --probe http://retrieval-api:8040/health --compose-tag klai/retrieval-api:local
