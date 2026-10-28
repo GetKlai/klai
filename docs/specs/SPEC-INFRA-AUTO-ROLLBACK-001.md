@@ -202,18 +202,25 @@ is the inventory and already names a backup kind per data volume (`sql`,
   "minor" (18.6 to 18.7) is a Postgres minor release with the same on-disk
   format, which makes it the safest case, yet today the "Data store series
   bumps" rule holds it for review. Majors: see D1 and D2.
-- **Proven:** a monthly restore rehearsal restores each store's latest snapshot
-  into a throwaway container on core-01 (never the live volume) and runs the
-  same probe.
+- **Proven:** a restore rehearsal on the 1st and 15th (02:17 UTC) restores
+  each store's latest snapshot into a throwaway container on core-01 (never
+  the live volume) and requires the restored facts to equal the snapshot's
+  baseline. Twice a month rather than monthly because VictoriaLogs keeps 30
+  days: a monthly run would leave the missing-rehearsal rule without a line
+  on the 31st of a long month. As built (S8b): Garage is copied cold as well,
+  because `garage meta snapshot` holds only `db.lmdb` and a restore also needs
+  the node key and layout; a Mongo whose FCV changed since its snapshot is
+  refused (`mongo-fcv`), and dry mode is refused for the cold-copied engines,
+  whose previous image cannot open a volume the new one already opened.
 
 ### 4.d public-01
 
 public-01 (website, Uptime Kuma, Caddy, Alloy) deploys itself from the private
-infra repo every 10 minutes. Its script already validates compose, Caddy and
-Alloy config, backs Kuma up before a compose change, checks health afterwards
-and pushes up/down to a Kuma push monitor. On a failed check it leaves the new
-files in place, and because the applied revision is only recorded on success,
-it retries the same broken revision on every run.
+infra repo every 10 minutes. Its script validates compose, Caddy and Alloy
+config, backs Kuma up before a compose change and checks health afterwards.
+Before S10 a failed check left the new files in place, and because the applied
+revision was only recorded on success, the same broken revision was retried
+on every run.
 
 - **Broken means:** the existing post-apply checks (Kuma healthy, Alloy running,
   the site and status page answering).
@@ -222,9 +229,11 @@ it retries the same broken revision on every run.
   reapply it every 10 minutes; a newer revision on `main` is tried normally.
 - **Cannot be rolled back:** Kuma's own database after a Kuma image migration;
   the existing pre-change Kuma backup is the restore source, used by hand.
-- **Informed:** the Kuma push monitor goes down with a `rolled-back-<rev>`
-  message; an external check is needed because public-01 hosts Kuma itself
-  (section 8).
+- **Informed:** one JSON line per run in `/opt/klai/logs/infra-deploy.log`,
+  shipped by public-01's Alloy to VictoriaLogs; Grafana on core-01 mails on an
+  `auto_rollback` event and on two hours without a clean run (section 8).
+  Nothing goes to Uptime Kuma: Kuma is the customer status page and is not
+  used for operational signals (owner decision, 2026-10-28).
 - **Proven:** a shell test with stubbed docker in that repo applies a bad
   revision and asserts the previous files are back.
 
@@ -237,10 +246,18 @@ Once 4.a to 4.c are live and their rehearsals are green:
 - Keep `minimumReleaseAge: '7 days'`. Updates that fix a published
   vulnerability skip it (configure the vulnerability-alert path; verify the key
   against the pinned Renovate version in `test-renovate-config.sh`).
-- Data-store minors move from the review rule to automerge, one minor per PR.
-- Majors automerge for npm, pep621 and github-actions, and for third-party
-  images that hold no data, once their E2E coverage is green. Data-store majors
-  keep `dependencyDashboardApproval` (D1, D2).
+- Data-store minors move from the review rule to automerge, one minor per PR,
+  after three green restore rehearsals in a row (4.c); until then a restore is
+  a claim, not a measurement. Not done in S9 on purpose.
+- Majors automerge only where a pull-request run executes the new version
+  before the merge (as built in S9): the GitHub Actions a PR job runs
+  (checkout, setup-node, setup-python, setup-uv, paths-filter, ast-grep),
+  npm devDependencies of the three packages with a CI job (portal frontend,
+  docs, widget) and Python dev groups outside `klai-libs` (no workflow runs a
+  library's own dev group). Everything else stays manual: runtime
+  dependencies, Docker images, the deploy, registry and token actions that run
+  first on main, upload-artifact and the CodeQL SARIF upload (only on main or
+  on failure). Data-store majors keep `dependencyDashboardApproval` (D1, D2).
 - Vexa stays manual (bot image pre-pull, documented in `renovate.json5`).
 
 ## 6. E2E-triggered rollback
@@ -308,7 +325,11 @@ Out of scope to build; in scope to leave the hook:
   from, to, commit, failed gate, outcome, log excerpt location). The deploy
   workflow uploads it as artifact `rollback-report`.
 - `ci-failure-notice.yml` reads that artifact and labels the issue
-  `auto-rollback` or `rollback-failed`, report in the body.
+  `auto-rollback` or `rollback-failed`, report in the body. Learned on
+  2026-10-28: GitHub matches a `workflow_run` `workflows:` filter with its
+  pattern syntax, so a workflow name with ` + ` in it never matched itself and
+  no consumer of the compose sync had fired since August; workflow names stay
+  free of `*`, `?`, `+`, `[` and `!`.
 - A future fixer triggers on `workflow_run` of `CI failure notice` (or the
   label) and must, per field practice: hold no deploy keys or production
   secrets; be unable to edit `.github/workflows/**`, tests or this spec; stop
@@ -347,12 +368,13 @@ Phrased as outcomes someone can watch happen.
   start and an issue explains why.
 - AT-c3: A gate going red 31 minutes after a data store upgrade opens an issue
   and restores nothing.
-- AT-c4: The monthly restore rehearsal restores every store in the inventory
-  into a throwaway container and the probe is green; a store whose restore
-  fails opens an issue.
+- AT-c4: The twice-monthly restore rehearsal restores every store in the
+  inventory into a throwaway container and the restored facts equal the
+  snapshot baseline; a store whose restore fails opens an issue.
 - AT-d1: A klai-infra revision with a Caddyfile that validates but fails the
-  live check leaves public-01 on the previous files, the Kuma monitor reports
-  `rolled-back-<rev>`, and the next cron run does not reapply that revision.
+  live check leaves public-01 on the previous files, logs an `auto_rollback`
+  line that Grafana mails on, and the next cron run does not reapply that
+  revision.
 - AT-e1: `renovate.json5` passes `test-renovate-config.sh` with SHA pinning and
   the new automerge rules; every `uses:` reference is a 40-character SHA after
   the first Renovate run.
@@ -381,8 +403,8 @@ added to `deploy-scripts-tests.yml`, and the rehearsal once it exists.
 | S6 | `Auto-rollback` workflow on E2E result, last-green marker, ledger replay, one spec retry in the prod suite | 6 | new workflow, helper under `deploy/scripts/`, `klai-portal/frontend` Playwright prod config | AT-6 | M | Opus (deploy key) |
 | S7 | Rehearsal and dead-man's switch: `rollback-canary` service, `rollback-rehearsal.yml`, Grafana mail rules (no Kuma) | 8 | `deploy/docker-compose.yml`, `deploy/volume-mounts.yaml` if needed, new workflow, `renovate.yml`, alerting rules | AT-f1, f2 | M | Sonnet |
 | S8a | Snapshot, probe, restore for Postgres (main and app databases) and the apps that migrate their own DB | 4.c, 4.b | helper under `deploy/scripts/`, its test, `deploy-compose.yml` | AT-c1, c2, c3 for Postgres | L | Opus |
-| S8b | Same for Qdrant, Meilisearch, Mongo, Redis, FalkorDB, Garage, RabbitMQ; monthly restore rehearsal | 4.c | same helper, new rehearsal workflow | AT-c1 to c4 | L | Opus |
-| S9 | Renovate policy: SHA pinning, vulnerability bypass, data-store minors and approved majors to automerge | 5 | `renovate.json5`, `scripts/test-renovate-config.sh` | AT-e1 | S | Sonnet |
+| S8b | Same for Qdrant, Meilisearch, Mongo, Redis, FalkorDB, Garage, RabbitMQ; restore rehearsal on the 1st and 15th | 4.c | same helper, new rehearsal workflow | AT-c1 to c4 | L | Opus |
+| S9 | Renovate policy: SHA pinning, vulnerability bypass, majors to automerge where a PR run executes them; data-store minors after three green rehearsals | 5 | `renovate.json5`, `scripts/test-renovate-config.sh` | AT-e1 | S | Sonnet |
 | S10 | public-01 previous-revision rollback and bad-revision marker (private infra repo) | 4.d | that repo's deploy script and its test | AT-d1 | S | Sonnet |
 | S11 | Post-deploy error-rate watch | 7 | helper under `deploy/scripts/`, alerting rules | threshold from 30 days of data, one forced breach rolls back | M | Sonnet |
 
