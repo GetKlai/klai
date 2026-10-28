@@ -23,8 +23,9 @@ class PortalGapProposal(Base):
         UniqueConstraint("org_id", "cluster_key", name="uq_gap_proposals_org_cluster"),
         CheckConstraint("where_kind IN ('existing', 'new')", name="ck_gap_proposals_where_kind"),
         CheckConstraint("decision IN ('none', 'rejected', 'out_of_scope')", name="ck_gap_proposals_decision"),
-        # The weekly generation cap counts per org.
-        Index("ix_gap_proposals_org_generated", "org_id", "generated_at"),
+        CheckConstraint("status IN ('generating', 'ready', 'failed')", name="ck_gap_proposals_status"),
+        # The weekly cap counts the model calls of an org's rows attempted in the window.
+        Index("ix_gap_proposals_org_attempted", "org_id", "attempted_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -40,6 +41,15 @@ class PortalGapProposal(Base):
     language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The model call is reserved before it is made: 'generating' while it runs,
+    # 'ready' with a proposal, 'failed' with ``failure_reason``. NULL on a row
+    # that only carries a decision. ``attempts`` is the number of model calls
+    # on this row and ``attempted_at`` the last one, which the weekly cap counts,
+    # failed calls included.
+    status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     decision: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'none'"))
     # The portal user who decided. No ForeignKey(): portal_api has no
     # REFERENCES privilege on the klai-owned portal_users; the FK (ON DELETE

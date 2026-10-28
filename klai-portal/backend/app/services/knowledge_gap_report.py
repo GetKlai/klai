@@ -10,18 +10,26 @@ on a weak search (gap_type ``soft``).
 
 Turns are grouped on topic without a model: the product the case named plus
 the three longest content words of the case's problem (the visitor's search
-when the case has none). The key is a pure function of one turn's signals, so
-the same topic lands on the same key next week, which is what a decision
-(``portal_gap_proposals``) and a proposal hang on. Known ceiling: two wordings
-of one need that share fewer than three long words make two clusters; the
-upgrade is a deterministic synonym/stem table, still without a model.
+when the case has none). The key is a hash of those, a pure function of one
+turn's signals, so the same topic lands on the same key next week, which is
+what a decision (``portal_gap_proposals``) and a proposal hang on, and no
+visitor word reaches a URL or a stored key. Known ceiling: two wordings of one
+need that share fewer than three long words make two clusters; the upgrade is
+a deterministic synonym/stem table, still without a model.
 
-Internal turns carry no text, so they are counted per kind only, one cluster
-per kind.
+A cluster without topic words, and every internal cluster (internal turns
+carry no text, so they are counted per kind only), is a catch-all: it is not
+``decidable``, because a final decision on it would hide every future turn of
+that kind, and a proposal on it would mix unrelated questions.
+
+Below telemetry ``full`` the list carries no visitor text: counts, kinds,
+product, the articles found and ``last_seen`` only, the same line
+``record_gap_event`` draws with ``[REDACTED:shadow]``.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -32,9 +40,10 @@ from typing import Any, Literal
 from sqlalchemy import column, func, or_, select, table
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.gap_proposals import PortalGapProposal
-from app.models.portal import PortalUser
+from app.models.portal import PortalOrg, PortalUser
 from app.models.widgets import WidgetConversation, WidgetMessage
 
 GAP_DECISIONS = ("refusal", "clarifying_question", "human_request", "partial_answer")
@@ -55,6 +64,9 @@ PROBE_QUESTION = "Hoe lang rijst het deeg van het Proefbrood van Probe Bakkerij?
 
 _TOPIC_WORDS = 3
 _MIN_WORD = 3
+# Longer than any Dutch or English word an owner would write about; an IBAN
+# without spaces, a token or a hash is longer.
+_MAX_WORD = 24
 _QUESTION_CHARS = 200
 _MAX_QUESTIONS = 20
 _MAX_ARTICLES = 5
@@ -76,6 +88,8 @@ class GapTurn:
     surface: Literal["widget", "internal"]
     signals: dict[str, Any]
     created_at: datetime
+    # The visitor's own message of this turn (widget_messages, role user), when stored.
+    visitor_text: str | None = None
 
 
 def is_gap(signals: Mapping[str, Any]) -> bool:
@@ -99,21 +113,38 @@ def gap_kind(signals: Mapping[str, Any]) -> GapKind:
 
 
 def topic_words(text: str, *, product: str = "") -> list[str]:
-    """The three longest content words, sorted; the product's own words are already in the key."""
+    """The three longest content words, sorted.
+
+    A whitespace token holding a digit or an ``@`` (a phone, order or account
+    number, an e-mail address) never becomes a topic word, nor does a token
+    longer than ``_MAX_WORD``; stopwords and the product's own words, already
+    in the key, go before the choice.
+    """
     skip = _STOPWORDS | set(product.split())
-    words = {w for w in _WORD.findall(text.lower()) if len(w) >= _MIN_WORD and w not in skip}
+    words = {
+        word
+        for token in text.lower().split()
+        if "@" not in token and not any(char.isdigit() for char in token)
+        for word in _WORD.findall(token)
+        if _MIN_WORD <= len(word) <= _MAX_WORD and word not in skip
+    }
     return sorted(sorted(words, key=lambda w: (-len(w), w))[:_TOPIC_WORDS])
 
 
-def cluster_key(turn: GapTurn) -> str:
-    if turn.surface == "internal":
-        return f"internal|{gap_kind(turn.signals)}"
+def _topic(turn: GapTurn) -> tuple[str, list[str]]:
     case = turn.signals.get("case")
     if not isinstance(case, dict):
         case = {}
     product = " ".join(str(case.get("product") or "").lower().split())
     text = str(case.get("problem") or "") or _query(turn.signals)
-    return f"{product}|{' '.join(topic_words(text, product=product))}"
+    return product, topic_words(text, product=product)
+
+
+def cluster_key(turn: GapTurn) -> str:
+    if turn.surface == "internal":
+        return f"internal|{gap_kind(turn.signals)}"
+    product, words = _topic(turn)
+    return "t" + hashlib.sha256(f"{product}|{' '.join(words)}".encode()).hexdigest()[:20]
 
 
 def _query(signals: Mapping[str, Any]) -> str:
@@ -137,13 +168,18 @@ def _distinct(values: Iterable[str], limit: int) -> list[str]:
 
 
 def build_clusters(
-    turns: Iterable[GapTurn], decisions: Mapping[str, dict[str, Any]], *, include_decided: bool = False
+    turns: Iterable[GapTurn],
+    decisions: Mapping[str, dict[str, Any]],
+    *,
+    include_decided: bool = False,
+    literal: bool = True,
 ) -> list[dict[str, Any]]:
     """Group the counted turns per topic, biggest first; a cluster of one stays, at the bottom.
 
     ``decisions`` maps a cluster key to its ``portal_gap_proposals`` row
     (``load_cluster_decisions``); a decided cluster is left out unless
-    ``include_decided``.
+    ``include_decided``. ``literal`` False (telemetry below ``full``) leaves
+    every visitor text out.
     """
     groups: dict[str, list[GapTurn]] = {}
     for turn in turns:
@@ -158,6 +194,7 @@ def build_clusters(
         members.sort(key=lambda t: t.created_at, reverse=True)
         kinds = Counter(gap_kind(t.signals) for t in members)
         widget = [t for t in members if t.surface == "widget"]
+        product, words = _topic(widget[0]) if widget else ("", [])
         # Best score first; a kept passage has no score and goes last.
         best: dict[str, dict] = {}
         for f in sorted(
@@ -167,26 +204,33 @@ def build_clusters(
         ):
             best.setdefault(str(f.get("url") or f.get("title")), f)
         articles = [{"title": f.get("title"), "url": f.get("url"), "score": f.get("score")} for f in best.values()]
-        questions = _distinct((" ".join(_query(t.signals).split())[:_QUESTION_CHARS] for t in widget), _MAX_QUESTIONS)
-        product, _, words = key.partition("|")
+        # The visitor's own words; the search query only when the message is gone
+        # (the case step rewrites the query into the articles' language).
+        questions = _distinct(
+            (" ".join((t.visitor_text or _query(t.signals)).split())[:_QUESTION_CHARS] for t in widget),
+            _MAX_QUESTIONS,
+        )
+        open_parts = _distinct((p for t in widget for p in _open_parts(t.signals)), _MAX_OPEN_PARTS)
         languages = Counter(str(t.signals["language"]) for t in members if t.signals.get("language"))
+        topic = " ".join(words) if literal else ""
         clusters.append(
             {
                 "cluster_key": key,
-                "product": product if product and product != "internal" else None,
-                "topic": words,
+                "product": product or None,
+                "topic": topic or product or "—",
                 "count": len(members),
                 "widget_count": len(widget),
                 "internal_count": len(members) - len(widget),
                 "kind": max(kinds, key=lambda k: (kinds[k], -_KIND_ORDER.index(k))),
                 "kinds": dict(kinds),
-                "question": questions[0] if questions else None,
-                "questions": questions,
+                "question": questions[0] if questions and literal else None,
+                "questions": questions if literal else [],
                 "article": articles[0] if articles else None,
                 "articles": articles[:_MAX_ARTICLES],
-                "open_parts": _distinct((p for t in widget for p in _open_parts(t.signals)), _MAX_OPEN_PARTS),
+                "open_parts": open_parts if literal else [],
                 "language": languages.most_common(1)[0][0] if languages else None,
                 "last_seen": members[0].created_at.isoformat(),
+                "decidable": bool(widget) and bool(words),
                 "decision": decided.get("decision", "none"),
                 "decided_by": decided.get("decided_by"),
                 "decided_at": decided.get("decided_at"),
@@ -213,8 +257,24 @@ async def load_gap_turns(db: AsyncSession, *, org_id: int, since: datetime) -> l
     """The org's counted turns since ``since``: widget answers (preview, test and probe left out) and internal turns.
 
     Runs on a tenant-scoped session (Cat-D on all three tables) and names the
-    org in every predicate as well.
+    org in every predicate as well. A widget answer brings the visitor's own
+    message: the latest user row of the conversation before it (the user row
+    is written first, record_widget_turn).
     """
+    visitor = aliased(WidgetMessage)
+    visitor_text = (
+        select(visitor.content)
+        .where(
+            visitor.conversation_id == WidgetMessage.conversation_id,
+            visitor.org_id == org_id,
+            visitor.role == "user",
+            visitor.sequence < WidgetMessage.sequence,
+        )
+        .order_by(visitor.sequence.desc())
+        .limit(1)
+        .correlate(WidgetMessage)
+        .scalar_subquery()
+    )
     widget_rows = (
         await db.execute(
             select(
@@ -222,6 +282,7 @@ async def load_gap_turns(db: AsyncSession, *, org_id: int, since: datetime) -> l
                 WidgetMessage.created_at,
                 WidgetConversation.loaded_origin,
                 WidgetConversation.first_user_query,
+                visitor_text.label("visitor_text"),
             )
             .join(WidgetConversation, WidgetConversation.id == WidgetMessage.conversation_id)
             .where(
@@ -245,7 +306,7 @@ async def load_gap_turns(db: AsyncSession, *, org_id: int, since: datetime) -> l
         )
     ).all()
     return [
-        GapTurn("widget", row.answer_signals, row.created_at)
+        GapTurn("widget", row.answer_signals, row.created_at, row.visitor_text)
         for row in widget_rows
         if row.loaded_origin != PROBE_ORIGIN and " ".join((row.first_user_query or "").split()) != PROBE_QUESTION
     ] + [GapTurn("internal", row.answer_signals, row.created_at) for row in internal_rows]
@@ -258,7 +319,7 @@ async def load_cluster_decisions(db: AsyncSession, *, org_id: int) -> dict[str, 
                 PortalGapProposal.cluster_key,
                 PortalGapProposal.decision,
                 PortalGapProposal.decided_at,
-                PortalGapProposal.generated_at,
+                PortalGapProposal.status,
                 func.coalesce(PortalUser.display_name, PortalUser.email).label("decided_by"),
             )
             .outerjoin(PortalUser, (PortalUser.id == PortalGapProposal.decided_by) & (PortalUser.org_id == org_id))
@@ -270,7 +331,7 @@ async def load_cluster_decisions(db: AsyncSession, *, org_id: int) -> dict[str, 
             "decision": row.decision,
             "decided_by": row.decided_by,
             "decided_at": row.decided_at.isoformat() if row.decided_at else None,
-            "has_proposal": row.generated_at is not None,
+            "has_proposal": row.status == "ready",
         }
         for row in rows
     }
@@ -279,6 +340,13 @@ async def load_cluster_decisions(db: AsyncSession, *, org_id: int) -> dict[str, 
 async def knowledge_gap_clusters(
     db: AsyncSession, *, org_id: int, days: int = 7, include_decided: bool = False, now: datetime | None = None
 ) -> list[dict[str, Any]]:
+    # The level is the org's own, re-read here as record_gap_event does: never a caller's.
+    level = (await db.execute(select(PortalOrg.telemetry_level).where(PortalOrg.id == org_id))).scalar_one()
     since = (now or datetime.now(tz=UTC)) - timedelta(days=days)
     turns = await load_gap_turns(db, org_id=org_id, since=since)
-    return build_clusters(turns, await load_cluster_decisions(db, org_id=org_id), include_decided=include_decided)
+    return build_clusters(
+        turns,
+        await load_cluster_decisions(db, org_id=org_id),
+        include_decided=include_decided,
+        literal=level == "full",
+    )

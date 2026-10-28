@@ -38,17 +38,22 @@ def upgrade() -> None:
             language VARCHAR(8),
             model VARCHAR(64),
             generated_at TIMESTAMP WITH TIME ZONE,
+            status VARCHAR(16),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            attempted_at TIMESTAMP WITH TIME ZONE,
+            failure_reason VARCHAR,
             decision VARCHAR(16) NOT NULL DEFAULT 'none',
             decided_by INTEGER,
             decided_at TIMESTAMP WITH TIME ZONE,
             CONSTRAINT uq_gap_proposals_org_cluster UNIQUE (org_id, cluster_key),
             CONSTRAINT ck_gap_proposals_where_kind CHECK (where_kind IN ('existing', 'new')),
-            CONSTRAINT ck_gap_proposals_decision CHECK (decision IN ('none', 'rejected', 'out_of_scope'))
+            CONSTRAINT ck_gap_proposals_decision CHECK (decision IN ('none', 'rejected', 'out_of_scope')),
+            CONSTRAINT ck_gap_proposals_status CHECK (status IN ('generating', 'ready', 'failed'))
         )
         """
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_gap_proposals_org_generated ON portal_gap_proposals (org_id, generated_at)"
+        "CREATE INDEX IF NOT EXISTS ix_gap_proposals_org_attempted ON portal_gap_proposals (org_id, attempted_at)"
     )
 
 

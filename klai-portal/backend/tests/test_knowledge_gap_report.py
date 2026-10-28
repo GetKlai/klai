@@ -18,7 +18,14 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.services import knowledge_gap_report as report
-from app.services.knowledge_gap_report import GapTurn, build_clusters, cluster_key, load_gap_turns
+from app.services.knowledge_gap_report import (
+    GapTurn,
+    build_clusters,
+    cluster_key,
+    knowledge_gap_clusters,
+    load_gap_turns,
+    topic_words,
+)
 
 SEED = 20261028
 _T0 = datetime(2026, 10, 20, 9, 0, tzinfo=UTC)
@@ -47,8 +54,8 @@ def _signals(
     }
 
 
-def _widget(minutes: int = 0, **kwargs: Any) -> GapTurn:
-    return GapTurn("widget", _signals(**kwargs), _T0 + timedelta(minutes=minutes))
+def _widget(minutes: int = 0, visitor_text: str | None = None, **kwargs: Any) -> GapTurn:
+    return GapTurn("widget", _signals(**kwargs), _T0 + timedelta(minutes=minutes), visitor_text)
 
 
 def _only(clusters: list[dict]) -> dict:
@@ -101,7 +108,6 @@ def test_open_parts_next_to_a_found_article_is_article_misses_part() -> None:
     assert cluster["kind"] == "article_misses_part"
     assert cluster["open_parts"] == ["wachtmuziek na 18 uur"]
     assert cluster["article"]["url"] == "https://help.example.com/wachtmuziek"
-    assert cluster["question"] == "Hoe zet ik wachtmuziek aan op de wolkcentrale?"
 
 
 def test_a_clarifying_question_is_variant_unclear() -> None:
@@ -124,6 +130,27 @@ def test_a_cluster_of_one_turn_stays_listed_at_the_bottom() -> None:
     assert clusters[-1]["question"] == "Kan ik een faxnummer koppelen?"
 
 
+def test_the_question_is_the_visitors_own_message_and_the_query_only_without_one() -> None:
+    """The case step rewrites the search query into the articles' language and
+    strips names and numbers; the proposal asks for the visitor's own words."""
+    turns = [
+        _widget(
+            minutes=2,
+            visitor_text="hoe krijg ik muziek als mensen in de wacht staan",
+            decision="refusal",
+            problem="wachtmuziek",
+        ),
+        _widget(minutes=1, decision="refusal", problem="wachtmuziek"),
+    ]
+
+    cluster = _only(build_clusters(turns, {}))
+
+    assert cluster["questions"] == [
+        "hoe krijg ik muziek als mensen in de wacht staan",
+        "Hoe zet ik wachtmuziek aan op de wolkcentrale?",
+    ]
+
+
 def test_internal_turns_count_per_kind_without_text() -> None:
     turns = [
         GapTurn("internal", {"decision": "refusal", "gap_type": "hard"}, _T0),
@@ -136,6 +163,26 @@ def test_internal_turns_count_per_kind_without_text() -> None:
     assert [(c["cluster_key"], c["count"], c["internal_count"], c["question"]) for c in clusters] == [
         ("internal|no_article", 2, 2, None),
         ("internal|weak_match", 1, 1, None),
+    ]
+
+
+def test_catch_all_clusters_are_not_decidable() -> None:
+    """Internal turns and turns without topic words share one key per kind or
+    product; a final decision there would hide every later turn of that kind."""
+    clusters = build_clusters(
+        [
+            GapTurn("internal", {"decision": "refusal", "gap_type": "hard"}, _T0),
+            # Only filler words: the product alone is left, a catch-all for that product.
+            _widget(decision="human_request", problem="", query="kan dat graag?"),
+            _widget(decision="refusal", problem="wachtmuziek instellen"),
+        ],
+        {},
+    )
+
+    assert sorted((c["topic"], c["decidable"]) for c in clusters) == [
+        ("instellen wachtmuziek", True),
+        ("wolkcentrale", False),
+        ("—", False),
     ]
 
 
@@ -152,39 +199,57 @@ def test_a_decided_cluster_leaves_the_list_and_shows_with_include_decided() -> N
 
 
 def test_the_cluster_key_is_the_same_for_the_same_topic_in_another_wording_and_week() -> None:
-    """Product plus the three longest content words, sorted: word order, case,
+    """Product plus the three longest content words: word order, case,
     punctuation, filler words and the date do not move a turn to another key."""
     rng = random.Random(SEED)  # noqa: S311 -- a seeded, reproducible test generator, not a secret
-    # The product's own word is already the key's first part, so it never takes a topic slot.
+    # The product's own word is already part of the key, so it never takes a topic slot.
     words = ["wachtmuziek", "instellen", "kantooruren", "wolkcentrale"]
     fillers = ["hoe", "kan", "ik", "de", "na", "graag", "?", "!", ","]
-    keys = set()
+    turns = []
     for week in range(4):
         wording = [*words, *rng.sample(fillers, 4)]
         rng.shuffle(wording)
         text = " ".join(w.upper() if rng.random() < 0.3 else w for w in wording)
-        turn = GapTurn("widget", _signals(decision="refusal", problem=text), _T0 + timedelta(weeks=week))
-        keys.add(cluster_key(turn))
+        turns.append(GapTurn("widget", _signals(decision="refusal", problem=text), _T0 + timedelta(weeks=week)))
 
-    assert keys == {"wolkcentrale|instellen kantooruren wachtmuziek"}
+    cluster = _only(build_clusters(turns, {}))
+
+    assert (cluster["count"], cluster["topic"]) == (4, "instellen kantooruren wachtmuziek")
+    assert "wachtmuziek" not in cluster["cluster_key"]
 
 
-def _row(signals: dict, *, origin: str | None = "https://shop.example.com", first: str = "Vraag") -> SimpleNamespace:
-    return SimpleNamespace(answer_signals=signals, created_at=_T0, loaded_origin=origin, first_user_query=first)
+def test_no_number_or_address_becomes_part_of_the_topic() -> None:
+    words = topic_words(
+        "Mijn nummer 06-12345678 en mailadres jan.fictief@example.com, ordernummer KLT2026A, "
+        "rekening NL00EXMP0123456789, doorschakelen werkt niet"
+    )
+
+    assert words == ["doorschakelen", "mailadres", "ordernummer"]
+
+
+def _row(
+    signals: dict, *, origin: str | None = "https://shop.example.com", first: str = "Vraag", visitor: str | None = None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        answer_signals=signals, created_at=_T0, loaded_origin=origin, first_user_query=first, visitor_text=visitor
+    )
 
 
 class _Db:
-    """Answers the widget query with ``widget_rows`` and the internal one with nothing; records the SQL."""
+    """Answers the widget query with ``widget_rows``, the org's level with ``level``, the rest with nothing."""
 
-    def __init__(self, widget_rows: list[SimpleNamespace]) -> None:
+    def __init__(self, widget_rows: list[SimpleNamespace], level: str = "full") -> None:
         self.widget_rows = widget_rows
+        self.level = level
         self.compiled: list[Any] = []
 
     async def execute(self, stmt: Any) -> MagicMock:
         compiled = stmt.compile(dialect=postgresql.dialect())
         self.compiled.append(compiled)
+        sql = str(compiled)
         result = MagicMock()
-        result.all.return_value = self.widget_rows if "widget_messages" in str(compiled) else []
+        result.scalar_one.return_value = self.level
+        result.all.return_value = self.widget_rows if "FROM widget_messages" in sql else []
         return result
 
 
@@ -206,7 +271,7 @@ async def test_the_widget_monitoring_probe_is_not_a_gap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_every_read_is_bound_to_the_one_org() -> None:
+async def test_every_read_is_bound_to_the_one_org_and_leaves_previews_and_tests_out() -> None:
     db = _Db([])
 
     await load_gap_turns(db, org_id=7, since=_T0)  # type: ignore[arg-type]
@@ -214,8 +279,21 @@ async def test_every_read_is_bound_to_the_one_org() -> None:
     widget_sql, internal_sql = (str(c) for c in db.compiled)
     assert "widget_messages.org_id = " in widget_sql
     assert "widget_conversations.org_id = " in widget_sql
+    assert "widget_conversations.is_preview IS false" in widget_sql
+    assert "widget_conversations.is_test IS false" in widget_sql
     assert "internal_chat_turns.org_id = " in internal_sql
     for compiled in db.compiled:
-        assert [v for k, v in compiled.params.items() if k.startswith("org_id")] == [7] * (
-            2 if "widget_messages" in str(compiled) else 1
-        )
+        assert {v for k, v in compiled.params.items() if k.startswith("org_id")} == {7}
+
+
+@pytest.mark.asyncio
+async def test_below_full_telemetry_the_list_carries_no_visitor_text() -> None:
+    signals = _signals(decision="partial_answer", problem="wachtmuziek instellen", open_parts=["na 18 uur"])
+    db = _Db([_row(signals, visitor="hoe zet ik muziek in de wacht")], level="shadow")
+
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
+
+    assert (cluster["question"], cluster["questions"], cluster["open_parts"]) == (None, [], [])
+    assert cluster["topic"] == "wolkcentrale"
+    assert cluster["count"] == 1
+    assert cluster["article"]["url"] == "https://help.example.com/wachtmuziek"
