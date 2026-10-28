@@ -24,6 +24,7 @@ import { GapsAccessGate } from './_components/GapsAccessGate'
 import {
   clusterKindLabel,
   clustersPath,
+  articleLabel,
   clusterTitle,
   decisionLabel,
   isWebUrl,
@@ -100,6 +101,8 @@ export function GapClusterDetailPage() {
     <PageContainer width="3xl" gap="6">
       <PageHeader title={clusterTitle(cluster)} actions={backButton} />
 
+      <p className="-mb-3 text-xs text-gray-500">{m.gaps_clusters_window_note()}</p>
+
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard
           label={m.gaps_clusters_column_count()}
@@ -125,7 +128,9 @@ export function GapClusterDetailPage() {
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-gray-600">{m.gaps_clusters_internal_only()}</p>
+          // Below telemetry level full a widget cluster has no text either, so only
+          // a cluster without widget signals is an internal-chat one.
+          <p className="text-sm text-gray-600">{cluster.widget_count === 0 ? m.gaps_clusters_internal_only() : '—'}</p>
         )}
       </div>
 
@@ -145,15 +150,22 @@ export function GapClusterDetailPage() {
         {cluster.articles.length > 0 ? (
           <ul className="space-y-1 text-sm text-gray-900">
             {cluster.articles.map((article) => (
-              <li key={`${article.title}|${article.url ?? ''}`}>
+              <li key={`${article.title ?? ''}|${article.url ?? ''}`}>
                 {isWebUrl(article.url) ? (
                   <a href={article.url} target="_blank" rel="noopener noreferrer" className="underline">
-                    {article.title}
+                    {articleLabel(article)}
                   </a>
                 ) : (
-                  article.title
-                )}{' '}
-                <span className="text-gray-500">{m.gaps_clusters_article_score({ score: String(Math.round(article.score * 100)) })}</span>
+                  (articleLabel(article) ?? m.gaps_clusters_no_article())
+                )}
+                {article.score != null && (
+                  <>
+                    {' '}
+                    <span className="text-gray-500">
+                      {m.gaps_clusters_article_score({ score: String(Math.round(article.score * 100)) })}
+                    </span>
+                  </>
+                )}
               </li>
             ))}
           </ul>

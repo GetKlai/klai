@@ -3154,6 +3154,7 @@
   "gaps_clusters_questions_heading": "Vragen",
   "gaps_clusters_open_parts_heading": "Wat nog open blijft",
   "gaps_clusters_articles_heading": "Gevonden artikelen",
+  "gaps_clusters_window_note": "Cijfers over de laatste 30 dagen",
   "gaps_clusters_article_score": "score {score}%",
   "gaps_cluster_kind_no_article": "Geen artikel",
   "gaps_cluster_kind_article_misses_part": "Artikel mist een deel",

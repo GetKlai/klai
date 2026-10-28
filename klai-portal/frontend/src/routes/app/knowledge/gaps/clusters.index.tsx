@@ -31,6 +31,7 @@ import * as m from '@/paraglide/messages'
 import { GapsAccessGate } from './_components/GapsAccessGate'
 import { formatRelativeTime } from './-gap-types'
 import {
+  articleLabel,
   clusterKindLabel,
   clustersPath,
   clusterTitle,
@@ -179,7 +180,9 @@ function ClusterTableRow({ cluster, onOpen }: { cluster: ClusterRow; onOpen: () 
         {cluster.question != null ? (
           shorten(cluster.question)
         ) : (
-          <span className="text-gray-500">{m.gaps_clusters_internal_only()}</span>
+          // Below telemetry level full a widget cluster has no text either, so only
+          // a cluster without widget signals is an internal-chat one.
+          <span className="text-gray-500">{cluster.widget_count === 0 ? m.gaps_clusters_internal_only() : '—'}</span>
         )}
       </DataTableCell>
       <DataTableCell className="truncate">
@@ -191,10 +194,10 @@ function ClusterTableRow({ cluster, onOpen }: { cluster: ClusterRow; onOpen: () 
             className="underline"
             onClick={(e) => e.stopPropagation()}
           >
-            {cluster.article.title}
+            {articleLabel(cluster.article)}
           </a>
-        ) : cluster.article ? (
-          cluster.article.title
+        ) : cluster.article && articleLabel(cluster.article) != null ? (
+          articleLabel(cluster.article)
         ) : (
           <span className="text-gray-500">{m.gaps_clusters_no_article()}</span>
         )}

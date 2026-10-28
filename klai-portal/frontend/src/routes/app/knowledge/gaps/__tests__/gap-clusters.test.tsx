@@ -182,12 +182,41 @@ describe('GapClustersPage', () => {
 
   it('marks an internal-only cluster instead of showing a question', async () => {
     mockApi({
-      clusters: [cluster({ cluster_key: 'internal|billing', question: null, questions: [], article: null, articles: [] })],
+      clusters: [cluster({ cluster_key: 'internal|billing', widget_count: 0, internal_count: 5, question: null, questions: [], article: null, articles: [] })],
     })
 
     render(<Wrapper><GapClustersPage /></Wrapper>)
 
     expect(await screen.findByText(/interne chat, zonder tekst|internal chat, no text/i)).toBeTruthy()
+  })
+
+  it('shows no internal marker for a widget cluster without text', async () => {
+    mockApi({ clusters: [cluster({ question: null, questions: [], widget_count: 3, internal_count: 0 })] })
+
+    render(<Wrapper><GapClustersPage /></Wrapper>)
+
+    await screen.findByText('Facturatie · Facturen exporteren')
+    expect(screen.queryByText(/interne chat, zonder tekst|internal chat, no text/i)).toBeNull()
+  })
+
+  it('shows the url as link text when an article has no title', async () => {
+    mockApi({
+      clusters: [cluster({ article: { title: null, url: 'https://docs.example.com/zonder-titel', score: null } })],
+    })
+
+    render(<Wrapper><GapClustersPage /></Wrapper>)
+
+    const link = await screen.findByRole('link', { name: 'https://docs.example.com/zonder-titel' })
+    expect(link.getAttribute('href')).toBe('https://docs.example.com/zonder-titel')
+  })
+
+  it('says there is no article when the article has neither title nor url', async () => {
+    mockApi({ clusters: [cluster({ article: { title: null, url: null, score: null } })] })
+
+    render(<Wrapper><GapClustersPage /></Wrapper>)
+
+    await screen.findByText('Facturatie · Facturen exporteren')
+    expect(screen.getByText(/^(geen artikel|no article)$/i, { selector: 'td span' })).toBeTruthy()
   })
 
   it('marks a non-decidable cluster in the list', async () => {
@@ -229,6 +258,51 @@ describe('GapClusterDetailPage', () => {
     expect(screen.getByText('Het exacte menupad')).toBeTruthy()
     // The key is URL-encoded in the path.
     expect(apiFetchMock.mock.calls.some((call) => call[0] === `/api/app/gaps/clusters/${ENC}/proposal`)).toBe(true)
+  })
+
+  it('shows the 30-day window above the counts', async () => {
+    mockApi({})
+
+    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+
+    expect(await screen.findByText(/cijfers over de laatste 30 dagen|figures over the last 30 days/i)).toBeTruthy()
+  })
+
+  it('shows no internal marker for a widget cluster without text', async () => {
+    mockApi({ clusters: [cluster({ question: null, questions: [], widget_count: 3, internal_count: 0 })] })
+
+    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+
+    await screen.findByRole('heading', { name: /vragen|questions/i })
+    expect(screen.queryByText(/interne chat, zonder tekst|internal chat, no text/i)).toBeNull()
+  })
+
+  it('marks an internal-only cluster on the detail page', async () => {
+    mockApi({
+      clusters: [cluster({ question: null, questions: [], widget_count: 0, internal_count: 2, decidable: false })],
+    })
+
+    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+
+    expect(await screen.findByText(/interne chat, zonder tekst|internal chat, no text/i)).toBeTruthy()
+  })
+
+  it('renders the url for an untitled article and no percentage for a score of null', async () => {
+    mockApi({
+      clusters: [
+        cluster({
+          articles: [
+            { title: null, url: 'https://docs.example.com/zonder-titel', score: null },
+            { title: 'Met score', url: null, score: 0.5 },
+          ],
+        }),
+      ],
+    })
+
+    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+
+    expect(await screen.findByRole('link', { name: 'https://docs.example.com/zonder-titel' })).toBeTruthy()
+    expect(screen.getAllByText(/score \d+%/)).toHaveLength(1)
   })
 
   it('names the parent section and the nearest article for a new article', async () => {

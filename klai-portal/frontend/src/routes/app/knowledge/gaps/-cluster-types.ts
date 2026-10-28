@@ -8,9 +8,9 @@ export type ClusterKind = 'no_article' | 'article_misses_part' | 'variant_unclea
 export type ClusterDecision = 'rejected' | 'out_of_scope'
 
 export interface ClusterArticle {
-  title: string
+  title: string | null
   url: string | null
-  score: number
+  score: number | null
 }
 
 export interface ClusterRow {
@@ -99,4 +99,7 @@ export function decisionLabel(decision: ClusterDecision): string {
 
 // Only http(s) becomes a link: article and proposal URLs come from stored or
 // generated text, and a javascript: href would run in the portal origin.
+// An article can come without a title; its url then stands in as the link text.
+export const articleLabel = (article: ClusterArticle): string | null => article.title ?? article.url
+
 export const isWebUrl = (url: string | null): url is string => url != null && /^https?:\/\//i.test(url)
