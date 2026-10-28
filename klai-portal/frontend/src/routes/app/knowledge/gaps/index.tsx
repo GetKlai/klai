@@ -28,6 +28,8 @@ import { PageContainer } from '@/components/ui/page-container'
 import { PageHeader } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { appNavGapsIsVisible } from '@/routes/app/-app-tools'
+import { Checkbox } from '@/components/ui/checkbox'
+import { DecisionBadge } from './_components/GapProposal'
 import { TranscriptImportDialog } from './_components/TranscriptImportDialog'
 import { audienceLabel, caseSourceLabel, diagnosisLabel } from './-support-helpers'
 import { gapGroupDigest } from './-gap-identity'
@@ -92,13 +94,15 @@ export function GapsPage() {
   // Client-side only: the API does not group by source, so narrowing to one
   // source never needs a refetch and does not need to survive a bookmark.
   const [source, setSource] = useState<GapSource | ''>('')
+  const [includeDecided, setIncludeDecided] = useState(false)
 
   const { data, isLoading, isError, error, refetch } = useQuery<GapsResponse>({
-    queryKey: ['app-gaps', days, language, includeResolved],
+    queryKey: ['app-gaps', days, language, includeResolved, includeDecided],
     queryFn: async () => {
       const params = new URLSearchParams({ days: String(days), limit: '100' })
       if (language) params.set('language', language)
       if (includeResolved) params.set('include_resolved', 'true')
+      if (includeDecided) params.set('include_decided', 'true')
       try {
         return await apiFetch<GapsResponse>(`/api/app/gaps?${params}`)
       } catch (err) {
@@ -232,6 +236,11 @@ export function GapsPage() {
             <option value="all">{m.gaps_filter_all()}</option>
           </Select>
         </div>
+        <Checkbox
+          label={m.gaps_filter_include_decided()}
+          checked={includeDecided}
+          onChange={(e) => setIncludeDecided(e.target.checked)}
+        />
       </div>
 
       {/* Table */}
@@ -301,9 +310,12 @@ export function GapsPage() {
                       </div>
                     </DataTableCell>
                     <DataTableCell>
-                      <Badge variant={isResolved ? 'secondary' : 'outline'}>
-                        {isResolved ? m.gaps_status_resolved() : m.gaps_status_open()}
-                      </Badge>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant={isResolved ? 'secondary' : 'outline'}>
+                          {isResolved ? m.gaps_status_resolved() : m.gaps_status_open()}
+                        </Badge>
+                        <DecisionBadge decision={gap.decision} />
+                      </div>
                       {isResolved && (
                         <div className="mt-1 text-xs text-gray-500">
                           {closerLabel(gap)

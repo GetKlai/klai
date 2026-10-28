@@ -28,6 +28,7 @@ import { PageContainer } from '@/components/ui/page-container'
 import { PageHeader } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { appNavActivityIsVisible, appNavGapsIsVisible } from '@/routes/app/-app-tools'
+import { GapProposal } from './_components/GapProposal'
 import { diagnosisLabel } from './-support-helpers'
 import { findGapByDigest } from './-gap-identity'
 import { closerLabel, formatRelativeTime, type GapRow, type GapsResponse } from './-gap-types'
@@ -87,7 +88,7 @@ export function GapDetailPage() {
   const detailQuery = useQuery<GapsResponse>({
     queryKey: ['app-gap-detail', groupKey],
     queryFn: async () => {
-      const params = new URLSearchParams({ days: '90', limit: '200', include_resolved: 'true' })
+      const params = new URLSearchParams({ days: '90', limit: '200', include_resolved: 'true', include_decided: 'true' })
       try {
         return await apiFetch<GapsResponse>(`/api/app/gaps?${params}`)
       } catch (err) {
@@ -275,6 +276,8 @@ export function GapDetailPage() {
           )}
         </div>
       )}
+
+      {gap.group_key && <GapProposal gap={gap} digest={groupKey} groupKey={gap.group_key} />}
     </PageContainer>
   )
 }

@@ -26,7 +26,36 @@ export interface GapRow {
   support_case_ids: number[]
   support_sources?: string[]
   group_key?: string | null
+  // Final owner decision (knowledge-gap-to-article phase 1). Only present on
+  // lists fetched with include_decided=true; the default list hides decided groups.
+  decision?: GapDecision | 'none' | null
+  decided_by?: string | null
+  decided_at?: string | null
   topic: { id: number; name: string } | null
+}
+
+export type GapDecision = 'rejected' | 'out_of_scope'
+
+export interface GapProposal {
+  id: number
+  kb_slug: string
+  group_key: string
+  missing: string
+  where_kind: 'existing' | 'new'
+  where_title: string
+  where_url: string | null
+  where_section: string | null
+  example_text: string
+  open_facts: string[]
+  language: string
+  generated_at: string
+  decision: GapDecision | 'none'
+  decided_by: string | null
+  decided_at: string | null
+}
+
+export function decisionLabel(decision: GapDecision): string {
+  return decision === 'rejected' ? m.gaps_decision_label_rejected() : m.gaps_decision_label_out_of_scope()
 }
 
 export interface GapsResponse {
