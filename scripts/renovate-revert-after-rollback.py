@@ -12,7 +12,9 @@ lands once `quality` is green.
 
 Our own code is never reverted (decision D3): only commits authored by
 klai-renovate[bot] with a `chore(deps): update` subject count. A rollback with
-no such commit in its range does nothing and exits 0.
+no such commit in its range does nothing and exits 0. Only `rolled_back` acts:
+after `rollback_failed` the host is in a state nobody verified, and that is for
+a person (the ci-failure issue carries the `rollback-failed` label).
 
 Usage, from the root of a full-history checkout of main, with GH_TOKEN set:
 
@@ -26,6 +28,22 @@ gh failure); the message says why and nothing was pushed unless it says so.
 One PR per rollback, not one per package: every exclusion is inserted at the
 same anchor in renovate.json5, so separate PRs would conflict with each other
 after the first merge, and the host rolled the whole compose file back at once.
+
+Known ceilings
+  - An image line is put back wherever its text matches. If one of our own
+    commits added the same line for another service between the bump and the
+    rollback, that line goes back too. Accepted: the window is the minutes of
+    one sync, and the result is the image the host runs after the rollback.
+  - A package that already has an allowedVersions ceiling is refused (exit 1,
+    the job goes red): Renovate cannot combine a range and an exclusion in one
+    option, and a second rule replaces the first, so a person combines them.
+    Today that is seven rules, two of them compose images (victoria-logs, mongo).
+  - LiteLLM never reaches this path: it migrates its own database, so a red gate
+    after a LiteLLM change restores nothing and ends rollback_failed. That is
+    why its PyPI pin in litellm-tests.yml and its Renovate depName `litellm`
+    (not the image name) are not handled here.
+  - A digest-only change (no tag) is skipped with a message: there is no
+    version to exclude.
 """
 
 import argparse
@@ -42,16 +60,6 @@ ANCHOR = "    // End of the rolled-back versions: scripts/renovate-revert-after-
 RENOVATE_AUTHOR = "klai-renovate[bot]"
 RENOVATE_EMAIL = "316920285+klai-renovate[bot]@users.noreply.github.com"
 AUTO_DESCRIPTION = "Rolled back on core-01"
-# rollback_failed with one of these gates restored nothing (compose-rollback.sh,
-# datastore-rollback.sh): the host still runs the new version, so main keeps it
-# too and a person decides.
-NOTHING_RESTORED = {
-    "self-migrating-image",
-    "previous-state-unverified",
-    "restore-window",
-    "disk-headroom",
-    "snapshot",
-}
 # An `image:` key or an env value such as BROWSER_IMAGE (vexa-bot), the two
 # forms Renovate bumps in the compose file.
 REF_LINE = re.compile(r"""^\s*(?:image|[A-Z_]*IMAGE):\s*["']?([^\s"'#]+)""")
@@ -90,11 +98,7 @@ def split_ref(ref: str) -> tuple[str, str]:
 
 
 def acts_on(report: dict) -> bool:
-    if report.get("kind") != "compose":
-        return False
-    if report.get("outcome") == "rolled_back":
-        return True
-    return report.get("outcome") == "rollback_failed" and report.get("gate") not in NOTHING_RESTORED
+    return report.get("kind") == "compose" and report.get("outcome") == "rolled_back"
 
 
 def renovate_bumps(frm: str, to: str) -> list[Bump]:
@@ -128,21 +132,24 @@ def changed_refs(diff: str) -> list[tuple[str, tuple[str, str], tuple[str, str]]
     return out
 
 
-def version_pattern(tag: str) -> str:
-    """The regex body that matches this exact release in every form Renovate reads it.
+def version_pattern(config: str, repo: str, tag: str) -> str:
+    """The regex body that matches exactly this tag, as the version Renovate compares.
 
-    A Docker tag carries a leading v and a variant suffix (v1.2.3, 8.10.2-alpine);
-    the GitHub-sourced custom managers read the bare version (8.10.2). The
-    suffix group starts with a dash, so 8.10.20 never matches 8.10.2.
+    The docker datasource compares the whole tag, so v1.5.0-rc.1 excludes only
+    itself and never v1.5.0. The GitHub-sourced custom managers above read the
+    numeric part of the tag (`redis:(?<currentValue>[0-9][0-9.]*)-alpine` reads
+    8.10.2 from 8.10.2-alpine), so for those the numeric part is the version.
     """
-    m = re.fullmatch(r"v?(\d+(?:\.\d+)*)(-.*)?", tag)
-    return re.escape(m.group(1)) if m else re.escape(tag)
+    tag = tag.removeprefix("v")
+    if f"{repo}:(?<currentValue>" in config or f"{repo}:v(?<currentValue>" in config:
+        tag = re.match(r"[0-9][0-9.]*", tag).group(0).rstrip(".")  # type: ignore[union-attr]
+    return re.escape(tag)
 
 
 def allowed_versions(patterns: list[str]) -> str:
     body = "|".join(patterns)
     # JSON5 single-quoted string: every regex backslash is written twice.
-    return f"'!/^v?({body})(-.+)?$/'".replace("\\", "\\\\")
+    return f"'!/^v?({body})$/'".replace("\\", "\\\\")
 
 
 def rule_blocks(config: str) -> list[tuple[int, int]]:
@@ -162,7 +169,7 @@ def add_exclusion(config: str, dep: str, tag: str, note: str) -> str:
     """Return config with tag excluded for dep; unchanged if it already is."""
     lines = config.splitlines()
     quoted = f"'{dep}'"
-    pattern = version_pattern(tag)
+    pattern = version_pattern(config, dep, tag)
     for start, end in rule_blocks(config):
         block = lines[start : end + 1]
         if not any(quoted in line for line in block) or not any("allowedVersions" in line for line in block):
@@ -173,7 +180,7 @@ def add_exclusion(config: str, dep: str, tag: str, note: str) -> str:
                 "would replace that ceiling instead of adding to it, so the exclusion has to be combined by hand"
             )
         idx = next(i for i in range(start, end + 1) if lines[i].lstrip().startswith("allowedVersions:"))
-        current = re.search(r"\?\((.*?)\)\(-", lines[idx].replace("\\\\", "\\"))
+        current = re.search(r"\?\((.*?)\)\$", lines[idx].replace("\\\\", "\\"))
         existing = current.group(1).split("|") if current else []
         if pattern in existing:
             return config
@@ -205,9 +212,15 @@ def ci_failure_issue(workflow: str) -> str:
     return f"#{number}" if number else f'"{title}" (opened when this run ends)'
 
 
-def open_revert_titles() -> list[str]:
+def open_revert_prs() -> list[dict]:
     prs = json.loads(gh("pr", "list", "--state", "open", "--json", "headRefName,title", "--limit", "200"))
-    return [p["title"] for p in prs if p["headRefName"].startswith("revert/renovate-")]
+    return [p for p in prs if p["headRefName"].startswith("revert/renovate-")]
+
+
+def branch_name(todo: list[Bump], run_id: str) -> str:
+    if len(todo) == 1:
+        return f"revert/renovate-{slug(todo[0].repo)}-{slug(todo[0].new)}-{run_id}"
+    return f"revert/renovate-{len(todo)}-images-{run_id}"
 
 
 def slug(text: str) -> str:
@@ -231,17 +244,31 @@ def run(args: argparse.Namespace) -> int:
     git("fetch", "--quiet", "origin", "main")
     compose = git("show", f"origin/main:{COMPOSE}")
     config = git("show", f"origin/main:{CONFIG}")
-    covered = open_revert_titles()
     todo = []
     for b in bumps:
-        if not any(new in compose.splitlines() for _, new in b.lines):
+        if not b.new:
+            print(f"{b.repo}: a digest-only change has no version to exclude; left for a person")
+        elif not any(new in compose.splitlines() for _, new in b.lines):
             print(f"{b.repo}: main no longer runs {b.new}; nothing to revert")
-        elif any(f"{b.label}," in t for t in covered):
-            print(f"{b.repo}: an open PR already reverts {b.new}")
         else:
             todo.append(b)
     if not todo:
         return 0
+    # A rerun of this run after the push succeeded and `gh pr create` did not, or
+    # after the PR was opened: finish that PR instead of pushing the branch again.
+    prs = open_revert_prs()
+    branch = branch_name(todo, args.run_id)
+    if any(p["headRefName"] == branch for p in prs):
+        gh("pr", "merge", branch, "--auto", "--squash")
+        print(f"{branch} already has an open PR; auto-merge armed")
+        return 0
+    covered = [b for b in todo if any(f"{b.label}," in p["title"] for p in prs)]
+    for b in covered:
+        print(f"{b.repo}: an open PR already reverts {b.new}")
+    todo = [b for b in todo if b not in covered]
+    if not todo:
+        return 0
+    branch = branch_name(todo, args.run_id)
 
     issue = ci_failure_issue(args.workflow)
     note = f"failed gate {report.get('gate')} on {report.get('service')}, run {args.run_url}, issue {issue}"
@@ -251,10 +278,6 @@ def run(args: argparse.Namespace) -> int:
             lines = [old if line == new else line for line in lines]
         config = add_exclusion(config, b.repo, b.new, note)
     title = f"revert(renovate): {', '.join(b.label for b in todo)}, rolled back by run {args.run_id}"
-    if len(todo) == 1:
-        branch = f"revert/renovate-{slug(todo[0].repo)}-{slug(todo[0].new)}-{args.run_id}"
-    else:
-        branch = f"revert/renovate-{len(todo)}-images-{args.run_id}"
 
     git("checkout", "--quiet", "-B", branch, "origin/main")
     Path(COMPOSE).write_text("\n".join(lines) + "\n")
@@ -275,7 +298,8 @@ def run(args: argparse.Namespace) -> int:
         f"version in `{CONFIG}`, so the next compose change does not deploy it again and "
         "Renovate does not propose it again; later versions keep flowing.\n\n"
         f"| Package | Rolled back | Restored |\n|---|---|---|\n{rows}\n\n"
-        f"Rollback report:\n\n```json\n{json.dumps(report, indent=2)}\n```\n\n"
+        f"Rollback: service `{report.get('service')}`, gate `{report.get('gate')}`, outcome "
+        f"`{report.get('outcome')}`, commit `{to}`, run {args.run_url}\n\n"
         "Opened by `scripts/renovate-revert-after-rollback.py` (SPEC-INFRA-AUTO-ROLLBACK-001 S5); "
         "auto-merge is armed and waits for `quality`."
     )
