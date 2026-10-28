@@ -38,7 +38,7 @@ import { Route } from '../index'
 import type { SlackStatusResponse } from '../-types'
 
 const KEY = {
-  id: 7,
+  id: "4f2c9a1e-0000-4000-8000-000000000007",
   key_prefix: 'pk_live_ab12',
   rate_limit_rpm: 600,
   last_used_at: null,
