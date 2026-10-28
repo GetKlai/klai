@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import repo
+from app import db, repo
+from app.clients.partner import KnowledgeBase
+from app.services.allowed_kbs import allowed_kbs
 
 
 def effective_kb_ids(
@@ -37,3 +39,16 @@ async def resolve_kb_ids(
     )
     channel = await repo.get_channel_default(session, team_id, channel_id)
     return effective_kb_ids(allowed, channel, thread)
+
+
+async def channel_scope(
+    team_id: str, channel_id: str
+) -> tuple[list[KnowledgeBase], list[int] | None]:
+    """Layer 1 and the channel's effective ids (None = all allowed, [] = default revoked).
+
+    Raises NotLinked or a PartnerError like :func:`allowed_kbs`.
+    """
+    kbs = await allowed_kbs(team_id)
+    async with db.session() as s:
+        default = await repo.get_channel_default(s, team_id, channel_id)
+    return kbs, effective_kb_ids([kb.id for kb in kbs], default, None)

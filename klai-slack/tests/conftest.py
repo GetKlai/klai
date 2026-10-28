@@ -48,3 +48,58 @@ def fake_db(monkeypatch: pytest.MonkeyPatch) -> object:
 
     monkeypatch.setattr(db, "session", _session)
     return sentinel
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_caches() -> Iterator[None]:
+    """The conversation code keeps short-lived per-process state; no test may see another's."""
+    from app.conversation import render, sessions, turn
+    from app.services import allowed_kbs, slack_users
+
+    yield
+    for cache in (
+        allowed_kbs._cache,
+        slack_users._langs,
+        sessions._unsupported,
+        render._sources,
+        turn._pending,
+    ):
+        cache.clear()
+
+
+@pytest.fixture
+def store(monkeypatch: pytest.MonkeyPatch, fake_db: object) -> Any:
+    """In-memory replacement for the repo functions the conversation code calls."""
+    from app import repo
+    from tests.fakes import KEY, Store
+
+    state = Store()
+    for name in Store.REPO_FUNCTIONS:
+        monkeypatch.setattr(repo, name, getattr(state, name))
+    monkeypatch.setattr(repo, "link_api_key", lambda _link: KEY)
+    return state
+
+
+@pytest.fixture
+def partner(monkeypatch: pytest.MonkeyPatch) -> Any:
+    import httpx
+
+    from app.clients.partner import PartnerClient
+    from app.services import allowed_kbs
+    from tests.fakes import Partner
+
+    fake = Partner()
+    transport = httpx.MockTransport(fake.handle)
+    monkeypatch.setattr(
+        allowed_kbs,
+        "_partner",
+        lambda base_url, api_key: PartnerClient(base_url, api_key, transport=transport),
+    )
+    return fake
+
+
+@pytest.fixture
+def slack() -> Any:
+    from tests.fakes import FakeSlack
+
+    return FakeSlack()

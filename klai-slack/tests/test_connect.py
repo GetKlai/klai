@@ -16,7 +16,7 @@ from app.clients.portal import (
     LinkResult,
     PortalUnavailable,
 )
-from app.commands import NOT_AVAILABLE, ack_klai, connect
+from app.commands import ack_klai, connect
 from app.commands.context import CommandContext
 
 KEY = "pk_live_synthetic_key_0001"
@@ -184,9 +184,11 @@ async def test_store_failure_releases_the_portal_link(store: Store) -> None:
 
 @pytest.mark.parametrize(
     ("text", "expected"),
-    [(f"connect {KEY}", connect.ACK_TEXT), ("kb", NOT_AVAILABLE), ("", NOT_AVAILABLE)],
+    # kb opens a modal and help (also for unknown or missing subcommands) answers
+    # ephemerally from the lazy listener, so their ack is empty.
+    [(f"connect {KEY}", connect.ACK_TEXT), ("kb", None), ("onbekend", None), ("", None)],
 )
-async def test_ack_text(text: str, expected: str) -> None:
+async def test_ack_text(text: str, expected: str | None) -> None:
     acked: list[str | None] = []
 
     async def ack(text: str | None = None) -> None:
