@@ -31,6 +31,7 @@ Services migrated off per-service `env_file: ./<svc>/.env` (SPEC-SEC-AUDIT-2026-
 |---|---|---|
 | klai-mailer | YES | (this commit) |
 | klai-connector | YES | (this commit) |
+| klai-slack | born with an explicit `environment:` block (SPEC-SLACK-001) | (this commit) |
 
 Services still using per-service `env_file` pattern (REQ-6 — compliant as-is):
 librechat-getklai.
@@ -49,6 +50,10 @@ details in the private infra repo.
 | `SMTP_HOST` | klai-mailer | SMTP server hostname. Source: mailer service env. |
 | `SMTP_PASSWORD` | klai-mailer | SMTP auth password. Source: mailer service env. |
 | `SMTP_USERNAME` | klai-mailer | SMTP auth username. Source: mailer service env. |
+| `SLACK_CLIENT_ID` | klai-slack | Slack app client id for the OAuth install flow (SPEC-SLACK-001). SOPS: `klai-infra/core-01/klai-slack/.env.sops`. |
+| `SLACK_CLIENT_SECRET` | klai-slack | Slack app client secret for the OAuth code exchange. SOPS: `klai-infra/core-01/klai-slack/.env.sops`. |
+| `SLACK_ENCRYPTION_KEY` | klai-slack | AES-256-GCM key (base64 of exactly 32 bytes) encrypting bot tokens and the per-workspace Klai partner key at rest. Validated at startup. SOPS: `klai-infra/core-01/klai-slack/.env.sops`. |
+| `SLACK_SIGNING_SECRET` | klai-slack | Slack request signing secret, verified by Bolt on every `/slack/events` request. SOPS: `klai-infra/core-01/klai-slack/.env.sops`. |
 | `CONNECTOR_ENCRYPTION_KEY` | klai-connector | KEK for connector credential storage (two-tier hierarchy). Mapped to `ENCRYPTION_KEY` in-container. |
 | `CONNECTOR_REDIS_URL` | klai-connector | Redis URL for per-org rate limiting (SPEC-SEC-HYGIENE-001 HY-32). Empty disables rate limiting (code default). Mapped to `REDIS_URL` in-container. |
 | `CONNECTOR_ZITADEL_CLIENT_ID` | klai-connector | Zitadel OIDC client_id for connector token introspection. Mapped to `ZITADEL_CLIENT_ID` in-container. |
@@ -58,6 +63,7 @@ details in the private infra repo.
 | `FIRECRAWL_INTERNAL_KEY` | portal-api | Shared web-search API key (portal re-uses the Firecrawl internal key for URL extraction). |
 | `GITHUB_ADMIN_PAT` | portal-api | GitHub PAT with `admin:org` scope — used during offboarding to remove members from the GetKlai org. |
 | `KLAI_CONNECTOR_SECRET` | portal-api | Shared secret for portal → klai-connector orchestration calls (SOPS key: `PORTAL_API_KLAI_CONNECTOR_SECRET`, mapped inline). |
+| `KLAI_SLACK_DB_PASSWORD` | klai-slack | PostgreSQL password of the `klai_slack` role; interpolated into `DATABASE_URL`. SOPS: `klai-infra/core-01/klai-slack/.env.sops`. The role itself is created by `deploy/postgres/init.sql` (fresh volume) or by hand (`docs/runbooks/slack-integration.md`). |
 | `KNOWLEDGE_INGEST_SECRET` | portal-api | Shared secret portal-api → knowledge-ingest for tenant KB mutations. |
 | `KNOWLEDGE_INGEST_SECRET` | scribe-api | HMAC auth when scribe pushes transcripts to knowledge-ingest. |
 | `KNOWLEDGE_RETRIEVE_URL` | portal-api | URL of retrieval-api used for gap re-scoring (value, not secret — kept here because it crosses a trust boundary). |
@@ -94,6 +100,7 @@ details in the private infra repo.
 | `PORTAL_API_ENCRYPTION_KEY` | portal-api | KEK for the two-tier connector credential hierarchy (SPEC-KB-020). Mapped to `ENCRYPTION_KEY` in-container. |
 | `PORTAL_API_IMAP_PASSWORD` | portal-api | IMAP password for the meeting-invite listener (`meet@getklai.com`). Mapped to `IMAP_PASSWORD` in-container. |
 | `PORTAL_API_INTERNAL_SECRET` | portal-api | Shared secret used by klai-mailer → portal for webhook callbacks. Mapped to `INTERNAL_SECRET` in-container. |
+| `PORTAL_API_INTERNAL_SECRET` | klai-slack | Same shared secret, mapped to both `INTERNAL_SECRET` (portal-api → klai-slack disconnect) and `PORTAL_INTERNAL_SECRET` (klai-slack → portal-api `/internal/slack/*`) in-container. |
 | `PORTAL_API_KLAI_CONNECTOR_SECRET` | portal-api | See `KLAI_CONNECTOR_SECRET` row — this is the SOPS-side name. |
 | `PORTAL_API_PORTAL_SECRETS_KEY` | portal-api | Application-level key encrypting per-tenant secrets (zitadel_librechat_client_secret, litellm_team_key). Mapped to `PORTAL_SECRETS_KEY` in-container. |
 | `PORTAL_API_SSO_COOKIE_KEY` | portal-api | Fernet key for SSO session cookies. Mapped to `SSO_COOKIE_KEY` in-container. |
