@@ -1,0 +1,77 @@
+name: Measurement contract
+
+# Every PR body carries a `Meting:` line (AGENTS.md, "measure first"). The
+# shape check mirrors ~/.claude/hooks/size-gate.py so the chat report and the
+# PR body are held to the same contract. Standalone on purpose: the required
+# `quality` job does not run on `edited`, so a body fix would stay red there
+# until the next push. Renovate PRs are skipped so dependency automerges are
+# never blocked.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  meting:
+    if: >-
+      github.event.pull_request.user.login != 'renovate[bot]'
+      && !startsWith(github.event.pull_request.title, 'chore(deps)')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a Meting line in the PR body
+        env:
+          # Passed through env, never interpolated into the script, because
+          # the body is author-controlled text.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import sys
+
+          METING_RE = re.compile(r"(?m)^[ \t]*[-*]?[ \t]*`?Meting:[ \t]*([^\n]*)$")
+          NVT_RE = re.compile(r"n\.?v\.?t\.?\s*\(\s*[^)\s][^)]*\)", re.I)
+          SHAPE_RE = re.compile(
+              r"(?P<metric>.*?\S.*?)\bnu\b(?P<nu>.+?)\bverwacht\b(?P<exp>.+?)"
+              r"\bbewezen\b(?P<proof>.+)",
+              re.I,
+          )
+          PARENS_RE = re.compile(r"\([^)]*\)")
+
+          def has_number(part):
+              return re.search(r"\d", PARENS_RE.sub("", part)) is not None
+
+          def problem(body):
+              # The template's hint lives in an HTML comment; it must not
+              # count as part of the line the author filled in.
+              body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+              match = METING_RE.search(body)
+              if match is None:
+                  return "no `Meting:` line; use `Meting: n.v.t. (<reason>)` when nothing is measurable"
+              line = match.group(1).strip().rstrip("`").strip()
+              if NVT_RE.match(line):
+                  return None
+              shape = SHAPE_RE.match(line)
+              if shape is None:
+                  return "the Meting line needs `nu`, `verwacht` and `bewezen`"
+              for name, label in (("nu", "nu"), ("exp", "verwacht")):
+                  if not has_number(shape.group(name)):
+                      return f"`{label}` has no number"
+              proof = shape.group("proof").strip()
+              if proof.lower().startswith("nog niet"):
+                  parts = [p.strip() for p in proof[len("nog niet"):].lstrip(" :").split(",")]
+                  if len(parts) < 3 or not all(parts) or not parts[-1].lower().startswith("terug als"):
+                      return "`bewezen nog niet:` names when, with what and `terug als <threshold>`, comma-separated"
+              elif not has_number(proof):
+                  return "`bewezen` has no number and is not `nog niet: ...`"
+              return None
+
+          found = problem(os.environ.get("PR_BODY") or "")
+          if found:
+              print(f"::error::Measurement contract: {found}. See AGENTS.md, 'measure first'.")
+              sys.exit(1)
+          print("Meting line present and well-formed.")
+          PY
