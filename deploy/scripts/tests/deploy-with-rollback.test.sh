@@ -132,6 +132,7 @@ check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
 check "ledger carries commit and kind" grep -q $'\timage\tretrieval-api\t0123456789ab\tghcr.io/getklai/retrieval-api:abc123\tabc123\tdeployed$' "$ledger"
 check "report outcome deployed" grep -q '"outcome":"deployed"' "$report"
 check "report line printed on stdout" grep -q '^ROLLBACK_REPORT {' <<< "$out"
+check "report keeps the probe for a later replay" grep -q '"probe":"http://retrieval-api:8040/health","probe_network":"klai-net"' "$report"
 check "no event for a green deploy" test ! -e "$event"
 check "previous kept" has_line "$fx/docker_argv" "tag sha256:0123456789abcdef0123456789abcdef klai/retrieval-api:previous"
 check "exact sha pulled, tagged as compose tag" has_line "$fx/docker_argv" "tag ghcr.io/getklai/retrieval-api:abc123 klai/retrieval-api:local"
@@ -256,6 +257,7 @@ check "exit 4" test "$rc" = 4
 check "gate no-previous-image" grep -q '"gate":"no-previous-image"' "$report"
 check "ledger from is none" grep -q $'\tretrieval-api\tnone\t' "$ledger"
 check "no rollback attempted" test "$(count_lines "$fx/compose_up_argv")" = 1
+check "no probe given: empty probe keys" grep -q '"probe":"","probe_network":""' "$report"
 
 echo "# probe network option"
 new_case net "0" "200"

@@ -204,9 +204,12 @@ finish() {
     fi
     printf '%s\timage\t%s\t%s\t%s\t%s\t%s\n' \
         "$ts" "$SERVICE" "$FROM" "$TO" "$COMMIT" "$OUTCOME" >> "$LEDGER"
-    report="$(printf '{"service":"%s","kind":"image","from":"%s","to":"%s","commit":"%s","gate":"%s","outcome":"%s","ts":"%s","log":"%s"}' \
+    # probe and probe_network let rollback-since.sh probe a replayed image the
+    # same way, since the ledger does not carry them.
+    report="$(printf '{"service":"%s","kind":"image","from":"%s","to":"%s","commit":"%s","gate":"%s","outcome":"%s","ts":"%s","log":"%s","probe":"%s","probe_network":"%s"}' \
         "$(json_str "$SERVICE")" "$(json_str "$FROM")" "$(json_str "$TO")" "$(json_str "$COMMIT")" \
-        "$(json_str "$REPORT_GATE")" "$OUTCOME" "$ts" "$(json_str "$LOG_PATH")")"
+        "$(json_str "$REPORT_GATE")" "$OUTCOME" "$ts" "$(json_str "$LOG_PATH")" \
+        "$(json_str "$PROBE_URL")" "$(json_str "${PROBE_URL:+$PROBE_NETWORK}")")"
     printf '%s\n' "$report" > "$REPORT_DIR/$SERVICE.json"
     if [[ "$OUTCOME" != "deployed" ]]; then
         # service is the stream label (as in the probe logs); the compose
