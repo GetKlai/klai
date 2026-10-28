@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlparse
 
+import httpx
 from klai_image_storage.url_guard import ValidatedURL
 
 from knowledge_ingest.connector_cookies import ConnectorNotFoundError, StoredCredentials
@@ -50,7 +52,7 @@ def _probe(
     text: str = "",
     location: str | None = None,
     set_cookie: str | None = None,
-    new_cookies: dict[tuple[str, str], str] | None = None,
+    set_cookies: list[str] | None = None,
 ) -> _ProbeResponse:
     return _ProbeResponse(
         status_code=status_code,
@@ -59,17 +61,24 @@ def _probe(
         text=text,
         location=location,
         set_cookie=set_cookie,
-        new_cookies=new_cookies or {},
+        set_cookies=set_cookies or [],
     )
 
 
-def _creds(cookies: list[dict]) -> StoredCredentials:
+def _creds(cookies: list[dict], **extra: object) -> StoredCredentials:
     return StoredCredentials(
-        payload={"cookies": cookies},
+        payload={"cookies": cookies, **extra},
         encrypted=b"blob-read-by-this-probe",
         dek_enc=b"dek",
         org_id=7,
     )
+
+
+def _by_url(pages: dict[str, _ProbeResponse]):
+    async def _fetch(url: str, pin_map: dict, cookies: dict | None = None) -> _ProbeResponse:
+        return pages[url]
+
+    return _fetch
 
 
 def _post(connector_id: str | None = None, url: str = "https://wiki.example.com/") -> dict:
@@ -157,10 +166,16 @@ class TestCrawlKeepaliveEndpoint:
             patch(
                 "knowledge_ingest.routes.crawl_sync._probe_fetch",
                 new_callable=AsyncMock,
-                side_effect=[
-                    _probe(302, location="https://wiki.example.com/login"),
-                    _probe(200, text="Please log in to continue"),
-                ],
+                side_effect=_by_url(
+                    {
+                        "https://wiki.example.com/": _probe(
+                            302, location="https://wiki.example.com/login"
+                        ),
+                        "https://wiki.example.com/login": _probe(
+                            200, text="Please log in to continue"
+                        ),
+                    }
+                ),
             ),
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
@@ -170,35 +185,6 @@ class TestCrawlKeepaliveEndpoint:
         # Both the redirect target ("/login") and the landed page's own body
         # ("please log in to continue") are independently walled signals.
         assert body["reason"] == "redirect_to_login, end_of_body_login_marker"
-
-    def test_redirect_to_another_host_is_not_followed(self) -> None:
-        """A redirect leaving the connector's host (e.g. an SSO host) must
-        never be followed — that is an SSRF/host-pivot boundary, not just an
-        auth signal."""
-        pool = _make_pool()
-        with (
-            _client_with_patches(pool) as (client, _defer),
-            patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
-                new_callable=AsyncMock,
-                return_value=_creds([{"name": "sid", "value": "abc123"}]),
-            ),
-            patch(
-                "knowledge_ingest.routes.crawl_sync.validate_url_pinned",
-                new_callable=AsyncMock,
-                return_value=_VALIDATED,
-            ),
-            patch(
-                "knowledge_ingest.routes.crawl_sync._probe_fetch",
-                new_callable=AsyncMock,
-                return_value=_probe(302, location="https://accounts.example-sso.com/login"),
-            ),
-        ):
-            resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["ok"] is False
-        assert body["reason"] is not None and body["reason"].startswith("redirect_left_host")
 
     def test_https_to_http_downgrade_is_not_followed(self) -> None:
         """A same-host redirect from https to http must not be followed --
@@ -284,10 +270,15 @@ class TestCrawlKeepaliveEndpoint:
             patch(
                 "knowledge_ingest.routes.crawl_sync._probe_fetch",
                 new_callable=AsyncMock,
-                side_effect=[
-                    _probe(302, location="https://wiki.example.com/login?return_to=/en"),
-                    _probe(200, text=long_body),
-                ],
+                side_effect=_by_url(
+                    {
+                        "https://wiki.example.com/": _probe(
+                            302, location="https://wiki.example.com/login?return_to=/en"
+                        ),
+                        "https://wiki.example.com/login?return_to=/en": _probe(200, text=long_body),
+                        "https://wiki.example.com/login": _probe(200, text=long_body),
+                    }
+                ),
             ),
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
@@ -562,7 +553,7 @@ class TestKeepaliveStoresRefreshedSessionCookies:
                 return_value=_VALIDATED,
             ),
             patch("knowledge_ingest.routes.crawl_sync._probe_fetch", side_effect=_fetch),
-            patch("knowledge_ingest.routes.crawl_sync.store_refreshed_connector_cookies", store),
+            patch("knowledge_ingest.routes.crawl_sync.store_connector_cookie_jar", store),
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
         assert resp.status_code == 200
@@ -570,7 +561,7 @@ class TestKeepaliveStoresRefreshedSessionCookies:
 
     def test_session_that_unlocks_a_gated_page_stores_the_reissued_cookie(self) -> None:
         body, store, stored, fetch_calls = self._run(
-            with_cookies=_probe(200, text=self._ARTICLE, new_cookies={("sid", "/"): "issued"}),
+            with_cookies=_probe(200, text=self._ARTICLE, set_cookies=["sid=issued; Path=/"]),
             anonymous=_probe(200, text=self._GATE),
         )
         assert body == {"ok": True, "reason": None}
@@ -578,12 +569,11 @@ class TestKeepaliveStoresRefreshedSessionCookies:
         store.assert_awaited_once()
         kwargs = store.await_args.kwargs
         assert kwargs["stored"] is stored
-        assert kwargs["hostname"] == "wiki.example.com"
-        assert kwargs["refreshed"] == {("sid", "/"): "issued"}
+        assert kwargs["jar"].jar_for_host("wiki.example.com") == {"sid": "issued"}
 
     def test_public_page_never_overwrites_the_stored_session(self) -> None:
         body, store, _stored, _calls = self._run(
-            with_cookies=_probe(200, text=self._ARTICLE, new_cookies={("sid", "/"): "anonymous"}),
+            with_cookies=_probe(200, text=self._ARTICLE, set_cookies=["sid=anonymous; Path=/"]),
             anonymous=_probe(200, text=self._ARTICLE),
         )
         assert body == {"ok": True, "reason": None}
@@ -591,8 +581,157 @@ class TestKeepaliveStoresRefreshedSessionCookies:
 
     def test_logged_out_probe_never_overwrites_the_stored_session(self) -> None:
         body, store, _stored, _calls = self._run(
-            with_cookies=_probe(200, text=self._GATE, new_cookies={("sid", "/"): "anonymous"}),
+            with_cookies=_probe(200, text=self._GATE, set_cookies=["sid=anonymous; Path=/"]),
             anonymous=_probe(200, text=self._GATE),
         )
         assert body["ok"] is False
         store.assert_not_awaited()
+
+
+class _SignInSite:
+    """A synthetic wiki that signs in through idp.example.com.
+
+    Mirrors the chain observed on 2026-10-28: ``/login`` 302s to the identity
+    host's ``/oauth/authorize?prompt=auto``, which -- holding a valid session
+    of its own -- 302s straight back to ``/login/callback``, which sets a new
+    wiki session. Pure server-side redirects, no JavaScript.
+    """
+
+    _ARTICLE = "<article>" + "Welcome to the handbook. " * 20 + "</article>"
+    _GATE = (
+        "<main><p>Intro text for the article.</p>"
+        '<h2><a href="https://wiki.example.com/login?redirect_to=/docs/page">Log in</a>'
+        " when you want to read this article</h2></main>"
+    )
+
+    def __init__(self, idp_redirect: str = "https://wiki.example.com/login/callback?code=c1"):
+        self.idp_redirect = idp_redirect
+        self.requests: list[tuple[str, str | None]] = []
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        header = request.headers.get("cookie")
+        self.requests.append((request.url.host, header))
+        sent = dict(part.split("=", 1) for part in header.split("; ")) if header else {}
+        where = (request.url.host, request.url.path)
+        if where == ("wiki.example.com", "/docs/page"):
+            fresh = sent.get("wiki_session") == "fresh"
+            return httpx.Response(200, html=self._ARTICLE if fresh else self._GATE)
+        if where == ("wiki.example.com", "/login"):
+            return httpx.Response(
+                302,
+                headers=[
+                    ("location", "https://idp.example.com/oauth/authorize?prompt=auto"),
+                    ("set-cookie", "XSRF-TOKEN=x1; Path=/; Secure; Max-Age=7200"),
+                ],
+            )
+        if where == ("idp.example.com", "/oauth/authorize"):
+            if sent.get("idp_session") != "idp-valid":
+                return httpx.Response(200, html="<form><input type=password></form>")
+            return httpx.Response(
+                302,
+                headers=[
+                    ("location", self.idp_redirect),
+                    (
+                        "set-cookie",
+                        "idp_session=idp-rotated; Path=/; Secure; HttpOnly; Max-Age=7200",
+                    ),
+                ],
+            )
+        if where == ("wiki.example.com", "/login/callback"):
+            return httpx.Response(
+                302,
+                headers=[
+                    ("location", "https://wiki.example.com/docs/page"),
+                    ("set-cookie", "wiki_session=fresh; Path=/; Secure; HttpOnly; Max-Age=7200"),
+                ],
+            )
+        return httpx.Response(404)
+
+
+async def _validated(url: str) -> ValidatedURL:
+    host = urlparse(url).hostname or ""
+    return ValidatedURL(
+        url=url, hostname=host, pinned_ips=frozenset({"203.0.113.1"}), preferred_ip="203.0.113.1"
+    )
+
+
+_WIKI_LAPSED = {
+    "name": "wiki_session",
+    "value": "lapsed",
+    "domain": "wiki.example.com",
+    "path": "/",
+}
+_IDP_VALID = {"name": "idp_session", "value": "idp-valid", "domain": "idp.example.com", "path": "/"}
+
+
+class TestSignInChain:
+    """2026-10-28: since 2026-09-28 not one probe of a wiki that signs in
+    through a second host came back ok; every tick saw embedded_login_gate,
+    because the keep-alive held and followed only the wiki's own host. A
+    browser survives the lapse by walking the sign-in chain with cookies for
+    both hosts; the keep-alive now does the same."""
+
+    def _run(self, site: _SignInSite, cookies: list[dict]):
+        pool = _make_pool()
+        store = AsyncMock(return_value=True)
+        mock_logger = MagicMock()
+        with (
+            _client_with_patches(pool) as (client, _defer),
+            patch("knowledge_ingest.routes.crawl_sync.logger", mock_logger),
+            patch(
+                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
+                new_callable=AsyncMock,
+                return_value=_creds(cookies, auth_chain_hosts=["idp.example.com"]),
+            ),
+            patch("knowledge_ingest.routes.crawl_sync.validate_url_pinned", side_effect=_validated),
+            patch(
+                "knowledge_ingest.routes.crawl.PinnedResolverTransport",
+                lambda _pin_map: httpx.MockTransport(site.handle),
+            ),
+            patch("knowledge_ingest.routes.crawl_sync.store_connector_cookie_jar", store),
+        ):
+            resp = client.post(
+                "/ingest/v1/crawl/keep-alive",
+                json=_post(url="https://wiki.example.com/docs/page"),
+            )
+        assert resp.status_code == 200
+        return resp.json(), store, mock_logger
+
+    def test_a_lapsed_session_is_reminted_through_the_sign_in_chain(self) -> None:
+        site = _SignInSite()
+        body, store, mock_logger = self._run(site, [_WIKI_LAPSED, _IDP_VALID])
+
+        assert body == {"ok": True, "reason": None}
+        assert ("idp.example.com", "idp_session=idp-valid") in site.requests
+        store.assert_awaited_once()
+        jar = store.await_args.kwargs["jar"]
+        assert jar.jar_for_host("wiki.example.com") == {"wiki_session": "fresh", "XSRF-TOKEN": "x1"}
+        assert jar.jar_for_host("idp.example.com") == {"idp_session": "idp-rotated"}
+        reminted = [
+            c
+            for c in mock_logger.info.call_args_list
+            if c.args[0] == "crawl_keepalive_session_reminted"
+        ]
+        assert reminted[0].kwargs["hosts"] == ["idp.example.com", "wiki.example.com"]
+        logged = repr(mock_logger.mock_calls)
+        assert "fresh" not in logged and "idp-rotated" not in logged and "x1" not in logged
+
+    def test_without_the_idp_cookie_the_chain_breaks_at_the_idp(self) -> None:
+        site = _SignInSite()
+        body, store, _logger = self._run(site, [_WIKI_LAPSED])
+
+        assert body == {"ok": False, "reason": "chain_broken_at:idp.example.com"}
+        assert all(host != "idp.example.com" for host, _cookie in site.requests)
+        store.assert_not_awaited()
+
+    def test_the_chain_never_leaves_the_chain_hosts(self) -> None:
+        """A host outside auth_chain_hosts is refused even when the jar holds
+        cookies for it; what the chain renewed before that is still kept."""
+        site = _SignInSite(idp_redirect="https://evil.example.net/collect")
+        tracker = {"name": "tracker", "value": "t", "domain": "evil.example.net", "path": "/"}
+        body, store, _logger = self._run(site, [_WIKI_LAPSED, _IDP_VALID, tracker])
+
+        assert body == {"ok": False, "reason": "redirect_left_host:evil.example.net"}
+        assert all(host != "evil.example.net" for host, _cookie in site.requests)
+        jar = store.await_args.kwargs["jar"]
+        assert jar.jar_for_host("idp.example.com") == {"idp_session": "idp-rotated"}

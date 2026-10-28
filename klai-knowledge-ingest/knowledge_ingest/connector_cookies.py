@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
+import httpx
 import structlog
 from connector_credentials import ConnectorCredentialStore
 from cryptography.exceptions import InvalidTag
@@ -141,47 +143,118 @@ async def load_connector_cookies(
     return list(stored.payload.get("cookies") or [])
 
 
-async def store_refreshed_connector_cookies(
+class CookieJar:
+    """A connector's stored cookies, kept per host the way a browser keeps them.
+
+    Each cookie is a dict with ``name, value, domain, path, expires`` (ISO or
+    null), ``secure`` and ``httpOnly``. A cookie without a domain (an older
+    row) belongs to ``base_host``, the connector's own host. A domain with a
+    leading dot also covers subdomains; one without covers that exact host
+    only, which is how the portal has always stored a pasted cookie.
+    """
+
+    def __init__(self, cookies: list[Any], base_host: str) -> None:
+        self.cookies: list[dict[str, Any]] = copy.deepcopy(
+            [c for c in cookies if isinstance(c, dict)]
+        )
+        self.base_host = base_host.lower()
+        # Hosts whose Set-Cookie changed the jar; non-empty means there is
+        # something to persist.
+        self.issued_hosts: set[str] = set()
+
+    def _domain(self, cookie: dict[str, Any]) -> str:
+        return str(cookie.get("domain") or self.base_host).lower()
+
+    def jar_for_host(self, host: str, path: str = "/") -> dict[str, str]:
+        """Name to value of the cookies a browser would send to ``host`` for ``path``.
+
+        Of two cookies with the same name the one with the longer path wins,
+        because a browser sends that one first.
+        """
+        host = host.lower()
+        jar: dict[str, str] = {}
+        for cookie in sorted(self.cookies, key=lambda c: len(c.get("path") or "/")):
+            domain = self._domain(cookie)
+            cookie_path = cookie.get("path") or "/"
+            covers = host == domain.lstrip(".") or (
+                domain.startswith(".") and host.endswith(domain)
+            )
+            on_path = path == cookie_path or path.startswith(cookie_path.rstrip("/") + "/")
+            if covers and on_path and cookie.get("name") and cookie.get("value"):
+                jar[cookie["name"]] = cookie["value"]
+        return jar
+
+    def merge_set_cookies(self, url: str, set_cookie_headers: list[str]) -> None:
+        """Fold the Set-Cookie headers a response to ``url`` carried into the jar.
+
+        Parsing goes through the stdlib cookie jar (via httpx), so Max-Age
+        becomes an absolute expiry, a host-only cookie gets the responding
+        host as its domain, and a Domain attribute that does not cover the
+        responding host is dropped. A cookie is identified by name, domain
+        (leading dot ignored) and path; a known one gets the new value and
+        expiry, an unknown one is added. A deletion (empty value or a past
+        expiry) is ignored on purpose: a stored credential is only ever
+        removed by its owner.
+        """
+        if not set_cookie_headers:
+            return
+        response = httpx.Response(
+            200,
+            headers=[("set-cookie", header) for header in set_cookie_headers],
+            request=httpx.Request("GET", url),
+        )
+        for issued in response.cookies.jar:
+            if not issued.value:
+                continue
+            fresh = {
+                "value": issued.value,
+                "expires": (
+                    datetime.fromtimestamp(issued.expires, UTC).isoformat()
+                    if issued.expires
+                    else None
+                ),
+                "secure": issued.secure,
+                "httpOnly": any(issued.has_nonstandard_attr(k) for k in ("HttpOnly", "httponly")),
+            }
+            key = (issued.name, issued.domain.lstrip("."), issued.path)
+            known = next(
+                (
+                    c
+                    for c in self.cookies
+                    if (c.get("name"), self._domain(c).lstrip("."), c.get("path") or "/") == key
+                ),
+                None,
+            )
+            if known is None:
+                self.cookies.append(
+                    {"name": issued.name, "domain": issued.domain, "path": issued.path, **fresh}
+                )
+            elif any(known.get(k) != v for k, v in fresh.items()):
+                known.update(fresh)
+            else:
+                continue
+            self.issued_hosts.add(urlparse(url).hostname or "")
+
+
+async def store_connector_cookie_jar(
     *,
     connector_id: uuid.UUID,
     stored: StoredCredentials,
     pool: asyncpg.Pool,
     kek_hex: str,
-    hostname: str,
-    refreshed: Mapping[tuple[str, str], str],
-) -> int:
-    """Write session cookie values the site re-issued back into the stored credentials.
+    jar: CookieJar,
+) -> bool:
+    """Write the jar back into the stored credentials, the way a browser keeps cookies.
 
     A rolling session stays alive only if the value the site last issued is
-    the one replayed next time, which is what a browser does. ``refreshed``
-    maps ``(name, path)`` of a Set-Cookie the site sent for ``hostname`` to
-    its value. Only the stored cookie with the same name, the same path (a
-    missing path counts as ``/``) and scoped to ``hostname`` (a domain with
-    or without a leading dot, or no domain) is rewritten: saved cookies are
-    host-scoped credentials. Nothing is added or removed.
-
-    The update is applied to the payload of ``stored`` -- the blob the caller
-    read before it made its request -- and guarded on that same blob and the
+    the one replayed next time. The jar replaces the ``cookies`` of the
+    payload of ``stored`` -- the blob the caller read before it made its
+    requests -- and the update is guarded on that same blob and the
     connector's org, never on a fresh re-read. A cookie paste in the portal
     after the caller's read therefore always wins and this write is dropped.
-    Returns the number of cookies rewritten (0 when nothing changed or the
-    swap lost).
+    Returns whether the row was written.
     """
-    payload = copy.deepcopy(stored.payload)
-    host = hostname.lower()
-    changed = 0
-    for cookie in payload.get("cookies") or []:
-        if not isinstance(cookie, dict):
-            continue
-        key = (cookie.get("name") or "", cookie.get("path") or "/")
-        new_value = refreshed.get(key)
-        domain = (cookie.get("domain") or host).lstrip(".").lower()
-        if new_value and domain == host and new_value != cookie.get("value"):
-            cookie["value"] = new_value
-            changed += 1
-    if not changed:
-        return 0
-
+    payload = {**stored.payload, "cookies": jar.cookies}
     new_blob = ConnectorCredentialStore(kek_hex).encrypt_credentials_to_blob(
         payload, stored.dek_enc
     )
@@ -193,4 +266,4 @@ async def store_refreshed_connector_cookies(
         stored.encrypted,
         stored.org_id,
     )
-    return changed if status == "UPDATE 1" else 0
+    return status == "UPDATE 1"

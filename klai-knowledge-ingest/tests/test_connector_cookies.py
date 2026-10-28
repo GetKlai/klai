@@ -20,9 +20,10 @@ from knowledge_ingest.connector_cookies import (
     ConnectorDecryptError,
     ConnectorNotFoundError,
     ConnectorOrgMismatchError,
+    CookieJar,
     StoredCredentials,
     load_connector_cookies,
-    store_refreshed_connector_cookies,
+    store_connector_cookie_jar,
 )
 
 
@@ -212,97 +213,67 @@ def _written_payload(pool: MagicMock, kek_hex: str, dek_enc: bytes) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_refresh_is_bound_to_the_blob_the_probe_read() -> None:
-    """The probe read blob A, then made its HTTP request. If the owner pasted
-    blob B meanwhile, the refresh from A's response must not overwrite B: the
-    update is applied to A's payload and guarded on A itself (plus the org),
-    never on a fresh re-read."""
+async def test_the_jar_write_is_bound_to_the_blob_the_probe_read() -> None:
+    """The probe read blob A, then made its HTTP requests. If the owner pasted
+    blob B meanwhile, the jar derived from A must not overwrite B: the update
+    replaces A's cookies and is guarded on A itself (plus the org), never on a
+    fresh re-read. Everything next to the cookies is kept."""
     kek_hex = os.urandom(32).hex()
     stored = _stored(
         kek_hex,
-        [
-            {"name": "sid", "value": "pasted", "domain": "wiki.example.com", "path": "/"},
-            {"name": "xsrf", "value": "keep", "domain": ".wiki.example.com", "path": "/"},
-        ],
+        [{"name": "sid", "value": "pasted", "domain": "wiki.example.com", "path": "/"}],
         auth_headers={"X-Example": "unchanged"},
+        auth_chain_hosts=["idp.example.com"],
     )
+    jar = CookieJar(stored.payload["cookies"], "wiki.example.com")
+    jar.merge_set_cookies("https://wiki.example.com/a", ["sid=issued; Path=/"])
     pool = MagicMock()
     pool.fetchrow = AsyncMock()
     pool.execute = AsyncMock(return_value="UPDATE 1")
 
-    changed = await store_refreshed_connector_cookies(
-        connector_id=uuid.UUID(int=1),
-        stored=stored,
-        pool=pool,
-        kek_hex=kek_hex,
-        hostname="wiki.example.com",
-        refreshed={("sid", "/"): "issued", ("unrelated", "/"): "ignored"},
+    written = await store_connector_cookie_jar(
+        connector_id=uuid.UUID(int=1), stored=stored, pool=pool, kek_hex=kek_hex, jar=jar
     )
 
-    assert changed == 1
+    assert written is True
     pool.fetchrow.assert_not_awaited()
     sql, _new_blob, connector_id, guard, org_id = pool.execute.await_args.args
     assert "org_id = $4" in sql
     assert (connector_id, guard, org_id) == (uuid.UUID(int=1), stored.encrypted, 7)
-    assert _written_payload(pool, kek_hex, stored.dek_enc) == {
-        "cookies": [
-            {"name": "sid", "value": "issued", "domain": "wiki.example.com", "path": "/"},
-            {"name": "xsrf", "value": "keep", "domain": ".wiki.example.com", "path": "/"},
-        ],
-        "auth_headers": {"X-Example": "unchanged"},
-    }
+    payload = _written_payload(pool, kek_hex, stored.dek_enc)
+    assert payload["cookies"][0]["value"] == "issued"
+    assert payload["auth_headers"] == {"X-Example": "unchanged"}
+    assert payload["auth_chain_hosts"] == ["idp.example.com"]
 
 
-@pytest.mark.asyncio
-async def test_only_the_cookie_with_the_same_path_is_rewritten() -> None:
-    """A Set-Cookie for path "/" must not rewrite a same-named cookie saved
-    for another path; a saved cookie without a path counts as "/"."""
-    kek_hex = os.urandom(32).hex()
-    stored = _stored(
-        kek_hex,
+def test_the_jar_keeps_each_cookie_with_its_own_host() -> None:
+    """A Set-Cookie updates only the cookie with the same name, host and path
+    (a missing domain is the connector's own host, a missing path is "/"),
+    adds one it did not know with its expiry, and never touches another
+    host's cookie of the same name."""
+    jar = CookieJar(
         [
-            {"name": "sid", "value": "root", "domain": "wiki.example.com"},
+            {"name": "sid", "value": "root"},
             {"name": "sid", "value": "admin", "domain": "wiki.example.com", "path": "/admin"},
+            {"name": "sid", "value": "idp", "domain": "idp.example.com", "path": "/"},
+            {"name": "shared", "value": "s", "domain": ".example.com", "path": "/"},
         ],
-    )
-    pool = MagicMock()
-    pool.execute = AsyncMock(return_value="UPDATE 1")
-
-    changed = await store_refreshed_connector_cookies(
-        connector_id=uuid.UUID(int=1),
-        stored=stored,
-        pool=pool,
-        kek_hex=kek_hex,
-        hostname="wiki.example.com",
-        refreshed={("sid", "/"): "issued"},
+        "wiki.example.com",
     )
 
-    assert changed == 1
-    assert _written_payload(pool, kek_hex, stored.dek_enc)["cookies"] == [
-        {"name": "sid", "value": "issued", "domain": "wiki.example.com"},
-        {"name": "sid", "value": "admin", "domain": "wiki.example.com", "path": "/admin"},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_cookie_scoped_to_another_host_is_never_rewritten() -> None:
-    """Saved cookies are host-scoped credentials: a response from one host
-    must not rewrite a same-named cookie saved for a different host."""
-    kek_hex = os.urandom(32).hex()
-    stored = _stored(
-        kek_hex, [{"name": "sid", "value": "pasted", "domain": "sso.example.com", "path": "/"}]
-    )
-    pool = MagicMock()
-    pool.execute = AsyncMock(return_value="UPDATE 1")
-
-    changed = await store_refreshed_connector_cookies(
-        connector_id=uuid.UUID(int=1),
-        stored=stored,
-        pool=pool,
-        kek_hex=kek_hex,
-        hostname="wiki.example.com",
-        refreshed={("sid", "/"): "issued"},
+    jar.merge_set_cookies(
+        "https://wiki.example.com/a",
+        ["sid=issued; Path=/", "XSRF-TOKEN=x1; Path=/; Secure; Max-Age=7200"],
     )
 
-    assert changed == 0
-    pool.execute.assert_not_awaited()
+    assert jar.jar_for_host("wiki.example.com") == {
+        "sid": "issued",
+        "shared": "s",
+        "XSRF-TOKEN": "x1",
+    }
+    assert jar.jar_for_host("idp.example.com") == {"sid": "idp", "shared": "s"}
+    assert [c["value"] for c in jar.cookies[:3]] == ["issued", "admin", "idp"]
+    xsrf = jar.cookies[-1]
+    assert (xsrf["domain"], xsrf["secure"]) == ("wiki.example.com", True)
+    assert xsrf["expires"] is not None
+    assert jar.issued_hosts == {"wiki.example.com"}
