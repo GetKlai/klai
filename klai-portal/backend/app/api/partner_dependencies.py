@@ -288,7 +288,12 @@ async def get_partner_key(
     # SPEC-PORTAL-RBAC-REFACTOR-001 Phase 5C. The internal-chat key is the
     # tenant's own LibreChat, not the partner product, and only provisioning
     # mints it (app/services/internal_chat_keys.py), so it skips this gate.
-    if key_row.permissions.get("internal_chat") is not True:
+    # The Slack key is a finished product rather than a customer integration
+    # (SPEC-SLACK-001 D10): only /api/admin/slack mints it, and it is gated by
+    # the slack unlock instead, so locking Slack stops the bot immediately.
+    if key_row.permissions.get("slack") is True:
+        assert_platform_unlocked(org, "slack")
+    elif key_row.permissions.get("internal_chat") is not True:
         assert_platform_unlocked(org, "partner_api")
 
     # Step 6: Load KB access entries after tenant context is set. Legacy rows

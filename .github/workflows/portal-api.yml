@@ -189,6 +189,7 @@ jobs:
           CREATE TABLE internal_chat_cases (id BIGSERIAL PRIMARY KEY, org_id INTEGER NOT NULL);
           -- Knowledge-gap proposals per cluster (Cat-D, policy applied below like the chat tables).
           CREATE TABLE portal_gap_proposals (id BIGSERIAL PRIMARY KEY, org_id INTEGER NOT NULL);
+          CREATE TABLE portal_slack_installations (id SERIAL PRIMARY KEY, org_id INTEGER NOT NULL);
           CREATE TABLE vexa_meetings (id UUID PRIMARY KEY, org_id INTEGER, status VARCHAR(32));
           CREATE TABLE partner_api_keys (id UUID PRIMARY KEY, org_id INTEGER NOT NULL);
           CREATE TABLE partner_api_key_kb_access (partner_api_key_id UUID NOT NULL, kb_id INTEGER NOT NULL, PRIMARY KEY (partner_api_key_id, kb_id));
@@ -226,7 +227,8 @@ jobs:
                   ('partner_api_keys'), ('partner_api_key_kb_access'),
                   ('widgets'), ('widget_kb_access'), ('portal_mcp_tokens'),
                   ('portal_support_cases'), ('internal_chat_turns'), ('internal_chat_cases'),
-                  ('portal_gap_proposals')
+                  ('portal_gap_proposals'),
+                  ('portal_slack_installations')
               LOOP
                   EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
                   EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -302,6 +304,7 @@ jobs:
           psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS tenant_isolation ON internal_chat_turns; CREATE POLICY tenant_isolation ON internal_chat_turns USING (public._rls_current_org_id() IS NULL OR org_id = public._rls_current_org_id()) WITH CHECK (org_id = public._rls_current_org_id());"
           psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS tenant_isolation ON internal_chat_cases; CREATE POLICY tenant_isolation ON internal_chat_cases USING (public._rls_current_org_id() IS NULL OR org_id = public._rls_current_org_id()) WITH CHECK (org_id = public._rls_current_org_id());"
           psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS tenant_isolation ON portal_gap_proposals; CREATE POLICY tenant_isolation ON portal_gap_proposals USING (public._rls_current_org_id() IS NULL OR org_id = public._rls_current_org_id()) WITH CHECK (org_id = public._rls_current_org_id());"
+          psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS tenant_isolation ON portal_slack_installations; CREATE POLICY tenant_isolation ON portal_slack_installations USING (public._rls_current_org_id() IS NULL OR org_id = public._rls_current_org_id()) WITH CHECK (org_id = public._rls_current_org_id());"
 
       - name: Run RLS smoke test
         env:
@@ -325,6 +328,7 @@ jobs:
               "internal_chat_turns raised insufficient_privilege as expected" \
               "internal_chat_cases raised insufficient_privilege as expected" \
               "portal_gap_proposals raised insufficient_privilege as expected" \
+              "portal_slack_installations raised insufficient_privilege as expected" \
               "RLS smoke test complete"; do
               grep -Fq "$marker" /tmp/smoke.out || { echo "MISSING marker: $marker"; exit 1; }
           done
@@ -340,7 +344,7 @@ jobs:
         # *_rollback_*.sql — deploy-portal-api.sh skips it). Remove the dependents
         # so the generic rollback can DROP the function cleanly.
         run: |
-          psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS product_update_reads_select ON product_update_reads; DROP POLICY IF EXISTS product_update_reads_insert ON product_update_reads; DROP POLICY IF EXISTS tenant_isolation ON portal_support_cases; DROP POLICY IF EXISTS tenant_isolation ON internal_chat_turns; DROP POLICY IF EXISTS tenant_isolation ON internal_chat_cases; DROP POLICY IF EXISTS tenant_isolation ON portal_gap_proposals;"
+          psql -h localhost -U klai -d klai -v ON_ERROR_STOP=1 -c "DROP POLICY IF EXISTS product_update_reads_select ON product_update_reads; DROP POLICY IF EXISTS product_update_reads_insert ON product_update_reads; DROP POLICY IF EXISTS tenant_isolation ON portal_support_cases; DROP POLICY IF EXISTS tenant_isolation ON internal_chat_turns; DROP POLICY IF EXISTS tenant_isolation ON internal_chat_cases; DROP POLICY IF EXISTS tenant_isolation ON portal_gap_proposals; DROP POLICY IF EXISTS tenant_isolation ON portal_slack_installations;"
 
       - name: Apply rollback migration (smoke-test rollback path too)
         env:

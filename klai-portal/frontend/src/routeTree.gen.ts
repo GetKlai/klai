@@ -61,6 +61,7 @@ import { Route as AdminPlatformIndexRouteImport } from './routes/admin/platform/
 import { Route as AdminPlatformNewRouteImport } from './routes/admin/platform/new'
 import { Route as AdminPlatformOnboardingHowtoRouteImport } from './routes/admin/platform/onboarding-howto'
 import { Route as AdminProfilesIndexRouteImport } from './routes/admin/profiles/index'
+import { Route as AdminSlackIndexRouteImport } from './routes/admin/slack/index'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AdminUsersInviteRouteImport } from './routes/admin/users/invite'
 import { Route as AdminWidgetsIndexRouteImport } from './routes/admin/widgets/index'
@@ -378,6 +379,11 @@ const AdminPlatformOnboardingHowtoRoute =
 const AdminProfilesIndexRoute = AdminProfilesIndexRouteImport.update({
   id: '/profiles/',
   path: '/profiles/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminSlackIndexRoute = AdminSlackIndexRouteImport.update({
+  id: '/slack/',
+  path: '/slack/',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
@@ -754,6 +760,7 @@ export interface FileRoutesByFullPath {
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/platform/': typeof AdminPlatformIndexRoute
   '/admin/profiles/': typeof AdminProfilesIndexRoute
+  '/admin/slack/': typeof AdminSlackIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
@@ -859,6 +866,7 @@ export interface FileRoutesByTo {
   '/admin/mcps': typeof AdminMcpsIndexRoute
   '/admin/platform': typeof AdminPlatformIndexRoute
   '/admin/profiles': typeof AdminProfilesIndexRoute
+  '/admin/slack': typeof AdminSlackIndexRoute
   '/admin/users': typeof AdminUsersIndexRoute
   '/admin/widgets': typeof AdminWidgetsIndexRoute
   '/app/docs': typeof AppDocsIndexRoute
@@ -970,6 +978,7 @@ export interface FileRoutesById {
   '/admin/mcps/': typeof AdminMcpsIndexRoute
   '/admin/platform/': typeof AdminPlatformIndexRoute
   '/admin/profiles/': typeof AdminProfilesIndexRoute
+  '/admin/slack/': typeof AdminSlackIndexRoute
   '/admin/users/': typeof AdminUsersIndexRoute
   '/admin/widgets/': typeof AdminWidgetsIndexRoute
   '/app/docs/': typeof AppDocsIndexRoute
@@ -1082,6 +1091,7 @@ export interface FileRouteTypes {
     | '/admin/mcps/'
     | '/admin/platform/'
     | '/admin/profiles/'
+    | '/admin/slack/'
     | '/admin/users/'
     | '/admin/widgets/'
     | '/app/docs/'
@@ -1187,6 +1197,7 @@ export interface FileRouteTypes {
     | '/admin/mcps'
     | '/admin/platform'
     | '/admin/profiles'
+    | '/admin/slack'
     | '/admin/users'
     | '/admin/widgets'
     | '/app/docs'
@@ -1297,6 +1308,7 @@ export interface FileRouteTypes {
     | '/admin/mcps/'
     | '/admin/platform/'
     | '/admin/profiles/'
+    | '/admin/slack/'
     | '/admin/users/'
     | '/admin/widgets/'
     | '/app/docs/'
@@ -1730,6 +1742,13 @@ declare module '@tanstack/react-router' {
       path: '/profiles'
       fullPath: '/admin/profiles/'
       preLoaderRoute: typeof AdminProfilesIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/slack/': {
+      id: '/admin/slack/'
+      path: '/slack'
+      fullPath: '/admin/slack/'
+      preLoaderRoute: typeof AdminSlackIndexRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/users/': {
@@ -2179,6 +2198,7 @@ interface AdminRouteRouteChildren {
   AdminMcpsIndexRoute: typeof AdminMcpsIndexRoute
   AdminPlatformIndexRoute: typeof AdminPlatformIndexRoute
   AdminProfilesIndexRoute: typeof AdminProfilesIndexRoute
+  AdminSlackIndexRoute: typeof AdminSlackIndexRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
   AdminWidgetsIndexRoute: typeof AdminWidgetsIndexRoute
   AdminGroupsGroupIdAddMemberRoute: typeof AdminGroupsGroupIdAddMemberRoute
@@ -2218,6 +2238,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminMcpsIndexRoute: AdminMcpsIndexRoute,
   AdminPlatformIndexRoute: AdminPlatformIndexRoute,
   AdminProfilesIndexRoute: AdminProfilesIndexRoute,
+  AdminSlackIndexRoute: AdminSlackIndexRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,
   AdminWidgetsIndexRoute: AdminWidgetsIndexRoute,
   AdminGroupsGroupIdAddMemberRoute: AdminGroupsGroupIdAddMemberRoute,

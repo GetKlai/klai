@@ -1,0 +1,66 @@
+# Slack app manifest for Klai in Slack (SPEC-SLACK-001 §7.4).
+# Create the app from this file: api.slack.com/apps -> Create New App -> From a
+# manifest. Request URLs point at the public api. host; Caddy routes /slack/* to
+# klai-slack. Field names follow https://docs.slack.dev/reference/app-manifest
+# (checked 2026-10-28). Builds on agent_view, not the retired assistant_view.
+display_information:
+  name: Klai
+  description: Antwoorden uit de kennisbanken van jouw organisatie, met bronnen.
+  background_color: "#1a1a1a"
+features:
+  bot_user:
+    display_name: Klai
+    always_online: true
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  agent_view:
+    agent_description: >-
+      Stel een vraag en Klai zoekt het antwoord in de kennisbanken die jouw
+      organisatie heeft vrijgegeven. Elk antwoord laat zien waarin gezocht is en
+      toont de bronnen.
+    suggested_prompts:
+      - title: Wat weet Klai?
+        message: In welke kennisbanken kun je zoeken?
+      - title: Beleid opzoeken
+        message: Wat is ons beleid rond thuiswerken?
+      - title: Proces uitleggen
+        message: Hoe werkt het onboardingproces voor nieuwe collega's?
+      - title: Samenvatten
+        message: Vat de belangrijkste punten over onze producten samen.
+  slash_commands:
+    - command: /klai
+      url: https://api.getklai.com/slack/events
+      description: Klai instellen en gebruiken
+      usage_hint: kb | help | connect
+      should_escape: false
+oauth_config:
+  redirect_urls:
+    - https://api.getklai.com/slack/oauth_redirect
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - im:history
+      - im:write
+      - channels:history
+      - groups:history
+      - commands
+      - users:read
+      - assistant:write
+settings:
+  event_subscriptions:
+    request_url: https://api.getklai.com/slack/events
+    bot_events:
+      - app_mention
+      - message.im
+      - app_home_opened
+      - app_uninstalled
+      - tokens_revoked
+  interactivity:
+    is_enabled: true
+    request_url: https://api.getklai.com/slack/events
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
