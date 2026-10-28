@@ -253,6 +253,17 @@ check "exit 3" test "$rc" = 3
 check "restarted twice, then breached" bash -c 'grep -q "window restarted (2/2)" <<< "$0" && grep -q "BREACH knowledge-ingest: 42" <<< "$0"' "$out"
 check "no query had bad bounds" test ! -e "$STATE/bad_query"
 
+
+echo "# every workflow that passes --error-watch gives its ssh step room for the lock wait plus the watch"
+repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
+for wf in $(grep -lE -- '--error-watch [0-9]+' "$repo_root"/.github/workflows/*.yml); do
+    # The step that runs the deploy script must carry command_timeout of at
+    # least 25 minutes: 600 s lock wait + 300 s watch of the deploy ahead, then
+    # its own deploy and 300 s watch; the action's default is 10 minutes.
+    check "$(basename "$wf") sets command_timeout of at least 25m on its deploy step" \
+        awk '/command_timeout:/ { split($2, a, "m"); if (a[1] + 0 >= 25) ok = 1 } /deploy-with-rollback.sh .*--error-watch/ { if (ok) found = 1; ok = 0 } END { exit !found }' "$wf"
+done
+
 if (( failures > 0 )); then
     echo "$failures check(s) failed"
     exit 1
