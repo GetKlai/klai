@@ -19,8 +19,15 @@ failures=0
 
 cat > "$work/docker" <<'STUB'
 #!/usr/bin/env bash
-[[ "$1" == run ]] || { echo "stub: unexpected docker args: $*" >&2; exit 90; }
 printf '%s\n' "$*" >> "$STATE/docker_argv"
+# `ps -q` and `inspect` serve the overlap check from a state file: one line per
+# running container, "<StartedAt> <compose service label> /<name>".
+case "$1" in
+    ps) [[ -s "$STATE/inspect" ]] && echo c1; exit 0 ;;
+    inspect) cat "$STATE/inspect" 2>/dev/null; exit 0 ;;
+    run) ;;
+    *) echo "stub: unexpected docker args: $*" >&2; exit 90 ;;
+esac
 while [[ "$1" != "$KLAI_CURL_IMAGE" ]]; do shift; done
 shift
 exec curl "$@"
@@ -49,21 +56,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != expected:
             return self.reply(401, "unauthorized")
         deployed = open(os.path.join(state, "deployed_iso")).read().strip()
+        starts_path = os.path.join(state, "after_starts")
+        after_starts = open(starts_path).read().split() if os.path.exists(starts_path) else []
         flt = open(os.path.join(state, "expected_filter")).read().strip()
         m = re.fullmatch(re.escape(flt) + r" AND _time:\[([^,]+), ([^)]+)\) \| stats count\(\) as n", query)
         if not m:
             return self.bad("filter/shape: " + query)
         start, end = m.groups()
-        if end == deployed:
-            # "before" query: same length as the span since the deploy, ending at the deploy.
+        if end == deployed or end in after_starts:
+            # "before" query: same length as the span since the (re)start, ending there.
             kind = "before"
-            if start >= deployed:
-                return self.bad("before-window starts at or after the deploy: " + query)
+            if start >= end:
+                return self.bad("before-window is empty or inverted: " + query)
         else:
-            # "after" query: starts exactly at the deploy time, ends after it.
+            # "after" query: starts at the deploy time or at a window restart, ends after it.
             kind = "after"
-            if start != deployed or end <= deployed:
-                return self.bad("after-window must start at the deploy time: " + query)
+            if start < deployed or end <= start:
+                return self.bad("after-window must start at or after the deploy time: " + query)
+            open(starts_path, "a").write(start + "\n")
         value = pop(kind)
         if value == "ERR":
             return self.reply(500, "boom")
@@ -99,7 +109,7 @@ printf '%s\n' 'OTHER=1' 'VICTORIALOGS_AUTH_USER=vluser' "VICTORIALOGS_AUTH_PASSW
 
 # new_case <after sequence> [<before sequence>]
 new_case() {
-    rm -f "$STATE"/*.n "$STATE/queries.log" "$STATE/docker_argv" "$STATE/bad_query"
+    rm -f "$STATE"/*.n "$STATE/queries.log" "$STATE/docker_argv" "$STATE/bad_query" "$STATE/inspect" "$STATE/after_starts"
     printf '%s\n' $1 > "$STATE/after"
     printf '%s\n' ${2:-0} > "$STATE/before"
     deployed=$(date -u +%s)
@@ -204,6 +214,44 @@ check "one dropped query in the window is tolerated" test "$rc" = 0
 new_case "ERR" "0"
 run_watch portal-api --window 4
 check "three dropped queries in a row exit 1" test "$rc" = 1
+
+
+# overlap_after <seconds>: a container of another service started that many seconds after the deploy.
+overlap_after() {
+    local at
+    at=$(date -u -d "@$(( deployed + $1 ))" +%Y-%m-%dT%H:%M:%S.000000000Z 2>/dev/null \
+        || date -u -r "$(( deployed + $1 ))" +%Y-%m-%dT%H:%M:%S.000000000Z)
+    echo "$at $2 /klai-core-$2-1" > "$STATE/inspect"
+}
+
+echo "# a breach while another container started inside the window is not attributed: the window restarts"
+new_case "42 3" "0"
+overlap_after 1 litellm
+run_watch knowledge-ingest --window 0
+check "exit 0 after the restarted window came back clean" test "$rc" = 0
+check "names the container and the restart" grep -q 'another container started inside the window (.*litellm.*); not attributable, window restarted (1/2)' <<< "$out"
+check "the restarted window was queried with proper bounds" test ! -e "$STATE/bad_query"
+
+echo "# the service's own container does not count as an overlap"
+new_case "42" "0"
+overlap_after 1 knowledge-ingest
+run_watch knowledge-ingest --window 0
+check "exit 3" test "$rc" = 3
+check "breach printed" grep -q 'BREACH knowledge-ingest: 42 error lines' <<< "$out"
+
+echo "# a container that started before the deploy does not count"
+new_case "42" "0"
+overlap_after -120 litellm
+run_watch knowledge-ingest --window 0
+check "exit 3" test "$rc" = 3
+
+echo "# after MAX_RESTARTS restarts the last window decides"
+new_case "42 42 42" "0 0 0"
+overlap_after 1 litellm
+run_watch knowledge-ingest --window 0
+check "exit 3" test "$rc" = 3
+check "restarted twice, then breached" bash -c 'grep -q "window restarted (2/2)" <<< "$0" && grep -q "BREACH knowledge-ingest: 42" <<< "$0"' "$out"
+check "no query had bad bounds" test ! -e "$STATE/bad_query"
 
 if (( failures > 0 )); then
     echo "$failures check(s) failed"

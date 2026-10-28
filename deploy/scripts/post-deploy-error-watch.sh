@@ -28,6 +28,13 @@
 # still loading) from being blamed on it. Known ceiling: a regression that
 # lands on top of an equally noisy period and does not double it goes unseen.
 #
+# A breach is not attributed to the deploy when another container on the host
+# started inside the window: the window is restarted from that moment, at most
+# MAX_RESTARTS times, and only the last window decides. On 2026-10-28 23:07 UTC
+# knowledge-ingest was rolled back on 12 "LLM connection error" lines while the
+# LiteLLM hook deploy recreated litellm twice in those minutes; the same lines
+# kept coming on the old image. The service's own container does not count.
+#
 # Exit codes
 #   0  the window closed without a breach
 #   3  breach; the count and the threshold are printed
@@ -57,6 +64,9 @@ POLL_INTERVAL="${KLAI_ERROR_WATCH_INTERVAL:-30}"
 # Consecutive failed polls tolerated before giving up; one dropped query in a
 # watch is not an outage.
 MAX_QUERY_FAILURES=3
+# Windows restarted because another container started inside one. Two keeps a
+# deploy wave from stretching a watch past three windows (15 minutes at 300 s).
+MAX_RESTARTS=2
 
 usage() {
     echo "usage: ${0##*/} <service> <deployed-at> [--window <seconds>] [--threshold <n>]" >&2
@@ -135,8 +145,22 @@ except Exception:
     echo "$reply"
 }
 
+# The first running container other than this service that started at or
+# after START, as "<started-at> <name>"; empty when there is none. StartedAt is
+# RFC 3339 with nanoseconds, so a plain string compare against the ISO second
+# orders correctly.
+overlapping_start() {
+    local ids
+    ids="$("$DOCKER" ps -q 2>/dev/null)" || return 0
+    [[ -n "$ids" ]] || return 0
+    # shellcheck disable=SC2086 # one id per word
+    "$DOCKER" inspect -f '{{.State.StartedAt}} {{index .Config.Labels "com.docker.compose.service"}} {{.Name}}' $ids 2>/dev/null \
+        | awk -v since="$(to_iso "$START")" -v svc="$SERVICE" '$1 >= since && $2 != svc { print $1, $3; exit }'
+}
+
 END=$(( START + WINDOW ))
 failures=0
+restarts=0
 echo "error-watch: $SERVICE since $(to_iso "$START"), window ${WINDOW}s, threshold $THRESHOLD ($FILTER)"
 while :; do
     now="$(date -u +%s)"
@@ -150,6 +174,13 @@ while :; do
             # Same length of time just before the deploy.
             if before="$(count_between $(( START - span )) "$START")"; then
                 if (( after > 2 * before )); then
+                    other="$(overlapping_start)"
+                    if [[ -n "$other" ]] && (( restarts < MAX_RESTARTS )); then
+                        restarts=$(( restarts + 1 ))
+                        echo "error-watch: $SERVICE has $after error lines since $(to_iso "$START") but another container started inside the window ($other); not attributable, window restarted ($restarts/$MAX_RESTARTS)"
+                        START="$now"; END=$(( START + WINDOW ))
+                        continue
+                    fi
                     echo "error-watch: BREACH $SERVICE: $after error lines in ${span}s since deploy, threshold $THRESHOLD, $before in the ${span}s before"
                     exit 3
                 fi
