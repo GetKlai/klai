@@ -1,0 +1,72 @@
+[project]
+name = "klai-slack"
+version = "0.1.0"
+description = "Klai in Slack: Bolt for Python service that answers from the Partner API (SPEC-SLACK-001)."
+requires-python = ">=3.12"
+dependencies = [
+    "slack-bolt==1.30.0",
+    "slack-sdk==3.45.0",
+    # slack_sdk's async web client and Bolt's async adapters run on aiohttp.
+    "aiohttp>=3.11",
+    "fastapi>=0.136",
+    "uvicorn[standard]>=0.44",
+    "httpx>=0.28",
+    "sqlalchemy[asyncio]>=2.0.49",
+    "asyncpg>=0.31",
+    "alembic>=1.18",
+    "cryptography>=48.0.1",
+    "pydantic-settings>=2.14.2",
+    "structlog>=25.5",
+    # SPEC-LOGGING-EXTRACT-001 / SPEC-SEC-INTERNAL-001: shared setup_logging,
+    # RequestContextMiddleware, verify_shared_secret, sanitize_response_body.
+    "klai-log-utils",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9",
+    "pytest-asyncio>=1",
+    "ruff>=0.15",
+    "pyright>=1.1.408",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9",
+    "pytest-asyncio>=1",
+    "ruff>=0.15",
+    "pyright>=1.1.408",
+]
+
+[tool.uv.sources]
+klai-log-utils = { path = "../klai-libs/log-utils", editable = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "RUF", "G", "LOG", "TRY", "C90"]
+ignore = [
+    "S101",    # assert is fine in tests
+    "S105",    # hardcoded passwords: too many false positives on config defaults
+    "TRY003",  # a typed error with a descriptive message is the intended shape
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S106", "S311"]
+"alembic/**" = ["E501"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+include = ["app", "tests", "alembic"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "postgres: real-PostgreSQL repository tests (need SLACK_TEST_DATABASE_URL)",
+]
+addopts = "-m 'not postgres'"
