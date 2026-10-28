@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # A version pin that lives in two places drifts: the compose image is
       # what production runs, the litellm-tests pin is what CI tests the hooks
@@ -71,7 +71,7 @@ jobs:
           yq --version
           jq --version
 
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
 
       - name: Run volume audit
         run: bash scripts/audit-compose-volumes.sh

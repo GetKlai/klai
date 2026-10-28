@@ -1,6 +1,13 @@
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
-  extends: ['config:recommended'],
+  // helpers:pinGitHubActionDigests turns every `uses: owner/action@v7` into
+  // `owner/action@<40-char sha> # v7.0.1`. A tag can be moved after the fact
+  // (tj-actions/changed-files, March 2025: a retargeted tag dumped the secrets
+  // of every workflow that ran it); a commit SHA cannot. scripts/pin-action-shas.sh
+  // did the one-off migration and scripts/check-action-shas.sh fails CI on a new
+  // unpinned reference. The preset only touches the github-actions manager:
+  // Docker images keep the tags and digests the compose rules below manage.
+  extends: ['config:recommended', 'helpers:pinGitHubActionDigests'],
   timezone: 'Europe/Amsterdam',
 
   // Deliberately NO top-level schedule. This is a self-hosted run: the cadence
@@ -94,6 +101,26 @@
   // that HAS a timestamp (npm, PyPI, Docker Hub); only an update that can
   // never be aged goes through without the cooldown, which beats never.
   minimumReleaseAgeBehaviour: 'timestamp-optional',
+  // A published vulnerability must not wait out the cooldown above: the 7 days
+  // exist to let a hijacked release (litellm 1.82.7, March 2026) get pulled
+  // before we take it, and a fix for a known CVE is the opposite case. Renovate
+  // defaults to exactly this, so the keys restate the defaults on purpose: a
+  // later "tidy-up" that sets minimumReleaseAge inside vulnerabilityAlerts, or
+  // flips prCreation, fails scripts/test-renovate-config.sh instead of silently
+  // holding a security fix for a week.
+  //   - minimumReleaseAge: null  the vulnerability PR skips the cooldown.
+  //   - prCreation: 'immediate'  no waiting for the stability-days check.
+  // osvVulnerabilityAlerts adds the OSV database (npm, PyPI, GitHub Actions) next
+  // to GitHub's own Dependabot alerts, which the klai-renovate app token may not
+  // be allowed to read. It does NOT lift the other policies: a major still needs
+  // the rules further down, a data store still waits on the dashboard, and the
+  // version ceilings still apply.
+  osvVulnerabilityAlerts: true,
+  vulnerabilityAlerts: {
+    enabled: true,
+    minimumReleaseAge: null,
+    prCreation: 'immediate',
+  },
   // Renovate otherwise installs the newest npm to regenerate lock files. npm
   // 12 defaults allow-remote to 'none' and refused the tarball of
   // @tailwindcss/oxide-wasm32-wasi, so every lock file refresh and thirteen
@@ -498,6 +525,14 @@
         'falkordb/falkordb',
       ],
       groupName: 'Data store series bumps',
+      // Unchanged on 2026-10-28 on purpose (SPEC-INFRA-AUTO-ROLLBACK-001 S9):
+      // data-store minors would move to automerge, one minor per PR, once the
+      // restore rehearsal (S8b) has proven that a snapshot can be put back.
+      // It has not run yet. The condition is three green monthly restore
+      // rehearsals in a row on main; until then a restore is a claim, not a
+      // measurement, and a minor of a data store is the one change a rollback
+      // cannot undo. Postgres majors stay human for good (D1), the other
+      // data-store majors wait for the same three months (D2).
       automerge: false,
     },
     {
@@ -518,9 +553,86 @@
       groupName: 'BlockNote',
     },
     {
-      description: 'Major upgrades always get human eyes',
+      description:
+        'Major upgrades get human eyes, except the three dev-tooling rules \
+        right below. Everything else stays here: runtime dependencies, \
+        Docker images (Twenty, ubuntu, nvidia/cuda, Vexa, python), the data \
+        stores and every action CI cannot exercise before the merge.',
       matchUpdateTypes: ['major'],
       automerge: false,
+    },
+    {
+      description:
+        'Majors of GitHub Actions automerge, but only for the actions that a \
+        pull request run itself executes: checkout, setup-node, setup-python, \
+        setup-uv, paths-filter and ast-grep. A major that breaks one of them \
+        turns quality red and never merges; SHA pinning \
+        (helpers:pinGitHubActionDigests) means what merges is the exact \
+        commit CI just ran. NOT covered, so still manual: appleboy/*, \
+        webfactory/ssh-agent, docker/* (login, buildx, build-push), \
+        create-github-app-token, renovatebot/github-action and github-script, \
+        which run only on main or on a schedule with deploy keys, registry \
+        credentials or the Renovate app token; and upload-artifact and \
+        github/codeql-action, whose steps sit in push-to-main or scheduled \
+        jobs or run on a PR only when a job has already failed. The first \
+        run of a new major of any of these would be the production run. \
+        aquasecurity/* is not matched either: its lookups use the git-tags \
+        override above. Same for the ubuntu runner image, which is not an \
+        action.',
+      matchManagers: ['github-actions'],
+      matchDatasources: ['github-tags', 'github-releases'],
+      matchPackageNames: [
+        'actions/checkout',
+        'actions/setup-node',
+        'actions/setup-python',
+        'astral-sh/setup-uv',
+        'dorny/paths-filter',
+        'ast-grep/action',
+      ],
+      matchUpdateTypes: ['major'],
+      automerge: true,
+    },
+    {
+      description:
+        'Majors of npm devDependencies automerge in the three packages whose \
+        lint, type check, build, unit tests and (portal) visual tests run on \
+        every pull request: klai-portal/frontend, klai-docs and klai-widget. \
+        Dev tooling cannot reach a customer except through those gates, and a \
+        failing gate keeps the PR open. NOT covered: runtime `dependencies`, \
+        any package with an allowedVersions ceiling below (typescript, \
+        eslint in klai-docs: the ceiling filters the major out before this \
+        rule sees it), and package.json files without a CI job, such as \
+        .agents/skills/playwright-skill.',
+      matchManagers: ['npm'],
+      matchDepTypes: ['devDependencies'],
+      matchFileNames: [
+        'klai-portal/frontend/package.json',
+        'klai-docs/package.json',
+        'klai-widget/package.json',
+      ],
+      matchUpdateTypes: ['major'],
+      automerge: true,
+    },
+    {
+      description:
+        'Majors of Python dev tooling (pytest, ruff, pyright and friends) \
+        automerge: each service workflow runs ruff, pyright and pytest on \
+        every pull request. Every optional-dependencies and dependency-groups \
+        entry in this repo is the `dev` extra, which is why the depType is \
+        enough; a runtime extra added later has to be named here first. NOT \
+        covered: `project.dependencies` (runtime), build-system.requires and \
+        klai-libs/*, whose own dev group no workflow installs (the service \
+        workflows install the service\'s group), so a major there would merge \
+        without any test having run it.',
+      matchManagers: ['pep621'],
+      matchFileNames: ['!klai-libs/**'],
+      matchDepTypes: [
+        'dependency-groups',
+        'project.optional-dependencies',
+        'tool.uv.dev-dependencies',
+      ],
+      matchUpdateTypes: ['major'],
+      automerge: true,
     },
     {
       description:
@@ -618,8 +730,13 @@
         releases, 8.3 needs FCV 8.2 before it starts, and Community has no \
         binary downgrade, so leaving 8.0 is a one-way step. Move to the next \
         LTS (9.0) deliberately.',
-      matchDatasources: ['docker'],
-      matchPackageNames: ['mongo'],
+      // Both names, both datasources: since #2085 the version is read from
+      // GitHub tags (packageName mongodb/mongo) and the Hub name is only the
+      // depName. A ceiling that names only the Hub name and datasource matched
+      // nothing, and 8.3 was one run away from being proposed. The test
+      // script checks every ceiling against the custom managers above.
+      matchDatasources: ['docker', 'github-tags'],
+      matchPackageNames: ['mongo', 'mongodb/mongo'],
       allowedVersions: '<8.1',
     },
     {

@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # This workflow is the second place compose-up.sh is installed on core-01
       # (the sync step below), so it has to be the second place its tests run.
@@ -38,7 +38,7 @@ jobs:
         run: bash deploy/scripts/tests/compose-up-verify.test.sh
 
       - name: Set up SSH
-        uses: webfactory/ssh-agent@v0.10.0
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555  # v0.10.0
         with:
           ssh-private-key: ${{ secrets.CORE01_DEPLOY_KEY }}
 

@@ -18,7 +18,7 @@ def _build_step(job: dict[str, object]) -> dict[str, object]:
     return next(
         step
         for step in job["steps"]
-        if step.get("uses") == "docker/build-push-action@v7"
+        if str(step.get("uses", "")).startswith("docker/build-push-action@")
     )
 
 
@@ -29,7 +29,7 @@ def test_pull_requests_build_the_docs_image_without_push_permissions() -> None:
     assert verify["if"] == "github.event_name == 'pull_request'"
     assert verify["permissions"] == {"contents": "read"}
     assert not any(
-        step.get("uses") == "docker/login-action@v4" for step in verify["steps"]
+        str(step.get("uses", "")).startswith("docker/login-action@") for step in verify["steps"]
     )
 
     build = _build_step(verify)
