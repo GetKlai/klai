@@ -3,7 +3,7 @@
 export type SlackStatus = 'not_connected' | 'awaiting_link' | 'connected' | 'revoked'
 
 export interface SlackKey {
-  id: number
+  id: string
   key_prefix: string
   rate_limit_rpm: number
   last_used_at: string | null
