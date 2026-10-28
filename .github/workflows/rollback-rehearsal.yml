@@ -1,0 +1,66 @@
+name: Rollback rehearsal
+
+# SPEC-INFRA-AUTO-ROLLBACK-001 section 8, slice S7.
+#
+# Automatic rollback only runs after a deploy has already failed, so on a good
+# week nothing ever proves it still works, and a script that was never run is
+# the one that fails when it is needed. Once a week this deploys a good image to
+# the rollback-canary service on core-01 (tiny HTTP server, no customer traffic,
+# no data), then a deliberately broken one, both through the real
+# deploy-with-rollback.sh, and asserts the broken one was rolled back and the
+# good one answers again within 5 minutes. The whole sequence lives in
+# deploy/scripts/rollback-rehearsal-assert.sh (installed to /opt/klai/scripts by
+# deploy-compose.yml, tested in deploy-scripts-tests.yml); this workflow only
+# starts it.
+#
+# On success the script appends one event:rollback_rehearsal line to
+# /opt/klai/logs/auto-rollback.log; Alloy ships it to VictoriaLogs and the
+# Grafana rule rollback_rehearsal_missing fires when none arrived for 8 days
+# (deploy/grafana/provisioning/alerting/auto-rollback-rules.yaml). Any other
+# result ends this run red, and ci-failure-notice.yml opens its issue.
+#
+# The deliberate rollback is also an auto_rollback event; that Grafana rule
+# excludes deploy_service:rollback-canary, so the rehearsal does not mail.
+
+on:
+  schedule:
+    # Mondays 03:17 UTC: after the nightly backups, before the 04:00 E2E run.
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One rehearsal at a time; a manual run during the scheduled one waits.
+concurrency:
+  group: rollback-rehearsal
+  cancel-in-progress: false
+
+env:
+  # GOOD runs the canary command (busybox httpd). BAD has a shell but no httpd,
+  # so the container exits at once and crash-loops, which is gate 1 of
+  # deploy-with-rollback.sh. Exact tags; bump them by hand when they age out
+  # (the canary is the only thing that uses them).
+  GOOD_IMAGE: busybox:1.37.0
+  BAD_IMAGE: debian:12.15-slim
+
+jobs:
+  rehearse:
+    # Scheduled runs belong to main anyway; this keeps a workflow_dispatch from
+    # another branch off the production host.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Deploy good, deploy bad, assert rollback on core-01
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          command_timeout: 25m
+          script: |
+            set -e
+            test -x /opt/klai/scripts/deploy-with-rollback.sh
+            test -x /opt/klai/scripts/rollback-rehearsal-assert.sh
+            /opt/klai/scripts/rollback-rehearsal-assert.sh ${{ env.GOOD_IMAGE }} ${{ env.BAD_IMAGE }}

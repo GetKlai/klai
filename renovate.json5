@@ -357,6 +357,16 @@
     },
     {
       description:
+        'klai/rollback-canary is a tag the weekly rollback rehearsal sets on \
+        core-01 (SPEC-INFRA-AUTO-ROLLBACK-001); it exists in no registry, so \
+        every run would log a failed lookup.',
+      matchManagers: ['docker-compose'],
+      matchDatasources: ['docker'],
+      matchPackageNames: ['klai/rollback-canary'],
+      enabled: false,
+    },
+    {
+      description:
         'vexaai/transcription-service is not published anywhere: it is built \
         from Vexa-ai/vexa source on gpu-01 (tag <upstream>-local-<stamp>), so \
         every run logged a failed lookup. Its upgrade path is the manual \

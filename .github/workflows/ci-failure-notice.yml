@@ -56,6 +56,10 @@ on:
       # notified nobody. Over its last 60 runs (2026-10-22/23) it failed 7
       # times, none traced to a defect in the test, so it is watched like a deploy.
       - E2E prod-tenant
+      # The weekly proof that automatic rollback still works. Red means the
+      # rollback path itself (or the canary) is broken, which nobody would see
+      # until a real deploy failed.
+      - Rollback rehearsal
     types: [completed]
 
     # Deliberately NOT watched, so the open-issue list stays a list of real

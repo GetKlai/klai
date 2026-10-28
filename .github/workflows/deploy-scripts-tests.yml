@@ -129,6 +129,11 @@ jobs:
       - name: deploy-with-rollback suite
         run: bash deploy/scripts/tests/deploy-with-rollback.test.sh
 
+      # The weekly rehearsal's verdict logic: a bad image that deploys as
+      # healthy must end red, not green.
+      - name: rollback-rehearsal assertion suite
+        run: bash deploy/scripts/tests/rollback-rehearsal-assert.test.sh
+
       # A red gate in deploy-compose.yml puts the previous files back; a helper
       # that restores the wrong set of files turns a bad deploy into a worse one.
       - name: compose rollback suite

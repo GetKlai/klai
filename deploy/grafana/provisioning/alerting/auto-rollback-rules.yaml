@@ -1,0 +1,167 @@
+# Automatic rollback alerts (SPEC-INFRA-AUTO-ROLLBACK-001).
+#
+# deploy-with-rollback.sh and rollback-rehearsal-assert.sh append one JSON line
+# per event to /opt/klai/logs/auto-rollback.log on core-01; Alloy ships it to
+# VictoriaLogs as `service:auto-rollback` (deploy/alloy/config.alloy). Fields:
+# event (auto_rollback | rollback_rehearsal), outcome (rolled_back |
+# rollback_failed | ok), deploy_service, gate, commit.
+#
+# Both rules carry severity=critical and no component label, so policies.yaml
+# sends them to klai-ops-alerts-email through its severity=critical route.
+# Neither carries page="true": whether a rolled-back deploy should page is not
+# decided. Slice S4 may extend auto_rollback_event (labels, issue link); keep
+# this rule small.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: auto-rollback
+    folder: Klai
+    interval: 1m
+    rules:
+      # Any deploy that went red and was rolled back (outcome rolled_back) or
+      # whose rollback failed too (rollback_failed, the one that needs a human
+      # now). The weekly rehearsal rolls back the rollback-canary on purpose, so
+      # its events are excluded here; they are proven by the rule below.
+      # Zero matches return Value=0 with this stats shape, so noDataState OK.
+      - uid: obs-auto-rollback-event
+        title: auto_rollback_event
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:15m service:auto-rollback event:auto_rollback -deploy_service:rollback-canary
+                  | stats count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-AUTO-ROLLBACK-001
+          service_group: deploy
+          alert_type: auto_rollback
+        annotations:
+          summary: 'A deploy was rolled back automatically in the last 15 minutes'
+          description: |
+            deploy-with-rollback.sh put a previous image back after a red gate
+            (outcome rolled_back), or could not (outcome rollback_failed, which
+            needs a human now). Production is serving the previous image in the
+            first case and may be broken in the second.
+
+            Which service, gate and commit, in VictoriaLogs:
+              _time:30m service:auto-rollback event:auto_rollback | sort by (_time) desc | limit 10
+            The report of the last deploy of a service is on core-01 at
+            /opt/klai/deploy-reports/<service>.json, with the container log
+            next to it as <service>.log.
+
+      # The dead-man's switch for the rehearsal itself: it writes one
+      # event:rollback_rehearsal outcome:ok line when it passes, weekly. No line
+      # for 8 days means a skipped schedule, a red run, or a broken log pipeline,
+      # and in every case nothing is proving that rollback works. noDataState
+      # and execErrState Alerting because a rule that exists to catch silence
+      # must not go quiet itself. for: 30m only so a VictoriaLogs hiccup does not
+      # mail; the 8-day window is the requirement. Dispatch the first rehearsal
+      # by hand right after this rule is merged.
+      - uid: obs-rollback-rehearsal-missing
+        title: rollback_rehearsal_missing
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:8d service:auto-rollback event:rollback_rehearsal outcome:ok
+                  | stats count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 691200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 30m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-AUTO-ROLLBACK-001
+          service_group: deploy
+          alert_type: synthetic
+        annotations:
+          summary: 'No passing rollback rehearsal for 8 days: nothing proves automatic rollback still works'
+          description: |
+            The weekly Rollback rehearsal workflow (rollback-rehearsal.yml) writes
+            an event:rollback_rehearsal outcome:ok line when a bad image was rolled
+            back and the good one serves again. None reached VictoriaLogs in 8 days.
+
+            Check, in order:
+              1. gh run list --workflow rollback-rehearsal.yml --limit 5
+                 (red: read the failing step; skipped or absent: the schedule stopped)
+              2. On core-01: tail -n 3 /opt/klai/logs/auto-rollback.log
+                 (line present but not in VictoriaLogs: Alloy or VictoriaLogs is the break)
+              3. Start it by hand: gh workflow run rollback-rehearsal.yml
