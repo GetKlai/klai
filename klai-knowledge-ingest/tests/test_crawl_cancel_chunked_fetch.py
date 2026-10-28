@@ -236,6 +236,8 @@ async def test_circuit_breaker_still_fires_when_cancel_check_present_but_false(
     assert fetch.cancelled is False
     assert fetch.circuit_breaker_triggered is True
     assert fetch.not_attempted_reason_code == FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value
-    assert len(calls) <= 5, (
-        f"expected the breaker to stop after a handful of chunks, got {len(calls)}"
+    # One URL per request since 2026-10-28: a site that fails every request
+    # stops at the ratio trigger's ten attempts, not after five requests.
+    assert len(calls) <= 10, (
+        f"expected the breaker to stop after ten single-URL requests, got {len(calls)}"
     )
