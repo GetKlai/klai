@@ -5,39 +5,20 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-JS_PREP_REMOVE_CHROME = (
-    "['nav','header','footer','aside',"
-    "'[role=\"navigation\"]','[role=\"banner\"]','[role=\"contentinfo\"]',"
-    "'[role=\"complementary\"]','[role=\"search\"]'"
-    "].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));"
-)
-
-JS_PREP_EXPAND_TOGGLES = (
-    "document.querySelectorAll('details:not([open])')"
-    ".forEach(d => d.setAttribute('open', ''));"
-    "document.querySelectorAll('.notion-toggle__summary, "
-    '[data-block-type="toggle"] > *:first-child\')'
-    ".forEach(s => s.click());"
+# crawl4ai 0.9.5 (live 2026-10-22) answers HTTP 400 to any JavaScript in a
+# network request (wait_for "js:", js_code, c4a_script, init_scripts), which
+# ended every nightly crawl with 0 pages from 2026-10-23. The config therefore
+# carries CSS only. A probe of 20 stored pages without the old JS prep fetched
+# 20/20 with identical headings, +1% to +8% words and markdown links 139 -> 363:
+# collapsed toggle bodies are already in the DOM, and the JS chrome removal was
+# dropping link labels.
+_CHROME_ROLES_SELECTOR = (
+    '[role="navigation"],[role="banner"],[role="contentinfo"],'
+    '[role="complementary"],[role="search"]'
 )
 
 
-def build_wait_for(*, strip_chrome: bool, ready_condition: str) -> str:
-    """Compose the Crawl4AI wait predicate with one-time DOM preparation."""
-    prep = (JS_PREP_REMOVE_CHROME if strip_chrome else "") + JS_PREP_EXPAND_TOGGLES
-    return (
-        "js:() => {"
-        " const d = document.documentElement.dataset;"
-        " if (!d.klaiPrepTs) { " + prep + " d.klaiPrepTs = String(Date.now()); return false; }"
-        " if (Date.now() - Number(d.klaiPrepTs) < 300) return false;"
-        " return " + ready_condition + ";"
-        " }"
-    )
-
-
-def build_crawl_config(
-    selector: str | None,
-    login_indicator_selector: str | None = None,
-) -> dict[str, Any]:
+def build_crawl_config(selector: str | None) -> dict[str, Any]:
     """Build a Crawl4AI ``CrawlerRunConfig`` payload.
 
     Pacing is intentionally absent: the REST server ignores those config keys,
@@ -54,18 +35,9 @@ def build_crawl_config(
         },
     }
 
-    ready_condition = "(document.body.innerText.trim().split(/\\s+/).length > 50)"
-    if login_indicator_selector:
-        selector_escaped = login_indicator_selector.replace("\\", "\\\\").replace("'", "\\'")
-        ready_condition += f" && !document.querySelector('{selector_escaped}')"
-
     params: dict[str, Any] = {
         "cache_mode": "bypass",
         "word_count_threshold": 10,
-        "wait_for": build_wait_for(
-            strip_chrome=selector is None,
-            ready_condition=ready_condition,
-        ),
         "remove_consent_popups": True,
         "remove_overlay_elements": True,
         "page_timeout": 30000,
@@ -86,13 +58,14 @@ def build_crawl_config(
         params["excluded_tags"] = []
     else:
         params["excluded_tags"] = ["nav", "footer", "header", "aside", "script", "style"]
+        params["excluded_selector"] = _CHROME_ROLES_SELECTOR
     return params
 
 
 def relax_seed_crawl_config(crawler_config: dict[str, Any]) -> dict[str, Any]:
     """Retry thin seeds without chrome stripping while keeping script/style excluded."""
     relaxed = copy.deepcopy(crawler_config)
-    relaxed.pop("wait_for", None)
+    relaxed.pop("excluded_selector", None)
     if relaxed.get("excluded_tags"):
         relaxed["excluded_tags"] = ["script", "style"]
     return relaxed

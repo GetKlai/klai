@@ -122,6 +122,102 @@ REVOKE ALL ON portal_meeting_transcript_health FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO grafana_reader;
 GRANT SELECT ON portal_meeting_transcript_health TO grafana_reader;
 
+-- ── Crawl job health ─────────────────────────────────────────────────────
+--
+-- The crawl-rules.yaml rules read knowledge.crawl_jobs, which has FORCE ROW
+-- LEVEL SECURITY (alembic 0002) and holds the crawl config, with cookies and
+-- login selectors. A base-table grant would read zero rows and expose that
+-- config, so the rules read this superuser-owned view instead. It exposes the
+-- connector id (the one key of config), status, page counts, the
+-- epoch-seconds updated_at, the error_summary reason code, and per job:
+--
+--   fetch_total            number of fetch_outcomes
+--   crawler_side_failures  outcomes raised by OUR request to crawl4ai rather
+--                          than answered by the target site: a 4xx or 5xx
+--                          httpx.HTTPStatusError, or a connect/read timeout.
+--                          A site's own 4xx/5xx is recorded page-level with
+--                          error_type 'crawl4ai:<reason>' and is not counted.
+--                          429 is not counted either: it is the site asking
+--                          for a slower pace.
+--   top_signature          the most frequent error_type:status_code
+--   top_signature_share    its share of fetch_total
+--
+-- New columns go last so CREATE OR REPLACE keeps working on an existing view.
+-- 30 days of jobs is the horizon: it keeps the jsonb expansion cheap and covers
+-- the longest window any rule reads (7 days 30 hours).
+-- Added 2026-10-28 after six nights of crawls that answered errors (2026-10-23
+-- to 2026-10-28) raised no alert.
+CREATE OR REPLACE VIEW knowledge.crawl_job_health
+WITH (security_invoker = false, security_barrier = true) AS
+    SELECT j.org_id,
+           j.kb_slug,
+           j.status,
+           j.pages_total,
+           j.pages_done,
+           j.updated_at,
+           j.error_summary ->> 'reason' AS reason,
+           j.config ->> 'connector_id' AS connector_id,
+           o.fetch_total,
+           o.crawler_side_failures,
+           t.signature AS top_signature,
+           round(t.n::numeric / NULLIF(o.fetch_total, 0), 3) AS top_signature_share
+      FROM knowledge.crawl_jobs j
+     CROSS JOIN LATERAL (
+           SELECT count(*)::integer AS fetch_total,
+                  (count(*) FILTER (
+                       WHERE coalesce(
+                                 (x ->> 'error_type' = 'httpx.HTTPStatusError'
+                                  AND (x ->> 'reason_code' IN ('http_4xx', 'auth_error')
+                                       OR coalesce((x ->> 'status_code')::integer, 0) >= 500)
+                                  -- a site's 429 or anti-bot answer travels as an
+                                  -- HTTPStatusError too; it is the site, not the crawler
+                                  AND coalesce(x ->> 'reason_code', '') NOT IN ('rate_limited', 'blocked_anti_bot'))
+                                 -- a timeout on the bulk call is as often a slow site as a
+                                 -- stuck crawler, so only a refused connection counts
+                                 OR x ->> 'error_type' = 'httpx.ConnectError',
+                                 false)
+                  ))::integer AS crawler_side_failures
+             FROM jsonb_array_elements(j.fetch_outcomes) AS x
+           ) o
+      LEFT JOIN LATERAL (
+           SELECT (x ->> 'error_type') || ':' || coalesce(x ->> 'status_code', 'none') AS signature,
+                  count(*) AS n
+             FROM jsonb_array_elements(j.fetch_outcomes) AS x
+            -- crawler-side only: a site's own 403/429 is recorded as crawl4ai:<reason>
+            WHERE x ->> 'error_type' LIKE 'httpx.%'
+            GROUP BY 1
+            ORDER BY 2 DESC, 1
+            LIMIT 1
+           ) t ON true
+     WHERE j.updated_at >= date_part('epoch', now() - interval '30 days');
+
+REVOKE ALL ON knowledge.crawl_job_health FROM PUBLIC;
+GRANT USAGE ON SCHEMA knowledge TO grafana_reader;
+GRANT SELECT ON knowledge.crawl_job_health TO grafana_reader;
+
+-- crawl_jobs_silent needs to know which sources are SUPPOSED to crawl every
+-- day, which only the portal knows. portal_connectors holds config and
+-- encrypted credentials and portal_knowledge_bases is FORCE-RLS, so this view
+-- exposes only the connector id, its knowledge base slug and its creation time,
+-- for enabled, active web crawlers of an org-scoped knowledge base whose cron
+-- schedule runs every day (day-of-month, month and weekday all '*'). Weekly and
+-- unscheduled sources are left out on purpose: a missing job is normal there.
+CREATE OR REPLACE VIEW portal_scheduled_crawlers
+WITH (security_invoker = false, security_barrier = true) AS
+    SELECT c.id::text AS connector_id,
+           kb.slug AS kb_slug,
+           date_part('epoch', c.created_at) AS created_at
+      FROM portal_connectors c
+      JOIN portal_knowledge_bases kb ON kb.id = c.kb_id
+     WHERE c.connector_type = 'web_crawler'
+       AND c.is_enabled
+       AND c.state = 'active'
+       AND kb.owner_type = 'org'
+       AND c.schedule ~ '^\S+\s+\S+\s+\*\s+\*\s+\*\s*$';
+
+REVOKE ALL ON portal_scheduled_crawlers FROM PUBLIC;
+GRANT SELECT ON portal_scheduled_crawlers TO grafana_reader;
+
 -- Verify after running (must return a non-zero count, not an error and not 0):
 --   SET ROLE grafana_reader;
 --   SELECT count(*) FROM portal_feedback_correlation_stats;

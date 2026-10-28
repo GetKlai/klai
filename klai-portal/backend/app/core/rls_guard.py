@@ -62,6 +62,7 @@ RLS_DML_TABLES: frozenset[str] = frozenset(
         "partner_api_key_kb_access",
         "partner_api_keys",
         "portal_connectors",
+        "portal_gap_proposals",  # knowledge-gap-to-article phase 1 Cat-D
         "portal_group_kb_access",
         "portal_group_memberships",
         "portal_group_products",

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any
@@ -56,6 +58,103 @@ def html_visible_text(html: str) -> str:
 def html_text_word_count(html: str) -> int:
     """Count visible HTML words without executing or rendering the document."""
     return len(html_visible_text(html).split())
+
+
+_COMPOUND_RE = re.compile(r"^([A-Za-z][\w-]*|\*)?((?:#[\w-]+|\.[\w-]+|\[[^\]]*\])*)$")
+_COMPOUND_PART_RE = re.compile(r"#([\w-]+)|\.([\w-]+)|(\[[^\]]*\])")
+_ATTR_RE = re.compile(
+    r"""\[\s*([\w:-]+)\s*(?:([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+))\s*)?\]"""
+)
+_ATTR_OPS: dict[str, Callable[[str, str], bool]] = {
+    "=": lambda have, want: have == want,
+    "^=": lambda have, want: bool(want) and have.startswith(want),
+    "$=": lambda have, want: bool(want) and have.endswith(want),
+    "*=": lambda have, want: bool(want) and want in have,
+    "~=": lambda have, want: want in have.split(),
+    "|=": lambda have, want: have == want or have.startswith(want + "-"),
+}
+
+
+@dataclass(frozen=True)
+class _Compound:
+    tag: str | None
+    ids: tuple[str, ...]
+    classes: tuple[str, ...]
+    attrs: tuple[tuple[str, str, str], ...]
+
+    def matches(self, tag: str, attrs: dict[str, str]) -> bool:
+        if self.tag not in (None, "*", tag):
+            return False
+        if any(attrs.get("id") != i for i in self.ids):
+            return False
+        have_classes = attrs.get("class", "").split()
+        if any(c not in have_classes for c in self.classes):
+            return False
+        return all(
+            name in attrs and (not op or _ATTR_OPS[op](attrs[name], want))
+            for name, op, want in self.attrs
+        )
+
+
+def _parse_selector(selector: str) -> list[_Compound]:
+    """Parse a comma list of compound selectors (tag, #id, .class, [attr op value]).
+
+    Combinators and pseudo-classes are refused instead of guessed at: a wall
+    indicator that silently never matches would ingest the login page.
+    """
+    compounds: list[_Compound] = []
+    for text in re.split(r",(?![^\[]*\])", selector):
+        match = _COMPOUND_RE.match(text.strip())
+        if not text.strip() or match is None:
+            raise ValueError(f"Unsupported login indicator selector: {selector!r}")
+        ids: list[str] = []
+        classes: list[str] = []
+        attrs: list[tuple[str, str, str]] = []
+        for ident, cls, attr in _COMPOUND_PART_RE.findall(match.group(2)):
+            if ident:
+                ids.append(ident)
+            elif cls:
+                classes.append(cls)
+            else:
+                attr_match = _ATTR_RE.fullmatch(attr)
+                if attr_match is None:
+                    raise ValueError(f"Unsupported login indicator selector: {selector!r}")
+                value = next((g for g in attr_match.groups()[2:] if g is not None), "")
+                attrs.append((attr_match.group(1).lower(), attr_match.group(2) or "", value))
+        tag = match.group(1)
+        compounds.append(
+            _Compound(tag.lower() if tag else None, tuple(ids), tuple(classes), tuple(attrs))
+        )
+    return compounds
+
+
+class _ElementFinder(HTMLParser):
+    def __init__(self, compounds: list[_Compound]) -> None:
+        super().__init__()
+        self._compounds = compounds
+        self.found = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if not self.found:
+            have = {name: value or "" for name, value in attrs}
+            self.found = any(c.matches(tag.lower(), have) for c in self._compounds)
+
+
+def parse_login_indicator(selector: str) -> None:
+    """Raise ValueError when ``selector`` uses CSS the matcher does not support."""
+    _parse_selector(selector)
+
+
+def html_has_element(html: str, selector: str) -> bool:
+    """Whether fetched HTML contains an element matching ``selector``.
+
+    Replaces the page-side ``!document.querySelector(selector)`` readiness
+    check: crawl4ai 0.9.5 refuses JavaScript in a network request, so the
+    login-wall indicator is evaluated on the HTML that came back.
+    """
+    finder = _ElementFinder(_parse_selector(selector))
+    finder.feed(html)
+    return finder.found
 
 
 def should_retry_relaxed_for_thin_content(result: CrawlResult) -> bool:
@@ -148,6 +247,7 @@ def extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
         fit_markdown=fit,
         raw_markdown=raw,
         html=page.get("html", ""),
+        cleaned_html=page.get("cleaned_html", "") or "",
         word_count=len(text.split()),
         success=page.get("success", True),
         requested_url=url,

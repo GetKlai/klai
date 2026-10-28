@@ -114,6 +114,8 @@ import { Route as AppKnowledgeGapsGroupKeyRouteImport } from './routes/app/knowl
 import { Route as AdminPlatformFeedbackItemsItemIdRouteImport } from './routes/admin/platform/feedback.items.$itemId'
 import { Route as AdminPlatformFeedbackSubmissionsSubmissionIdRouteImport } from './routes/admin/platform/feedback.submissions.$submissionId'
 import { Route as AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport } from './routes/app/knowledge/$kbSlug_.edit-connector.$connectorId'
+import { Route as AppKnowledgeGapsClustersIndexRouteImport } from './routes/app/knowledge/gaps/clusters.index'
+import { Route as AppKnowledgeGapsClustersClusterKeyRouteImport } from './routes/app/knowledge/gaps/clusters.$clusterKey'
 import { Route as AppKnowledgeGapsSupportCasesIndexRouteImport } from './routes/app/knowledge/gaps/support-cases.index'
 import { Route as AppKnowledgeGapsSupportCasesCaseIdRouteImport } from './routes/app/knowledge/gaps/support-cases.$caseId'
 
@@ -667,6 +669,18 @@ const AppKnowledgeKbSlugEditConnectorConnectorIdRoute =
     path: '/knowledge/$kbSlug/edit-connector/$connectorId',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppKnowledgeGapsClustersIndexRoute =
+  AppKnowledgeGapsClustersIndexRouteImport.update({
+    id: '/knowledge/gaps/clusters/',
+    path: '/knowledge/gaps/clusters/',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
+const AppKnowledgeGapsClustersClusterKeyRoute =
+  AppKnowledgeGapsClustersClusterKeyRouteImport.update({
+    id: '/knowledge/gaps/clusters/$clusterKey',
+    path: '/knowledge/gaps/clusters/$clusterKey',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppKnowledgeGapsSupportCasesIndexRoute =
   AppKnowledgeGapsSupportCasesIndexRouteImport.update({
     id: '/knowledge/gaps/support-cases/',
@@ -786,7 +800,9 @@ export interface FileRoutesByFullPath {
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  '/app/knowledge/gaps/clusters/$clusterKey': typeof AppKnowledgeGapsClustersClusterKeyRoute
   '/app/knowledge/gaps/support-cases/$caseId': typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  '/app/knowledge/gaps/clusters/': typeof AppKnowledgeGapsClustersIndexRoute
   '/app/knowledge/gaps/support-cases/': typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 export interface FileRoutesByTo {
@@ -890,7 +906,9 @@ export interface FileRoutesByTo {
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  '/app/knowledge/gaps/clusters/$clusterKey': typeof AppKnowledgeGapsClustersClusterKeyRoute
   '/app/knowledge/gaps/support-cases/$caseId': typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  '/app/knowledge/gaps/clusters': typeof AppKnowledgeGapsClustersIndexRoute
   '/app/knowledge/gaps/support-cases': typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 export interface FileRoutesById {
@@ -1000,7 +1018,9 @@ export interface FileRoutesById {
   '/admin/platform/feedback/items/$itemId': typeof AdminPlatformFeedbackItemsItemIdRoute
   '/admin/platform/feedback/submissions/$submissionId': typeof AdminPlatformFeedbackSubmissionsSubmissionIdRoute
   '/app/knowledge/$kbSlug_/edit-connector/$connectorId': typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  '/app/knowledge/gaps/clusters/$clusterKey': typeof AppKnowledgeGapsClustersClusterKeyRoute
   '/app/knowledge/gaps/support-cases/$caseId': typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  '/app/knowledge/gaps/clusters/': typeof AppKnowledgeGapsClustersIndexRoute
   '/app/knowledge/gaps/support-cases/': typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 export interface FileRouteTypes {
@@ -1111,7 +1131,9 @@ export interface FileRouteTypes {
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
+    | '/app/knowledge/gaps/clusters/$clusterKey'
     | '/app/knowledge/gaps/support-cases/$caseId'
+    | '/app/knowledge/gaps/clusters/'
     | '/app/knowledge/gaps/support-cases/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -1215,7 +1237,9 @@ export interface FileRouteTypes {
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug/edit-connector/$connectorId'
+    | '/app/knowledge/gaps/clusters/$clusterKey'
     | '/app/knowledge/gaps/support-cases/$caseId'
+    | '/app/knowledge/gaps/clusters'
     | '/app/knowledge/gaps/support-cases'
   id:
     | '__root__'
@@ -1324,7 +1348,9 @@ export interface FileRouteTypes {
     | '/admin/platform/feedback/items/$itemId'
     | '/admin/platform/feedback/submissions/$submissionId'
     | '/app/knowledge/$kbSlug_/edit-connector/$connectorId'
+    | '/app/knowledge/gaps/clusters/$clusterKey'
     | '/app/knowledge/gaps/support-cases/$caseId'
+    | '/app/knowledge/gaps/clusters/'
     | '/app/knowledge/gaps/support-cases/'
   fileRoutesById: FileRoutesById
 }
@@ -2089,6 +2115,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/knowledge/gaps/clusters/': {
+      id: '/app/knowledge/gaps/clusters/'
+      path: '/knowledge/gaps/clusters'
+      fullPath: '/app/knowledge/gaps/clusters/'
+      preLoaderRoute: typeof AppKnowledgeGapsClustersIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/knowledge/gaps/clusters/$clusterKey': {
+      id: '/app/knowledge/gaps/clusters/$clusterKey'
+      path: '/knowledge/gaps/clusters/$clusterKey'
+      fullPath: '/app/knowledge/gaps/clusters/$clusterKey'
+      preLoaderRoute: typeof AppKnowledgeGapsClustersClusterKeyRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/app/knowledge/gaps/support-cases/': {
       id: '/app/knowledge/gaps/support-cases/'
       path: '/knowledge/gaps/support-cases'
@@ -2306,7 +2346,9 @@ interface AppRouteRouteChildren {
   AppKnowledgeActivityIndexRoute: typeof AppKnowledgeActivityIndexRoute
   AppKnowledgeGapsIndexRoute: typeof AppKnowledgeGapsIndexRoute
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute: typeof AppKnowledgeKbSlugEditConnectorConnectorIdRoute
+  AppKnowledgeGapsClustersClusterKeyRoute: typeof AppKnowledgeGapsClustersClusterKeyRoute
   AppKnowledgeGapsSupportCasesCaseIdRoute: typeof AppKnowledgeGapsSupportCasesCaseIdRoute
+  AppKnowledgeGapsClustersIndexRoute: typeof AppKnowledgeGapsClustersIndexRoute
   AppKnowledgeGapsSupportCasesIndexRoute: typeof AppKnowledgeGapsSupportCasesIndexRoute
 }
 
@@ -2342,8 +2384,11 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppKnowledgeGapsIndexRoute: AppKnowledgeGapsIndexRoute,
   AppKnowledgeKbSlugEditConnectorConnectorIdRoute:
     AppKnowledgeKbSlugEditConnectorConnectorIdRoute,
+  AppKnowledgeGapsClustersClusterKeyRoute:
+    AppKnowledgeGapsClustersClusterKeyRoute,
   AppKnowledgeGapsSupportCasesCaseIdRoute:
     AppKnowledgeGapsSupportCasesCaseIdRoute,
+  AppKnowledgeGapsClustersIndexRoute: AppKnowledgeGapsClustersIndexRoute,
   AppKnowledgeGapsSupportCasesIndexRoute:
     AppKnowledgeGapsSupportCasesIndexRoute,
 }

@@ -155,7 +155,19 @@ BEGIN
     END;
 END $$;
 
-SELECT '=== Test 14: portal_slack_installations (SPEC-SLACK-001 Cat-D) ===' AS test;
+SELECT '=== Test 14: portal_gap_proposals (knowledge-gap-to-article Cat-D) ===' AS test;
+-- Strict Cat-D: a SELECT without tenant context must raise insufficient_privilege.
+DO $$
+BEGIN
+    BEGIN
+        PERFORM COUNT(*) FROM portal_gap_proposals;
+        RAISE EXCEPTION 'RLS SMOKE FAILURE: SELECT on portal_gap_proposals without tenant context did not raise';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK: portal_gap_proposals raised insufficient_privilege as expected';
+    END;
+END $$;
+
+SELECT '=== Test 15: portal_slack_installations (SPEC-SLACK-001 Cat-D) ===' AS test;
 -- Strict Cat-D: a SELECT without tenant context must raise insufficient_privilege.
 DO $$
 BEGIN

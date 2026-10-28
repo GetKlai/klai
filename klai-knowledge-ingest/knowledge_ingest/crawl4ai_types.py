@@ -39,6 +39,11 @@ class CrawlResult:
     status_code: int | None = None
     error_type: str | None = None
     raw_error_text: str | None = None
+    # crawl4ai's HTML after excluded_tags and excluded_selector: what the
+    # login indicator is matched against, so a user menu in a stripped
+    # header never reads as a login wall (the page-side check used to run
+    # after the same chrome removal).
+    cleaned_html: str = ""
 
 
 @dataclass
