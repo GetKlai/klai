@@ -1,0 +1,176 @@
+name: Build and push klai-slack
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+    paths:
+      - 'klai-slack/**'
+      - 'klai-libs/log-utils/**'
+      - '.github/workflows/klai-slack.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+env:
+  # Opt in early to Node 24 for all JS-based actions (Node 20 EOL Sept 2026)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # Lint -> types -> tests, all gating the image build. pip-audit mirrors the
+  # mailer: external deps only, klai-log-utils is an editable path dep.
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: klai-slack
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Type check (pyright)
+        run: uv run pyright
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run --with pip-audit pip-audit --skip-editable
+
+      - name: Test (pytest)
+        run: uv run pytest -q --tb=short
+
+  build-push:
+    needs: quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # SPEC-SEC-INTERNAL-001 REQ-6: ban `==` / `!=` on secret-shaped variables
+      # across the whole klai-slack app tree. Each rule's own `files:` filter
+      # already scopes to klai-slack/app/**/*.py and ignores tests; this step
+      # broadens the action's scan path so the rules are actually exercised.
+      - name: Guard — no string-compare on secret (SPEC-SEC-INTERNAL-001 REQ-6)
+        uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6  # v1.5.0
+        with:
+          config: sgconfig.yml
+          paths: klai-slack/app
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push klai-slack
+        uses: docker/build-push-action@v7
+        with:
+          # SPEC-LOGGING-EXTRACT-001: build from repo root so the Dockerfile
+          # can COPY the shared klai-libs/log-utils path dep.
+          context: .
+          file: klai-slack/Dockerfile
+          push: true
+          # `:latest` is published only for main. The SHA tag stays
+          # unconditional so non-main builds cannot overwrite production's
+          # mutable tag.
+          tags: |
+            ghcr.io/getklai/klai-slack:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && 'ghcr.io/getklai/klai-slack:latest' || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  scan:
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+    steps:
+      # Checkout is required so trivy-action can find .trivy.yaml + the
+      # service's .trivyignore.yaml (paths are relative to repo root).
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # STRICT-tier scan per SPEC-CI-TRIVY-POLICY-001 (REQ-2).
+      #
+      # Direct CLI invocation bypasses an aquasecurity/trivy-action
+      # bug (0.35.0/0.36.0): with `format: sarif` the `severity` filter
+      # is honoured for the SARIF body but NOT for the exit-code, so
+      # a MEDIUM/LOW finding triggers exit-code 1 even when we asked
+      # for CRITICAL+HIGH gating. trivy CLI's `--severity` flag is
+      # honoured for both detection AND exit-code. .trivy.yaml stays
+      # in the repo as the canonical policy reference until the
+      # action lands proper config-file precedence.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567  # v0.3.1
+        with:
+          version: v0.76.1
+          cache: true
+
+      - name: Run Trivy vulnerability scanner
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 1 \
+            ghcr.io/getklai/klai-slack:${{ github.sha }}
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  deploy:
+    # Opt-in until the secrets are in place: every klai-slack secret is a
+    # startup validator, so rolling the image before the SOPS entries and the
+    # klai_slack database exist is a restart loop (the klai-mailer incident of
+    # 2026-05-05 had the same shape). Set the repository variable
+    # KLAI_SLACK_DEPLOY=true after the first manual deploy in
+    # docs/runbooks/slack-integration.md has gone green.
+    if: github.ref == 'refs/heads/main' && vars.KLAI_SLACK_DEPLOY == 'true'
+    # `needs: scan` lets the Trivy gate block the rollout.
+    needs: [build-push, scan]
+    runs-on: ubuntu-latest
+
+    steps:
+      # Deploy only on main-branch pushes, never from PR builds.
+      - name: Deploy to core-01
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          script: |
+            set -e
+            source /opt/klai/.env
+            docker pull ghcr.io/getklai/klai-slack:latest
+            # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
+            /opt/klai/scripts/compose-up.sh klai-slack
