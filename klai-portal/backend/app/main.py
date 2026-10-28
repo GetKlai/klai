@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import auth_password_policy, me, orgs, signup
 from app.api.admin import router as admin_router
 from app.api.admin_api_keys import router as admin_api_keys_router
+from app.api.admin_slack import router as admin_slack_router
 from app.api.admin_widgets import router as admin_widgets_router
 from app.api.app_account import router as app_account_router
 from app.api.app_activity import router as app_activity_router
@@ -29,6 +30,7 @@ from app.api.connectors import router as connectors_router
 from app.api.groups import router as groups_router
 from app.api.internal import router as internal_router
 from app.api.internal_connectors import router as internal_connectors_router
+from app.api.internal_slack import router as internal_slack_router
 from app.api.internal_support_cases import router as internal_support_cases_router
 from app.api.kb_images import router as kb_images_router
 from app.api.knowledge import router as knowledge_router
@@ -427,6 +429,8 @@ app.include_router(internal_connectors_router)
 # SPEC-RAG-SUPPORT-GAP: internal HubSpot support-case ingest + reconcile, and
 # the app-facing transcript import (both restricted-evidence, no KB publish).
 app.include_router(internal_support_cases_router)
+# SPEC-SLACK-001 §7.2: klai-slack links and unlinks a workspace.
+app.include_router(internal_slack_router)
 app.include_router(app_support_cases_router)
 app.include_router(knowledge_bases_router)
 app.include_router(app_account_router)
@@ -444,6 +448,7 @@ app.include_router(vitals_router)
 app.include_router(kb_images_router)
 app.include_router(mcp_servers_router)
 app.include_router(admin_api_keys_router)
+app.include_router(admin_slack_router)
 app.include_router(admin_widgets_router)
 app.include_router(partner_router)
 app.include_router(shield_router)
