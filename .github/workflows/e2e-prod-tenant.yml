@@ -9,7 +9,10 @@ name: E2E prod-tenant
 #     failed.
 #   - schedule:     04:00 UTC nightly, even without a deploy, to catch
 #     drift / cert-expiry / external-dependency regressions.
-#   - workflow_dispatch: manual trigger from the Actions UI.
+#   - workflow_dispatch: manual trigger from the Actions UI, and Auto-rollback
+#     (auto-rollback.yml), which starts one run to confirm a red result before
+#     rolling back and one after a rollback. Its `reason` input becomes the run
+#     name, which is how Auto-rollback finds its run and how the two read apart.
 #
 # Running specs require these secrets:
 #   E2E_BASE_URL       e.g. https://e2e.getklai.com
@@ -20,6 +23,8 @@ name: E2E prod-tenant
 #                        it is not skipped; see docs/runbooks/widget-probe.md.
 #
 # docs/testing/test-suite-plan.md §8.
+
+run-name: "${{ inputs.reason && format('E2E prod-tenant: {0}', inputs.reason) || '' }}"
 
 on:
   workflow_run:
@@ -40,6 +45,11 @@ on:
   schedule:
     - cron: '0 4 * * *'
   workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why this run was started (shown as the run name)'
+        type: string
+        default: ''
 
 # Avoid concurrent runs against the same e2e tenant — they collide on
 # templates / KBs / settings. One in flight, one queued.

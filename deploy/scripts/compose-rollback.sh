@@ -16,6 +16,7 @@
 #   rb_gate <service> <gate> [--reverify] <cmd...>
 #                                         run a gate; --reverify runs <cmd> again after a rollback
 #   rb_deployed                           last line of a green run: ledger + report
+#   rb_replay <gate>                      after the run, undo the last green sync (rollback-since.sh)
 #
 # Exit codes of a red run: 3 rolled back, 4 rollback failed. The ledger line,
 # the report (<reports>/compose.json, also printed as "ROLLBACK_REPORT <json>")
@@ -26,6 +27,12 @@
 # the next red gate restores nothing (a .prev made now would be the failing
 # state) and reports rollback_failed with gate previous-state-unverified. A
 # green run (rb_deployed) removes it.
+#
+# A green run also leaves $RB_DIR/.compose-prev-state: the commits and the paths
+# and services it kept and touched. rb_replay reads it to undo that sync when a
+# later check goes red (E2E prod-tenant, slice S6). The next sync removes it in
+# rb_init, because from then on the .prev copies belong to that sync, and a
+# replay removes it so the same sync is never undone twice.
 #
 # Known ceilings
 #   - Failures before the first recreate (the file copies, bash -n) are outside
@@ -47,6 +54,7 @@ RB_EVENT_LOG="${KLAI_AUTO_ROLLBACK_LOG:-$RB_DIR/logs/auto-rollback.log}"
 # The commit the compose state on the host was last synced from; the "from" of the ledger.
 RB_MARKER="$RB_DIR/.compose-commit"
 RB_FAILED_FLAG="$RB_DIR/.compose-rollback-failed"
+RB_STATE="$RB_DIR/.compose-prev-state"
 
 # Images that migrate their own database when they start: Twenty (`upgrade` on
 # start), LiteLLM (USE_PRISMA_MIGRATE), GlitchTip (`manage.py migrate`), Zitadel
@@ -74,6 +82,7 @@ rb_init() {
   RB_TOUCHED=()
   RB_FROM="$(cat "$RB_MARKER" 2>/dev/null || true)"
   RB_FROM="${RB_FROM:-none}"
+  rm -f "$RB_STATE"
   mkdir -p "$RB_REPORT_DIR"
   RB_LOG="$RB_REPORT_DIR/compose.log"
   : > "$RB_LOG"
@@ -145,10 +154,25 @@ rb_finish() {
     "$(rb_json "$gate")" "$outcome" "$ts" "$(rb_json "$RB_LOG")")"
   printf '%s\n' "$report" > "$RB_REPORT_DIR/compose.json"
   case "$outcome" in
-    deployed) printf '%s\n' "$RB_TO" > "$RB_MARKER"; rm -f "$RB_FAILED_FLAG" ;;
-    rolled_back) code=3 ;;
+    deployed)
+      printf '%s\n' "$RB_TO" > "$RB_MARKER"
+      rm -f "$RB_FAILED_FLAG"
+      local f
+      {
+        printf 'from=%s\nto=%s\n' "$RB_FROM" "$RB_TO"
+        for f in "${RB_KEPT[@]}"; do printf 'kept=%s\n' "$f"; done
+        for f in "${RB_NEW[@]}"; do printf 'new=%s\n' "$f"; done
+        for f in "${RB_TOUCHED[@]}"; do printf 'touched=%s\n' "$f"; done
+      } > "$RB_STATE" ;;
+    rolled_back)
+      code=3
+      rm -f "$RB_STATE"
+      # During a sync the marker already names RB_FROM; after a replay the host
+      # is back on RB_FROM and the marker has to follow.
+      [[ "$RB_FROM" == none ]] || printf '%s\n' "$RB_FROM" > "$RB_MARKER" ;;
     *)
       code=4
+      rm -f "$RB_STATE"
       # Keep the first failure's commit and gate; later runs only report.
       [[ -e "$RB_FAILED_FLAG" ]] || printf 'commit=%s gate=%s\n' "$RB_TO" "$gate" > "$RB_FAILED_FLAG" ;;
   esac
@@ -166,6 +190,33 @@ rb_finish() {
 }
 
 rb_deployed() { rb_finish compose none deployed; }
+
+# The red gate here is the one that already failed after the sync (E2E): the
+# state the sync recorded is loaded and rb_gate runs its usual rollback, flag
+# and self-migrating checks included, and exits 3 or 4 the same way.
+rb_replay() {
+  local key val
+  if [[ ! -s "$RB_STATE" ]]; then
+    echo "::error::no $RB_STATE: the last compose sync left nothing to undo" >&2
+    return 1
+  fi
+  RB_KEPT=()
+  RB_NEW=()
+  RB_TOUCHED=()
+  while IFS='=' read -r key val; do
+    case "$key" in
+      from) RB_FROM="$val" ;;
+      to) RB_TO="$val" ;;
+      kept) RB_KEPT+=("$val") ;;
+      new) RB_NEW+=("$val") ;;
+      touched) RB_TOUCHED+=("$val") ;;
+    esac
+  done < "$RB_STATE"
+  mkdir -p "$RB_REPORT_DIR"
+  RB_LOG="$RB_REPORT_DIR/compose.log"
+  : > "$RB_LOG"
+  rb_gate compose "$1" false
+}
 
 rb_gate() {
   local service="$1" gate="$2" reverify=0

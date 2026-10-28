@@ -116,6 +116,9 @@ check "  report outcome" deployed "$(report outcome)"
 file_is "  marker moves to the new commit" bbb222 .compose-commit
 check "  file created by the sync stays" yes "$(exists caddy/created-by-sync.conf)"
 check "  no failure flag" no "$(exists .compose-rollback-failed)"
+check "  state for a later replay: commits, kept paths, touched services" \
+    "from=aaa111|to=bbb222|kept=$case_dir/docker-compose.yml|touched=caddy" \
+    "$(grep -E '^(from|to|touched)=|^kept=.*docker-compose' "$case_dir/.compose-prev-state" | paste -sd'|' -)"
 
 # AT-b1: a red recreate puts the .prev files back, recreates and verifies again.
 new_case at_b1
@@ -130,6 +133,7 @@ check "  config service recreated through compose-up.sh" "compose-up --no-pull -
 check "  after the restore: config service recreated, then the sweep ran again" "sweep compose-up sweep" "$(call_order)"
 check "  second sweep saw the restored compose file" 1 "$(grep -c 'caddy:2.9' <<< "$(grep '^sweep' "$case_dir/fixtures/calls" | tail -n1)")"
 check "  file created by the sync removed" no "$(exists caddy/created-by-sync.conf)"
+check "  no replay state after a rollback" no "$(exists .compose-prev-state)"
 check "  ledger" $'compose\tcompose\taaa111\tbbb222\tbbb222\trolled_back' "$(ledger_last)"
 for key in service kind from to commit gate outcome ts log; do
     report "$key" > /dev/null || fail "  report lacks key $key"

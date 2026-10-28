@@ -38,9 +38,11 @@ case "$1" in
     [[ "$(pwd -P)" == "$(cd "$KLAI_COMPOSE_DIR" && pwd -P)" ]] \
         || { echo "stub: compose ps outside $KLAI_COMPOSE_DIR (cwd $PWD)" >&2; exit 1; }
     [[ -f "$fx/running_cid" ]] && cat "$fx/running_cid"; exit 0 ;;
-  inspect) echo "sha256:0123456789abcdef0123456789abcdef"; exit 0 ;;
+  inspect)
+    if [[ "$*" == *Config.Image* ]]; then echo "klai/retrieval-api:local"; else echo "sha256:0123456789abcdef0123456789abcdef"; fi
+    exit 0 ;;
   tag|pull) exit 0 ;;
-  image) exit 0 ;;
+  image) [[ "${3:-}" == "$(cat "$fx/missing_image" 2>/dev/null)" ]] && exit 1; exit 0 ;;
   ps) echo "failedcontainer1"; exit 0 ;;
   logs) echo "container log line: boom"; exit 0 ;;
   run) c=$(pop probe_codes); printf '%s' "$c"; [[ "$c" =~ ^2 ]] || exit 22; exit 0 ;;
@@ -107,7 +109,7 @@ new_case() {
 run_script() {
     out=$(cd "$work" && KLAI_COMPOSE_DIR="$fx/opt" KLAI_DEPLOY_LOCK_DIR="$fx" KLAI_DEPLOY_LOCK_WAIT="${LOCK_WAIT:-5}" KLAI_DOCKER_BIN="$work/docker" KLAI_COMPOSE_UP="$work/compose-up.sh" KLAI_ERROR_WATCH="$work/error-watch.sh" \
           KLAI_PROBE_TIMEOUT=0 KLAI_PROBE_INTERVAL=0 GITHUB_SHA=abc123 \
-          bash "$target" retrieval-api ghcr.io/getklai/retrieval-api:abc123 "$@" 2>"$fx/stderr")
+          bash "$target" retrieval-api "${IMAGE:-ghcr.io/getklai/retrieval-api:abc123}" "$@" 2>"$fx/stderr")
     rc=$?
     ledger="$fx/opt/deploy-ledger.log"
     report="$fx/opt/deploy-reports/retrieval-api.json"
@@ -130,6 +132,7 @@ check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
 check "ledger carries commit and kind" grep -q $'\timage\tretrieval-api\t0123456789ab\tghcr.io/getklai/retrieval-api:abc123\tabc123\tdeployed$' "$ledger"
 check "report outcome deployed" grep -q '"outcome":"deployed"' "$report"
 check "report line printed on stdout" grep -q '^ROLLBACK_REPORT {' <<< "$out"
+check "report keeps the probe for a later replay" grep -q '"probe":"http://retrieval-api:8040/health","probe_network":"klai-net"' "$report"
 check "no event for a green deploy" test ! -e "$event"
 check "previous kept" has_line "$fx/docker_argv" "tag sha256:0123456789abcdef0123456789abcdef klai/retrieval-api:previous"
 check "exact sha pulled, tagged as compose tag" has_line "$fx/docker_argv" "tag ghcr.io/getklai/retrieval-api:abc123 klai/retrieval-api:local"
@@ -254,6 +257,7 @@ check "exit 4" test "$rc" = 4
 check "gate no-previous-image" grep -q '"gate":"no-previous-image"' "$report"
 check "ledger from is none" grep -q $'\tretrieval-api\tnone\t' "$ledger"
 check "no rollback attempted" test "$(count_lines "$fx/compose_up_argv")" = 1
+check "no probe given: empty probe keys" grep -q '"probe":"","probe_network":""' "$report"
 
 echo "# probe network option"
 new_case net "0" "200"
@@ -278,6 +282,35 @@ wait "$holder"
 check "exit 1 when the lock stays held" test "$rc" = 1
 check "says why" grep -q 'another deploy of retrieval-api' "$fx/stderr"
 check "nothing was touched" test ! -s "$fx/docker_argv"
+
+echo "# --rollback: a later gate (E2E) went red, the image that ran before goes back"
+new_case rb_green "0" "200"
+IMAGE=aaaaaaaaaaa1 run_script --rollback e2e
+check "exit 3" test "$rc" = 3
+check "the running image kept as previous" has_line "$fx/docker_argv" "tag sha256:0123456789abcdef0123456789abcdef klai/retrieval-api:previous"
+check "no registry pull" bash -c "! grep -q '^pull' '$fx/docker_argv'"
+check "the old image tagged as the running container's compose tag" has_line "$fx/docker_argv" "tag aaaaaaaaaaa1 klai/retrieval-api:local"
+check "forced recreate" has_line "$fx/compose_up_argv" "--no-pull --force-recreate retrieval-api"
+check "ledger reads like a deploy-time rollback: from = serving again, to = rejected" \
+    grep -q $'\timage\tretrieval-api\taaaaaaaaaaa1\t0123456789ab\tabc123\trolled_back$' "$ledger"
+check "report gate e2e" grep -q '"gate":"e2e","outcome":"rolled_back"' "$report"
+check "auto_rollback event with gate e2e" grep -q '"outcome":"rolled_back","deploy_service":"retrieval-api","gate":"e2e"' "$event"
+
+echo "# --rollback: the old image is gone"
+new_case rb_missing "0" "200"
+echo aaaaaaaaaaa1 > "$fx/missing_image"
+IMAGE=aaaaaaaaaaa1 run_script --rollback e2e
+check "exit 4" test "$rc" = 4
+check "gate rollback-image-missing" grep -q '"gate":"rollback-image-missing","outcome":"rollback_failed"' "$report"
+check "nothing recreated" test ! -s "$fx/compose_up_argv"
+
+echo "# --rollback: the old image is red too -> the one that ran goes back, exit 4"
+new_case rb_red "1 0" "200"
+IMAGE=aaaaaaaaaaa1 run_script --rollback e2e
+check "exit 4" test "$rc" = 4
+check "the image that ran is put back" has_line "$fx/docker_argv" "tag klai/retrieval-api:previous klai/retrieval-api:local"
+check "two compose-up calls, no third" test "$(count_lines "$fx/compose_up_argv")" = 2
+check "gate rollback-compose-up" grep -q '"gate":"rollback-compose-up","outcome":"rollback_failed"' "$report"
 
 if (( failures > 0 )); then
     echo "$failures check(s) failed"
