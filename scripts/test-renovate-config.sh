@@ -112,8 +112,25 @@ assert_line "$config" \
   "      datasourceTemplate: 'github-releases'," \
   'Qdrant must only be proposed from a published GitHub release'
 assert_line "$config" \
-  "      matchDatasources: ['docker', 'github-releases']," \
+  "      matchDatasources: ['docker', 'github-releases', 'github-tags']," \
   'a Qdrant series bump from GitHub releases must stay in the non-automerge data store group'
+# Docker Hub drops every timestamp for an image with more than 1000 tags, so
+# these come from GitHub (#1730: meilisearch v1.56.0 passed the age check 43
+# minutes after its push). Each needs its custom manager, and its GitHub name
+# must sit in the data-store rules, which match packageName, not depName.
+for pkg in 'getmeili/meilisearch:v' 'image: mongo:' 'image: redis:' 'image: rabbitmq:' \
+  'pgvector/pgvector:' 'grafana/grafana:' 'ollama/ollama:'; do
+  if ! grep -qF "matchStrings: ['${pkg}(?<currentValue>" "$config"; then
+    echo "FAIL: ${pkg%:*} must be read by a GitHub-sourced custom manager (Docker Hub drops its timestamps)" >&2
+    exit 1
+  fi
+done
+for name in 'mongodb/mongo' 'redis/redis' 'rabbitmq/rabbitmq-server' 'meilisearch/meilisearch'; do
+  if [ "$(grep -cF "        '${name}'," "$config")" -lt 3 ]; then
+    echo "FAIL: ${name} must be listed in the data-store group, the major rule and the strict rule" >&2
+    exit 1
+  fi
+done
 # Under the global 'flexible' a still-young version is proposed anyway, with
 # only the stability check pending; 'strict' is what holds the branch back.
 qdrant_rules=$(grep -A1 -F "      matchPackageNames: ['qdrant/qdrant']," "$config")
