@@ -1,12 +1,14 @@
 # Automatic rollback alerts (SPEC-INFRA-AUTO-ROLLBACK-001).
 #
-# deploy-with-rollback.sh and rollback-rehearsal-assert.sh append one JSON line
-# per event to /opt/klai/logs/auto-rollback.log on core-01; Alloy ships it to
-# VictoriaLogs as `service:auto-rollback` (deploy/alloy/config.alloy). Fields:
-# event (auto_rollback | rollback_rehearsal), outcome (rolled_back |
-# rollback_failed | ok), deploy_service, gate, commit.
+# deploy-with-rollback.sh, rollback-rehearsal-assert.sh and
+# datastore-restore-rehearsal.sh append one JSON line per event to
+# /opt/klai/logs/auto-rollback.log on core-01; Alloy ships it to VictoriaLogs as
+# `service:auto-rollback` (deploy/alloy/config.alloy). Fields: event
+# (auto_rollback | rollback_rehearsal | datastore_restore_rehearsal), outcome
+# (rolled_back | rollback_failed | ok | failed), deploy_service or store, gate,
+# commit.
 #
-# Both rules carry severity=critical and no component label, so policies.yaml
+# All rules carry severity=critical and no component label, so policies.yaml
 # sends them to klai-ops-alerts-email through its severity=critical route.
 # Neither carries page="true": whether a rolled-back deploy should page is not
 # decided. auto_rollback_event groups by service, gate and outcome, so one mail
@@ -175,3 +177,80 @@ groups:
               2. On core-01: tail -n 3 /opt/klai/logs/auto-rollback.log
                  (line present but not in VictoriaLogs: Alloy or VictoriaLogs is the break)
               3. Start it by hand: gh workflow run rollback-rehearsal.yml
+
+      # The dead-man's switch for the datastore restore rehearsal (S8b): it
+      # writes one event:datastore_restore_rehearsal line per store, outcome ok
+      # when that store's snapshot restored and probed green. It runs on the 1st
+      # and the 15th. 30 days is the longest window VictoriaLogs can answer (its
+      # retention), so the rule fires after two missed runs, or when no store at
+      # all restored for a month. A single failed store already ends its run red
+      # and opens an issue. noDataState and execErrState Alerting for the same
+      # reason as the rule above.
+      - uid: obs-datastore-rehearsal-missing
+        title: datastore_restore_rehearsal_missing
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 2592000
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:30d service:auto-rollback event:datastore_restore_rehearsal outcome:ok
+                  | stats count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 2592000
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 2592000
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 30m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-AUTO-ROLLBACK-001
+          service_group: deploy
+          alert_type: synthetic
+        annotations:
+          summary: 'No data store restored in a rehearsal for 30 days: nothing proves the data rollback points restore'
+          runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/auto-rollback.md#the-datastore-restore-rehearsal-is-missing'
+          description: |
+            The Datastore restore rehearsal workflow (datastore-restore-rehearsal.yml,
+            1st and 15th of the month) writes an event:datastore_restore_rehearsal
+            outcome:ok line per store whose snapshot restored into a throwaway
+            container. None reached VictoriaLogs in 30 days.
+
+            Check, in order:
+              1. gh run list --workflow datastore-restore-rehearsal.yml --limit 5
+                 (red: read the failing store; skipped or absent: the schedule stopped)
+              2. On core-01: grep datastore_restore_rehearsal /opt/klai/logs/auto-rollback.log | tail -n 5
+                 (lines present but not in VictoriaLogs: Alloy or VictoriaLogs is the break)
+              3. Start it by hand: gh workflow run datastore-restore-rehearsal.yml
