@@ -49,9 +49,10 @@ in_store() {
         case "$1" in -l) list=1 ;; --data-only) data=1 ;; --create) create=1 ;; -n) n="$2" ;; -t) tb="$2" ;; esac
         shift
       done
-      if (( list )); then awk '$1 == "T" { split($2, p, "."); print "1; 0 0 TABLE DATA " p[1] " " p[2] " owner" }'
-      elif (( data )); then
-        awk -v want="$n.$tb" '$1 == "T" && $2 == want { print "COPY " $2 " (id) FROM stdin;"; for (i = 0; i < $3; i++) print "row"; print "\\." }'
+      if (( data )); then
+        awk '$1 == "T" { print "COPY " $2 " (id) FROM stdin;"; for (i = 0; i < $3; i++) print "row"; print "\\." }'
+        # A dump that does not read back: pg_restore stops with exit 1.
+        if [[ -e "$F/corrupt_dump" ]]; then exit 1; fi
       elif (( create )); then
         local first=1
         while read -r k name cnt; do
@@ -78,17 +79,20 @@ if [[ "$1" == compose ]]; then
   shift; [[ "$1" == --project-directory ]] && shift 2
   case "$1" in
     exec) shift; [[ "$1" == -T ]] && shift; t="$1"; shift; in_store "$t" "$@" ;;
-    ps) echo "cid-${!#}" ;;
+    ps) for a in "$@"; do [[ "$a" == -* || "$a" == ps ]] || echo "cid-$a"; done ;;
     stop) : ;;
     up) svc="${!#}"; img_of "$svc" > "$F/running/$svc" ;;
   esac
 elif [[ "$1" == exec ]]; then
   shift; [[ "$1" == -i ]] && shift; t="$1"; shift; in_store "$t" "$@"
 elif [[ "$1" == inspect ]]; then
-  case "$3" in
-    *Mounts*) echo "/var/lib/docker/volumes/${4#cid-}" ;;
-    *Config.Image*) cat "$F/running/${4#cid-}" ;;
-  esac
+  fmt="$3"; shift 3
+  for c in "$@"; do
+    case "$fmt" in
+      *Mounts*) echo "/var/lib/docker/volumes/${c#cid-}" ;;
+      *Config.Image*) cat "$F/running/${c#cid-}" ;;
+    esac
+  done
 elif [[ "$1" == run ]]; then
   while (( $# )); do [[ "$1" == --name ]] && mkdir -p "$F/db/$2"; shift; done
   echo ctr-id
@@ -102,7 +106,10 @@ FAKE
 cat > "$bin/df" <<'FAKE'
 #!/usr/bin/env bash
 echo "Filesystem 1-blocks Used Available Capacity Mounted"
-echo "/dev/fake 1000000000000 1 $(cat "$FAKE/df_avail") 1% /"
+# Only the backup root has the fixture's free space; any other path plenty, so
+# a check against the wrong filesystem passes and the test notices.
+if [[ "${!#}" == */backups ]]; then avail="$(cat "$FAKE/df_avail")"; else avail=999999999999; fi
+echo "/dev/fake 1000000000000 1 $avail 1% /"
 FAKE
 printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/flock"
 chmod +x "$bin"/*
@@ -122,6 +129,14 @@ OLD_COMPOSE='services:
     image: twentycrm/twenty:v2.51.0
   litellm:
     image: ghcr.io/berriai/litellm:v1.106.2
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg18
+  glitchtip-migrate:
+    image: glitchtip/glitchtip:6.2.6
+  glitchtip-web:
+    image: glitchtip/glitchtip:6.2.6
+  glitchtip-worker:
+    image: glitchtip/glitchtip:6.2.6
 volumes:
   umami-postgres-data-18:
 '
@@ -130,11 +145,13 @@ UMAMI_BUMP="${OLD_COMPOSE//postgres:18.6-alpine
   umami:}"
 TWENTY_BUMP="${OLD_COMPOSE//v2.51.0/v2.52.0}"
 LITELLM_BUMP="${OLD_COMPOSE//v1.106.2/v1.107.0}"
+UMAMI_APP_BUMP="${OLD_COMPOSE//umami:3.0.0/umami:3.1.0}"
+GLITCHTIP_BUMP="${OLD_COMPOSE//glitchtip:6.2.6/glitchtip:6.3.0}"
 
 new_case() {
   case_dir="$work/$1"
   local f="$case_dir/fake"
-  mkdir -p "$case_dir/scripts" "$f/running" "$f/db/umami-postgres/umami" "$f/db/umami-postgres/postgres" "$f/db/crm-postgres/twenty"
+  mkdir -p "$case_dir/scripts" "$f/running" "$f/db/umami-postgres/umami" "$f/db/umami-postgres/postgres" "$f/db/crm-postgres/twenty" "$f/db/postgres/glitchtip"
   : > "$f/calls"
   printf '%s' "$OLD_COMPOSE" > "$case_dir/docker-compose.yml"
   awk '/^  [a-z]/ { svc = $1; sub(/:$/, "", svc) } /^    image:/ { print $2 > (dir "/" svc) }' dir="$f/running" "$case_dir/docker-compose.yml"
@@ -142,6 +159,8 @@ new_case() {
   echo 52 > "$f/db/umami-postgres/umami/public.session"
   echo 1 > "$f/db/crm-postgres/twenty/core.objectMetadata"
   echo 20 > "$f/db/crm-postgres/twenty/core.fieldMetadata"
+  echo 1 > "$f/db/postgres/glitchtip/public.users_user"
+  echo 1 > "$f/db/postgres/glitchtip/public.projects_project"
   echo 1000 > "$f/du_bytes"
   echo 1000000 > "$f/df_avail"
   echo aaa111 > "$case_dir/.compose-commit"
@@ -240,7 +259,7 @@ inventory_check() {
   # image has an app row.
   while read -r name s; do
     [[ "$s" =~ (^|/)(postgres|pgvector/pgvector): ]] && [[ -z "$(ds_store_row "$name")" ]] && bad+=" missing-store:$name"
-    [[ "$s" =~ twentycrm/twenty|glitchtip/glitchtip|zitadel/zitadel|berriai/litellm ]] \
+    [[ "$s" =~ twentycrm/twenty|glitchtip/glitchtip|zitadel/zitadel|berriai/litellm|umami-software/umami ]] \
       && [[ -z "$(ds_app_row "$name")" ]] \
       && ! grep -qw "$name" <<< "$DS_APPS" && bad+=" missing-app:$name"
   done < <(ds_images "$compose")
@@ -359,6 +378,64 @@ run_driver "$LITELLM_BUMP" "" 'rb_gate caddy sync-recreate red caddy'
 check "LiteLLM bump, red gate -> exit 4" 4 "$rc"
 check "  no dump" 0 "$(calls pg_dump)"
 check "  report gate" self-migrating-image "$(report gate)"
+
+# --- a dump that does not read back refuses the sync before anything changed --
+new_case corrupt_dump
+: > "$case_dir/fake/corrupt_dump"
+run_driver "$UMAMI_BUMP"
+check "pg_restore cannot read the dump back -> exit 4" 4 "$rc"
+check "  report gate" snapshot "$(report gate)"
+check "  compose file untouched" postgres:18.6-alpine "$(umami_pg_image)"
+check "  no recreate, no failure flag" "0 no" "$(calls '^sweep') $([[ -e "$case_dir/.compose-rollback-failed" ]] && echo yes || echo no)"
+
+# --- Umami migrates its own database (Prisma) -> snapshot and restore ---------
+new_case umami_app
+: > "$case_dir/fake/new_writes"
+: > "$case_dir/fake/probe_red"
+run_driver "$UMAMI_APP_BUMP"
+check "Umami 3.0.0 -> 3.1.0, probe red -> exit 3" 3 "$rc"
+check "  snapshot named after the app, umami database only" "umami.dump" "$(cd "$(find "$case_dir/backups" -maxdepth 1 -name 'pre-umami-2*')" && ls ./*.dump | sed 's#^\./##')"
+check "  store not recreated, app stopped" "0 1" "$(calls 'force-recreate umami-postgres') $(calls 'compose .* stop umami$')"
+check "  umami restored to the snapshot" 91 "$(count umami-postgres/umami/public.website_event)"
+check "  Umami back on its previous image" ghcr.io/umami-software/umami:3.0.0 "$(running umami)"
+
+# --- GlitchTip: migrate and web change together -> one snapshot ---------------
+new_case glitchtip_one_snapshot
+run_driver "$GLITCHTIP_BUMP"
+check "GlitchTip bump, green -> exit 0" 0 "$rc"
+check "  one snapshot of the glitchtip database" "1 1" "$(find "$case_dir/backups" -maxdepth 1 -name 'pre-glitchtip-*' | wc -l | tr -d ' ') $(calls 'pg_dump -U klai -Fc -d glitchtip')"
+check "  taken under the migrating service" yes "$([[ -n "$(snapdir glitchtip-migrate)" ]] && echo yes || echo no)"
+
+# --- the migrate job ran the new image, web still shows the old one -> restore -
+new_case glitchtip_migrate_ran
+: > "$case_dir/fake/probe_red"
+run_driver "$GLITCHTIP_BUMP" "" 'echo glitchtip/glitchtip:6.3.0 > "$FAKE/running/glitchtip-migrate"; echo 2 > "$FAKE/db/postgres/glitchtip/public.users_user"; rb_gate caddy sync-recreate red caddy'
+check "red gate before the sweep, migrate already ran 6.3.0 -> exit 3" 3 "$rc"
+check "  glitchtip restored, not skipped" 1 "$(calls 'DROP DATABASE IF EXISTS "glitchtip"')"
+check "  migrated rows gone" 1 "$(count postgres/glitchtip/public.users_user)"
+check "  ledger: restored" "glitchtip-migrate snapshot,glitchtip-migrate restored" "$(data_ledger)"
+
+# --- no service of the row ran the new image -> nothing restored -------------
+new_case glitchtip_never_ran
+run_driver "$GLITCHTIP_BUMP" "" 'rb_gate caddy sync-recreate red caddy'
+check "red gate before the sweep, no GlitchTip container on 6.3.0 -> exit 3" 3 "$rc"
+check "  no restore" 0 "$(calls 'DROP DATABASE')"
+check "  ledger: not_needed" "glitchtip-migrate snapshot,glitchtip-migrate not_needed" "$(data_ledger)"
+
+# --- dry mode is refused for an app row: it would migrate the live database ----
+new_case dry_app_refused
+echo crm > "$case_dir/.datastore-dry"
+: > "$case_dir/fake/twenty_red_first"
+run_driver "$TWENTY_BUMP" "" "" 'rb_gate crm twenty-upgrade --reverify "$KLAI_COMPOSE_DIR/scripts/check-twenty-upgrade.sh"'
+check "dry flag on Twenty -> refused, normal run, exit 3" 3 "$rc"
+check "  refusal printed" 1 "$(grep -c 'dry mode is for stores only' "$case_dir/out")"
+check "  flag removed" no "$([[ -e "$case_dir/.datastore-dry" ]] && echo yes || echo no)"
+check "  live restore, no throwaway" "1 0" "$(calls 'exec -T crm-postgres psql .*DROP') $(calls 'docker run')"
+
+# --- the window counts from the end of the dumps -------------------------------
+new_case epoch_after_dumps
+run_driver "$UMAMI_BUMP" 'echo "epoch line count: $(grep -c ^epoch= "${DS_SNAPSHOTS[0]}/meta") last: $(tail -n1 "${DS_SNAPSHOTS[0]}/meta" | cut -d= -f1)"'
+check "epoch written once, after the dump" "epoch line count: 1 last: epoch" "$(grep '^epoch line count' "$case_dir/out")"
 
 echo
 if [[ "$failures" -eq 0 ]]; then

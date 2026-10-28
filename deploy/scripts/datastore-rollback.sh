@@ -36,15 +36,24 @@
 # Baseline counts are read from the dump itself (the COPY rows of each probe
 # table), not from a live count taken after it: the database keeps taking
 # writes during and after the dump, and a live count would differ from the
-# restored state on any busy table. Reading the dump back also proves the
-# archive is readable before anything is changed.
+# restored state on any busy table. The count is one full pg_restore pass over
+# the archive whose exit status decides: a per-table `pg_restore -t` read a
+# truncated dump without error when the table sat before the cut (verified on
+# postgres:18.6-alpine), and a dump that does not read back would only fail
+# after the live database had been dropped.
+#
+# The 30-minute window (R4) counts from the end of the last dump of the run,
+# just before the first file is replaced, so a long dump does not eat it.
 #
 # Dry mode, for proving the path on production: a file $RB_DIR/.datastore-dry
-# holding one inventory name (e.g. umami-postgres). The next sync that changes
-# that entry takes the real snapshot, forces the probe red with a table that
-# does not exist, and on the rollback restores into a throwaway container
-# instead of the live store; the live store only gets its previous image back
-# on the same volume. The file is removed when it is used, so it applies once.
+# holding one store name (e.g. umami-postgres). The next sync that changes that
+# store takes the real snapshot, forces the probe red with a table that does
+# not exist, and on the rollback restores into a throwaway container instead of
+# the live store; the live store only gets its previous image back on the same
+# volume, which a Postgres patch release reads unchanged. The file is removed
+# when it is used, so it applies once. Stores only: a new app image would
+# migrate the live database, and putting its old image back without a live
+# restore is the state this file exists to prevent.
 #
 # Known ceilings
 #   - Snapshots under backups/pre-* are not pruned; backup.sh retention only
@@ -54,6 +63,12 @@
 #     beside this sync, so a dump taken here could already be post-migration. It
 #     is listed with that workflow as owner; a red gate after a LiteLLM image
 #     change restores nothing (rollback_failed, gate self-migrating-image).
+#     LiteLLM is still a consumer of the main Postgres. A Postgres bump
+#     force-recreates it on its unchanged image, which re-runs its Prisma
+#     migrate against a schema already at that version: a no-op. When Postgres
+#     and LiteLLM change in the same sync, the store row dumps the litellm
+#     database too, and a restore puts the previous compose file back, so the
+#     old LiteLLM tag returns together with its restored database.
 #   - The restore holds the host container lock (compose-up.sh's), so no
 #     service deploy starts a consumer against a half-restored database. A
 #     deploy that does not go through compose-up.sh is not held back.
@@ -88,11 +103,14 @@ fider-postgres      fider      fider
 # triggers the snapshot, store, database, who recreates it, then the services
 # stopped before and recreated after a restore. A store change already dumps
 # every database of that store, so an app row is skipped when its store
-# changed in the same sync.
+# changed in the same sync, and so is a second row on the same database
+# (glitchtip-migrate runs the migration, glitchtip-web shares its image).
 DS_APPS='
 crm            crm-postgres  twenty     sync                      crm crm-worker
+glitchtip-migrate postgres   glitchtip  sync                      glitchtip-migrate glitchtip-web glitchtip-worker
 glitchtip-web  postgres      glitchtip  sync                      glitchtip-migrate glitchtip-web glitchtip-worker
 zitadel        postgres      zitadel    sync                      zitadel
+umami          umami-postgres umami     sync                      umami
 litellm        postgres      litellm    litellm-hook-deploy.yml   litellm
 '
 # Probe tables per database: store, database, schema.table... Content tables
@@ -147,7 +165,7 @@ ds_image_of() { ds_images "$1" | awk -v s="$2" '$1 == s { print $2 }'; }
 # Inventory names whose image differs between two compose files, store rows
 # first; an app row is dropped when its store is in the list as well.
 ds_changed() {
-  local old="$1" new="$2" name rest store stores=()
+  local old="$1" new="$2" name rest store db stores=() dbs=()
   [[ -f "$old" && -f "$new" ]] || return 0
   while read -r name rest; do
     [[ -n "$name" ]] || continue
@@ -155,10 +173,12 @@ ds_changed() {
       stores+=("$name"); echo "$name"
     fi
   done <<< "$DS_STORES"
-  while read -r name store rest; do
+  while read -r name store db rest; do
     [[ -n "$name" ]] || continue
-    [[ " ${stores[*]} " == *" $store "* ]] && continue
-    [[ "$(ds_image_of "$old" "$name")" != "$(ds_image_of "$new" "$name")" ]] && echo "$name"
+    [[ " ${stores[*]} " == *" $store "* || " ${dbs[*]} " == *" $store/$db "* ]] && continue
+    if [[ "$(ds_image_of "$old" "$name")" != "$(ds_image_of "$new" "$name")" ]]; then
+      dbs+=("$store/$db"); echo "$name"
+    fi
   done <<< "$DS_APPS"
   return 0
 }
@@ -182,18 +202,33 @@ ds_volume_bytes() {
   sudo -n du -sb "$src" | awk '{ print $1 }'
 }
 
-ds_running_image() {
-  local cid
-  cid="$(ds_compose ps -q "$1" 2>/dev/null)" && [[ -n "$cid" ]] || return 0
-  docker inspect --format '{{.Config.Image}}' "$cid" 2>/dev/null || true
+# The image of every container, running or exited, of the given services.
+ds_container_images() {
+  local cids
+  cids="$(ds_compose ps -a -q "$@" 2>/dev/null)" && [[ -n "$cids" ]] || return 0
+  # shellcheck disable=SC2086 # one word per container id
+  docker inspect --format '{{.Config.Image}}' $cids 2>/dev/null || true
 }
 
-# Rows of the COPY block of one table in a dump read on stdin. COPY text escapes
-# newlines inside values, so one line is one row.
-ds_count_in_dump() {
-  local t="$1" su="$2" table="$3"
-  ds_x "$t" pg_restore -U "$su" --data-only -n "${table%%.*}" -t "${table#*.}" -f - \
-    | awk '/^COPY / { c = 1; next } c && /^\\\.$/ { c = 0; next } c { n++ } END { print n + 0 }'
+# ds_baseline <target> <db> <dump> <schema.table>...: one full pass over the
+# archive, "<db> <table> <rows>" per probe table, "MISSING" for a table without
+# a COPY block (an empty table still has one). COPY text escapes newlines in
+# values, so one line is one row; a header only counts outside a block. Fails
+# when pg_restore cannot read the whole archive.
+ds_baseline() {
+  local t="$1" db="$2" dump="$3"
+  shift 3
+  ds_x "$t" pg_restore --data-only -f - < "$dump" \
+    | awk -v db="$db" -v tables="$*" '
+        !inb && /^COPY / { inb = 1; name = $2; gsub(/"/, "", name)
+                           c = index(" " tables " ", " " name " ") > 0
+                           if (c) { seen[name] = 1; n[name] = 0 }
+                           next }
+        inb && /^\\\.$/ { inb = 0; c = 0; next }
+        c { n[name]++ }
+        END { k = split(tables, w, " ")
+              for (i = 1; i <= k; i++) print db, w[i], (w[i] in seen) ? n[w[i]] : "MISSING" }'
+  return "${PIPESTATUS[0]}"
 }
 
 # stdin from /dev/null: exec forwards stdin, and inside ds_compare's read loop
@@ -210,7 +245,7 @@ ds_ledger() {
 
 # ds_snapshot <name> <old-compose> <new-compose>: dump, baseline, ledger.
 ds_snapshot() {
-  local name="$1" old="$2" new="$3" store su dbs consumers storecons dir db table n app
+  local name="$1" old="$2" new="$3" store su dbs consumers storecons dir db n app
   app="$(ds_app_row "$name")"
   if [[ -n "$app" ]]; then
     read -r _ store dbs _ consumers <<< "$app"
@@ -236,19 +271,20 @@ ds_snapshot() {
     echo "old_image=$(ds_image_of "$old" "$name")"
     echo "new_image=$(ds_image_of "$new" "$name")"
     echo "store_image=$(ds_image_of "$old" "$store")"
-    echo "epoch=$(ds_now_epoch)"
   } > "$dir/meta"
   : > "$dir/baseline.counts"
   for db in $dbs; do
     echo "snapshot: pg_dump -Fc $store/$db -> $dir/$db.dump"
     ds_x "$store" pg_dump -U "$su" -Fc -d "$db" > "$dir/$db.dump" \
       || { echo "::error::pg_dump of $store/$db failed"; return 1; }
-    for table in $(ds_probe_tables "$store" "$db"); do
-      ds_x "$store" pg_restore -l < "$dir/$db.dump" | grep -q " TABLE DATA ${table%%.*} ${table#*.} " \
-        || { echo "::error::probe table $table is not in the dump of $store/$db; fix DS_PROBES in datastore-rollback.sh"; return 1; }
-      n="$(ds_count_in_dump "$store" "$su" "$table" < "$dir/$db.dump")" || return 1
-      printf '%s %s %s\n' "$db" "$table" "$n" >> "$dir/baseline.counts"
-    done
+    # shellcheck disable=SC2046 # one word per table
+    n="$(ds_baseline "$store" "$db" "$dir/$db.dump" $(ds_probe_tables "$store" "$db"))" \
+      || { echo "::error::the dump of $store/$db does not read back"; return 1; }
+    if grep -q ' MISSING$' <<< "$n"; then
+      echo "::error::probe table $(awk '$3 == "MISSING" { print $2 }' <<< "$n" | paste -sd' ' -) not in the dump of $store/$db; fix DS_PROBES in datastore-rollback.sh"
+      return 1
+    fi
+    [[ -z "$n" ]] || printf '%s\n' "$n" >> "$dir/baseline.counts"
   done
   ds_ledger "$name" "$dir" "$(ds_image_of "$new" "$name")" snapshot
   DS_SNAPSHOTS+=("$dir")
@@ -271,19 +307,28 @@ ds_snapshot_changed() {
       || { echo "::error::could not size the volume of $store"; rb_finish "$name" disk-headroom rollback_failed; }
     need=$(( need + 2 * bytes ))
   done
-  free="$(df -PB1 "$RB_DIR" | awk 'NR == 2 { print $4 }')"
+  mkdir -p "$DS_BACKUP_ROOT" || rb_finish "${own[0]}" snapshot rollback_failed
+  free="$(df -PB1 "$DS_BACKUP_ROOT" | awk 'NR == 2 { print $4 }')"
   if ! [[ "$free" =~ ^[0-9]+$ ]] || (( free < need )); then
-    echo "::error::not enough disk for a snapshot: ${free:-?} bytes free on $RB_DIR, $need needed (twice the volume size of ${own[*]}); nothing changed"
+    echo "::error::not enough disk for a snapshot: ${free:-?} bytes free on $DS_BACKUP_ROOT, $need needed (twice the volume size of ${own[*]}); nothing changed"
     rb_finish "${own[0]}" disk-headroom rollback_failed
   fi
   for name in "${own[@]}"; do
     if [[ -f "$DS_DRY_FLAG" && "$(cat "$DS_DRY_FLAG")" == "$name" ]]; then
-      echo "::warning::datastore dry mode for $name: the probe is forced red and the restore goes to a throwaway container"
-      DS_DRY="$name"
       rm -f "$DS_DRY_FLAG"
+      if [[ -n "$(ds_app_row "$name")" ]]; then
+        echo "::warning::datastore dry mode is for stores only: $name would migrate the live database and the dry path would put its old image back on that schema. Flag removed; this sync runs normally."
+      else
+        echo "::warning::datastore dry mode for $name: the probe is forced red and the restore goes to a throwaway container"
+        DS_DRY="$name"
+      fi
     fi
     ds_snapshot "$name" "$old" "$new" || rb_finish "$name" snapshot rollback_failed
   done
+  # The window starts after the last dump, just before the first file changes.
+  local now dir
+  now="$(ds_now_epoch)"
+  for dir in "${DS_SNAPSHOTS[@]}"; do echo "epoch=$now" >> "$dir/meta"; done
 }
 
 # Recreate the consumers of a store whose image changed, then check that every
@@ -379,8 +424,16 @@ ds_restore_snapshot() {
   local dir="$1" name store su consumers rc
   name="$(ds_meta "$dir" name)"; store="$(ds_meta "$dir" store)"
   su="$(ds_meta "$dir" superuser)"; consumers="$(ds_meta "$dir" consumers)"
-  if [[ "$(ds_running_image "$name")" == "$(ds_meta "$dir" old_image)" ]]; then
-    echo "restore: $name never started $(ds_meta "$dir" new_image); its database is as it was, nothing to restore"
+  # A store row looks at the store; an app row at every service in it, because
+  # glitchtip-migrate migrates while glitchtip-web may still show the old image.
+  # Any container on an image other than the old one counts as having run the
+  # new version: restoring when in doubt loses minutes of writes, not restoring
+  # leaves the old image on a schema it may not understand.
+  local svcs="$store"
+  [[ "$name" == "$store" ]] || svcs="$consumers"
+  # shellcheck disable=SC2086 # one word per service
+  if ! ds_container_images $svcs | grep -qvxF "$(ds_meta "$dir" old_image)"; then
+    echo "restore: no container of [$svcs] ran anything but $(ds_meta "$dir" old_image); the database is as it was, nothing to restore"
     ds_ledger "$name" "$dir" "$(ds_meta "$dir" old_image)" not_needed
     return 0
   fi
