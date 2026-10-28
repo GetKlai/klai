@@ -1,8 +1,9 @@
 """SPEC-SLACK-001: the portal side of the Slack integration.
 
 Covers the managed Slack key (§4, §7.1), the status the admin page reads, the
-disconnect from the portal (§12 test 8) and the internal link API that
-klai-slack calls (§7.2), including its shared-secret guard.
+disconnect from the portal (§12 test 8), the internal link API that
+klai-slack calls (§7.2), including its shared-secret guard, and the
+portal-driven OAuth link (§8 target state: ``/connect`` and ``/link-oauth``).
 
 synthetic-data: generator=hand-written seed=0 (org ids 41/42, invented Slack ids).
 """
@@ -279,6 +280,7 @@ def test_every_admin_slack_route_requires_admin_and_the_slack_unlock():
     assert {(next(iter(r.methods)), r.path) for r in routes} == {
         ("GET", "/api/admin/slack"),
         ("POST", "/api/admin/slack/key"),
+        ("POST", "/api/admin/slack/connect"),
         ("PATCH", "/api/admin/slack"),
         ("DELETE", "/api/admin/slack"),
     }
@@ -480,3 +482,277 @@ async def test_unlink_marks_the_workspace_revoked_and_is_idempotent(internal, re
     updates = [str(call.args[0]) for call in db.execute.await_args_list if str(call.args[0]).startswith("UPDATE")]
     assert len(updates) == 1 and "revoked_at" in updates[0] and "revoked_at IS NULL" in updates[0]
     db.commit.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Portal-driven OAuth link (§8 target state)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_returns_a_klai_slack_url_whose_token_carries_the_org_user_and_kbs(events, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    import jwt
+
+    import app.api.admin_slack as admin_slack
+    from app.services import slack_integration
+
+    monkeypatch.setattr(slack_integration.settings, "internal_secret", _SECRET)
+    monkeypatch.setattr(slack_integration.settings, "domain", "getklai.com")
+    monkeypatch.setattr(slack_integration.settings, "slack_service_public_url", "https://api.getklai.com")
+    db = _db([FakeResult([]), FakeResult([_ORG_KB, _ORG_KB_2])])
+
+    result = await admin_slack.connect_slack(
+        body=admin_slack.SlackKbIdsIn(kb_ids=[11, 10]),
+        perms=SimpleNamespace(org_id=42, org_slug="example", user_id="u"),
+        _platform=None,
+        db=db,
+    )
+
+    url = urlsplit(result.connect_url)
+    assert (url.scheme, url.netloc, url.path) == ("https", "api.getklai.com", "/slack/connect")
+    claims = jwt.decode(parse_qs(url.query)["token"][0], _SECRET, algorithms=["HS256"])
+    assert claims.pop("exp") - claims.pop("iat") == 15 * 60
+    assert claims.pop("jti")
+    assert claims == {
+        "typ": "slack_link",
+        "org_id": 42,
+        "user_id": "u",
+        "kb_ids": [10, 11],
+        "return_url": "https://example.getklai.com/admin/slack",
+    }
+    db.add.assert_not_called()  # nothing is minted before Slack OAuth succeeded
+    db.commit.assert_not_awaited()
+    assert events.call_args.args[0] == "slack.connect_started"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("results", "kb_ids", "status_code"),
+    [
+        ([FakeResult([]), FakeResult([_ORG_KB, _PERSONAL_KB])], [10, 12], 400),
+        ([FakeResult([_slack_key()])], [10], 409),
+    ],
+    ids=["personal kb", "existing key"],
+)
+async def test_connect_refuses_a_personal_kb_and_an_org_that_has_a_slack_key(events, results, kb_ids, status_code):
+    from app.services.slack_integration import start_slack_connect
+
+    with pytest.raises(HTTPException) as exc:
+        await start_slack_connect(_db(results), org_id=42, org_slug="example", user_id="u", kb_ids=kb_ids)
+
+    assert exc.value.status_code == status_code
+    events.assert_not_called()
+
+
+class _FakeRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, tuple[str, int | None]] = {}
+
+    async def set(self, key: str, value: str, nx: bool = False, ex: int | None = None):
+        if nx and key in self.values:
+            return None
+        self.values[key] = (value, ex)
+        return True
+
+
+@pytest.fixture
+def token_store(internal, monkeypatch) -> _FakeRedis:
+    store = _FakeRedis()
+    monkeypatch.setattr(internal, "get_redis_pool", AsyncMock(return_value=store))
+    return store
+
+
+def _link_token(secret: str = _SECRET, **overrides) -> str:
+    import time
+
+    import jwt
+
+    now = int(time.time())
+    claims = {
+        "typ": "slack_link",
+        "org_id": 42,
+        "user_id": "u",
+        "kb_ids": [10, 11],
+        "return_url": "https://example.getklai.com/admin/slack",
+        "jti": "jti-1",
+        "iat": now,
+        "exp": now + 900,
+    }
+    claims.update(overrides)
+    return jwt.encode(claims, secret, algorithm="HS256")
+
+
+def _oauth_body(token: str):
+    from app.api.internal_slack import LinkOAuthRequest
+
+    return LinkOAuthRequest(
+        token=token, team_id="T0EXAMPLE1", team_name="Example Workspace", slack_user_id="U0EXAMPLE1"
+    )
+
+
+def _oauth_db(kbs=(_ORG_KB, _ORG_KB_2), existing_key=None, unlocked=("slack",)) -> AsyncMock:
+    org = FakeOrg(id=42, name="Example Org", platform_unlocked_features=list(unlocked))
+    return _db(
+        [
+            FakeResult([org]),
+            FakeResult(),  # org row lock
+            FakeResult([existing_key] if existing_key else []),
+            FakeResult(list(kbs)),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_link_oauth_mints_the_key_records_the_workspace_and_returns_the_plaintext_once(internal, token_store):
+    import hashlib
+
+    from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
+    from app.models.slack import PortalSlackInstallation
+
+    db = _oauth_db()
+
+    result = await internal.link_slack_workspace_oauth(body=_oauth_body(_link_token()), request=_request(), db=db)
+
+    added = [call.args[0] for call in db.add.call_args_list]
+    key = next(row for row in added if isinstance(row, PartnerAPIKey))
+    assert key.permissions["slack"] is True and key.created_by == "u" and key.org_id == 42
+    assert key.key_hash == hashlib.sha256(result.api_key.encode()).hexdigest()
+    access = [row for row in added if isinstance(row, PartnerApiKeyKbAccess)]
+    assert sorted((row.kb_id, row.access_level) for row in access) == [(10, "read"), (11, "read")]
+    installation = next(row for row in added if isinstance(row, PortalSlackInstallation))
+    assert (installation.org_id, installation.team_id, installation.partner_api_key_id) == (42, "T0EXAMPLE1", key.id)
+    assert result.api_key.startswith("pk_live_")
+    assert result.model_dump(exclude={"api_key"}) == {
+        "org_id": 42,
+        "org_name": "Example Org",
+        "key_id": key.id,
+        "kb_ids": [10, 11],
+        "return_url": "https://example.getklai.com/admin/slack",
+    }
+    internal.set_tenant.assert_awaited_once_with(db, 42)
+    db.commit.assert_awaited_once()
+    assert [call.args[0] for call in internal.emit_event.call_args_list] == ["slack.key_created", "slack.linked"]
+    assert token_store.values == {"slack_link_jti:jti-1": ("1", 900)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "token",
+    [
+        _link_token(iat=1, exp=2),
+        _link_token(secret="another-secret-of-at-least-32-bytes"),
+        _link_token(typ="widget_session"),
+    ],
+    ids=["expired", "tampered signature", "other token type"],
+)
+async def test_link_oauth_rejects_an_invalid_token_with_one_generic_401(internal, token_store, token):
+    db = _oauth_db()
+
+    with pytest.raises(HTTPException) as exc:
+        await internal.link_slack_workspace_oauth(body=_oauth_body(token), request=_request(), db=db)
+
+    assert (exc.value.status_code, exc.value.detail) == (401, "Invalid link token")
+    db.execute.assert_not_awaited()
+    assert token_store.values == {}
+
+
+@pytest.mark.asyncio
+async def test_link_oauth_refuses_a_replayed_token(internal, token_store):
+    token = _link_token()
+    await internal.link_slack_workspace_oauth(body=_oauth_body(token), request=_request(), db=_oauth_db())
+    replay_db = _oauth_db()
+
+    response = await internal.link_slack_workspace_oauth(body=_oauth_body(token), request=_request(), db=replay_db)
+
+    assert response.status_code == 409
+    assert response.body == b'{"code":"token_used"}'
+    replay_db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_link_oauth_fails_closed_without_the_token_store(internal, monkeypatch):
+    monkeypatch.setattr(internal, "get_redis_pool", AsyncMock(return_value=None))
+    db = _oauth_db()
+
+    with pytest.raises(HTTPException) as exc:
+        await internal.link_slack_workspace_oauth(body=_oauth_body(_link_token()), request=_request(), db=db)
+
+    assert exc.value.status_code == 503
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_link_oauth_rejects_a_kb_deleted_since_the_link_started(internal, token_store):
+    db = _oauth_db(kbs=[_ORG_KB])
+
+    with pytest.raises(HTTPException) as exc:
+        await internal.link_slack_workspace_oauth(body=_oauth_body(_link_token()), request=_request(), db=db)
+
+    assert exc.value.status_code == 400
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_link_oauth_is_forbidden_once_the_slack_unlock_is_withdrawn(internal, token_store):
+    db = _oauth_db(unlocked=("partner_api",))
+
+    with pytest.raises(HTTPException) as exc:
+        await internal.link_slack_workspace_oauth(body=_oauth_body(_link_token()), request=_request(), db=db)
+
+    assert exc.value.status_code == 403
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_link_oauth_refuses_an_org_that_already_has_a_slack_key(internal, token_store):
+    db = _oauth_db(existing_key=_slack_key())
+
+    response = await internal.link_slack_workspace_oauth(body=_oauth_body(_link_token()), request=_request(), db=db)
+
+    assert response.status_code == 409
+    assert response.body == b'{"code":"org_already_linked"}'
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_link_oauth_mints_no_key_for_a_workspace_linked_to_another_org(internal, token_store):
+    db = _oauth_db()
+    # Key and KB rows flush; the installation row trips UNIQUE(team_id).
+    db.flush.side_effect = [
+        None,
+        None,
+        IntegrityError(
+            "INSERT",
+            {},
+            Exception('duplicate key value violates unique constraint "uq_portal_slack_installations_team_id"'),
+        ),
+    ]
+
+    response = await internal.link_slack_workspace_oauth(body=_oauth_body(_link_token()), request=_request(), db=db)
+
+    assert response.body == b'{"code":"team_already_linked"}'
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+    internal.emit_event.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("secret", "token", "status_code"), [("", _SECRET, 503), (_SECRET, "wrong", 401), (_SECRET, None, 401)]
+)
+async def test_link_oauth_fails_closed_without_the_internal_secret(
+    internal, token_store, monkeypatch, secret, token, status_code
+):
+    from app.api import internal as internal_mod
+
+    monkeypatch.setattr(internal_mod.settings, "internal_secret", secret)
+    db = _oauth_db()
+
+    with pytest.raises(HTTPException) as exc:
+        await internal.link_slack_workspace_oauth(body=_oauth_body(_link_token()), request=_request(token), db=db)
+
+    assert exc.value.status_code == status_code
+    db.execute.assert_not_awaited()
+    assert token_store.values == {}
