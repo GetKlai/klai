@@ -370,6 +370,7 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
     async def _fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
         captured["url"] = url
         captured["payload"] = kwargs.get("json")
+        captured.setdefault("urls", []).extend(captured["payload"]["urls"])
         request = httpx.Request("POST", url)
         return httpx.Response(200, json={"results": []}, request=request)
 
@@ -386,7 +387,7 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
     assert any(r.url == "https://wiki.redcactus.cloud" for r in results)
 
     payload = captured["payload"]
-    urls_submitted = payload["urls"]
+    urls_submitted = captured["urls"]
     # include_patterns is a substring filter — start_url with empty path
     # does not match "/nl/" anyway, but the more important guard is that
     # it never reaches the bulk request because the seed already covered it.
@@ -425,6 +426,7 @@ async def test_crawl_site_no_include_patterns_passes_all_same_domain(
 
     async def _fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
         captured["payload"] = kwargs.get("json")
+        captured.setdefault("urls", []).extend(captured["payload"]["urls"])
         request = httpx.Request("POST", url)
         return httpx.Response(200, json={"results": []}, request=request)
 
@@ -436,7 +438,7 @@ async def test_crawl_site_no_include_patterns_passes_all_same_domain(
         )
 
     payload = captured["payload"]
-    urls_submitted = payload["urls"]
+    urls_submitted = captured["urls"]
     # start_url is the seed — not in the bulk submission.
     assert "https://example.com" not in urls_submitted, (
         "start_url must not be in the bulk submission (it is the seed)"
@@ -479,6 +481,7 @@ async def test_crawl_site_excludes_archive_candidates_after_discovery(
     async def _fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
         captured["payload"] = kwargs.get("json")
         urls = captured["payload"]["urls"]
+        captured.setdefault("urls", []).extend(urls)
         results = [
             {
                 "url": u,
@@ -511,7 +514,7 @@ async def test_crawl_site_excludes_archive_candidates_after_discovery(
         "https://www.getklai.com/blog/article-from-bfs",
         "https://www.getklai.com/blog/article-from-sitemap",
     }
-    assert captured["payload"]["urls"] == [
+    assert captured["urls"] == [
         "https://www.getklai.com/blog/article-from-sitemap",
         "https://www.getklai.com/blog/article-from-bfs",
     ]

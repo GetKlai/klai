@@ -155,9 +155,9 @@ class Settings(BaseSettings):
     # to the domain's OWN default rate limit instead of a fixed absolute
     # value, so a site with a low default and a site with a high default
     # both recover in a comparable number of clean crawls. At the default
-    # 2.0 req/s and this 0.25 fraction, the step is 0.5 req/s, so a domain
+    # 1.0 req/s and this 0.25 fraction, the step is 0.25 req/s, so a domain
     # at the 0.2 floor reaches (or clears past) the default in exactly 4
-    # clean crawls past cooldown: 0.2 -> 0.7 -> 1.2 -> 1.7 -> cleared.
+    # clean crawls past cooldown: 0.2 -> 0.45 -> 0.7 -> 0.95 -> cleared.
     crawl_rate_limit_recovery_step_fraction: float = Field(
         default=0.25,
         validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_STEP_FRACTION"),

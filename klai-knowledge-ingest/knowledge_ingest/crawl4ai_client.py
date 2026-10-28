@@ -178,7 +178,7 @@ async def _fetch_sitemap_document(
     try:
         pacing_session = _current_host_pacing_session.get()
         if pacing_session is not None and pacing_session.key == crawl_gate_key(sitemap_url):
-            await pacing_session.acquire(1)
+            await pacing_session.acquire()
         resp = await client.get(sitemap_url, headers=_auth_headers())
         resp.raise_for_status()
     except Exception as exc:
@@ -928,7 +928,7 @@ async def _crawl_sync(
         and payload_urls
         and pacing_session.key == crawl_gate_key(payload_urls[0])
     ):
-        await pacing_session.acquire(len(payload_urls))
+        await pacing_session.acquire()
     async with _crawl4ai_request_semaphore:
         resp = await client.post(
             f"{settings.crawl4ai_api_url}/crawl",
@@ -1037,7 +1037,7 @@ async def crawl_page(
     selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     retry_relaxed_on_thin: bool = False,
-    rate_limit: float | None = 2.0,
+    rate_limit: float | None = 1.0,
 ) -> CrawlResult:
     """Crawl one page while participating in the process-wide host schedule."""
     async with _host_pacing_scope(url, rate_limit):
@@ -1599,7 +1599,7 @@ async def sample_linked_pages(
     selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     max_pages: int = 5,
-    rate_limit: float | None = 2.0,
+    rate_limit: float | None = 1.0,
 ) -> LinkedPageSample:
     """Fetch pages linked from ``seed`` and count how many carry real content.
 
@@ -3135,7 +3135,7 @@ _MAX_CONSECUTIVE_RATE_LIMIT_SLOWDOWNS = 3
 # "start pacing because the site just complained" begins from the same
 # baseline a normal crawl would have used anyway, rather than an
 # arbitrary new number.
-_UNPACED_SLOWDOWN_STARTING_RATE_LIMIT = 2.0
+_UNPACED_SLOWDOWN_STARTING_RATE_LIMIT = 1.0
 
 
 def _lower_rate_limit_for_slowdown(current_rate_limit: float | None) -> float:
@@ -3292,10 +3292,10 @@ async def _chunked_bulk_fetch_with_session(
 
     ``pacing_session`` additionally paces the chunks client-side. crawl4ai's
     server ignores our ``mean_delay`` / ``semaphore_count`` config, so
-    ``host_pacing.HostGateRegistry`` owns the real weighted-burst schedule.
-    ``HostPacingSession.acquire`` returns the allowed chunk size after
-    enforcing the gap from the prior request; an unpaced session retains the
-    historical chunk size.
+    ``host_pacing.HostGateRegistry`` owns the real schedule. Every chunk is
+    one URL (a multi-URL request is fetched concurrently by crawl4ai's
+    dispatcher, see ``host_pacing``), and ``HostPacingSession.acquire``
+    enforces the ``1 / rate`` gap from the prior request.
 
     Each chunk request uses the fixed
     ``settings.crawl_bulk_base_timeout_seconds`` httpx timeout — see that
@@ -3381,8 +3381,8 @@ async def _chunked_bulk_fetch_with_session(
                 not_attempted_urls=len(remaining_urls),
             )
             break
-        chunk_size = await pacing_session.acquire(len(urls) - chunk_start)
-        chunk_urls = urls[chunk_start : chunk_start + chunk_size]
+        await pacing_session.acquire()
+        chunk_urls = urls[chunk_start : chunk_start + 1]
         payload: dict[str, Any] = {
             "urls": chunk_urls,
             "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
@@ -3649,7 +3649,7 @@ def _build_candidate_set(
     return ordered
 
 
-async def crawl_dom_summary(url: str, rate_limit: float | None = 2.0) -> list[dict] | None:
+async def crawl_dom_summary(url: str, rate_limit: float | None = 1.0) -> list[dict] | None:
     """Extract a DOM summary while participating in the shared host schedule."""
     async with _host_pacing_scope(url, rate_limit):
         return await _crawl_dom_summary_in_host_scope(url)

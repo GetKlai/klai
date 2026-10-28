@@ -103,13 +103,12 @@ async def test_aug_18_0927_same_host_crawls_share_aggregate_cadence() -> None:
         starts: list[float] = []
 
         async def reserve(session: object) -> None:
-            weight = await session.acquire(2)  # type: ignore[attr-defined]
-            assert weight == 2
+            await session.acquire()  # type: ignore[attr-defined]
             starts.append(clock.now)
 
         await asyncio.gather(reserve(first), reserve(second))
 
-    assert sorted(starts) == [0.0, 10.0]
+    assert sorted(starts) == [0.0, 5.0]
     assert registry.active_gate_count == 0
 
 
@@ -125,7 +124,7 @@ async def test_different_hosts_do_not_share_a_pacing_schedule() -> None:
         starts: list[float] = []
 
         async def reserve(session: object) -> None:
-            assert await session.acquire(2) == 2  # type: ignore[attr-defined]
+            await session.acquire()  # type: ignore[attr-defined]
             starts.append(clock.now)
 
         await asyncio.gather(reserve(alpha), reserve(beta))
@@ -134,18 +133,18 @@ async def test_different_hosts_do_not_share_a_pacing_schedule() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lower_active_rate_controls_future_burst_and_repays_previous_burst() -> None:
+async def test_lower_active_rate_controls_the_gap_after_the_previous_request() -> None:
     clock = _VirtualClock()
     registry = HostGateRegistry(monotonic=clock.monotonic, sleep=clock.sleep)
 
     async with registry.session("https://example.com", 2.0) as fast:
-        assert await fast.acquire(100) == 20
+        await fast.acquire()
         async with registry.session("https://www.example.com", 0.2) as slow:
-            assert await slow.acquire(100) == 2
+            await slow.acquire()
 
-    # The previous 20-URL burst is charged against the newly effective
-    # 0.2 URL/s rate before another request may start.
-    assert clock.now == 100.0
+    # The previous request is charged against the newly effective 0.2 req/s
+    # rate (a 5 s gap) before another request may start.
+    assert clock.now == 5.0
 
 
 @pytest.mark.asyncio
@@ -208,7 +207,7 @@ async def test_checkpoint_restored_rate_controls_the_active_crawl_gate(
         checkpoint=_Checkpoint(),
     )
 
-    assert request_sizes == [2, 1]
+    assert request_sizes == [1, 1, 1]
 
 
 @pytest.mark.asyncio
@@ -247,7 +246,7 @@ async def test_concurrent_bulk_fetches_share_the_host_schedule(
         ),
     )
 
-    assert sorted(starts) == [(0.0, 2), (10.0, 2)]
+    assert sorted(starts) == [(0.0, 1), (5.0, 1), (10.0, 1), (15.0, 1)]
 
 
 @pytest.mark.asyncio
@@ -286,7 +285,7 @@ async def test_concurrent_bulk_fetches_for_different_hosts_start_independently(
         ),
     )
 
-    assert starts == [0.0, 0.0]
+    assert sorted(starts) == [0.0, 0.0, 5.0, 5.0]
 
 
 @pytest.mark.asyncio
@@ -333,3 +332,35 @@ async def test_single_page_requests_also_share_the_host_schedule(
     )
 
     assert sorted(starts) == [0.0, 5.0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rate_limit", [1.0, 2.0, None])
+async def test_a_host_never_receives_more_than_one_url_per_crawl_request(
+    monkeypatch: pytest.MonkeyPatch, rate_limit: float | None
+) -> None:
+    clock = _VirtualClock()
+    registry = HostGateRegistry(monotonic=clock.monotonic, sleep=clock.sleep)
+    request_sizes: list[int] = []
+
+    async def crawl_sync(_client: httpx.AsyncClient, payload: dict[str, Any]) -> dict[str, Any]:
+        request_sizes.append(len(payload["urls"]))
+        return {
+            "results": [
+                {"url": url, "success": True, "markdown": "content", "links": {}}
+                for url in payload["urls"]
+            ]
+        }
+
+    monkeypatch.setattr(crawl4ai_client, "_host_gate_registry", registry)
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", crawl_sync)
+
+    fetch = await crawl4ai_client._chunked_bulk_fetch(
+        urls=[f"https://example.com/p{i}" for i in range(5)],
+        crawler_config={},
+        cookies=None,
+        rate_limit=rate_limit,
+    )
+
+    assert request_sizes == [1] * 5
+    assert len(fetch.raw_results) == 5

@@ -28,9 +28,8 @@ from knowledge_ingest import crawl4ai_client
 from knowledge_ingest.crawl4ai_client import _chunked_bulk_fetch
 from knowledge_ingest.reason_codes import FetchReasonCode
 
-# At 0.5 req/s, the host gate's 10-second window allows five URLs per request — five
-# URLs per chunk, so 20 URLs produce exactly four chunks.
-_FIVE_URLS_PER_CHUNK_RATE_LIMIT = 0.5
+# Every chunk is one URL, so 20 URLs produce twenty chunks.
+_PACED_RATE_LIMIT = 0.5
 
 
 def _ok_page(url: str) -> dict[str, Any]:
@@ -109,11 +108,10 @@ async def test_cancel_requested_before_first_chunk_sends_zero_requests(
 async def test_cancel_checked_once_per_chunk_not_per_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """20 URLs / 5 per chunk == 4 chunks. cancel_check flips true on the
-    3rd check (i.e. before chunk 3 is sent) — chunks 1 and 2 must have
-    already gone out, chunks 3 and 4 must never be attempted, and
-    cancel_check must be called exactly 3 times (once per chunk boundary
-    reached), never once per URL (which would be 20 calls)."""
+    """20 URLs == 20 one-URL chunks. cancel_check flips true on the 3rd
+    check (i.e. before chunk 3 is sent) — chunks 1 and 2 must have already
+    gone out, the rest must never be attempted, and cancel_check must be
+    called exactly 3 times (once per chunk boundary reached), not 20."""
     _disable_real_pacing_sleep(monkeypatch)
     calls: list[list[str]] = []
 
@@ -132,22 +130,22 @@ async def test_cancel_checked_once_per_chunk_not_per_url(
         urls=urls,
         crawler_config={},
         cookies=None,
-        rate_limit=_FIVE_URLS_PER_CHUNK_RATE_LIMIT,
+        rate_limit=_PACED_RATE_LIMIT,
         cancel_check=cancel_check,
     )
 
     assert cancel_check.await_count == 3, (
         f"expected exactly one cancel_check() per chunk boundary reached (3), "
-        f"got {cancel_check.await_count} — a per-URL check would be 20"
+        f"got {cancel_check.await_count}"
     )
-    assert [len(c) for c in calls] == [5, 5], "only the first two chunks were sent"
+    assert [len(c) for c in calls] == [1, 1], "only the first two chunks were sent"
     assert fetch.cancelled is True
     assert fetch.stopped_early is True
-    assert fetch.not_attempted == urls[10:]
+    assert fetch.not_attempted == urls[2:]
     assert fetch.not_attempted_reason_code == FetchReasonCode.NOT_FETCHED_CANCELLED.value
     # The first two chunks' real results are kept — cancellation does not
     # discard work already done.
-    assert len(fetch.raw_results) == 10
+    assert len(fetch.raw_results) == 2
 
 
 @pytest.mark.asyncio
@@ -197,7 +195,7 @@ async def test_cancel_and_circuit_breaker_do_not_interfere_cancel_wins(
         urls=urls,
         crawler_config={},
         cookies=None,
-        rate_limit=_FIVE_URLS_PER_CHUNK_RATE_LIMIT,
+        rate_limit=_PACED_RATE_LIMIT,
         cancel_check=cancel_check,
     )
 
