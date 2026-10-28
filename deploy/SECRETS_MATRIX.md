@@ -63,7 +63,7 @@ details in the private infra repo.
 | `FIRECRAWL_INTERNAL_KEY` | portal-api | Shared web-search API key (portal re-uses the Firecrawl internal key for URL extraction). |
 | `GITHUB_ADMIN_PAT` | portal-api | GitHub PAT with `admin:org` scope — used during offboarding to remove members from the GetKlai org. |
 | `KLAI_CONNECTOR_SECRET` | portal-api | Shared secret for portal → klai-connector orchestration calls (SOPS key: `PORTAL_API_KLAI_CONNECTOR_SECRET`, mapped inline). |
-| `KLAI_SLACK_DB_PASSWORD` | klai-slack | PostgreSQL password of the `klai_slack` role; interpolated into `DATABASE_URL`. SOPS: `klai-infra/core-01/klai-slack/.env.sops`. The role itself is created by `deploy/postgres/init.sql` (fresh volume) or by hand (`docs/runbooks/slack-integration.md`). |
+| `KLAI_SLACK_DB_PASSWORD` | klai-slack | PostgreSQL password of the `klai_slack` role; interpolated into `DATABASE_URL`. Lives in the core SOPS env file; the role and database are created by hand on the existing volume (runbook `slack-integration.md`). |
 | `KNOWLEDGE_INGEST_SECRET` | portal-api | Shared secret portal-api → knowledge-ingest for tenant KB mutations. |
 | `KNOWLEDGE_INGEST_SECRET` | scribe-api | HMAC auth when scribe pushes transcripts to knowledge-ingest. |
 | `KNOWLEDGE_RETRIEVE_URL` | portal-api | URL of retrieval-api used for gap re-scoring (value, not secret — kept here because it crosses a trust boundary). |
