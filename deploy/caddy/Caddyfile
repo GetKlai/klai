@@ -13,10 +13,19 @@
         propagation_delay 120s
     }
 
+    # Both access logs drop a `token` query parameter before writing. A link
+    # token (e.g. SPEC-SLACK-001's /slack/connect) is a bearer credential and
+    # travels in a form POST body, but an old link or a client that still puts
+    # it in the URL must not leave it in VictoriaLogs or on disk.
     log {
         # JSON to stdout for Alloy → VictoriaLogs pipeline (queryable in Grafana)
         output stdout
-        format json
+        format filter {
+            request>uri query {
+                delete token
+            }
+            wrap json
+        }
     }
     log access-file {
         # File backup for direct server access
@@ -24,7 +33,12 @@
             roll_size 10mb
             roll_keep 5
         }
-        format json
+        format filter {
+            request>uri query {
+                delete token
+            }
+            wrap json
+        }
     }
 
     # Generate X-Request-ID for trace correlation across Caddy → backend services.
