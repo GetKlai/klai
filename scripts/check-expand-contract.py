@@ -6,18 +6,25 @@ runs ``alembic downgrade``. That is only safe when a migration that removes,
 renames, retypes or tightens something ships on its own, after the release that
 stopped depending on it. This check fails a diff that adds such a migration
 together with a change to the service's application code. The same migration in
-a PR without application code (the contract PR) passes.
+a PR without application code (the contract PR) passes. New migration files are
+checked whole; an edited one is checked for operations its base version did not
+have.
 
 Usage, from anywhere inside the repository:
 
     check-expand-contract.py <base-ref> <migrations-dir> <app-dir> [<app-dir> ...]
 
-Paths are relative to the repository root. The head is HEAD. When <base-ref> is
-empty or not present in a shallow checkout, origin/main is fetched and used.
+Paths are relative to the repository root. The head is HEAD, and the diff runs
+from the merge base of <base-ref> and HEAD. In a shallow checkout the base is
+fetched and HEAD deepened until that merge base exists; only when that fails (or
+<base-ref> is empty) does the check fall back to the current origin/main, with a
+warning.
 
 Known ceiling: the check sees that a contract PR carries no application code,
-not that the release which stopped using the column is already live; that half
-stays a review rule.
+not that the release which stopped using the column is already live. A contract
+migration shipped on its own still runs while the previous release serves, so
+deploying one requires the release that stopped using the column to be live
+already. That half is a review rule, not CI (spec R3).
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ import ast
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 # Alembic operations whose result the previous image may not survive. The
@@ -46,16 +54,42 @@ DESTRUCTIVE_SQL = re.compile(
     re.IGNORECASE,
 )
 SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
+# Stands in for an interpolated or unknown part of a SQL string.
+PLACEHOLDER = "__expr__"
+
+
+def _str_value(node: ast.AST, names: dict[str, str]) -> str | None:
+    """The SQL text an expression builds, with PLACEHOLDER for the parts only known at runtime."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return names.get(node.id)
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            v.value
+            if isinstance(v, ast.Constant) and isinstance(v.value, str)
+            else PLACEHOLDER
+            for v in node.values
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        return _str_value(node.left, names)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _str_value(node.left, names), _str_value(node.right, names)
+        if left is None and right is None:
+            return None
+        return (PLACEHOLDER if left is None else left) + (
+            PLACEHOLDER if right is None else right
+        )
+    return None
 
 
 def _strings(node: ast.AST, names: dict[str, str]) -> list[str]:
-    out = []
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
-            out.append(sub.value)
-        elif isinstance(sub, ast.Name) and sub.id in names:
-            out.append(names[sub.id])
-    return out
+    value = _str_value(node, names)
+    if value is not None:
+        return [value]
+    return [
+        text for child in ast.iter_child_nodes(node) for text in _strings(child, names)
+    ]
 
 
 def _call_name(call: ast.Call) -> str:
@@ -78,10 +112,11 @@ def destructive_ops_py(source: str) -> list[str]:
     for node in ast.walk(tree):
         if id(node) in skip or not isinstance(node, ast.Assign):
             continue
-        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+        value = _str_value(node.value, names)
+        if value is not None:
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    names[target.id] = node.value.value
+                    names[target.id] = value
     found = []
     for node in ast.walk(tree):
         if id(node) in skip or not isinstance(node, ast.Call):
@@ -100,7 +135,7 @@ def destructive_ops_py(source: str) -> list[str]:
         elif name in SQL_CALLS:
             for arg in [*node.args, *(kw.value for kw in node.keywords)]:
                 for text in _strings(arg, names):
-                    match = DESTRUCTIVE_SQL.search(text)
+                    match = DESTRUCTIVE_SQL.search(SQL_COMMENT.sub("", text))
                     if match:
                         found.append(
                             f"line {node.lineno}: {' '.join(match.group(0).split())}"
@@ -119,19 +154,51 @@ def _git(*args: str) -> str:
     ).stdout
 
 
+def _git_ok(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+
+
 def _resolve_base(base: str) -> str:
-    if (
-        base
-        and subprocess.run(
-            ["git", "cat-file", "-e", f"{base}^{{commit}}"],
-            capture_output=True,
-            check=False,
-        ).returncode
-        == 0
-    ):
-        return base
+    """Merge base of <base-ref> and HEAD, so commits that landed on main later never count."""
+    if base:
+        if _git_ok("cat-file", "-e", f"{base}^{{commit}}").returncode != 0:
+            _git_ok("fetch", "--quiet", "--depth=1", "origin", base)
+        head = _git("rev-parse", "HEAD").strip()
+        for attempt in range(2):
+            if attempt:
+                # A depth-1 checkout has no path from HEAD back to the base yet.
+                _git_ok("fetch", "--quiet", "--deepen=100", "origin", head)
+            merge_base = _git_ok("merge-base", base, "HEAD")
+            if merge_base.returncode == 0:
+                return merge_base.stdout.strip()
+    print(
+        f"::warning::no merge base for '{base}' and HEAD; diffing against the current origin/main instead",
+        file=sys.stderr,
+    )
     _git("fetch", "--quiet", "--depth=1", "origin", "main")
     return "FETCH_HEAD"
+
+
+def _ops(path: str, source: str) -> list[str]:
+    if path.endswith(".py"):
+        return destructive_ops_py(source)
+    if path.endswith(".sql") and "_rollback_" not in Path(path).name:
+        # deploy-portal-api.sh skips *_rollback_*.sql; every other one runs.
+        return destructive_ops_sql(source)
+    return []
+
+
+def _added_ops(before: list[str], after: list[str]) -> list[str]:
+    """Operations in `after` that `before` did not have; line numbers do not count."""
+    seen = Counter(op.split(": ", 1)[-1] for op in before)
+    added = []
+    for op in after:
+        key = op.split(": ", 1)[-1]
+        if seen[key]:
+            seen[key] -= 1
+        else:
+            added.append(op)
+    return added
 
 
 def _under(path: str, directory: str) -> bool:
@@ -150,16 +217,13 @@ def main(argv: list[str]) -> int:
 
     destructive: dict[str, list[str]] = {}
     for status, path in changes:
-        if status != "A" or not _under(path, migrations_dir):
+        if status not in ("A", "M") or not _under(path, migrations_dir):
             continue
-        source = (root / path).read_text()
-        if path.endswith(".py"):
-            ops = destructive_ops_py(source)
-        elif path.endswith(".sql") and "_rollback_" not in Path(path).name:
-            # deploy-portal-api.sh skips *_rollback_*.sql; every other one runs.
-            ops = destructive_ops_sql(source)
-        else:
-            continue
+        ops = _ops(path, (root / path).read_text())
+        if status == "M":
+            ops = _added_ops(
+                _ops(path, _git("-C", str(root), "show", f"{base}:{path}")), ops
+            )
         if ops:
             destructive[path] = ops
     app_changes = [
@@ -167,7 +231,7 @@ def main(argv: list[str]) -> int:
     ]
 
     if not destructive:
-        print(f"expand-contract: no destructive migration added under {migrations_dir}")
+        print(f"expand-contract: no new destructive operation under {migrations_dir}")
         return 0
     if not app_changes:
         print(

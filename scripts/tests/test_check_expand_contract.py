@@ -134,17 +134,110 @@ class ExpandContractTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("DROP COLUMN", result.stdout)
 
-    def test_edit_to_an_existing_destructive_migration_does_not_count(self) -> None:
-        # A lint sweep over old migrations is not a new contract step.
+    def test_drop_added_to_an_existing_migration_counts(self) -> None:
         self._write(f"{MIGRATIONS}/0002_drop_legacy.py", DROP_COLUMN)
         self.base = self._commit("old contract release")
+        self._write(f"{APP}/models.py", "class Widget:\n    colour: str\n")
+        # A lint sweep over an old contract migration is not a new contract step.
         self._write(
             f"{MIGRATIONS}/0002_drop_legacy.py", DROP_COLUMN + "\n# reformatted\n"
+        )
+        self._commit("pr")
+        self.assertEqual(self._check().returncode, 0)
+        edited = DROP_COLUMN.replace(
+            'op.drop_column("widgets", "legacy_flag")',
+            'op.drop_column("widgets", "legacy_flag")\n    op.drop_table("gadgets")',
+        )
+        self._write(f"{MIGRATIONS}/0002_drop_legacy.py", edited)
+        self._commit("pr 2")
+        result = self._check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("drop_table", result.stdout)
+        self.assertNotIn("drop_column", result.stdout)
+
+    def test_sql_built_with_fstring_or_concatenation_counts(self) -> None:
+        self._write(
+            f"{MIGRATIONS}/0002_rename.py",
+            """
+            from alembic import op
+
+            def upgrade():
+                table = "widgets"
+                op.execute(f"ALTER TABLE {table} RENAME COLUMN a TO b")
+                op.execute("ALTER TABLE " + table + " RENAME TO gadgets")
+
+            def downgrade():
+                pass
+            """,
+        )
+        self._write(f"{APP}/models.py", "class Widget:\n    b: str\n")
+        self._commit("pr")
+        result = self._check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        # One per statement: neither piece of the split string matches alone.
+        self.assertEqual(result.stdout.count("RENAME"), 2, result.stdout)
+
+    def test_sql_comment_inside_a_python_string_does_not_count(self) -> None:
+        self._write(
+            f"{MIGRATIONS}/0002_index.py",
+            """
+            from alembic import op
+
+            def upgrade():
+                op.execute(\"\"\"
+                    -- DROP COLUMN legacy_flag once the reader is gone
+                    /* ALTER TABLE widgets RENAME TO gadgets */
+                    CREATE INDEX IF NOT EXISTS ix_widgets_colour ON widgets (colour)
+                \"\"\")
+
+            def downgrade():
+                pass
+            """,
         )
         self._write(f"{APP}/models.py", "class Widget:\n    colour: str\n")
         self._commit("pr")
         result = self._check()
         self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_main_moving_on_does_not_count_against_the_pr(self) -> None:
+        self._git("checkout", "-q", "-b", "pr")
+        self._write(f"{MIGRATIONS}/0002_drop_legacy.py", DROP_COLUMN)
+        self._commit("contract pr")
+        self._git("checkout", "-q", "main")
+        self._write(f"{APP}/models.py", "class Widget:\n    colour: str\n")
+        self.base = self._commit("someone else's code on main")
+        self._git("checkout", "-q", "pr")
+        result = self._check()
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_shallow_checkout_diffs_from_the_merge_base(self) -> None:
+        self._write(f"{MIGRATIONS}/0002_drop_legacy.py", DROP_COLUMN)
+        self._write(f"{APP}/models.py", "class Widget:\n    colour: str\n")
+        self._commit("pr")
+        clone_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(clone_dir.cleanup)
+        clone = Path(clone_dir.name) / "clone"
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "-q",
+                "--depth=1",
+                "--no-local",
+                f"file://{self.repo}",
+                str(clone),
+            ],
+            check=True,
+        )
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), self.base, MIGRATIONS, APP],
+            check=False,
+            cwd=clone,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotIn("origin/main instead", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
     def test_post_deploy_sql_counts_but_comments_and_rollback_scripts_do_not(
         self,

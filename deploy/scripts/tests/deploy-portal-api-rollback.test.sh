@@ -29,7 +29,7 @@ case "$1" in
   compose)
     case "$2" in
       ps)  cat "$fx/running_cid"; exit 0 ;;
-      run) exit 0 ;;
+      run) exit "$(cat "$fx/migrate_rc")" ;;
     esac ;;
   pull|tag|rm) exit 0 ;;
   image) exit 0 ;;
@@ -76,24 +76,36 @@ chmod +x "$work/bin/"* "$work/compose-up.sh"
 if ! command -v flock >/dev/null 2>&1; then
     cat > "$work/bin/flock" <<'STUB'
 #!/usr/bin/env python3
-import fcntl, sys
-fcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX)
+import fcntl, sys, time
+wait = float(sys.argv[2]) if sys.argv[1] == "-w" else 0
+fd = int(sys.argv[-1])
+end = time.time() + wait
+while True:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        sys.exit(0)
+    except OSError:
+        if time.time() >= end:
+            sys.exit(1)
+        time.sleep(0.05)
 STUB
     chmod +x "$work/bin/flock"
 fi
 
-# new_case <name> <compose-up rcs> <probe codes>
+# new_case <name> <compose-up rcs> <probe codes> [alembic rc]
 new_case() {
     fx="$work/$1"; mkdir -p "$fx/opt"
     export FIXTURES="$fx"
     printf '%s\n' $2 > "$fx/compose_up_rcs"
     printf '%s\n' $3 > "$fx/probe_codes"
     echo "oldcontainer1" > "$fx/running_cid"
+    echo "${4:-0}" > "$fx/migrate_rc"
     : > "$fx/events"
 }
 
 run_script() {
-    (cd "$work" && PATH="$work/bin:$PATH" KLAI_COMPOSE_DIR="$fx/opt" KLAI_DEPLOY_LOCK_DIR="$fx" \
+    # A short lock wait turns a nested-lock deadlock into a failed case, not a hang.
+    (cd "$work" && PATH="$work/bin:$PATH" KLAI_COMPOSE_DIR="$fx/opt" KLAI_DEPLOY_LOCK_DIR="$fx" KLAI_DEPLOY_LOCK_WAIT=2 \
           KLAI_DOCKER_BIN="$work/bin/docker" KLAI_COMPOSE_UP="$work/compose-up.sh" \
           KLAI_PROBE_TIMEOUT=0 KLAI_PROBE_INTERVAL=0 GITHUB_SHA=abc123 \
           bash "$target" "$@" >"$fx/stdout" 2>"$fx/stderr")
@@ -121,7 +133,7 @@ check "nothing touched" test "$(wc -l < "$fx/events" | tr -d ' ')" = 0
 echo "# green path"
 new_case green "0" "200"
 run_script "$IMAGE"
-check "exit 0" test "$rc" = 0
+check "exit 0: the helper does not wait on the lock its parent holds" test "$rc" = 0
 check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
 check "exact sha pulled" grep -qxF "docker pull $IMAGE" "$fx/events"
 check "migrations run from the new image, before the swap" before "docker tag $IMAGE ghcr.io/getklai/portal-api:latest" "docker compose run --rm --no-deps --entrypoint alembic portal-api upgrade head"
@@ -141,6 +153,28 @@ check "migrations ran once" test "$(count "alembic portal-api upgrade head")" = 
 check "no alembic downgrade" test "$(count "downgrade")" = 0
 check "post-deploy SQL applied once, not reverted" test "$(count "psql-stdin")" = 1
 check "no OIDC check after a rollback" test "$(count "curl ")" = 0
+check "the helper's retag is left alone" test "$(count "docker tag sha256:0123456789abcdef0123456789abcdef ghcr.io/getklai/portal-api:latest")" = 0
+
+echo "# migration fails -> compose tag back on the running image, no swap"
+new_case migrate_red "0" "200" 1
+run_script "$IMAGE"
+check "exit 1" test "$rc" = 1
+check "compose tag points at the running image again" before "docker compose run --rm --no-deps --entrypoint alembic portal-api upgrade head" "docker tag sha256:0123456789abcdef0123456789abcdef ghcr.io/getklai/portal-api:latest"
+check "said so" grep -q "points at the running image" "$fx/stderr"
+check "no swap" test "$(count "compose-up ")" = 0
+
+echo "# a second deploy waits for the lock instead of moving the tag"
+new_case locked "0" "200"
+python3 -c 'import fcntl, sys, time
+f = open(sys.argv[1], "w"); fcntl.flock(f, fcntl.LOCK_EX); open(sys.argv[2], "w").close(); time.sleep(30)' \
+    "$fx/klai-deploy-portal-api.lock" "$fx/held" &
+holder=$!
+for _ in $(seq 1 100); do [[ -e "$fx/held" ]] && break; sleep 0.05; done
+run_script "$IMAGE"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+check "exit 1 after the lock wait" test "$rc" = 1
+check "said why" grep -q "another portal-api deploy held" "$fx/stderr"
+check "no docker call while another deploy holds the lock" test "$(wc -l < "$fx/events" | tr -d ' ')" = 0
 
 echo "# AT-a5: the rollback fails too -> exit 4, one attempt"
 new_case a5 "1 1" "200"
