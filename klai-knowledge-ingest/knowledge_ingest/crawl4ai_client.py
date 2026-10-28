@@ -3153,7 +3153,8 @@ def _lower_rate_limit_for_slowdown(current_rate_limit: float | None) -> float:
         if current_rate_limit is not None
         else _UNPACED_SLOWDOWN_STARTING_RATE_LIMIT
     )
-    return max(MIN_DOMAIN_RATE_LIMIT, baseline / 2)
+    # The floor never lifts a rate above the one in effect.
+    return max(min(MIN_DOMAIN_RATE_LIMIT, baseline), baseline / 2)
 
 
 # Reason codes that mean "the target site just told us to back off" —
