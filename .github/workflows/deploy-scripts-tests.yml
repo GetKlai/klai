@@ -133,6 +133,11 @@ jobs:
       - name: deploy-with-rollback suite
         run: bash deploy/scripts/tests/deploy-with-rollback.test.sh
 
+      # Gate 4 reads VictoriaLogs after a green deploy: a query error must not
+      # roll back, a real breach must.
+      - name: post-deploy error-watch suite
+        run: bash deploy/scripts/tests/post-deploy-error-watch.test.sh
+
       # The weekly rehearsal's verdict logic: a bad image that deploys as
       # healthy must end red, not green.
       - name: rollback-rehearsal assertion suite

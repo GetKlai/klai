@@ -7,6 +7,7 @@
 # Usage:
 #   deploy-with-rollback.sh <compose-service> <image-ref-with-sha>
 #                           [--probe <url>] [--probe-network <net>] [--compose-tag <tag>]
+#                           [--error-watch <seconds>]
 #
 #   <image-ref-with-sha>  ghcr.io/getklai/<image>:<git sha>, the tag the build
 #                         workflow pushed. Rule R1: the exact sha is deployed,
@@ -18,6 +19,15 @@
 #                         :latest, which is what every service in scope uses.
 #   --probe               HTTP 2xx expected from this URL within 60 s (every
 #                         5 s), fetched from inside core-01 on klai-net.
+#   --error-watch         after the probe is green, keep the deploy under watch
+#                         for this many seconds (gate 4, slice S11): the helper
+#                         post-deploy-error-watch.sh counts the service's error
+#                         lines in VictoriaLogs since just before the recreate.
+#                         The per-service lock stays held for the whole watch,
+#                         and so does the calling ssh step; the lock wait grows
+#                         by the same number of seconds so a queued deploy of
+#                         the same service waits instead of failing. The helper
+#                         must exist and be executable, or nothing is deployed.
 #
 # Steps
 #   1. Record the image the service runs now and tag it klai/<svc>:previous (R2).
@@ -27,8 +37,15 @@
 #      the tag this script just set, which on a rollback would bring the bad
 #      image back.
 #   4. The --probe URL is gate 2.
-#   5. A red gate retags klai/<svc>:previous to the compose tag and runs
-#      compose-up.sh again (once, R6), then the probe again.
+#   5. --error-watch is gate 4, error-rate. Fail open on observability, fail
+#      closed on real errors: helper exit 3 (a breach) is a red gate; exit 1 (a
+#      query error, no credentials) logs a warning and keeps the deploy, because
+#      an outage of the log store is no evidence against the new image; any
+#      other exit is a tooling error, logged with ::error:: and the deploy is
+#      kept too (no evidence against the image either).
+#   6. A red gate retags klai/<svc>:previous to the compose tag and runs
+#      compose-up.sh again (once, R6), then the probe again. The rollback is
+#      not error-watched.
 #
 # Exit codes
 #   0  deployed
@@ -61,11 +78,12 @@ EVENT_LOG="${KLAI_AUTO_ROLLBACK_LOG:-$KLAI_DIR/logs/auto-rollback.log}"
 PROBE_TIMEOUT="${KLAI_PROBE_TIMEOUT:-60}"
 PROBE_INTERVAL="${KLAI_PROBE_INTERVAL:-5}"
 PROBE_NETWORK="${KLAI_PROBE_NETWORK:-klai-net}"
+ERROR_WATCH_BIN="${KLAI_ERROR_WATCH:-$KLAI_DIR/scripts/post-deploy-error-watch.sh}"
 # Same pinned image persistence-smoke.sh and backup.sh use.
 CURL_IMAGE="${KLAI_CURL_IMAGE:-curlimages/curl:8.11.1}"
 
 usage() {
-    echo "usage: ${0##*/} <compose-service> <image-ref-with-sha> [--probe <url>] [--probe-network <net>] [--compose-tag <tag>]" >&2
+    echo "usage: ${0##*/} <compose-service> <image-ref-with-sha> [--probe <url>] [--probe-network <net>] [--compose-tag <tag>] [--error-watch <seconds>]" >&2
     exit 1
 }
 
@@ -75,15 +93,23 @@ IMAGE_REF="$2"
 shift 2
 PROBE_URL=""
 COMPOSE_TAG=""
+ERROR_WATCH=0
 while (( $# > 0 )); do
     case "$1" in
         --probe)       (( $# >= 2 )) || usage; PROBE_URL="$2"; shift 2 ;;
         --probe-network) (( $# >= 2 )) || usage; PROBE_NETWORK="$2"; shift 2 ;;
         --compose-tag) (( $# >= 2 )) || usage; COMPOSE_TAG="$2"; shift 2 ;;
+        --error-watch) (( $# >= 2 )) || usage; ERROR_WATCH="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
 [[ "$IMAGE_REF" == *:* ]] || usage
+[[ "$ERROR_WATCH" =~ ^[0-9]+$ ]] || usage
+if (( ERROR_WATCH > 0 )) && [[ ! -x "$ERROR_WATCH_BIN" ]]; then
+    echo "::error::--error-watch needs $ERROR_WATCH_BIN to be executable; nothing deployed" >&2
+    exit 1
+fi
+LOCK_WAIT=$(( LOCK_WAIT + ERROR_WATCH ))
 # The ssh step starts in the deploy user's home directory, and `docker compose
 # ps` finds the stack from the working directory.
 cd "$KLAI_DIR" || exit 1
@@ -229,10 +255,26 @@ fi
 
 # --- 3 + 4. recreate and probe ------------------------------------------------
 echo "==> recreating $SERVICE"
+# Errors while the new container starts count, so the watch starts here.
+WATCH_FROM="$(now)"
 if run_gates; then
-    echo "==> $SERVICE is up on $IMAGE_REF"
-    OUTCOME="deployed"
-    finish 0
+    # --- gate 4: error rate since the deploy ----------------------------------
+    watch_rc=0
+    if (( ERROR_WATCH > 0 )); then
+        "$ERROR_WATCH_BIN" "$SERVICE" "$WATCH_FROM" --window "$ERROR_WATCH"
+        watch_rc=$?
+        case "$watch_rc" in
+            0|3) ;;
+            1) echo "::warning::$SERVICE error watch gave no verdict (exit 1); keeping the deploy"; watch_rc=0 ;;
+            *) echo "::error::$SERVICE error watch broke (exit $watch_rc), which says nothing about the image; keeping the deploy"; watch_rc=0 ;;
+        esac
+    fi
+    if (( watch_rc == 0 )); then
+        echo "==> $SERVICE is up on $IMAGE_REF"
+        OUTCOME="deployed"
+        finish 0
+    fi
+    GATE="error-rate"
 fi
 
 # --- 5. red gate: one rollback, never a loop ----------------------------------

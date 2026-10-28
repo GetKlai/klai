@@ -53,10 +53,20 @@ fx="$FIXTURES"
 printf '%s\n' "$*" >> "$fx/compose_up_argv"
 n=$(wc -l < "$fx/compose_up_argv")
 rc=$(sed -n "${n}p" "$fx/compose_up_rcs"); [[ -n "$rc" ]] || rc=$(tail -n1 "$fx/compose_up_rcs")
+[[ ! -e "$fx/compose_sleep" ]] || sleep 2
 echo "compose-up stub call $n rc=$rc"
 exit "$rc"
 STUB
-chmod +x "$work/docker" "$work/compose-up.sh"
+# Stands in for post-deploy-error-watch.sh: exits with the code in watch_rc and
+# records how it was called.
+cat > "$work/error-watch.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FIXTURES/watch_argv"
+date -u +%s > "$FIXTURES/watch_ran_at"
+echo "error-watch stub: exit $(cat "$FIXTURES/watch_rc")"
+exit "$(cat "$FIXTURES/watch_rc")"
+STUB
+chmod +x "$work/docker" "$work/compose-up.sh" "$work/error-watch.sh"
 
 # The script needs flock(1). Linux has it; elsewhere emulate `flock -w N 9` on
 # the inherited descriptor so the lock cases still run.
@@ -89,12 +99,13 @@ new_case() {
     printf '%s\n' ${3:-200} > "$fx/probe_codes"
     mkdir -p "$fx/opt"
     echo "oldcontainer1" > "$fx/running_cid"
-    : > "$fx/docker_argv"; : > "$fx/compose_up_argv"
+    : > "$fx/docker_argv"; : > "$fx/compose_up_argv"; : > "$fx/watch_argv"
+    echo 0 > "$fx/watch_rc"
 }
 
 # run_script [extra args]; sets rc, out, and the path variables below.
 run_script() {
-    out=$(cd "$work" && KLAI_COMPOSE_DIR="$fx/opt" KLAI_DEPLOY_LOCK_DIR="$fx" KLAI_DEPLOY_LOCK_WAIT="${LOCK_WAIT:-5}" KLAI_DOCKER_BIN="$work/docker" KLAI_COMPOSE_UP="$work/compose-up.sh" \
+    out=$(cd "$work" && KLAI_COMPOSE_DIR="$fx/opt" KLAI_DEPLOY_LOCK_DIR="$fx" KLAI_DEPLOY_LOCK_WAIT="${LOCK_WAIT:-5}" KLAI_DOCKER_BIN="$work/docker" KLAI_COMPOSE_UP="$work/compose-up.sh" KLAI_ERROR_WATCH="$work/error-watch.sh" \
           KLAI_PROBE_TIMEOUT=0 KLAI_PROBE_INTERVAL=0 GITHUB_SHA=abc123 \
           bash "$target" retrieval-api ghcr.io/getklai/retrieval-api:abc123 "$@" 2>"$fx/stderr")
     rc=$?
@@ -164,6 +175,76 @@ run_script --probe http://retrieval-api:8040/health
 check "exit 4" test "$rc" = 4
 check "gate names the rollback probe" grep -q '"gate":"rollback-probe"' "$report"
 check "two compose-up calls only" test "$(count_lines "$fx/compose_up_argv")" = 2
+
+echo "# no --error-watch: the helper never runs"
+new_case nowatch "0" "200"
+run_script --probe http://retrieval-api:8040/health
+check "exit 0" test "$rc" = 0
+check "helper not called" test ! -s "$fx/watch_argv"
+
+echo "# gate 4: error-watch clean -> deployed"
+new_case watchok "0" "200"
+touch "$fx/compose_sleep"
+run_script --probe http://retrieval-api:8040/health --error-watch 300
+check "exit 0" test "$rc" = 0
+check "helper called once with service, deploy time and window" grep -Eqx 'retrieval-api [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z --window 300' "$fx/watch_argv"
+check "the watch starts when the recreate starts, not after the gates" test "$(( $(cat "$fx/watch_ran_at") - $(date -u -d "$(awk '{print $2}' "$fx/watch_argv")" +%s 2>/dev/null || date -u -j -f %Y-%m-%dT%H:%M:%SZ "$(awk '{print $2}' "$fx/watch_argv")" +%s) ))" -ge 2
+check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
+
+echo "# gate 4: the helper is missing -> nothing is deployed"
+new_case watchmissing "0" "200"
+rc_out=$(cd "$work" && KLAI_ERROR_WATCH="$work/nope.sh" KLAI_COMPOSE_DIR="$fx/opt" KLAI_DEPLOY_LOCK_DIR="$fx" KLAI_DOCKER_BIN="$work/docker" KLAI_COMPOSE_UP="$work/compose-up.sh" \
+      bash "$target" retrieval-api ghcr.io/getklai/retrieval-api:abc123 --error-watch 300 2>&1); rc=$?
+check "exit 1" test "$rc" = 1
+check "says which file is missing" grep -q 'nope.sh to be executable; nothing deployed' <<< "$rc_out"
+check "docker and compose-up never ran" test ! -s "$fx/docker_argv" -a ! -s "$fx/compose_up_argv"
+
+echo "# gate 4: the helper breaks with another code (exit 2) -> deploy kept, loud error"
+new_case watchbroken "0" "200"
+echo 2 > "$fx/watch_rc"
+run_script --probe http://retrieval-api:8040/health --error-watch 300
+check "exit 0" test "$rc" = 0
+check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
+check "::error:: names the exit code" grep -q '::error::retrieval-api error watch broke (exit 2)' <<< "$out"
+check "no rollback" test "$(count_lines "$fx/compose_up_argv")" = 1
+
+echo "# gate 4: the lock wait grows with the watch"
+new_case watchlock "0" "200"
+( exec 9>"$fx/klai-deploy-retrieval-api.lock"; flock -w 5 9; sleep 3 ) &
+holder=$!
+sleep 0.3
+LOCK_WAIT=1 run_script --error-watch 5
+wait "$holder"
+check "a queued deploy waits for the lock plus the watch time" test "$rc" = 0
+
+echo "# gate 4: error-watch breach (exit 3) -> one rollback, gate error-rate"
+new_case watchbreach "0 0" "200"
+echo 3 > "$fx/watch_rc"
+run_script --probe http://retrieval-api:8040/health --error-watch 300
+check "exit 3" test "$rc" = 3
+check "ledger outcome rolled_back" test "$(ledger_outcome)" = rolled_back
+check "previous retagged to the compose tag" has_line "$fx/docker_argv" "tag klai/retrieval-api:previous ghcr.io/getklai/retrieval-api:latest"
+check "second compose-up is a forced recreate" has_line "$fx/compose_up_argv" "--no-pull --force-recreate retrieval-api"
+check "exactly one rollback attempt" test "$(count_lines "$fx/compose_up_argv")" = 2
+check "report gate error-rate, outcome rolled_back" grep -q '"gate":"error-rate".*"outcome":"rolled_back"' "$report"
+check "auto_rollback event names the gate" grep -q '"event":"auto_rollback","outcome":"rolled_back","deploy_service":"retrieval-api","gate":"error-rate"' "$event"
+check "the rollback is not error-watched" test "$(count_lines "$fx/watch_argv")" = 1
+
+echo "# gate 4: error-watch cannot query (exit 1) -> deploy kept, with a warning"
+new_case watchblind "0" "200"
+echo 1 > "$fx/watch_rc"
+run_script --probe http://retrieval-api:8040/health --error-watch 300
+check "exit 0" test "$rc" = 0
+check "ledger outcome deployed" test "$(ledger_outcome)" = deployed
+check "warns about the missing verdict" grep -q '::warning::retrieval-api error watch gave no verdict (exit 1)' <<< "$out"
+check "no rollback" test "$(count_lines "$fx/compose_up_argv")" = 1
+check "no auto_rollback event" test ! -e "$event"
+
+echo "# gate 4: a red probe never reaches the watch"
+new_case watchskipped "0 0" "500 200"
+run_script --probe http://retrieval-api:8040/health --error-watch 300
+check "exit 3 from the probe gate" test "$rc" = 3
+check "helper not called" test ! -s "$fx/watch_argv"
 
 echo "# no previous container"
 new_case first "1 0" "200"
