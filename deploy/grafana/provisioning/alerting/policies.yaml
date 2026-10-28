@@ -12,6 +12,7 @@
 #   - spec=SPEC-KB-015                           → klai-ops-alerts-email (feedback-loop health)
 #   - component=mistral-api-probe                → klai-ops-alerts-email (Mistral key state, repeat 1h)
 #   - component=widget-probe                     → klai-ops-alerts-email (customer widget probe, repeat 1h)
+#   - component=crawl                            → klai-ops-alerts-email (crawl jobs failing or silent, repeat 24h)
 #   - severity=critical                          → klai-ops-alerts-email (any critical rule not matched above)
 #
 # Paging is not a route. A rule that means "a human must act now, day or night,
@@ -181,6 +182,23 @@ policies:
         group_wait: 0s
         group_interval: 1m
         repeat_interval: 1h
+        continue: false
+
+      # Crawl job health (crawl-rules.yaml): critical, one alert per knowledge
+      # base whose latest nightly crawl fetched 0 pages, or that has no crawl
+      # job at all for 30 hours. group_by alertname so one mail lists every
+      # affected knowledge base; repeat 24h because the crawls are nightly and
+      # the verdict cannot change faster than that. From 2026-10-23 to
+      # 2026-10-28 every knowledge base failed six nights running unnoticed
+      # because no rule read crawl jobs.
+      - receiver: klai-ops-alerts-email
+        matchers:
+          - component = crawl
+        group_by:
+          - alertname
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 24h
         continue: false
 
       # SPEC-KB-015 — feedback-loop health. The rule evaluates a 30-day

@@ -100,6 +100,16 @@ AUTH_WALL_DETECTED_REASON = "auth_wall_detected"
 # failure regardless of cause. Stable string — same "surfaced in UI
 # error_summary" contract as the other *_REASON constants above.
 FETCH_FAILURE_DOMINANT_REASON = "fetch_failure_dominant"
+# 2026-10-23 02:01: crawl4ai 0.9.5 started answering HTTP 400 "Rejected
+# config" to our JavaScript ``wait_for``, so six nightly crawls of every
+# knowledge base fetched 0 pages and were reported as fetch_failure_dominant
+# ("the site may be blocking automated access"). A 4xx raised by the crawl4ai
+# API itself is our own deployment, never the target site.
+CRAWLER_CONFIG_REJECTED_REASON = "crawler_config_rejected"
+_CRAWLER_CONFIG_REJECTED_SUGGESTION = (
+    "The crawler refused our own configuration; this is a deployment bug, not "
+    "the target site. Check the crawl4ai version and knowledge_ingest/crawl4ai_config.py."
+)
 
 # SPEC-CRAWLER-FAILURE-EVIDENCE Deel B: ``pages_failed`` (incremented on
 # every ``_ingest_crawl_result`` exception) was tracked but never read —
@@ -239,6 +249,18 @@ if _uncategorized_fetch_reason_codes:  # pragma: no cover — fails import, not 
     )
 
 
+def _is_crawler_rejection(outcome: dict) -> bool:
+    """True for a 4xx that the crawl4ai API itself raised for our request.
+
+    ``error_type`` tells it apart from a 4xx the target site answered, which
+    crawl4ai reports as a page-level result (``crawl4ai:http_4xx``).
+    """
+    return outcome.get("error_type") == "httpx.HTTPStatusError" and outcome.get("reason_code") in (
+        FetchReasonCode.HTTP_4XX.value,
+        FetchReasonCode.AUTH_ERROR.value,
+    )
+
+
 def decide_terminal_status(
     *,
     auth_wall_count: int,
@@ -338,6 +360,16 @@ def decide_fetch_failure_terminal_status(
     total_count = len(fetch_outcomes)
     if total_count <= 0:
         return ("", None)
+    rejected = [o for o in fetch_outcomes if _is_crawler_rejection(o)]
+    if rejected and len(rejected) / total_count >= threshold:
+        return (
+            "failed",
+            {
+                "reason": CRAWLER_CONFIG_REJECTED_REASON,
+                "detail": str(rejected[0].get("error_message") or "")[:200],
+                "suggestion": _CRAWLER_CONFIG_REJECTED_SUGGESTION,
+            },
+        )
     failure_counts = Counter(
         reason
         for outcome in fetch_outcomes

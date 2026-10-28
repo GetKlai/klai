@@ -122,6 +122,30 @@ REVOKE ALL ON portal_meeting_transcript_health FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO grafana_reader;
 GRANT SELECT ON portal_meeting_transcript_health TO grafana_reader;
 
+-- ── Crawl job health ─────────────────────────────────────────────────────
+--
+-- crawl_jobs_failing and crawl_jobs_silent read knowledge.crawl_jobs, which has
+-- FORCE ROW LEVEL SECURITY (alembic 0002) and holds the crawl config, with
+-- cookies and login selectors. A base-table grant would read zero rows and
+-- expose that config, so the rules read this superuser-owned view instead:
+-- status, page counts, the epoch-seconds updated_at, and the error_summary
+-- reason code. Added 2026-10-28 after six nights of 0-page crawls
+-- (2026-10-23 to 2026-10-28) raised no alert.
+CREATE OR REPLACE VIEW knowledge.crawl_job_health
+WITH (security_invoker = false, security_barrier = true) AS
+    SELECT org_id,
+           kb_slug,
+           status,
+           pages_total,
+           pages_done,
+           updated_at,
+           error_summary ->> 'reason' AS reason
+      FROM knowledge.crawl_jobs;
+
+REVOKE ALL ON knowledge.crawl_job_health FROM PUBLIC;
+GRANT USAGE ON SCHEMA knowledge TO grafana_reader;
+GRANT SELECT ON knowledge.crawl_job_health TO grafana_reader;
+
 -- Verify after running (must return a non-zero count, not an error and not 0):
 --   SET ROLE grafana_reader;
 --   SELECT count(*) FROM portal_feedback_correlation_stats;

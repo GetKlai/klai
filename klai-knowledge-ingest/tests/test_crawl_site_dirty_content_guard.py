@@ -14,11 +14,14 @@ variables.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
+from knowledge_ingest import crawl4ai_client
 from knowledge_ingest.adapters.crawler import (
     CRAWL_BUDGET_EXHAUSTED_REASON,
     CRAWL_FETCH_FAILED_REASON,
+    CRAWLER_CONFIG_REJECTED_REASON,
     DIRTY_CONTENT_REASON,
     FETCH_FAILURE_DOMINANT_REASON,
     _build_crawl_outcome_warning,
@@ -313,3 +316,51 @@ def test_fetch_failure_only_not_fetched_codes_does_not_trip_guard() -> None:
     status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
     assert status == ""
     assert summary is None
+
+
+# ---------------------------------------------------------------------------
+# crawler_config_rejected — from 2026-10-23 02:01 crawl4ai 0.9.5 answered
+# HTTP 400 to every request we sent, because it refused our JavaScript
+# ``wait_for``. Six nightly crawls of every knowledge base ended as
+# "fetch_failure_dominant" with the suggestion that the site blocks automated
+# access, and nobody looked at crawl4ai.
+# ---------------------------------------------------------------------------
+
+_REJECTED_BODY = (
+    '{"detail":"Rejected config: a JavaScript wait_for is not permitted from an untrusted request"}'
+)
+
+
+def _crawler_rejected_outcome(url: str, *, status: int = 400, body: str = _REJECTED_BODY) -> dict:
+    request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
+    response = httpx.Response(status, text=body, request=request)
+    error = httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
+    return crawl4ai_client._outcome_for_failed_url(url, error)
+
+
+def test_every_page_refused_by_the_crawler_config_check_fails_the_job_as_config_rejected() -> None:
+    outcomes = [_crawler_rejected_outcome(f"https://example.com/{i}") for i in range(6)]
+
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
+
+    assert status == "failed"
+    assert summary is not None
+    assert summary["reason"] == CRAWLER_CONFIG_REJECTED_REASON == "crawler_config_rejected"
+    assert summary["detail"] == _REJECTED_BODY[:200]
+    assert "not the target site" in summary["suggestion"]
+    assert "crawl4ai_config.py" in summary["suggestion"]
+
+
+def test_a_4xx_answered_by_the_target_site_stays_fetch_failure_dominant() -> None:
+    """crawl4ai fetched the page and the SITE answered 4xx: page-level result,
+    ``error_type`` is the crawl4ai failure category, not an httpx exception."""
+    outcomes = _outcomes(*(["http_4xx"] * 6))
+    for outcome in outcomes:
+        outcome["status_code"] = 400
+        outcome["error_type"] = "crawl4ai:http_4xx"
+
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
+
+    assert status == "failed_partial"
+    assert summary is not None
+    assert summary["reason"] == FETCH_FAILURE_DOMINANT_REASON
