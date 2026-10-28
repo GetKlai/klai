@@ -1,8 +1,9 @@
 # Automatic rollback
 
 Alerts: `auto_rollback_event`, `rollback_rehearsal_missing`,
-`public01_infra_deploy_rollback`, `public01_infra_deploy_silent` (all
-`severity=critical`). Spec: SPEC-INFRA-AUTO-ROLLBACK-001.
+`datastore_restore_rehearsal_missing`, `public01_infra_deploy_rollback`,
+`public01_infra_deploy_silent` (all `severity=critical`). Spec:
+SPEC-INFRA-AUTO-ROLLBACK-001.
 
 `deploy-with-rollback.sh` (one service image) and `compose-rollback.sh` (the
 compose and config sync) put the previous state back when a deploy gate goes
@@ -38,6 +39,39 @@ No `rollback_rehearsal` event with outcome `ok` reached VictoriaLogs for 8
 days. The three checks, in order, are in the alert description. A green rehearsal
 run whose line is missing means Alloy or VictoriaLogs is the break, not the
 rollback.
+
+## A data store rollback failed
+
+An image change of a data store (Postgres, Qdrant, Meilisearch, Mongo, Redis,
+FalkorDB, Garage, RabbitMQ) is snapshotted into `/opt/klai/backups/pre-<store>-<time>/`
+before the compose sync replaces any file (`datastore-rollback.sh`). Three
+gates restore nothing on purpose and end `rollback_failed`, leaving the new
+version running:
+
+- `restore-window`: the red gate came more than 30 minutes after the snapshot,
+  so a restore would throw away too many writes. Decide by hand whether the new
+  version can stay.
+- `mongo-fcv`: Mongo's featureCompatibilityVersion differs from the one in the
+  snapshot, so someone changed it after the upgrade. Restoring would undo that
+  and every write since; the snapshot is still there if that is what you want.
+- `disk-headroom`: less free disk than twice the store's data; nothing changed.
+
+The snapshot directory holds `meta` (images, consumers), the data
+(`volume.tar`, `dump.rdb`, `definitions.json` or one `.dump` per database) and
+the baseline the restore is compared against. The ledger line has kind `data`.
+
+## The datastore restore rehearsal is missing
+
+No `datastore_restore_rehearsal` event with outcome `ok` reached VictoriaLogs
+for 30 days (the retention of VictoriaLogs). The rehearsal runs on the 1st and
+the 15th and restores every store's newest snapshot into a throwaway container
+labelled `klai.adhoc=datastore-restore`; a store without a snapshot gets a fresh
+one first, which stops Qdrant, Meilisearch, Mongo and Garage for the seconds of
+a cold copy. The three checks, in order, are in the alert description. A red
+run names the store whose restore failed; its event line carries the snapshot
+path, and the restore output is in the run log. Leftover throwaways from an
+interrupted run: `docker ps -a --filter label=klai.adhoc=datastore-restore` and
+`docker volume ls --filter label=klai.adhoc=datastore-restore`.
 
 ## A public-01 infra deploy was rolled back
 
