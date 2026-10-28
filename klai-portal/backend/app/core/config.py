@@ -161,6 +161,9 @@ class Settings(BaseSettings):
     # Empty = klai-slack not deployed: a disconnect then reports
     # ``slack_revoked: false`` instead of pretending the bot token was revoked.
     slack_service_url: str = ""  # e.g. http://klai-slack:8000
+    # Public origin of klai-slack: "Verbind met Slack" sends the admin's
+    # browser to ``<this>/slack/connect`` (Caddy routes /slack/* to klai-slack).
+    slack_service_public_url: str = "https://api.getklai.com"
 
     # klai-docs internal secret (used by portal → klai-docs for KB provisioning)
     docs_internal_secret: str = ""

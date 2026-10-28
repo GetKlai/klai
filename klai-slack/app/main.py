@@ -15,12 +15,18 @@ from fastapi import FastAPI, Request, Response  # noqa: E402
 from slack_bolt.adapter.fastapi.async_handler import AsyncSlackRequestHandler  # noqa: E402
 from slack_sdk.oauth.state_store.sqlalchemy import AsyncSQLAlchemyOAuthStateStore  # noqa: E402
 
-from app import db, repo  # noqa: E402
+from app import db, portal_link, repo  # noqa: E402
 from app.clients.portal import PortalClient  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.internal_api import router as internal_router  # noqa: E402
 from app.oauth_store import OAUTH_STATES_TABLE, EncryptedInstallationStore  # noqa: E402
-from app.slack_app import INSTALL_PATH, REDIRECT_PATH, build_slack_app  # noqa: E402
+from app.slack_app import (  # noqa: E402
+    CONNECT_PATH,
+    INSTALL_PATH,
+    REDIRECT_PATH,
+    build_oauth_settings,
+    build_slack_app,
+)
 
 logger = structlog.get_logger()
 
@@ -34,7 +40,8 @@ state_store = AsyncSQLAlchemyOAuthStateStore(
     expiration_seconds=OAUTH_STATE_EXPIRATION_S, engine=engine, table_name=OAUTH_STATES_TABLE
 )
 portal = PortalClient(settings.portal_api_url, settings.portal_internal_secret)
-bolt_app = build_slack_app(settings, installation_store, state_store, portal)
+oauth_settings = build_oauth_settings(settings, installation_store, state_store, portal)
+bolt_app = build_slack_app(settings, oauth_settings, portal)
 slack_handler = AsyncSlackRequestHandler(bolt_app)
 
 
@@ -73,6 +80,11 @@ async def slack_events(request: Request) -> Response:
 @app.get(INSTALL_PATH)
 async def slack_install(request: Request) -> Response:
     return await slack_handler.handle(request)
+
+
+@app.get(CONNECT_PATH)
+async def slack_connect(token: str | None = None) -> Response:
+    return await portal_link.start(token, oauth_settings, settings.portal_internal_secret)
 
 
 @app.get(REDIRECT_PATH)

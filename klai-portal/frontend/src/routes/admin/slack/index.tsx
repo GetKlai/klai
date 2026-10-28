@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { AlertTriangle, Info, KeyRound, Trash2 } from 'lucide-react'
+import { AlertTriangle, BookOpen, Info, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import { PageContainer } from '@/components/ui/page-container'
@@ -8,7 +9,6 @@ import { PageHeader } from '@/components/ui/page-header'
 import { QueryErrorState } from '@/components/ui/query-error-state'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import * as m from '@/paraglide/messages'
-import { CreatedKeyModal } from '../api-keys/_components/CreatedKeyModal'
 import { isSlackLockedError, useDisconnectSlack, useSlackStatus } from './-hooks'
 import { SlackConnectCard } from './_components/SlackConnectCard'
 import { SlackDisconnectTab } from './_components/SlackDisconnectTab'
@@ -21,8 +21,14 @@ type TabId = 'overview' | 'kbs' | 'disconnect'
 
 const VALID_TABS = new Set<TabId>(['overview', 'kbs', 'disconnect'])
 
+/** What the Slack OAuth callback appends to the page URL when it sends the admin back. */
+type SlackReturn = 'connected' | 'denied' | 'failed' | 'already_linked'
+
+const VALID_RETURNS = new Set<SlackReturn>(['connected', 'denied', 'failed', 'already_linked'])
+
 type SlackSearch = {
   tab?: TabId
+  slack?: SlackReturn
 }
 
 export const Route = createFileRoute('/admin/slack/')({
@@ -30,18 +36,37 @@ export const Route = createFileRoute('/admin/slack/')({
     tab: (VALID_TABS as Set<string>).has(search.tab as string)
       ? (search.tab as TabId)
       : undefined,
+    slack: (VALID_RETURNS as Set<string>).has(search.slack as string)
+      ? (search.slack as SlackReturn)
+      : undefined,
   }),
   component: SlackPage,
 })
+
+function showReturnToast(result: SlackReturn) {
+  const options = { id: 'slack-return' }
+  if (result === 'connected') toast.success(m.admin_slack_return_connected(), options)
+  else if (result === 'denied') toast.error(m.admin_slack_return_denied(), options)
+  else if (result === 'failed') toast.error(m.admin_slack_return_failed(), options)
+  else toast.warning(m.admin_slack_return_already_linked(), options)
+}
 
 function SlackPage() {
   const search = Route.useSearch()
   const navigate = useNavigate()
   const { data, isLoading, error, refetch } = useSlackStatus()
   const disconnectMutation = useDisconnectSlack()
-  // The key lives here, not in the connect card: creating it flips the status
-  // to awaiting_link, which unmounts the card while the modal is still open.
-  const [createdKey, setCreatedKey] = useState<string | null>(null)
+
+  // Tell the admin how the Slack round trip ended, then drop the param so a
+  // reload does not repeat the message. The round trip is a full page load,
+  // so the status query is fetched fresh and needs no invalidation.
+  const returned = search.slack
+  const returnedTab = search.tab
+  useEffect(() => {
+    if (!returned) return
+    showReturnToast(returned)
+    void navigate({ to: '/admin/slack', search: { tab: returnedTab }, replace: true })
+  }, [returned, returnedTab, navigate])
 
   const title = (name: string) => (
     <span className="inline-flex items-center gap-2">
@@ -52,7 +77,7 @@ function SlackPage() {
 
   if (isLoading) {
     return (
-      <PageContainer width="3xl" gap="6">
+      <PageContainer width="4xl" gap="6">
         <PageHeader title={title(m.admin_section_slack_title())} />
         <ListLoadingState label={m.admin_slack_loading()} />
       </PageContainer>
@@ -61,7 +86,7 @@ function SlackPage() {
 
   if (error) {
     return (
-      <PageContainer width="3xl" gap="6">
+      <PageContainer width="4xl" gap="6">
         <PageHeader title={title(m.admin_section_slack_title())} />
         {isSlackLockedError(error) ? (
           <ListEmptyState icon={AlertTriangle} title={m.admin_slack_unlock_required()} />
@@ -81,18 +106,11 @@ function SlackPage() {
   const connected = data.status === 'connected'
 
   const tabs: TabItem<TabId>[] = [
-    ...(connected
-      ? [{ id: 'overview' as const, label: m.admin_slack_tab_overview(), icon: Info }]
-      : []),
-    { id: 'kbs', label: m.admin_slack_tab_kbs(), icon: KeyRound },
-    {
-      id: 'disconnect',
-      label: awaiting ? m.admin_slack_tab_remove_key() : m.admin_slack_tab_disconnect(),
-      icon: Trash2,
-    },
+    { id: 'overview', label: m.admin_slack_tab_overview(), icon: Info },
+    { id: 'kbs', label: m.admin_slack_tab_kbs(), icon: BookOpen },
+    { id: 'disconnect', label: m.admin_slack_tab_disconnect(), icon: Trash2 },
   ]
-  const activeTab: TabId =
-    search.tab && tabs.some((t) => t.id === search.tab) ? search.tab : tabs[0].id
+  const activeTab: TabId = search.tab ?? 'overview'
 
   function setTab(tab: TabId) {
     void navigate({ to: '/admin/slack', search: { tab } })
@@ -100,26 +118,23 @@ function SlackPage() {
 
   const badge = connected ? (
     <Badge variant="success">{m.admin_slack_status_connected()}</Badge>
-  ) : awaiting ? (
-    <Badge variant="info">{m.admin_slack_status_awaiting()}</Badge>
   ) : data.status === 'revoked' ? (
     <Badge variant="warning">{m.admin_slack_status_revoked()}</Badge>
   ) : null
 
-  const workspaceName = data.installation?.team_name
-  const pageTitle = title(workspaceName ?? m.admin_section_slack_title())
+  const pageTitle = title(
+    connected && data.installation ? data.installation.team_name : m.admin_section_slack_title(),
+  )
 
   return (
-    <PageContainer width="3xl" gap="6">
+    <PageContainer width="4xl" gap="6">
       <PageHeader
         title={pageTitle}
         description={m.admin_section_slack_description()}
         actions={badge}
       />
 
-      {data.status === 'not_connected' && (
-        <SlackConnectCard onCreated={setCreatedKey} />
-      )}
+      {data.status === 'not_connected' && <SlackConnectCard />}
 
       {data.status === 'revoked' && (
         <>
@@ -136,32 +151,22 @@ function SlackPage() {
         </>
       )}
 
-      {(awaiting || connected) && (
+      {awaiting && (
         <>
-          {awaiting && data.key && (
-            <SlackStatusAlert status="awaiting_link" keyPrefix={data.key.key_prefix} />
-          )}
-          <Tabs tabs={tabs} value={activeTab} onValueChange={setTab} />
-          {activeTab === 'overview' && data.installation && data.key && (
-            <SlackOverviewTab installation={data.installation} slackKey={data.key} />
-          )}
-          {activeTab === 'kbs' && (
-            <SlackKbTab key={[...data.kb_ids].sort().join(',')} kbIds={data.kb_ids} />
-          )}
-          {activeTab === 'disconnect' && <SlackDisconnectTab awaitingLink={awaiting} />}
+          <SlackStatusAlert status="awaiting_link" />
+          <SlackDisconnectTab awaitingLink />
         </>
       )}
 
-      {createdKey && (
-        <CreatedKeyModal
-          apiKey={createdKey}
-          open
-          onConfirm={() => setCreatedKey(null)}
-          title={m.admin_slack_key_modal_title()}
-          warning={m.admin_slack_key_modal_warning()}
-          description={m.admin_slack_key_modal_description()}
-          confirmLabel={m.admin_slack_key_modal_confirm()}
-        />
+      {connected && data.installation && (
+        <>
+          <Tabs tabs={tabs} value={activeTab} onValueChange={setTab} />
+          {activeTab === 'overview' && <SlackOverviewTab installation={data.installation} />}
+          {activeTab === 'kbs' && (
+            <SlackKbTab key={[...data.kb_ids].sort().join(',')} kbIds={data.kb_ids} />
+          )}
+          {activeTab === 'disconnect' && <SlackDisconnectTab awaitingLink={false} />}
+        </>
       )}
     </PageContainer>
   )

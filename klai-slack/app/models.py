@@ -90,3 +90,19 @@ class ProcessedEvent(Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class PendingLink(Base):
+    """A portal link token waiting for its Slack OAuth callback, keyed by the Bolt state.
+
+    The token is a bearer credential the portal exchanges for a key, so it is
+    stored encrypted like the key itself.
+    """
+
+    __tablename__ = "pending_links"
+
+    state: Mapped[str] = mapped_column(String(200), primary_key=True)
+    token_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

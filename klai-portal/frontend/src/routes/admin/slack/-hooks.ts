@@ -3,15 +3,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/lib/auth'
 import { apiFetch, ApiError } from '@/lib/apiFetch'
 import type {
-  CreateSlackKeyRequest,
-  CreateSlackKeyResponse,
+  ConnectSlackRequest,
+  ConnectSlackResponse,
   DisconnectSlackResponse,
   SlackStatusResponse,
   UpdateSlackKbsRequest,
 } from './-types'
 
 const SLACK_KEY = ['admin-slack'] as const
-const POLL_MS = 10_000
 
 /** 403 on GET means the tenant has no `slack` unlock; the page shows the locked state. */
 export function isSlackLockedError(error: unknown): boolean {
@@ -26,23 +25,19 @@ export function useSlackStatus() {
     queryFn: async () => apiFetch<SlackStatusResponse>('/api/admin/slack'),
     enabled: auth.isAuthenticated,
     retry: (failureCount, error) => !isSlackLockedError(error) && failureCount < 2,
-    // Poll only while the admin has to paste the key into Slack.
-    refetchInterval: (query) =>
-      query.state.data?.status === 'awaiting_link' ? POLL_MS : false,
   })
 }
 
-export function useCreateSlackKey() {
-  const queryClient = useQueryClient()
-
+/** Starts the Slack OAuth flow: the backend answers with the authorize URL and the browser leaves the portal. */
+export function useConnectSlack() {
   return useMutation({
-    mutationFn: async (data: CreateSlackKeyRequest) =>
-      apiFetch<CreateSlackKeyResponse>('/api/admin/slack/key', {
+    mutationFn: async (data: ConnectSlackRequest) =>
+      apiFetch<ConnectSlackResponse>('/api/admin/slack/connect', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: SLACK_KEY })
+    onSuccess: (res) => {
+      window.location.assign(res.connect_url)
     },
   })
 }
