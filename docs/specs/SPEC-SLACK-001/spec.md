@@ -172,7 +172,7 @@ States:
 3. **Ontkoppeld in Slack** (`revoked`): alert with "Opnieuw koppelen" (delete + recreate key).
 4. Errors: already linked elsewhere (never names the other org), no KBs left, partial disconnect ("Verwijder de app ook in Slack").
 
-Target state (not MVP): "Verbind met Slack" starts Slack OAuth from the portal with a state bound to org, user and kb_ids; the callback mints the key server-side and hands `{team_id, bot_token, key}` to klai-slack; no key ever reaches the browser. Endpoints `POST /api/admin/slack/authorize`, `GET /api/slack/oauth/callback`, `POST /api/admin/slack/key/reissue`, `GET /api/admin/slack/channels`.
+Implemented connect flow: "Verbind met Slack" calls `POST /api/admin/slack/connect`, which returns the klai-slack `connect_url` and a signed 15-minute single-use link token (org, user, kb_ids, return_url). The browser hands the token to klai-slack with a top-level form POST to `/slack/connect` (never in a URL); klai-slack parks it under a Bolt OAuth state and sends the admin to Slack. On Slack's callback klai-slack exchanges the token at `POST /internal/slack/link-oauth`, where the portal re-checks the unlock, the knowledge bases and that the user is still an active admin, mints the managed key and records the installation; klai-slack stores the key encrypted and returns the browser to `return_url?slack=connected|denied|already_linked|failed`. Caddy drops any `token` query parameter from its access logs as defence in depth.
 
 ## 9. Slack UX
 
