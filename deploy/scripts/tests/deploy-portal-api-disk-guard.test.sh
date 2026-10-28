@@ -36,7 +36,7 @@ chmod +x "$TMP/bin/docker" "$TMP/bin/df"
 
 set +e
 PATH="$TMP/bin:$PATH" KLAI_COMPOSE_DIR="$COMPOSE_DIR" \
-    bash "$SCRIPT" >"$TMP/out" 2>&1
+    bash "$SCRIPT" ghcr.io/getklai/portal-api:0123abc >"$TMP/out" 2>&1
 rc=$?
 set -e
 
@@ -67,7 +67,7 @@ STUB
 
 set +e
 PATH="$TMP/bin:$PATH" KLAI_COMPOSE_DIR="$COMPOSE_DIR" \
-    bash "$SCRIPT" >"$TMP/out2" 2>&1
+    bash "$SCRIPT" ghcr.io/getklai/portal-api:0123abc >"$TMP/out2" 2>&1
 rc=$?
 set -e
 
@@ -89,7 +89,7 @@ STUB
 
 set +e
 PATH="$TMP/bin:$PATH" KLAI_COMPOSE_DIR="$COMPOSE_DIR" \
-    bash "$SCRIPT" >"$TMP/out3" 2>&1
+    bash "$SCRIPT" ghcr.io/getklai/portal-api:0123abc >"$TMP/out3" 2>&1
 set -e
 
 if ! [ -f "$TMP/docker-was-called" ]; then
