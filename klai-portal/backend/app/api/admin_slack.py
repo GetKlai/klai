@@ -74,7 +74,9 @@ class SlackKeyCreatedOut(BaseModel):
 
 
 class SlackConnectOut(BaseModel):
+    # The page form-POSTs ``token`` to ``connect_url``; it never goes in a URL.
     connect_url: str
+    token: str
 
 
 def _key_out(key: PartnerAPIKey) -> SlackKeyOut:
@@ -139,10 +141,10 @@ async def connect_slack(
     _platform: UserPermissions = Depends(require_platform_unlocked("slack")),
     db: AsyncSession = Depends(get_db),
 ) -> SlackConnectOut:
-    connect_url = await start_slack_connect(
+    connect_url, token = await start_slack_connect(
         db, org_id=perms.org_id, org_slug=perms.org_slug, user_id=perms.user_id, kb_ids=body.kb_ids
     )
-    return SlackConnectOut(connect_url=connect_url)
+    return SlackConnectOut(connect_url=connect_url, token=token)
 
 
 @router.patch("")

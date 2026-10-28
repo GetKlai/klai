@@ -490,9 +490,7 @@ async def test_unlink_marks_the_workspace_revoked_and_is_idempotent(internal, re
 
 
 @pytest.mark.asyncio
-async def test_connect_returns_a_klai_slack_url_whose_token_carries_the_org_user_and_kbs(events, monkeypatch):
-    from urllib.parse import parse_qs, urlsplit
-
+async def test_connect_returns_the_token_beside_a_klai_slack_url_that_does_not_carry_it(events, monkeypatch):
     import jwt
 
     import app.api.admin_slack as admin_slack
@@ -510,9 +508,9 @@ async def test_connect_returns_a_klai_slack_url_whose_token_carries_the_org_user
         db=db,
     )
 
-    url = urlsplit(result.connect_url)
-    assert (url.scheme, url.netloc, url.path) == ("https", "api.getklai.com", "/slack/connect")
-    claims = jwt.decode(parse_qs(url.query)["token"][0], _SECRET, algorithms=["HS256"])
+    # The browser form-POSTs the token: a URL lands in access logs and history.
+    assert result.connect_url == "https://api.getklai.com/slack/connect"
+    claims = jwt.decode(result.token, _SECRET, algorithms=["HS256"])
     assert claims.pop("exp") - claims.pop("iat") == 15 * 60
     assert claims.pop("jti")
     assert claims == {
@@ -592,11 +590,19 @@ def _oauth_body(token: str):
     )
 
 
-def _oauth_db(kbs=(_ORG_KB, _ORG_KB_2), existing_key=None, unlocked=("slack",)) -> AsyncMock:
-    org = FakeOrg(id=42, name="Example Org", platform_unlocked_features=list(unlocked))
+def _portal_user(**overrides) -> SimpleNamespace:
+    values = {"zitadel_user_id": "u", "org_id": 42, "role": "admin", "seat_type": "knowledge", "status": "active"}
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _oauth_db(kbs=(_ORG_KB, _ORG_KB_2), existing_key=None, unlocked=("slack",), user=None) -> AsyncMock:
+    org = FakeOrg(id=42, name="Example Org", slug="example", plan="core", platform_unlocked_features=list(unlocked))
+    user = _portal_user() if user is None else user
     return _db(
         [
             FakeResult([org]),
+            FakeResult([(org, user)] if user else []),  # resolve_user_permissions
             FakeResult(),  # org row lock
             FakeResult([existing_key] if existing_key else []),
             FakeResult(list(kbs)),
@@ -703,6 +709,24 @@ async def test_link_oauth_is_forbidden_once_the_slack_unlock_is_withdrawn(intern
 
     assert exc.value.status_code == 403
     db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "user",
+    [_portal_user(status="suspended"), _portal_user(status="offboarded"), _portal_user(role="company"), False],
+    ids=["suspended", "offboarded", "demoted to company", "no longer in the org"],
+)
+async def test_link_oauth_mints_nothing_for_a_user_who_is_no_longer_an_active_admin(internal, token_store, user):
+    db = _oauth_db(user=user)
+
+    response = await internal.link_slack_workspace_oauth(body=_oauth_body(_link_token()), request=_request(), db=db)
+
+    assert response.status_code == 403
+    assert response.body == b'{"code":"not_admin"}'
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+    assert "slack_link_jti:jti-1" in token_store.values  # the token cannot be retried
 
 
 @pytest.mark.asyncio

@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.internal import _audit_internal_call, _require_internal_token
 from app.api.partner_dependencies import _org_accepts_credentials
 from app.core.database import cross_org_scope, get_db, set_tenant
-from app.core.permissions import assert_platform_unlocked
+from app.core.permissions import ProfileRole, assert_platform_unlocked, has_role_at_least, resolve_user_permissions
 from app.models.partner_api_keys import PartnerAPIKey
 from app.models.portal import PortalOrg
 from app.models.slack import PortalSlackInstallation
@@ -154,6 +154,13 @@ async def link_slack_workspace_oauth(
     assert_platform_unlocked(org, "slack")
 
     user_id = claims["user_id"]
+    # The token proves who was admin when the link started, up to 15 minutes
+    # ago; a suspension, offboarding or demotion since then stops the mint.
+    # The jti is already claimed, so the same token cannot be retried.
+    perms = await resolve_user_permissions(user_id, db, org_id=org.id)
+    if perms is None or perms.status != "active" or not has_role_at_least(perms, ProfileRole.ADMIN):
+        logger.warning("slack_link_user_not_admin", org_id=org.id, user_id=user_id)
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"code": "not_admin"})
     # mint_slack_key re-validates kb_ids against the org now (400): a KB may
     # have been deleted while the admin was in Slack.
     try:

@@ -17,7 +17,6 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
-from urllib.parse import urlencode
 
 import httpx
 import jwt
@@ -174,8 +173,13 @@ async def create_slack_key(
     return plaintext, key
 
 
-async def start_slack_connect(db: AsyncSession, *, org_id: int, org_slug: str, user_id: str, kb_ids: list[int]) -> str:
-    """Validate the admin's KB choice and return the klai-slack URL that starts Slack OAuth.
+async def start_slack_connect(
+    db: AsyncSession, *, org_id: int, org_slug: str, user_id: str, kb_ids: list[int]
+) -> tuple[str, str]:
+    """Validate the admin's KB choice; return the klai-slack URL and the link token.
+
+    The page form-POSTs the token to that URL, so the bearer token never sits
+    in a URL (access logs, browser history, Referer).
 
     Mints nothing: ``/internal/slack/link-oauth`` creates the key once the
     workspace approved the app, after running the same checks again.
@@ -200,7 +204,7 @@ async def start_slack_connect(db: AsyncSession, *, org_id: int, org_slug: str, u
         algorithm="HS256",
     )
     emit_event("slack.connect_started", org_id=org_id, user_id=user_id, properties={"kb_ids": wanted})
-    return f"{settings.slack_service_public_url.rstrip('/')}/slack/connect?{urlencode({'token': token})}"
+    return f"{settings.slack_service_public_url.rstrip('/')}/slack/connect", token
 
 
 def decode_link_token(token: str) -> dict[str, Any]:
