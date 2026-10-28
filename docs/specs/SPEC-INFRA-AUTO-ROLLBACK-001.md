@@ -269,20 +269,26 @@ set from 30 days of real data before the slice merges.
 ## 8. Dead-man's switch (layer f)
 
 The chain fails silently more often than it fails loudly, so each link proves it
-ran, to a watcher outside GitHub:
+ran. Uptime Kuma is the customer status page and is not used for this (owner
+decision, 2026-10-28): every signal below is a Grafana alert rule on core-01
+that mails the ops contact point.
 
-- Push monitors in Uptime Kuma (on public-01, a different host from core-01)
-  for: a successful Renovate run (expected hourly, alert after 6 hours), a
-  successful deploy or explicit "nothing to deploy" day, and the weekly
-  rollback rehearsal (alert after 8 days).
 - **Weekly rehearsal** (`rollback-rehearsal.yml`): a `rollback-canary` service
   in the compose file (tiny HTTP image, no customer traffic, no data) is
   deployed with a known-bad image through the real rollback script. The job
   asserts the canary runs the previous image again within 5 minutes and that a
-  report with outcome `rolled_back` was produced, then pushes to Kuma.
-- Since public-01 hosts Kuma, Grafana on core-01 alerts when the public-01 Kuma
-  heartbeat stops (`public01-rules.yaml` is the place), so each host watches the
-  other.
+  report with outcome `rolled_back` was produced, then appends one
+  `rollback_rehearsal` event line to the auto-rollback log that Alloy ships.
+  A red job opens the `ci-failure` issue.
+- Grafana rules: no `rollback_rehearsal` event with outcome `ok` in 8 days;
+  any `auto_rollback` event (outcome `rolled_back` or `rollback_failed`) in the
+  last 15 minutes; no successful Renovate run in 6 hours and no deploy-compose
+  run in 7 days, both read from the ledger and report files that the sync
+  writes on every run (a scheduled check on core-01 turns their age into a
+  metric). Known ceiling: Grafana on core-01 watches core-01, so a dead
+  Grafana or a dead host is caught only by the existing
+  `public01_caddy_logs_silent` style rules in the other direction and by the
+  alerter heartbeat already in place.
 - `version-drift.yml` keeps checking for stuck Renovate PRs and runs.
 
 ## 9. Hook for a later AI fixer (layer g)
@@ -341,8 +347,8 @@ Phrased as outcomes someone can watch happen.
 - AT-e1: `renovate.json5` passes `test-renovate-config.sh` with SHA pinning and
   the new automerge rules; every `uses:` reference is a 40-character SHA after
   the first Renovate run.
-- AT-f1: Disabling the Renovate workflow for 6 hours makes Kuma alert; skipping
-  one weekly rehearsal makes Kuma alert after 8 days.
+- AT-f1: Disabling the Renovate workflow for 6 hours produces a Grafana mail;
+  skipping one weekly rehearsal produces a Grafana mail after 8 days.
 - AT-f2: The weekly rehearsal is green on `main` for four weeks in a row.
 - AT-6: A deploy followed by a red E2E run (red after one retry) rolls back
   that deploy's ledger entries and re-runs E2E green; a red scheduled 04:00 run
@@ -364,7 +370,7 @@ added to `deploy-scripts-tests.yml`, and the rehearsal once it exists.
 | S4 | Notification and hook: report artifact, labels in `ci-failure-notice.yml`, Grafana rule on the `auto_rollback` log line | 4.a, 9 | `ci-failure-notice.yml`, the deploy workflows (upload step), `deploy/grafana/provisioning/alerting/` | AT-a1 issue and mail part | M | Sonnet |
 | S5 | Revert PR plus exact-version exclusion after a Renovate bump rollback | 4.b | `deploy-compose.yml`, a script under `scripts/`, `renovate.json5` (ceiling section only) | AT-b2 | M | Opus (app token) |
 | S6 | `Auto-rollback` workflow on E2E result, last-green marker, ledger replay, one spec retry in the prod suite | 6 | new workflow, helper under `deploy/scripts/`, `klai-portal/frontend` Playwright prod config | AT-6 | M | Opus (deploy key) |
-| S7 | Rehearsal and dead-man's switch: `rollback-canary` service, `rollback-rehearsal.yml`, Kuma push steps, Grafana rule for the public-01 heartbeat | 8 | `deploy/docker-compose.yml`, `deploy/volume-mounts.yaml` if needed, new workflow, `renovate.yml`, alerting rules | AT-f1, f2 | M | Sonnet |
+| S7 | Rehearsal and dead-man's switch: `rollback-canary` service, `rollback-rehearsal.yml`, Grafana mail rules (no Kuma) | 8 | `deploy/docker-compose.yml`, `deploy/volume-mounts.yaml` if needed, new workflow, `renovate.yml`, alerting rules | AT-f1, f2 | M | Sonnet |
 | S8a | Snapshot, probe, restore for Postgres (main and app databases) and the apps that migrate their own DB | 4.c, 4.b | helper under `deploy/scripts/`, its test, `deploy-compose.yml` | AT-c1, c2, c3 for Postgres | L | Opus |
 | S8b | Same for Qdrant, Meilisearch, Mongo, Redis, FalkorDB, Garage, RabbitMQ; monthly restore rehearsal | 4.c | same helper, new rehearsal workflow | AT-c1 to c4 | L | Opus |
 | S9 | Renovate policy: SHA pinning, vulnerability bypass, data-store minors and approved majors to automerge | 5 | `renovate.json5`, `scripts/test-renovate-config.sh` | AT-e1 | S | Sonnet |
