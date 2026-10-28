@@ -152,7 +152,16 @@ jobs:
             set -e
             source /opt/klai/.env
             test -x /opt/klai/scripts/rollback-since.sh
-            /opt/klai/scripts/rollback-since.sh ${{ steps.green.outputs.since }} --until ${{ steps.green.outputs.until }} ${{ github.event_name == 'workflow_dispatch' && '--rehearse' || '' }}
+            rc=0
+            /opt/klai/scripts/rollback-since.sh ${{ steps.green.outputs.since }} --until ${{ steps.green.outputs.until }} ${{ github.event_name == 'workflow_dispatch' && '--rehearse' || '' }} || rc=$?
+            # A rehearsal that rolled the canary back is the expected outcome and
+            # ends green, so it opens no ci-failure issue (the 2026-10-28 proof
+            # run opened #2111 that way); any other result is red.
+            if [ "${{ github.event_name }}" = workflow_dispatch ] && [ "$rc" = 3 ]; then
+              echo "rehearsal: the canary was rolled back as expected"
+              exit 0
+            fi
+            exit "$rc"
 
       # Same hand-off as the deploy workflows (S4): only a report written by this
       # replay counts.
