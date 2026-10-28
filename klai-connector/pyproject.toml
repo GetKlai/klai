@@ -126,3 +126,6 @@ dev = [
 # 3.x line carries thirteen advisories fixed only in 4.2.1 (CVE-2026-1129xx),
 # so the upper bound is overridden instead of ignoring each advisory.
 override-dependencies = ["filelock>=4.2.1"]
+# Supply-chain cooldown, the uv counterpart of Renovate's 7-day release age:
+# a freshly published version is not resolved for a week.
+exclude-newer = "7 days"
