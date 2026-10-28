@@ -871,6 +871,52 @@ services:
       - klai-net
       - net-redis
 
+  # ─── klai-slack (Klai in Slack, SPEC-SLACK-001) ──────────────────────────
+  # Bolt for Python behind Caddy `/slack/*` on the api. host. Talks to Slack
+  # over HTTPS and to portal-api over klai-net (Partner API + /internal/slack/*).
+  # NOT on the socket-proxy network: it has no Docker access and must not gain
+  # any (SPEC-SLACK-001 §10, scripts/audit-docker-access.sh pins this).
+  # Explicit environment block (SPEC-SEC-ENVFILE-SCOPE-001): exactly what
+  # klai-slack/app/config.py reads, no env_file. Every secret is mandatory and
+  # validated at startup, so a missing SOPS entry is a restart loop, not a
+  # half-working bot. Put the SOPS entries in place BEFORE the first deploy.
+  klai-slack:
+    logging: *log-rotation
+    image: ghcr.io/getklai/klai-slack:latest
+    restart: unless-stopped
+    environment:
+      # Slack app credentials — from klai-infra/core-01/klai-slack/.env.sops
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+      # base64 of exactly 32 bytes (AES-256-GCM), encrypts bot tokens and the
+      # Klai partner key at rest — from klai-infra/core-01/klai-slack/.env.sops
+      SLACK_ENCRYPTION_KEY: ${SLACK_ENCRYPTION_KEY}
+      # Own database `klai_slack` on the shared postgres (deploy/postgres/init.sql);
+      # password from klai-infra/core-01/klai-slack/.env.sops. Alembic runs from
+      # entrypoint.sh before uvicorn starts.
+      DATABASE_URL: postgresql+asyncpg://klai_slack:${KLAI_SLACK_DB_PASSWORD}@postgres:5432/klai_slack
+      PORTAL_API_URL: http://portal-api:8010
+      # One cross-service secret in both directions (SPEC-SLACK-001 §7.3), the
+      # same one portal-api and klai-mailer share. Single source of truth in
+      # the main SOPS env; both sides compare via hmac.compare_digest.
+      PORTAL_INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      INTERNAL_SECRET: ${PORTAL_API_INTERNAL_SECRET}
+      PUBLIC_BASE_URL: https://api.${DOMAIN}
+      KLAI_ENV: ${KLAI_ENV:-production}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - klai-net
+      - net-postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # ─── listmonk (self-hosted mailing platform) ─────────────────────────────
   # UI: https://mailing.${DOMAIN}
   # Purpose: compose campaigns, manage templates/lists/subscribers, and receive
@@ -1047,6 +1093,11 @@ services:
       # Auth is X-Internal-Secret: ${PORTAL_API_INTERNAL_SECRET}; mailer
       # validates via hmac.compare_digest.
       MAILER_URL: ${MAILER_URL:-http://klai-mailer:8000}
+      # ─── Slack (SPEC-SLACK-001) ─────────────────────────────────
+      # klai-slack internal API (DELETE /internal/installations/{team_id} on
+      # disconnect). Auth is Bearer ${PORTAL_API_INTERNAL_SECRET}, already
+      # mapped to INTERNAL_SECRET above. Public host is the Slack-facing api.
+      SLACK_SERVICE_URL: ${SLACK_SERVICE_URL:-http://klai-slack:8000}
       # ─── listmonk mailing lists / transactional sends ───────────
       LISTMONK_URL: ${LISTMONK_URL:-http://listmonk:9000}
       LISTMONK_API_USER: ${LISTMONK_API_USER:-}

@@ -141,6 +141,7 @@ sudo bash scripts/harden-docker-user.sh
 | **Portal API** | Tenant provisioning and management API |
 | **Caddy** | Reverse proxy with wildcard TLS (Hetzner DNS) |
 | **klai-mailer** | Transactional email via Zitadel HTTP notifications |
+| **klai-slack** | Klai in Slack: answers from the Partner API in a customer's Slack workspace |
 | **GlitchTip** | Frontend error tracking |
 | **Grafana** | Monitoring dashboards |
 | **VictoriaMetrics** | Metrics storage |
