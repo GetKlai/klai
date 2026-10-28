@@ -186,6 +186,12 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
         with:
+          # The script holds the per-service lock for up to 600 s plus the watch
+          # (900 s), then deploys and watches for 300 s: a queue of two deploys
+          # of this service runs past the action's 10-minute default. On
+          # 2026-10-28 23:37 UTC the default cut a knowledge-ingest deploy in its
+          # watch window, with no verdict and no ledger line.
+          command_timeout: 30m
           host: ${{ secrets.CORE01_HOST }}
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
