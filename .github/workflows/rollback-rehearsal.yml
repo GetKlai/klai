@@ -64,13 +64,3 @@ jobs:
             test -x /opt/klai/scripts/deploy-with-rollback.sh
             test -x /opt/klai/scripts/rollback-rehearsal-assert.sh
             /opt/klai/scripts/rollback-rehearsal-assert.sh ${{ env.GOOD_IMAGE }} ${{ env.BAD_IMAGE }}
-
-      # --- Uptime Kuma push step: DECISION PENDING -------------------------------
-      # SPEC-INFRA-AUTO-ROLLBACK-001 section 8 also has the green run push to a
-      # Kuma push monitor on public-01 (alert after 8 days), so a dead GitHub
-      # schedule is seen from outside GitHub. Whether and how that push is made
-      # (monitor token as a repo secret, which monitor, from the runner or from
-      # core-01) is still an open decision, so nothing is pushed yet. The Grafana
-      # rule rollback_rehearsal_missing covers the same gap from core-01 meanwhile.
-      # When decided, the step goes here, after the ssh step, and runs only when
-      # that step succeeded (the default).

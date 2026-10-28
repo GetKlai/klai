@@ -41,6 +41,7 @@ CURL_IMAGE="${KLAI_CURL_IMAGE:-curlimages/curl:8.11.1}"
 SERVICE="rollback-canary"
 COMPOSE_TAG="klai/rollback-canary:1.0-local-261028-0000"
 PROBE_URL="http://rollback-canary:8080/"
+PROBE_NETWORK="klai-rehearsal"
 
 (( $# == 2 )) || { echo "usage: ${0##*/} <good-image-ref> <bad-image-ref>" >&2; exit 1; }
 GOOD="$1"
@@ -60,7 +61,7 @@ fail() { echo "::error::rollback rehearsal: $*" >&2; exit 1; }
 # its output in $WORK/<name>.out (tee keeps it in the Actions log too).
 deploy() {
     local image="$1" name="$2"
-    "$DEPLOY" "$SERVICE" "$image" --compose-tag "$COMPOSE_TAG" --probe "$PROBE_URL" 2>&1 \
+    "$DEPLOY" "$SERVICE" "$image" --compose-tag "$COMPOSE_TAG" --probe "$PROBE_URL" --probe-network "$PROBE_NETWORK" 2>&1 \
         | tee "$WORK/$name.out"
     DEPLOY_RC="${PIPESTATUS[0]}"
 }
@@ -89,7 +90,7 @@ while :; do
     running_id=""
     [[ -z "$cid" ]] || running_id="$("$DOCKER" inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
     if [[ -n "$running_id" && "$running_id" == "$good_id" ]]; then
-        code="$("$DOCKER" run --rm --network klai-net "$CURL_IMAGE" \
+        code="$("$DOCKER" run --rm --network "$PROBE_NETWORK" "$CURL_IMAGE" \
             -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROBE_URL" 2>/dev/null)" || code="000"
         echo "canary runs the good image; probe $PROBE_URL -> HTTP $code"
         [[ "$code" =~ ^2[0-9][0-9]$ ]] && break

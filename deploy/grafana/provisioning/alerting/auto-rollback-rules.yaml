@@ -96,8 +96,9 @@ groups:
       # for 8 days means a skipped schedule, a red run, or a broken log pipeline,
       # and in every case nothing is proving that rollback works. noDataState
       # and execErrState Alerting because a rule that exists to catch silence
-      # must not go quiet itself. for: 6h so the first rehearsal after this rule
-      # is merged can be dispatched by hand before it mails.
+      # must not go quiet itself. for: 30m only so a VictoriaLogs hiccup does not
+      # mail; the 8-day window is the requirement. Dispatch the first rehearsal
+      # by hand right after this rule is merged.
       - uid: obs-rollback-rehearsal-missing
         title: rollback_rehearsal_missing
         condition: threshold
@@ -143,7 +144,7 @@ groups:
                   type: query
         noDataState: Alerting
         execErrState: Alerting
-        for: 6h
+        for: 30m
         keepFiringFor: 10m
         isPaused: false
         labels:

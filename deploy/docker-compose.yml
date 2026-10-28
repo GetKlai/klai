@@ -37,6 +37,10 @@ networks:
     driver: bridge
     name: klai-net-redis
     internal: true   # only Redis <-> LiteLLM, GlitchTip, LibreChat
+  klai-rehearsal:
+    driver: bridge
+    name: klai-rehearsal
+    internal: true   # only rollback-canary; shares no network with a real service (SPEC-INFRA-AUTO-ROLLBACK-001 S7)
   net-listmonk:
     driver: bridge
     name: klai-net-listmonk
@@ -875,7 +879,8 @@ services:
   # SPEC-INFRA-AUTO-ROLLBACK-001 slice S7. rollback-rehearsal.yml deploys a good
   # image, then a deliberately broken one, through deploy-with-rollback.sh and
   # asserts the good one is serving again. No customer traffic, no data, no
-  # published port, no secrets.
+  # published port, no secrets, and its own internal network (klai-rehearsal), so
+  # it shares no network with a real service.
   #
   # The image is a host-local tag: the rehearsal tags whatever it deploys as
   # klai/rollback-canary:1.0-local-261028-0000 on core-01, and nothing pushes or
@@ -909,7 +914,7 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - klai-net
+      - klai-rehearsal
     deploy:
       resources:
         limits:

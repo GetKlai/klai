@@ -75,7 +75,7 @@ check "event line appended" grep -q '"service":"auto-rollback","level":"info","e
 check "event names the canary service, so the auto_rollback alert can exclude it" grep -q '"deploy_service":"rollback-canary"' "$event"
 check "one event line" test "$(wc -l < "$event" | tr -d ' ')" = 1
 check "good image deployed first, bad second" bash -c "sed -n 1p '$fx/deploy_argv' | grep -q '^rollback-canary busybox:1.37.0 ' && sed -n 2p '$fx/deploy_argv' | grep -q '^rollback-canary debian:12.15-slim '"
-check "same compose tag and probe on both deploys" test "$(grep -c -- '--compose-tag klai/rollback-canary:1.0-local-261028-0000 --probe http://rollback-canary:8080/ ' "$fx/deploy_argv")" = 2
+check "same compose tag, probe and probe network on both deploys" test "$(grep -c -- '--compose-tag klai/rollback-canary:1.0-local-261028-0000 --probe http://rollback-canary:8080/ --probe-network klai-rehearsal' "$fx/deploy_argv")" = 2
 check "compose profile is on for the deploy script" test "$(grep -c 'COMPOSE_PROFILES=rollback-rehearsal$' "$fx/deploy_argv")" = 2
 
 echo "# bad image deploys as healthy: the rollback path did not roll back"
