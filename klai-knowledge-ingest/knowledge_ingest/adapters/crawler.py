@@ -43,6 +43,7 @@ from knowledge_ingest.crawl_checkpoint import (
     finish_crawl_execution,
     guard_crawl_execution,
 )
+from knowledge_ingest.crawl_result_processing import html_has_element
 from knowledge_ingest.domain_rate_limit_control import (
     DomainRateLimitState,
     apply_domain_rate_limit_decay,
@@ -867,8 +868,8 @@ async def run_crawl_job(
     over subsequent clean crawls (same module).
 
     ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
-    injected into crawl4ai's wait_for and also re-checked on every returned
-    page. If any page is flagged as auth-walled the job is marked failed
+    matched against the HTML of every page before it is ingested. If a page
+    matches, it is flagged as auth-walled and the job is marked failed
     with ``error='auth_wall_detected: {selector}'`` and no further pages
     are ingested.
 
@@ -1012,7 +1013,6 @@ async def run_crawl_job(
             max_pages=max_pages,
             include_patterns=include_patterns,
             exclude_patterns=exclude_patterns,
-            login_indicator_selector=login_indicator_selector,
             cookies=cookies,
             rate_limit=effective_rate_limit,
             cancel_check=cancel_check,
@@ -1068,7 +1068,6 @@ async def run_crawl_job(
                 max_pages=max_pages,
                 include_patterns=include_patterns,
                 exclude_patterns=exclude_patterns,
-                login_indicator_selector=login_indicator_selector,
                 cookies=cookies,
                 rate_limit=seed_starting_rate_limit,
                 cancel_check=cancel_check,
@@ -1209,17 +1208,11 @@ async def run_crawl_job(
                         url=url,
                     )
                     continue
-            # SPEC-CRAWLER-004 Fase B: detect login-indicator trigger.
-            # crawl4ai returns success=False when the injected wait_for times
-            # out on the login selector; surfacing that as AuthWallDetected
-            # gives us a single structured failure per sync.
             async with connection_factory() as conn:
                 async with guard_crawl_execution(conn, job_id, execution_generation):
                     # The session advisory lock prevents a newer attempt from
                     # claiming the job until this page's independently committed
                     # side effects and progress update have finished.
-                    if login_indicator_selector and not result.success:
-                        raise AuthWallDetected(login_indicator_selector)
                     page_changed = False
                     try:
                         page_changed = await _ingest_crawl_result(
@@ -1650,13 +1643,13 @@ async def _ingest_crawl_result(
     content-hash no-op), True after a real ingest.
     """
     if not result.success:
-        # With a login indicator set, crawl4ai's wait_for fails on auth-walled
-        # pages and returns success=False. run_crawl_job catches this first
-        # (before calling us), but guard here too so a direct caller still
-        # surfaces the typed exception instead of a generic ValueError.
-        if login_indicator_selector:
-            raise AuthWallDetected(login_indicator_selector)
         raise ValueError(f"Crawl failed: {result.error_message}")
+
+    # SPEC-CRAWLER-004 Fase B: the login indicator is checked on the fetched
+    # HTML. It used to ride in crawl4ai's JS wait_for, which 0.9.5 refuses.
+    # Surfacing it as AuthWallDetected gives one structured failure per sync.
+    if login_indicator_selector and html_has_element(result.html or "", login_indicator_selector):
+        raise AuthWallDetected(login_indicator_selector)
 
     # Detect PDF: check Content-Type header first, fall back to URL extension
     content_type_header = ""

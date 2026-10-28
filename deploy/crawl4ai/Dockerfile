@@ -12,9 +12,12 @@
 # the old version back — reintroducing those CVEs AND the 0.9.x
 # incompatibility that 400'd every tenant crawl for ~20 minutes on 2026-08-13.
 #
-# 0.9.x forbids `js_code` / `js_code_before_wait` on untrusted configs. Do not
-# revert below 0.9.2 without also reverting the wait_for-based client in
-# klai-knowledge-ingest/knowledge_ingest/crawl4ai_client.py.
+# 0.9.x forbids `js_code` / `js_code_before_wait` on untrusted configs, and
+# 0.9.5 (GHSA-qj46-wp7m-rgj8) also refuses a JavaScript `wait_for` with HTTP
+# 400, which ended every nightly crawl with 0 pages from 2026-10-23. The client
+# in knowledge_ingest/crawl4ai_config.py therefore sends CSS only. A probe of
+# 20 stored pages without the old JS prep fetched 20/20 with identical headings,
+# +1% to +8% words and markdown links 139 -> 363. Do not add page JS back.
 #
 # The body-visibility patch that used to live here is GONE, and that is the
 # good outcome: 0.9.3 ships `CrawlerRunConfig.body_visibility_timeout`, which
