@@ -259,12 +259,21 @@ workflow `Auto-rollback` runs on `workflow_run` of `E2E prod-tenant`.
 - E2E retries a failing spec once before it counts as red, so one flaky spec
   does not revert a good deploy.
 
-## 7. Error-rate watch (later)
+## 7. Error-rate watch (slice S11)
 
-Caddy 5xx is already alerted on (`caddy_5xx_count_high`). A post-deploy watch
-compares the 5xx rate of the 15 minutes after a deploy with the hour before and
-rolls back the ledger entries of that deploy when it breaches. The threshold is
-set from 30 days of real data before the slice merges.
+Caddy 5xx is already alerted on (`caddy_5xx_count_high`). The post-deploy watch
+(`deploy/scripts/post-deploy-error-watch.sh`, gate 4 of
+`deploy-with-rollback.sh --error-watch <seconds>`) counts a service's
+`level:error` lines in VictoriaLogs from the moment the recreate starts, over a
+300-second window, and rolls the deploy back when BOTH hold: more than 10 error
+lines since the deploy, and more than twice the lines in the same length of
+time just before it. The second clause keeps trouble that began before the
+deploy (an upstream already down, a database still loading) from being blamed
+on it. Measured on 2026-10-28 over 246 deploys in 30 days: the floor alone would
+have fired 3 times, all on errors already running before the deploy; with the
+before-clause 0 of 246. A query error is fail-open (the deploy stays, with a
+warning): an observability outage is no evidence against the new image. Caddy is
+not watched this way (two deploys in 30 days, and its own 5xx rule covers it).
 
 ## 8. Dead-man's switch (layer f)
 
