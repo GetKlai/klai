@@ -175,6 +175,10 @@ jobs:
             # nothing has changed yet. Short on disk (twice the volume size) or a
             # failed dump ends the run here, exit 4, with every file untouched.
             ds_snapshot_changed /opt/klai/docker-compose.yml deploy/docker-compose.yml
+            # Visible in the run log even when nothing changed, so a missed data-store
+            # change (the 2026-10-28 umami proof found none without a trace) is
+            # diagnosable from the log alone.
+            echo "datastore change check: [$(ds_changed /opt/klai/docker-compose.yml deploy/docker-compose.yml | tr '\n' ' ')] snapshots this run: ${#DS_SNAPSHOTS[@]}"
             # Write-then-rename, not `cp` in place. cp truncates the target and
             # then writes it, and portal-api.yml and litellm-hook-deploy.yml run
             # `docker compose` against this same file — both can fire on the same
