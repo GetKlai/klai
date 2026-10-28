@@ -261,3 +261,79 @@ async def test_admin_can_delete_a_normal_key_but_not_the_internal_chat_key(monke
     else:
         await admin_api_keys.delete_api_key(key_id="k", perms=_PERMS, _platform=None, db=db)
         db.commit.assert_awaited_once()
+
+
+# SPEC-SLACK-001 §6.2: the Slack key is minted and managed by /api/admin/slack,
+# so the generic api-keys admin treats it exactly like the internal-chat key.
+_SLACK = {"slack": True, "chat": True, "feedback": True, "knowledge_append": False, "general_chat": False}
+
+
+@pytest.mark.asyncio
+async def test_list_and_detail_hide_the_slack_key(monkeypatch):
+    import app.api.admin_api_keys as admin_api_keys
+
+    db = AsyncMock()
+    setup_db(db, [FakeResult([_key("normal", {"chat": True}), _key("slack", _SLACK)]), FakeResult([])])
+    listed = await admin_api_keys.list_api_keys(perms=_PERMS, _platform=None, db=db)
+    assert [key.id for key in listed] == ["normal"]
+
+    monkeypatch.setattr(admin_api_keys, "_get_key_or_404", AsyncMock(return_value=_key("slack", _SLACK)))
+    with pytest.raises(HTTPException) as exc:
+        await admin_api_keys.get_api_key_detail(key_id="slack", perms=_PERMS, _platform=None, db=AsyncMock())
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_mint_or_grant_a_slack_key(monkeypatch):
+    import app.api.admin_api_keys as admin_api_keys
+
+    db = AsyncMock()
+    create = admin_api_keys.CreateApiKeyRequest(
+        name="My Slack", permissions=_SLACK, kb_access=[admin_api_keys.KbAccessEntry(kb_id=1, access_level="read")]
+    )
+    with pytest.raises(HTTPException) as exc:
+        await admin_api_keys.create_api_key(body=create, perms=_PERMS, _platform=None, db=db)
+    assert exc.value.status_code == 403
+
+    key = _key("normal", {"chat": True})
+    monkeypatch.setattr(admin_api_keys, "_get_key_or_404", AsyncMock(return_value=key))
+    with pytest.raises(HTTPException) as exc:
+        await admin_api_keys.update_api_key(
+            key_id="normal",
+            body=admin_api_keys.UpdateApiKeyRequest(permissions={"chat": True, "slack": True}),
+            perms=_PERMS,
+            _platform=None,
+            db=db,
+        )
+    assert exc.value.status_code == 403
+    assert key.permissions == {"chat": True}
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_update_rotate_or_delete_the_slack_key(monkeypatch):
+    import app.api.admin_api_keys as admin_api_keys
+
+    key = _key("slack", _SLACK)
+    monkeypatch.setattr(admin_api_keys, "_get_key_or_404", AsyncMock(return_value=key))
+    db = AsyncMock()
+
+    for call in (
+        admin_api_keys.update_api_key(
+            key_id="slack",
+            body=admin_api_keys.UpdateApiKeyRequest(rate_limit_rpm=10),
+            perms=_PERMS,
+            _platform=None,
+            db=db,
+        ),
+        admin_api_keys.rotate_api_key(key_id="slack", perms=_PERMS, _platform=None, db=db),
+        admin_api_keys.delete_api_key(key_id="slack", perms=_PERMS, _platform=None, db=db),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await call
+        assert exc.value.status_code == 403
+        assert exc.value.detail == "slack keys are managed by the Slack integration"
+
+    assert key.rate_limit_rpm == 60
+    db.add.assert_not_called()
+    db.execute.assert_not_awaited()
