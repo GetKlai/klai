@@ -60,7 +60,10 @@ INVALID_LINK_PAGE = (
 FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
 # The 302 to Slack carries the state cookie and the request carried the token:
 # no cache may keep either, and the Slack page must not learn where it came from.
-NO_STORE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+# Referrer-Policy is set by Caddy for every response; one source, not two.
+NO_STORE_HEADERS = {"Cache-Control": "no-store"}
+# The legitimate body is one JWT of under 2 KB; anything larger is not ours.
+MAX_BODY_BYTES = 8192
 
 
 def decode_link_token(token: str, secret: str, *, verify_exp: bool = True) -> dict[str, Any] | None:
@@ -85,6 +88,18 @@ def _form_token(request: Request, body: bytes) -> str | None:
     return tokens[0] if len(tokens) == 1 else None
 
 
+async def _read_body(request: Request, limit: int) -> bytes | None:
+    """The request body, or None once it exceeds ``limit`` bytes (read stops there)."""
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def connect(request: Request, oauth: AsyncOAuthSettings, secret: str) -> Response:
     """``/slack/connect``: a POST of the portal's token form starts the Slack OAuth.
 
@@ -95,7 +110,12 @@ async def connect(request: Request, oauth: AsyncOAuthSettings, secret: str) -> R
             INVALID_LINK_PAGE, status_code=405, headers={"Allow": "POST"}
         )
     else:
-        response = await start(_form_token(request, await request.body()), oauth, secret)
+        body = await _read_body(request, MAX_BODY_BYTES)
+        if body is None:
+            logger.info("slack_portal_link_body_too_large")
+            response = HTMLResponse(INVALID_LINK_PAGE, status_code=413)
+        else:
+            response = await start(_form_token(request, body), oauth, secret)
     response.headers.update(NO_STORE_HEADERS)
     return response
 
