@@ -273,7 +273,7 @@ on:
       - "Build and push klai-knowledge-mcp"
       - "Build and push knowledge-ingest"
       - "Build and push retrieval-api"
-      - "Sync docker-compose.yml + config + smoke-test to core-01"
+      - "Sync compose and config to core-01"
     types: [completed]
   schedule:
     - cron: '0 4 * * *'   # nightly 04:00 UTC
