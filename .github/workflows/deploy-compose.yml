@@ -86,6 +86,8 @@ jobs:
           # every service. This job is the only thing that installs it on
           # core-01, so its tests belong here.
           bash deploy/scripts/tests/compose-up-verify.test.sh
+          # compose-rollback.sh is sourced by the sync step below.
+          bash deploy/scripts/tests/compose-rollback.test.sh
           # The env-drift sweep at the end of the sync step, installed here too.
           bash deploy/scripts/tests/compose-env-drift-recreate.test.sh
           # Installed here with the other deploy scripts; service workflows call it.
@@ -137,6 +139,14 @@ jobs:
               deploy/scripts \
               deploy/systemd \
               scripts
+
+            # SPEC-INFRA-AUTO-ROLLBACK-001 S3: every file this sync overwrites
+            # gets a .prev copy (rb_keep), and a red gate (rb_gate) puts the
+            # copies back, recreates through the same path and verifies again.
+            # The run still ends red, with exit 3 (rolled back) or 4 (rollback
+            # failed). Helper and rules: deploy/scripts/compose-rollback.sh.
+            source deploy/scripts/compose-rollback.sh
+            rb_init "$(git rev-parse HEAD)"
             # Write-then-rename, not `cp` in place. cp truncates the target and
             # then writes it, and portal-api.yml and litellm-hook-deploy.yml run
             # `docker compose` against this same file — both can fire on the same
@@ -146,6 +156,7 @@ jobs:
             # new one and never half of either. Same idiom this script already
             # uses for the deploy scripts below.
             for f in docker-compose.yml docker-compose.override.yml; do
+              rb_keep "/opt/klai/$f"
               cp "deploy/$f" "/opt/klai/$f.tmp"
               mv -f "/opt/klai/$f.tmp" "/opt/klai/$f"
             done
@@ -176,9 +187,11 @@ jobs:
                 *.py) python3 -m py_compile "$script" ;;
                 *) bash -n "$script" ;;
               esac
+              rb_keep "/opt/klai/scripts/$name"
               install -m 0755 "$script" "/opt/klai/scripts/$name.tmp"
               mv -f "/opt/klai/scripts/$name.tmp" "/opt/klai/scripts/$name"
             done
+            rb_keep /opt/klai/scripts/mistral-api-probe.sh /opt/klai/scripts/widget-probe.py
             install -m 0755 scripts/mistral-api-probe.sh /opt/klai/scripts/mistral-api-probe.sh.tmp
             mv -f /opt/klai/scripts/mistral-api-probe.sh.tmp /opt/klai/scripts/mistral-api-probe.sh
             install -m 0755 scripts/widget-probe.py /opt/klai/scripts/widget-probe.py.tmp
@@ -190,6 +203,7 @@ jobs:
             # to sync here. Removing the sync AFTER the container stopped mounting
             # the files is the required order -- the reverse is what took 36 of 42
             # tenants down on 2026-08-14.
+            rb_keep /opt/klai/librechat/getklai/librechat.yaml
             getklai_config_status=$(python3 deploy/librechat/getklai/apply-canary-config.py /opt/klai/librechat/getklai/librechat.yaml)
             echo "getklai LibreChat config patch: $getklai_config_status"
 
@@ -197,6 +211,7 @@ jobs:
             # units. Activation requires sudo and is one-time per host —
             # see docs/runbooks/container-hygiene-systemd-install.md.
             mkdir -p /opt/klai/systemd
+            rb_keep /opt/klai/systemd/*.service /opt/klai/systemd/*.timer
             install -m 0644 deploy/systemd/docker-cleanup.service /opt/klai/systemd/docker-cleanup.service
             install -m 0644 deploy/systemd/docker-cleanup.timer /opt/klai/systemd/docker-cleanup.timer
             install -m 0644 deploy/systemd/orphan-audit.service /opt/klai/systemd/orphan-audit.service
@@ -231,10 +246,12 @@ jobs:
             # naturally. Short downtime (~10s) is acceptable for an internal
             # observability tool; no user-facing impact.
             mkdir -p /opt/klai/grafana/provisioning
+            rb_keep /opt/klai/grafana/provisioning
             RSYNC_PROV_CHANGES=$(rsync -ac --itemize-changes deploy/grafana/provisioning/ /opt/klai/grafana/provisioning/ | grep -E '^[<>*]' || true)
             if [ -n "$RSYNC_PROV_CHANGES" ]; then
               echo "Grafana provisioning content changed:"
               echo "$RSYNC_PROV_CHANGES"
+              rb_touched grafana
               docker compose --project-directory /opt/klai up -d --force-recreate grafana
             else
               echo "Grafana provisioning unchanged; using plain up -d (recreates only on service-definition diff)"
@@ -281,6 +298,7 @@ jobs:
               local src="$2"
               local dst="$3"
               mkdir -p "$(dirname "$dst")"
+              rb_keep "$dst" || return 1
               local changes
               changes=$(rsync -ac --itemize-changes "$src" "$dst" | grep -E '^[<>*]' || true)
               if [ -z "$changes" ]; then
@@ -289,7 +307,9 @@ jobs:
               fi
               echo "$svc config content changed:"
               echo "$changes"
-              docker compose --project-directory /opt/klai up -d --force-recreate "$svc"
+              rb_touched "$svc"
+              # return, not exit: rb_gate decides what a red recreate means.
+              docker compose --project-directory /opt/klai up -d --force-recreate "$svc" || return 1
 
               echo "::group::$svc post-recreate health check"
               local healthy=0
@@ -312,7 +332,7 @@ jobs:
               if [ "$healthy" -ne 1 ]; then
                 echo "::error::$svc did not reach running state within 10s after recreate"
                 docker compose --project-directory /opt/klai logs --tail 50 "$svc" || true
-                exit 1
+                return 1
               fi
               echo "::endgroup::"
             }
@@ -323,9 +343,9 @@ jobs:
             # mounted into the runtime-api compose service, NOT a
             # service named "vexa" — the asymmetry matters for the
             # force-recreate target.
-            sync_and_recreate caddy       deploy/caddy/Caddyfile        /opt/klai/caddy/Caddyfile
-            sync_and_recreate alloy       deploy/alloy/config.alloy     /opt/klai/alloy/config.alloy
-            sync_and_recreate searxng     deploy/searxng/settings.yml   /opt/klai/searxng/settings.yml
+            rb_gate caddy   sync-recreate sync_and_recreate caddy   deploy/caddy/Caddyfile      /opt/klai/caddy/Caddyfile
+            rb_gate alloy   sync-recreate sync_and_recreate alloy   deploy/alloy/config.alloy   /opt/klai/alloy/config.alloy
+            rb_gate searxng sync-recreate sync_and_recreate searxng deploy/searxng/settings.yml /opt/klai/searxng/settings.yml
 
             clear_librechat_config_cache() {
               local pattern="${1:-configs:*}"
@@ -353,7 +373,7 @@ jobs:
             # so the bind-mount source exists before (re)create — no empty-dir
             # race. Per-tenant (provisioning-managed) containers pick it up on
             # their next recreate via _start_librechat_container.
-            sync_and_recreate librechat-getklai deploy/librechat/getklai/entrypoint.sh /opt/klai/librechat/getklai/entrypoint.sh
+            rb_gate librechat-getklai sync-recreate sync_and_recreate librechat-getklai deploy/librechat/getklai/entrypoint.sh /opt/klai/librechat/getklai/entrypoint.sh
 
             cleanup_stale_librechat_getklai_container() {
               local svc="librechat-getklai"
@@ -371,12 +391,14 @@ jobs:
             clear_librechat_config_cache "configs:*"
             echo "getklai LibreChat config cache cleared; force-recreating librechat-getklai via compose-up wrapper"
             cleanup_stale_librechat_getklai_container
-            /opt/klai/scripts/compose-up.sh --force-recreate librechat-getklai
+            rb_touched librechat-getklai
+            rb_gate librechat-getklai compose-up-verification /opt/klai/scripts/compose-up.sh --force-recreate librechat-getklai
 
             # SPEC-SEC-024 M4.3 — sync smoke-test script. `chmod +x` because
             # git clone on a Linux runner usually preserves the execute bit,
             # but this guards against core.filemode quirks.
             mkdir -p /opt/klai/scripts
+            rb_keep /opt/klai/scripts/smoke-docker-socket-proxy.sh
             rsync -a scripts/smoke-docker-socket-proxy.sh /opt/klai/scripts/
             chmod +x /opt/klai/scripts/smoke-docker-socket-proxy.sh
 
@@ -387,7 +409,7 @@ jobs:
             # re-apply (also on failure). The incidents behind each part are in
             # the script; it was installed by the deploy/scripts loop above, so
             # it is the version from this commit.
-            /opt/klai/scripts/compose-env-drift-recreate.sh
+            rb_gate compose compose-up-verification /opt/klai/scripts/compose-env-drift-recreate.sh
 
             # SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test. Prints
             # [OK]/[FAIL] per probe; warns on non-zero exit but does NOT
@@ -408,4 +430,7 @@ jobs:
             # Blocking: a Twenty image change is a schema migration, and its
             # entrypoint reports success even when the upgrade failed. Renovate
             # automerges Twenty, so this is what turns a failed migration red.
-            /opt/klai/scripts/check-twenty-upgrade.sh
+            rb_gate crm twenty-upgrade --reverify /opt/klai/scripts/check-twenty-upgrade.sh
+
+            # Green end: ledger line, report, last-synced commit.
+            rb_deployed
