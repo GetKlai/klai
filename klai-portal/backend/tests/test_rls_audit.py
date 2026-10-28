@@ -96,6 +96,12 @@ _ALLOWLIST: dict[str, str] = {
     "app/services/kb_offboarding.py": (
         "service layer — orchestrator called from admin/users.py routes after _get_caller_org sets tenant"
     ),
+    # SPEC-SLACK-001: every function takes the request session of an
+    # /api/admin/slack route (get_caller_at_least runs set_tenant) or of
+    # /internal/slack/link after its explicit set_tenant for the key's org.
+    "app/services/slack_integration.py": (
+        "service layer — callers are admin_slack routes under get_caller and internal_slack after set_tenant"
+    ),
     # The partner API was one module until it was split by concern; it passed
     # this audit only because the widget-config routes in the same file call
     # set_tenant. Every query in partner.py and partner_feedback.py runs on

@@ -191,6 +191,9 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         # app/services/bot_poller.py — pure SQLAlchemy statement builder,
         # only called from _load_cycle_snapshots inside cross_org_session().
         "_stuck_meetings_stmt",
+        # app/services/slack_integration.py — takes org_id, called from
+        # /api/admin/slack routes under get_caller_at_least, which ran set_tenant.
+        "_org_kb_ids",
     }
 )
 

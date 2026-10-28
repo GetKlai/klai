@@ -211,20 +211,27 @@ def _rotated_key_name(name: str, now: datetime) -> str:
     return f"{name[: 128 - len(suffix)]}{suffix}"
 
 
-def _is_internal_chat(permissions: dict | None) -> bool:
-    return bool(permissions and permissions.get("internal_chat"))
+# Managed keys belong to a Klai component, not to the org's integrations, so
+# this admin never shows, mints, changes, rotates or deletes one:
+# - internal_chat acts as any employee named in the request, personal knowledge
+#   bases included. Only tenant provisioning mints it; it is the tenant's
+#   LibreChat credential (app/services/internal_chat_keys.py).
+# - slack is the workspace key of the Slack integration, minted and managed by
+#   /api/admin/slack (app/services/slack_integration.py). Its auth skips the
+#   partner_api unlock, so an admin must not mint one here to get around it.
+_MANAGED_KEY_OWNERS = {"internal_chat": "Klai provisioning", "slack": "the Slack integration"}
 
 
-def _reject_internal_chat(permissions: dict | None) -> None:
-    # An internal_chat key acts as any employee named in the request, personal
-    # knowledge bases included. Only tenant provisioning may mint one, and an
-    # admin must not get its plaintext through create or rotate. The key that
-    # exists is the tenant's LibreChat credential (app/services/internal_chat_keys.py),
-    # so an admin may not change or delete it either.
-    if _is_internal_chat(permissions):
+def _managed_key(permissions: dict | None) -> str | None:
+    return next((name for name in _MANAGED_KEY_OWNERS if permissions and permissions.get(name)), None)
+
+
+def _reject_managed_key(permissions: dict | None) -> None:
+    managed = _managed_key(permissions)
+    if managed:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            detail="internal_chat keys are managed by Klai provisioning",
+            detail=f"{managed} keys are managed by {_MANAGED_KEY_OWNERS[managed]}",
         )
 
 
@@ -261,7 +268,7 @@ async def create_api_key(
     db: AsyncSession = Depends(get_db),
 ) -> CreateApiKeyResponse:
     """Create a new partner API key."""
-    _reject_internal_chat(body.permissions)
+    _reject_managed_key(body.permissions)
     kb_ids = [entry.kb_id for entry in body.kb_access]
     await _validate_kb_ids(kb_ids, perms.org_id, perms.user_id, db)
     _validate_permissions_against_kb_access(body.permissions, body.kb_access)
@@ -331,8 +338,8 @@ async def list_api_keys(
 ) -> list[ApiKeyResponse]:
     """List all API keys for the caller's org."""
     result = await db.execute(select(PartnerAPIKey).where(PartnerAPIKey.org_id == perms.org_id))
-    # The internal-chat key belongs to provisioning, not to the org's integrations.
-    keys = [key for key in result.scalars().all() if not _is_internal_chat(key.permissions)]
+    # Managed keys (internal chat, Slack) are not the org's own integrations.
+    keys = [key for key in result.scalars().all() if not _managed_key(key.permissions)]
     if not keys:
         return []
 
@@ -364,7 +371,7 @@ async def get_api_key_detail(
 ) -> ApiKeyDetailResponse:
     """Get full detail for a single API key."""
     key = await _get_key_or_404(key_id, perms.org_id, db)
-    if _is_internal_chat(key.permissions):
+    if _managed_key(key.permissions):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="API key not found")
 
     kb_result = await db.execute(
@@ -413,7 +420,7 @@ async def rotate_api_key(
     zero-downtime rotation window.
     """
     source_key = await _get_key_or_404(key_id, perms.org_id, db)
-    _reject_internal_chat(source_key.permissions)
+    _reject_managed_key(source_key.permissions)
     if source_key.rotated_to_key_id is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -511,9 +518,9 @@ async def update_api_key(
     db: AsyncSession = Depends(get_db),
 ) -> ApiKeyResponse:
     """Partial update of an API key."""
-    _reject_internal_chat(body.permissions)
+    _reject_managed_key(body.permissions)
     key = await _get_key_or_404(key_id, perms.org_id, db)
-    _reject_internal_chat(key.permissions)
+    _reject_managed_key(key.permissions)
     effective_permissions = body.permissions if body.permissions is not None else key.permissions
     effective_kb_access = body.kb_access
     permissions_changed = body.permissions is not None
@@ -604,7 +611,7 @@ async def delete_api_key(
 ) -> None:
     """Permanently delete an API key and its KB access entries."""
     key = await _get_key_or_404(key_id, perms.org_id, db)
-    _reject_internal_chat(key.permissions)
+    _reject_managed_key(key.permissions)
 
     await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
     await db.execute(

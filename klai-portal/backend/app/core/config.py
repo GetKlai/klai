@@ -156,6 +156,12 @@ class Settings(BaseSettings):
     # klai-mailer service URL (for sending transactional emails)
     mailer_url: str = ""  # e.g. http://klai-mailer:8300
 
+    # klai-slack service URL (SPEC-SLACK-001). Portal → klai-slack calls use
+    # ``internal_secret`` as Bearer, the same secret klai-slack sends inbound.
+    # Empty = klai-slack not deployed: a disconnect then reports
+    # ``slack_revoked: false`` instead of pretending the bot token was revoked.
+    slack_service_url: str = ""  # e.g. http://klai-slack:8000
+
     # klai-docs internal secret (used by portal → klai-docs for KB provisioning)
     docs_internal_secret: str = ""
 

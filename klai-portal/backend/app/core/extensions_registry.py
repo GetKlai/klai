@@ -46,6 +46,10 @@ KNOWN_FEATURES: frozenset[str] = frozenset(
         # Gaps screen under Kennis: separate switch, default off, because the
         # screen is unfinished; Klai staff turn it on per tenant.
         "knowledge_gaps",
+        # SPEC-SLACK-001 D10: Klai in Slack. A finished product, so it has its
+        # own switch instead of riding on partner_api; it gates /api/admin/slack,
+        # the Slack link and every Partner API call made with the Slack key.
+        "slack",
     }
 )
 
