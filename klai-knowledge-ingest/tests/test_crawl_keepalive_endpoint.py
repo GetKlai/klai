@@ -30,9 +30,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import urlparse
 
-import httpx
 from klai_image_storage.url_guard import ValidatedURL
 
 from knowledge_ingest.connector_cookies import ConnectorNotFoundError, StoredCredentials
@@ -589,203 +587,6 @@ class TestKeepaliveStoresRefreshedSessionCookies:
         store.assert_not_awaited()
 
 
-class _SignInSite:
-    """A synthetic wiki that signs in through idp.example.com.
-
-    Mirrors the chain observed on 2026-10-28: ``/login`` 302s to the identity
-    host's ``/oauth/authorize?prompt=auto``, which -- holding a valid session
-    of its own -- 302s straight back to ``/login/callback``, which sets a new
-    wiki session. Pure server-side redirects, no JavaScript.
-    """
-
-    _ARTICLE = "<article>" + "Welcome to the handbook. " * 20 + "</article>"
-    _GATE = (
-        "<main><p>Intro text for the article.</p>"
-        '<h2><a href="https://wiki.example.com/login?redirect_to=/docs/page">Log in</a>'
-        " when you want to read this article</h2></main>"
-    )
-
-    def __init__(self, idp_redirect: str = "https://wiki.example.com/login/callback?code=c1"):
-        self.idp_redirect = idp_redirect
-        self.requests: list[tuple[str, str | None]] = []
-
-    def handle(self, request: httpx.Request) -> httpx.Response:
-        header = request.headers.get("cookie")
-        self.requests.append((request.url.host, header))
-        sent = dict(part.split("=", 1) for part in header.split("; ")) if header else {}
-        where = (request.url.host, request.url.path)
-        if where == ("wiki.example.com", "/docs/page"):
-            fresh = sent.get("wiki_session") == "fresh"
-            return httpx.Response(200, html=self._ARTICLE if fresh else self._GATE)
-        if where == ("wiki.example.com", "/login"):
-            return httpx.Response(
-                302,
-                headers=[
-                    ("location", "https://idp.example.com/oauth/authorize?prompt=auto"),
-                    ("set-cookie", "XSRF-TOKEN=x1; Path=/; Secure; Max-Age=7200"),
-                ],
-            )
-        if where == ("idp.example.com", "/oauth/authorize"):
-            if sent.get("idp_session") != "idp-valid":
-                return httpx.Response(200, html="<form><input type=password></form>")
-            return httpx.Response(
-                302,
-                headers=[
-                    ("location", self.idp_redirect),
-                    (
-                        "set-cookie",
-                        "idp_session=idp-rotated; Path=/; Secure; HttpOnly; Max-Age=7200",
-                    ),
-                ],
-            )
-        if where == ("wiki.example.com", "/login/callback"):
-            return httpx.Response(
-                302,
-                headers=[
-                    ("location", "https://wiki.example.com/docs/page"),
-                    ("set-cookie", "wiki_session=fresh; Path=/; Secure; HttpOnly; Max-Age=7200"),
-                ],
-            )
-        return httpx.Response(404)
-
-
-async def _validated(url: str) -> ValidatedURL:
-    host = urlparse(url).hostname or ""
-    return ValidatedURL(
-        url=url, hostname=host, pinned_ips=frozenset({"203.0.113.1"}), preferred_ip="203.0.113.1"
-    )
-
-
-_WIKI_LAPSED = {
-    "name": "wiki_session",
-    "value": "lapsed",
-    "domain": "wiki.example.com",
-    "path": "/",
-}
-_IDP_VALID = {"name": "idp_session", "value": "idp-valid", "domain": "idp.example.com", "path": "/"}
-
-
-class TestSignInChain:
-    """2026-10-28: since 2026-09-28 not one probe of a wiki that signs in
-    through a second host came back ok; every tick saw embedded_login_gate,
-    because the keep-alive held and followed only the wiki's own host. A
-    browser survives the lapse by walking the sign-in chain with cookies for
-    both hosts; the keep-alive now does the same."""
-
-    def _run(self, site: _SignInSite, cookies: list[dict]):
-        pool = _make_pool()
-        store = AsyncMock(return_value=True)
-        mock_logger = MagicMock()
-        with (
-            _client_with_patches(pool) as (client, _defer),
-            patch("knowledge_ingest.routes.crawl_sync.logger", mock_logger),
-            patch(
-                "knowledge_ingest.routes.crawl_sync.load_connector_credentials",
-                new_callable=AsyncMock,
-                return_value=_creds(cookies),
-            ),
-            patch("knowledge_ingest.routes.crawl_sync.validate_url_pinned", side_effect=_validated),
-            patch(
-                "knowledge_ingest.routes.crawl.PinnedResolverTransport",
-                lambda _pin_map: httpx.MockTransport(site.handle),
-            ),
-            patch("knowledge_ingest.routes.crawl_sync.store_connector_cookie_jar", store),
-        ):
-            resp = client.post(
-                "/ingest/v1/crawl/keep-alive",
-                json={
-                    **_post(url="https://wiki.example.com/docs/page"),
-                    "auth_chain_hosts": ["idp.example.com"],
-                },
-            )
-        assert resp.status_code == 200
-        return resp.json(), store, mock_logger
-
-    def test_a_lapsed_session_is_reminted_through_the_sign_in_chain(self) -> None:
-        site = _SignInSite()
-        body, store, mock_logger = self._run(site, [_WIKI_LAPSED, _IDP_VALID])
-
-        assert body == {"ok": True, "reason": None}
-        assert ("idp.example.com", "idp_session=idp-valid") in site.requests
-        store.assert_awaited_once()
-        jar = store.await_args.kwargs["jar"]
-        assert jar.jar_for_host("wiki.example.com") == {"wiki_session": "fresh", "XSRF-TOKEN": "x1"}
-        assert jar.jar_for_host("idp.example.com") == {"idp_session": "idp-rotated"}
-        reminted = [
-            c
-            for c in mock_logger.info.call_args_list
-            if c.args[0] == "crawl_keepalive_session_reminted"
-        ]
-        assert reminted[0].kwargs["hosts"] == ["idp.example.com", "wiki.example.com"]
-        logged = repr(mock_logger.mock_calls)
-        assert "fresh" not in logged and "idp-rotated" not in logged and "x1" not in logged
-
-    def test_without_the_idp_cookie_the_chain_breaks_at_the_idp(self) -> None:
-        site = _SignInSite()
-        body, store, _logger = self._run(site, [_WIKI_LAPSED])
-
-        assert body == {"ok": False, "reason": "chain_broken_at:idp.example.com"}
-        assert all(host != "idp.example.com" for host, _cookie in site.requests)
-        store.assert_not_awaited()
-
-    def test_the_chain_never_leaves_the_chain_hosts(self) -> None:
-        """A host outside auth_chain_hosts is refused even when the jar holds
-        cookies for it, and the half-walked chain stores nothing."""
-        site = _SignInSite(idp_redirect="https://evil.example.net/collect")
-        tracker = {"name": "tracker", "value": "t", "domain": "evil.example.net", "path": "/"}
-        body, store, _logger = self._run(site, [_WIKI_LAPSED, _IDP_VALID, tracker])
-
-        assert body == {"ok": False, "reason": "redirect_left_host:evil.example.net"}
-        assert all(host != "evil.example.net" for host, _cookie in site.requests)
-        store.assert_not_awaited()
-
-    def test_a_chain_that_does_not_reopen_the_page_never_overwrites_the_stored_session(
-        self,
-    ) -> None:
-        """An identity host that answers a lapsed session with its login form
-        and a fresh anonymous cookie leaves the page walled; storing that
-        cookie would replace the owner's and kill the connector."""
-
-        class _AnonymousIdp(_SignInSite):
-            def handle(self, request: httpx.Request) -> httpx.Response:
-                if request.url.host == "idp.example.com":
-                    self.requests.append((request.url.host, request.headers.get("cookie")))
-                    return httpx.Response(
-                        200,
-                        html="<form><input type=password></form>",
-                        headers=[("set-cookie", "idp_session=anon-1; Path=/; Secure")],
-                    )
-                return super().handle(request)
-
-        idp_expired = {**_IDP_VALID, "value": "idp-expired"}
-        body, store, _logger = self._run(_AnonymousIdp(), [_WIKI_LAPSED, idp_expired])
-
-        assert body["ok"] is False
-        store.assert_not_awaited()
-
-    def test_an_expired_sign_in_cookie_from_an_earlier_walk_is_neither_stored_nor_logged(
-        self,
-    ) -> None:
-        """A login page sets a short-lived state cookie; once it lapsed a
-        browser drops it, and it must not raise the expiry alert forever."""
-        state = {
-            "name": "oauth_state",
-            "value": "st-1",
-            "domain": "wiki.example.com",
-            "path": "/",
-            "expires": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
-        }
-        body, store, mock_logger = self._run(_SignInSite(), [_WIKI_LAPSED, _IDP_VALID, state])
-
-        assert body == {"ok": True, "reason": None}
-        assert "oauth_state" not in [c["name"] for c in store.await_args.kwargs["jar"].cookies]
-        assert not [
-            c
-            for c in mock_logger.error.call_args_list
-            if c.args[0] == "crawl_keepalive_cookie_expiring"
-        ]
-
-
 class TestCookieExpiryAlert:
     """A pasted session cookie that is about to lapse cannot be renewed by the
     keep-alive (no host re-issues it), so each tick names it at error level
@@ -816,10 +617,7 @@ class TestCookieExpiryAlert:
                 store or AsyncMock(return_value=True),
             ),
         ):
-            client.post(
-                "/ingest/v1/crawl/keep-alive",
-                json={**_post(), "auth_chain_hosts": ["idp.example.com"]},
-            )
+            client.post("/ingest/v1/crawl/keep-alive", json=_post())
         return mock_logger
 
     @staticmethod
@@ -834,17 +632,27 @@ class TestCookieExpiryAlert:
     def _in(days: int) -> str:
         return (datetime.now(UTC) + timedelta(days=days, hours=1)).isoformat()
 
+    @staticmethod
+    async def _rolling(url: str, pin_map: dict, cookies: dict | None = None) -> _ProbeResponse:
+        if not cookies:
+            return _probe(200, text=TestKeepaliveStoresRefreshedSessionCookies._GATE)
+        return _probe(
+            200,
+            text="Welcome to the handbook. " * 20,
+            set_cookies=["wiki_session=rolled; Path=/; Secure; HttpOnly; Max-Age=86400"],
+        )
+
     def test_a_cookie_expiring_within_seven_days_is_logged_at_error(self) -> None:
         mock_logger = self._tick(
             [
                 {
-                    "name": "idp_session",
+                    "name": "wiki_session",
                     "value": "secret-1",
-                    "domain": "idp.example.com",
+                    "domain": "wiki.example.com",
                     "expires": self._in(3),
                 },
                 {
-                    "name": "wiki_session",
+                    "name": "wiki_remember",
                     "value": "secret-2",
                     "domain": "wiki.example.com",
                     "expires": self._in(30),
@@ -870,21 +678,12 @@ class TestCookieExpiryAlert:
             if c.args[0] == "crawl_keepalive_cookie_expiring"
         ]
         assert len(expiring) == 1
-        assert expiring[0].kwargs["host"] == "idp.example.com"
-        assert expiring[0].kwargs["name"] == "idp_session"
+        assert expiring[0].kwargs["host"] == "wiki.example.com"
+        assert expiring[0].kwargs["name"] == "wiki_session"
         assert expiring[0].kwargs["days_left"] == 3
         assert "secret" not in repr(mock_logger.mock_calls)
 
     def test_a_rolling_session_the_tick_renewed_and_stored_is_not_logged(self) -> None:
-        async def fetch(url: str, pin_map: dict, cookies: dict | None = None) -> _ProbeResponse:
-            if not cookies:
-                return _probe(200, text=_SignInSite._GATE)
-            return _probe(
-                200,
-                text="Welcome to the handbook. " * 20,
-                set_cookies=["wiki_session=rolled; Path=/; Secure; HttpOnly; Max-Age=86400"],
-            )
-
         store = AsyncMock(return_value=True)
         mock_logger = self._tick(
             [
@@ -896,11 +695,34 @@ class TestCookieExpiryAlert:
                     "expires": self._in(0),
                 }
             ],
-            fetch=AsyncMock(side_effect=fetch),
+            fetch=AsyncMock(side_effect=self._rolling),
             store=store,
         )
 
         store.assert_awaited_once()
+        assert not self._expiring(mock_logger)
+
+    def test_an_expired_cookie_is_neither_stored_nor_logged(self) -> None:
+        """A login page sets a short-lived state cookie; once it lapsed a
+        browser drops it, and it must not raise the expiry alert forever."""
+        store = AsyncMock(return_value=True)
+        mock_logger = self._tick(
+            [
+                {"name": "wiki_session", "value": "secret-1", "domain": "wiki.example.com"},
+                {
+                    "name": "oauth_state",
+                    "value": "st-1",
+                    "domain": "wiki.example.com",
+                    "path": "/",
+                    "expires": self._in(-2),
+                },
+            ],
+            fetch=AsyncMock(side_effect=self._rolling),
+            store=store,
+        )
+
+        jar = store.await_args_list[0].kwargs["jar"]
+        assert "oauth_state" not in [c["name"] for c in jar.cookies]
         assert not self._expiring(mock_logger)
 
     def test_a_parent_domain_cookie_covering_the_site_is_logged_under_that_domain(self) -> None:

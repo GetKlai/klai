@@ -808,9 +808,8 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
             auth_guard=None,
         )
 
-    # A site that signs in through a second host sends us that host's cookies
-    # too; they belong to the sign-in host and must not be replayed here. The
-    # jar decides that with the same scope rule the keep-alive uses.
+    # Only cookies whose domain covers the probed host are sent, by the same
+    # scope rule the keep-alive and the crawler use.
     cookie_dict = CookieJar(body.cookies, validated.hostname).jar_for_host(
         validated.hostname, urlparse(body.url).path or "/"
     )

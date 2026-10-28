@@ -1,11 +1,9 @@
 /**
- * CookieHostPaste - paste a Cookie-Editor JSON export for one host, and list
- * that host's cookies by name and expiry (never by value).
+ * CookieHostPaste - paste a Cookie-Editor JSON export for the site's host, and
+ * list the pasted cookies by name and expiry (never by value).
  *
- * A site that signs in through a second host (SSO/OAuth) keeps its session in
- * cookies for both hosts, so the wizard asks for each host's cookies. Every
- * cookie keeps the domain it was exported with; the backend refuses one whose
- * domain is neither the base host nor a detected sign-in host.
+ * Every cookie keeps the domain it was exported with; the backend refuses one
+ * whose domain does not cover the site's host.
  */
 import { useState } from 'react'
 import { X } from 'lucide-react'
@@ -18,15 +16,12 @@ import {
   CookieJsonError,
   cookieCoversHost,
   isManualRow,
-  ownerHost,
   parseCookieEditorJson,
 } from '@/routes/app/knowledge/-connector-shared/cookieHosts'
 
 interface CookieHostPasteProps {
   host: string
-  baseHost: string
-  chainHosts: string[]
-  /** All cookie rows of the wizard, across hosts. */
+  /** All cookie rows of the wizard. */
   rows: CookieRow[]
   onChange: (rows: CookieRow[]) => void
   idPrefix: string
@@ -36,12 +31,10 @@ function sameCookie(a: CookieRow, b: CookieRow): boolean {
   return a.name === b.name && (a.domain ?? '') === (b.domain ?? '') && (a.path ?? '/') === (b.path ?? '/')
 }
 
-export function CookieHostPaste({ host, baseHost, chainHosts, rows, onChange, idPrefix }: CookieHostPasteProps) {
+export function CookieHostPaste({ host, rows, onChange, idPrefix }: CookieHostPasteProps) {
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const listed = rows.filter(
-    (row) => !isManualRow(row, baseHost, chainHosts) && ownerHost(row, baseHost, chainHosts) === host,
-  )
+  const listed = rows.filter((row) => !isManualRow(row))
 
   function addCookies() {
     let parsed: CookieRow[]
@@ -52,8 +45,7 @@ export function CookieHostPaste({ host, baseHost, chainHosts, rows, onChange, id
       setError(m.admin_connectors_webcrawler_cookies_json_invalid({ reason: e.message }))
       return
     }
-    const knownHosts = [baseHost, ...chainHosts]
-    const foreign = parsed.filter((c) => !knownHosts.some((h) => cookieCoversHost(c.domain ?? '', h)))
+    const foreign = parsed.filter((c) => !cookieCoversHost(c.domain ?? '', host))
     if (foreign.length > 0) {
       setError(
         m.admin_connectors_webcrawler_cookies_json_other_host({

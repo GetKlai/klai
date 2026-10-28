@@ -2993,11 +2993,10 @@ async def test_crawl_requests_claim_a_current_chrome_not_crawl4ais_default(
 
 def test_cookie_hooks_carry_each_cookie_with_its_own_domain() -> None:
     """Cookies travel via the declarative ``add_cookies`` hook - crawl4ai's
-    server-validated replacement for raw ``BrowserConfig.cookies``. Since
-    2026-10-28 the jar can hold cookies for the host a site signs in through
-    as well, so each cookie keeps its own domain (one without gets the host
-    of the crawled URL), only the fields add_cookies accepts are sent, and
-    more than 20 cookies are split over several hooks."""
+    server-validated replacement for raw ``BrowserConfig.cookies``. Each
+    cookie keeps its own domain (one without gets the host of the crawled
+    URL), only the fields add_cookies accepts are sent, and more than 20
+    cookies are split over several hooks."""
     page = "https://wiki.example.com/docs/page"
     cookies = [
         {"name": "sid", "value": "w"},

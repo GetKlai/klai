@@ -1417,8 +1417,6 @@
   "admin_connectors_webcrawler_cookies_json_add": "Add cookies",
   "admin_connectors_webcrawler_cookies_json_invalid": "Could not read this export: {reason}.",
   "admin_connectors_webcrawler_cookies_json_other_host": "Not added, these are for another site: {names}.",
-  "admin_connectors_webcrawler_cookies_chain_title": "The check did not pass. This site can also sign in via {host}: paste that site's cookies as well.",
-  "admin_connectors_webcrawler_cookies_chain_failed": "Could not check whether this site signs in through another host.",
   "admin_connectors_webcrawler_cookie_expires": "expires {date}",
   "admin_connectors_webcrawler_cookie_session": "session cookie",
   "admin_connectors_webcrawler_cookie_saved": "saved",
