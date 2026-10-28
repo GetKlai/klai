@@ -28,8 +28,6 @@ same anchor in renovate.json5, so separate PRs would conflict with each other
 after the first merge, and the host rolled the whole compose file back at once.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import re
