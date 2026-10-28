@@ -1,4 +1,4 @@
-"""Slack user lookups: the admin check of `/klai connect` and `/klai kb`, and the UI language."""
+"""Slack user lookups: the admin check of `/klai kb` and the UI language."""
 
 from __future__ import annotations
 

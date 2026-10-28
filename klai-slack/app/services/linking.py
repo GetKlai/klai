@@ -1,4 +1,4 @@
-"""Persist a workspace link the portal already recorded (`/klai connect` and the OAuth link)."""
+"""Persist a workspace link the portal already recorded (the OAuth link)."""
 
 from __future__ import annotations
 

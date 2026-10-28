@@ -357,6 +357,18 @@ async def get_caller_during_deprovisioning(
     )
 
 
+def has_role_at_least(perms: UserPermissions, min_role: ProfileRole) -> bool:
+    """The role gate of ``get_caller_at_least``, for callers that resolved ``perms`` themselves."""
+    # Platform-admin bypass: Klai staff (members of the platform org)
+    # skip per-tenant role gates. Mirrors the frontend RoleGuard
+    # bypass on `user?.isAdmin` so the two surfaces stay consistent.
+    # Symptom that triggered adding this: org-owner of the platform
+    # org has effective_role='personal' (no per-org admin grant),
+    # so taxonomy/coverage and similar admin-gated endpoints would
+    # 403 her even though the frontend tab is open.
+    return perms.is_platform_admin or PROFILE_RANK[perms.effective_role] >= PROFILE_RANK[min_role]
+
+
 def get_caller_at_least(min_role: ProfileRole):
     """Factory: dependency that requires ``effective_role >= min_role``.
 
@@ -367,20 +379,9 @@ def get_caller_at_least(min_role: ProfileRole):
         async def endpoint(perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN))):
             ...
     """
-    required_rank = PROFILE_RANK[min_role]
 
     async def _dep(perms: UserPermissions = Depends(get_caller)) -> UserPermissions:
-        # Platform-admin bypass: Klai staff (members of the platform org)
-        # skip per-tenant role gates. Mirrors the frontend RoleGuard
-        # bypass on `user?.isAdmin` so the two surfaces stay consistent.
-        # Symptom that triggered adding this: org-owner of the platform
-        # org has effective_role='personal' (no per-org admin grant),
-        # so taxonomy/coverage and similar admin-gated endpoints would
-        # 403 her even though the frontend tab is open.
-        if perms.is_platform_admin:
-            return perms
-        caller_rank = PROFILE_RANK[perms.effective_role]
-        if caller_rank < required_rank:
+        if not has_role_at_least(perms, min_role):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Role {min_role.value!r} or higher required",
@@ -504,6 +505,7 @@ __all__ = [
     "assert_platform_unlocked",
     "get_caller",
     "get_caller_at_least",
+    "has_role_at_least",
     "require_capability",
     "require_platform_admin",
     "require_platform_unlocked",

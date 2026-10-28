@@ -1,21 +1,18 @@
 """Internal link API for klai-slack — SPEC-SLACK-001 §7.2.
 
 klai-slack calls these when Slack OAuth completes for a link the portal
-started (``/link-oauth``, which mints the key here), when a Slack workspace
-admin runs the legacy ``/klai connect`` with the org's Slack key (``/link``),
-and when the app is uninstalled or its tokens revoked.
+started (``/link-oauth``, which mints the key here) and when the app is
+uninstalled or its tokens revoked.
 Auth is the shared ``INTERNAL_SECRET`` Bearer guard of every other
 ``/internal/*`` route (``internal._require_internal_token``), which fails
 closed when the secret is unset or does not match.
 
-The key or the signed link token, not the caller, decides the org: a link only
-ever lands on the org that owns the verified key or issued the token. On a conflict the answer is a code, never the
+The signed link token, not the caller, decides the org: a link only ever lands
+on the org that issued the token. On a conflict the answer is a code, never the
 other org, so a workspace cannot learn which org holds another link.
 """
 
 from __future__ import annotations
-
-import hashlib
 
 import jwt
 import structlog
@@ -30,20 +27,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.internal import _audit_internal_call, _require_internal_token
 from app.api.partner_dependencies import _org_accepts_credentials
 from app.core.database import cross_org_scope, get_db, set_tenant
-from app.core.permissions import assert_platform_unlocked
-from app.models.partner_api_keys import PartnerAPIKey
+from app.core.permissions import ProfileRole, assert_platform_unlocked, has_role_at_least, resolve_user_permissions
 from app.models.portal import PortalOrg
 from app.models.slack import PortalSlackInstallation
 from app.services.events import emit_event
-from app.services.partner_keys import verify_partner_key
 from app.services.redis_client import get_redis_pool
-from app.services.slack_integration import (
-    LINK_TOKEN_TTL,
-    decode_link_token,
-    get_installation,
-    key_kb_ids,
-    mint_slack_key,
-)
+from app.services.slack_integration import LINK_TOKEN_TTL, decode_link_token, mint_slack_key
 
 logger = structlog.get_logger()
 
@@ -52,7 +41,6 @@ router = APIRouter(prefix="/internal/slack", tags=["internal"])
 # Slack team and user ids are upper-case alphanumerics (T…, E…, U…, W…). The
 # team id is also put in klai-slack's URL on disconnect, so nothing else passes.
 _SLACK_ID = r"^[A-Z0-9]{1,32}$"
-_UNKNOWN_KEY = "Unknown Slack key"
 _INVALID_TOKEN = "Invalid link token"
 _LINK_JTI_KEY_PREFIX = "slack_link_jti:"
 
@@ -63,22 +51,15 @@ class _SlackWorkspace(BaseModel):
     slack_user_id: str = Field(pattern=_SLACK_ID)
 
 
-class LinkRequest(_SlackWorkspace):
-    api_key: str = Field(min_length=1, max_length=128)
-
-
 class LinkOAuthRequest(_SlackWorkspace):
     token: str = Field(min_length=1, max_length=4096)
 
 
-class LinkResponse(BaseModel):
+class LinkOAuthResponse(BaseModel):
     org_id: int
     org_name: str
     key_id: str
     kb_ids: list[int]
-
-
-class LinkOAuthResponse(LinkResponse):
     api_key: str  # plaintext; leaves the portal this once, to klai-slack
     return_url: str
 
@@ -154,6 +135,13 @@ async def link_slack_workspace_oauth(
     assert_platform_unlocked(org, "slack")
 
     user_id = claims["user_id"]
+    # The token proves who was admin when the link started, up to 15 minutes
+    # ago; a suspension, offboarding or demotion since then stops the mint.
+    # The jti is already claimed, so the same token cannot be retried.
+    perms = await resolve_user_permissions(user_id, db, org_id=org.id)
+    if perms is None or perms.status != "active" or not has_role_at_least(perms, ProfileRole.ADMIN):
+        logger.warning("slack_link_user_not_admin", org_id=org.id, user_id=user_id)
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"code": "not_admin"})
     # mint_slack_key re-validates kb_ids against the org now (400): a KB may
     # have been deleted while the admin was in Slack.
     try:
@@ -183,45 +171,6 @@ async def link_slack_workspace_oauth(
         api_key=plaintext,
         return_url=claims["return_url"],
     )
-
-
-@router.post("/link", response_model=LinkResponse)
-async def link_slack_workspace(
-    body: LinkRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> LinkResponse | JSONResponse:
-    await _require_internal_token(request)
-
-    # partner_api_keys is Cat-B (SELECT open before tenant context), the same
-    # lookup get_partner_key does; the hash comparison is constant-time.
-    key_hash = hashlib.sha256(body.api_key.encode()).hexdigest()
-    key = (await db.execute(select(PartnerAPIKey).where(PartnerAPIKey.key_hash == key_hash))).scalar_one_or_none()
-    # One answer for unknown, non-slack and dead-org keys: no key enumeration.
-    if key is None or not verify_partner_key(body.api_key, key.key_hash) or key.permissions.get("slack") is not True:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=_UNKNOWN_KEY)
-    org = (await db.execute(select(PortalOrg).where(PortalOrg.id == key.org_id))).scalar_one_or_none()
-    if org is None or not _org_accepts_credentials(org):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=_UNKNOWN_KEY)
-
-    await set_tenant(db, org.id)
-    assert_platform_unlocked(org, "slack")
-
-    if await get_installation(db, org.id) is not None:
-        return _conflict("org_already_linked")
-    conflict = await _insert_installation(db, org_id=org.id, key_id=key.id, workspace=body)
-    if conflict is not None:
-        return conflict
-    kb_ids = await key_kb_ids(db, key.id)
-    await db.commit()
-
-    emit_event(
-        "slack.linked",
-        org_id=org.id,
-        properties={"api_key_id": key.id, "team_id": body.team_id, "slack_user_id": body.slack_user_id},
-    )
-    await _audit_internal_call(request, org_id=org.id)
-    return LinkResponse(org_id=org.id, org_name=org.name, key_id=key.id, kb_ids=kb_ids)
 
 
 @router.delete("/link/{team_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)

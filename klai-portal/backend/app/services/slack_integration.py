@@ -17,7 +17,6 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
-from urllib.parse import urlencode
 
 import httpx
 import jwt
@@ -56,7 +55,7 @@ LINK_TOKEN_TYP = "slack_link"
 LINK_TOKEN_TTL = timedelta(minutes=15)
 _LINK_TOKEN_CLAIMS = ["typ", "org_id", "user_id", "kb_ids", "return_url", "jti", "iat", "exp"]
 
-SlackStatus = Literal["not_connected", "awaiting_link", "connected", "revoked"]
+SlackStatus = Literal["not_connected", "connected", "revoked"]
 
 
 async def get_slack_key(db: AsyncSession, org_id: int) -> PartnerAPIKey | None:
@@ -81,10 +80,10 @@ async def key_kb_ids(db: AsyncSession, key_id: str) -> list[int]:
 
 
 def derive_status(key: object | None, installation: PortalSlackInstallation | None) -> SlackStatus:
-    if key is None:
+    # A key without an installation row is an orphan (the retired paste-the-key
+    # flow); the next connect replaces it, so for the page it is not connected.
+    if key is None or installation is None:
         return "not_connected"
-    if installation is None:
-        return "awaiting_link"
     if installation.revoked_at is not None:
         return "revoked"
     return "connected"
@@ -117,6 +116,12 @@ async def _org_kb_ids(db: AsyncSession, org_id: int, kb_ids: list[int]) -> list[
 def _add_read_access(db: AsyncSession, key_id: str, kb_ids: list[int]) -> None:
     for kb_id in kb_ids:
         db.add(PartnerApiKeyKbAccess(partner_api_key_id=key_id, kb_id=kb_id, access_level="read"))
+
+
+async def _delete_key(db: AsyncSession, key_id: str, org_id: int) -> None:
+    """Delete the Slack key and its KB rows, uncommitted; the installation row must be gone first (FK)."""
+    await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key_id))
+    await db.execute(delete(PartnerAPIKey).where(PartnerAPIKey.id == key_id, PartnerAPIKey.org_id == org_id))
 
 
 async def mint_slack_key(
@@ -153,36 +158,27 @@ async def mint_slack_key(
     return plaintext, key, wanted
 
 
-async def create_slack_key(
-    db: AsyncSession, *, org_id: int, user_id: str, kb_ids: list[int]
-) -> tuple[str, PartnerAPIKey]:
-    """Mint the org's Slack key and return its plaintext, shown this once.
+async def start_slack_connect(
+    db: AsyncSession, *, org_id: int, org_slug: str, user_id: str, kb_ids: list[int]
+) -> tuple[str, str]:
+    """Validate the admin's KB choice; return the klai-slack URL and the link token.
 
-    Serves the deprecated paste-the-key flow; the portal now links through
-    ``start_slack_connect`` and ``/internal/slack/link-oauth`` mints the key.
-    """
-    plaintext, key, wanted = await mint_slack_key(db, org_id=org_id, user_id=user_id, kb_ids=kb_ids)
-    await db.commit()
-
-    emit_event(
-        "slack.key_created",
-        org_id=org_id,
-        user_id=user_id,
-        properties={"api_key_id": key.id, "kb_ids": wanted},
-    )
-    logger.info("Slack key created", api_key_id=key.id, org_id=org_id)
-    return plaintext, key
-
-
-async def start_slack_connect(db: AsyncSession, *, org_id: int, org_slug: str, user_id: str, kb_ids: list[int]) -> str:
-    """Validate the admin's KB choice and return the klai-slack URL that starts Slack OAuth.
+    The page form-POSTs the token to that URL, so the bearer token never sits
+    in a URL (access logs, browser history, Referer).
 
     Mints nothing: ``/internal/slack/link-oauth`` creates the key once the
-    workspace approved the app, after running the same checks again.
+    workspace approved the app, after running the same checks again. A key
+    without an installation row is an orphan of the retired paste-the-key flow
+    and would make that mint answer 409, so it is deleted here first.
     """
-    if await get_slack_key(db, org_id) is not None:
+    key = await get_slack_key(db, org_id)
+    if key is not None and await get_installation(db, org_id) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="This organisation already has a Slack key")
     wanted = await _org_kb_ids(db, org_id, kb_ids)
+    if key is not None:
+        await _delete_key(db, key.id, org_id)
+        await db.commit()
+        logger.info("Slack orphan key replaced", api_key_id=key.id, org_id=org_id)
 
     now = datetime.now(UTC)
     token = jwt.encode(
@@ -200,7 +196,7 @@ async def start_slack_connect(db: AsyncSession, *, org_id: int, org_slug: str, u
         algorithm="HS256",
     )
     emit_event("slack.connect_started", org_id=org_id, user_id=user_id, properties={"kb_ids": wanted})
-    return f"{settings.slack_service_public_url.rstrip('/')}/slack/connect?{urlencode({'token': token})}"
+    return f"{settings.slack_service_public_url.rstrip('/')}/slack/connect", token
 
 
 def decode_link_token(token: str) -> dict[str, Any]:
@@ -246,8 +242,7 @@ async def disconnect_slack(db: AsyncSession, *, org_id: int, user_id: str) -> bo
     team_id = installation.team_id if installation is not None else None
 
     await db.execute(delete(PortalSlackInstallation).where(PortalSlackInstallation.org_id == org_id))
-    await db.execute(delete(PartnerApiKeyKbAccess).where(PartnerApiKeyKbAccess.partner_api_key_id == key.id))
-    await db.execute(delete(PartnerAPIKey).where(PartnerAPIKey.id == key.id, PartnerAPIKey.org_id == org_id))
+    await _delete_key(db, key.id, org_id)
     await db.commit()
 
     slack_revoked = True if team_id is None else await _revoke_in_klai_slack(team_id, org_id)

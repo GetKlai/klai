@@ -82,9 +82,11 @@ async def slack_install(request: Request) -> Response:
     return await slack_handler.handle(request)
 
 
-@app.get(CONNECT_PATH)
-async def slack_connect(token: str | None = None) -> Response:
-    return await portal_link.start(token, oauth_settings, settings.portal_internal_secret)
+# GET is routed too, so it gets the Dutch "start again" page with a 405
+# instead of FastAPI's JSON one.
+@app.api_route(CONNECT_PATH, methods=["GET", "POST"])
+async def slack_connect(request: Request) -> Response:
+    return await portal_link.connect(request, oauth_settings, settings.portal_internal_secret)
 
 
 @app.get(REDIRECT_PATH)

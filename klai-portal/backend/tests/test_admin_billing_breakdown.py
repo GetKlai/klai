@@ -160,11 +160,9 @@ class TestBillingBreakdownRbacWiring:
             f"endpoint dependency is not the get_caller_at_least closure. Got: {dep.__qualname__!r}"
         )
 
-        # Verify the closure captured the ADMIN rank (not some other tier).
-        # ``required_rank = PROFILE_RANK[min_role]`` -> the free variable
-        # ``required_rank`` is the int rank of the role the factory was
-        # called with.
-        from app.core.profiles import PROFILE_RANK, ProfileRole
+        # Verify the closure captured the ADMIN role (not some other tier):
+        # the free variable ``min_role`` is the role the factory was called with.
+        from app.core.profiles import ProfileRole
 
         captured = {
             name: cell.cell_contents
@@ -174,9 +172,8 @@ class TestBillingBreakdownRbacWiring:
                 strict=False,
             )
         }
-        assert captured.get("required_rank") == PROFILE_RANK[ProfileRole.ADMIN], (
-            f"dependency captured rank {captured.get('required_rank')!r}, "
-            f"expected ADMIN rank {PROFILE_RANK[ProfileRole.ADMIN]}"
+        assert captured.get("min_role") == ProfileRole.ADMIN, (
+            f"dependency captured role {captured.get('min_role')!r}, expected {ProfileRole.ADMIN!r}"
         )
 
     @pytest.mark.asyncio

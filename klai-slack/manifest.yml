@@ -33,7 +33,7 @@ features:
     - command: /klai
       url: https://api.getklai.com/slack/events
       description: Klai instellen en gebruiken
-      usage_hint: kb | help | connect
+      usage_hint: kb | help
       should_escape: false
 oauth_config:
   redirect_urls:
