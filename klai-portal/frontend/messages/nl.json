@@ -1417,7 +1417,7 @@
   "admin_connectors_webcrawler_cookies_json_add": "Cookies toevoegen",
   "admin_connectors_webcrawler_cookies_json_invalid": "Deze export is niet te lezen: {reason}.",
   "admin_connectors_webcrawler_cookies_json_other_host": "Niet toegevoegd, deze horen bij een andere site: {names}.",
-  "admin_connectors_webcrawler_cookies_chain_title": "Deze site logt in via {host}; plak ook de cookies van die host",
+  "admin_connectors_webcrawler_cookies_chain_title": "De controle slaagde niet. Deze site kan ook inloggen via {host}: plak dan ook de cookies van die site.",
   "admin_connectors_webcrawler_cookies_chain_failed": "Kon niet nagaan of deze site via een andere host inlogt.",
   "admin_connectors_webcrawler_cookie_expires": "verloopt {date}",
   "admin_connectors_webcrawler_cookie_session": "sessiecookie",
