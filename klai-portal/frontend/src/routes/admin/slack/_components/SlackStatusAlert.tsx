@@ -3,23 +3,17 @@ import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 
-interface AwaitingProps {
-  status: 'awaiting_link'
-  keyPrefix: string
-}
-
 interface RevokedProps {
   status: 'revoked'
   onReconnect: () => void
   isReconnecting: boolean
 }
 
-export function SlackStatusAlert(props: AwaitingProps | RevokedProps) {
+export function SlackStatusAlert(props: { status: 'awaiting_link' } | RevokedProps) {
   if (props.status === 'awaiting_link') {
     return (
-      <Alert variant="info">
-        <p className="font-medium">{m.admin_slack_awaiting_title()}</p>
-        <p className="mt-1">{m.admin_slack_awaiting_body({ prefix: `${props.keyPrefix}...` })}</p>
+      <Alert variant="warning">
+        <p>{m.admin_slack_legacy_body()}</p>
       </Alert>
     )
   }
