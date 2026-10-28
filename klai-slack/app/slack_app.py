@@ -1,4 +1,4 @@
-"""Bolt app: OAuth install flow, event dedupe, uninstall handling, `/klai` (SPEC-SLACK-001 §7.4)."""
+"""Bolt app: OAuth install, dedupe, uninstall, `/klai`, conversation (SPEC-SLACK-001 §7.4, §9)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from slack_sdk.oauth.state_store.async_state_store import AsyncOAuthStateStore
 from app import commands, db, repo
 from app.clients.portal import PortalClient, PortalUnavailable
 from app.config import Settings
+from app.conversation import listeners
 
 logger = structlog.get_logger()
 
@@ -103,4 +104,5 @@ def build_slack_app(
     app.event("app_uninstalled")(on_app_uninstalled)
     app.event("tokens_revoked")(on_tokens_revoked)
     commands.register(app, portal)
+    listeners.register(app)
     return app

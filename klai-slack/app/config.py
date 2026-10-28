@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     internal_secret: str = ""
 
     public_base_url: str = "https://api.getklai.com"
+    # Canonical portal-login host; App Home links admins to <this>/admin/slack.
+    portal_public_url: str = "https://my.getklai.com"
     klai_env: str = "production"
 
     @field_validator(*_REQUIRED_SECRETS, mode="after")

@@ -105,6 +105,15 @@ async def set_channel_default(
     )
 
 
+async def list_channel_defaults(session: AsyncSession, team_id: str) -> dict[str, list[int]]:
+    result = await session.execute(
+        select(ChannelDefault.channel_id, ChannelDefault.kb_ids)
+        .where(ChannelDefault.team_id == team_id)
+        .order_by(ChannelDefault.channel_id)
+    )
+    return {channel_id: list(kb_ids) for channel_id, kb_ids in result.all()}
+
+
 async def get_thread_scope(
     session: AsyncSession, team_id: str, channel_id: str, thread_ts: str
 ) -> list[int] | None:
