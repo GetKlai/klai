@@ -153,5 +153,5 @@ forwards `X-Request-ID` to the Partner API call.
 | Container restarts, log shows `Missing required: ...` or an encryption-key error | a SOPS key is absent, empty or `SLACK_ENCRYPTION_KEY` is not 32 bytes | fix SOPS, sync env, `compose-up.sh klai-slack` |
 | Container restarts at `alembic upgrade head` | database or role missing, wrong `KLAI_SLACK_DB_PASSWORD` | redo section 3 step 2 |
 | Slack shows `dispatch_failed` or Request URL unverified | Caddy block not live, or container down | section 6 checks |
-| `/klai connect` says the key is refused | key is not a Slack key, org lacks the `slack` unlock, or org already linked | section 4, `/admin/slack` status |
+| `/klai connect` says the key is refused | key is not a Slack key, the organisation lacks the `slack` unlock, or the organisation is already linked | section 4, `/admin/slack` status |
 | No answers on the free Slack plan Messages tab | agent sessions API unavailable; the service falls back to DM replies | expected, see SPEC-SLACK-001 section 9 |

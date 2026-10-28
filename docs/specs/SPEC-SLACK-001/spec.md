@@ -45,7 +45,7 @@ Slack users never authenticate against Klai.
 | # | Decision | Why |
 |---|---|---|
 | D1 | Access is a **Partner API key** per Slack workspace, minted by the portal as a *managed* key (`permissions.slack = true`). Not MCP OAuth per user. | Zero friction per user; the key model already carries the KB whitelist; the MCP server returns passages, not answers, so a per-user route would need a second answer pipeline. Per-user identity stays an upgrade path (§11). |
-| D2 | One Slack workspace per Klai org, one org per workspace. | Keeps the portal page a single card instead of a list; enforced by unique constraints both ways. |
+| D2 | One Slack workspace per Klai organisation, one organisation per workspace. | Keeps the portal page a single card instead of a list; enforced by unique constraints both ways. |
 | D3 | Knowledge-base governance has three layers (§5). "All allowed KBs" is the default at every layer. | Admin keeps the maximum; channel owners and users only narrow. Retrieval already searches several KBs at once, so "all" is a safe default. |
 | D4 | Framework: **slack-bolt (Python) 1.30 + slack_sdk 3.45**, async, mounted in FastAPI. No ready-made bot, no no-code tool for production. | Only maintained option with HTTP Events API, OAuth installation store, modals, `agent_view` and streaming. Every ready-made OpenAI-compatible bot found is Socket-Mode, single-workspace and cannot inject the `knowledge` field. **New dependencies, approved by Mark with the go for implementation on 2026-10-28.** |
 | D5 | Transport: HTTP Events API behind Caddy (`https://api.getklai.com/slack/*`). Socket Mode only for local development. | Slack recommends HTTP for production; Socket Mode apps cannot be listed in the Marketplace and are capped at 10 connections. |
@@ -53,7 +53,7 @@ Slack users never authenticate against Klai.
 | D7 | The bot keeps its **own transcript per thread** (the question/answer pairs it handled) and calls `conversations.replies` only when it meets a thread it has not seen. | Since 2025-05-29 Slack throttles `conversations.replies` to 1 req/min for distributed non-Marketplace apps; the bot receives every question as an event anyway. Verified in the spike of §10 before the behaviour is relied on. |
 | D8 | Separate service with its own Postgres schema; the portal talks to it only over an internal HTTP API with a shared secret. | Same shape as klai-connector and klai-mailer; the portal backend stays the portal's own. |
 | D9 | MVP ships the **paste-the-key** onboarding (`/klai connect`); portal-driven Slack OAuth with a server-side minted key is the target state (§8). | Least code that works; the target state removes the one manual step without changing anything else. |
-| D10 | Feature gated per tenant by a **new platform unlock `slack`**, not `partner_api`. | `partner_api` means "this customer builds integrations with keys"; Slack is a finished product. A `slack` managed key skips the `partner_api` gate and is checked against `slack` instead, mirroring the `internal_chat` key. |
+| D10 | Feature gated per workspace owner by a **new platform unlock `slack`**, not `partner_api`. | `partner_api` means "the workspace owner builds integrations with keys"; Slack is a finished product. A `slack` managed key skips the `partner_api` gate and is checked against `slack` instead, mirroring the `internal_chat` key. |
 | D11 | KB choices live in klai-slack's Postgres, never in Slack message metadata. Every turn intersects the stored choice with the live allowed set. | Message metadata is readable by every workspace member; the intersection makes a revocation in the portal effective immediately. |
 
 ## 3. Architecture
@@ -73,8 +73,8 @@ Components and owners:
 
 | Component | Repo path | Owns |
 |---|---|---|
-| `klai-slack` service | `klai-slack/` (new) | Slack installations (OAuth store), link to a Klai org + key, channel defaults, thread scopes, transcript, event dedupe, all Slack UX |
-| Portal backend | `klai-portal/backend` | The managed `slack` key, the `slack` unlock, `portal_slack_installations` (org ↔ team), admin and internal endpoints |
+| `klai-slack` service | `klai-slack/` (new) | Slack installations (OAuth store), link to a Klai organisation + key, channel defaults, thread scopes, transcript, event dedupe, all Slack UX |
+| Portal backend | `klai-portal/backend` | The managed `slack` key, the `slack` unlock, `portal_slack_installations` (organisation ↔ team), admin and internal endpoints |
 | Portal frontend | `klai-portal/frontend` | `/admin/slack` page, nav item, i18n |
 | Deploy | `deploy/`, `.github/workflows/` | Compose service, Caddy route, image build, env scoping |
 | Secrets | `klai-infra` (private) | SOPS entries for the new env vars (§7) |
@@ -129,7 +129,7 @@ Effective scope of a turn = layer 3 if set, else layer 2 if set, else all of lay
 | Method, path | Body | Response |
 |---|---|---|
 | `GET /api/admin/slack` | – | `200 {status: "not_connected"\|"awaiting_link"\|"connected"\|"revoked", key: {id, key_prefix, rate_limit_rpm, last_used_at, created_at} \| null, installation: {team_id, team_name, installed_by_slack_user_id, installed_at, revoked_at} \| null, kb_ids: int[]}` |
-| `POST /api/admin/slack/key` | `{kb_ids: int[] (≥1, org KBs only)}` | `201 {api_key: "pk_live_…", status: "awaiting_link", key: {…}}`; `409` if a slack key exists; `400` on a personal KB |
+| `POST /api/admin/slack/key` | `{kb_ids: int[] (≥1, shared KBs only, never personal)}` | `201 {api_key: "pk_live_…", status: "awaiting_link", key: {…}}`; `409` if a slack key exists; `400` on a personal KB |
 | `PATCH /api/admin/slack` | `{kb_ids: int[] (≥1)}` | `200` same shape as GET |
 | `DELETE /api/admin/slack` | – | deletes installation row + key (+ kb access); calls klai-slack `DELETE /internal/installations/{team_id}` when linked; `204`, or `200 {slack_revoked: false}` when klai-slack could not be reached (loud, not silent) |
 
@@ -139,7 +139,7 @@ Status derivation: no key → `not_connected`; key without installation row → 
 
 | Method, path | Body | Response |
 |---|---|---|
-| `POST /internal/slack/link` | `{api_key, team_id, team_name, slack_user_id}` | `200 {org_id, org_name, key_id, kb_ids}`; `404` when the key is unknown or not a `slack` key (one generic message); `403` when the org lacks the `slack` unlock; `409 {code: "org_already_linked"\|"team_already_linked"}` |
+| `POST /internal/slack/link` | `{api_key, team_id, team_name, slack_user_id}` | `200 {org_id, org_name, key_id, kb_ids}`; `404` when the key is unknown or not a `slack` key (one generic message); `403` when the organisation lacks the `slack` unlock; `409 {code: "org_already_linked"\|"team_already_linked"}` |
 | `DELETE /internal/slack/link/{team_id}` | – | marks `revoked_at`; `204` (idempotent) |
 
 ### 7.3 klai-slack internal API (portal-api → klai-slack, `Authorization: Bearer <INTERNAL_SECRET>`)
@@ -229,4 +229,4 @@ Target state (not MVP): "Verbind met Slack" starts Slack OAuth from the portal w
 | B Portal backend | Opus | registry, managed key, `partner_dependencies`, `admin_slack.py`, `internal_slack.py`, model + Alembic + post-deploy RLS SQL, deprovisioning delete list, tests | – |
 | C Portal frontend | Sonnet | `routes/admin/slack/*`, `-nav.ts`, `components/admin/OrgKbChecklist.tsx`, messages nl/en, tests, `npm run build` | – (contract §7.1) |
 | D Deploy | Sonnet | compose service, Caddy `/slack/*`, env-scope-guard, `klai-slack.yml` workflow, audit scripts, runbook `docs/runbooks/slack-integration.md` | A1 |
-| E Secrets + rollout | Mark + Claude | SOPS entries in klai-infra, Slack app creation from the manifest, `slack` unlock for the pilot tenant, spike of §10 | D |
+| E Secrets + rollout | Mark + Claude | SOPS entries in klai-infra, Slack app creation from the manifest, `slack` unlock for the pilot workspace, spike of §10 | D |
