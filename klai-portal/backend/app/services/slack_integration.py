@@ -15,9 +15,12 @@ Every function here takes the request session of an admin route, which
 from __future__ import annotations
 
 import uuid
-from typing import Literal
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
+from urllib.parse import urlencode
 
 import httpx
+import jwt
 import structlog
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select
@@ -46,6 +49,12 @@ SLACK_KEY_PERMISSIONS = {
 SLACK_KEY_RATE_LIMIT_RPM = 600
 # klai-slack answers its idempotent DELETE locally (token revoke + row deletes).
 _KLAI_SLACK_TIMEOUT_SECONDS = 10.0
+# The portal-driven link (§8 target state): the admin's choice travels to
+# klai-slack and back inside a short-lived token signed with the secret both
+# services already share, so nothing is minted until Slack OAuth succeeded.
+LINK_TOKEN_TYP = "slack_link"
+LINK_TOKEN_TTL = timedelta(minutes=15)
+_LINK_TOKEN_CLAIMS = ["typ", "org_id", "user_id", "kb_ids", "return_url", "jti", "iat", "exp"]
 
 SlackStatus = Literal["not_connected", "awaiting_link", "connected", "revoked"]
 
@@ -110,10 +119,14 @@ def _add_read_access(db: AsyncSession, key_id: str, kb_ids: list[int]) -> None:
         db.add(PartnerApiKeyKbAccess(partner_api_key_id=key_id, kb_id=kb_id, access_level="read"))
 
 
-async def create_slack_key(
+async def mint_slack_key(
     db: AsyncSession, *, org_id: int, user_id: str, kb_ids: list[int]
-) -> tuple[str, PartnerAPIKey]:
-    """Mint the org's Slack key and return its plaintext, shown this once."""
+) -> tuple[str, PartnerAPIKey, list[int]]:
+    """Add the org's Slack key and its KB rows to the session, uncommitted.
+
+    The caller commits and emits ``slack.key_created``, which lets the
+    link-oauth route commit the key and the installation row as one unit.
+    """
     # Get-or-create on a per-org credential: lock the org row so two concurrent
     # creates cannot both mint a key (portal-backend.md, SELECT FOR UPDATE).
     await db.execute(select(PortalOrg).where(PortalOrg.id == org_id).with_for_update())
@@ -137,6 +150,18 @@ async def create_slack_key(
     _add_read_access(db, key.id, wanted)
     await db.flush()
     await db.refresh(key)  # server defaults (created_at) while tenant context is still bound
+    return plaintext, key, wanted
+
+
+async def create_slack_key(
+    db: AsyncSession, *, org_id: int, user_id: str, kb_ids: list[int]
+) -> tuple[str, PartnerAPIKey]:
+    """Mint the org's Slack key and return its plaintext, shown this once.
+
+    Serves the deprecated paste-the-key flow; the portal now links through
+    ``start_slack_connect`` and ``/internal/slack/link-oauth`` mints the key.
+    """
+    plaintext, key, wanted = await mint_slack_key(db, org_id=org_id, user_id=user_id, kb_ids=kb_ids)
     await db.commit()
 
     emit_event(
@@ -147,6 +172,43 @@ async def create_slack_key(
     )
     logger.info("Slack key created", api_key_id=key.id, org_id=org_id)
     return plaintext, key
+
+
+async def start_slack_connect(db: AsyncSession, *, org_id: int, org_slug: str, user_id: str, kb_ids: list[int]) -> str:
+    """Validate the admin's KB choice and return the klai-slack URL that starts Slack OAuth.
+
+    Mints nothing: ``/internal/slack/link-oauth`` creates the key once the
+    workspace approved the app, after running the same checks again.
+    """
+    if await get_slack_key(db, org_id) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="This organisation already has a Slack key")
+    wanted = await _org_kb_ids(db, org_id, kb_ids)
+
+    now = datetime.now(UTC)
+    token = jwt.encode(
+        {
+            "typ": LINK_TOKEN_TYP,
+            "org_id": org_id,
+            "user_id": user_id,
+            "kb_ids": wanted,
+            "return_url": f"https://{org_slug}.{settings.domain}/admin/slack",
+            "jti": uuid.uuid4().hex,
+            "iat": now,
+            "exp": now + LINK_TOKEN_TTL,
+        },
+        settings.internal_secret,
+        algorithm="HS256",
+    )
+    emit_event("slack.connect_started", org_id=org_id, user_id=user_id, properties={"kb_ids": wanted})
+    return f"{settings.slack_service_public_url.rstrip('/')}/slack/connect?{urlencode({'token': token})}"
+
+
+def decode_link_token(token: str) -> dict[str, Any]:
+    """Verify signature, expiry and type of a link token; raises ``jwt.InvalidTokenError``."""
+    claims = jwt.decode(token, settings.internal_secret, algorithms=["HS256"], options={"require": _LINK_TOKEN_CLAIMS})
+    if claims["typ"] != LINK_TOKEN_TYP:
+        raise jwt.InvalidTokenError("Not a Slack link token")
+    return claims
 
 
 async def set_slack_kb_access(db: AsyncSession, *, org_id: int, user_id: str, kb_ids: list[int]) -> PartnerAPIKey:
