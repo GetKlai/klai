@@ -226,13 +226,14 @@ groups:
           service_group: public-01
           alert_type: silent
         annotations:
-          summary: 'No clean public-01 infra deploy run for 2 hours: the cron, the log shipper, or every run is failing'
+          summary: 'No healthy public-01 infra deploy heartbeat for 2 hours: the cron, the log shipper, or every run is failing'
           runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/auto-rollback.md#public-01-infra-deploy-is-silent'
           description: |
             deploy-infra.sh runs every 10 minutes and writes one line per run to
             /opt/klai/logs/infra-deploy.log, which Alloy ships to VictoriaLogs.
-            No line with a healthy outcome (deployed, up_to_date or
-            skipped_bad_rev) arrived in 2 hours. Either the cron stopped, Alloy
+            No heartbeat line (event infra_deploy with outcome deployed,
+            up_to_date or skipped_bad_rev) arrived in 2 hours; lines with outcome
+            failed or validation_failed are not counted. Either the cron stopped, Alloy
             stopped shipping the file, or every run fails before it finishes
             (outcome failed or validation_failed).
 

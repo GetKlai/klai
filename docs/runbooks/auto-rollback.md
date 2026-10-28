@@ -68,8 +68,10 @@ In VictoriaLogs:
 
 ## Public-01 infra deploy is silent
 
-No line with outcome `deployed`, `up_to_date` or `skipped_bad_rev` reached
-VictoriaLogs for 2 hours (`public01_infra_deploy_silent`). `deploy-infra.sh`
+No heartbeat line (`event:infra_deploy` with outcome `deployed`, `up_to_date`
+or `skipped_bad_rev`) reached VictoriaLogs for 2 hours
+(`public01_infra_deploy_silent`); lines with outcome `failed` or
+`validation_failed` are not counted. `deploy-infra.sh`
 writes one every run, so silence is one of three things: the cron stopped, Alloy
 stopped shipping `/opt/klai/logs/infra-deploy.log` (the Alloy container must
 mount `/opt/klai/logs`), or every run fails before it finishes, which logs
