@@ -1,7 +1,6 @@
 // SPEC-SLACK-001 §7.1 - portal admin API shapes for /api/admin/slack.
 
-/** `awaiting_link` only exists for keys created before the OAuth flow. */
-export type SlackStatus = 'not_connected' | 'awaiting_link' | 'connected' | 'revoked'
+export type SlackStatus = 'not_connected' | 'connected' | 'revoked'
 
 export interface SlackKey {
   id: string

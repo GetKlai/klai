@@ -102,7 +102,6 @@ function SlackPage() {
 
   if (!data) return null
 
-  const awaiting = data.status === 'awaiting_link'
   const connected = data.status === 'connected'
 
   const tabs: TabItem<TabId>[] = [
@@ -139,7 +138,6 @@ function SlackPage() {
       {data.status === 'revoked' && (
         <>
           <SlackStatusAlert
-            status="revoked"
             isReconnecting={disconnectMutation.isPending}
             onReconnect={() => disconnectMutation.mutate()}
           />
@@ -151,13 +149,6 @@ function SlackPage() {
         </>
       )}
 
-      {awaiting && (
-        <>
-          <SlackStatusAlert status="awaiting_link" />
-          <SlackDisconnectTab awaitingLink />
-        </>
-      )}
-
       {connected && data.installation && (
         <>
           <Tabs tabs={tabs} value={activeTab} onValueChange={setTab} />
@@ -165,7 +156,7 @@ function SlackPage() {
           {activeTab === 'kbs' && (
             <SlackKbTab key={[...data.kb_ids].sort().join(',')} kbIds={data.kb_ids} />
           )}
-          {activeTab === 'disconnect' && <SlackDisconnectTab awaitingLink={false} />}
+          {activeTab === 'disconnect' && <SlackDisconnectTab />}
         </>
       )}
     </PageContainer>

@@ -224,37 +224,6 @@ describe('/admin/slack return from Slack', () => {
   })
 })
 
-describe('/admin/slack legacy awaiting_link', () => {
-  it('tells the admin to remove the key and connect again, without tabs or paste instructions', async () => {
-    mockBackend(() => status({ status: 'awaiting_link', key: KEY, kb_ids: [1] }))
-    renderPage()
-
-    expect(await screen.findByText(m.admin_slack_legacy_body())).toBeTruthy()
-    expect(screen.queryByRole('tab')).toBeNull()
-    expect(screen.queryByRole('alertdialog')).toBeNull()
-  })
-
-  it('does not poll', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
-    mockBackend(() => status({ status: 'awaiting_link', key: KEY, kb_ids: [1] }))
-    renderPage()
-    await screen.findByText(m.admin_slack_legacy_body())
-
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(calls('GET', '/api/admin/slack')).toHaveLength(1)
-  })
-
-  it('removes the key after the inline confirmation', async () => {
-    mockBackend(() => status({ status: 'awaiting_link', key: KEY, kb_ids: [1] }))
-    renderPage()
-
-    fireEvent.click(await screen.findByRole('button', { name: m.admin_slack_remove_key_button() }))
-    fireEvent.click(await screen.findByRole('button', { name: m.admin_slack_remove_key_confirm() }))
-
-    await waitFor(() => expect(calls('DELETE', '/api/admin/slack')).toHaveLength(1))
-  })
-})
-
 describe('/admin/slack connected', () => {
   it('shows the workspace name with a badge, the three tabs and a calm overview', async () => {
     mockBackend(() => CONNECTED)
