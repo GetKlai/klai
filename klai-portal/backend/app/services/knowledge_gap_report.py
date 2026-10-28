@@ -8,16 +8,25 @@ and makes no model call: a turn counts when it ended in a refusal, a
 clarifying question, a request for a person or a partial answer, or answered
 on a weak search (gap_type ``soft``).
 
-Turns are grouped on topic without a model: the product the case named plus
-the three longest content words of the case's problem (the visitor's search
-when the case has none). The key is a hash of those, a pure function of one
-turn's signals, so the same topic lands on the same key next week, which is
-what a decision (``portal_gap_proposals``) and a proposal hang on, and no
-visitor word reaches a URL or a stored key. Known ceiling: two wordings of one
-need that share fewer than three long words make two clusters; the upgrade is
-a deterministic synonym/stem table, still without a model.
+Turns are grouped on topic without a model, on one of two anchors. A turn the
+search answered in part (``article_misses_part``, ``weak_match``,
+``variant_unclear``) is anchored on the best article it found
+(``source_url_key``): an owner fixes one article, not one wording, and the case's
+problem text varies per visitor while the article they matched does not. Every
+other turn (``no_article``, ``contact_wish``, a best article without url) has no
+article to anchor on and is grouped on the product the case named plus the three
+longest content words of the case's problem (the visitor's search when the
+problem holds no content word). Words are lower-cased, chat filler is a
+stopword, and a trailing "en" or "s" is stripped from a word when at least four
+letters stay, so "oproep" and "oproepen" are one word. The key is a hash of the
+anchor, a pure function of one turn's signals, so the same topic lands on the
+same key next week, which is what a decision (``portal_gap_proposals``) and a
+proposal hang on, and no visitor word reaches a URL or a stored key. Known
+ceiling: two wordings of one need without an article that share fewer than
+three long words make two clusters; the upgrade is a deterministic synonym
+table, still without a model.
 
-A cluster without topic words, and every internal cluster (internal turns
+A cluster without an article and without topic words, and every internal cluster (internal turns
 carry no text, so they are counted per kind only), is a catch-all: it is not
 ``decidable``, because a final decision on it would hide every future turn of
 that kind, and a proposal on it would mix unrelated questions.
@@ -45,6 +54,7 @@ from sqlalchemy.orm import aliased
 from app.models.gap_proposals import PortalGapProposal
 from app.models.portal import PortalOrg, PortalUser
 from app.models.widgets import WidgetConversation, WidgetMessage
+from app.services.citations import source_url_key
 
 GAP_DECISIONS = ("refusal", "clarifying_question", "human_request", "partial_answer")
 GapKind = Literal["no_article", "article_misses_part", "variant_unclear", "contact_wish", "weak_match"]
@@ -64,6 +74,9 @@ PROBE_QUESTION = "Hoe lang rijst het deeg van het Proefbrood van Probe Bakkerij?
 
 _TOPIC_WORDS = 3
 _MIN_WORD = 3
+# Letters that must stay after a plural or infinitive ending is stripped.
+_MIN_STEM = 4
+_ANCHORED_KINDS = frozenset({"article_misses_part", "weak_match", "variant_unclear"})
 # Longer than any Dutch or English word an owner would write about; an IBAN
 # without spaces, a token or a hash is longer.
 _MAX_WORD = 24
@@ -72,13 +85,25 @@ _MAX_QUESTIONS = 20
 _MAX_ARTICLES = 5
 _MAX_OPEN_PARTS = 10
 _WORD = re.compile(r"[^\W_]+")
+# Chat filler says nothing about the subject: pronouns, auxiliaries, the words a
+# visitor uses to ask ("graag", "hoe", "lukt") and the generic verbs and
+# nouns around a request ("instellen", "aanvragen", "klant").
 _STOPWORDS = frozenset(
     """
     aan alle als bij dan dat de deze die dit door een en er geen heb hebben het hoe ik in is je jij kan
     kun kunt maar met mijn moet naar niet nog of om ons onze ook op te tot u uw van voor waar wanneer
     waarom wat wel werkt wil wordt worden zijn zou graag mogelijk iets zet doe gaat krijg vind
+    bezoeker bezoekers klant klanten gebruiker gebruikers weten weet lukt lukken willen wilt kunnen
+    mag mogen moeten zouden zal zullen heeft had hadden ben bent was waren werd wij we jullie
+    ze zij hij haar hun hem mij me jouw wie welke welk hier daar toch al even erg zeer heel veel
+    meer minder anders ander andere nieuw nieuwe opnieuw via vraag vragen vraagt aanvragen toevoegen
+    wijzigen instellen instelling bijvoorbeeld krijgen krijgt doen maken gaan komen helpen hulp
+    dus want omdat dank bedankt hallo
     the and are can does for from get
     have how not our that this what when where which who why will with you your about into there
+    could would should want need please help know able cannot customer customers visitor visitors
+    user users ask question questions request requests new other add change set again via
+    me my we us they their them its she his her was were been being than then also
     """.split()
 )
 
@@ -112,39 +137,73 @@ def gap_kind(signals: Mapping[str, Any]) -> GapKind:
     return "no_article" if decision == "refusal" else "weak_match"
 
 
-def topic_words(text: str, *, product: str = "") -> list[str]:
-    """The three longest content words, sorted.
+def _stem(word: str) -> str:
+    """Crude plural/infinitive strip: a trailing "en", else "s", when four or more letters stay."""
+    for suffix in ("en", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= _MIN_STEM:
+            return word[: -len(suffix)]
+    return word
+
+
+def _topic_terms(text: str, skip: frozenset[str]) -> list[tuple[str, str]]:
+    """The three longest content words as (stem, shown word), sorted by stem.
 
     A whitespace token holding a digit or an ``@`` (a phone, order or account
     number, an e-mail address) never becomes a topic word, nor does a token
     longer than ``_MAX_WORD``; stopwords and the product's own words, already
-    in the key, go before the choice.
+    in the key, go before the choice. Words with one stem are one term and
+    show as the shortest of them.
     """
-    skip = _STOPWORDS | set(product.split())
-    words = {
-        word
-        for token in text.lower().split()
-        if "@" not in token and not any(char.isdigit() for char in token)
-        for word in _WORD.findall(token)
-        if _MIN_WORD <= len(word) <= _MAX_WORD and word not in skip
-    }
-    return sorted(sorted(words, key=lambda w: (-len(w), w))[:_TOPIC_WORDS])
+    shown: dict[str, str] = {}
+    for token in text.lower().split():
+        if "@" in token or any(char.isdigit() for char in token):
+            continue
+        for word in _WORD.findall(token):
+            stem = _stem(word)
+            if _MIN_WORD <= len(word) <= _MAX_WORD and word not in skip and stem not in skip:
+                shown[stem] = min(word, shown.get(stem, word), key=lambda w: (len(w), w))
+    return sorted(sorted(shown.items(), key=lambda kv: (-len(kv[0]), kv[0]))[:_TOPIC_WORDS])
 
 
-def _topic(turn: GapTurn) -> tuple[str, list[str]]:
+def topic_words(text: str, *, product: str = "") -> list[str]:
+    """The three longest content words as shown, in stem order."""
+    return [word for _, word in _topic_terms(text, _STOPWORDS | set(product.split()))]
+
+
+def _score(found: Mapping[str, Any]) -> float:
+    # A kept passage has no score and goes last.
+    return found["score"] if isinstance(found.get("score"), int | float) else -1.0
+
+
+def _anchor(signals: Mapping[str, Any]) -> tuple[str, dict] | None:
+    """(url key, article) a turn is grouped on: its best found article, for the kinds where one fell short."""
+    found = _found(signals)
+    if not found or gap_kind(signals) not in _ANCHORED_KINDS:
+        return None
+    article = max(found, key=_score)
+    url_key = source_url_key(article.get("url"))
+    return (url_key, article) if url_key else None
+
+
+def _topic(turn: GapTurn) -> tuple[str, list[tuple[str, str]]]:
     case = turn.signals.get("case")
     if not isinstance(case, dict):
         case = {}
     product = " ".join(str(case.get("product") or "").lower().split())
-    text = str(case.get("problem") or "") or _query(turn.signals)
-    return product, topic_words(text, product=product)
+    skip = _STOPWORDS | set(product.split())
+    # The case's problem names the subject; the search query is a rewrite of the
+    # whole question and only stands in when the problem holds no content word.
+    terms = _topic_terms(str(case.get("problem") or ""), skip) or _topic_terms(_query(turn.signals), skip)
+    return product, terms
 
 
 def cluster_key(turn: GapTurn) -> str:
     if turn.surface == "internal":
         return f"internal|{gap_kind(turn.signals)}"
-    product, words = _topic(turn)
-    return "t" + hashlib.sha256(f"{product}|{' '.join(words)}".encode()).hexdigest()[:20]
+    product, terms = _topic(turn)
+    anchor = _anchor(turn.signals)
+    basis = f"{product}|article:{anchor[0]}" if anchor else f"{product}|{' '.join(stem for stem, _ in terms)}"
+    return "t" + hashlib.sha256(basis.encode()).hexdigest()[:20]
 
 
 def _query(signals: Mapping[str, Any]) -> str:
@@ -174,7 +233,7 @@ def build_clusters(
     include_decided: bool = False,
     literal: bool = True,
 ) -> list[dict[str, Any]]:
-    """Group the counted turns per topic, biggest first; a cluster of one stays, at the bottom.
+    """Group the counted turns per topic, decidable and biggest first; a cluster of one stays, at the bottom of its block.
 
     ``decisions`` maps a cluster key to its ``portal_gap_proposals`` row
     (``load_cluster_decisions``); a decided cluster is left out unless
@@ -194,12 +253,14 @@ def build_clusters(
         members.sort(key=lambda t: t.created_at, reverse=True)
         kinds = Counter(gap_kind(t.signals) for t in members)
         widget = [t for t in members if t.surface == "widget"]
-        product, words = _topic(widget[0]) if widget else ("", [])
+        product, terms = _topic(widget[0]) if widget else ("", [])
+        words = [word for _, word in terms]
+        anchored = [a for a in (_anchor(t.signals) for t in widget) if a]
         # Best score first; a kept passage has no score and goes last.
         best: dict[str, dict] = {}
         for f in sorted(
             (f for t in widget for f in _found(t.signals)),
-            key=lambda f: f["score"] if isinstance(f.get("score"), int | float) else -1.0,
+            key=_score,
             reverse=True,
         ):
             best.setdefault(str(f.get("url") or f.get("title")), f)
@@ -212,7 +273,12 @@ def build_clusters(
         )
         open_parts = _distinct((p for t in widget for p in _open_parts(t.signals)), _MAX_OPEN_PARTS)
         languages = Counter(str(t.signals["language"]) for t in members if t.signals.get("language"))
-        topic = " ".join(words) if literal else ""
+        if anchored:
+            # An article title is the owner's own text, not the visitor's, so it shows at every telemetry level.
+            _, title, url = min((-_score(a), str(a.get("title") or ""), str(a.get("url"))) for _, a in anchored)
+            topic = title or url
+        else:
+            topic = " ".join(words) if literal else ""
         clusters.append(
             {
                 "cluster_key": key,
@@ -230,17 +296,20 @@ def build_clusters(
                 "open_parts": open_parts if literal else [],
                 "language": languages.most_common(1)[0][0] if languages else None,
                 "last_seen": members[0].created_at.isoformat(),
-                "decidable": bool(widget) and bool(words),
+                "decidable": bool(widget) and bool(anchored or words),
                 "decision": decided.get("decision", "none"),
                 "decided_by": decided.get("decided_by"),
                 "decided_at": decided.get("decided_at"),
                 "has_proposal": bool(decided.get("has_proposal")),
             }
         )
-    # Biggest first, then newest, then by key so the order is reproducible.
+    # Decidable clusters first (a singleton stays at the bottom of that block),
+    # then the widget catch-alls, then the internal per-kind aggregates; within a
+    # block biggest first, then newest, then by key so the order is reproducible.
     clusters.sort(key=lambda c: c["cluster_key"])
     clusters.sort(key=lambda c: c["last_seen"], reverse=True)
     clusters.sort(key=lambda c: c["count"], reverse=True)
+    clusters.sort(key=lambda c: (not c["decidable"]) + (c["widget_count"] == 0))
     return clusters
 
 
