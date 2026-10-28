@@ -32,6 +32,7 @@ export interface ConnectSlackRequest {
 
 export interface ConnectSlackResponse {
   connect_url: string
+  token: string
 }
 
 export interface UpdateSlackKbsRequest {
