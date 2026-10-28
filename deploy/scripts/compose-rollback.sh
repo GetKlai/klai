@@ -34,12 +34,14 @@
 # rb_init, because from then on the .prev copies belong to that sync, and a
 # replay removes it so the same sync is never undone twice.
 #
-# Data stores (slice S8a, datastore-rollback.sh, sourced below): an image change
-# of a Postgres store or of an app that migrates its own database is dumped
-# before the sync changes anything, and a red gate within 30 minutes restores
-# the dumps together with the files. Past the window nothing is restored (gate
-# restore-window); an inventory entry this sync does not snapshot (LiteLLM)
-# restores nothing either (gate self-migrating-image).
+# Data stores (slices S8a and S8b, datastore-rollback.sh, sourced below): an
+# image change of a data store or of an app that migrates its own database is
+# snapshotted before the sync changes anything, and a red gate within 30
+# minutes restores the snapshots together with the files. Past the window
+# nothing is restored (gate restore-window); an inventory entry this sync does
+# not snapshot (LiteLLM) restores nothing either (gate self-migrating-image),
+# and neither does a Mongo whose FCV was raised since its snapshot (gate
+# mongo-fcv).
 #
 # Known ceilings
 #   - Failures before the first recreate (the file copies, bash -n) are outside
@@ -250,6 +252,10 @@ rb_gate() {
   # would put the old image on the new schema, so past the window nothing.
   if ! ds_in_window; then
     rb_finish "$service" restore-window rollback_failed
+  fi
+  # A raised Mongo FCV is a human's step; a restore would undo it (S8b).
+  if ! ds_fcv_unchanged; then
+    rb_finish "$service" mongo-fcv rollback_failed
   fi
   if {
     rb_restore \

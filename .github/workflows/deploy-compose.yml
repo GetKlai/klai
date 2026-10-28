@@ -102,6 +102,7 @@ jobs:
           bash deploy/scripts/tests/compose-rollback.test.sh
           # Its data half: snapshot before, restore on red (S8a).
           bash deploy/scripts/tests/datastore-rollback.test.sh
+          bash deploy/scripts/tests/datastore-restore-rehearsal.test.sh
           # The env-drift sweep at the end of the sync step, installed here too.
           bash deploy/scripts/tests/compose-env-drift-recreate.test.sh
           # Installed here with the other deploy scripts; service workflows call it.
@@ -137,6 +138,11 @@ jobs:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          # The action's default is 10m, and a cut ssh session kills the script
+          # wherever it is, a data restore included. A FalkorDB change alone
+          # loads its 1.1 GB dump three times (baseline, new image, restore) at
+          # 104 s each (core-01, 2026-10-23).
+          command_timeout: 45m
           script: |
             set -e
             # A directory of its own per run, so a run that overlaps (or a

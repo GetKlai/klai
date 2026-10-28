@@ -60,6 +60,9 @@ on:
       # rollback path itself (or the canary) is broken, which nobody would see
       # until a real deploy failed.
       - Rollback rehearsal
+      # Restores every data store's snapshot into a throwaway; red means a
+      # store's rollback point does not restore.
+      - Datastore restore rehearsal
       # Rolls back what was deployed since the last green E2E run. It ends red
       # after every rollback, and its rollback-report artifact sets the label.
       - Auto-rollback

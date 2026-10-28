@@ -177,6 +177,11 @@ jobs:
       - name: datastore rollback suite
         run: bash deploy/scripts/tests/datastore-rollback.test.sh
 
+      # The rehearsal that proves those snapshots restore, and that one failing
+      # store ends the run red without hiding the others.
+      - name: datastore restore rehearsal suite
+        run: bash deploy/scripts/tests/datastore-restore-rehearsal.test.sh
+
       - name: LibreChat regenerate suite
         run: bash deploy/scripts/tests/tenant-config-regenerate.test.sh
 

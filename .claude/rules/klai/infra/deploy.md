@@ -103,14 +103,19 @@ Just `git push`. The workflow rsyncs + force-recreates. ~30s end-
 to-end. A red gate (SPEC-INFRA-AUTO-ROLLBACK-001 S3,
 `deploy/scripts/compose-rollback.sh`) restores the `*.prev` copies the
 run made, recreates and verifies once more, and still ends the job red:
-exit 3 = rolled back, exit 4 = rollback failed (needs a human). A Postgres
-image change, or one of Twenty, GlitchTip or Zitadel (they migrate their own
-database), is dumped first (`deploy/scripts/datastore-rollback.sh`, S8a); a red
-gate within 30 minutes restores the dumps with the files, later restores
-nothing (gate `restore-window`). Too little disk for the dump (twice the
-volume) refuses the sync before any file changes (gate `disk-headroom`). A
-LiteLLM image change is migrated by its own workflow, so nothing is restored
-(gate `self-migrating-image`).
+exit 3 = rolled back, exit 4 = rollback failed (needs a human). An image
+change of a data store, or of Twenty, GlitchTip or Zitadel (they migrate their
+own database), is snapshotted first (`deploy/scripts/datastore-rollback.sh`,
+S8a/S8b: `pg_dump` for Postgres, a cold copy for Qdrant, Meilisearch, Mongo and
+Garage, which stops that store for seconds, BGSAVE for Redis and FalkorDB,
+exported definitions for RabbitMQ); a red gate within 30 minutes restores the
+snapshots with the files, later restores nothing (gate `restore-window`), and
+a Mongo whose FCV changed since its snapshot is never restored over (gate
+`mongo-fcv`). `datastore-restore-rehearsal.yml` restores every store's newest
+snapshot into a throwaway container on the 1st and 15th. Too little disk for
+the snapshot (twice the volume) refuses the sync before any file changes (gate
+`disk-headroom`). A LiteLLM image change is migrated by its own workflow, so
+nothing is restored (gate `self-migrating-image`).
 
 ### When you change a Class A-dir file
 

@@ -1,0 +1,64 @@
+name: Datastore restore rehearsal
+
+# SPEC-INFRA-AUTO-ROLLBACK-001 section 4.c, slice S8b, AT-c4.
+#
+# A data store is rolled back by restoring the snapshot taken just before its
+# image changed, and that path only runs after a deploy has already failed. This
+# proves it on a quiet night instead: every store in datastore-rollback.sh's
+# inventory gets its newest snapshot restored into a throwaway container on
+# core-01 (own volumes, --network none, never the live volume) and probed
+# against the snapshot's baseline. A store without a snapshot gets a fresh one,
+# taken the way a deploy takes it. The whole sequence lives in
+# deploy/scripts/datastore-restore-rehearsal.sh (installed to /opt/klai/scripts
+# by deploy-compose.yml, tested in deploy-scripts-tests.yml); this workflow
+# only starts it.
+#
+# Twice a month rather than once: VictoriaLogs keeps 30 days, so a monthly run
+# would leave the dead-man's-switch rule (datastore_restore_rehearsal_missing,
+# no ok event for 30 days) without a line on the 31st of every long month.
+# A failed store ends the run red after the others ran, and
+# ci-failure-notice.yml opens its issue.
+
+on:
+  schedule:
+    # 1st and 15th, 02:17 UTC: after the nightly backup, before the 04:00 E2E run.
+    - cron: '17 2 1,15 * *'
+  workflow_dispatch:
+    inputs:
+      stores:
+        description: 'Space-separated store names (empty: every store in the inventory)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: datastore-restore-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    # Scheduled runs belong to main anyway; this keeps a workflow_dispatch from
+    # another branch off the production host.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Restore every store's snapshot into a throwaway on core-01
+        uses: appleboy/ssh-action@v1
+        env:
+          STORES: ${{ inputs.stores }}
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          command_timeout: 110m
+          envs: STORES
+          script: |
+            set -e
+            test -x /opt/klai/scripts/datastore-restore-rehearsal.sh
+            # Word-split on purpose: one argument per store; the script refuses
+            # any name outside its inventory.
+            # shellcheck disable=SC2086
+            /opt/klai/scripts/datastore-restore-rehearsal.sh ${STORES:-}

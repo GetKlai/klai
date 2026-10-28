@@ -24,7 +24,41 @@
 #   ds_restore_into <dir> <container>
 #                         restore into a throwaway container from the store's
 #                         previous image and compare the counts; never touches
-#                         the live store (dry mode now, the monthly rehearsal S8b)
+#                         the live store (dry mode, datastore-restore-rehearsal.sh)
+#   ds_fcv_unchanged      0 unless a mongo snapshot's FCV differs from the live one
+#
+# Other engines (slice S8b, DS_ENGINE_STORES): the snapshot depends on what the
+# engine can read back.
+#   volume       qdrant, meilisearch, mongo, garage: none of them opens data a
+#                newer version wrote (Meilisearch migrates one way on start,
+#                Mongo after an FCV bump, Qdrant and Garage migrate storage), so
+#                the store is stopped and every data mount is copied cold with
+#                tar, then started again. Seconds on core-01 (largest, Qdrant,
+#                786 MB on 2026-10-28). Garage is copied cold as well, not with
+#                backup.sh's `garage meta snapshot`: that snapshot holds only
+#                db.lmdb, while a restore needs the node key and cluster layout
+#                next to it in the same state.
+#   rdb          redis, falkordb: BGSAVE, waited for on LASTSAVE as backup.sh
+#                does, then the dump.rdb. A store that runs with appendonly
+#                gets the dump back as the base file of a fresh AOF manifest,
+#                because Redis with appendonly on ignores dump.rdb at start and
+#                comes up empty (verified on redis:8.10.2-alpine).
+#   definitions  rabbitmq: rabbitmqctl export_definitions. Messages are not
+#                kept: firecrawl-rabbitmq has no volume and every recreate
+#                already starts a new node.
+#   none         crm-redis runs without persistence; a recreate empties it
+#                today, so there is nothing to snapshot. The row exists for the
+#                probe and the consumer recreate.
+# The baseline of an engine snapshot is read from the snapshot itself, as for
+# Postgres: it is restored into a throwaway container of the running image
+# before any file changes, which also proves it reads back. The facts are lines
+# like "collection <name>" and "count <name> <n>". A throwaway must reproduce
+# them exactly; the live store after a restore must hold every name and at
+# least every count, because LibreChat tenant containers outside compose keep
+# writing while it runs.
+#
+# Throwaway containers run with --network none, label klai.adhoc=datastore-restore,
+# limited memory and CPU, and on their own volumes; they are removed afterwards.
 #
 # Restore method: DROP DATABASE ... WITH (FORCE), then pg_restore --create. Not
 # pg_restore --clean: --clean drops only the objects inside the dump, so a table
@@ -72,6 +106,15 @@
 #   - The restore holds the host container lock (compose-up.sh's), so no
 #     service deploy starts a consumer against a half-restored database. A
 #     deploy that does not go through compose-up.sh is not held back.
+#   - The LibreChat tenant containers portal-api starts outside compose
+#     (librechat-<tenant>) use mongodb, meilisearch and redis but are not
+#     stopped for a restore; they reconnect after it, and their writes during it
+#     fail. Their writes are also why a live restore compares counts as "at
+#     least" rather than exact.
+#   - A Mongo FCV that cannot be read (the new image does not answer) counts as
+#     unchanged: a bump needs a running server and someone to issue it.
+#   - Dry mode is refused for the volume engines: their previous image cannot
+#     open the volume the new one has already started on.
 #
 # Tests: deploy/scripts/tests/datastore-rollback.test.sh
 
@@ -130,7 +173,32 @@ listmonk-db         listmonk    public.subscribers public.lists
 umami-postgres      umami       public.website_event public.session
 fider-postgres      fider       public.users public.system_settings
 '
+# The other stores (S8b): service, engine, then the services that hold a
+# connection to it, with the same role as the consumers in DS_STORES. The test
+# suite checks every name, and that every service naming the store in its
+# environment or depends_on, or sharing its private network, is listed.
+# redis-ephemeral is a Redis without persistence: probed, never snapshotted.
+DS_ENGINE_STORES='
+qdrant              qdrant           knowledge-ingest retrieval-api portal-api
+meilisearch         meilisearch      librechat-getklai portal-api
+mongodb             mongo            librechat-getklai portal-api
+redis               redis            litellm librechat-getklai glitchtip-web glitchtip-worker retrieval-api firecrawl-api klai-mailer portal-api
+vexa12-redis        redis            vexa12-runtime vexa12-meeting-api
+crm-redis           redis-ephemeral  crm crm-worker
+falkordb            falkordb         knowledge-ingest retrieval-api
+garage              garage           knowledge-ingest klai-connector portal-api vexa12-meeting-api
+firecrawl-rabbitmq  rabbitmq         firecrawl-api
+'
 # ---------------------------------------------------------------------------
+
+# Images for the helper containers: tar and cp into volumes, and curl into the
+# network namespace of a store whose image has no HTTP client (Qdrant, Garage).
+# Both are pulled on core-01; the curl tag is the one backup.sh uses.
+DS_TOOL_IMAGE="${KLAI_DS_TOOL_IMAGE:-alpine:3.22}"
+DS_CURL_IMAGE="${KLAI_CURL_IMAGE:-curlimages/curl:8.11.1}"
+# A throwaway holds one store's snapshot. The largest, FalkorDB, used 2.9 GiB
+# live on 2026-10-28 on a host with 62 GiB; one throwaway runs at a time.
+DS_THROWAWAY_LIMITS=(--memory 6g --cpus 2)
 
 DS_SNAPSHOTS=()
 
@@ -152,6 +220,45 @@ ds_app_row() { awk -v s="$1" '$1 == s' <<< "$DS_APPS"; }
 ds_probe_tables() { awk -v s="$1" -v d="$2" '$1 == s && $2 == d { $1 = ""; $2 = ""; print }' <<< "$DS_PROBES"; }
 ds_meta() { sed -n "s/^$2=//p" "$1/meta"; }
 
+# ds_engine <service>: postgres, the engine of a DS_ENGINE_STORES row, or nothing.
+ds_engine() {
+  if [[ -n "$(ds_store_row "$1")" ]]; then echo postgres; return; fi
+  awk -v s="$1" '$1 == s { print $2 }' <<< "$DS_ENGINE_STORES"
+}
+ds_is_store() { [[ -n "$(ds_engine "$1")" ]]; }
+ds_store_names() { awk 'NF { print $1 }' <<< "$DS_STORES$DS_ENGINE_STORES"; }
+# A snapshot written before S8b has no engine line; those were all Postgres.
+ds_dir_engine() { local e; e="$(ds_meta "$1" engine)"; echo "${e:-postgres}"; }
+ds_kind() {
+  case "$1" in
+    postgres) echo dump ;;
+    qdrant|meilisearch|mongo|garage) echo volume ;;
+    redis|falkordb) echo rdb ;;
+    rabbitmq) echo definitions ;;
+    *) echo none ;;
+  esac
+}
+# Data mounts (container paths) per engine, as deploy/volume-mounts.yaml lists them.
+ds_paths() {
+  case "$1" in
+    postgres) echo /var/lib/postgresql ;;
+    qdrant) echo /qdrant/storage ;;
+    meilisearch) echo /meili_data ;;
+    mongo) echo /data/db ;;
+    garage) echo /var/lib/garage/meta /var/lib/garage/data ;;
+    redis) echo /data ;;
+    falkordb) echo /var/lib/falkordb/data ;;
+  esac
+}
+# The container behind a target: "ctr:<name>", or a compose service's container,
+# running or not (a stopped one still carries the volumes).
+ds_ctr() {
+  case "$1" in
+    ctr:*) echo "${1#ctr:}" ;;
+    *) ds_compose ps -a -q "$1" 2>/dev/null | head -n1 ;;
+  esac
+}
+
 # "<service> <image>" per service in a compose file. The file keeps services at
 # two spaces and their image at four.
 ds_images() {
@@ -172,7 +279,7 @@ ds_changed() {
     if [[ "$(ds_image_of "$old" "$name")" != "$(ds_image_of "$new" "$name")" ]]; then
       stores+=("$name"); echo "$name"
     fi
-  done <<< "$DS_STORES"
+  done <<< "$DS_STORES$DS_ENGINE_STORES"
   while read -r name store db rest; do
     [[ -n "$name" ]] || continue
     [[ " ${stores[*]} " == *" $store "* || " ${dbs[*]} " == *" $store/$db "* ]] && continue
@@ -188,18 +295,25 @@ ds_changed() {
 ds_unsnapshotted() {
   local name
   while read -r name; do
-    [[ "$(ds_app_row "$name" | awk '{ print $4 }')" == sync || -n "$(ds_store_row "$name")" ]] || echo "$name"
+    [[ "$(ds_app_row "$name" | awk '{ print $4 }')" == sync ]] || ds_is_store "$name" || echo "$name"
   done < <(ds_changed "$1" "$2")
 }
 
-# Size in bytes of the data volume behind a store's running container.
+# Size in bytes of the data mounts behind a store's running container; 0 for
+# an engine without any (rabbitmq, redis-ephemeral).
 ds_volume_bytes() {
-  local cid src
+  local cid p src n total=0 paths
+  paths="$(ds_paths "$(ds_engine "$1")")"
+  [[ -n "$paths" ]] || { echo 0; return 0; }
   cid="$(ds_compose ps -q "$1")" && [[ -n "$cid" ]] || return 1
-  src="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql"}}{{.Source}}{{end}}{{end}}' "$cid")" \
-    && [[ -n "$src" ]] || return 1
-  # The volume lives under /var/lib/docker, readable for root only.
-  sudo -n du -sb "$src" | awk '{ print $1 }'
+  for p in $paths; do
+    src="$(docker inspect --format "{{range .Mounts}}{{if eq .Destination \"$p\"}}{{.Source}}{{end}}{{end}}" "$cid")" \
+      && [[ -n "$src" ]] || return 1
+    # A named volume lives under /var/lib/docker, readable for root only.
+    n="$(sudo -n du -sb "$src" | awk '{ print $1 }')" && [[ "$n" =~ ^[0-9]+$ ]] || return 1
+    total=$(( total + n ))
+  done
+  echo "$total"
 }
 
 # The image of every container, running or exited, of the given services.
@@ -243,10 +357,392 @@ ds_ledger() {
   printf '%s\tdata\t%s\t%s\t%s\t%s\t%s\n' "$(rb_now)" "$1" "$2" "$3" "$RB_TO" "$4" >> "$RB_LEDGER"
 }
 
+# --- other engines (S8b) ----------------------------------------------------
+
+ds_env_of() {
+  docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null | sed -n "s/^$2=//p" | head -n1
+}
+
+# ds_rcli <target> <command...>: redis-cli in a Redis or FalkorDB container.
+# redis and vexa12-redis take their password as --requirepass on the command
+# line (backup.sh reads it from the same place); it is handed over in the
+# environment, never as an argument.
+ds_rcli() {
+  local cid pw
+  cid="$(ds_ctr "$1")" && [[ -n "$cid" ]] || return 1
+  shift
+  pw="$(docker inspect --format '{{range .Config.Cmd}}{{println .}}{{end}}' "$cid" 2>/dev/null \
+    | grep -A1 -x -- --requirepass | tail -n1 || true)"
+  if [[ -n "$pw" ]]; then
+    REDISCLI_AUTH="$pw" docker exec -e REDISCLI_AUTH "$cid" redis-cli "$@" < /dev/null
+  else
+    docker exec "$cid" redis-cli "$@" < /dev/null
+  fi
+}
+
+# ds_curl <target> <port> <auth-header-prefix> <token-env> <method> <path> [body]:
+# HTTP from a curl container in the store's network namespace, so it works for
+# a throwaway on --network none and for images without an HTTP client. The
+# token comes from the store's own environment and travels in the environment.
+ds_curl() {
+  local cid
+  cid="$(ds_ctr "$1")" && [[ -n "$cid" ]] || return 1
+  T="$(ds_env_of "$cid" "$4")" H="$3" docker run --rm --network "container:$cid" -e T -e H \
+    --entrypoint sh "$DS_CURL_IMAGE" -c \
+    'curl -fsS --max-time 60 -X "$1" -H "$H$T" -H "Content-Type: application/json" -d "$3" "http://127.0.0.1:$0$2"' \
+    "$2" "$5" "$6" "${7:-}"
+}
+ds_qdrant() { ds_curl "$1" 6333 "api-key: " QDRANT__SERVICE__API_KEY "$2" "$3" "${4:-}"; }
+ds_garage() { ds_curl "$1" 3903 "Authorization: Bearer " GARAGE_ADMIN_TOKEN GET "$2"; }
+# Meilisearch has wget and its key in its own environment. A throwaway has no
+# key, and then any Authorization header is refused with 403 (v1.55.0).
+ds_meili() {
+  local cid
+  cid="$(ds_ctr "$1")" && [[ -n "$cid" ]] || return 1
+  docker exec "$cid" sh -c 'if [ -n "${MEILI_MASTER_KEY:-}" ]; then
+      exec wget -qO- --header="Authorization: Bearer $MEILI_MASTER_KEY" "http://127.0.0.1:7700$1"; fi
+    exec wget -qO- "http://127.0.0.1:7700$1"' sh "$2" < /dev/null
+}
+# ds_mongo <target> <js>: the root user from the container's own environment;
+# a throwaway runs without auth.
+ds_mongo() {
+  local cid
+  cid="$(ds_ctr "$1")" && [[ -n "$cid" ]] || return 1
+  JS="$2" docker exec -e JS "$cid" sh -c 'if [ -n "${MONGO_INITDB_ROOT_USERNAME:-}" ]; then
+      set -- -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin; fi
+    exec mongosh --quiet "$@" --eval "$JS"' < /dev/null
+}
+DS_MONGO_FCV='print(db.adminCommand({getParameter: 1, featureCompatibilityVersion: 1}).featureCompatibilityVersion.version)'
+# The CLI as the rabbitmq user: as root it can write .erlang.cookie before the
+# server does, and the server then dies on eacces (seen on rabbitmq:4.4.0-alpine).
+ds_rmq() {
+  local cid
+  cid="$(ds_ctr "$1")" && [[ -n "$cid" ]] || return 1
+  shift
+  docker exec -u rabbitmq "$cid" "$@" < /dev/null
+}
+# import_definitions does not read stdin, so the file goes in first.
+ds_rmq_import() {
+  local cid
+  cid="$(ds_ctr "$1")" && [[ -n "$cid" ]] || return 1
+  docker exec -i -u rabbitmq "$cid" sh -c 'cat > /tmp/definitions.json && rabbitmqctl -q import_definitions /tmp/definitions.json' < "$2"
+}
+
+ds_ready() {
+  local t="$1"
+  case "$2" in
+    qdrant) ds_qdrant "$t" GET /readyz > /dev/null 2>&1 ;;
+    meilisearch) ds_meili "$t" /health 2>/dev/null | grep -q '"available"' ;;
+    mongo) [[ "$(ds_mongo "$t" 'print(db.adminCommand({ping: 1}).ok)' 2>/dev/null)" == 1 ]] ;;
+    redis|redis-ephemeral|falkordb) [[ "$(ds_rcli "$t" PING 2>/dev/null)" == PONG ]] ;;
+    garage) ds_garage "$t" /health > /dev/null 2>&1 ;;
+    rabbitmq) ds_rmq "$t" rabbitmq-diagnostics -q check_running > /dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+# Up to 10 minutes: FalkorDB took 104 s to load its 1.1 GB dump on core-01
+# (2026-10-23) and answers LOADING until then.
+ds_wait_ready() {
+  local i
+  for (( i = 0; i < 300; i++ )); do
+    ds_ready "$1" "$2" && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# ds_facts <target> <engine>: sorted lines "<thing> <name>" and "count <name> <n>".
+# Every call is checked: a failing call inside a pipeline or a for-list would
+# otherwise read as a store with nothing in it.
+ds_facts() {
+  local t="$1" out n c i
+  case "$2" in
+    qdrant)
+      n="$(ds_qdrant "$t" GET /collections \
+        | python3 -c 'import json, sys; [print(c["name"]) for c in json.load(sys.stdin)["result"]["collections"]]')" || return 1
+      for n in $n; do
+        c="$(ds_qdrant "$t" POST "/collections/$n/points/count" '{"exact": true}' \
+          | python3 -c 'import json, sys; print(json.load(sys.stdin)["result"]["count"])')" || return 1
+        out+="collection $n"$'\n'"count $n $c"$'\n'
+      done ;;
+    meilisearch)
+      # Tasks left in the copied queue resume on start; count once they are done.
+      for (( i = 0; i < 150; i++ )); do
+        ds_meili "$t" '/tasks?statuses=enqueued,processing&limit=1' 2>/dev/null \
+          | python3 -c 'import json, sys; sys.exit(json.load(sys.stdin)["total"] != 0)' 2>/dev/null && break
+        sleep 2
+      done
+      (( i < 150 )) || { echo "::error::meilisearch tasks still processing after 300s" >&2; return 1; }
+      out="$(ds_meili "$t" /stats | python3 -c '
+import json, sys
+for uid, s in json.load(sys.stdin)["indexes"].items():
+    print("index", uid)
+    print("count", uid, s["numberOfDocuments"])')" || return 1 ;;
+    mongo)
+      # Document counts per collection, so empty collections fail the probe.
+      # config holds session and transaction bookkeeping that changes on its own.
+      out="$(ds_mongo "$t" 'print("fcv " + db.adminCommand({getParameter: 1, featureCompatibilityVersion: 1}).featureCompatibilityVersion.version);
+        db.adminCommand({listDatabases: 1, nameOnly: true}).databases.forEach(function (d) {
+          if (d.name === "local") return;
+          print("db " + d.name);
+          if (d.name === "config") return;
+          var s = db.getSiblingDB(d.name);
+          s.getCollectionInfos({type: "collection"}, {nameOnly: true}).forEach(function (c) {
+            if (c.name.indexOf("system.") === 0) return;
+            print("collection " + d.name + "." + c.name);
+            print("count " + d.name + "." + c.name + " " + s.getCollection(c.name).countDocuments({}));
+          });
+        });')" || return 1 ;;
+    redis|falkordb)
+      n="$(ds_rcli "$t" INFO keyspace)" && [[ "$n" == *Keyspace* ]] || return 1
+      # Keys without a TTL only: an expiring key can lapse between snapshot and count.
+      out="$(tr -d '\r' <<< "$n" | awk -F'[:=,]' '/^db[0-9]+:/ { k += $3 - $5 } END { print "count keys", k + 0 }')"
+      if [[ "$2" == falkordb ]]; then
+        n="$(ds_rcli "$t" GRAPH.LIST)" || return 1
+        out+=$'\n'"$(tr -d '\r' <<< "$n" | sed '/^$/d; s/^/graph /')"
+      fi ;;
+    garage)
+      out="$(ds_garage "$t" /v2/ListBuckets | python3 -c '
+import json, sys
+for b in json.load(sys.stdin):
+    print("bucket", b["id"])
+    for a in b.get("globalAliases", []):
+        print("alias", a)')" || return 1
+      for n in $(awk '$1 == "bucket" { print $2 }' <<< "$out"); do
+        c="$(ds_garage "$t" "/v2/GetBucketInfo?id=$n" | python3 -c 'import json, sys; print(json.load(sys.stdin)["objects"])')" || return 1
+        out+=$'\n'"count $n $c"
+      done ;;
+    rabbitmq)
+      n="$(ds_rmq "$t" rabbitmqctl -q list_queues --no-table-headers name)" || return 1
+      out="$(sed '/^$/d; s/^/queue /' <<< "$n")" ;;
+    *) return 1 ;;
+  esac
+  sed '/^$/d' <<< "$out" | LC_ALL=C sort
+}
+
+# ds_compare_facts <baseline> <live> <exact|atleast>
+ds_compare_facts() {
+  if [[ "$3" == exact ]]; then
+    diff "$1" "$2" > /dev/null && { echo "probe: $(wc -l < "$1" | tr -d ' ') facts, as in the snapshot"; return 0; }
+    echo "::error::probe after restore differs from the snapshot (< snapshot, > restored):"
+    diff "$1" "$2" | grep '^[<>]'
+    return 1
+  fi
+  awk '
+    NR == FNR { if ($1 == "count") have[$1 " " $2] = $3; else have[$0] = 1; next }
+    $1 == "count" { k = $1 " " $2
+                    if (!(k in have) || have[k] + 0 < $3 + 0) { print "::error::probe after restore: " $2 " has " (k in have ? have[k] : "nothing") ", the snapshot " $3; bad = 1 }
+                    else print "probe: " $2 " " have[k] ", the snapshot " $3
+                    next }
+    !($0 in have) { print "::error::probe after restore: " $0 " is missing"; bad = 1 }
+    END { exit bad }' "$2" "$1"
+}
+
+# ds_throwaway <dir> <container>: the snapshot in a throwaway container of the
+# image that wrote it, on volumes of its own; prints its facts, removes it all.
+ds_throwaway() {
+  local dir="$1" ctr="$2" engine kind image p i=0 rc=0 vols=() mounts=() run=() args=()
+  engine="$(ds_dir_engine "$dir")"; kind="$(ds_kind "$engine")"; image="$(ds_meta "$dir" store_image)"
+  for p in $(ds_paths "$engine"); do
+    docker volume create --label klai.adhoc=datastore-restore "$ctr-$i" > /dev/null || rc=1
+    vols+=("$ctr-$i"); mounts+=(-v "$ctr-$i:$p")
+    i=$(( i + 1 ))
+  done
+  case "$kind" in
+    volume) (( rc )) || docker run --rm "${mounts[@]}" -v "$dir:/in:ro" "$DS_TOOL_IMAGE" tar -xf /in/volume.tar -C / || rc=1 ;;
+    rdb) (( rc )) || docker run --rm "${mounts[@]}" -v "$dir:/in:ro" "$DS_TOOL_IMAGE" cp /in/dump.rdb "$p/dump.rdb" || rc=1 ;;
+  esac
+  case "$engine" in
+    meilisearch) run=(-e MEILI_DB_PATH=/meili_data -e MEILI_ENV=development -e MEILI_NO_ANALYTICS=true) ;;
+    redis) args=(redis-server --appendonly no) ;;
+    falkordb) run=(-e BROWSER=0) ;;
+    # Fresh secrets: the node key and layout come from the snapshot, the RPC
+    # secret is only shared with the CLI inside the same container.
+    garage) run=(-v "$RB_DIR/garage/garage.toml:/etc/garage.toml:ro" -e GARAGE_RPC_SECRET -e GARAGE_ADMIN_TOKEN) ;;
+  esac
+  if (( rc == 0 )); then
+    GARAGE_RPC_SECRET="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" GARAGE_ADMIN_TOKEN="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" \
+      docker run -d --name "$ctr" --network none --label klai.adhoc=datastore-restore "${DS_THROWAWAY_LIMITS[@]}" \
+      "${mounts[@]}" "${run[@]}" "$image" "${args[@]}" > /dev/null || rc=1
+  fi
+  if (( rc == 0 )) && ! ds_wait_ready "ctr:$ctr" "$engine"; then
+    echo "::error::throwaway $ctr ($image) did not become ready; its last log lines:" >&2
+    docker logs --tail 20 "$ctr" >&2 2>&1
+    rc=1
+  fi
+  if (( rc == 0 )) && [[ "$kind" == definitions ]]; then
+    ds_rmq_import "ctr:$ctr" "$dir/definitions.json" > /dev/null || rc=1
+  fi
+  (( rc )) || ds_facts "ctr:$ctr" "$engine" || rc=1
+  docker rm -f "$ctr" > /dev/null 2>&1 || true
+  (( ${#vols[@]} == 0 )) || docker volume rm "${vols[@]}" > /dev/null 2>&1 || true
+  return "$rc"
+}
+
+# A cold copy: the store is stopped so the files are consistent, and started
+# again on the same image whatever the copy did.
+ds_cold_copy() {
+  local name="$1" engine="$2" dir="$3" cid p rc=0 rel=()
+  cid="$(ds_ctr "$name")" && [[ -n "$cid" ]] || return 1
+  for p in $(ds_paths "$engine"); do rel+=("${p#/}"); done
+  echo "snapshot: $name stopped for a cold copy of $(ds_paths "$engine")"
+  # A stop that reports an error may still have stopped the store.
+  ds_compose stop -t 120 "$name" || { ds_compose start "$name"; return 1; }
+  docker run --rm --volumes-from "$cid:ro" -v "$dir:/out" "$DS_TOOL_IMAGE" tar -cf /out/volume.tar -C / "${rel[@]}" || rc=1
+  ds_compose start "$name" || rc=1
+  return "$rc"
+}
+
+# BGSAVE and wait for it on LASTSAVE, as backup.sh does (a fixed sleep copied a
+# three-hour-old FalkorDB dump on 2026-10-22).
+ds_bgsave() {
+  local t="$1" before now="" reply i
+  for (( i = 0; i < 900; i++ )); do
+    ds_rcli "$t" INFO persistence | grep -q '^rdb_bgsave_in_progress:0' && break
+    sleep 1
+  done
+  before="$(ds_rcli "$t" LASTSAVE)" && [[ "$before" =~ ^[0-9]+$ ]] || return 1
+  # LASTSAVE has one-second resolution.
+  sleep 1
+  reply="$(ds_rcli "$t" BGSAVE)"
+  [[ "$reply" == *"Background saving started"* ]] || { echo "::error::$t: BGSAVE not started (${reply:-no reply})"; return 1; }
+  for (( i = 0; i < 900; i++ )); do
+    now="$(ds_rcli "$t" LASTSAVE)" && [[ "$now" =~ ^[0-9]+$ ]] || return 1
+    (( now > before )) && break
+    sleep 1
+  done
+  (( now > before )) || { echo "::error::$t: BGSAVE did not finish within 900s"; return 1; }
+  ds_rcli "$t" INFO persistence | grep -q '^rdb_last_bgsave_status:ok'
+}
+
+ds_snapshot_engine() {
+  local name="$1" old="$2" new="$3" engine kind dir cid
+  engine="$(ds_engine "$name")"; kind="$(ds_kind "$engine")"
+  dir="$DS_BACKUP_ROOT/pre-$name-$(date -u +%Y%m%dT%H%M%SZ)"
+  (umask 077 && mkdir -p "$dir") || return 1
+  {
+    echo "name=$name"
+    echo "store=$name"
+    echo "engine=$engine"
+    echo "consumers=$(awk -v s="$name" '$1 == s { $1 = ""; $2 = ""; print }' <<< "$DS_ENGINE_STORES" | xargs)"
+    echo "old_image=$(ds_image_of "$old" "$name")"
+    echo "new_image=$(ds_image_of "$new" "$name")"
+    echo "store_image=$(ds_image_of "$old" "$name")"
+  } > "$dir/meta"
+  : > "$dir/baseline.facts"
+  case "$kind" in
+    volume) ds_cold_copy "$name" "$engine" "$dir" ;;
+    rdb)
+      cid="$(ds_ctr "$name")" && [[ -n "$cid" ]] \
+        && ds_bgsave "$name" \
+        && docker cp "$cid:$(ds_paths "$engine")/dump.rdb" "$dir/dump.rdb" ;;
+    definitions)
+      ds_rmq "$name" rabbitmqctl -q export_definitions - > "$dir/definitions.json" \
+        && python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$dir/definitions.json" ;;
+  esac || { echo "::error::$kind snapshot of $name failed"; return 1; }
+  # The baseline comes from the snapshot itself, restored into a throwaway of
+  # the running image: exact without stopping any writer, and proof that the
+  # snapshot reads back before the sync changes anything.
+  if [[ "$kind" != none ]]; then
+    echo "snapshot: reading the baseline of $name back from a throwaway container"
+    ds_throwaway "$dir" "klai-datastore-baseline-$name" > "$dir/baseline.facts" \
+      || { echo "::error::the $kind snapshot of $name does not read back"; return 1; }
+  fi
+  ds_ledger "$name" "$dir" "$(ds_image_of "$new" "$name")" snapshot
+  DS_SNAPSHOTS+=("$dir")
+  echo "snapshot of $name taken: $dir ($(wc -l < "$dir/baseline.facts" | tr -d ' ') facts)"
+}
+
+# After a green image change: the store answers and its facts read; Mongo's FCV
+# is the snapshot's (spec 4.c). Counts are not compared, the new version writes.
+ds_probe_engine() {
+  local dir="$1" store engine live=""
+  store="$(ds_meta "$dir" store)"; engine="$(ds_dir_engine "$dir")"
+  ds_wait_ready "$store" "$engine" || { echo "probe: $store does not answer"; return 1; }
+  # shellcheck disable=SC2046 # one word per service
+  "$RB_DIR/scripts/compose-up.sh" --no-pull --force-recreate $(ds_meta "$dir" consumers) || return 1
+  if [[ "$(ds_kind "$engine")" != none ]]; then
+    live="$(ds_facts "$store" "$engine")" || { echo "probe: $store does not answer its $engine probe"; return 1; }
+    if [[ "$engine" == mongo && "$(grep '^fcv ' <<< "$live")" != "$(grep '^fcv ' "$dir/baseline.facts")" ]]; then
+      echo "probe: mongodb $(grep '^fcv ' <<< "$live"), the snapshot $(grep '^fcv ' "$dir/baseline.facts")"
+      return 1
+    fi
+  fi
+  if [[ "${DS_DRY:-}" == "$(ds_meta "$dir" name)" ]]; then
+    echo "probe: dry mode, forced red"
+    return 1
+  fi
+  echo "probe: $store answers"
+}
+
+# The live half of an engine restore; consumers are already stopped. The store
+# is stopped, its data mounts emptied and filled from the snapshot through the
+# stopped container's volumes, and it is started on the previous image (the
+# previous compose file is back by now).
+ds_put_back() {
+  local dir="$1" store engine kind cid live rc
+  store="$(ds_meta "$dir" store)"; engine="$(ds_dir_engine "$dir")"; kind="$(ds_kind "$engine")"
+  cid="$(ds_ctr "$store")"
+  ds_compose stop -t 120 "$store" || return 1
+  case "$kind" in
+    volume)
+      [[ -n "$cid" ]] || return 1
+      # shellcheck disable=SC2046 # one word per path
+      docker run --rm --volumes-from "$cid" -v "$dir:/in:ro" "$DS_TOOL_IMAGE" sh -c \
+        'for p in "$@"; do find "$p" -mindepth 1 -delete || exit 1; done; tar -xf /in/volume.tar -C /' \
+        sh $(ds_paths "$engine") || return 1 ;;
+    rdb)
+      [[ -n "$cid" ]] || return 1
+      # With appendonly on, Redis loads the AOF and ignores dump.rdb, so the
+      # dump becomes the base of a fresh manifest (Redis 7+ multi-part AOF).
+      docker run --rm --volumes-from "$cid" -v "$dir:/in:ro" "$DS_TOOL_IMAGE" sh -c '
+        cd "$1" || exit 1
+        if [ -d appendonlydir ]; then
+          rm -rf appendonlydir && mkdir appendonlydir \
+            && cp /in/dump.rdb appendonlydir/appendonly.aof.1.base.rdb \
+            && : > appendonlydir/appendonly.aof.1.incr.aof \
+            && printf "file appendonly.aof.1.base.rdb seq 1 type b\nfile appendonly.aof.1.incr.aof seq 1 type i\n" \
+              > appendonlydir/appendonly.aof.manifest || exit 1
+        fi
+        cp /in/dump.rdb dump.rdb && chown -R "$(stat -c %u:%g .)" .' sh "$(ds_paths "$engine")" || return 1 ;;
+  esac
+  ds_compose up -d --no-deps --force-recreate "$store" || return 1
+  ds_wait_ready "$store" "$engine" || { echo "::error::$store did not come back on its previous image"; return 1; }
+  if [[ "$kind" == definitions ]]; then
+    ds_rmq_import "$store" "$dir/definitions.json" || return 1
+  fi
+  [[ "$kind" != none ]] || return 0
+  live="$(mktemp)"
+  ds_facts "$store" "$engine" > "$live" && ds_compare_facts "$dir/baseline.facts" "$live" atleast
+  rc=$?
+  rm -f "$live"
+  return "$rc"
+}
+
+# Restoring a Mongo snapshot after someone raised the FCV would silently throw
+# that away (spec 4.c: an FCV bump stays a human step). Called before anything
+# is restored.
+ds_fcv_unchanged() {
+  local dir want got
+  for dir in "${DS_SNAPSHOTS[@]}"; do
+    [[ "$(ds_dir_engine "$dir")" == mongo ]] || continue
+    want="$(sed -n 's/^fcv //p' "$dir/baseline.facts")"
+    got="$(ds_mongo "$(ds_meta "$dir" store)" "$DS_MONGO_FCV" 2>/dev/null)" || got=""
+    if [[ -n "$got" && "$got" != "$want" ]]; then
+      echo "::error::mongodb runs featureCompatibilityVersion $got, the snapshot $dir has $want: it was changed after the upgrade, and a restore would undo that together with every write since. Nothing restored."
+      return 1
+    fi
+  done
+}
+
 # ds_snapshot <name> <old-compose> <new-compose>: dump, baseline, ledger.
 ds_snapshot() {
   local name="$1" old="$2" new="$3" store su dbs consumers storecons dir db n app
   app="$(ds_app_row "$name")"
+  if [[ -z "$app" && "$(ds_engine "$name")" != postgres ]]; then
+    ds_snapshot_engine "$@"
+    return
+  fi
   if [[ -n "$app" ]]; then
     read -r _ store dbs _ consumers <<< "$app"
   else
@@ -265,6 +761,7 @@ ds_snapshot() {
   {
     echo "name=$name"
     echo "store=$store"
+    echo "engine=postgres"
     echo "superuser=$su"
     echo "databases=$dbs"
     echo "consumers=$consumers"
@@ -291,33 +788,41 @@ ds_snapshot() {
   echo "snapshot of $name taken: $dir"
 }
 
+# ds_disk_ok <name>...: 0 when the backup root has twice the data volume of
+# every named store (an app row counts its store) free (AT-c2).
+ds_disk_ok() {
+  local name store bytes need=0 free
+  for name in "$@"; do
+    store="$name"; [[ -n "$(ds_app_row "$name")" ]] && store="$(ds_app_row "$name" | awk '{ print $2 }')"
+    bytes="$(ds_volume_bytes "$store")" && [[ "$bytes" =~ ^[0-9]+$ ]] \
+      || { echo "::error::could not size the volume of $store"; return 1; }
+    need=$(( need + 2 * bytes ))
+  done
+  free="$(df -PB1 "$DS_BACKUP_ROOT" | awk 'NR == 2 { print $4 }')"
+  if ! [[ "$free" =~ ^[0-9]+$ ]] || (( free < need )); then
+    echo "::error::not enough disk for a snapshot: ${free:-?} bytes free on $DS_BACKUP_ROOT, $need needed (twice the volume size of $*); nothing changed"
+    return 1
+  fi
+}
+
 ds_snapshot_changed() {
-  local old="$1" new="$2" names name need=0 free bytes store
+  local old="$1" new="$2" names name
   mapfile -t names < <(ds_changed "$old" "$new")
   local own=()
   for name in "${names[@]}"; do
-    [[ -n "$(ds_store_row "$name")" || "$(ds_app_row "$name" | awk '{ print $4 }')" == sync ]] && own+=("$name")
+    { ds_is_store "$name" || [[ "$(ds_app_row "$name" | awk '{ print $4 }')" == sync ]]; } && own+=("$name")
   done
   (( ${#own[@]} > 0 )) || return 0
   echo "image change of a data store or a self-migrating app: ${own[*]}"
-  # AT-c2: twice the volume size free, or the change does not start.
-  for name in "${own[@]}"; do
-    store="$name"; [[ -n "$(ds_app_row "$name")" ]] && store="$(ds_app_row "$name" | awk '{ print $2 }')"
-    bytes="$(ds_volume_bytes "$store")" && [[ "$bytes" =~ ^[0-9]+$ ]] \
-      || { echo "::error::could not size the volume of $store"; rb_finish "$name" disk-headroom rollback_failed; }
-    need=$(( need + 2 * bytes ))
-  done
   mkdir -p "$DS_BACKUP_ROOT" || rb_finish "${own[0]}" snapshot rollback_failed
-  free="$(df -PB1 "$DS_BACKUP_ROOT" | awk 'NR == 2 { print $4 }')"
-  if ! [[ "$free" =~ ^[0-9]+$ ]] || (( free < need )); then
-    echo "::error::not enough disk for a snapshot: ${free:-?} bytes free on $DS_BACKUP_ROOT, $need needed (twice the volume size of ${own[*]}); nothing changed"
-    rb_finish "${own[0]}" disk-headroom rollback_failed
-  fi
+  ds_disk_ok "${own[@]}" || rb_finish "${own[0]}" disk-headroom rollback_failed
   for name in "${own[@]}"; do
     if [[ -f "$DS_DRY_FLAG" && "$(cat "$DS_DRY_FLAG")" == "$name" ]]; then
       rm -f "$DS_DRY_FLAG"
       if [[ -n "$(ds_app_row "$name")" ]]; then
         echo "::warning::datastore dry mode is for stores only: $name would migrate the live database and the dry path would put its old image back on that schema. Flag removed; this sync runs normally."
+      elif [[ "$(ds_kind "$(ds_engine "$name")")" == volume ]]; then
+        echo "::warning::datastore dry mode is refused for $name: the dry path starts its previous image on the volume the new version already opened, which $(ds_engine "$name") cannot read back. Flag removed; this sync runs normally."
       else
         echo "::warning::datastore dry mode for $name: the probe is forced red and the restore goes to a throwaway container"
         DS_DRY="$name"
@@ -336,6 +841,7 @@ ds_snapshot_changed() {
 # here: the new version is live and taking writes.
 ds_probe() {
   local dir="$1" store su db table
+  [[ "$(ds_dir_engine "$dir")" == postgres ]] || { ds_probe_engine "$dir"; return; }
   store="$(ds_meta "$dir" store)"; su="$(ds_meta "$dir" superuser)"
   if [[ "$(ds_meta "$dir" name)" == "$store" ]]; then
     # shellcheck disable=SC2046 # one word per service
@@ -401,9 +907,16 @@ ds_restore_dbs() {
 }
 
 ds_restore_into() {
-  local dir="$1" ctr="$2" su image i rc=0
+  local dir="$1" ctr="$2" su image i rc=0 facts
+  if [[ "$(ds_dir_engine "$dir")" != postgres ]]; then
+    [[ "$(ds_kind "$(ds_dir_engine "$dir")")" != none ]] || { echo "restore: $(ds_meta "$dir" store) keeps no state"; return 0; }
+    facts="$(mktemp)"
+    ds_throwaway "$dir" "$ctr" > "$facts" && ds_compare_facts "$dir/baseline.facts" "$facts" exact || rc=1
+    rm -f "$facts"
+    return "$rc"
+  fi
   su="$(ds_meta "$dir" superuser)"; image="$(ds_meta "$dir" store_image)"
-  docker run -d --rm --name "$ctr" --network none --label klai.adhoc=datastore-restore \
+  docker run -d --rm --name "$ctr" --network none --label klai.adhoc=datastore-restore "${DS_THROWAWAY_LIMITS[@]}" \
     -e POSTGRES_USER="$su" -e POSTGRES_HOST_AUTH_METHOD=trust "$image" > /dev/null || return 1
   # Over TCP: the image's init server listens on the socket only, so a socket
   # check would pass before initialisation has finished.
@@ -438,7 +951,7 @@ ds_restore_snapshot() {
     return 0
   fi
   if [[ "${DS_DRY:-}" == "$name" ]]; then
-    echo "restore (dry): into a throwaway container; live would stop [$consumers], restore [$(ds_meta "$dir" databases)] in $store, recreate [$consumers]"
+    echo "restore (dry): into a throwaway container; live would stop [$consumers], restore $store from $dir, recreate [$consumers]"
     ds_restore_into "$dir" "klai-datastore-dry-$name" \
       && { [[ "$name" != "$store" ]] || "$RB_DIR/scripts/compose-up.sh" --no-pull --force-recreate "$store"; } \
       && { # shellcheck disable=SC2086 # one word per service
@@ -455,6 +968,7 @@ ds_restore_snapshot() {
     flock -w 900 8 || { echo "::error::host container lock $DS_LOCK_FILE busy for 15 minutes"; exit 1; }
     # shellcheck disable=SC2086 # one word per service
     ds_compose stop $consumers || exit 1
+    [[ "$(ds_dir_engine "$dir")" == postgres ]] || { ds_put_back "$dir"; exit; }
     if [[ "$name" == "$store" ]]; then
       ds_compose up -d --no-deps --force-recreate "$store" || exit 1
       for i in $(seq 1 60); do
