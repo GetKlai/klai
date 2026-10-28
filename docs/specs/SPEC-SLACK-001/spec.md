@@ -52,7 +52,7 @@ Slack users never authenticate against Klai.
 | D6 | Build on Slack's **`agent_view`**, not the deprecated `assistant_view` / Bolt `Assistant` class. | `assistant_view` is retired in February 2027; the migration is one-way. |
 | D7 | The bot keeps its **own transcript per thread** (the question/answer pairs it handled) and calls `conversations.replies` only when it meets a thread it has not seen. | Since 2025-05-29 Slack throttles `conversations.replies` to 1 req/min for distributed non-Marketplace apps; the bot receives every question as an event anyway. Verified in the spike of §10 before the behaviour is relied on. |
 | D8 | Separate service with its own Postgres schema; the portal talks to it only over an internal HTTP API with a shared secret. | Same shape as klai-connector and klai-mailer; the portal backend stays the portal's own. |
-| D9 | Onboarding is **portal-driven Slack OAuth**: the admin picks knowledge bases and clicks "Verbind met Slack"; the key is minted server-side after Slack's consent and handed to klai-slack (§8). The paste-the-key route (`/klai connect`) shipped first on 2026-10-28 and stays only as a hidden fallback. | The founder judged the paste flow unnatural on the live page the same day; a product feature ships on the better path, not the least-code path. |
+| D9 | Onboarding is **portal-driven Slack OAuth**: the admin picks knowledge bases and clicks "Verbind met Slack"; the key is minted server-side after Slack's consent and handed to klai-slack (§8). The paste-the-key route (`/klai connect`) shipped first on 2026-10-28 and was removed the same day (one test link, nothing to migrate). | The founder judged the paste flow unnatural on the live page the same day; a product feature ships on the better path, not the least-code path. |
 | D10 | Feature gated per workspace owner by a **new platform unlock `slack`**, not `partner_api`. | `partner_api` means "the workspace owner builds integrations with keys"; Slack is a finished product. A `slack` managed key skips the `partner_api` gate and is checked against `slack` instead, mirroring the `internal_chat` key. |
 | D11 | KB choices live in klai-slack's Postgres, never in Slack message metadata. Every turn intersects the stored choice with the live allowed set. | Message metadata is readable by every workspace member; the intersection makes a revocation in the portal effective immediately. |
 
@@ -128,18 +128,18 @@ Effective scope of a turn = layer 3 if set, else layer 2 if set, else all of lay
 
 | Method, path | Body | Response |
 |---|---|---|
-| `GET /api/admin/slack` | – | `200 {status: "not_connected"\|"awaiting_link"\|"connected"\|"revoked", key: {id, key_prefix, rate_limit_rpm, last_used_at, created_at} \| null, installation: {team_id, team_name, installed_by_slack_user_id, installed_at, revoked_at} \| null, kb_ids: int[]}` |
-| `POST /api/admin/slack/key` | `{kb_ids: int[] (≥1, shared KBs only, never personal)}` | `201 {api_key: "pk_live_…", status: "awaiting_link", key: {…}}`; `409` if a slack key exists; `400` on a personal KB |
+| `GET /api/admin/slack` | – | `200 {status: "not_connected"\|"connected"\|"revoked", key: {id, key_prefix, rate_limit_rpm, last_used_at, created_at} \| null, installation: {team_id, team_name, installed_by_slack_user_id, installed_at, revoked_at} \| null, kb_ids: int[]}` |
+| `POST /api/admin/slack/connect` | `{kb_ids: int[] (≥1, shared KBs only, never personal)}` | `200 {connect_url: "https://api.getklai.com/slack/connect", token: "<jwt>"}`: the page form-POSTs `token` (`application/x-www-form-urlencoded`) to `connect_url`, never in a URL; the token is HS256, 15 min, single-use (`jti`), bound to org, user, kb_ids and return URL; mints nothing. `409` when an installation row exists; a key without one (orphan) is deleted and replaced; `400` on a personal or foreign KB |
 | `PATCH /api/admin/slack` | `{kb_ids: int[] (≥1)}` | `200` same shape as GET |
 | `DELETE /api/admin/slack` | – | deletes installation row + key (+ kb access); calls klai-slack `DELETE /internal/installations/{team_id}` when linked; `204`, or `200 {slack_revoked: false}` when klai-slack could not be reached (loud, not silent) |
 
-Status derivation: no key → `not_connected`; key without installation row → `awaiting_link`; row with `revoked_at` → `revoked`; otherwise `connected`.
+Status derivation: no key or no installation row → `not_connected`; row with `revoked_at` → `revoked`; otherwise `connected`.
 
 ### 7.2 Portal internal API (klai-slack → portal-api, `Authorization: Bearer <INTERNAL_SECRET>`, same guard as the other `/internal/*` routes)
 
 | Method, path | Body | Response |
 |---|---|---|
-| `POST /internal/slack/link` | `{api_key, team_id, team_name, slack_user_id}` | `200 {org_id, org_name, key_id, kb_ids}`; `404` when the key is unknown or not a `slack` key (one generic message); `403` when the organisation lacks the `slack` unlock; `409 {code: "org_already_linked"\|"team_already_linked"}` |
+| `POST /internal/slack/link-oauth` | `{token, team_id, team_name, slack_user_id}` | `200 {org_id, org_name, key_id, kb_ids, api_key, return_url}` (the key is minted here and leaves the portal this once); `401` on an invalid or expired token (one generic message); `403 {detail: {error_code: "feature_not_unlocked"}}` when the organisation lacks the `slack` unlock; `403 {code: "not_admin"}` when the token's user is no longer an active admin of the org (suspended, offboarded, demoted); `409 {code: "token_used"\|"org_already_linked"\|"team_already_linked"}`. The `jti` is claimed before any check, so a refused token cannot be retried |
 | `DELETE /internal/slack/link/{team_id}` | – | marks `revoked_at`; `204` (idempotent) |
 
 ### 7.3 klai-slack internal API (portal-api → klai-slack, `Authorization: Bearer <INTERNAL_SECRET>`)
@@ -153,7 +153,7 @@ Both directions use the one cross-service secret already shared by portal-api an
 
 ### 7.4 Slack app (manifest)
 
-- `features`: `bot_user` (display name "Klai"), `app_home` (home tab, messages tab, not read-only), `agent_view` (description ≤ 300 chars, 4 `suggested_prompts`), `slash_commands`: `/klai` with usage hint `kb | help | connect`.
+- `features`: `bot_user` (display name "Klai"), `app_home` (home tab, messages tab, not read-only), `agent_view` (description ≤ 300 chars, 4 `suggested_prompts`), `slash_commands`: `/klai` with usage hint `kb | help`.
 - Bot scopes: `app_mentions:read`, `chat:write`, `im:history`, `im:write`, `channels:history`, `groups:history`, `commands`, `users:read`, `assistant:write`.
 - Events: `app_mention`, `message.im`, `app_home_opened`, `app_uninstalled`, `tokens_revoked`.
 - Interactivity on. Request URL for everything: `https://api.getklai.com/slack/events`; OAuth redirect `https://api.getklai.com/slack/oauth_redirect`; install `https://api.getklai.com/slack/install`.
@@ -167,11 +167,10 @@ Both directions use the one cross-service secret already shared by portal-api an
 Sidebar item between Widgets and API-keys, `minRole: 'admin'`, `requiresFeature: 'slack'`, icon `Hash`; the Slack logo as a local SVG on the page. Locked state reuses the `gaps_unlock_required` pattern. A failing klai-slack or portal call shows `QueryErrorState`, never "not connected".
 
 States:
-1. **Niet verbonden**: intro (two sentences), org-KB checklist (reuse the widgets `KbAccessEditor`, moved to `components/admin/OrgKbChecklist.tsx`), button "Maak Slack-sleutel" enabled at ≥ 1 KB.
-2. **Wacht op koppeling** (MVP): `CreatedKeyModal` shows the key once with "Plak deze sleutel in Slack met /klai connect"; the page shows the prefix, the KB tab and a "Sleutel verwijderen" action; polls GET every 10 s while awaiting.
-3. **Verbonden**: header with workspace name and badge; tabs Overzicht (workspace, team-id, geïnstalleerd door/op, sleutelprefix, laatst gebruikt, rate limit), Kennisbanken (checklist + Opslaan), Ontkoppelen (`InlineDeleteConfirm`). Kanalen tab (read-only channel defaults) is target state.
-4. **Ontkoppeld in Slack** (`revoked`): alert with "Opnieuw koppelen" (delete + recreate key).
-5. Errors: already linked elsewhere (never names the other org), no KBs left, partial disconnect ("Verwijder de app ook in Slack").
+1. **Niet verbonden**: intro (two sentences), org-KB checklist (reuse the widgets `KbAccessEditor`, moved to `components/admin/OrgKbChecklist.tsx`), button "Verbind met Slack" enabled at ≥ 1 KB (form-POSTs the link token, §7.1).
+2. **Verbonden**: header with workspace name and badge; tabs Overzicht (workspace, team-id, geïnstalleerd door/op, sleutelprefix, laatst gebruikt, rate limit), Kennisbanken (checklist + Opslaan), Ontkoppelen (`InlineDeleteConfirm`). Kanalen tab (read-only channel defaults) is target state.
+3. **Ontkoppeld in Slack** (`revoked`): alert with "Opnieuw koppelen" (delete + recreate key).
+4. Errors: already linked elsewhere (never names the other org), no KBs left, partial disconnect ("Verwijder de app ook in Slack").
 
 Target state (not MVP): "Verbind met Slack" starts Slack OAuth from the portal with a state bound to org, user and kb_ids; the callback mints the key server-side and hands `{team_id, bot_token, key}` to klai-slack; no key ever reaches the browser. Endpoints `POST /api/admin/slack/authorize`, `GET /api/slack/oauth/callback`, `POST /api/admin/slack/key/reissue`, `GET /api/admin/slack/channels`.
 
@@ -185,7 +184,7 @@ Target state (not MVP): "Verbind met Slack" starts Slack OAuth from the portal w
 - *Agent container* (Messages tab, paid Slack plan): on `app_home_opened` with `tab=messages` set 4 suggested prompts; on `message.im` set `agents.sessions.setStatus processing`, answer, set `active`, `agents.sessions.rename` with a short title after the first answer. If the sessions API fails (free plan) remember per team and fall back to the DM path.
 - *DM and @mention* (any plan): placeholder "Ik zoek in n kennisbanken…", then `chat.update` with the answer; reply in `thread_ts = event.thread_ts ?? event.ts`, never broadcast. Follow-ups in a channel thread need a new @mention in the MVP.
 - *`/klai kb`*: `views.open` within 3 s with a loading view, then `views.update` with a `multi_static_select` of the layer-1 KBs (hint "Leeg laten = alle vrijgegeven kennisbanken"); Slack admins and owners only (`users.info`); `view_submission` re-validates against layer 1. The same modal with `callback_id: thread_kb` serves the thread picker, options limited to the channel's effective set.
-- *`/klai help`*: ephemeral explanation plus the current scope of this channel. *`/klai connect <pk_live_…>`*: workspace admins only, only while unlinked; validates via `POST /internal/slack/link`, stores the key encrypted, deletes the command message where possible and answers ephemerally.
+- *`/klai help`*: ephemeral explanation plus the current scope of this channel. Linking happens only from the portal (§8); there is no `/klai connect`.
 - *App Home*: status ("Verbonden met Klai-organisatie X" or "Nog niet gekoppeld"), allowed KBs with a link to the portal, channel defaults as `<#C…>` lines, help, disclaimer that answers can be wrong.
 - *Feedback*: `feedback_buttons` → `block_actions` → `POST /partner/v1/feedback`; a thumbs-down opens a small reason modal. Reaction-based feedback is target state.
 - *Errors*: not linked, no KBs released, empty intersection, 429 (show `Retry-After`, a "Opnieuw proberen" button, no automatic retry), 5xx/timeout (with request id), bot not in channel (`/invite @Klai`). Every Slack event is acked within 3 s, processed in a background task and deduplicated on `event_id`.
@@ -209,8 +208,8 @@ Target state (not MVP): "Verbind met Slack" starts Slack OAuth from the portal w
 
 ## 12. Acceptance tests
 
-1. `/klai connect` with a valid slack key links the workspace; portal GET shows `connected` with the team name; the key is stored encrypted (no plaintext in the DB dump of the test).
-2. `/klai connect` with a non-slack `pk_live_` key, an unknown key, a key of an org without the `slack` unlock, or a key of an org already linked, each fails with the mapped ephemeral message and no row written.
+1. "Verbind met Slack" plus Slack consent links the workspace; portal GET shows `connected` with the team name; the key is stored encrypted (no plaintext in the DB dump of the test).
+2. An invalid, expired or replayed link token, an org without the `slack` unlock, a user no longer an active admin, or an org or workspace already linked each returns to the portal with the mapped `?slack=` outcome and no row written.
 3. A DM question returns one message with answer, "Gezocht in" line listing the layer-1 KBs, ≤ 3 sources and feedback buttons; the Partner API request omitted `knowledge_base_ids`.
 4. After `/klai kb` selects KB 2 in channel C, an @mention in C sends `knowledge_base_ids: [2]`; a thread scope of KB 1 in a thread of C is rejected because 1 is outside the channel's effective set.
 5. Removing KB 2 from layer 1 in the portal makes the next turn in C fall back to the remaining allowed KBs; a channel default that becomes empty yields the "kies opnieuw" message and no Partner API call.

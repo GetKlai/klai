@@ -107,14 +107,15 @@ Leave out the existing features and you switch them off.
 ## 5. How a customer admin links a workspace
 
 1. The org admin opens `/admin/slack` in the portal, picks the knowledge bases
-   Slack may use and creates the Slack key. The `pk_live_...` key is shown once.
-2. They install the app: `https://api.getklai.com/slack/install` (OAuth, a Slack
-   workspace admin approves).
-3. In any channel the Slack workspace admin types `/klai connect pk_live_...`.
-   Only workspace admins can do this, only while the workspace is unlinked. The
-   service validates the key against portal-api, stores it AES-256-GCM encrypted
-   and answers ephemerally. The portal page then shows `connected`.
-4. `/klai kb` (workspace admins) narrows the knowledge bases per channel,
+   Slack may use and clicks "Verbind met Slack". The page form-POSTs a signed
+   15-minute link token to `https://api.getklai.com/slack/connect`, which sends
+   the browser to Slack's consent screen.
+2. A Slack workspace admin approves the app. On the callback portal-api checks
+   the token again (still an active admin, `slack` unlock, KBs still there),
+   mints the Slack key and hands it to klai-slack once, which stores it
+   AES-256-GCM encrypted. The browser lands on `/admin/slack?slack=connected`
+   (or `already_linked`, `denied`, `failed`). No key is ever shown to anyone.
+3. `/klai kb` (workspace admins) narrows the knowledge bases per channel,
    `/klai help` shows the current scope.
 
 Disconnect is done from the portal (`DELETE /api/admin/slack`); portal-api then
@@ -153,5 +154,5 @@ forwards `X-Request-ID` to the Partner API call.
 | Container restarts, log shows `Missing required: ...` or an encryption-key error | a SOPS key is absent, empty or `SLACK_ENCRYPTION_KEY` is not 32 bytes | fix SOPS, sync env, `compose-up.sh klai-slack` |
 | Container restarts at `alembic upgrade head` | database or role missing, wrong `KLAI_SLACK_DB_PASSWORD` | redo section 3 step 2 |
 | Slack shows `dispatch_failed` or Request URL unverified | Caddy block not live, or container down | section 6 checks |
-| `/klai connect` says the key is refused | key is not a Slack key, the organisation lacks the `slack` unlock, or the organisation is already linked | section 4, `/admin/slack` status |
+| Portal returns with `?slack=denied` or `?slack=failed` | cancelled in Slack, the organisation lacks the `slack` unlock, the admin who started it is no longer an active admin, or the token expired | log `event:slack_portal_link_failed` (field `reason`), section 4 |
 | No answers on the free Slack plan Messages tab | agent sessions API unavailable; the service falls back to DM replies | expected, see SPEC-SLACK-001 section 9 |
