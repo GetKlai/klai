@@ -8,6 +8,8 @@
 #   deploy-with-rollback.sh <compose-service> <image-ref-with-sha>
 #                           [--probe <url>] [--probe-network <net>] [--compose-tag <tag>]
 #                           [--error-watch <seconds>]
+#   deploy-with-rollback.sh <compose-service> <local-image-id> --rollback <gate>
+#                           [--probe <url>] [--probe-network <net>] [--compose-tag <tag>]
 #
 #   <image-ref-with-sha>  ghcr.io/getklai/<image>:<git sha>, the tag the build
 #                         workflow pushed. Rule R1: the exact sha is deployed,
@@ -28,6 +30,14 @@
 #                         by the same number of seconds so a queued deploy of
 #                         the same service waits instead of failing. The helper
 #                         must exist and be executable, or nothing is deployed.
+#   --rollback <gate>     the deploy already finished and <gate> went red later
+#                         (rollback-since.sh, gate e2e). <local-image-id> is the
+#                         ledger's `from` of that deploy; it is put back without a
+#                         pull. The compose tag defaults to the one the running
+#                         container was created from. Green gates end 3 with gate
+#                         <gate>; red ones put the image that ran back once and end
+#                         4. The ledger line reads like a deploy-time rollback:
+#                         from = the image serving again, to = the rejected one.
 #
 # Steps
 #   1. Record the image the service runs now and tag it klai/<svc>:previous (R2).
@@ -83,7 +93,7 @@ ERROR_WATCH_BIN="${KLAI_ERROR_WATCH:-$KLAI_DIR/scripts/post-deploy-error-watch.s
 CURL_IMAGE="${KLAI_CURL_IMAGE:-curlimages/curl:8.11.1}"
 
 usage() {
-    echo "usage: ${0##*/} <compose-service> <image-ref-with-sha> [--probe <url>] [--probe-network <net>] [--compose-tag <tag>] [--error-watch <seconds>]" >&2
+    echo "usage: ${0##*/} <compose-service> <image-ref-with-sha> [--probe <url>] [--probe-network <net>] [--compose-tag <tag>] [--error-watch <seconds>] | <compose-service> <local-image-id> --rollback <gate> [--probe <url>] [--probe-network <net>]" >&2
     exit 1
 }
 
@@ -94,16 +104,18 @@ shift 2
 PROBE_URL=""
 COMPOSE_TAG=""
 ERROR_WATCH=0
+ROLLBACK_GATE=""
 while (( $# > 0 )); do
     case "$1" in
         --probe)       (( $# >= 2 )) || usage; PROBE_URL="$2"; shift 2 ;;
         --probe-network) (( $# >= 2 )) || usage; PROBE_NETWORK="$2"; shift 2 ;;
         --compose-tag) (( $# >= 2 )) || usage; COMPOSE_TAG="$2"; shift 2 ;;
         --error-watch) (( $# >= 2 )) || usage; ERROR_WATCH="$2"; shift 2 ;;
+        --rollback)    (( $# >= 2 )) || usage; ROLLBACK_GATE="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
-[[ "$IMAGE_REF" == *:* ]] || usage
+[[ "$IMAGE_REF" == *:* || -n "$ROLLBACK_GATE" ]] || usage
 [[ "$ERROR_WATCH" =~ ^[0-9]+$ ]] || usage
 if (( ERROR_WATCH > 0 )) && [[ ! -x "$ERROR_WATCH_BIN" ]]; then
     echo "::error::--error-watch needs $ERROR_WATCH_BIN to be executable; nothing deployed" >&2
@@ -127,7 +139,9 @@ if [[ "${KLAI_DEPLOY_LOCK_HELD:-}" != 1 ]]; then
         exit 1
     fi
 fi
-COMPOSE_TAG="${COMPOSE_TAG:-${IMAGE_REF%:*}:latest}"
+if [[ -z "$COMPOSE_TAG" && -z "$ROLLBACK_GATE" ]]; then
+    COMPOSE_TAG="${IMAGE_REF%:*}:latest"
+fi
 COMMIT="${GITHUB_SHA:-${IMAGE_REF##*:}}"
 PREVIOUS_TAG="klai/$SERVICE:previous"
 
@@ -176,6 +190,7 @@ run_gates() {
 }
 
 FROM="none"
+TO="$IMAGE_REF"
 OUTCOME=""
 LOG_PATH=""
 REPORT_GATE="none"
@@ -188,9 +203,9 @@ finish() {
         : >> "$LEDGER" && chmod 0644 "$LEDGER"
     fi
     printf '%s\timage\t%s\t%s\t%s\t%s\t%s\n' \
-        "$ts" "$SERVICE" "$FROM" "$IMAGE_REF" "$COMMIT" "$OUTCOME" >> "$LEDGER"
+        "$ts" "$SERVICE" "$FROM" "$TO" "$COMMIT" "$OUTCOME" >> "$LEDGER"
     report="$(printf '{"service":"%s","kind":"image","from":"%s","to":"%s","commit":"%s","gate":"%s","outcome":"%s","ts":"%s","log":"%s"}' \
-        "$(json_str "$SERVICE")" "$(json_str "$FROM")" "$(json_str "$IMAGE_REF")" "$(json_str "$COMMIT")" \
+        "$(json_str "$SERVICE")" "$(json_str "$FROM")" "$(json_str "$TO")" "$(json_str "$COMMIT")" \
         "$(json_str "$REPORT_GATE")" "$OUTCOME" "$ts" "$(json_str "$LOG_PATH")")"
     printf '%s\n' "$report" > "$REPORT_DIR/$SERVICE.json"
     if [[ "$OUTCOME" != "deployed" ]]; then
@@ -227,6 +242,47 @@ capture_log() {
         fi
     } > "$LOG_PATH"
 }
+
+# --- rollback mode: put <local-image-id> back after a later gate went red ----
+if [[ -n "$ROLLBACK_GATE" ]]; then
+    PREV_ID="$(running_image_id)"
+    if [[ -z "$PREV_ID" ]]; then
+        echo "::error::$SERVICE has no running container; nothing to roll back" >&2
+        exit 1
+    fi
+    if [[ -z "$COMPOSE_TAG" ]]; then
+        COMPOSE_TAG="$("$DOCKER" inspect --format '{{.Config.Image}}' "$("$DOCKER" compose ps -q "$SERVICE" | head -n1)" 2>/dev/null)"
+        [[ -n "$COMPOSE_TAG" ]] || { echo "::error::could not read the compose tag of $SERVICE" >&2; exit 1; }
+    fi
+    if ! "$DOCKER" tag "$PREV_ID" "$PREVIOUS_TAG"; then
+        echo "::error::could not tag the running image $PREV_ID as $PREVIOUS_TAG; $SERVICE untouched" >&2
+        exit 1
+    fi
+    FROM="$(short_id "$IMAGE_REF")"
+    TO="$(short_id "$PREV_ID")"
+    REPORT_GATE="$ROLLBACK_GATE"
+    echo "==> $SERVICE: gate '$ROLLBACK_GATE' is red; putting $FROM back (compose tag $COMPOSE_TAG), $TO kept as $PREVIOUS_TAG"
+    if ! "$DOCKER" image inspect "$IMAGE_REF" >/dev/null 2>&1; then
+        echo "::error::image $IMAGE_REF is no longer on core-01; $SERVICE stays on $TO" >&2
+        REPORT_GATE="rollback-image-missing"
+        OUTCOME="rollback_failed"
+        finish 4
+    fi
+    if "$DOCKER" tag "$IMAGE_REF" "$COMPOSE_TAG" && run_gates --force-recreate; then
+        echo "::error::$SERVICE rolled back to $FROM after gate '$ROLLBACK_GATE' went red on $TO"
+        OUTCOME="rolled_back"
+        finish 3
+    fi
+    REPORT_GATE="rollback-${GATE:-tag}"
+    capture_log
+    # The image that ran passed its own deploy gates; it is better than one that
+    # does not start. Once, then stop (R6).
+    echo "::error::$FROM is red too ($REPORT_GATE); putting $TO back and stopping"
+    "$DOCKER" tag "$PREVIOUS_TAG" "$COMPOSE_TAG" && run_gates --force-recreate \
+        || echo "::error::$TO did not come back either ($GATE); $SERVICE needs a human now"
+    OUTCOME="rollback_failed"
+    finish 4
+fi
 
 # --- 1. record the image that runs now ---------------------------------------
 echo "==> $SERVICE: deploying $IMAGE_REF (compose tag $COMPOSE_TAG)"

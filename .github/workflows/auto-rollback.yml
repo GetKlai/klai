@@ -1,0 +1,174 @@
+name: Auto-rollback
+
+# SPEC-INFRA-AUTO-ROLLBACK-001 section 6, slice S6.
+#
+# Gate 3 of a deploy is the E2E prod-tenant run after it. That workflow holds no
+# deploy key and should not get one, so the rollback lives here: when E2E
+# prod-tenant ends red on main, this run reads the last green E2E run from the
+# GitHub API and has deploy/scripts/rollback-since.sh on core-01 put back every
+# service deployed after it (ledger replay, one pass, never a second time for
+# the same deploys). Then it starts E2E again and ends red itself, so
+# ci-failure-notice.yml opens its issue with the rollback report and the
+# auto-rollback or rollback-failed label.
+#
+# Which red runs count:
+#   - workflow_run (after a deploy) and schedule (04:00). E2E runs after a deploy
+#     are often cancelled by the next one in their concurrency group, so the
+#     04:00 run can be the first to see a deploy. A red run with nothing deployed
+#     since the last green one rolls back nothing (drift outside our deploys):
+#     the run stays green and the E2E issue is the only signal.
+#   - workflow_dispatch runs are ignored. That is the E2E run this workflow
+#     starts after a rollback, so a red one cannot start another round.
+# A playwright spec is retried once in CI (playwright.prod.config.ts), so one
+# flaky spec does not count as red.
+#
+# workflow_dispatch with rehearse=true (the default) replays only the
+# rollback-canary service, so the whole chain (API lookup, ssh, replay, report,
+# issue label) can be proven on production without touching a real service.
+# It does not start E2E. Run rollback-rehearsal.yml first: that gives the canary
+# a deployed ledger line after the last green E2E run.
+
+on:
+  workflow_run:
+    workflows: ['E2E prod-tenant']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rehearse:
+        description: 'Replay the rollback-canary service only (false = roll back every service deployed since the last green E2E run)'
+        type: boolean
+        default: true
+      since:
+        description: 'Last-green time to use instead of the GitHub API, YYYY-MM-DDTHH:MM:SSZ (empty = API)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  # gh workflow run for the E2E re-run.
+  actions: write
+
+# One replay at a time; a second red E2E run waits for the first replay.
+concurrency:
+  group: auto-rollback
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  rollback:
+    if: >-
+      github.ref == 'refs/heads/main' && (
+        github.event_name == 'workflow_dispatch' || (
+          github.event.workflow_run.conclusion == 'failure' &&
+          github.event.workflow_run.event != 'workflow_dispatch'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      # The time the last green run's job started: everything deployed after it
+      # was not covered by a green run. Conservative on purpose: a deploy that
+      # landed while that job ran counts as untested.
+      - name: Find the last green E2E run
+        id: green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SINCE_INPUT: ${{ inputs.since }}
+          FAILED_CREATED: ${{ github.event.workflow_run.created_at }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$SINCE_INPUT" ]]; then
+            since="$SINCE_INPUT"
+          else
+            latest="$(gh api "repos/$REPO/actions/workflows/e2e-prod-tenant.yml/runs?branch=main&status=success&per_page=1" \
+              --jq '.workflow_runs[0] | select(.) | "\(.id) \(.created_at)"')"
+            if [[ -z "$latest" ]]; then
+              echo "::error::no green E2E prod-tenant run on main; cannot tell what to roll back"
+              exit 1
+            fi
+            read -r id created <<< "$latest"
+            # A run created after the red one is green already: nothing to undo.
+            if [[ -n "$FAILED_CREATED" && "$created" > "$FAILED_CREATED" ]]; then
+              echo "E2E run $id (created $created) is green and newer than the red one; nothing to roll back"
+              exit 0
+            fi
+            since="$(gh api "repos/$REPO/actions/runs/$id/jobs" --jq '[.jobs[].started_at | select(.)] | min // empty')"
+            echo "last green E2E run: $id, job started $since"
+          fi
+          if [[ ! "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+            echo "::error::last-green time '$since' is not YYYY-MM-DDTHH:MM:SSZ"
+            exit 1
+          fi
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+
+      # Host and runner clocks both follow NTP; marks which report on core-01
+      # this run wrote.
+      - name: Mark replay start
+        id: replay-start
+        if: steps.green.outputs.since != ''
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      # Exit 0: nothing deployed since the last green run. 3: rolled back. 4: a
+      # rollback failed or could not be attempted (needs a human). Both 3 and 4
+      # fail this step and so this run.
+      - name: Roll back on core-01
+        id: replay
+        if: steps.green.outputs.since != ''
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          command_timeout: 30m
+          script: |
+            set -e
+            source /opt/klai/.env
+            test -x /opt/klai/scripts/rollback-since.sh
+            /opt/klai/scripts/rollback-since.sh ${{ steps.green.outputs.since }} ${{ (github.event_name == 'workflow_dispatch' && inputs.rehearse) && '--rehearse' || '' }}
+
+      # Same hand-off as the deploy workflows (S4): only a report written by this
+      # replay counts.
+      - name: Fetch rollback report
+        id: rollback-report
+        if: always() && steps.replay.outcome == 'failure'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          capture_stdout: true
+          script: cat /opt/klai/deploy-reports/e2e-rollback.json 2>/dev/null || true
+
+      - name: Keep rollback report
+        id: keep
+        if: always() && steps.replay.outcome == 'failure'
+        continue-on-error: true
+        env:
+          REPORT: ${{ steps.rollback-report.outputs.stdout }}
+          STARTED: ${{ steps.replay-start.outputs.at }}
+        run: |
+          report="$(printf '%s\n' "$REPORT" | grep -m1 '^{' || true)"
+          if printf '%s' "$report" | jq -e --arg since "$STARTED" '.kind == "e2e" and .ts >= $since and .outcome != "deployed"' >/dev/null 2>&1; then
+            printf '%s\n' "$report" > rollback-report.json
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload rollback report
+        if: always() && steps.keep.outputs.found == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: rollback-report
+          path: rollback-report.json
+          retention-days: 30
+
+      # Proof that the restored state is good. A red re-run is a workflow_dispatch
+      # run, which this workflow ignores, so it cannot start a second round.
+      - name: Run E2E prod-tenant again
+        if: always() && steps.keep.outputs.found == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.rehearse)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run e2e-prod-tenant.yml --repo "$GITHUB_REPOSITORY" --ref main

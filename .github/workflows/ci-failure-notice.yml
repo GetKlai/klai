@@ -60,6 +60,9 @@ on:
       # rollback path itself (or the canary) is broken, which nobody would see
       # until a real deploy failed.
       - Rollback rehearsal
+      # Rolls back what was deployed since the last green E2E run. It ends red
+      # after every rollback, and its rollback-report artifact sets the label.
+      - Auto-rollback
     types: [completed]
 
     # Deliberately NOT watched, so the open-issue list stays a list of real

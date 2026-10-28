@@ -148,6 +148,11 @@ jobs:
       - name: compose rollback suite
         run: bash deploy/scripts/tests/compose-rollback.test.sh
 
+      # The E2E-triggered replay: which ledger lines it undoes, and that it
+      # never undoes the same deploy twice.
+      - name: rollback-since replay suite
+        run: bash deploy/scripts/tests/rollback-since.test.sh
+
       - name: LibreChat regenerate suite
         run: bash deploy/scripts/tests/tenant-config-regenerate.test.sh
 
