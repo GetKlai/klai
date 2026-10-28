@@ -220,6 +220,81 @@
       datasourceTemplate: 'github-releases',
       extractVersionTemplate: '^v(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)$',
     },
+    // Docker Hub lists at most 1000 tags anonymously (page 11 answers 403),
+    // and Renovate then drops EVERY Hub timestamp for that image. Under
+    // timestamp-optional an update without a timestamp proceeds, so for the
+    // images below the 7-day release age was never counted: meilisearch
+    // v1.56.0 passed renovate/stability-days 43 minutes after its push
+    // (#1730, debug run 40747506827 on 2026-10-28). Each of these reads its
+    // version from GitHub instead, where releases and tags carry a date. The
+    // depName stays the Docker Hub name so the data-store and major rules
+    // below keep matching; packageName is the GitHub repository. A release
+    // whose image is not on Docker Hub yet fails the core-01 deploy on the
+    // pull, loudly, which has not happened inside a 7-day window so far.
+    // postgres, python, node and nvidia/cuda hit the same cap and stay
+    // unaged: their GitHub tags (REL_18_6, v3.12.x) cannot be mapped onto
+    // the image tag by extractVersionTemplate, and endoflife.date carries
+    // the cycle's first release date, not the patch's.
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^deploy/docker-compose\\.yml$/', '/^docker-compose\\.dev\\.yml$/'],
+      matchStrings: ['getmeili/meilisearch:v(?<currentValue>[0-9][0-9.]*)'],
+      depNameTemplate: 'getmeili/meilisearch',
+      packageNameTemplate: 'meilisearch/meilisearch',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)$',
+    },
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^deploy/docker-compose\\.yml$/', '/^docker-compose\\.dev\\.yml$/'],
+      matchStrings: ['image: mongo:(?<currentValue>[0-9][0-9.]*)\\n'],
+      depNameTemplate: 'mongo',
+      packageNameTemplate: 'mongodb/mongo',
+      datasourceTemplate: 'github-tags',
+      extractVersionTemplate: '^r(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)$',
+    },
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^deploy/docker-compose\\.yml$/', '/^docker-compose\\.dev\\.yml$/'],
+      matchStrings: ['image: redis:(?<currentValue>[0-9][0-9.]*)-alpine'],
+      depNameTemplate: 'redis',
+      packageNameTemplate: 'redis/redis',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)$',
+    },
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^deploy/docker-compose\\.yml$/'],
+      matchStrings: ['image: rabbitmq:(?<currentValue>[0-9][0-9.]*)-alpine'],
+      depNameTemplate: 'rabbitmq',
+      packageNameTemplate: 'rabbitmq/rabbitmq-server',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)$',
+    },
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^deploy/docker-compose\\.yml$/', '/^docker-compose\\.dev\\.yml$/'],
+      matchStrings: ['pgvector/pgvector:(?<currentValue>[0-9][0-9.]*)-pg18'],
+      depNameTemplate: 'pgvector/pgvector',
+      datasourceTemplate: 'github-tags',
+      extractVersionTemplate: '^v(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)$',
+    },
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^deploy/docker-compose\\.yml$/'],
+      matchStrings: ['grafana/grafana:(?<currentValue>[0-9][0-9.]*)'],
+      depNameTemplate: 'grafana/grafana',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)$',
+    },
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^deploy/docker-compose\\.yml$/'],
+      matchStrings: ['ollama/ollama:(?<currentValue>[0-9][0-9.]*)'],
+      depNameTemplate: 'ollama/ollama',
+      datasourceTemplate: 'github-releases',
+      extractVersionTemplate: '^v(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)$',
+    },
     {
       customType: 'regex',
       managerFilePatterns: ['/^deploy/docker-compose\\.yml$/'],
@@ -394,15 +469,21 @@
         and keep flowing.',
       // github-releases: the Qdrant version is read from its GitHub releases
       // by the custom manager above, not from Docker Hub.
-      matchDatasources: ['docker', 'github-releases'],
+      matchDatasources: ['docker', 'github-releases', 'github-tags'],
       matchUpdateTypes: ['minor'],
+      // matchPackageNames matches packageName, not depName: the GitHub names
+      // of the custom managers above are listed next to the Hub names.
       matchPackageNames: [
         'mongo',
+        'mongodb/mongo',
         'postgres',
         'redis',
+        'redis/redis',
         'rabbitmq',
+        'rabbitmq/rabbitmq-server',
         'pgvector/pgvector',
         'getmeili/meilisearch',
+        'meilisearch/meilisearch',
         'qdrant/qdrant',
         'falkordb/falkordb',
       ],
@@ -443,11 +524,15 @@
       matchUpdateTypes: ['major'],
       matchPackageNames: [
         'mongo',
+        'mongodb/mongo',
         'postgres',
         'redis',
+        'redis/redis',
         'rabbitmq',
+        'rabbitmq/rabbitmq-server',
         'pgvector/pgvector',
         'getmeili/meilisearch',
+        'meilisearch/meilisearch',
         'qdrant/qdrant',
         'falkordb/falkordb',
         'ubuntu',
@@ -586,6 +671,39 @@
         a branch that already exists is left as it is, not updated.',
       matchDatasources: ['github-releases'],
       matchPackageNames: ['qdrant/qdrant'],
+      internalChecksFilter: 'strict',
+    },
+    {
+      description:
+        'These images are read from GitHub by the custom managers above \
+        (Docker Hub drops their timestamps past 1000 tags), so the compose \
+        managers must not also propose an unaged Docker Hub tag.',
+      matchManagers: ['docker-compose', 'dockerfile'],
+      matchPackageNames: [
+        'getmeili/meilisearch',
+        'mongo',
+        'redis',
+        'rabbitmq',
+        'pgvector/pgvector',
+        'grafana/grafana',
+        'ollama/ollama',
+      ],
+      enabled: false,
+    },
+    {
+      description:
+        'Same reason as Qdrant: strict holds a branch until the version has \
+        aged 7 days instead of opening it with only stability-days pending.',
+      matchDatasources: ['github-releases', 'github-tags'],
+      matchPackageNames: [
+        'meilisearch/meilisearch',
+        'mongodb/mongo',
+        'redis/redis',
+        'rabbitmq/rabbitmq-server',
+        'pgvector/pgvector',
+        'grafana/grafana',
+        'ollama/ollama',
+      ],
       internalChecksFilter: 'strict',
     },
     {
