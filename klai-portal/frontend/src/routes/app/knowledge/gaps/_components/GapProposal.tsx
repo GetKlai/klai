@@ -1,6 +1,6 @@
-// "Voorstel" section on the gap detail page (knowledge-gap-to-article phase 1).
+// "Voorstel" section on the cluster detail page (knowledge-gap-to-article phase 1).
 // The owner reads what to write and where, copies the example text into the
-// source system by hand, and may close the group with one of two final
+// source system by hand, and may close the cluster with one of two final
 // decisions. Nothing is written to a knowledge base from here.
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -18,34 +18,22 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { ApiError, apiFetch } from '@/lib/apiFetch'
 import { queryLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
+import { formatRelativeTime } from '../-gap-types'
 import {
-  decisionLabel,
-  formatRelativeTime,
-  type GapDecision,
-  type GapProposal as Proposal,
-  type GapRow,
-} from '../-gap-types'
-
-interface Props {
-  gap: GapRow
-  // Route digest of the group; keys the detail query that must be refreshed.
-  digest: string
-  groupKey: string
-}
-
-const proposalPath = (groupKey: string) => `/api/app/gaps/groups/${encodeURIComponent(groupKey)}/proposal`
+  clusterPath,
+  isWebUrl,
+  type ClusterDecision,
+  type ClusterProposal,
+  type ClusterRow,
+} from '../-cluster-types'
+import { DecisionLine } from './DecisionLine'
 
 function errorDetail(err: unknown, fallback: string): string {
   return err instanceof ApiError && err.detail ? err.detail : fallback
 }
-
-// Only http(s) becomes a link: where_url comes from generated text, and a
-// javascript: href would run in the portal origin.
-const isWebUrl = (url: string | null): url is string => url != null && /^https?:\/\//i.test(url)
 
 function ArticleRef({ title, url }: { title: string; url: string | null }) {
   return isWebUrl(url) ? (
@@ -57,20 +45,21 @@ function ArticleRef({ title, url }: { title: string; url: string | null }) {
   )
 }
 
-export function GapProposal({ gap, digest, groupKey }: Props) {
+export function GapProposal({ cluster }: { cluster: ClusterRow }) {
+  const clusterKey = cluster.cluster_key
   const queryClient = useQueryClient()
   const [copied, setCopied] = useState<'ok' | 'failed' | null>(null)
-  const [pending, setPending] = useState<GapDecision | null>(null)
-  const queryKey = ['app-gap-proposal', groupKey]
+  const [pending, setPending] = useState<ClusterDecision | null>(null)
+  const queryKey = ['app-gap-proposal', clusterKey]
 
-  const proposalQuery = useQuery<Proposal | null>({
+  const proposalQuery = useQuery<ClusterProposal | null>({
     queryKey,
     queryFn: async () => {
       try {
-        return await apiFetch<Proposal>(proposalPath(groupKey))
+        return await apiFetch<ClusterProposal>(`${clusterPath(clusterKey)}/proposal`)
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) return null
-        queryLogger.warn('Gap proposal fetch failed', { error: err })
+        queryLogger.warn('Cluster proposal fetch failed', { error: err })
         throw err
       }
     },
@@ -78,32 +67,34 @@ export function GapProposal({ gap, digest, groupKey }: Props) {
   })
 
   const createMutation = useMutation({
-    mutationFn: () => apiFetch<Proposal>(proposalPath(groupKey), { method: 'POST' }),
-    onSuccess: (created) => queryClient.setQueryData(queryKey, created),
+    mutationFn: () => apiFetch<ClusterProposal>(`${clusterPath(clusterKey)}/proposal`, { method: 'POST' }),
+    onSuccess: (created) => {
+      queryClient.setQueryData(queryKey, created)
+      // The list shows a marker when a proposal exists.
+      void queryClient.invalidateQueries({ queryKey: ['app-gap-clusters'] })
+    },
   })
 
   const decideMutation = useMutation({
-    mutationFn: (decision: GapDecision) =>
-      apiFetch<unknown>(`/api/app/gaps/groups/${encodeURIComponent(groupKey)}/decision`, {
+    mutationFn: (decision: ClusterDecision) =>
+      apiFetch<unknown>(`${clusterPath(clusterKey)}/decision`, {
         method: 'POST',
         body: JSON.stringify({ decision }),
       }),
     onError: (err: unknown) => {
-      queryLogger.warn('Gap decision failed', { error: err })
+      queryLogger.warn('Cluster decision failed', { error: err })
       toast.error(errorDetail(err, m.gaps_decision_failed()))
     },
     // A 409 means someone else decided first: refresh either way so the page
     // shows the decision that stands.
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey })
-      void queryClient.invalidateQueries({ queryKey: ['app-gap-detail', digest] })
-      void queryClient.invalidateQueries({ queryKey: ['app-gaps'] })
+      void queryClient.invalidateQueries({ queryKey: ['app-gap-clusters'] })
     },
   })
 
   const proposal = proposalQuery.data ?? null
-  const decided = proposal && proposal.decision !== 'none' ? proposal : gap.decision && gap.decision !== 'none' ? gap : null
-  const decision = decided?.decision && decided.decision !== 'none' ? decided.decision : null
+  const decided = proposal && proposal.decision !== 'none' ? proposal : cluster.decision !== 'none' ? cluster : null
 
   async function copyExample(text: string) {
     try {
@@ -126,7 +117,7 @@ export function GapProposal({ gap, digest, groupKey }: Props) {
         </p>
       )}
 
-      {proposalQuery.isSuccess && !proposal && (
+      {proposalQuery.isSuccess && !proposal && !decided && (
         <div className="space-y-2">
           <Button size="sm" disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>
             {createMutation.isPending ? m.gaps_proposal_creating() : m.gaps_proposal_create()}
@@ -196,24 +187,15 @@ export function GapProposal({ gap, digest, groupKey }: Props) {
           )}
 
           <p className="text-xs text-gray-500">
-            {m.gaps_proposal_meta({ time: formatRelativeTime(proposal.generated_at), language: proposal.language })}
+            {proposal.language
+              ? m.gaps_proposal_meta({ time: formatRelativeTime(proposal.generated_at), language: proposal.language })
+              : m.gaps_proposal_meta_no_language({ time: formatRelativeTime(proposal.generated_at) })}
           </p>
         </div>
       )}
 
-      {decision ? (
-        <p className="text-sm text-gray-900">
-          {decided?.decided_by
-            ? m.gaps_decision_line({
-                decision: decisionLabel(decision),
-                who: decided.decided_by,
-                time: decided.decided_at ? formatRelativeTime(decided.decided_at) : '',
-              })
-            : m.gaps_decision_line_no_actor({
-                decision: decisionLabel(decision),
-                time: decided?.decided_at ? formatRelativeTime(decided.decided_at) : '',
-              })}
-        </p>
+      {decided ? (
+        <DecisionLine decision={decided} />
       ) : (
         proposalQuery.isSuccess && (
           <div className="flex items-center gap-2">
@@ -247,9 +229,4 @@ export function GapProposal({ gap, digest, groupKey }: Props) {
       </AlertDialog>
     </section>
   )
-}
-
-export function DecisionBadge({ decision }: { decision: GapRow['decision'] }) {
-  if (!decision || decision === 'none') return null
-  return <Badge variant="secondary">{decisionLabel(decision)}</Badge>
 }
