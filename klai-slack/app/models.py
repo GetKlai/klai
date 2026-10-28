@@ -33,7 +33,7 @@ class WorkspaceLink(Base):
     org_id: Mapped[int] = mapped_column(Integer, nullable=False)
     org_name: Mapped[str] = mapped_column(Text, nullable=False)
     klai_api_key_enc: Mapped[str] = mapped_column(Text, nullable=False)
-    key_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    key_id: Mapped[str] = mapped_column(String(36), nullable=False)
     linked_by_slack_user_id: Mapped[str] = mapped_column(String(32), nullable=False)
     linked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

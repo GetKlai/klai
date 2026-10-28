@@ -43,7 +43,7 @@ async def save_link(
     org_id: int,
     org_name: str,
     api_key: str,
-    key_id: int,
+    key_id: str,
     linked_by_slack_user_id: str,
 ) -> None:
     """Insert or replace the team's link; a revoked link is overwritten by a fresh one."""

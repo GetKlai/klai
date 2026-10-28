@@ -81,7 +81,7 @@ class Store:
     link: Any = field(
         default_factory=lambda: SimpleNamespace(
             org_name="Voorbeeld BV",
-            key_id=42,
+            key_id="4f2c9a1e-0000-4000-8000-000000000042",
             linked_at=datetime(2026, 1, 1, tzinfo=UTC),
             revoked_at=None,
         )

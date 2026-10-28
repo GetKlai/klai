@@ -19,7 +19,7 @@ async def test_layer1_is_cached_per_link_and_refetched_after_a_relink(
     partner.kbs = partner.kbs[:1]
     store.link = SimpleNamespace(
         org_name="Voorbeeld BV",
-        key_id=43,
+        key_id="4f2c9a1e-0000-4000-8000-000000000043",
         linked_at=datetime(2026, 2, 1, tzinfo=UTC),
         revoked_at=None,
     )

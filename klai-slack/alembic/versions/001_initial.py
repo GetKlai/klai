@@ -84,7 +84,7 @@ def upgrade() -> None:
         sa.Column("org_id", sa.Integer, nullable=False),
         sa.Column("org_name", sa.Text, nullable=False),
         sa.Column("klai_api_key_enc", sa.Text, nullable=False),
-        sa.Column("key_id", sa.Integer, nullable=False),
+        sa.Column("key_id", sa.String(36), nullable=False),
         sa.Column("linked_by_slack_user_id", sa.String(32), nullable=False),
         sa.Column(
             "linked_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()

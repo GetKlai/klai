@@ -43,7 +43,7 @@ class PortalUnavailable(PortalError):
 class LinkResult:
     org_id: int
     org_name: str
-    key_id: int
+    key_id: str
     kb_ids: list[int]
 
 
@@ -108,7 +108,7 @@ class PortalClient:
         return LinkResult(
             org_id=int(body["org_id"]),
             org_name=str(body["org_name"]),
-            key_id=int(body["key_id"]),
+            key_id=str(body["key_id"]),
             kb_ids=[int(kb_id) for kb_id in body["kb_ids"]],
         )
 

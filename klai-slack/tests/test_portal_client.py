@@ -32,10 +32,21 @@ def _client(status: int, body: object = None) -> tuple[list[httpx.Request], Port
 
 async def test_link_success() -> None:
     seen, client = _client(
-        200, {"org_id": 7, "org_name": "Voorbeeld BV", "key_id": 42, "kb_ids": [1, 2]}
+        200,
+        {
+            "org_id": 7,
+            "org_name": "Voorbeeld BV",
+            "key_id": "4f2c9a1e-0000-4000-8000-000000000042",
+            "kb_ids": [1, 2],
+        },
     )
     result = await client.link(KEY, "T1", "Voorbeeld", "U1")
-    assert result == LinkResult(org_id=7, org_name="Voorbeeld BV", key_id=42, kb_ids=[1, 2])
+    assert result == LinkResult(
+        org_id=7,
+        org_name="Voorbeeld BV",
+        key_id="4f2c9a1e-0000-4000-8000-000000000042",
+        kb_ids=[1, 2],
+    )
     assert seen[0].url.path == "/internal/slack/link"
     assert seen[0].headers["Authorization"] == f"Bearer {SECRET}"
     assert json.loads(seen[0].content) == {

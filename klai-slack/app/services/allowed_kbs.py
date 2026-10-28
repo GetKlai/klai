@@ -28,12 +28,12 @@ class Workspace:
     team_id: str
     org_name: str
     partner: PartnerClient
-    link_version: tuple[int, datetime]
+    link_version: tuple[str, datetime]
 
 
 @dataclass(frozen=True)
 class _Entry:
-    link_version: tuple[int, datetime]
+    link_version: tuple[str, datetime]
     expires_at: float
     kbs: list[KnowledgeBase]
 

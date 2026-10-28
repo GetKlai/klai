@@ -70,7 +70,7 @@ async def test_link_key_is_encrypted_at_rest(engine: None) -> None:
             org_id=7,
             org_name="Voorbeeld BV",
             api_key=KEY,
-            key_id=42,
+            key_id="4f2c9a1e-0000-4000-8000-000000000042",
             linked_by_slack_user_id="U1",
         )
     async with db.session() as s:

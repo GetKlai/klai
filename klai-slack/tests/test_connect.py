@@ -46,7 +46,12 @@ class FakePortal:
         self.links.append((api_key, team_id, team_name, slack_user_id))
         if self.error:
             raise self.error
-        return LinkResult(org_id=7, org_name="Voorbeeld BV", key_id=42, kb_ids=[1, 2])
+        return LinkResult(
+            org_id=7,
+            org_name="Voorbeeld BV",
+            key_id="4f2c9a1e-0000-4000-8000-000000000042",
+            kb_ids=[1, 2],
+        )
 
     async def unlink(self, team_id: str) -> None:
         self.unlinked.append(team_id)
@@ -113,7 +118,7 @@ async def test_happy_path_links_and_stores_key(store: Store) -> None:
             "org_id": 7,
             "org_name": "Voorbeeld BV",
             "api_key": KEY,
-            "key_id": 42,
+            "key_id": "4f2c9a1e-0000-4000-8000-000000000042",
             "linked_by_slack_user_id": "U1",
         }
     ]
