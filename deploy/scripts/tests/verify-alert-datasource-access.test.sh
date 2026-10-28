@@ -43,8 +43,11 @@ for expected in \
   "obs-meeting-transcript-silence	portal_meeting_transcript_health" \
   "spec-priv-001-tenant-stuck-full	portal_telemetry_mode_changes" \
   "rag-eval-001-faithfulness-low	knowledge.rag_eval_results" \
-  "crawl-jobs-failing	knowledge.crawl_job_health" \
-  "crawl-jobs-silent	knowledge.crawl_job_health"; do
+  "crawl-crawler-errors	knowledge.crawl_job_health" \
+  "crawl-fleet-signature	knowledge.crawl_job_health" \
+  "crawl-success-below-baseline	knowledge.crawl_job_health" \
+  "crawl-jobs-silent	knowledge.crawl_job_health" \
+  "crawl-jobs-silent	portal_scheduled_crawlers"; do
   if printf '%s\n' "$out" | grep -qF "$expected"; then
     ok "finds ${expected//	/ -> }"
   else

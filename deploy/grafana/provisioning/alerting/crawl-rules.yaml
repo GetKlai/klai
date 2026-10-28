@@ -1,27 +1,37 @@
-# Crawl job health alerts.
+# Crawl health alerts.
 #
 # Routed via component=crawl -> klai-ops-alerts-email (policies.yaml).
 #
-#   R1  crawl_jobs_failing  CRITICAL  a knowledge base whose latest crawl job in
-#                                     the last 26h fetched 0 pages and ended
-#                                     failed or failed_partial
-#   R2  crawl_jobs_silent   CRITICAL  a knowledge base with crawl jobs in the
-#                                     7 days before, but none in the last 30h
-#                                     (the scheduler is dead)
+#   R1  crawl_crawler_errors          CRITICAL + page   a job in which 20% or more
+#                                                       of the fetches failed on OUR
+#                                                       request to crawl4ai
+#   R2  crawl_fleet_signature         CRITICAL          one error signature is the
+#                                                       main outcome of jobs of 3 or
+#                                                       more unrelated sources
+#   R3  crawl_success_below_baseline  WARNING           a source ingested under 70%
+#                                                       of what its last runs did
+#   R4  crawl_jobs_silent             CRITICAL          a daily-scheduled source with
+#                                                       no crawl job for 30 hours
 #
-# Why: from 2026-10-23 02:01 every nightly crawl of every knowledge base
-# fetched 0 pages for six nights (crawl4ai 0.9.5 answered HTTP 400 to our
-# JavaScript wait_for), and no rule read crawl jobs. Runbook:
-# docs/runbooks/crawl-failures.md.
+# Why: from 2026-10-23 02:01 the crawler answered errors for page after page of
+# every knowledge base, six nights running (crawl4ai 0.9.5 returned HTTP 400 to
+# our JavaScript wait_for), and no rule read crawl jobs. Partial breakage is
+# the same class: a rule that waits for "0 pages" would have missed a crawler
+# that fails 4 pages in 10. Runbook: docs/runbooks/crawl-failures.md.
 #
-# Datasource access: knowledge.crawl_jobs has FORCE ROW LEVEL SECURITY, so both
-# rules read knowledge.crawl_job_health, a superuser-owned view defined in
-# deploy/grafana/sql/grafana-reader-setup.sql. Checked on every deploy by
+# Datasource access: knowledge.crawl_jobs has FORCE ROW LEVEL SECURITY and holds
+# crawl config, so the rules read two superuser-owned views defined in
+# deploy/grafana/sql/grafana-reader-setup.sql: knowledge.crawl_job_health and
+# portal_scheduled_crawlers. Checked on every deploy by
 # deploy/scripts/verify-alert-datasource-access.py.
 #
-# updated_at is a bigint of epoch seconds, hence the date_part('epoch', ...) bounds. Not
-# extract(epoch FROM ...): verify-alert-datasource-access.py reads every FROM as a
-# relation name.
+# updated_at is a bigint of epoch seconds, hence the date_part('epoch', ...)
+# bounds. Not extract(epoch FROM ...): verify-alert-datasource-access.py reads
+# every FROM as a relation name.
+#
+# Every query returns one row per alerting source, with string columns as
+# labels; the latest job per source is taken so a rerun does not produce two
+# series with the same labels.
 
 apiVersion: 1
 
@@ -32,10 +42,13 @@ groups:
     interval: 1h
     rules:
 
-      # The latest FINISHED job per knowledge base decides, so a later success
-      # clears the alert. 26h = one nightly cycle plus two hours of slack.
-      - uid: crawl-jobs-failing
-        title: crawl_jobs_failing
+      # Crawler-side = raised by our request to crawl4ai (a 4xx or 5xx from the
+      # crawl4ai API, a connect or read timeout), as opposed to a page the
+      # target site answered with an error. The floor of 20 outcomes keeps a
+      # three-page site from paging on one timeout. 26h = one nightly cycle plus
+      # two hours of slack.
+      - uid: crawl-crawler-errors
+        title: crawl_crawler_errors
         condition: threshold
         data:
           - refId: query
@@ -51,15 +64,17 @@ groups:
                 uid: portal-postgres
               format: table
               rawSql: |
-                SELECT org_id, kb_slug, 1 AS value
-                  FROM (SELECT DISTINCT ON (org_id, kb_slug)
-                               org_id, kb_slug, status, pages_done
+                SELECT org_id, kb_slug,
+                       coalesce(connector_id, '') AS connector_id,
+                       coalesce(reason, '') AS reason,
+                       round(crawler_side_failures::numeric / fetch_total, 3) AS value
+                  FROM (SELECT DISTINCT ON (org_id, kb_slug, coalesce(connector_id, '')) *
                           FROM knowledge.crawl_job_health
                          WHERE status IN ('completed', 'failed', 'failed_partial')
                            AND updated_at >= date_part('epoch', now() - interval '26 hours')
-                         ORDER BY org_id, kb_slug, updated_at DESC) latest
-                 WHERE status IN ('failed', 'failed_partial')
-                   AND pages_done = 0
+                         ORDER BY org_id, kb_slug, coalesce(connector_id, ''), updated_at DESC) latest
+                 WHERE fetch_total >= 20
+                   AND crawler_side_failures * 5 >= fetch_total
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -84,8 +99,93 @@ groups:
                   operator: { type: and }
                   reducer: { params: [], type: last }
                   type: query
-        # No row means no failing knowledge base. An unreadable view must not
-        # look like that, hence Error on a failed query.
+        # No row means no job above the share. An unreadable view must not look
+        # like that, hence Error on a failed query.
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: false
+        labels:
+          severity: critical
+          component: crawl
+          service_group: knowledge
+          page: "true"
+        annotations:
+          summary: 'Knowledge base {{ $labels.kb_slug }} (org {{ $labels.org_id }}): {{ humanizePercentage $values.reduce.Value }} of the fetches failed on the crawler'
+          runbook_url: 'docs/runbooks/crawl-failures.md'
+          description: |
+            In the latest crawl job of this source, at least 20% of the fetches
+            (of 20 or more) were errors raised by our own request to crawl4ai,
+            not answers from the target site.
+            {{ if eq $labels.reason "crawler_config_rejected" }}
+            The job ended with reason crawler_config_rejected: the crawler
+            refused our own configuration. This is a deployment bug and every
+            knowledge base is affected.
+            {{ end }}
+            Check the share and the signature:
+
+              SELECT kb_slug, status, reason, fetch_total, crawler_side_failures,
+                     top_signature, top_signature_share, to_timestamp(updated_at)
+                FROM knowledge.crawl_job_health
+               WHERE kb_slug = '<kb_slug>' ORDER BY updated_at DESC LIMIT 5;
+
+            Runbook: docs/runbooks/crawl-failures.md.
+
+      # The same error as the main outcome of jobs of unrelated sources is
+      # never "the site is blocking us". A source counts once however often it
+      # was retried. No outcome floor: a crawler that fails the seed fetch
+      # leaves a handful of outcomes.
+      - uid: crawl-fleet-signature
+        title: crawl_fleet_signature
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: portal-postgres
+            queryType: ''
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                SELECT top_signature AS signature,
+                       count(DISTINCT org_id || '/' || kb_slug) AS value
+                  FROM knowledge.crawl_job_health
+                 WHERE status IN ('completed', 'failed', 'failed_partial')
+                   AND updated_at >= date_part('epoch', now() - interval '24 hours')
+                   AND fetch_total > 0
+                   AND top_signature IS NOT NULL
+                   AND top_signature_share >= 0.5
+                 GROUP BY top_signature
+                HAVING count(DISTINCT org_id || '/' || kb_slug) >= 3
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
         noDataState: OK
         execErrState: Error
         for: 0s
@@ -95,24 +195,134 @@ groups:
           component: crawl
           service_group: knowledge
         annotations:
-          summary: 'Knowledge base {{ $labels.kb_slug }} (org {{ $labels.org_id }}): latest crawl fetched 0 pages'
+          summary: 'Error {{ $labels.signature }} is the main outcome of crawl jobs of {{ $values.reduce.Value }} unrelated sources'
           runbook_url: 'docs/runbooks/crawl-failures.md'
           description: |
-            The latest finished crawl job of this knowledge base ended failed or
-            failed_partial with pages_done = 0 within the last 26 hours. Check
-            the reason first:
+            In the last 24 hours, jobs of at least 3 different sources had
+            {{ $labels.signature }} (error_type:status_code) as the outcome of
+            half or more of their fetches. Unrelated sites do not fail in the
+            same way at the same time: the cause is on our side of the
+            crawler. Which sources:
 
-              SELECT org_id, kb_slug, status, reason, to_timestamp(updated_at)
+              SELECT org_id, kb_slug, status, reason, fetch_total, top_signature_share,
+                     to_timestamp(updated_at)
                 FROM knowledge.crawl_job_health
-               WHERE kb_slug = '<kb_slug>' ORDER BY updated_at DESC LIMIT 5;
+               WHERE top_signature = '<signature>'
+                 AND updated_at >= date_part('epoch', now() - interval '24 hours')
+               ORDER BY updated_at DESC;
 
-            reason = crawler_config_rejected means crawl4ai refused our own
-            request (deployment bug, every knowledge base fails at once).
             Runbook: docs/runbooks/crawl-failures.md.
 
-      # One row per knowledge base seen in the 7 days before the window, with
-      # the number of jobs in the last 30h. 0 fires. 30h = the nightly cycle
-      # plus six hours of slack for a late start.
+      # Catches partial breakage that no error signature shows: the latest job
+      # ingested under 70% of the median of the last 5 completed jobs before it.
+      # pages_done is compared, not its ratio to pages_total, because
+      # pages_total is what was discovered and shrinks together with the
+      # breakage. Sources with fewer than 3 earlier completed jobs, or a median
+      # under 1 page, have no baseline and stay silent.
+      - uid: crawl-success-below-baseline
+        title: crawl_success_below_baseline
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: portal-postgres
+            queryType: ''
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: postgres
+                uid: portal-postgres
+              format: table
+              rawSql: |
+                WITH latest AS (
+                  SELECT DISTINCT ON (org_id, kb_slug, coalesce(connector_id, ''))
+                         org_id, kb_slug, coalesce(connector_id, '') AS connector_id,
+                         pages_done, updated_at
+                    FROM knowledge.crawl_job_health
+                   WHERE status IN ('completed', 'failed', 'failed_partial')
+                     AND updated_at >= date_part('epoch', now() - interval '26 hours')
+                   ORDER BY org_id, kb_slug, coalesce(connector_id, ''), updated_at DESC
+                ),
+                earlier AS (
+                  SELECT l.org_id, l.kb_slug, l.connector_id, h.pages_done,
+                         row_number() OVER (
+                           PARTITION BY l.org_id, l.kb_slug, l.connector_id
+                           ORDER BY h.updated_at DESC) AS rn
+                    FROM latest l
+                    JOIN knowledge.crawl_job_health h
+                      ON h.org_id = l.org_id
+                     AND h.kb_slug = l.kb_slug
+                     AND coalesce(h.connector_id, '') = l.connector_id
+                     AND h.status = 'completed'
+                     AND h.updated_at < l.updated_at
+                ),
+                baseline AS (
+                  SELECT org_id, kb_slug, connector_id,
+                         percentile_cont(0.5) WITHIN GROUP (ORDER BY pages_done) AS median_done,
+                         count(*) AS jobs
+                    FROM earlier
+                   WHERE rn <= 5
+                   GROUP BY org_id, kb_slug, connector_id
+                )
+                SELECT l.org_id, l.kb_slug, l.connector_id, 1 AS value
+                  FROM latest l
+                  JOIN baseline b USING (org_id, kb_slug, connector_id)
+                 WHERE b.jobs >= 3
+                   AND b.median_done >= 1
+                   AND l.pages_done < 0.7 * b.median_done
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: false
+        labels:
+          severity: warning
+          component: crawl
+          service_group: knowledge
+        annotations:
+          summary: 'Knowledge base {{ $labels.kb_slug }} (org {{ $labels.org_id }}): latest crawl ingested under 70% of its usual pages'
+          runbook_url: 'docs/runbooks/crawl-failures.md'
+          description: |
+            The latest finished crawl job of this source ingested fewer than 70%
+            of the median pages_done of its last 5 completed jobs. The site may
+            have shrunk, or part of the crawl is failing.
+
+              SELECT status, reason, pages_total, pages_done, fetch_total,
+                     crawler_side_failures, top_signature, to_timestamp(updated_at)
+                FROM knowledge.crawl_job_health
+               WHERE kb_slug = '<kb_slug>' ORDER BY updated_at DESC LIMIT 7;
+
+            Runbook: docs/runbooks/crawl-failures.md.
+
+      # One row per source that is supposed to crawl every day, with the number
+      # of its crawl jobs in the last 30h. 0 fires. 30h = the nightly cycle plus
+      # six hours of slack for a late start. A source created less than 30h ago
+      # has not had its first firing yet and is left out.
       - uid: crawl-jobs-silent
         title: crawl_jobs_silent
         condition: threshold
@@ -130,13 +340,13 @@ groups:
                 uid: portal-postgres
               format: table
               rawSql: |
-                SELECT org_id, kb_slug,
-                       count(*) FILTER (
-                           WHERE updated_at >= date_part('epoch', now() - interval '30 hours')
-                       ) AS value
-                  FROM knowledge.crawl_job_health
-                 WHERE updated_at >= date_part('epoch', now() - interval '7 days 30 hours')
-                 GROUP BY org_id, kb_slug
+                SELECT s.connector_id, s.kb_slug, count(j.updated_at) AS value
+                  FROM portal_scheduled_crawlers s
+                  LEFT JOIN knowledge.crawl_job_health j
+                    ON j.connector_id = s.connector_id
+                   AND j.updated_at >= date_part('epoch', now() - interval '30 hours')
+                 WHERE s.created_at < date_part('epoch', now() - interval '30 hours')
+                 GROUP BY s.connector_id, s.kb_slug
           - refId: reduce
             datasourceUid: __expr__
             relativeTimeRange:
@@ -161,9 +371,10 @@ groups:
                   operator: { type: and }
                   reducer: { params: [], type: last }
                   type: query
-        # Alerting, not OK: the query always returns a row for every knowledge
-        # base that crawled in the last week, so no data at all means no crawl
-        # job anywhere for 7 days, which is the scheduler being dead.
+        # Alerting, not OK: the query returns a row for every daily-scheduled
+        # source, so no data at all means the portal view is empty or
+        # unreadable, which for a platform with scheduled crawls is itself the
+        # thing to look at.
         noDataState: Alerting
         execErrState: Error
         for: 0s
@@ -173,16 +384,15 @@ groups:
           component: crawl
           service_group: knowledge
         annotations:
-          summary: 'Knowledge base {{ $labels.kb_slug }} (org {{ $labels.org_id }}): no crawl job for 30 hours'
+          summary: 'Knowledge base {{ $labels.kb_slug }}: no crawl job for 30 hours although it is scheduled daily'
           runbook_url: 'docs/runbooks/crawl-failures.md'
           description: |
-            This knowledge base had crawl jobs in the previous 7 days and none
-            in the last 30 hours, so the nightly scheduler did not start it.
-            A knowledge base crawled less often than daily, or one whose
-            connector was removed, also lands here until it leaves the 7-day
-            window.
+            The web connector {{ $labels.connector_id }} has a schedule that
+            runs every day and no crawl job was created or updated in the last
+            30 hours, so the scheduler did not start it.
 
               SELECT max(to_timestamp(updated_at)) FROM knowledge.crawl_job_health
-               WHERE kb_slug = '<kb_slug>';
+               WHERE connector_id = '<connector_id>';
 
-            Runbook: docs/runbooks/crawl-failures.md.
+            See docs/runbooks/connector-schedules.md for how the scheduler reads
+            its schedules. Runbook: docs/runbooks/crawl-failures.md.

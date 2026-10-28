@@ -12,7 +12,7 @@
 #   - spec=SPEC-KB-015                           → klai-ops-alerts-email (feedback-loop health)
 #   - component=mistral-api-probe                → klai-ops-alerts-email (Mistral key state, repeat 1h)
 #   - component=widget-probe                     → klai-ops-alerts-email (customer widget probe, repeat 1h)
-#   - component=crawl                            → klai-ops-alerts-email (crawl jobs failing or silent, repeat 24h)
+#   - component=crawl                            → klai-ops-alerts-email (crawl errors, fleet-wide errors, success below baseline, silent crawls; repeat 24h)
 #   - severity=critical                          → klai-ops-alerts-email (any critical rule not matched above)
 #
 # Paging is not a route. A rule that means "a human must act now, day or night,
@@ -184,13 +184,15 @@ policies:
         repeat_interval: 1h
         continue: false
 
-      # Crawl job health (crawl-rules.yaml): critical, one alert per knowledge
-      # base whose latest nightly crawl fetched 0 pages, or that has no crawl
-      # job at all for 30 hours. group_by alertname so one mail lists every
-      # affected knowledge base; repeat 24h because the crawls are nightly and
-      # the verdict cannot change faster than that. From 2026-10-23 to
-      # 2026-10-28 every knowledge base failed six nights running unnoticed
-      # because no rule read crawl jobs.
+      # Crawl health (crawl-rules.yaml): crawler-side errors in a job, one error
+      # signature across unrelated sources, success below baseline, and a
+      # daily-scheduled source with no job for 30 hours. group_by alertname so
+      # one mail lists every affected source; repeat 24h because the crawls are
+      # nightly and the verdict cannot change faster than that. From
+      # 2026-10-23 to 2026-10-28 every knowledge base failed six nights running
+      # unnoticed because no rule read crawl jobs. Paging is not a route: the
+      # page="true" label on crawl_crawler_errors is what the external pager
+      # reads.
       - receiver: klai-ops-alerts-email
         matchers:
           - component = crawl
