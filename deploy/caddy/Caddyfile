@@ -349,6 +349,27 @@
         }
     }
 
+    # Klai in Slack (SPEC-SLACK-001): Slack events, slash commands, interactivity
+    # and the OAuth install/redirect all land on klai-slack. Only /slack/* is
+    # exposed; klai-slack's /internal/* and /health stay on klai-net. Restricted
+    # to the api. host because the Slack app's request URLs are all
+    # https://api.<domain>/slack/...; no per-IP rate limit, since Slack
+    # authenticates every request with its signing secret and delivers bursts
+    # from a small set of addresses.
+    @slack {
+        host api.{$DOMAIN}
+        path /slack/*
+    }
+    handle @slack {
+        reverse_proxy klai-slack:8000 {
+            header_up -X-Internal-Secret
+            header_up -X-Caller-Service
+            header_up -X-Org-ID
+            header_up -X-Org-Slug
+            header_up -X-User-ID
+        }
+    }
+
     # dev.getklai.com was removed 2026-08-17. It routed to portal-api-dev +
     # /srv/portal-dev, a parallel review environment from PR #103
     # (feat/chat-first-redesign, April 2026) where every feat/* push auto-deployed.

@@ -138,6 +138,12 @@ network in `deploy/docker-compose.yml`:
   language lookup; the template renderer (`app/renderer.py`) does not
   fetch remote resources. Safe to revisit if a future feature adds
   user-URL rendering.
+- `klai-slack` — only outbound calls are Slack's API and the hardcoded
+  `portal_api_url` (Partner API, `/internal/slack/*`); it never fetches a
+  URL taken from a Slack message. It is kept off `socket-proxy`
+  structurally by `scripts/audit-docker-access.sh` (the mutating lane is
+  pinned), not by the curl smoke test: its image has no `curl`, so that
+  probe would pass vacuously.
 
 Verification: every PR touching `deploy/docker-compose.yml` must pass
 `./scripts/smoke-ssrf-isolation.sh` post-deploy — runs the AC-13 /

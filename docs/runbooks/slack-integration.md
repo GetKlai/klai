@@ -21,7 +21,7 @@ klai-slack answers through the Partner API of portal-api with one managed
 
 ## 2. SOPS entries (names only, values never in this repo)
 
-File: `klai-infra/core-01/klai-slack/.env.sops`. Edit it with the procedure in
+File: `klai-infra/core-01/.env.sops` (the one file `sync-env.yml` pushes to `/opt/klai/.env`). Edit it with the procedure in
 `klai-infra/docs/runbooks/sops-edit-via-core01.md`, then decrypt again and
 compare the key set.
 

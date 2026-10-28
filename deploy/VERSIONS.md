@@ -4,7 +4,7 @@ This file documents public-repo external image pins for the core stack and dev s
 
 Automated dependency updates are handled by Dependabot / Renovate. Upgrades follow `docs/runbooks/version-management.md`.
 
-**Exception — internal CI-deployed services:** images under `ghcr.io/getklai/*` (portal-api, retrieval-api, knowledge-ingest, klai-connector, klai-mailer, klai-docs, klai-knowledge-mcp, scribe-api, caddy-hetzner) use `:latest` because GitHub Actions rebuild and re-push on every commit to `main` in their respective repos, AND — this is the part that makes the rolling tag safe — the pull and the recreate happen in one `compose-up.sh <service>` call, so a newer `:latest` never sits on the host waiting to be picked up by somebody else's deploy.
+**Exception — internal CI-deployed services:** images under `ghcr.io/getklai/*` (portal-api, retrieval-api, knowledge-ingest, klai-connector, klai-mailer, klai-slack, klai-docs, klai-knowledge-mcp, scribe-api, caddy-hetzner) use `:latest` because GitHub Actions rebuild and re-push on every commit to `main` in their respective repos, AND — this is the part that makes the rolling tag safe — the pull and the recreate happen in one `compose-up.sh <service>` call, so a newer `:latest` never sits on the host waiting to be picked up by somebody else's deploy.
 
 Each CI workflow also tags the build with `:${github.sha}` so rollbacks are possible via explicit SHA pin. These are NOT production `:latest` anti-patterns — they are continuous-deployment rolling tags owned by our own CI pipelines. The self-host compose file expects every referenced `ghcr.io/getklai/*` image to be public and anonymously pullable; `deploy/check-image-pullable.sh` enforces that contract. (research-api removed in SPEC-PORTAL-UNIFY-KB-001.)
 
