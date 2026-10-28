@@ -9,8 +9,8 @@
 # Both rules carry severity=critical and no component label, so policies.yaml
 # sends them to klai-ops-alerts-email through its severity=critical route.
 # Neither carries page="true": whether a rolled-back deploy should page is not
-# decided. Slice S4 may extend auto_rollback_event (labels, issue link); keep
-# this rule small.
+# decided. auto_rollback_event groups by service, gate and outcome, so one mail
+# names what rolled back and why, and the text differs for rollback_failed.
 
 apiVersion: 1
 
@@ -24,7 +24,9 @@ groups:
       # whose rollback failed too (rollback_failed, the one that needs a human
       # now). The weekly rehearsal rolls back the rollback-canary on purpose, so
       # its events are excluded here; they are proven by the rule below.
-      # Zero matches return Value=0 with this stats shape, so noDataState OK.
+      # One alert instance per (deploy_service, gate, outcome): the labels feed
+      # the mail text. No matches return no series, which is NoData, so
+      # noDataState OK.
       - uid: obs-auto-rollback-event
         title: auto_rollback_event
         condition: threshold
@@ -42,7 +44,7 @@ groups:
                 uid: victorialogs
               expr: |
                 _time:15m service:auto-rollback event:auto_rollback -deploy_service:rollback-canary
-                  | stats count() as n
+                  | stats by (deploy_service, gate, outcome) count() as n
               queryType: stats
           - refId: reduce
             datasourceUid: __expr__
@@ -78,18 +80,25 @@ groups:
           service_group: deploy
           alert_type: auto_rollback
         annotations:
-          summary: 'A deploy was rolled back automatically in the last 15 minutes'
+          summary: '{{ if eq $labels.outcome "rollback_failed" }}ROLLBACK FAILED, human needed now: {{ $labels.deploy_service }} (gate {{ $labels.gate }}){{ else }}Rolled back automatically: {{ $labels.deploy_service }} (gate {{ $labels.gate }}){{ end }}'
+          runbook_url: 'docs/runbooks/auto-rollback.md#a-deploy-was-rolled-back'
           description: |
-            deploy-with-rollback.sh put a previous image back after a red gate
-            (outcome rolled_back), or could not (outcome rollback_failed, which
-            needs a human now). Production is serving the previous image in the
-            first case and may be broken in the second.
+            Service: {{ $labels.deploy_service }}
+            Failed gate: {{ $labels.gate }}
+            Outcome: {{ $labels.outcome }}
 
-            Which service, gate and commit, in VictoriaLogs:
+            {{ if eq $labels.outcome "rollback_failed" }}The rollback did not hold (or there was no previous image to go back
+            to), so production may be broken right now. This is the one outcome
+            that needs a human immediately; nothing retries it.{{ else }}A new version failed its gate and the previous one is serving again. Nothing
+            is broken now, but the new version is still on main: the next deploy
+            of this service will fail the same way until it is fixed.{{ end }}
+
+            Details: the CI failure issue labelled auto-rollback or
+            rollback-failed (report attached), or on core-01 the report
+            /opt/klai/deploy-reports/{{ $labels.deploy_service }}.json (compose
+            syncs write compose.json) with the container log next to it as
+            .log, and the ledger /opt/klai/deploy-ledger.log. In VictoriaLogs:
               _time:30m service:auto-rollback event:auto_rollback | sort by (_time) desc | limit 10
-            The report of the last deploy of a service is on core-01 at
-            /opt/klai/deploy-reports/<service>.json, with the container log
-            next to it as <service>.log.
 
       # The dead-man's switch for the rehearsal itself: it writes one
       # event:rollback_rehearsal outcome:ok line when it passes, weekly. No line
@@ -154,6 +163,7 @@ groups:
           alert_type: synthetic
         annotations:
           summary: 'No passing rollback rehearsal for 8 days: nothing proves automatic rollback still works'
+          runbook_url: 'docs/runbooks/auto-rollback.md#the-weekly-rehearsal-is-missing'
           description: |
             The weekly Rollback rehearsal workflow (rollback-rehearsal.yml) writes
             an event:rollback_rehearsal outcome:ok line when a bad image was rolled

@@ -121,6 +121,12 @@ jobs:
           bash deploy/scripts/tests/backup-bgsave-wait.test.sh
           bash deploy/scripts/tests/backup-single-run.test.sh
 
+      # Host and runner clocks both follow NTP; this marks which report on
+      # core-01 was written by this run (see "Keep rollback report" below).
+      - name: Mark sync start
+        id: sync-start
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Sync docker-compose.yml + config + run smoke-test
         uses: appleboy/ssh-action@v1
         with:
@@ -454,3 +460,40 @@ jobs:
 
             # Green end: ledger line, report, last-synced commit.
             rb_deployed
+
+      # SPEC-INFRA-AUTO-ROLLBACK-001 S4: hand the rollback report to
+      # ci-failure-notice.yml. The report file stays on core-01 between runs, so
+      # only one written after the sync started counts (its commit is the clone's
+      # HEAD, which can be newer than github.sha); a green sync, or one that
+      # never reached the script, leaves no artifact.
+      - name: Fetch rollback report
+        id: rollback-report
+        if: always()
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          capture_stdout: true
+          script: cat /opt/klai/deploy-reports/compose.json 2>/dev/null || true
+
+      - name: Keep rollback report
+        if: always()
+        env:
+          REPORT: ${{ steps.rollback-report.outputs.stdout }}
+          STARTED: ${{ steps.sync-start.outputs.at }}
+        run: |
+          report="$(printf '%s\n' "$REPORT" | grep -m1 '^{' || true)"
+          if printf '%s' "$report" | jq -e --arg since "$STARTED" '.ts >= $since and .outcome != "deployed"' >/dev/null 2>&1; then
+            printf '%s\n' "$report" > rollback-report.json
+          fi
+
+      - name: Upload rollback report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rollback-report
+          path: rollback-report.json
+          retention-days: 30
+          if-no-files-found: ignore

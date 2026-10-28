@@ -192,3 +192,38 @@ jobs:
             # SPEC-INFRA-AUTO-ROLLBACK-001: deploys the exact sha, rolls back on a red gate.
             test -x /opt/klai/scripts/deploy-with-rollback.sh
             /opt/klai/scripts/deploy-with-rollback.sh klai-mailer ghcr.io/getklai/klai-mailer:${{ github.sha }} --probe http://klai-mailer:8000/health
+
+      # SPEC-INFRA-AUTO-ROLLBACK-001 S4: hand the rollback report to
+      # ci-failure-notice.yml. The report file stays on core-01 between runs, so
+      # only one written by this run counts; a green deploy, or one that never
+      # reached the script, leaves no artifact.
+      - name: Fetch rollback report
+        id: rollback-report
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          capture_stdout: true
+          script: cat /opt/klai/deploy-reports/klai-mailer.json 2>/dev/null || true
+
+      - name: Keep rollback report
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          REPORT: ${{ steps.rollback-report.outputs.stdout }}
+        run: |
+          report="$(printf '%s\n' "$REPORT" | grep -m1 '^{' || true)"
+          if printf '%s' "$report" | jq -e --arg sha "$GITHUB_SHA" '.commit == $sha and .outcome != "deployed"' >/dev/null 2>&1; then
+            printf '%s\n' "$report" > rollback-report.json
+          fi
+
+      - name: Upload rollback report
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: rollback-report
+          path: rollback-report.json
+          retention-days: 30
+          if-no-files-found: ignore
