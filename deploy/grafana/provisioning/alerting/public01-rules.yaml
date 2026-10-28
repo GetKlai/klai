@@ -18,6 +18,16 @@
 # be a wide series but got type long" (seen on this rule's first deploy).
 # noDataState is Alerting and execErrState Error, because a rule that exists
 # to catch silence must not go quiet itself.
+#
+# Infra deploy (SPEC-INFRA-AUTO-ROLLBACK-001, 4.d): public-01's deploy-infra.sh
+# appends one JSON line per run to /opt/klai/logs/infra-deploy.log and public-01's
+# Alloy ships it as `service:infra-deploy`. Uptime Kuma is for public monitoring
+# only and runs on public-01 itself, so deploy outcomes reach people from here.
+# Events: auto_rollback (outcome rolled_back | rollback_failed, gate = the check
+# that failed) and infra_deploy (outcome deployed | up_to_date | skipped_bad_rev,
+# the healthy heartbeat of every run, or failed | validation_failed, which are
+# not). Both rules carry severity=critical and no component label, so
+# policies.yaml sends them to klai-ops-alerts-email.
 
 apiVersion: 1
 
@@ -91,3 +101,144 @@ groups:
               1. curl -sI https://getklai.com https://status.getklai.com
               2. ssh to public-01 and run: docker ps
               3. See the runbook for recovery.
+
+      - uid: public01-infra-deploy-rollback
+        title: public01_infra_deploy_rollback
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:15m service:infra-deploy event:auto_rollback
+                  | stats by (outcome, gate, rev) count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-AUTO-ROLLBACK-001
+          service_group: public-01
+          alert_type: auto_rollback
+        annotations:
+          summary: '{{ if eq $labels.outcome "rollback_failed" }}ROLLBACK FAILED, human needed now: public-01 infra revision {{ $labels.rev }} (gate {{ $labels.gate }}){{ else }}Rolled back automatically: public-01 infra revision {{ $labels.rev }} (gate {{ $labels.gate }}){{ end }}'
+          runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/auto-rollback.md#a-public-01-infra-deploy-was-rolled-back'
+          description: |
+            Revision: {{ $labels.rev }}
+            Failed gate: {{ $labels.gate }}
+            Outcome: {{ $labels.outcome }}
+
+            {{ if eq $labels.outcome "rollback_failed" }}The previous files did not pass the checks either, so the website, the
+            status page or Uptime Kuma on public-01 may be down right now. This is
+            the one outcome that needs a human immediately; nothing retries it.{{ else }}A klai-infra revision validated but failed the live checks on public-01 and
+            the previous files are serving again. Nothing is broken now, and the
+            revision is skipped until main moves past it. Fix forward in klai-infra.{{ end }}
+
+            Details, on public-01: tail -n 5 /opt/klai/logs/infra-deploy.log
+            and journalctl -t infra-deploy. In VictoriaLogs:
+              _time:1h service:infra-deploy | sort by (_time) desc | limit 10
+
+      - uid: public01-infra-deploy-silent
+        title: public01_infra_deploy_silent
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: |
+                _time:2h service:infra-deploy event:infra_deploy -outcome:in(failed, validation_failed)
+                  | stats count() as n
+              queryType: stats
+          - refId: reduce
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: reduce
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: reduce
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: Alerting
+        execErrState: Error
+        for: 10m
+        keepFiringFor: 10m
+        isPaused: false
+        labels:
+          severity: critical
+          spec: SPEC-INFRA-AUTO-ROLLBACK-001
+          service_group: public-01
+          alert_type: silent
+        annotations:
+          summary: 'No clean public-01 infra deploy run for 2 hours: the cron, the log shipper, or every run is failing'
+          runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/auto-rollback.md#public-01-infra-deploy-is-silent'
+          description: |
+            deploy-infra.sh runs every 10 minutes and writes one line per run to
+            /opt/klai/logs/infra-deploy.log, which Alloy ships to VictoriaLogs.
+            No line with a healthy outcome (deployed, up_to_date or
+            skipped_bad_rev) arrived in 2 hours. Either the cron stopped, Alloy
+            stopped shipping the file, or every run fails before it finishes
+            (outcome failed or validation_failed).
+
+            Check, in order:
+              1. In VictoriaLogs: _time:3h service:infra-deploy | sort by (_time) desc | limit 10
+                 (lines with outcome failed or validation_failed: read gate)
+              2. On public-01: tail -n 5 /opt/klai/logs/infra-deploy.log
+                 (fresh lines there but not in VictoriaLogs: Alloy is the break)
+              3. crontab -l and journalctl -t infra-deploy (the cron or the lock)

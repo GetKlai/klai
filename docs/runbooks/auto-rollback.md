@@ -1,6 +1,7 @@
 # Automatic rollback
 
-Alerts: `auto_rollback_event`, `rollback_rehearsal_missing` (both
+Alerts: `auto_rollback_event`, `rollback_rehearsal_missing`,
+`public01_infra_deploy_rollback`, `public01_infra_deploy_silent` (all
 `severity=critical`). Spec: SPEC-INFRA-AUTO-ROLLBACK-001.
 
 `deploy-with-rollback.sh` (one service image) and `compose-rollback.sh` (the
@@ -37,3 +38,40 @@ No `rollback_rehearsal` event with outcome `ok` reached VictoriaLogs for 8
 days. The three checks, in order, are in the alert description. A green rehearsal
 run whose line is missing means Alloy or VictoriaLogs is the break, not the
 rollback.
+
+## A public-01 infra deploy was rolled back
+
+public-01 is not deployed by this repo's CI: its `deploy-infra.sh` (root cron,
+every 10 minutes, script in the private klai-infra repo) applies klai-infra
+`public-01/` from main. Before installing it copies every file to `<file>.prev`;
+when the post-apply checks fail (Kuma healthy, Alloy running, getklai.com and
+status.getklai.com answering) it puts them back, brings the stack up, checks
+again and writes the revision to `/opt/klai/.infra-bad-rev`. No later run
+reapplies that revision; a newer one on main is tried normally. The mail names
+the revision, the failed gate and the outcome. The line is
+`public01_infra_deploy_rollback`, from `/opt/klai/logs/infra-deploy.log` via
+public-01's Alloy (`service:infra-deploy`).
+
+- `rolled_back`: the previous files serve again. Nothing is broken now. Fix the
+  revision forward in klai-infra; the next revision deploys by itself.
+- `rollback_failed`: the previous files failed the checks too. Treat the site,
+  status page and Uptime Kuma as possibly down: `ssh` to public-01,
+  `docker compose ps` in `/opt/klai/public` and `/opt/klai/alloy`, read
+  `tail -n 20 /opt/klai/logs/infra-deploy.log` and `journalctl -t infra-deploy`.
+  The `.prev` files sit next to the installed ones.
+- Not rolled back: Uptime Kuma's own database after a Kuma image migration. The
+  nightly backup (`docs/runbooks/uptime-kuma.md#backup-and-restore` in
+  klai-infra) is the restore source, used by hand.
+
+In VictoriaLogs:
+`_time:1h service:infra-deploy | sort by (_time) desc | limit 10`.
+
+## Public-01 infra deploy is silent
+
+No line with outcome `deployed`, `up_to_date` or `skipped_bad_rev` reached
+VictoriaLogs for 2 hours (`public01_infra_deploy_silent`). `deploy-infra.sh`
+writes one every run, so silence is one of three things: the cron stopped, Alloy
+stopped shipping `/opt/klai/logs/infra-deploy.log` (the Alloy container must
+mount `/opt/klai/logs`), or every run fails before it finishes, which logs
+`failed` or `validation_failed` with the failing `gate`. The three checks, in
+order, are in the alert description.
