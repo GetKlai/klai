@@ -25,7 +25,6 @@ from app.core.permissions import (
 from app.models.partner_api_keys import PartnerAPIKey
 from app.services.slack_integration import (
     SlackStatus,
-    create_slack_key,
     derive_status,
     disconnect_slack,
     get_installation,
@@ -65,12 +64,6 @@ class SlackKbIdsIn(BaseModel):
     # Emptiness is rejected with a 400 by the service, the same answer as for a
     # personal or foreign KB, so the page has one error path for a bad choice.
     kb_ids: list[int]
-
-
-class SlackKeyCreatedOut(BaseModel):
-    api_key: str  # plaintext, only in this response
-    status: SlackStatus
-    key: SlackKeyOut
 
 
 class SlackConnectOut(BaseModel):
@@ -117,21 +110,6 @@ async def get_slack(
     db: AsyncSession = Depends(get_db),
 ) -> SlackStateOut:
     return await _state(db, perms.org_id)
-
-
-@router.post("/key", status_code=status.HTTP_201_CREATED)
-async def create_key(
-    body: SlackKbIdsIn,
-    perms: UserPermissions = Depends(get_caller_at_least(ProfileRole.ADMIN)),
-    _platform: UserPermissions = Depends(require_platform_unlocked("slack")),
-    db: AsyncSession = Depends(get_db),
-) -> SlackKeyCreatedOut:
-    """Deprecated: the paste-the-key flow, kept while ``/klai connect`` is live.
-
-    The portal page uses ``POST /connect``, which never sends a key to the browser.
-    """
-    plaintext, key = await create_slack_key(db, org_id=perms.org_id, user_id=perms.user_id, kb_ids=body.kb_ids)
-    return SlackKeyCreatedOut(api_key=plaintext, status="awaiting_link", key=_key_out(key))
 
 
 @router.post("/connect")

@@ -98,7 +98,7 @@ _ALLOWLIST: dict[str, str] = {
     ),
     # SPEC-SLACK-001: every function takes the request session of an
     # /api/admin/slack route (get_caller_at_least runs set_tenant) or of
-    # /internal/slack/link after its explicit set_tenant for the key's org.
+    # /internal/slack/link-oauth after its explicit set_tenant for the token's org.
     "app/services/slack_integration.py": (
         "service layer — callers are admin_slack routes under get_caller and internal_slack after set_tenant"
     ),
