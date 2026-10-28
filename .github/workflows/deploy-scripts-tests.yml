@@ -33,6 +33,8 @@ on:
       - 'renovate.json5'
       - 'deploy/docker-compose.yml'
       - 'scripts/test-renovate-config.sh'
+      - 'scripts/check-action-shas.sh'
+      - 'scripts/pin-action-shas.sh'
       - 'scripts/check-version-drift.sh'
       - 'scripts/tests/check-version-drift.test.sh'
       - 'scripts/check-expand-contract.py'
@@ -58,6 +60,8 @@ on:
       - 'renovate.json5'
       - 'deploy/docker-compose.yml'
       - 'scripts/test-renovate-config.sh'
+      - 'scripts/check-action-shas.sh'
+      - 'scripts/pin-action-shas.sh'
       - 'scripts/check-version-drift.sh'
       - 'scripts/tests/check-version-drift.test.sh'
       - 'scripts/check-expand-contract.py'
@@ -90,6 +94,12 @@ jobs:
       # was recreated.
       - name: Parse the shell inside every workflow
         run: python3 scripts/check-workflow-shell-syntax.py
+
+      # A tag can be moved after the fact; a commit cannot. Every third-party
+      # `uses:` has to be a 40-character SHA (SPEC-INFRA-AUTO-ROLLBACK-001 S9);
+      # scripts/pin-action-shas.sh fixes a failure.
+      - name: GitHub Actions pinned to commit SHAs
+        run: sh scripts/check-action-shas.sh
 
       # renovate.yml runs this contract before every Renovate run, but only on
       # main: on 2026-09-24 a comment quoting a checked setting broke it, and

@@ -142,6 +142,91 @@ if ! printf '%s\n' "$qdrant_rules" | grep -qxF "      internalChecksFilter: 'str
   echo 'FAIL: Qdrant must use the strict internal checks filter' >&2
   exit 1
 fi
+# SPEC-INFRA-AUTO-ROLLBACK-001 S9. Tags can be moved after the fact; pins cannot.
+# The preset keeps the SHAs fresh, scripts/check-action-shas.sh (Deploy-script
+# tests) fails CI on a new unpinned `uses:`.
+assert_line "$config" \
+  "  extends: ['config:recommended', 'helpers:pinGitHubActionDigests']," \
+  'GitHub Actions must stay pinned to commit SHAs, and Renovate must keep them current'
+# A vulnerability fix must skip the 7-day cooldown. These are Renovate's own
+# defaults; asserting them keeps a later global setting from changing them.
+assert_line "$config" \
+  '  osvVulnerabilityAlerts: true,' \
+  'vulnerability alerts must also read the OSV database'
+vuln_block=$(awk '/^  vulnerabilityAlerts: \{/{f=1} f{print} /^  \},/{f=0}' "$config")
+for line in '    enabled: true,' '    minimumReleaseAge: null,' "    prCreation: 'immediate',"; do
+  if ! printf '%s\n' "$vuln_block" | grep -qxF "$line"; then
+    echo "FAIL: vulnerabilityAlerts must contain '${line#    }' (a security fix may not wait out the release age)" >&2
+    exit 1
+  fi
+done
+# Rules are read from the file itself: a rule is the text between two lines that
+# open a 4-space object, which is how customManagers and packageRules are laid out.
+if ! python3 - "$config" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+chunks = re.split(r"(?m)^    \{$", text)
+fail = []
+
+def names(chunk, key):
+    m = re.search(key + r": \[(.*?)\]", chunk, re.S)
+    return re.findall(r"'([^']+)'", m.group(1)) if m else []
+
+# Majors of an action automerge only when a pull request run executes it. The
+# deploy, registry and token actions run first on main, so they stay manual.
+allow = next((c for c in chunks if "matchManagers: ['github-actions']" in c and "matchUpdateTypes: ['major']" in c and "automerge: true" in c), "")
+allowed = names(allow, "matchPackageNames")
+if "actions/checkout" not in allowed:
+    fail.append("actions/checkout majors must automerge (CI runs it on every pull request)")
+for name in allowed:
+    if re.match(r"(appleboy|webfactory|docker|renovatebot|aquasecurity)/|actions/(create-github-app-token|github-script)", name):
+        fail.append(f"{name} majors must stay manual: no pull request run executes it")
+dev = next((c for c in chunks if "matchDepTypes: ['devDependencies']" in c), "")
+if "automerge: true" not in dev or "matchUpdateTypes: ['major']" not in dev:
+    fail.append("npm devDependencies majors must automerge")
+files = names(dev, "matchFileNames")
+if not files or any(not f.startswith(("klai-portal/frontend/", "klai-docs/", "klai-widget/")) for f in files):
+    fail.append("npm dev automerge is limited to the packages with a CI job")
+
+# A custom manager that reads a data store from GitHub changes the datasource
+# and sometimes the packageName. A version ceiling written for the Docker Hub
+# name and datasource then matches nothing (#2085: mongo '<8.1' went dead).
+moved = {}
+for c in chunks:
+    if "customType: 'regex'" not in c:
+        continue
+    dep = re.search(r"depNameTemplate: '([^']+)'", c)
+    ds = re.search(r"datasourceTemplate: '([^']+)'", c)
+    if not dep or not ds or ds.group(1) in ("docker", "pypi", "npm"):
+        continue
+    pkg = re.search(r"packageNameTemplate: '([^']+)'", c)
+    moved[dep.group(1)] = (pkg.group(1) if pkg else dep.group(1), ds.group(1))
+checked = 0
+for c in chunks:
+    if "allowedVersions:" not in c:
+        continue
+    listed = names(c, "matchPackageNames")
+    datasources = names(c, "matchDatasources")
+    for dep, (pkg, ds) in moved.items():
+        if dep not in listed and pkg not in listed:
+            continue
+        checked += 1
+        if dep not in listed or pkg not in listed:
+            fail.append(f"ceiling for {dep} must list both '{dep}' and '{pkg}'")
+        if datasources and ds not in datasources:
+            fail.append(f"ceiling for {dep} must include datasource '{ds}'")
+if "mongo" not in moved or checked == 0:
+    fail.append("the mongo ceiling must be found and checked against the GitHub-sourced mongo manager")
+mongo = next((c for c in chunks if "allowedVersions: '<8.1'" in c), "")
+if not all(n in names(mongo, "matchPackageNames") for n in ("mongo", "mongodb/mongo")):
+    fail.append("the mongo '<8.1' ceiling must match both 'mongo' and 'mongodb/mongo'")
+for f in fail:
+    print("FAIL: " + f, file=sys.stderr)
+sys.exit(1 if fail else 0)
+PY
+then
+  exit 1
+fi
 assert_line "$config" \
   "    npm: '^11'," \
   'lock files must be generated with the npm major that CI installs them with'
