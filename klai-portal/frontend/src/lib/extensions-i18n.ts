@@ -25,6 +25,8 @@ export function extensionLabel(key: string): string {
       return m.admin_extension_partner_api_label()
     case 'widgets':
       return m.admin_extension_widgets_label()
+    case 'slack':
+      return m.admin_extension_slack_label()
     case 'custom_mcps':
       return m.admin_extension_custom_mcps_label()
     case 'scribe':
@@ -48,6 +50,8 @@ export function extensionDescription(key: string): string {
       return m.admin_extension_partner_api_description()
     case 'widgets':
       return m.admin_extension_widgets_description()
+    case 'slack':
+      return m.admin_extension_slack_description()
     case 'custom_mcps':
       return m.admin_extension_custom_mcps_description()
     case 'scribe':

@@ -2,6 +2,7 @@ import {
   CreditCard,
   FolderKanban,
   Globe2,
+  Hash,
   Key,
   LayoutDashboard,
   MessageSquare,
@@ -82,6 +83,15 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     requiresFeature: 'widgets',
     showOnOverview: true,
     overviewDescription: m.admin_section_widgets_description(),
+  },
+  {
+    to: '/admin/slack',
+    label: m.admin_section_slack_title(),
+    icon: Hash,
+    minRole: 'admin',
+    requiresFeature: 'slack',
+    showOnOverview: true,
+    overviewDescription: m.admin_section_slack_description(),
   },
   {
     to: '/admin/api-keys',
