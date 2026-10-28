@@ -140,6 +140,11 @@ class _ElementFinder(HTMLParser):
             self.found = any(c.matches(tag.lower(), have) for c in self._compounds)
 
 
+def parse_login_indicator(selector: str) -> None:
+    """Raise ValueError when ``selector`` uses CSS the matcher does not support."""
+    _parse_selector(selector)
+
+
 def html_has_element(html: str, selector: str) -> bool:
     """Whether fetched HTML contains an element matching ``selector``.
 
@@ -242,6 +247,7 @@ def extract_result(url: str, page: dict[str, Any]) -> CrawlResult:
         fit_markdown=fit,
         raw_markdown=raw,
         html=page.get("html", ""),
+        cleaned_html=page.get("cleaned_html", "") or "",
         word_count=len(text.split()),
         success=page.get("success", True),
         requested_url=url,

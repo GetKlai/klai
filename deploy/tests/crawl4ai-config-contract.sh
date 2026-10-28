@@ -14,13 +14,12 @@
 # an empty `results[0].markdown.raw_markdown`: a 200 with no markdown is the
 # other way a refused or ignored field shows up.
 #
-# EXPECTED RESULT TODAY: FAIL against 0.9.5, with the 400 above. That is the
-# bug, not a flaw in the test; the config fix lands separately and turns this
-# green. Do not change the config to satisfy this file, and do not loosen this
-# file to pass the current config.
+# It failed against 0.9.5 with the 400 above until the config stopped sending
+# page JavaScript. Do not loosen this file to pass a config; fix the config.
 #
-# Needs Docker and uv. No outbound network: the page is served by a second
-# container on the same private network, and everything is removed on exit.
+# Needs Docker, uv and outbound network: the page is a public one, because
+# crawl4ai's SSRF guard answers 400 "URL blocked" to a private address, which
+# is what the first version of this test fetched (run 40704149444).
 #
 # Usage: crawl4ai-config-contract.sh [IMAGE]
 #   IMAGE defaults to the pin in deploy/docker-compose.yml. CI passes the image
@@ -46,30 +45,14 @@ PARAMS=$(cd "$ROOT/klai-knowledge-ingest" && uv run --frozen python -c \
 P=c4-config-contract-$$
 TOKEN=contract-test-token
 cleanup() {
-    docker rm -f ${P}-srv ${P}-web >/dev/null 2>&1 || true
+    docker rm -f ${P}-srv >/dev/null 2>&1 || true
     docker network rm ${P}-net >/dev/null 2>&1 || true
 }
 trap cleanup EXIT HUP INT TERM
 
 docker network create ${P}-net >/dev/null
 
-# A static page with well over the 50 words our wait_for predicate waits for,
-# inside <main> so the chrome stripping leaves it alone. Served from the same
-# image, which already has python.
-docker run -d --name ${P}-web --network ${P}-net --entrypoint sh "$IMAGE" -c '
-    mkdir /tmp/site && cd /tmp/site
-    {
-        echo "<!doctype html><html><head><title>Contract page</title></head><body>"
-        echo "<nav>navigation that must not matter</nav><main><h1>Contract page</h1>"
-        i=0
-        while [ $i -lt 12 ]; do
-            echo "<p>This paragraph exists so the page holds far more than fifty words of readable text, which is what the crawler waits for before it hands back markdown for this page.</p>"
-            i=$((i + 1))
-        done
-        echo "</main></body></html>"
-    } > index.html
-    exec python -m http.server 8080
-' >/dev/null
+PAGE=https://example.com/
 
 docker run -d --name ${P}-srv --network ${P}-net --shm-size=1g \
     -e CRAWL4AI_API_TOKEN="$TOKEN" \
@@ -84,7 +67,7 @@ while [ $i -lt 60 ]; do
 done
 echo
 
-docker exec -i -e TOKEN="$TOKEN" -e PARAMS="$PARAMS" -e PAGE="http://${P}-web:8080/" ${P}-srv python - <<'PY'
+docker exec -i -e TOKEN="$TOKEN" -e PARAMS="$PARAMS" -e PAGE="$PAGE" ${P}-srv python - <<'PY'
 import json
 import os
 import sys
@@ -114,8 +97,8 @@ raw = markdown.get("raw_markdown") if isinstance(markdown, dict) else markdown
 if not raw:
     print("CONTRACT BROKEN - HTTP 200 but results[0].markdown.raw_markdown is empty "
           f"(success={first.get('success')!r}, error={str(first.get('error_message'))[:200]!r}). "
-          "crawl4ai accepted the request and produced nothing from a page that "
-          "holds text.", file=sys.stderr)
+          "crawl4ai accepted the request and produced nothing from a public page "
+          "that holds text.", file=sys.stderr)
     raise SystemExit(1)
 print(f"OK: crawl4ai accepted our crawl config and returned {len(raw)} characters of markdown.")
 PY

@@ -351,6 +351,23 @@ def test_every_page_refused_by_the_crawler_config_check_fails_the_job_as_config_
     assert "crawl4ai_config.py" in summary["suggestion"]
 
 
+def test_a_target_url_blocked_by_the_crawlers_ssrf_guard_is_not_a_config_rejection() -> None:
+    """crawl4ai answers 400 "URL blocked" to a target that resolves to a private
+    address (the first contract test run, 40704149444): that is one site, not
+    our configuration, so it stays a fetch failure."""
+    outcomes = [
+        _crawler_rejected_outcome(
+            f"https://intranet.example/{i}", body='{"detail":"URL blocked (SSRF protection)"}'
+        )
+        for i in range(6)
+    ]
+
+    status, summary = decide_fetch_failure_terminal_status(fetch_outcomes=outcomes, threshold=0.30)
+
+    assert status == "failed_partial"
+    assert summary is not None and summary["reason"] != CRAWLER_CONFIG_REJECTED_REASON
+
+
 def test_a_4xx_answered_by_the_target_site_stays_fetch_failure_dominant() -> None:
     """crawl4ai fetched the page and the SITE answered 4xx: page-level result,
     ``error_type`` is the crawl4ai failure category, not an httpx exception."""

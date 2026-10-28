@@ -24,8 +24,13 @@ from knowledge_ingest.adapters.crawler import (
     run_crawl_job,
 )
 from knowledge_ingest.crawl4ai_client import CrawlResult
+from knowledge_ingest.crawl_result_processing import html_has_element
 from knowledge_ingest.utils.auth_wall_detector import AuthWallSignal
 from tests.conftest import connection_factory_for
+
+
+class _StopAfterCheck(Exception):
+    pass
 
 
 class TestIngestCrawlResultAuthWall:
@@ -53,6 +58,45 @@ class TestIngestCrawlResultAuthWall:
             )
         assert "auth_wall_detected" in str(excinfo.value)
         assert excinfo.value.selector == "#login-form"
+
+    @pytest.mark.asyncio()
+    async def test_an_indicator_in_the_stripped_header_is_not_a_login_wall(self) -> None:
+        """The indicator is matched on crawl4ai's cleaned HTML (after excluded_tags
+        and excluded_selector), as the page-side check ran after the same chrome
+        removal; a user menu that only lives in the header never ends a crawl."""
+        logged_in = CrawlResult(
+            url="https://wiki.example/page",
+            fit_markdown="Article body with enough words to be a page.",
+            raw_markdown="Article body with enough words to be a page.",
+            html=(
+                '<html><body><header><div class="user-menu">me</div></header>'
+                "<main>Article</main></body></html>"
+            ),
+            cleaned_html="<html><body><main>Article</main></body></html>",
+            word_count=9,
+            success=True,
+        )
+        seen: list[str] = []
+
+        def matcher(html: str, selector: str) -> bool:
+            seen.append(html)
+            raise _StopAfterCheck
+
+        with (
+            patch("knowledge_ingest.adapters.crawler.html_has_element", side_effect=matcher),
+            pytest.raises(_StopAfterCheck),
+        ):
+            await _ingest_crawl_result(
+                MagicMock(),
+                logged_in,
+                url=logged_in.url,
+                org_id="org",
+                kb_slug="support",
+                login_indicator_selector=".user-menu",
+            )
+        assert seen == [logged_in.cleaned_html]
+        assert html_has_element(logged_in.html, ".user-menu") is True
+        assert html_has_element(logged_in.cleaned_html, ".user-menu") is False
 
     @pytest.mark.asyncio()
     async def test_failed_result_raises_generic_even_with_selector(self) -> None:

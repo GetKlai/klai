@@ -168,9 +168,13 @@ WITH (security_invoker = false, security_barrier = true) AS
                        WHERE coalesce(
                                  (x ->> 'error_type' = 'httpx.HTTPStatusError'
                                   AND (x ->> 'reason_code' IN ('http_4xx', 'auth_error')
-                                       OR coalesce((x ->> 'status_code')::integer, 0) >= 500))
-                                 OR x ->> 'error_type' IN
-                                    ('httpx.ConnectError', 'httpx.ReadTimeout', 'httpx.ConnectTimeout'),
+                                       OR coalesce((x ->> 'status_code')::integer, 0) >= 500)
+                                  -- a site's 429 or anti-bot answer travels as an
+                                  -- HTTPStatusError too; it is the site, not the crawler
+                                  AND coalesce(x ->> 'reason_code', '') NOT IN ('rate_limited', 'blocked_anti_bot'))
+                                 -- a timeout on the bulk call is as often a slow site as a
+                                 -- stuck crawler, so only a refused connection counts
+                                 OR x ->> 'error_type' = 'httpx.ConnectError',
                                  false)
                   ))::integer AS crawler_side_failures
              FROM jsonb_array_elements(j.fetch_outcomes) AS x
@@ -179,7 +183,8 @@ WITH (security_invoker = false, security_barrier = true) AS
            SELECT (x ->> 'error_type') || ':' || coalesce(x ->> 'status_code', 'none') AS signature,
                   count(*) AS n
              FROM jsonb_array_elements(j.fetch_outcomes) AS x
-            WHERE x ->> 'error_type' IS NOT NULL
+            -- crawler-side only: a site's own 403/429 is recorded as crawl4ai:<reason>
+            WHERE x ->> 'error_type' LIKE 'httpx.%'
             GROUP BY 1
             ORDER BY 2 DESC, 1
             LIMIT 1

@@ -43,7 +43,7 @@ from knowledge_ingest.crawl_checkpoint import (
     finish_crawl_execution,
     guard_crawl_execution,
 )
-from knowledge_ingest.crawl_result_processing import html_has_element
+from knowledge_ingest.crawl_result_processing import html_has_element, parse_login_indicator
 from knowledge_ingest.domain_rate_limit_control import (
     DomainRateLimitState,
     apply_domain_rate_limit_decay,
@@ -255,9 +255,13 @@ def _is_crawler_rejection(outcome: dict) -> bool:
     ``error_type`` tells it apart from a 4xx the target site answered, which
     crawl4ai reports as a page-level result (``crawl4ai:http_4xx``).
     """
-    return outcome.get("error_type") == "httpx.HTTPStatusError" and outcome.get("reason_code") in (
-        FetchReasonCode.HTTP_4XX.value,
-        FetchReasonCode.AUTH_ERROR.value,
+    # Only the config check: crawl4ai also answers 400 "URL blocked" to a
+    # target that resolves to a private address, which is that one site.
+    return (
+        outcome.get("error_type") == "httpx.HTTPStatusError"
+        and outcome.get("reason_code")
+        in (FetchReasonCode.HTTP_4XX.value, FetchReasonCode.AUTH_ERROR.value)
+        and "Rejected config" in str(outcome.get("error_message") or "")
     )
 
 
@@ -977,6 +981,14 @@ async def run_crawl_job(
             return await _crawl_job_cancel_requested(conn, job_id)
 
     try:
+        # The indicator matcher supports a subset of CSS and raises on the
+        # rest; checked once here so an unsupported selector is one failed
+        # job row with the reason, not a page failure on every page.
+        if login_indicator_selector:
+            try:
+                parse_login_indicator(login_indicator_selector)
+            except ValueError as exc:
+                raise ValueError(f"login_indicator_invalid: {exc}") from exc
         # 2026-08-17 (intermedia.com + support.ascendcloud.com incident): if
         # a PREVIOUS crawl of this domain got rate-limited or anti-bot
         # blocked, start this one already paced down instead of hitting the
@@ -1680,7 +1692,9 @@ async def _ingest_crawl_result(
     # SPEC-CRAWLER-004 Fase B: the login indicator is checked on the fetched
     # HTML. It used to ride in crawl4ai's JS wait_for, which 0.9.5 refuses.
     # Surfacing it as AuthWallDetected gives one structured failure per sync.
-    if login_indicator_selector and html_has_element(result.html or "", login_indicator_selector):
+    if login_indicator_selector and html_has_element(
+        result.cleaned_html or result.html or "", login_indicator_selector
+    ):
         raise AuthWallDetected(login_indicator_selector)
 
     # Detect PDF: check Content-Type header first, fall back to URL extension
