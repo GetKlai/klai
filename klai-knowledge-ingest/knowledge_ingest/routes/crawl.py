@@ -757,6 +757,12 @@ async def _probe_fetch(
         )
 
 
+def _cookie_domain_matches(domain: str, host: str) -> bool:
+    """A cookie without a domain is for the host being probed."""
+    domain = domain.lstrip(".").lower()
+    return not domain or host == domain or host.endswith("." + domain)
+
+
 @router.post("/ingest/v1/crawl/auth-probe", response_model=AuthProbeResponse)
 async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeResponse:
     """REQ-2 — verify that cookies actually authenticate against the seed URL.
@@ -807,10 +813,16 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
             auth_guard=None,
         )
 
+    # A site that signs in through a second host sends us that host's cookies
+    # too; they belong to the sign-in host and must not be replayed here.
+    host = validated.hostname.lower()
     cookie_dict: dict[str, str] = {
         c["name"]: c["value"]
         for c in body.cookies
-        if isinstance(c, dict) and c.get("name") and c.get("value")
+        if isinstance(c, dict)
+        and c.get("name")
+        and c.get("value")
+        and _cookie_domain_matches(c.get("domain") or "", host)
     }
     pin_map = {validated.hostname: validated.preferred_ip}
 

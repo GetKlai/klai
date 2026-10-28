@@ -83,6 +83,10 @@ _REDCACTUS_COOKIES = [
     },
 ]
 
+# Cookies are only replayed on the host they name, so tests that probe
+# example.com need cookies for it.
+_COOKIES_FOR_EXAMPLE_COM = [{**c, "domain": "example.com"} for c in _REDCACTUS_COOKIES]
+
 
 # ---------------------------------------------------------------------------
 # Outcome labels
@@ -138,7 +142,7 @@ def test_auth_probe_status_code_split_returns_auth_ok(client: TestClient) -> Non
             "/ingest/v1/crawl/auth-probe",
             json={
                 "url": "https://example.com/dashboard",
-                "cookies": _REDCACTUS_COOKIES,
+                "cookies": _COOKIES_FOR_EXAMPLE_COM,
             },
         )
     body = resp.json()
@@ -224,7 +228,7 @@ def test_auth_probe_auth_ok_emits_canary_fingerprint(client: TestClient) -> None
             "/ingest/v1/crawl/auth-probe",
             json={
                 "url": "https://example.com/page",
-                "cookies": _REDCACTUS_COOKIES,
+                "cookies": _COOKIES_FOR_EXAMPLE_COM,
             },
         )
     body = resp.json()

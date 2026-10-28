@@ -164,4 +164,10 @@ export interface CookieRow {
   // row the operator typed: there is nothing stored to point at yet.
   domain?: string
   path?: string
+  // Set on a cookie taken from a Cookie-Editor export. Such a row is listed by
+  // name and expiry under its host instead of getting name/value inputs.
+  imported?: boolean
+  expires?: string
+  secure?: boolean
+  httpOnly?: boolean
 }
