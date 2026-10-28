@@ -1658,7 +1658,6 @@ async def crawl_site(
     max_pages: int = 200,
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
-    login_indicator_selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     rate_limit: float | None = None,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
@@ -1698,7 +1697,6 @@ async def crawl_site(
             max_pages=max_pages,
             include_patterns=include_patterns,
             exclude_patterns=exclude_patterns,
-            login_indicator_selector=login_indicator_selector,
             cookies=cookies,
             rate_limit=rate_limit,
             cancel_check=cancel_check,
@@ -1714,7 +1712,6 @@ async def _crawl_site_in_host_scope(
     max_pages: int = 200,
     include_patterns: list[str] | None = None,
     exclude_patterns: list[str] | None = None,
-    login_indicator_selector: str | None = None,
     cookies: list[dict[str, Any]] | None = None,
     rate_limit: float | None = None,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
@@ -1753,10 +1750,7 @@ async def _crawl_site_in_host_scope(
     """
     parsed = urlparse(start_url)
     base_domain = parsed.netloc.lower()
-    crawler_config = build_crawl_config(
-        selector,
-        login_indicator_selector=login_indicator_selector,
-    )
+    crawler_config = build_crawl_config(selector)
     restored = await checkpoint.load() if checkpoint is not None else None
     current_rate_limit = restored.get("current_rate_limit", rate_limit) if restored else rate_limit
     if rate_limit_state is not None:
@@ -2270,11 +2264,8 @@ async def _fetch_seed_page(
 ) -> CrawlResult:
     """Fetch ``start_url`` once with the SAME config the bulk path uses.
 
-    Distinct from ``crawl_page`` because crawl_page rebuilds config from
-    ``selector`` only — it has no knob for ``login_indicator_selector``,
-    so reusing it for the seed would silently strip auth-wall detection
-    and let the seed succeed on a login page (extracting login-form
-    anchors as BFS seeds, then auth-failing every URL in the bulk).
+    Distinct from ``crawl_page``, which rebuilds the config from ``selector``
+    only.
     """
     payload: dict[str, Any] = {
         "urls": [start_url],
@@ -3589,7 +3580,7 @@ def _build_candidate_set(
 
     ``include_start_url`` controls whether ``start_url`` is added as the
     first candidate. ``crawl_site`` sets it to ``False`` because the seed
-    is fetched separately (with full config including login_indicator) and
+    is fetched separately (with the full config) and
     re-submitting it in the bulk would be a redundant fetch. Even when
     excluded, ``start_url``'s canonical form is recorded in the dedupe
     ``seen`` set so a sitemap entry that points back to the homepage

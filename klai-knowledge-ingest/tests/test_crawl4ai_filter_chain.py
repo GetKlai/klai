@@ -83,12 +83,9 @@ async def test_fetch_seed_retries_relaxed_config_after_minimal_content_antibot(
 
     assert result.success is True
     assert len(calls) == 2
-    # Chrome stripping lives inside wait_for's prep on >= 0.9-compatible
-    # configs; the relaxed retry drops wait_for (and the stripping with it).
-    assert "js_code_before_wait" not in calls[0]
-    assert "wait_for" in calls[0]
-    assert "el.remove()" in calls[0]["wait_for"]
-    assert "wait_for" not in calls[1]
+    # Chrome stripping is a CSS excluded_selector; the relaxed retry drops it.
+    assert "excluded_selector" in calls[0]
+    assert "excluded_selector" not in calls[1]
     assert calls[1]["excluded_tags"] == ["script", "style"]
 
 
@@ -137,8 +134,8 @@ async def test_crawl_page_retries_relaxed_config_when_strict_result_is_thin(
 
     assert result.word_count >= 100
     assert len(calls) == 2
-    assert "el.remove()" in calls[0]["wait_for"]
-    assert "wait_for" not in calls[1]
+    assert "excluded_selector" in calls[0]
+    assert "excluded_selector" not in calls[1]
     assert calls[1]["excluded_tags"] == ["script", "style"]
 
 
@@ -171,7 +168,7 @@ async def test_crawl_site_recovers_thin_bulk_pages_with_relaxed_retry(
     ) -> dict[str, Any]:
         params = payload["crawler_config"]["params"]
         bulk_configs.append(params)
-        relaxed = "wait_for" not in params
+        relaxed = "excluded_selector" not in params
         return {
             "results": [
                 {
@@ -196,8 +193,8 @@ async def test_crawl_site_recovers_thin_bulk_pages_with_relaxed_retry(
     assert work.word_count >= 100  # recovered, not the 1-word strict result
     # Strict bulk fetch + one relaxed retry over the thin page.
     assert len(bulk_configs) == 2
-    assert "el.remove()" in bulk_configs[0]["wait_for"]
-    assert "wait_for" not in bulk_configs[1]
+    assert "excluded_selector" in bulk_configs[0]
+    assert "excluded_selector" not in bulk_configs[1]
 
 
 @pytest.mark.asyncio
@@ -228,7 +225,7 @@ async def test_crawl_site_discovers_links_from_recovered_bulk_pages(
         urls = payload["urls"]
         submitted_batches.append(urls)
         params = payload["crawler_config"]["params"]
-        relaxed = "wait_for" not in params
+        relaxed = "excluded_selector" not in params
 
         if urls == ["https://portfolio.example/work"] and not relaxed:
             return {

@@ -286,7 +286,7 @@ def _crawl_sync_error(row: Mapping[str, Any]) -> str | None:
     """Return the stable error code exposed to polling callers."""
     if row.get("error"):
         return str(row["error"])
-    if row.get("status") != _FAILED_PARTIAL_STATUS:
+    if row.get("status") not in (_FAILED_PARTIAL_STATUS, "failed"):
         return None
 
     summary = row.get("error_summary")
@@ -297,7 +297,7 @@ def _crawl_sync_error(row: Mapping[str, Any]) -> str | None:
             return _FAILED_PARTIAL_STATUS
     if isinstance(summary, Mapping) and summary.get("reason"):
         return str(summary["reason"])
-    return _FAILED_PARTIAL_STATUS
+    return str(row["status"])
 
 
 @router.get(
