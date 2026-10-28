@@ -308,7 +308,7 @@ jobs:
             # SPEC-INFRA-CONTAINER-HYGIENE-001 REQ-3
             # SPEC-INFRA-AUTO-ROLLBACK-001: deploys the exact sha, rolls back on a red gate.
             test -x /opt/klai/scripts/deploy-with-rollback.sh
-            /opt/klai/scripts/deploy-with-rollback.sh knowledge-ingest ghcr.io/getklai/knowledge-ingest:${{ github.sha }} --probe http://knowledge-ingest:8000/health
+            /opt/klai/scripts/deploy-with-rollback.sh knowledge-ingest ghcr.io/getklai/knowledge-ingest:${{ github.sha }} --probe http://knowledge-ingest:8000/health --error-watch 300
 
       # SPEC-INFRA-AUTO-ROLLBACK-001 S4: hand the rollback report to
       # ci-failure-notice.yml. The report file stays on core-01 between runs, so
