@@ -102,9 +102,16 @@ jobs:
           echo "retry helper ok"
 
       - name: Sync hook files to core-01
+        id: sync
         run: |
+          set -o pipefail
           source "$RUNNER_TEMP/ssh-retry.sh"
-          retry rsync -av deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/
+          # -i itemizes every change; a line starting with >f or cf is a file
+          # whose content was sent (attribute-only and directory lines are not).
+          retry rsync -ai deploy/litellm/ klai@${{ secrets.CORE01_HOST }}:/opt/klai/litellm/ | tee "$RUNNER_TEMP/rsync.log"
+          changed=$(grep -cE '^[>c]f' "$RUNNER_TEMP/rsync.log" || true)
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "hook files with new content: $changed"
           # SPEC-SEC-SERVICE-AUTH-002 removed the vendored ZitadelTokenClient;
           # the rsync above has no --delete, so drop the now-orphaned host file.
           retry ssh klai@${{ secrets.CORE01_HOST }} 'rm -f /opt/klai/litellm/klai_service_auth.py'
@@ -134,10 +141,23 @@ jobs:
       # Python modules are bind-mounted explicitly, so a hook-only deploy must
       # not recreate the container against a stale compose file that does not
       # expose the new module at /app.
+      #
+      # Only when a hook file actually changed. This workflow also runs after
+      # every green compose sync (since #2118), and on 2026-10-28 three runs in
+      # a row recreated litellm with nothing new on disk: every recreate is a
+      # minute of "LLM connection error" for every consumer, and one of them
+      # rolled knowledge-ingest back on its error watch. With no changed file,
+      # the plain `up -d` still recreates when the compose definition of
+      # litellm changed (image, env, mounts) and is a no-op otherwise.
       - name: Recreate LiteLLM container
         run: |
           source "$RUNNER_TEMP/ssh-retry.sh"
-          retry ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh --force-recreate litellm"
+          if [ "${{ steps.sync.outputs.changed }}" != 0 ]; then
+            retry ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh --force-recreate litellm"
+          else
+            echo "no hook file changed; recreating only if the compose definition of litellm did"
+            retry ssh klai@${{ secrets.CORE01_HOST }} "/opt/klai/scripts/compose-up.sh litellm"
+          fi
 
       - name: Smoke LiteLLM hook imports
         run: |
