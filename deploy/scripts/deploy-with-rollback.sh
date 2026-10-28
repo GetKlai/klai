@@ -87,14 +87,19 @@ done
 # The ssh step starts in the deploy user's home directory, and `docker compose
 # ps` finds the stack from the working directory.
 cd "$KLAI_DIR" || exit 1
-if ! command -v flock >/dev/null 2>&1; then
-    echo "ERROR: flock not found; refusing to deploy $SERVICE without the per-service lock" >&2
-    exit 1
-fi
-exec 9>"$LOCK_DIR/klai-deploy-$SERVICE.lock"
-if ! flock -w "$LOCK_WAIT" 9; then
-    echo "ERROR: another deploy of $SERVICE held $LOCK_DIR/klai-deploy-$SERVICE.lock for ${LOCK_WAIT}s; not starting" >&2
-    exit 1
+# KLAI_DEPLOY_LOCK_HELD=1: the caller (deploy-portal-api.sh) already holds this
+# service's lock and must keep it across its own steps; taking it again here
+# would wait on the parent forever.
+if [[ "${KLAI_DEPLOY_LOCK_HELD:-}" != 1 ]]; then
+    if ! command -v flock >/dev/null 2>&1; then
+        echo "ERROR: flock not found; refusing to deploy $SERVICE without the per-service lock" >&2
+        exit 1
+    fi
+    exec 9>"$LOCK_DIR/klai-deploy-$SERVICE.lock"
+    if ! flock -w "$LOCK_WAIT" 9; then
+        echo "ERROR: another deploy of $SERVICE held $LOCK_DIR/klai-deploy-$SERVICE.lock for ${LOCK_WAIT}s; not starting" >&2
+        exit 1
+    fi
 fi
 COMPOSE_TAG="${COMPOSE_TAG:-${IMAGE_REF%:*}:latest}"
 COMMIT="${GITHUB_SHA:-${IMAGE_REF##*:}}"

@@ -32,11 +32,14 @@ echo "/dev/md2 456519844 455471268 1048576 100% /"
 echo "/dev/md2 456519844 455471268 1048576 100% /"
 echo "/dev/md2 456519844 455471268 1048576 100% /"
 STUB
-chmod +x "$TMP/bin/docker" "$TMP/bin/df"
+# The deploy lock comes after the guard; a pass-through keeps the third case
+# reaching docker on hosts without flock(1).
+printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/bin/flock"
+chmod +x "$TMP/bin/docker" "$TMP/bin/df" "$TMP/bin/flock"
 
 set +e
-PATH="$TMP/bin:$PATH" KLAI_COMPOSE_DIR="$COMPOSE_DIR" \
-    bash "$SCRIPT" >"$TMP/out" 2>&1
+PATH="$TMP/bin:$PATH" KLAI_COMPOSE_DIR="$COMPOSE_DIR" KLAI_DEPLOY_LOCK_DIR="$TMP" \
+    bash "$SCRIPT" ghcr.io/getklai/portal-api:0123abc >"$TMP/out" 2>&1
 rc=$?
 set -e
 
@@ -66,8 +69,8 @@ echo "/dev/md3 456519844 455471268 2097152 100% /var/lib/containerd"
 STUB
 
 set +e
-PATH="$TMP/bin:$PATH" KLAI_COMPOSE_DIR="$COMPOSE_DIR" \
-    bash "$SCRIPT" >"$TMP/out2" 2>&1
+PATH="$TMP/bin:$PATH" KLAI_COMPOSE_DIR="$COMPOSE_DIR" KLAI_DEPLOY_LOCK_DIR="$TMP" \
+    bash "$SCRIPT" ghcr.io/getklai/portal-api:0123abc >"$TMP/out2" 2>&1
 rc=$?
 set -e
 
@@ -88,8 +91,8 @@ echo "/dev/md2 456519844 403000000 53519844 89% /"
 STUB
 
 set +e
-PATH="$TMP/bin:$PATH" KLAI_COMPOSE_DIR="$COMPOSE_DIR" \
-    bash "$SCRIPT" >"$TMP/out3" 2>&1
+PATH="$TMP/bin:$PATH" KLAI_COMPOSE_DIR="$COMPOSE_DIR" KLAI_DEPLOY_LOCK_DIR="$TMP" \
+    bash "$SCRIPT" ghcr.io/getklai/portal-api:0123abc >"$TMP/out3" 2>&1
 set -e
 
 if ! [ -f "$TMP/docker-was-called" ]; then

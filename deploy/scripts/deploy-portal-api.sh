@@ -1,16 +1,45 @@
 #!/usr/bin/env bash
 # Canonical portal-api production deploy.
 #
-# Runs schema work from the freshly pulled image before replacing the live app
-# container. If Alembic or post-deploy SQL fails, the old portal-api container
-# keeps serving traffic.
+# Usage: deploy-portal-api.sh ghcr.io/getklai/portal-api:<git sha>
+#
+# Runs schema work from the new image before replacing the live app container.
+# If Alembic or post-deploy SQL fails, the old portal-api container keeps
+# serving traffic. The container swap itself goes through
+# deploy-with-rollback.sh (SPEC-INFRA-AUTO-ROLLBACK-001 S2), which puts the
+# previous image back when compose-up.sh or the /health probe is red.
+#
+# Rule R3: that rollback is image-only. It never runs `alembic downgrade` and
+# never undoes post-deploy SQL, so the previous image runs on the newer schema.
+# The expand-then-contract check (scripts/check-expand-contract.py) keeps
+# destructive migrations out of PRs that change application code. It cannot
+# see the other half: a contract migration shipped on its own still runs while
+# the previous release serves, so deploying one requires the release that
+# stopped using the column to be live already. That is a review rule, not CI.
+#
+# Exit codes are deploy-with-rollback.sh's (0 deployed, 3 rolled_back,
+# 4 rollback_failed); 1 for anything that failed before the swap, in which case
+# the compose tag points at the running image again, or for a red OIDC smoke
+# check. That check runs after a green swap and is signal only: it does not roll
+# back. Login breakage is the E2E-triggered rollback's job (spec section 6).
 
 set -euo pipefail
 
-IMAGE="${KLAI_PORTAL_API_IMAGE:-ghcr.io/getklai/portal-api:latest}"
+if [[ $# -ne 1 || "$1" != *:* || "$1" == *:latest ]]; then
+    echo "usage: ${0##*/} <image-ref-with-sha>   (rule R1: the exact sha, never :latest)" >&2
+    exit 1
+fi
+IMAGE="$1"
+# The tag deploy/docker-compose.yml runs portal-api from.
+COMPOSE_TAG="${IMAGE%:*}:latest"
 COMPOSE_DIR="${KLAI_COMPOSE_DIR:-/opt/klai}"
 POSTGRES_CONTAINER="${KLAI_POSTGRES_CONTAINER:-klai-core-postgres-1}"
-PORTAL_CONTAINER="${KLAI_PORTAL_CONTAINER:-klai-core-portal-api-1}"
+# Installed next to this script, in /opt/klai/scripts on core-01.
+DEPLOY_WITH_ROLLBACK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deploy-with-rollback.sh"
+# The same per-service lock deploy-with-rollback.sh uses; held here from before
+# the compose tag moves until the swap is done.
+LOCK_FILE="${KLAI_DEPLOY_LOCK_DIR:-/tmp}/klai-deploy-portal-api.lock"
+LOCK_WAIT="${KLAI_DEPLOY_LOCK_WAIT:-600}"
 
 cd "$COMPOSE_DIR"
 
@@ -49,21 +78,52 @@ if [[ -f .env ]]; then
     source .env
 fi
 
+# A second deploy waits here instead of moving the compose tag under this one.
+exec 9>"$LOCK_FILE"
+if ! flock -w "$LOCK_WAIT" 9; then
+    echo "ERROR: another portal-api deploy held $LOCK_FILE for ${LOCK_WAIT}s; not starting" >&2
+    exit 1
+fi
+
+tmp_dir=""
+extract_ctr=""
+# Set while the compose tag points at the new image but nothing serves it yet.
+restore_image=""
+cleanup() {
+    local rc=$?
+    if [[ "$rc" -ne 0 && -n "$restore_image" ]]; then
+        # Otherwise the next recreate (an env-drift sweep, a compose sync) would
+        # start the new image on a schema that did not finish migrating.
+        if docker tag "$restore_image" "$COMPOSE_TAG"; then
+            echo "Deploy failed before the swap; $COMPOSE_TAG points at the running image $restore_image again." >&2
+        else
+            echo "ERROR: could not point $COMPOSE_TAG back at the running image $restore_image; it still names $IMAGE." >&2
+        fi
+    fi
+    if [[ -n "$extract_ctr" ]]; then
+        docker rm -f "$extract_ctr" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$tmp_dir" ]]; then
+        rm -rf "$tmp_dir"
+    fi
+}
+trap cleanup EXIT
+
 echo "Pulling ${IMAGE}..."
 docker pull "$IMAGE"
+# `compose run` below takes the image from the compose tag, so point it at the
+# new image first. deploy-with-rollback.sh records the previous image from the
+# running container, not from this tag, so the way back is unaffected.
+running_ctr="$(docker compose ps -q portal-api | head -n1)"
+if [[ -n "$running_ctr" ]]; then
+    restore_image="$(docker inspect --format '{{.Image}}' "$running_ctr")"
+fi
+docker tag "$IMAGE" "$COMPOSE_TAG"
 
 echo "Running portal-api Alembic migrations from the new image..."
 docker compose run --rm --no-deps --entrypoint alembic portal-api upgrade head
 
 tmp_dir="$(mktemp -d)"
-extract_ctr=""
-cleanup() {
-    if [[ -n "$extract_ctr" ]]; then
-        docker rm -f "$extract_ctr" >/dev/null 2>&1 || true
-    fi
-    rm -rf "$tmp_dir"
-}
-trap cleanup EXIT
 
 echo "Extracting post-deploy SQL from the new image..."
 extract_ctr="$(docker create --entrypoint sh "$IMAGE" -c 'true')"
@@ -97,21 +157,16 @@ while IFS= read -r sql_file; do
 done < <(find "$tmp_dir/versions" -maxdepth 1 -name 'post_deploy_*.sql' | sort)
 
 echo "Recreating portal-api..."
-/opt/klai/scripts/compose-up.sh portal-api
-
-echo "Waiting for portal-api to serve /health..."
-for i in $(seq 1 30); do
-    if docker exec "$PORTAL_CONTAINER" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=2)" >/dev/null 2>&1; then
-        echo "portal-api health OK"
-        break
-    fi
-    if [[ "$i" -eq 30 ]]; then
-        echo "portal-api health check failed" >&2
-        docker logs --tail=200 "$PORTAL_CONTAINER" >&2 || true
-        exit 1
-    fi
-    sleep 2
-done
+rc=0
+KLAI_DEPLOY_LOCK_HELD=1 "$DEPLOY_WITH_ROLLBACK" portal-api "$IMAGE" --probe http://portal-api:8010/health || rc=$?
+# 0: the new image serves. 3 and 4: the helper already pointed the tag at the
+# previous image, or tried to. Only 1 (helper changed nothing) still needs ours.
+if [[ "$rc" -ne 1 ]]; then
+    restore_image=""
+fi
+if [[ "$rc" -ne 0 ]]; then
+    exit "$rc"
+fi
 
 oidc_status="$(curl -sS -o /dev/null -w '%{http_code}' https://my.getklai.com/api/auth/oidc/start)"
 if [[ "$oidc_status" != "302" ]]; then

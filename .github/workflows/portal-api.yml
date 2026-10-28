@@ -113,6 +113,15 @@ jobs:
           fi
           uv run python scripts/check_migration_post_deploy.py $CHANGED
 
+      # SPEC-INFRA-AUTO-ROLLBACK-001 R3: an automatic rollback runs the previous
+      # image on the newer schema and never runs `alembic downgrade`. A migration
+      # that drops, renames, retypes or tightens to NOT NULL therefore ships
+      # without application code, after the release that stopped using it.
+      - name: Expand-then-contract migrations
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: python3 "$GITHUB_WORKSPACE/scripts/check-expand-contract.py" "$BASE_SHA" klai-portal/backend/alembic/versions klai-portal/backend/app
+
       - name: Test (pytest)
         run: uv run pytest -q --tb=short
 
@@ -678,6 +687,19 @@ jobs:
       # schema work from the freshly pulled image while the old API is still
       # serving traffic, then recreate the app container only after the DB is at
       # the expected shape.
+      #
+      # SPEC-INFRA-AUTO-ROLLBACK-001 S2: deploys the exact sha; the container swap
+      # goes through deploy-with-rollback.sh (installed by deploy-compose.yml),
+      # which puts the previous image back on a red gate. Migrations and
+      # post-deploy SQL stay applied (rule R3).
+      #
+      # Start time of the deploy, so the rollback report fetched afterwards can
+      # be told apart from one left by an earlier attempt of the same commit.
+      - name: Mark deploy start
+        id: deploy-start
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.freshness.outputs.current == 'true'
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to core-01
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.freshness.outputs.current == 'true'
         uses: appleboy/ssh-action@v1
@@ -687,8 +709,49 @@ jobs:
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           script: |
             set -e
+            test -x /opt/klai/scripts/deploy-with-rollback.sh
             chmod +x /opt/klai/scripts/deploy-portal-api.sh
-            /opt/klai/scripts/deploy-portal-api.sh
+            /opt/klai/scripts/deploy-portal-api.sh ghcr.io/getklai/portal-api:${{ github.sha }}
+
+      # SPEC-INFRA-AUTO-ROLLBACK-001 S4: hand the rollback report to
+      # ci-failure-notice.yml. The report file stays on core-01 between runs, so
+      # only one written by this attempt counts (this commit, written after the
+      # deploy step started); a green deploy, or one that never reached the
+      # script, leaves no artifact.
+      - name: Fetch rollback report
+        id: rollback-report
+        if: always() && github.event_name == 'push'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CORE01_HOST }}
+          username: klai
+          key: ${{ secrets.CORE01_DEPLOY_KEY }}
+          capture_stdout: true
+          script: cat /opt/klai/deploy-reports/portal-api.json 2>/dev/null || true
+
+      - name: Keep rollback report
+        continue-on-error: true
+        if: always() && github.event_name == 'push'
+        env:
+          REPORT: ${{ steps.rollback-report.outputs.stdout }}
+          STARTED: ${{ steps.deploy-start.outputs.at }}
+        run: |
+          [ -n "$STARTED" ] || exit 0
+          report="$(printf '%s\n' "$REPORT" | grep -m1 '^{' || true)"
+          if printf '%s' "$report" | jq -e --arg sha "$GITHUB_SHA" --arg since "$STARTED" '.commit == $sha and .ts >= $since and .outcome != "deployed"' >/dev/null 2>&1; then
+            printf '%s\n' "$report" > rollback-report.json
+          fi
+
+      - name: Upload rollback report
+        continue-on-error: true
+        if: always() && github.event_name == 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: rollback-report
+          path: rollback-report.json
+          retention-days: 30
+          if-no-files-found: ignore
 
       # NOTE: post_deploy_a1c2d3e4f5b6.sql (REQ-2) and
       # post_deploy_b2d3e4f5a6c7_portal_templates_rls_with_check.sql (REQ-3)
