@@ -20,7 +20,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { useCreateWidget } from './-hooks'
 import type { WidgetConfig } from './-types'
-import { KbAccessEditor } from './_components/KbAccessEditor'
+import { OrgKbChecklist } from '@/components/admin/OrgKbChecklist'
 import { PageContainer } from '@/components/ui/page-container'
 
 // Create flow walks through the SAME sections the edit page exposes
@@ -348,7 +348,7 @@ function NewWidgetPage() {
             <p className="text-sm text-gray-600">
               {m.admin_widgets_wizard_kb_access_intro_widget()}
             </p>
-            <KbAccessEditor
+            <OrgKbChecklist
               value={form.kb_ids}
               onChange={(kb_ids) => setForm((p) => ({ ...p, kb_ids }))}
             />

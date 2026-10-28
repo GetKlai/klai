@@ -197,7 +197,7 @@ The actual crawl happens inside **knowledge-ingest's** crawler adapter, which us
 
 **Cookie authentication (SPEC-CRAWL-002):** gated sites are crawled by pasting browser cookies into the connector config. Cookies are applied via Crawl4AI hooks on every request.
 
-**Auth guard (SPEC-CRAWL-004):** the webcrawler wizard sets up two checks automatically when cookies are provided — a canary URL (should always return the same content when authenticated) and a `login_indicator` string (e.g. "log in to continue"). If the crawler is redirected to an auth wall mid-run, the sync fails loudly rather than silently ingesting a login page.
+**Auth guard (SPEC-CRAWL-004):** the webcrawler wizard sets up two checks automatically when cookies are provided — a canary URL (should always return the same content when authenticated) and a `login_indicator` CSS selector (tag, `#id`, `.class`, `[attr]`; no combinators). It is matched against the HTML of every fetched page before ingest. If a page matches, i.e. the crawler was redirected to an auth wall mid-run, the sync fails loudly rather than silently ingesting a login page.
 
 **Quality layers A/B/C (SPEC-CRAWL-003):** every page stores a `quality_status` derived from three independent checks:
 
@@ -214,10 +214,14 @@ The worst layer wins; `quality_status` is queryable in PostgreSQL (`crawled_page
 **Smart pipeline switching (SPEC-CRAWL-001):** the pipeline is chosen based on whether a
 CSS selector is available:
 
-| Condition | JS chrome removal | `excluded_tags` | `css_selector` | Pruning filter |
+| Condition | `excluded_selector` | `excluded_tags` | `target_elements` | Pruning filter |
 |---|---|---|---|---|
-| No selector | `_JS_REMOVE_CHROME` (semantic tags only) | nav, footer, header, aside, script, style | — | Yes (0.45) |
-| Selector present (user or stored) | disabled | `[]` | selector value | Yes (0.45) |
+| No selector | ARIA chrome roles (navigation, banner, contentinfo, complementary, search) | nav, footer, header, aside, script, style | — | Yes (0.45) |
+| Selector present (user or stored) | — | `[]` | selector value | Yes (0.45) |
+
+The crawl config carries no page JavaScript: crawl4ai 0.9.5 answers HTTP 400 to a JavaScript
+`wait_for` and to `js_code`, and the old DOM prep (chrome removal, toggle expansion) was not
+needed for content. Collapsed toggle bodies are already in the fetched DOM.
 
 **Domain selector storage:** resolved selectors are persisted per `(domain, org_id)` in
 `knowledge.crawl_domains`. On subsequent crawls for the same domain, the stored selector is
@@ -357,8 +361,10 @@ The github + notion adapters in klai-connector keep using their own
 candidates from the union of `sitemap.xml` + a one-shot BFS seed of `start_url`'s
 internal links (canonicalised, deduped, capped at `max_pages` with sitemap-priority
 on the cap). The candidate list — minus `start_url` itself, which is already
-fetched as the seed — is submitted in **one** `POST /crawl` bulk call to crawl4ai,
-whose server-side `MemoryAdaptiveDispatcher` handles concurrency. This replaces an
+fetched as the seed — is fetched with one `POST /crawl` request **per URL**, paced at
+one request per second per host (`host_pacing.py`). A multi-URL request runs through
+crawl4ai's `MemoryAdaptiveDispatcher` with 20 parallel sessions that the request cannot
+change, which on 2026-10-28 made an external host answer 429 to 71 of 244 fetches. This replaces an
 earlier design that fanned out `crawl_page` calls in an unbounded `asyncio.gather`
 loop and silently dropped ~80% of pages on `help.voys.nl` (Bug A in the SPEC's
 motivation section). A repo-wide CI lint rule

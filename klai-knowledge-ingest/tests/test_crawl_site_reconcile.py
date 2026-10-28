@@ -1217,52 +1217,6 @@ async def test_crawl_site_does_not_double_fetch_start_url(
     assert urls_submitted == ["https://example.com/page-a"]
 
 
-# ---------------------------------------------------------------------------
-# Followup PR — login_indicator_selector is propagated to the seed config.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_seed_config_carries_login_indicator(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Seed fetch MUST use the same crawler_config (incl. login_indicator) as bulk.
-
-    Regression guard: an earlier implementation used ``crawl_page(start_url)``
-    for the seed, and ``crawl_page`` builds its own config without the
-    login_indicator kwarg. That meant for auth-walled sites the seed
-    "succeeded" on the login page, the BFS link list became
-    login-form anchors, and the bulk ran into AUTH_ERROR on every URL.
-    """
-    captured_seed_config: dict[str, Any] = {}
-
-    async def _fake_seed(
-        *,
-        crawler_config: dict[str, Any],
-        **_kwargs: Any,
-    ) -> CrawlResult:
-        captured_seed_config.update(crawler_config)
-        return _seed("https://wiki.example")
-
-    monkeypatch.setattr(crawl4ai_client, "_fetch_seed_page", _fake_seed)
-    monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", lambda _base: _async_return([]))
-
-    async def _fake_post(self: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
-        request = httpx.Request("POST", url)
-        return httpx.Response(200, json={"results": []}, request=request)
-
-    with patch("httpx.AsyncClient.post", new=_fake_post):
-        await crawl4ai_client.crawl_site(
-            start_url="https://wiki.example",
-            login_indicator_selector="#loginForm",
-        )
-
-    # The seed config MUST reflect the login_indicator: build_crawl_config
-    # negates the wait_for expression with the indicator selector when set.
-    wait_for = captured_seed_config.get("wait_for", "")
-    assert "#loginForm" in wait_for, (
-        f"seed config did not propagate login_indicator_selector — wait_for was {wait_for!r}"
-    )
-
-
 def _async_return(value: Any):
     """Wrap a value in an awaitable so it can be used as an async stub return."""
 
@@ -1318,9 +1272,14 @@ async def test_crawl_site_matches_redirect_response_positionally(
         ]
     }
 
-    async def _fake_post(self: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
+    async def _fake_post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        # One URL per request: answer each with the result at its own index.
+        (requested,) = kwargs["json"]["urls"]
+        index = 0 if requested.endswith("/old-page") else 1
         request = httpx.Request("POST", url)
-        return httpx.Response(200, json=bulk_response, request=request)
+        return httpx.Response(
+            200, json={"results": [bulk_response["results"][index]]}, request=request
+        )
 
     with patch("httpx.AsyncClient.post", new=_fake_post):
         results, outcomes = await crawl4ai_client.crawl_site(
@@ -1607,12 +1566,15 @@ async def test_crawl_site_recovers_batch_via_sequential_bulk_5xx_fallback(
             "media": {},
         }
 
+    attempts: dict[str, int] = {}
+
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        urls = payload["urls"]
-        if len(urls) > 1:
+        (url,) = payload["urls"]
+        attempts[url] = attempts.get(url, 0) + 1
+        if attempts[url] <= 2:  # the plain and the stealth attempt (one URL each) fail
             # The bulk batch request — always fails wholesale with crawl4ai's
             # real, opaque production body (no diagnosable reason).
             request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
@@ -1624,7 +1586,6 @@ async def test_crawl_site_recovers_batch_via_sequential_bulk_5xx_fallback(
             raise httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
 
         # Sequential single-page recovery request.
-        (url,) = urls
         if url == "https://example.com/page-b":
             request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
             response = httpx.Response(
@@ -1675,13 +1636,16 @@ async def test_crawl_site_bulk_5xx_recovery_respects_and_logs_cap(
     monkeypatch.setattr(crawl4ai_client, "_MAX_SEQUENTIAL_RECOVERY", 1)
 
     attempted_urls: list[str] = []
+    attempts: dict[str, int] = {}
 
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        urls = payload["urls"]
-        if len(urls) > 1:
+        (url,) = payload["urls"]
+        attempts[url] = attempts.get(url, 0) + 1
+        if attempts[url] <= 2:
+            # The plain and the stealth bulk attempt (one URL each) 500.
             request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
             response = httpx.Response(
                 500,
@@ -1690,7 +1654,6 @@ async def test_crawl_site_bulk_5xx_recovery_respects_and_logs_cap(
             )
             raise httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
 
-        (url,) = urls
         attempted_urls.append(url)
         return {
             "results": [
@@ -1752,15 +1715,13 @@ async def test_crawl_site_no_sequential_recovery_on_bulk_4xx(
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
     _patch_seed(monkeypatch, _seed("https://example.com"))
 
-    single_page_calls: list[str] = []
+    requested_urls: list[str] = []
 
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        urls = payload["urls"]
-        if len(urls) == 1:
-            single_page_calls.append(urls[0])
+        requested_urls.extend(payload["urls"])
         request = httpx.Request("POST", "http://crawl4ai:11235/crawl")
         response = httpx.Response(400, json={"detail": "Bad Request"}, request=request)
         raise httpx.HTTPStatusError("crawl4ai failed", request=request, response=response)
@@ -1772,8 +1733,8 @@ async def test_crawl_site_no_sequential_recovery_on_bulk_4xx(
         max_pages=10,
     )
 
-    # No sequential single-page recovery calls were made for the bulk batch.
-    assert single_page_calls == []
+    # Each URL was requested once: no stealth retry, no sequential recovery.
+    assert sorted(requested_urls) == ["https://example.com/page-a", "https://example.com/page-b"]
     by_url = {o["url"]: o for o in outcomes}
     assert by_url["https://example.com/page-a"]["reason_code"] == FetchReasonCode.HTTP_4XX.value
     assert by_url["https://example.com/page-b"]["reason_code"] == FetchReasonCode.HTTP_4XX.value
@@ -1816,19 +1777,21 @@ async def test_crawl_site_recovers_batch_via_sequential_bulk_timeout_fallback(
             "media": {},
         }
 
+    attempts: dict[str, int] = {}
+
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        urls = payload["urls"]
-        if len(urls) > 1:
+        (url,) = payload["urls"]
+        attempts[url] = attempts.get(url, 0) + 1
+        if attempts[url] <= 2:  # the plain and the stealth attempt (one URL each) fail
             # The bulk batch request — always times out (the self-imposed
             # pacing scenario: the chunk's own mean_delay exceeded the
             # fixed httpx read timeout before a real result came back).
             raise httpx.ReadTimeout("simulated bulk timeout")
 
         # Sequential single-page recovery request.
-        (url,) = urls
         if url == "https://example.com/page-b":
             raise httpx.ReadTimeout("simulated per-url timeout")
         return {"results": [_success_page(url)]}
@@ -1874,16 +1837,18 @@ async def test_crawl_site_bulk_timeout_recovery_cap_marks_timeout_not_http_5xx(
     monkeypatch.setattr(crawl4ai_client, "_MAX_SEQUENTIAL_RECOVERY", 1)
 
     attempted_urls: list[str] = []
+    attempts: dict[str, int] = {}
 
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        urls = payload["urls"]
-        if len(urls) > 1:
+        (url,) = payload["urls"]
+        attempts[url] = attempts.get(url, 0) + 1
+        if attempts[url] <= 2:
+            # The plain and the stealth bulk attempt (one URL each) time out.
             raise httpx.ReadTimeout("simulated bulk timeout")
 
-        (url,) = urls
         attempted_urls.append(url)
         return {
             "results": [
@@ -2169,8 +2134,8 @@ async def test_bulk_5xx_is_retried_with_stealth_before_the_sequential_path(
         seen.append(payload)
         browser = payload.get("browser_config") or {}
         stealth = (browser.get("params") or {}).get("enable_stealth") is True
-        if len(payload["urls"]) > 1 and not stealth:
-            raise _opaque_500()  # plain bulk: blocked wholesale
+        if not stealth:
+            raise _opaque_500()  # plain request: blocked
         return {
             "results": [
                 {
@@ -2192,13 +2157,14 @@ async def test_bulk_5xx_is_retried_with_stealth_before_the_sequential_path(
         start_url="https://example.com", max_pages=10
     )
 
-    bulk_payloads = [p for p in seen if len(p["urls"]) > 1]
-    assert len(bulk_payloads) == 2, "one plain attempt, then exactly one stealth retry"
-    assert "enable_stealth" not in bulk_payloads[0]["browser_config"]["params"]
-    assert bulk_payloads[1]["browser_config"]["params"]["enable_stealth"] is True
-
-    # The stealth retry succeeded, so the slow per-URL path never ran.
-    assert [p for p in seen if len(p["urls"]) == 1 and p["urls"][0] != "https://example.com"] == []
+    # Every request carries one URL: one plain attempt per URL, then exactly
+    # one stealth retry per URL, and nothing after that.
+    assert all(len(p["urls"]) == 1 for p in seen)
+    plain = [p for p in seen if "enable_stealth" not in p["browser_config"]["params"]]
+    stealth = [p for p in seen if p["browser_config"]["params"].get("enable_stealth") is True]
+    assert len(plain) == 2
+    assert len(stealth) == 2
+    assert len(seen) == 4, "the stealth retry succeeded, so the slow per-URL path never ran"
     by_url = {o["url"]: o["reason_code"] for o in outcomes}
     assert by_url["https://example.com/page-a"] == FetchReasonCode.SUCCESS.value
     assert by_url["https://example.com/page-b"] == FetchReasonCode.SUCCESS.value
@@ -2824,18 +2790,20 @@ async def test_crawl_site_recovery_available_after_slow_pacing_phase(
     # _recovery_sleep stays the autouse instant no-op (tests/conftest.py) —
     # only the pre-recovery elapsed time is under test here.
 
+    attempts: dict[str, int] = {}
+
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        urls = payload["urls"]
-        if len(urls) > 1:
+        (url,) = payload["urls"]
+        attempts[url] = attempts.get(url, 0) + 1
+        if attempts[url] <= 2:  # the plain and the stealth attempt (one URL each) fail
             # Simulate the wall-clock cost of everything that happened
             # BEFORE this bulk batch's failure was even known (pacing,
             # earlier chunks, the fetch itself) -- more than the entire
             # recovery budget, on the same clock _recovery_monotonic reads.
             clock.now += 2000.0
             raise _bulk_5xx_error()
-        (url,) = urls
         return {"results": [_success_page(url)]}
 
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
@@ -2881,13 +2849,15 @@ async def test_crawl_site_recovery_time_budget_carries_over_between_batches(
 
     single_url_calls: list[str] = []
 
+    attempts: dict[str, int] = {}
+
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        urls = payload["urls"]
-        if len(urls) > 1:
+        (url,) = payload["urls"]
+        attempts[url] = attempts.get(url, 0) + 1
+        if attempts[url] <= 2:  # the plain and the stealth attempt (one URL each) fail
             raise _bulk_5xx_error()
-        (url,) = urls
         single_url_calls.append(url)
         if url == "https://example.com/page-a":
             # Discovered only via this recovered page's own links, so
@@ -2949,13 +2919,15 @@ async def test_crawl_site_recovery_stops_mid_batch_once_time_budget_genuinely_sp
 
     single_url_calls: list[str] = []
 
+    attempts: dict[str, int] = {}
+
     async def _fake_crawl_sync(
         _client: httpx.AsyncClient, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        urls = payload["urls"]
-        if len(urls) > 1:
+        (url,) = payload["urls"]
+        attempts[url] = attempts.get(url, 0) + 1
+        if attempts[url] <= 2:  # the plain and the stealth attempt (one URL each) fail
             raise _bulk_5xx_error()
-        (url,) = urls
         single_url_calls.append(url)
         return {"results": [_success_page(url)]}
 

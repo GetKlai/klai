@@ -155,9 +155,9 @@ class Settings(BaseSettings):
     # to the domain's OWN default rate limit instead of a fixed absolute
     # value, so a site with a low default and a site with a high default
     # both recover in a comparable number of clean crawls. At the default
-    # 2.0 req/s and this 0.25 fraction, the step is 0.5 req/s, so a domain
+    # 1.0 req/s and this 0.25 fraction, the step is 0.25 req/s, so a domain
     # at the 0.2 floor reaches (or clears past) the default in exactly 4
-    # clean crawls past cooldown: 0.2 -> 0.7 -> 1.2 -> 1.7 -> cleared.
+    # clean crawls past cooldown: 0.2 -> 0.45 -> 0.7 -> 0.95 -> cleared.
     crawl_rate_limit_recovery_step_fraction: float = Field(
         default=0.25,
         validation_alias=AliasChoices("KLAI_CRAWL_RATE_LIMIT_RECOVERY_STEP_FRACTION"),
@@ -268,13 +268,14 @@ class Settings(BaseSettings):
     # budget. The anti-bot settings above feed the same evaluator; the knobs
     # below configure its general failure and refusal decisions.
     #
-    # crawl_circuit_breaker_consecutive_failures: N whole-chunk failures in
-    # a row (any single success resets to zero) — 5 mirrors
-    # crawl_sequential_recovery_max_consecutive_failures's philosophy
-    # (give an intermittently-failing site room to recover) while still
-    # capping the damage of a truly dead site to a handful of chunks.
+    # crawl_circuit_breaker_consecutive_failures: N failed /crawl requests in
+    # a row (any single success resets to zero). Since 2026-10-28 a request
+    # carries one URL, so this counts consecutive failed pages; 40 keeps the
+    # old sensitivity of 5 failed requests of 8 pages each, so five slow or
+    # broken pages in a row no longer end a 500-page crawl, while a truly
+    # dead site still stops within a minute at 1 request per second.
     crawl_circuit_breaker_consecutive_failures: int = Field(
-        default=5,
+        default=40,
         validation_alias=AliasChoices("KLAI_CRAWL_CIRCUIT_BREAKER_CONSECUTIVE_FAILURES"),
     )
     # crawl_circuit_breaker_min_attempts: the ratio trigger below never

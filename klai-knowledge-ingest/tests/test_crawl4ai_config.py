@@ -12,11 +12,6 @@ and the contract surfaces in CI before live debugging is needed.
 
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
-import tempfile
-
 import pytest
 
 from knowledge_ingest.crawl4ai_config import build_crawl_config
@@ -42,8 +37,7 @@ def test_no_selector_enables_chrome_stripping() -> None:
 
     assert "target_elements" not in cfg
     assert "css_selector" not in cfg
-    # Fallback pipeline: strip known chrome so word-count wait_for fires only
-    # when real article content is present.
+    # Fallback pipeline: strip known chrome before extraction.
     assert cfg.get("excluded_tags") == [
         "nav",
         "footer",
@@ -52,10 +46,19 @@ def test_no_selector_enables_chrome_stripping() -> None:
         "script",
         "style",
     ]
-    # Chrome stripping moved into wait_for's one-time prep (crawl4ai >= 0.9
-    # forbids js_code_before_wait on network requests).
-    assert "js_code_before_wait" not in cfg
-    assert "el.remove()" in cfg["wait_for"]
+    # ARIA chrome is removed server-side by a CSS excluded_selector, which
+    # crawl4ai 0.9.5 accepts from untrusted callers (JS is refused).
+    assert cfg["excluded_selector"] == (
+        '[role="navigation"],[role="banner"],[role="contentinfo"],'
+        '[role="complementary"],[role="search"]'
+    )
+    assert "wait_for" not in cfg
+
+
+def test_selector_pipeline_keeps_the_page_chrome() -> None:
+    cfg = build_crawl_config(selector="main")
+
+    assert "excluded_selector" not in cfg
 
 
 def test_build_crawl_config_never_sets_ignored_pacing_keys() -> None:
@@ -86,28 +89,26 @@ def test_selector_with_complex_css_is_passed_as_list() -> None:
     assert isinstance(cfg["target_elements"], list)
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+_JS_PREFIXES = ("js:", "()", "function")
+_JS_CONFIG_KEYS = ("js_code", "js_code_before_wait", "c4a_script", "init_scripts")
+
+
+def _js_strings(node: object, path: str = "") -> list[str]:
+    if isinstance(node, dict):
+        return [hit for k, v in node.items() for hit in _js_strings(v, f"{path}/{k}")]
+    if isinstance(node, list):
+        return [hit for i, v in enumerate(node) for hit in _js_strings(v, f"{path}/{i}")]
+    if isinstance(node, str) and node.lstrip().startswith(_JS_PREFIXES):
+        return [path]
+    return []
+
+
 @pytest.mark.parametrize("selector", [None, "article.main"])
-def test_wait_for_predicate_is_valid_javascript(selector) -> None:
-    """The wait_for prep predicate must stay parseable JS — crawl4ai evaluates
-    it in the page context, and a syntax error silently degrades every crawl."""
-    cfg = build_crawl_config(selector=selector, login_indicator_selector=".login-wall")
-    js = cfg["wait_for"]
-    assert js.startswith("js:")
-    node = shutil.which("node")
-    assert node is not None
-    # A real temp file, not /dev/stdin — node --check on a stdin pipe fails
-    # with ENOENT on Linux CI runners (it reopens /proc/<pid>/fd/pipe:[...]).
-    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
-        fh.write(f"const f = {js[3:]};")
-        path = fh.name
-    try:
-        proc = subprocess.run(  # noqa: S603 — fixed argv, test-only syntax check
-            [node, "--check", path],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        assert proc.returncode == 0, proc.stderr
-    finally:
-        os.unlink(path)
+def test_crawler_config_carries_no_javascript_so_crawl4ai_0_9_5_accepts_it(selector) -> None:
+    """crawl4ai 0.9.5 answers HTTP 400 "a JavaScript wait_for is not permitted
+    from an untrusted request" to a config with page JS; from 2026-10-23 that
+    ended every nightly crawl with 0 pages."""
+    cfg = build_crawl_config(selector=selector)
+
+    assert _js_strings(cfg) == []
+    assert not [key for key in _JS_CONFIG_KEYS if key in cfg]

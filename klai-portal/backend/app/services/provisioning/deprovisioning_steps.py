@@ -955,6 +955,11 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
     # entirely, so G2 is moot post-AUTH-009 and that table is intentionally
     # NOT in this list.
     await db.execute(text("DELETE FROM portal_join_requests WHERE org_id = :id"), {"id": state.org_id})
+    # SPEC-SLACK-001 — portal_slack_installations cascades from both portal_orgs
+    # and partner_api_keys, but its partner_api_keys FK is only added by the
+    # post-deploy SQL, so an explicit DELETE keeps the outcome independent of
+    # whether that script ran. Cat-D: runs under the tenant context set in step 0.
+    await db.execute(text("DELETE FROM portal_slack_installations WHERE org_id = :id"), {"id": state.org_id})
 
     # 3. Hard-delete the org row — cascades the auto-CASCADE tables (connectors,
     #    widgets, feedback_events, retrieval_gaps, partner_api_keys) and SET NULLs

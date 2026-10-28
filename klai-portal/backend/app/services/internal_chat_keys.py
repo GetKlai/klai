@@ -3,7 +3,7 @@
 A key with ``internal_chat`` answers as whichever employee the request names
 (``app.services.chat_profile``), personal knowledge bases included, so only
 provisioning mints one: the org admin API refuses it
-(``admin_api_keys._reject_internal_chat``). It carries no knowledge-base rows,
+(``admin_api_keys._reject_managed_key``). It carries no knowledge-base rows,
 because the employee's own profile decides the scope of every turn.
 """
 

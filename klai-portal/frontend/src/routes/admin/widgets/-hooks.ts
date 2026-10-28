@@ -7,7 +7,6 @@ import type {
   WidgetDetailResponse,
   CreateWidgetRequest,
   UpdateWidgetRequest,
-  OrgKnowledgeBase,
   WidgetStats,
   StatsPeriod,
   HubSpotIntegrationStatus,
@@ -211,16 +210,5 @@ export function useFetchTicketPipelines(widgetId: string) {
         method: 'POST',
         body: JSON.stringify(serviceKey ? { service_key: serviceKey } : {}),
       }),
-  })
-}
-
-export function useOrgKnowledgeBases() {
-  const auth = useAuth()
-
-  return useQuery({
-    queryKey: ['app-knowledge-bases-for-widgets'],
-    queryFn: async () =>
-      apiFetch<{ knowledge_bases: OrgKnowledgeBase[] }>('/api/app/knowledge-bases?owner_type=org', ),
-    enabled: auth.isAuthenticated,
   })
 }

@@ -440,3 +440,38 @@ def test_count_rate_limit_observations_success_is_clean() -> None:
     assert result.congestion_count == 0
     assert result.clean_count == 2
     assert result.attempted_count == 2
+
+
+def test_a_stored_rate_above_the_default_halves_from_the_rate_in_effect():
+    """Since 2026-10-28 the adapter caps a stored rate at the job's default, so a
+    2.0 left by the former default runs at 1.0; a 429 must then halve 1.0, not
+    the stored 2.0 (which would persist 1.0 and slow nothing down)."""
+    state = DomainRateLimitState(rate_limit=2.0, clean_streak=0, last_congestion_at=None)
+    now = datetime(2026, 10, 28, 16, 0, tzinfo=UTC)
+
+    updated = compute_domain_rate_limit_update(
+        state,
+        had_congestion=True,
+        default_rate_limit=1.0,
+        step_fraction=0.25,
+        cooldown=timedelta(hours=6),
+        now=now,
+    )
+
+    assert updated is not None and updated.rate_limit == 0.5
+
+
+def test_the_floor_never_raises_a_rate_above_the_rate_in_effect():
+    state = DomainRateLimitState(rate_limit=None, clean_streak=0, last_congestion_at=None)
+    now = datetime(2026, 10, 28, 16, 0, tzinfo=UTC)
+
+    updated = compute_domain_rate_limit_update(
+        state,
+        had_congestion=True,
+        default_rate_limit=0.1,
+        step_fraction=0.25,
+        cooldown=timedelta(hours=6),
+        now=now,
+    )
+
+    assert updated is not None and updated.rate_limit <= 0.1

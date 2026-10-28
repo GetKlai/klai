@@ -94,14 +94,15 @@ def _disable_real_pacing_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_five_consecutive_plain_5xx_chunks_stop_the_crawl(
+async def test_a_site_that_fails_every_request_stops_at_the_ratio_trigger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Neither RATE_LIMITED nor BLOCKED_ANTI_BOT ever appears here — a
     plain 503 with no marker classifies HTTP_5XX, which trips neither
-    existing mechanism. Ten URLs, every one 503s: the breaker must stop
-    sending after the 5th consecutive failure, leaving 5 URLs never
-    attempted."""
+    existing mechanism. Fifteen URLs, every one 503s: once min_attempts (10)
+    is reached the failure ratio (1.0 > 0.5) aborts, leaving 5 URLs never
+    attempted. The consecutive trigger counts single-URL requests since
+    2026-10-28 and sits at 40, so it never fires before the ratio does."""
     _disable_real_pacing_sleep(monkeypatch)
     calls: list[list[str]] = []
 
@@ -111,7 +112,7 @@ async def test_five_consecutive_plain_5xx_chunks_stop_the_crawl(
 
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
 
-    urls = [f"https://example.com/{i}" for i in range(10)]
+    urls = [f"https://example.com/{i}" for i in range(15)]
     fetch = await _chunked_bulk_fetch(
         urls=urls,
         crawler_config={},
@@ -119,15 +120,46 @@ async def test_five_consecutive_plain_5xx_chunks_stop_the_crawl(
         rate_limit=_ONE_URL_PER_CHUNK_RATE_LIMIT,
     )
 
-    assert len(calls) == 5
+    assert len(calls) == 10
     assert fetch.stopped_early is True
     assert fetch.circuit_breaker_triggered is True
     assert fetch.circuit_breaker_slowdown_triggered is False
-    assert fetch.not_attempted == urls[5:]
+    assert fetch.not_attempted == urls[10:]
     assert fetch.not_attempted_reason_code == FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value
     # Give-up semantics, same as a confirmed block — crawl_site must not
     # retry these at a slower pace (see the crawl_site-level test below).
     assert fetch.stop_trigger_reason_code == FetchReasonCode.BLOCKED_ANTI_BOT.value
+
+
+@pytest.mark.asyncio
+async def test_five_failed_pages_in_a_row_do_not_end_a_crawl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With one URL per request a request failure is a page failure. Five
+    slow or broken pages in a row on a healthy site must not abort the
+    crawl, as they did when the consecutive threshold (5) still counted
+    requests of 8 pages each."""
+    _disable_real_pacing_sleep(monkeypatch)
+    calls: list[list[str]] = []
+
+    async def _fake_crawl_sync(_client: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append(list(payload["urls"]))
+        page = _server_error_page if len(calls) <= 5 else _ok_page
+        return {"results": [page(u) for u in payload["urls"]]}
+
+    monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
+
+    urls = [f"https://example.com/{i}" for i in range(8)]
+    fetch = await _chunked_bulk_fetch(
+        urls=urls,
+        crawler_config={},
+        cookies=None,
+        rate_limit=_ONE_URL_PER_CHUNK_RATE_LIMIT,
+    )
+
+    assert len(calls) == 8
+    assert fetch.circuit_breaker_triggered is False
+    assert fetch.not_attempted == []
 
 
 @pytest.mark.asyncio
@@ -297,7 +329,7 @@ async def test_circuit_breaker_stop_gives_up_immediately_in_crawl_site(
     _disable_real_pacing_sleep(monkeypatch)
 
     async def _fake_sitemap(_base: str) -> list[str]:
-        return [f"https://example.com/{i}" for i in range(10)]
+        return [f"https://example.com/{i}" for i in range(15)]
 
     monkeypatch.setattr(crawl4ai_client, "_fetch_sitemap_urls", _fake_sitemap)
 
@@ -334,8 +366,9 @@ async def test_circuit_breaker_stop_gives_up_immediately_in_crawl_site(
     for outcome in outcomes:
         by_reason[outcome["reason_code"]] = by_reason.get(outcome["reason_code"], 0) + 1
 
-    assert by_reason.get(FetchReasonCode.HTTP_5XX.value, 0) == 5
+    assert by_reason.get(FetchReasonCode.HTTP_5XX.value, 0) == 10
     assert by_reason.get(FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value, 0) == 5
-    # Only the 5 real 503 attempts were ever sent to the failing batch —
-    # crawl_site did not retry the abandoned tail at a slower pace.
-    assert sum(len(c) for c in calls) == 5
+    # Only the 10 real 503 attempts (the ratio trigger's min_attempts) were
+    # ever sent to the failing batch; crawl_site did not retry the abandoned
+    # tail at a slower pace.
+    assert sum(len(c) for c in calls) == 10

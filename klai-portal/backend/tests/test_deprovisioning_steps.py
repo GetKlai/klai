@@ -1365,13 +1365,13 @@ class TestFinalizePostgresDelete:
 
     @pytest.mark.asyncio
     async def test_execute_called_for_each_non_cascading_child_table(self) -> None:
-        """db.execute called exactly 12 times: 11 explicit child DELETEs + 1 portal_orgs DELETE.
+        """db.execute called exactly 13 times: 12 explicit child DELETEs + 1 portal_orgs DELETE.
 
         Order MUST be: portal_knowledge_bases, portal_docs_libraries,
         portal_kb_tombstones, vexa_meetings, portal_group_products,
         portal_groups, portal_templates,
         portal_user_products, portal_user_seat_history, portal_users,
-        portal_join_requests, portal_orgs.
+        portal_join_requests, portal_slack_installations, portal_orgs.
 
         This list is the source of truth for the FK audit. If a new non-cascading
         FK is added to portal_orgs, this test must be updated AND the step's
@@ -1385,7 +1385,7 @@ class TestFinalizePostgresDelete:
         - Added `portal_user_seat_history` (PRICING-PER-USER-001) before portal_users
 
         SPEC-INFRA-TENANT-DELETE-002 G1 added portal_join_requests just
-        before portal_orgs.
+        before portal_orgs. SPEC-SLACK-001 added portal_slack_installations.
         """
         state = _make_state(org_id=42, slug="acme")
 
@@ -1401,7 +1401,7 @@ class TestFinalizePostgresDelete:
 
             await _finalize_postgres_delete(state)
 
-        assert state.db.execute.await_count == 12
+        assert state.db.execute.await_count == 13
 
         # Verify the table-name + order of every executed DELETE.
         expected_tables_in_order = [
@@ -1416,6 +1416,7 @@ class TestFinalizePostgresDelete:
             "portal_user_seat_history",
             "portal_users",
             "portal_join_requests",
+            "portal_slack_installations",
             "portal_orgs",
         ]
         actual_tables = []

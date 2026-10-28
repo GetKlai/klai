@@ -184,6 +184,46 @@ async def test_partner_api_gate_is_skipped_for_the_internal_chat_key_only(permis
             assert exc.value.status_code == 403
 
 
+_SLACK_PERMISSIONS = {"slack": True, "chat": True, "feedback": True, "knowledge_append": False, "general_chat": False}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("permissions", "unlocked", "refused_feature"),
+    [
+        (_SLACK_PERMISSIONS, ["slack"], None),
+        (_SLACK_PERMISSIONS, ["partner_api"], "slack"),
+        ({"chat": True}, ["slack"], "partner_api"),
+    ],
+)
+async def test_slack_key_is_gated_by_the_slack_unlock_instead_of_partner_api(permissions, unlocked, refused_feature):
+    """SPEC-SLACK-001 D10: Slack is a finished product, not the partner integration product."""
+    from app.api.partner_dependencies import get_partner_key
+
+    db = AsyncMock()
+    setup_db(
+        db,
+        [
+            FakeResult([FakeKeyRow(permissions=permissions)]),
+            FakeResult([FakeOrg(platform_unlocked_features=unlocked)]),
+            FakeResult(),  # set_tenant
+            FakeResult([(FakeKbAccessRow(), SimpleNamespace(id=10, owner_type="org", owner_user_id=None))]),
+            FakeResult(),
+        ],
+    )
+
+    patches = _partner_patches()
+    with patches[0], patches[1], patches[2], patches[3]:
+        if refused_feature is None:
+            result = await get_partner_key(request=_make_request(token="pk_live_" + "a" * 40), db=db)
+            assert result.kb_access == {10: "read"}
+        else:
+            with pytest.raises(HTTPException) as exc:
+                await get_partner_key(request=_make_request(token="pk_live_" + "a" * 40), db=db)
+            assert exc.value.status_code == 403
+            assert exc.value.detail == {"error_code": "feature_not_unlocked", "feature": refused_feature}
+
+
 @pytest.mark.asyncio
 async def test_valid_key_filters_other_users_personal_kb_access_at_runtime():
     """Legacy invalid personal-KB junction rows must not enter auth.kb_access."""

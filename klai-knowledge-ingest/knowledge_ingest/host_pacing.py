@@ -1,4 +1,12 @@
-"""Process-wide weighted pacing for concurrent crawls of one external host.
+"""Process-wide pacing for concurrent crawls of one external host.
+
+Every crawl4ai request carries exactly one URL, spaced ``1 / rate`` seconds
+apart per host.  On 2026-10-28 a burst of 20 URLs per request (rate x 10 s)
+made an external documentation host answer 429 to 71 of 244 fetches, although
+the average of 2 requests/s was fine: crawl4ai's Docker server fetches a
+multi-URL request through a ``MemoryAdaptiveDispatcher`` with
+``max_session_permit`` 20, which the request body cannot change, so all URLs
+of one request hit the host at once.
 
 The registry is intentionally in memory.  ``knowledge-ingest`` currently runs
 its FastAPI app and all Procrastinate workers in one Python process.  Multiple
@@ -17,12 +25,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 from knowledge_ingest.domain_selectors import extract_domain
-
-_BURST_WINDOW_SECONDS = 10.0
-# crawl4ai 0.8 rejects POST /crawl payloads containing more than 100 URLs.
-# Keep that transport ceiling next to the burst calculation that enforces it;
-# raise it only in lock-step with a verified crawl4ai schema relaxation.
-_MAX_BURST_SIZE = 100
 
 
 def ensure_single_process_host_pacing(
@@ -92,7 +94,6 @@ class _HostGate:
     rates: dict[object, float | None] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     previous_start: float | None = None
-    previous_weight: int = 0
 
     @property
     def effective_rate(self) -> float | None:
@@ -112,13 +113,11 @@ class HostPacingSession:
         self._token = token
         self._closed = False
 
-    async def acquire(self, max_weight: int) -> int:
-        """Wait for and reserve the next burst, returning its allowed URL count."""
+    async def acquire(self) -> None:
+        """Wait for and reserve the next single-URL request slot."""
         if self._closed:
             raise RuntimeError("host pacing session is closed")
-        if max_weight < 1:
-            raise ValueError("max_weight must be at least 1")
-        return await self._registry._acquire(self._gate, max_weight)
+        await self._registry._acquire(self._gate)
 
     def update_rate(self, rate_limit: float | None) -> None:
         """Change this crawl's advertised rate for every future shared grant."""
@@ -131,7 +130,7 @@ class HostPacingSession:
 
 
 class HostGateRegistry:
-    """Own one fair weighted schedule per normalized crawl host."""
+    """Own one fair request schedule per normalized crawl host."""
 
     def __init__(
         self,
@@ -163,49 +162,34 @@ class HostGateRegistry:
             if not gate.rates:
                 self._gates.pop(key, None)
 
-    async def _acquire(self, gate: _HostGate, max_weight: int) -> int:
+    async def _acquire(self, gate: _HostGate) -> None:
         # asyncio.Lock acquisition is FIFO-fair. Holding it across the pacing
         # sleep prevents a later crawl from jumping ahead, while rate updates
         # remain synchronous and can still change ``gate.rates`` during sleep.
         async with gate.lock:
-            while True:
+            while gate.previous_start is not None:
                 rate_limit = gate.effective_rate
                 if rate_limit is None:
-                    weight = min(max_weight, _MAX_BURST_SIZE)
-                    break
-
-                weight = min(max_weight, _burst_size(rate_limit))
-                if gate.previous_start is None:
                     break
 
                 elapsed = self._monotonic() - gate.previous_start
-                remaining = (gate.previous_weight / rate_limit) - elapsed
+                remaining = (1 / rate_limit) - elapsed
                 if remaining <= 0:
                     break
                 await self._sleep(remaining)
-                # Re-evaluate the effective rate and burst after sleeping: an
-                # overlapping crawl may have joined or slowed down meanwhile.
-                # When the rate did not change, the awaited sleep itself is
-                # the pacing guarantee. This also keeps the clock/sleep seam
-                # usable in tests where a no-op sleep intentionally leaves a
-                # frozen monotonic clock.
+                # Re-evaluate the effective rate after sleeping: an overlapping
+                # crawl may have joined or slowed down meanwhile. When the rate
+                # did not change, the awaited sleep itself is the pacing
+                # guarantee. This also keeps the clock/sleep seam usable in
+                # tests where a no-op sleep intentionally leaves a frozen
+                # monotonic clock.
                 if gate.effective_rate == rate_limit:
-                    weight = min(max_weight, _burst_size(rate_limit))
                     break
 
             gate.previous_start = self._monotonic()
-            gate.previous_weight = weight
-            return weight
 
 
 def _validated_rate(rate_limit: float | None) -> float | None:
     if rate_limit is not None and rate_limit <= 0:
         raise ValueError("rate_limit must be positive")
     return rate_limit
-
-
-def _burst_size(rate_limit: float) -> int:
-    return max(
-        1,
-        min(_MAX_BURST_SIZE, int(rate_limit * _BURST_WINDOW_SECONDS + 0.5)),
-    )
