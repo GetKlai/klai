@@ -88,8 +88,8 @@ vi.mock('../-hooks', () => ({
   useCreateWidget: () => ({ mutate: mutateMock, isPending: false, error: null }),
 }))
 
-vi.mock('../_components/KbAccessEditor', () => ({
-  KbAccessEditor: ({ onChange }: { onChange: (ids: number[]) => void }) => (
+vi.mock('@/components/admin/OrgKbChecklist', () => ({
+  OrgKbChecklist: ({ onChange }: { onChange: (ids: number[]) => void }) => (
     <button type="button" onClick={() => onChange([1])}>select-kb</button>
   ),
 }))

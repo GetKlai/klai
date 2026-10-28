@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 import type { WidgetDetailResponse } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
-import { KbAccessEditor } from '../KbAccessEditor'
+import { OrgKbChecklist } from '@/components/admin/OrgKbChecklist'
 
 interface Props {
   widget: WidgetDetailResponse
@@ -35,7 +35,7 @@ export function KnowledgeBasesTab({ widget }: Props) {
         <p className="text-sm text-gray-600">
           {m.admin_widgets_wizard_kb_access_intro_widget()}
         </p>
-        <KbAccessEditor value={kbIds} onChange={setKbIds} />
+        <OrgKbChecklist value={kbIds} onChange={setKbIds} />
       </section>
 
       {updateMutation.error && (

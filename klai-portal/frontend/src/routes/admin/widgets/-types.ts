@@ -182,13 +182,6 @@ export interface UpdateWidgetRequest {
   allow_any_origin?: boolean
 }
 
-export interface OrgKnowledgeBase {
-  id: number
-  name: string
-  slug: string
-  owner_type: string
-}
-
 // SPEC-WIDGET-ACTIVITY-001 - audit-trail types. Conversation list/transcript
 // types live in @/features/chat-activity (SPEC-KNOWLEDGE-ACTIVITY-001 §4.3);
 // the admin tab no longer renders them (§3).
