@@ -79,6 +79,16 @@ def test_a_bare_public_suffix_is_not_a_parent_domain() -> None:
         _validate_connector_config("web_crawler", _config({"name": "a", "value": "b", "domain": ".com"}))
 
 
+def test_a_parent_domain_without_a_leading_dot_is_host_only_and_does_not_cover_the_base_host() -> None:
+    # The crawler never sends such a cookie to app.example.com, so the wizard
+    # must not accept it as one.
+    with pytest.raises(HTTPException) as excinfo:
+        _validate_connector_config(
+            "web_crawler", _config({"name": "parent", "value": "made-up", "domain": "example.com"})
+        )
+    assert excinfo.value.status_code == 422
+
+
 def test_a_sign_in_host_must_be_a_host_name() -> None:
     with pytest.raises(HTTPException) as excinfo:
         _validate_connector_config("web_crawler", _config(hosts=["idp.example.com/oauth"]))

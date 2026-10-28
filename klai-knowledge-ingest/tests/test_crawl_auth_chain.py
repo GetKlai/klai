@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -97,3 +97,28 @@ def test_auth_probe_does_not_replay_a_sign_in_hosts_cookies_on_the_site(client: 
             "/ingest/v1/crawl/auth-probe", json={"url": "https://example.com/", "cookies": cookies}
         )
     assert {"site_session": "v1", "no_domain": "v2"} in sent
+
+
+def test_auth_chain_logs_hop_urls_without_their_query_string(client: TestClient) -> None:
+    """An identity-provider hop carries ``state`` and a callback ``code=``."""
+    routes = {
+        "https://app.example.com/start?state=s3cr": _redirect(
+            "https://idp.example.com/callback?code=abc"
+        ),
+        "https://app.example.com/login": _PAGE,
+    }
+
+    async def validate(url: str) -> SimpleNamespace:
+        if "idp" in url:
+            raise ValueError("private address")
+        return await _validated(url)
+
+    mock_logger = MagicMock()
+    with (
+        _fake_fetch(routes),
+        patch("knowledge_ingest.routes.crawl_auth_chain.logger", mock_logger),
+    ):
+        _post(client, "https://app.example.com/start?state=s3cr", validate=validate)
+    logged = repr(mock_logger.mock_calls)
+    assert "https://idp.example.com/callback" in logged
+    assert "abc" not in logged and "s3cr" not in logged

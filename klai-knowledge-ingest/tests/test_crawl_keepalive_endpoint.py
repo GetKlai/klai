@@ -730,15 +730,60 @@ class TestSignInChain:
 
     def test_the_chain_never_leaves_the_chain_hosts(self) -> None:
         """A host outside auth_chain_hosts is refused even when the jar holds
-        cookies for it; what the chain renewed before that is still kept."""
+        cookies for it, and the half-walked chain stores nothing."""
         site = _SignInSite(idp_redirect="https://evil.example.net/collect")
         tracker = {"name": "tracker", "value": "t", "domain": "evil.example.net", "path": "/"}
         body, store, _logger = self._run(site, [_WIKI_LAPSED, _IDP_VALID, tracker])
 
         assert body == {"ok": False, "reason": "redirect_left_host:evil.example.net"}
         assert all(host != "evil.example.net" for host, _cookie in site.requests)
-        jar = store.await_args.kwargs["jar"]
-        assert jar.jar_for_host("idp.example.com") == {"idp_session": "idp-rotated"}
+        store.assert_not_awaited()
+
+    def test_a_chain_that_does_not_reopen_the_page_never_overwrites_the_stored_session(
+        self,
+    ) -> None:
+        """An identity host that answers a lapsed session with its login form
+        and a fresh anonymous cookie leaves the page walled; storing that
+        cookie would replace the owner's and kill the connector."""
+
+        class _AnonymousIdp(_SignInSite):
+            def handle(self, request: httpx.Request) -> httpx.Response:
+                if request.url.host == "idp.example.com":
+                    self.requests.append((request.url.host, request.headers.get("cookie")))
+                    return httpx.Response(
+                        200,
+                        html="<form><input type=password></form>",
+                        headers=[("set-cookie", "idp_session=anon-1; Path=/; Secure")],
+                    )
+                return super().handle(request)
+
+        idp_expired = {**_IDP_VALID, "value": "idp-expired"}
+        body, store, _logger = self._run(_AnonymousIdp(), [_WIKI_LAPSED, idp_expired])
+
+        assert body["ok"] is False
+        store.assert_not_awaited()
+
+    def test_an_expired_sign_in_cookie_from_an_earlier_walk_is_neither_stored_nor_logged(
+        self,
+    ) -> None:
+        """A login page sets a short-lived state cookie; once it lapsed a
+        browser drops it, and it must not raise the expiry alert forever."""
+        state = {
+            "name": "oauth_state",
+            "value": "st-1",
+            "domain": "wiki.example.com",
+            "path": "/",
+            "expires": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+        }
+        body, store, mock_logger = self._run(_SignInSite(), [_WIKI_LAPSED, _IDP_VALID, state])
+
+        assert body == {"ok": True, "reason": None}
+        assert "oauth_state" not in [c["name"] for c in store.await_args.kwargs["jar"].cookies]
+        assert not [
+            c
+            for c in mock_logger.error.call_args_list
+            if c.args[0] == "crawl_keepalive_cookie_expiring"
+        ]
 
 
 class TestCookieExpiryAlert:
@@ -746,9 +791,12 @@ class TestCookieExpiryAlert:
     keep-alive (no host re-issues it), so each tick names it at error level
     until the owner pastes a fresh one. Only the name and the date are logged."""
 
-    def _tick(self, cookies: list[dict]) -> MagicMock:
+    def _tick(
+        self, cookies: list[dict], fetch: AsyncMock | None = None, store: AsyncMock | None = None
+    ) -> MagicMock:
         pool = _make_pool()
         mock_logger = MagicMock()
+        fetch = fetch or AsyncMock(return_value=_probe(200, text="Welcome to the handbook. " * 20))
         with (
             _client_with_patches(pool) as (client, _defer),
             patch("knowledge_ingest.routes.crawl_sync.logger", mock_logger),
@@ -762,10 +810,10 @@ class TestCookieExpiryAlert:
                 new_callable=AsyncMock,
                 return_value=_VALIDATED,
             ),
+            patch("knowledge_ingest.routes.crawl_sync._probe_fetch", fetch),
             patch(
-                "knowledge_ingest.routes.crawl_sync._probe_fetch",
-                new_callable=AsyncMock,
-                return_value=_probe(200, text="Welcome to the handbook. " * 20),
+                "knowledge_ingest.routes.crawl_sync.store_connector_cookie_jar",
+                store or AsyncMock(return_value=True),
             ),
         ):
             client.post(
@@ -773,6 +821,14 @@ class TestCookieExpiryAlert:
                 json={**_post(), "auth_chain_hosts": ["idp.example.com"]},
             )
         return mock_logger
+
+    @staticmethod
+    def _expiring(mock_logger: MagicMock) -> list:
+        return [
+            c
+            for c in mock_logger.error.call_args_list
+            if c.args[0] == "crawl_keepalive_cookie_expiring"
+        ]
 
     @staticmethod
     def _in(days: int) -> str:
@@ -818,3 +874,47 @@ class TestCookieExpiryAlert:
         assert expiring[0].kwargs["name"] == "idp_session"
         assert expiring[0].kwargs["days_left"] == 3
         assert "secret" not in repr(mock_logger.mock_calls)
+
+    def test_a_rolling_session_the_tick_renewed_and_stored_is_not_logged(self) -> None:
+        async def fetch(url: str, pin_map: dict, cookies: dict | None = None) -> _ProbeResponse:
+            if not cookies:
+                return _probe(200, text=_SignInSite._GATE)
+            return _probe(
+                200,
+                text="Welcome to the handbook. " * 20,
+                set_cookies=["wiki_session=rolled; Path=/; Secure; HttpOnly; Max-Age=86400"],
+            )
+
+        store = AsyncMock(return_value=True)
+        mock_logger = self._tick(
+            [
+                {
+                    "name": "wiki_session",
+                    "value": "secret-1",
+                    "domain": "wiki.example.com",
+                    "path": "/",
+                    "expires": self._in(0),
+                }
+            ],
+            fetch=AsyncMock(side_effect=fetch),
+            store=store,
+        )
+
+        store.assert_awaited_once()
+        assert not self._expiring(mock_logger)
+
+    def test_a_parent_domain_cookie_covering_the_site_is_logged_under_that_domain(self) -> None:
+        mock_logger = self._tick(
+            [
+                {
+                    "name": "sso",
+                    "value": "secret-1",
+                    "domain": ".example.com",
+                    "path": "/",
+                    "expires": self._in(3),
+                }
+            ]
+        )
+
+        expiring = self._expiring(mock_logger)
+        assert [(c.kwargs["host"], c.kwargs["name"]) for c in expiring] == [("example.com", "sso")]

@@ -117,12 +117,15 @@ _HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)
 def _domain_covers(cookie_domain: str, host: str) -> bool:
     """True when a cookie scoped to ``cookie_domain`` is sent to ``host``.
 
-    Browsers export ``.example.com`` for a cookie that app.example.com also
-    receives, so a parent domain counts. A bare suffix such as ``com`` never
-    does.
+    The same rule as knowledge-ingest's ``CookieJar.jar_for_host``, which
+    decides what the crawler sends. Browsers export ``.example.com`` for a
+    cookie that app.example.com also receives, so a parent domain counts only
+    with that leading dot; without it the cookie is host-only. A bare suffix
+    such as ``.com`` never counts.
     """
-    domain = cookie_domain.lstrip(".").lower()
-    return host == domain or ("." in domain and host.endswith("." + domain))
+    domain = cookie_domain.lower()
+    bare = domain.lstrip(".")
+    return host == bare or (domain.startswith(".") and "." in bare and host.endswith(domain))
 
 
 class WebcrawlerConfig(BaseModel):

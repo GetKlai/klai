@@ -143,27 +143,63 @@ async def load_connector_cookies(
     return list(stored.payload.get("cookies") or [])
 
 
+def cookie_covers_host(domain: str, host: str) -> bool:
+    """Whether a cookie stored for ``domain`` is sent to ``host``, as a browser decides.
+
+    A domain with a leading dot also covers subdomains; one without covers
+    that exact host only, which is how the portal has always stored a pasted
+    cookie. Both arguments are lower case.
+    """
+    return host == domain.lstrip(".") or (domain.startswith(".") and host.endswith(domain))
+
+
+def cookie_expires_at(cookie: dict[str, Any]) -> datetime | None:
+    """The cookie's expiry as an aware datetime, or ``None`` for a session cookie
+    or an unreadable date."""
+    try:
+        expires = datetime.fromisoformat(str(cookie["expires"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return expires if expires.tzinfo else expires.replace(tzinfo=UTC)
+
+
 class CookieJar:
     """A connector's stored cookies, kept per host the way a browser keeps them.
 
     Each cookie is a dict with ``name, value, domain, path, expires`` (ISO or
     null), ``secure`` and ``httpOnly``. A cookie without a domain (an older
-    row) belongs to ``base_host``, the connector's own host. A domain with a
-    leading dot also covers subdomains; one without covers that exact host
-    only, which is how the portal has always stored a pasted cookie.
+    row) belongs to ``base_host``, the connector's own host; which hosts a
+    domain covers is :func:`cookie_covers_host`. A cookie whose expiry has
+    passed is dropped on load, as a browser drops it, so it is neither sent
+    nor stored again.
     """
 
     def __init__(self, cookies: list[Any], base_host: str) -> None:
+        now = datetime.now(UTC)
         self.cookies: list[dict[str, Any]] = copy.deepcopy(
-            [c for c in cookies if isinstance(c, dict)]
+            [
+                c
+                for c in cookies
+                if isinstance(c, dict) and not ((exp := cookie_expires_at(c)) and exp <= now)
+            ]
         )
         self.base_host = base_host.lower()
         # Hosts whose Set-Cookie changed the jar; non-empty means there is
         # something to persist.
         self.issued_hosts: set[str] = set()
+        # Keys (see ``key``) of the cookies a Set-Cookie changed.
+        self.renewed: set[tuple[str, str, str]] = set()
 
     def _domain(self, cookie: dict[str, Any]) -> str:
         return str(cookie.get("domain") or self.base_host).lower()
+
+    def key(self, cookie: dict[str, Any]) -> tuple[str, str, str]:
+        """Name, domain (leading dot ignored) and path: what identifies a cookie."""
+        return (
+            str(cookie.get("name")),
+            self._domain(cookie).lstrip("."),
+            cookie.get("path") or "/",
+        )
 
     def jar_for_host(self, host: str, path: str = "/") -> dict[str, str]:
         """Name to value of the cookies a browser would send to ``host`` for ``path``.
@@ -174,11 +210,8 @@ class CookieJar:
         host = host.lower()
         jar: dict[str, str] = {}
         for cookie in sorted(self.cookies, key=lambda c: len(c.get("path") or "/")):
-            domain = self._domain(cookie)
             cookie_path = cookie.get("path") or "/"
-            covers = host == domain.lstrip(".") or (
-                domain.startswith(".") and host.endswith(domain)
-            )
+            covers = cookie_covers_host(self._domain(cookie), host)
             on_path = path == cookie_path or path.startswith(cookie_path.rstrip("/") + "/")
             if covers and on_path and cookie.get("name") and cookie.get("value"):
                 jar[cookie["name"]] = cookie["value"]
@@ -217,14 +250,7 @@ class CookieJar:
                 "httpOnly": any(issued.has_nonstandard_attr(k) for k in ("HttpOnly", "httponly")),
             }
             key = (issued.name, issued.domain.lstrip("."), issued.path)
-            known = next(
-                (
-                    c
-                    for c in self.cookies
-                    if (c.get("name"), self._domain(c).lstrip("."), c.get("path") or "/") == key
-                ),
-                None,
-            )
+            known = next((c for c in self.cookies if self.key(c) == key), None)
             if known is None:
                 self.cookies.append(
                     {"name": issued.name, "domain": issued.domain, "path": issued.path, **fresh}
@@ -233,6 +259,7 @@ class CookieJar:
                 known.update(fresh)
             else:
                 continue
+            self.renewed.add(key)
             self.issued_hosts.add(urlparse(url).hostname or "")
 
 

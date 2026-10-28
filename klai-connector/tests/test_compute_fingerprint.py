@@ -263,12 +263,57 @@ def test_build_crawl_payload_cookies_use_hooks() -> None:
     payload = _build_crawl_payload("https://example.com/page", cookies)
     assert "browser_config" not in payload
     assert payload["hooks"] == {
-        "hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]
+        "hooks": [
+            {
+                "action": "add_cookies",
+                "params": {"cookies": [{**cookies[0], "secure": False, "httpOnly": False}]},
+            }
+        ]
     }
 
     no_cookies = _build_crawl_payload("https://example.com/page", None)
     assert "hooks" not in no_cookies
     assert "browser_config" not in no_cookies
+
+
+def test_build_crawl_payload_sends_only_the_cookie_fields_add_cookies_accepts() -> None:
+    """A stored cookie also carries ``expires`` (ISO string or null) and
+    bookkeeping keys; Playwright's add_cookies may reject the whole batch on
+    them, which would silently clear the canary fingerprint on save."""
+    cookies = [
+        {
+            "name": "session",
+            "value": "made-up",
+            "domain": ".example.com",
+            "path": "/",
+            "expires": "2027-01-01T00:00:00+00:00",
+            "secure": True,
+            "httpOnly": True,
+            "imported": True,
+        },
+        {"name": "theme", "value": "dark", "expires": None},
+    ]
+
+    payload = _build_crawl_payload("https://app.example.com/page", cookies)
+
+    assert payload["hooks"]["hooks"][0]["params"]["cookies"] == [
+        {
+            "name": "session",
+            "value": "made-up",
+            "domain": ".example.com",
+            "path": "/",
+            "secure": True,
+            "httpOnly": True,
+        },
+        {
+            "name": "theme",
+            "value": "dark",
+            "domain": "app.example.com",
+            "path": "/",
+            "secure": False,
+            "httpOnly": False,
+        },
+    ]
 
 
 class _FakeResponse:

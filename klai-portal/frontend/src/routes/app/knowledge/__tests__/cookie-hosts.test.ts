@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildCrawlerCookies } from '../-connector-shared/api'
 import {
   CookieJsonError,
+  cookieCoversHost,
   isManualRow,
   ownerHost,
   parseCookieEditorJson,
@@ -57,6 +58,12 @@ describe('cookie ownership', () => {
   it('puts a cookie on the sign-in host it names, and a parent-domain cookie on the base host', () => {
     expect(ownerHost(rows[0], 'app.example.com', chain)).toBe('idp.example.com')
     expect(ownerHost(rows[1], 'app.example.com', chain)).toBe('app.example.com')
+  })
+
+  it('covers subdomains only with a leading dot, as the crawler does', () => {
+    expect(cookieCoversHost('example.com', 'app.example.com')).toBe(false)
+    expect(cookieCoversHost('.example.com', 'app.example.com')).toBe(true)
+    expect(cookieCoversHost('app.example.com', 'app.example.com')).toBe(true)
   })
 
   it('keeps hand-typed rows as the name/value inputs of the base host', () => {

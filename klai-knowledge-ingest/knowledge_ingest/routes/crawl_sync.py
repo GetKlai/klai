@@ -42,6 +42,8 @@ from knowledge_ingest.connector_cookies import (
     ConnectorOrgMismatchError,
     CookieJar,
     StoredCredentials,
+    cookie_covers_host,
+    cookie_expires_at,
     load_connector_cookies,
     load_connector_credentials,
     store_connector_cookie_jar,
@@ -665,10 +667,13 @@ def _classify_probe(
     return ok, reason
 
 
-async def _store_jar(req: CrawlKeepAliveRequest, stored: StoredCredentials, jar: CookieJar) -> None:
-    """Persist the jar; never logs a cookie value or an exception text."""
+async def _store_jar(req: CrawlKeepAliveRequest, stored: StoredCredentials, jar: CookieJar) -> bool:
+    """Persist the jar and say whether it was written.
+
+    Never logs a cookie value or an exception text.
+    """
     try:
-        await store_connector_cookie_jar(
+        return await store_connector_cookie_jar(
             connector_id=req.connector_id,
             stored=stored,
             pool=await get_pool(),
@@ -681,6 +686,7 @@ async def _store_jar(req: CrawlKeepAliveRequest, stored: StoredCredentials, jar:
             connector_id=str(req.connector_id),
             error_type=type(exc).__name__,
         )
+        return False
 
 
 async def _store_if_session_proven(
@@ -688,7 +694,7 @@ async def _store_if_session_proven(
     stored: StoredCredentials,
     final_url: str,
     jar: CookieJar,
-) -> None:
+) -> bool:
     """Store re-issued cookies only when the stored session demonstrably matters.
 
     A 200 without a login marker is not proof: a public page sets an
@@ -707,7 +713,7 @@ async def _store_if_session_proven(
             connector_id=connector_id,
             error_type=type(exc).__name__,
         )
-        return
+        return False
     anon_redirect = urljoin(final_url, anonymous.location) if anonymous.location else None
     anonymous_ok, _ = _classify_probe(anonymous, anon_redirect)
     if anonymous_ok:
@@ -718,9 +724,9 @@ async def _store_if_session_proven(
                 connector_id=connector_id,
                 url=final_url,
             )
-        return
+        return False
     _public_probe_logged.discard(connector_id)
-    await _store_jar(req, stored, jar)
+    return await _store_jar(req, stored, jar)
 
 
 def _log_probe_result(
@@ -768,22 +774,25 @@ def _log_expiring_cookies(
     """Name every cookie of the site or a chain host that lapses within a week.
 
     Nothing re-issues a pasted cookie on its own, so the owner has to paste a
-    fresh one before the date; the alert reads this event. Only the name and
-    the date are logged, never the value.
+    fresh one before the date; the alert reads this event. A cookie a
+    Set-Cookie renewed in this tick (``jar.renewed``) is skipped, because the
+    keep-alive is demonstrably keeping it alive; the caller passes a jar with
+    renewals only when it stored them. Only the name and the date are logged,
+    never the value.
     """
     hosts = {host for host, _port in chain_hosts}
     now = datetime.now(UTC)
     for cookie in jar.cookies:
-        host = str(cookie.get("domain") or jar.base_host).lower().lstrip(".")
-        if host not in hosts or not cookie.get("expires"):
+        domain = str(cookie.get("domain") or jar.base_host).lower()
+        expires = cookie_expires_at(cookie)
+        if (
+            expires is None
+            or jar.key(cookie) in jar.renewed
+            or not any(cookie_covers_host(domain, h) for h in hosts)
+        ):
             continue
-        try:
-            expires = datetime.fromisoformat(str(cookie["expires"]))
-        except ValueError:
-            continue
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=UTC)
-        if expires - now <= _COOKIE_EXPIRY_WARN:
+        host = domain.lstrip(".")
+        if timedelta(0) < expires - now <= _COOKIE_EXPIRY_WARN:
             logger.error(
                 "crawl_keepalive_cookie_expiring",
                 connector_id=connector_id,
@@ -855,7 +864,6 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
     jar = CookieJar(stored.payload["cookies"], validated.hostname)
     own_host = {(jar.base_host, urlparse(req.url).port or 443)}
     chain_hosts = own_host | {(host.lower(), 443) for host in req.auth_chain_hosts}
-    _log_expiring_cookies(str(req.connector_id), req.org_id, jar, chain_hosts)
     chain_walked = False
     result: _ProbeResponse | None = None
     final = req.url
@@ -889,14 +897,24 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
         )
         ok, reason = False, "fetch_failed"
 
+    persisted = False
     if jar.issued_hosts and not chain_walked and ok:
-        await _store_if_session_proven(req, stored, final, jar)
-    # After a walked chain, a logged-out answer from the own host alone (an
-    # anonymous session cookie) never overwrites the stored session. Once the
-    # page is unlocked, or a chain host renewed its cookie, the whole jar is
-    # kept, so a half-walked chain does not lose what it got.
-    elif jar.issued_hosts and chain_walked and (ok or jar.issued_hosts != {jar.base_host}):
-        await _store_jar(req, stored, jar)
+        persisted = await _store_if_session_proven(req, stored, final, jar)
+    # After a walked chain the jar is stored only once the page reopened: the
+    # chain's cookies count only when they demonstrably unlock it. A chain host
+    # that answers a lapsed session with a fresh anonymous cookie would
+    # otherwise overwrite the owner's stored one; a half-walked chain is
+    # retried on the next tick with what is stored.
+    elif jar.issued_hosts and chain_walked and ok:
+        persisted = await _store_jar(req, stored, jar)
+    # Expiry is judged on what is stored now: the jar when it was written,
+    # otherwise the stored cookies as they were read.
+    _log_expiring_cookies(
+        str(req.connector_id),
+        req.org_id,
+        jar if persisted else CookieJar(stored.payload["cookies"], jar.base_host),
+        chain_hosts,
+    )
 
     if reason == "fetch_failed":
         return CrawlKeepAliveResponse(ok=False, reason=reason)

@@ -25,6 +25,13 @@ router = APIRouter()
 _MAX_REDIRECTS = 5
 
 
+def _loggable(url: str) -> str:
+    """``url`` without its query string or fragment: an identity-provider hop
+    carries ``state`` and a callback carries the authorization ``code``."""
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.hostname}{parts.path}"
+
+
 class AuthChainRequest(BaseModel):
     url: str
     org_id: str = ""
@@ -51,7 +58,7 @@ async def _hosts_on_path(start: str) -> list[str]:
             validated = await validate_url_pinned(url)
             response = await _probe_fetch(url, pin_map={validated.hostname: validated.preferred_ip})
         except Exception as exc:
-            logger.info("auth_chain_hop_stopped", url=url, error=str(exc))
+            logger.info("auth_chain_hop_stopped", url=_loggable(url), error=str(exc))
             break
         hosts.append(validated.hostname.lower())
         if not response.location or response.status_code not in (301, 302, 303, 307, 308):
@@ -80,5 +87,5 @@ async def auth_chain(body: AuthChainRequest, request: Request) -> AuthChainRespo
         for host in await _hosts_on_path(start):
             if host != base_host and host not in seen:
                 seen.append(host)
-    logger.info("auth_chain_detected", url=body.url, hosts=seen)
+    logger.info("auth_chain_detected", url=_loggable(body.url), hosts=seen)
     return AuthChainResponse(hosts=seen)

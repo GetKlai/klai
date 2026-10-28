@@ -118,7 +118,7 @@ groups:
                 uid: victorialogs
               expr: |
                 service:knowledge-ingest event:crawl_keepalive_cookie_expiring _time:24h
-                  | stats by (connector_id, host, expires) count() as n
+                  | stats by (connector_id, host, name) count() as n
               queryType: stats
           - refId: reduce
             datasourceUid: __expr__
@@ -153,16 +153,16 @@ groups:
           component: crawl
           service_group: knowledge
         annotations:
-          summary: 'Cookie of {{ $labels.host }} (connector {{ $labels.connector_id }}) expires on {{ $labels.expires }}: paste fresh cookies before then'
+          summary: 'Cookie {{ $labels.name }} of {{ $labels.host }} (connector {{ $labels.connector_id }}) expires within 7 days: paste fresh cookies before then'
           runbook_url: 'docs/runbooks/crawl-failures.md'
           description: |
-            A stored cookie for {{ $labels.host }} lapses at {{ $labels.expires }}
-            (within 7 days or already past). Nothing renews a pasted cookie that
-            its host does not re-issue, so the owner of web connector
-            {{ $labels.connector_id }} has to paste fresh cookies for that host
-            in the connector wizard before that date. The alert clears when the
-            cookie is replaced.
+            Stored cookie {{ $labels.name }} for {{ $labels.host }} lapses within
+            7 days; the date is the expires field of the log lines below. Nothing
+            renews a pasted cookie that its host does not re-issue, so the owner
+            of web connector {{ $labels.connector_id }} has to paste fresh cookies
+            for that host in the connector wizard before that date. The alert
+            clears when the cookie is replaced.
 
-              service:knowledge-ingest event:crawl_keepalive_cookie_expiring connector_id:"{{ $labels.connector_id }}" | sort by (_time) desc | limit 5
+              service:knowledge-ingest event:crawl_keepalive_cookie_expiring connector_id:"{{ $labels.connector_id }}" name:"{{ $labels.name }}" | sort by (_time) desc | fields _time, host, name, expires, days_left | limit 5
 
             Runbook: docs/runbooks/crawl-failures.md.

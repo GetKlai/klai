@@ -3,11 +3,14 @@ import type { CookieRow } from '../$kbSlug/-kb-types'
 export class CookieJsonError extends Error {}
 
 // Browsers export ".example.com" for a cookie that app.example.com also
-// receives, so a parent domain covers the host. A bare suffix such as "com"
-// never does. The backend applies the same rule when it validates a save.
+// receives, so a parent domain covers the host only with that leading dot;
+// without it the cookie is host-only and the crawler never sends it to a
+// subdomain. A bare suffix such as ".com" never covers. The backend applies
+// the same rule when it validates a save.
 export function cookieCoversHost(domain: string, host: string): boolean {
-  const d = domain.replace(/^\./, '').toLowerCase()
-  return host === d || (d.includes('.') && host.endsWith(`.${d}`))
+  const d = domain.toLowerCase()
+  const bare = d.replace(/^\./, '')
+  return host === bare || (d.startsWith('.') && bare.includes('.') && host.endsWith(d))
 }
 
 export function hostOf(url: string): string {

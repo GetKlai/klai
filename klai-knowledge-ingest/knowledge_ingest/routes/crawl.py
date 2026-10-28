@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from knowledge_ingest import pg_store
+from knowledge_ingest.connector_cookies import CookieJar
 from knowledge_ingest.crawl4ai_client import (
     CrawlResult,
     LinkedPageSample,
@@ -757,12 +758,6 @@ async def _probe_fetch(
         )
 
 
-def _cookie_domain_matches(domain: str, host: str) -> bool:
-    """A cookie without a domain is for the host being probed."""
-    domain = domain.lstrip(".").lower()
-    return not domain or host == domain or host.endswith("." + domain)
-
-
 @router.post("/ingest/v1/crawl/auth-probe", response_model=AuthProbeResponse)
 async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeResponse:
     """REQ-2 — verify that cookies actually authenticate against the seed URL.
@@ -814,16 +809,11 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
         )
 
     # A site that signs in through a second host sends us that host's cookies
-    # too; they belong to the sign-in host and must not be replayed here.
-    host = validated.hostname.lower()
-    cookie_dict: dict[str, str] = {
-        c["name"]: c["value"]
-        for c in body.cookies
-        if isinstance(c, dict)
-        and c.get("name")
-        and c.get("value")
-        and _cookie_domain_matches(c.get("domain") or "", host)
-    }
+    # too; they belong to the sign-in host and must not be replayed here. The
+    # jar decides that with the same scope rule the keep-alive uses.
+    cookie_dict = CookieJar(body.cookies, validated.hostname).jar_for_host(
+        validated.hostname, urlparse(body.url).path or "/"
+    )
     pin_map = {validated.hostname: validated.preferred_ip}
 
     try:

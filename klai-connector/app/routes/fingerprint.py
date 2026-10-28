@@ -111,8 +111,23 @@ def _build_crawl_payload(
         # The field is ``hooks``, not ``hooks_config``: the latter is not on
         # crawl4ai's request model and pydantic drops an unknown field without
         # a word, which is how this answered 200 while sending no cookies.
+        # Only the fields add_cookies accepts: a stored cookie also carries
+        # ``expires`` (ISO string or null), on which Playwright may reject the
+        # whole batch. A cookie without a domain belongs to the host of ``url``.
+        host = urlsplit(url).hostname or ""
+        browser_cookies = [
+            {
+                "name": c["name"],
+                "value": c["value"],
+                "domain": c.get("domain") or host,
+                "path": c.get("path") or "/",
+                "secure": bool(c.get("secure")),
+                "httpOnly": bool(c.get("httpOnly")),
+            }
+            for c in cookies
+        ]
         payload["hooks"] = {
-            "hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]
+            "hooks": [{"action": "add_cookies", "params": {"cookies": browser_cookies}}]
         }
     return payload
 
