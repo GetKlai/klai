@@ -12,6 +12,7 @@ AES-256-GCM encrypted.
 |---|---|---|---|
 | `POST` | `/slack/events` | Slack: events, slash commands, interactivity | Slack signing secret (Bolt) |
 | `GET` | `/slack/install` | Browser: starts the Slack OAuth install | OAuth state |
+| `POST` | `/slack/connect` | Browser, form-POSTed by the portal: starts the portal-driven link | signed link token (`token=` form field) |
 | `GET` | `/slack/oauth_redirect` | Slack: OAuth callback | OAuth state |
 | `DELETE` | `/internal/installations/{team_id}` | portal-api: disconnect | `Authorization: Bearer <INTERNAL_SECRET>` |
 | `GET` | `/health` | Docker healthcheck | none |
@@ -40,8 +41,8 @@ development Slack app:
 - Slash command `/klai`: `https://<tunnel>/slack/events`
 - OAuth redirect URL: `https://<tunnel>/slack/oauth_redirect`, and `PUBLIC_BASE_URL=https://<tunnel>`
 
-Install the app by opening `https://<tunnel>/slack/install`, then link the
-workspace with `/klai connect pk_live_…` using a Slack key from the portal.
+Link a workspace from the portal page `/admin/slack` ("Verbind met Slack"),
+which form-POSTs a link token to `https://<tunnel>/slack/connect`.
 Socket Mode is not wired up; the HTTP route is what production uses.
 
 ## Tests and gates
@@ -63,9 +64,10 @@ downgrade it again, so point them at a throwaway database.
 |---|---|
 | `app/main.py` | FastAPI app, Bolt handler mount, hourly retention purge |
 | `app/slack_app.py` | `AsyncApp`, OAuth settings, event dedupe middleware, uninstall handling |
-| `app/commands/` | `/klai` dispatcher (`SUBCOMMANDS`), `connect` |
+| `app/commands/` | `/klai` dispatcher (`SUBCOMMANDS`), `kb`, `help` |
+| `app/portal_link.py` | `POST /slack/connect` and the OAuth callback of the portal-driven link |
 | `app/clients/partner.py` | Partner API: knowledge bases, chat, feedback |
-| `app/clients/portal.py` | portal-api `/internal/slack/link` |
+| `app/clients/portal.py` | portal-api `/internal/slack/link-oauth` and `/internal/slack/link/{team_id}` |
 | `app/repo.py` | all database access |
 | `app/services/scope.py` | effective knowledge-base scope (spec §5) |
 | `app/oauth_store.py`, `app/crypto.py` | encrypted Bolt installation store, AES-256-GCM |

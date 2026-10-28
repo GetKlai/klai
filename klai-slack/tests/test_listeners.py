@@ -44,7 +44,6 @@ def _ctx(slack: FakeSlack, text: str, said: list[str]) -> CommandContext:
         command={**COMMAND, "text": text},
         client=slack,  # pyright: ignore[reportArgumentType]
         respond=respond,  # pyright: ignore[reportArgumentType]
-        portal=None,  # pyright: ignore[reportArgumentType]
     )
 
 

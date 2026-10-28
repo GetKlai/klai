@@ -7,15 +7,17 @@ import pytest
 
 from app.clients.portal import (
     LinkConflict,
-    LinkFeatureLocked,
+    LinkForbidden,
     LinkKeyInvalid,
-    LinkResult,
+    OAuthLinkResult,
     PortalClient,
     PortalUnavailable,
 )
 
 SECRET = "test-portal-internal-secret"
 KEY = "pk_live_synthetic_key_0001"
+TOKEN = "synthetic.link.token"
+RETURN_URL = "https://portal.example.com/admin/slack"
 
 
 def _client(status: int, body: object = None) -> tuple[list[httpx.Request], PortalClient]:
@@ -30,7 +32,7 @@ def _client(status: int, body: object = None) -> tuple[list[httpx.Request], Port
     )
 
 
-async def test_link_success() -> None:
+async def test_link_oauth_success() -> None:
     seen, client = _client(
         200,
         {
@@ -38,19 +40,23 @@ async def test_link_success() -> None:
             "org_name": "Voorbeeld BV",
             "key_id": "4f2c9a1e-0000-4000-8000-000000000042",
             "kb_ids": [1, 2],
+            "api_key": KEY,
+            "return_url": RETURN_URL,
         },
     )
-    result = await client.link(KEY, "T1", "Voorbeeld", "U1")
-    assert result == LinkResult(
+    result = await client.link_oauth(TOKEN, "T1", "Voorbeeld", "U1")
+    assert result == OAuthLinkResult(
         org_id=7,
         org_name="Voorbeeld BV",
         key_id="4f2c9a1e-0000-4000-8000-000000000042",
         kb_ids=[1, 2],
+        api_key=KEY,
+        return_url=RETURN_URL,
     )
-    assert seen[0].url.path == "/internal/slack/link"
+    assert seen[0].url.path == "/internal/slack/link-oauth"
     assert seen[0].headers["Authorization"] == f"Bearer {SECRET}"
     assert json.loads(seen[0].content) == {
-        "api_key": KEY,
+        "token": TOKEN,
         "team_id": "T1",
         "team_name": "Voorbeeld",
         "slack_user_id": "U1",
@@ -60,26 +66,38 @@ async def test_link_success() -> None:
 @pytest.mark.parametrize(
     ("status", "body", "error"),
     [
-        (404, {"detail": "not found"}, LinkKeyInvalid),
-        (403, {"detail": "locked"}, LinkFeatureLocked),
+        (401, {"detail": "Invalid link token"}, LinkKeyInvalid),
+        (403, {"code": "not_admin"}, LinkForbidden),
         (500, {"detail": "boom"}, PortalUnavailable),
     ],
 )
-async def test_link_error_mapping(status: int, body: object, error: type[Exception]) -> None:
+async def test_link_oauth_error_mapping(status: int, body: object, error: type[Exception]) -> None:
     _, client = _client(status, body)
     with pytest.raises(error):
-        await client.link(KEY, "T1", "Voorbeeld", "U1")
+        await client.link_oauth(TOKEN, "T1", "Voorbeeld", "U1")
 
 
 @pytest.mark.parametrize(
-    "body",
-    [{"detail": {"code": "org_already_linked"}}, {"code": "org_already_linked"}],
+    ("status", "body", "error", "code"),
+    [
+        (409, {"code": "org_already_linked"}, LinkConflict, "org_already_linked"),
+        (409, {"detail": {"code": "token_used"}}, LinkConflict, "token_used"),
+        (403, {"code": "not_admin"}, LinkForbidden, "not_admin"),
+        (
+            403,
+            {"detail": {"error_code": "feature_not_unlocked", "feature": "slack"}},
+            LinkForbidden,
+            "feature_not_unlocked",
+        ),
+    ],
 )
-async def test_link_conflict_code(body: object) -> None:
-    _, client = _client(409, body)
-    with pytest.raises(LinkConflict) as exc:
-        await client.link(KEY, "T1", "Voorbeeld", "U1")
-    assert exc.value.code == "org_already_linked"
+async def test_link_oauth_error_code(
+    status: int, body: object, error: type[LinkConflict | LinkForbidden], code: str
+) -> None:
+    _, client = _client(status, body)
+    with pytest.raises(error) as exc:
+        await client.link_oauth(TOKEN, "T1", "Voorbeeld", "U1")
+    assert exc.value.code == code
 
 
 async def test_unlink() -> None:

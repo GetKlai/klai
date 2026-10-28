@@ -1,6 +1,8 @@
 """Portal-driven Slack link (SPEC-SLACK-001 §8 target state): the admin never sees a key.
 
-The portal sends the admin's browser to ``/slack/connect?token=<jwt>``. The
+The portal page form-POSTs ``token=<jwt>`` to ``/slack/connect`` (the OIDC
+``form_post`` pattern), so the bearer token never sits in a URL, where access
+logs, browser history and the Referer header would keep it. The
 token is HS256-signed by portal-api with the shared internal secret and carries
 ``typ == "slack_link"``, ``exp`` and ``return_url`` (the portal page to come back
 to). klai-slack parks it in ``pending_links`` under a fresh Bolt OAuth state and
@@ -10,15 +12,17 @@ finish it; the success callback then trades the token for a minted key at
 ``POST /internal/slack/link-oauth`` and stores the link.
 
 The browser lands back on ``return_url`` with ``?slack=`` set to ``connected``,
-``already_linked`` (portal 409), ``denied`` (cancelled in Slack, or the org
-lacks the ``slack`` unlock) or ``failed`` (anything else; start again from the
-portal). An OAuth callback without a pending link is a plain ``/slack/install``
-and keeps Bolt's own pages, so ``/klai connect`` stays usable.
+``already_linked`` (portal 409), ``denied`` (cancelled in Slack, the org lacks
+the ``slack`` unlock, or the admin who started it no longer is one) or
+``failed`` (anything else; start again from the portal). An OAuth callback
+without a pending link is a plain ``/slack/install`` and keeps Bolt's own pages;
+that workspace stays unlinked until an admin connects it from the portal.
 """
 
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qs
 
 import jwt
 import structlog
@@ -32,12 +36,13 @@ from slack_bolt.oauth.async_callback_options import (
 from slack_bolt.oauth.async_oauth_settings import AsyncOAuthSettings
 from slack_bolt.request.async_request import AsyncBoltRequest
 from slack_sdk.oauth.installation_store.models.installation import Installation
+from starlette.requests import Request
 from starlette.responses import Response
 
 from app import db, repo
 from app.clients.portal import (
     LinkConflict,
-    LinkFeatureLocked,
+    LinkForbidden,
     LinkKeyInvalid,
     PortalClient,
     PortalUnavailable,
@@ -52,6 +57,10 @@ INVALID_LINK_PAGE = (
     '<!DOCTYPE html><html lang="nl"><head><meta charset="utf-8"><title>Klai</title></head>'
     f"<body><p>{INVALID_LINK}</p></body></html>"
 )
+FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
+# The 302 to Slack carries the state cookie and the request carried the token:
+# no cache may keep either, and the Slack page must not learn where it came from.
+NO_STORE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
 def decode_link_token(token: str, secret: str, *, verify_exp: bool = True) -> dict[str, Any] | None:
@@ -68,8 +77,31 @@ def decode_link_token(token: str, secret: str, *, verify_exp: bool = True) -> di
     return claims if claims.get("typ") == LINK_TOKEN_TYPE else None
 
 
+def _form_token(request: Request, body: bytes) -> str | None:
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type != FORM_CONTENT_TYPE:
+        return None
+    tokens = parse_qs(body.decode("utf-8", "replace")).get("token", [])
+    return tokens[0] if len(tokens) == 1 else None
+
+
+async def connect(request: Request, oauth: AsyncOAuthSettings, secret: str) -> Response:
+    """``/slack/connect``: a POST of the portal's token form starts the Slack OAuth.
+
+    A GET never reads a token, so an old ``?token=`` link or bookmark does nothing.
+    """
+    if request.method != "POST":
+        response: Response = HTMLResponse(
+            INVALID_LINK_PAGE, status_code=405, headers={"Allow": "POST"}
+        )
+    else:
+        response = await start(_form_token(request, await request.body()), oauth, secret)
+    response.headers.update(NO_STORE_HEADERS)
+    return response
+
+
 async def start(token: str | None, oauth: AsyncOAuthSettings, secret: str) -> Response:
-    """``GET /slack/connect``: park the token under a new OAuth state and go to Slack."""
+    """Park the token under a new OAuth state and send the browser to Slack."""
     if not token or decode_link_token(token, secret) is None:
         logger.info("slack_portal_link_token_rejected")
         return HTMLResponse(INVALID_LINK_PAGE, status_code=400)
@@ -118,8 +150,8 @@ async def _link(
             )
         except LinkConflict as exc:
             outcome, reason = "already_linked", exc.code
-        except LinkFeatureLocked:
-            outcome, reason = "denied", "feature_locked"
+        except LinkForbidden as exc:
+            outcome, reason = "denied", exc.code
         except (LinkKeyInvalid, PortalUnavailable) as exc:
             outcome, reason = "failed", type(exc).__name__
         else:

@@ -1,9 +1,9 @@
 """Slack workspace link of an org — SPEC-SLACK-001 §6.2.
 
 One row per org and one per Slack workspace (both UNIQUE, decision D2). The row
-is written by klai-slack through ``POST /internal/slack/link`` once a workspace
-admin pastes the org's Slack key, and is the portal's record of which workspace
-holds that key. Category-D RLS (``post_deploy_sl4c5k6i7n8s_slack_installations.sql``).
+is written through ``POST /internal/slack/link-oauth`` once a workspace approved
+the app in Slack OAuth, and is the portal's record of which workspace holds the
+org's Slack key. Category-D RLS (``post_deploy_sl4c5k6i7n8s_slack_installations.sql``).
 """
 
 from datetime import datetime
