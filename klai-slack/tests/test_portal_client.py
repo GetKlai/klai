@@ -7,7 +7,7 @@ import pytest
 
 from app.clients.portal import (
     LinkConflict,
-    LinkFeatureLocked,
+    LinkForbidden,
     LinkKeyInvalid,
     LinkResult,
     PortalClient,
@@ -61,7 +61,7 @@ async def test_link_success() -> None:
     ("status", "body", "error"),
     [
         (404, {"detail": "not found"}, LinkKeyInvalid),
-        (403, {"detail": "locked"}, LinkFeatureLocked),
+        (403, {"detail": "locked"}, LinkForbidden),
         (500, {"detail": "boom"}, PortalUnavailable),
     ],
 )

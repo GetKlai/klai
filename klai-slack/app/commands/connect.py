@@ -13,7 +13,7 @@ from slack_sdk.errors import SlackApiError
 from app import db, repo
 from app.clients.portal import (
     LinkConflict,
-    LinkFeatureLocked,
+    LinkForbidden,
     LinkKeyInvalid,
     LinkResult,
     PortalUnavailable,
@@ -110,7 +110,7 @@ async def _link(
         return await ctx.portal.link(api_key, team_id, team_name, user_id)
     except LinkKeyInvalid:
         message, reason = KEY_INVALID, "key_invalid"
-    except LinkFeatureLocked:
+    except LinkForbidden:
         message, reason = FEATURE_LOCKED, "feature_locked"
     except LinkConflict as exc:
         message = ORG_ALREADY_LINKED if exc.code == "org_already_linked" else TEAM_ALREADY_LINKED

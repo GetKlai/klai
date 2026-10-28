@@ -24,16 +24,20 @@ class LinkKeyInvalid(PortalError):
     ``link_oauth`` (link token invalid or expired)."""
 
 
-class LinkFeatureLocked(PortalError):
-    """403: the org lacks the ``slack`` platform unlock."""
-
-
-class LinkConflict(PortalError):
-    """409: ``org_already_linked``, ``team_already_linked`` or (``link_oauth``) ``token_used``."""
-
+class _CodedError(PortalError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class LinkForbidden(_CodedError):
+    """403: ``feature_not_unlocked`` (the org lacks the ``slack`` unlock) or, on
+    ``link_oauth``, ``not_admin`` (the user who started the link is no longer an
+    active admin of the org)."""
+
+
+class LinkConflict(_CodedError):
+    """409: ``org_already_linked``, ``team_already_linked`` or (``link_oauth``) ``token_used``."""
 
 
 class PortalUnavailable(PortalError):
@@ -148,20 +152,21 @@ def _link_body(response: httpx.Response, *, invalid_status: int) -> dict[str, An
     if response.status_code == invalid_status:
         raise LinkKeyInvalid
     if response.status_code == 403:
-        raise LinkFeatureLocked
+        raise LinkForbidden(_error_code(response))
     if response.status_code == 409:
-        raise LinkConflict(_conflict_code(response))
+        raise LinkConflict(_error_code(response))
     if response.status_code != 200:
         raise PortalUnavailable(f"{response.request.url.path} returned {response.status_code}")
     return response.json()
 
 
-def _conflict_code(response: httpx.Response) -> str:
+def _error_code(response: httpx.Response) -> str:
     try:
         body = response.json()
     except ValueError:
         return "unknown"
     # FastAPI wraps an HTTPException detail as {"detail": {...}}; accept the bare shape too.
+    # The slack routes answer {"code": …}; the platform-unlock gate {"error_code": …}.
     detail = body.get("detail", body) if isinstance(body, dict) else None
-    code = detail.get("code") if isinstance(detail, dict) else None
+    code = (detail.get("code") or detail.get("error_code")) if isinstance(detail, dict) else None
     return code if isinstance(code, str) else "unknown"

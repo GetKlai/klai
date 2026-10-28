@@ -11,7 +11,7 @@ from structlog.testing import capture_logs
 from app import repo
 from app.clients.portal import (
     LinkConflict,
-    LinkFeatureLocked,
+    LinkForbidden,
     LinkKeyInvalid,
     LinkResult,
     PortalUnavailable,
@@ -166,7 +166,7 @@ async def test_revoked_link_can_be_relinked(store: Store) -> None:
     ("error", "message"),
     [
         (LinkKeyInvalid(), connect.KEY_INVALID),
-        (LinkFeatureLocked(), connect.FEATURE_LOCKED),
+        (LinkForbidden("feature_not_unlocked"), connect.FEATURE_LOCKED),
         (LinkConflict("org_already_linked"), connect.ORG_ALREADY_LINKED),
         (LinkConflict("team_already_linked"), connect.TEAM_ALREADY_LINKED),
         (PortalUnavailable("down"), connect.PORTAL_UNAVAILABLE),
