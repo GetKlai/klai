@@ -3,21 +3,12 @@ import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import * as m from '@/paraglide/messages'
 
-interface RevokedProps {
-  status: 'revoked'
+interface Props {
   onReconnect: () => void
   isReconnecting: boolean
 }
 
-export function SlackStatusAlert(props: { status: 'awaiting_link' } | RevokedProps) {
-  if (props.status === 'awaiting_link') {
-    return (
-      <Alert variant="warning">
-        <p>{m.admin_slack_legacy_body()}</p>
-      </Alert>
-    )
-  }
-
+export function SlackStatusAlert(props: Props) {
   return (
     <Alert variant="warning">
       <p>{m.admin_slack_revoked_body()}</p>

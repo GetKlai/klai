@@ -108,12 +108,23 @@ function renderPage() {
 }
 
 const assign = vi.fn()
+const submit = vi.fn()
 const originalLocation = Object.getOwnPropertyDescriptor(window, 'location')!
 
 beforeEach(() => {
   apiFetchMock.mockReset()
   navigate.mockReset()
   assign.mockReset()
+  submit.mockReset()
+  vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+    submit({
+      method: this.method,
+      action: this.getAttribute('action'),
+      fields: Object.fromEntries(
+        [...this.querySelectorAll('input')].map((i) => [i.name, { type: i.type, value: i.value }]),
+      ),
+    })
+  })
   toast.success.mockReset()
   toast.warning.mockReset()
   toast.error.mockReset()
@@ -125,15 +136,16 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.useRealTimers()
   Object.defineProperty(window, 'location', originalLocation)
 })
 
 describe('/admin/slack not_connected', () => {
-  it('shows one card and sends the browser to connect_url once a KB is chosen', async () => {
+  it('shows one card and hands the token to connect_url with a form POST once a KB is chosen', async () => {
     mockBackend(() => status({}))
     mockRoute('POST', '/api/admin/slack/connect', () =>
-      Promise.resolve({ connect_url: 'https://slack.com/oauth/v2/authorize?state=abc' }),
+      Promise.resolve({ connect_url: 'https://slack.example.com/connect', token: 'tok-123' }),
     )
 
     renderPage()
@@ -153,9 +165,14 @@ describe('/admin/slack not_connected', () => {
     await waitFor(() => expect(connect.disabled).toBe(false))
     fireEvent.click(connect)
 
-    await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith('https://slack.com/oauth/v2/authorize?state=abc'),
-    )
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
+    expect(submit).toHaveBeenCalledWith({
+      method: 'post',
+      action: 'https://slack.example.com/connect',
+      fields: { token: { type: 'hidden', value: 'tok-123' } },
+    })
+    expect(assign).not.toHaveBeenCalled()
+    expect(document.querySelector('form[action="https://slack.example.com/connect"]')).toBeNull()
     expect(calls('POST', '/api/admin/slack/connect')[0][1]).toMatchObject({
       body: JSON.stringify({ kb_ids: [1] }),
     })
@@ -204,37 +221,6 @@ describe('/admin/slack return from Slack', () => {
 
     expect(await screen.findByRole('heading', { name: /Acme Workspace/ })).toBeTruthy()
     expect(toast.success).toHaveBeenCalledWith(m.admin_slack_return_connected(), expect.anything())
-  })
-})
-
-describe('/admin/slack legacy awaiting_link', () => {
-  it('tells the admin to remove the key and connect again, without tabs or paste instructions', async () => {
-    mockBackend(() => status({ status: 'awaiting_link', key: KEY, kb_ids: [1] }))
-    renderPage()
-
-    expect(await screen.findByText(m.admin_slack_legacy_body())).toBeTruthy()
-    expect(screen.queryByRole('tab')).toBeNull()
-    expect(screen.queryByRole('alertdialog')).toBeNull()
-  })
-
-  it('does not poll', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
-    mockBackend(() => status({ status: 'awaiting_link', key: KEY, kb_ids: [1] }))
-    renderPage()
-    await screen.findByText(m.admin_slack_legacy_body())
-
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(calls('GET', '/api/admin/slack')).toHaveLength(1)
-  })
-
-  it('removes the key after the inline confirmation', async () => {
-    mockBackend(() => status({ status: 'awaiting_link', key: KEY, kb_ids: [1] }))
-    renderPage()
-
-    fireEvent.click(await screen.findByRole('button', { name: m.admin_slack_remove_key_button() }))
-    fireEvent.click(await screen.findByRole('button', { name: m.admin_slack_remove_key_confirm() }))
-
-    await waitFor(() => expect(calls('DELETE', '/api/admin/slack')).toHaveLength(1))
   })
 })
 

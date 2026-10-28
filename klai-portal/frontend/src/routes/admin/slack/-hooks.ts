@@ -28,7 +28,11 @@ export function useSlackStatus() {
   })
 }
 
-/** Starts the Slack OAuth flow: the backend answers with the authorize URL and the browser leaves the portal. */
+/**
+ * Starts the Slack OAuth flow: the backend answers with the klai-slack connect URL and a
+ * one-time token. The token travels in a form POST body, never in a URL, and the browser
+ * leaves the portal with the submit.
+ */
 export function useConnectSlack() {
   return useMutation({
     mutationFn: async (data: ConnectSlackRequest) =>
@@ -37,7 +41,17 @@ export function useConnectSlack() {
         body: JSON.stringify(data),
       }),
     onSuccess: (res) => {
-      window.location.assign(res.connect_url)
+      const form = document.createElement('form')
+      form.method = 'post'
+      form.action = res.connect_url
+      const token = document.createElement('input')
+      token.type = 'hidden'
+      token.name = 'token'
+      token.value = res.token
+      form.appendChild(token)
+      document.body.appendChild(form)
+      form.submit()
+      form.remove()
     },
   })
 }
