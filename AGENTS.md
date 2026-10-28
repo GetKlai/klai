@@ -55,6 +55,25 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
   measurement alongside (logs, counters, an eval you can run), measure on real
   traffic, and adjust from there. What still gates a rollout is safety, not
   measurement: a fail-closed direction, a security boundary, a migration order.
+- **measure first** — Every slice description, closing report and PR body
+  carries one line: `Meting: <metric, source> · nu <number> (<date/index>) ·
+  verwacht <number above the noise> · bewezen <number | nog niet: <when>,
+  <with what>, terug als <threshold>>`. The baseline (`nu`) is taken before
+  the first code edit. `nog niet` is allowed only when the metric exists
+  solely on real traffic or a production schedule and no replay, one-off run,
+  trial crawl or dry probe can stand in. A change without a measurable effect
+  (docs, dependencies, CI, a feature with no users yet) says
+  `Meting: n.v.t. (<reason>)`. CI (`measurement-contract.yml`) checks the PR
+  body against this shape.
+
+  | Area | Baseline source |
+  |---|---|
+  | Chat quality | meetlat: two rounds main and two rounds candidate on the same day; noise = the difference between the two main rounds |
+  | Retrieval | meetlat retrieval plus the nightly RAG eval |
+  | Crawling | `crawl_jobs` / `fetch_outcomes` and the crawl alert views; ahead of time via a trial crawl with `max_pages` |
+  | Cost | LiteLLM spend logs per alias |
+  | Speed | meetlat `total_ms`, `pytest --durations`, E2E times |
+  | Ops | alert firings and VictoriaLogs counts |
 - **production knowledge data is rewritten only with approval per run** — A
   re-ingest, `rebuild_kb`, a backfill with `--execute`, a crawl start or a
   deferred enrichment job on production never runs on an agent's own
