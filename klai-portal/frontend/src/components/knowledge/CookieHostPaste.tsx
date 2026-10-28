@@ -1,0 +1,116 @@
+/**
+ * CookieHostPaste - paste a Cookie-Editor JSON export for one host, and list
+ * that host's cookies by name and expiry (never by value).
+ *
+ * A site that signs in through a second host (SSO/OAuth) keeps its session in
+ * cookies for both hosts, so the wizard asks for each host's cookies. Every
+ * cookie keeps the domain it was exported with; the backend refuses one whose
+ * domain is neither the base host nor a detected sign-in host.
+ */
+import { useState } from 'react'
+import { X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import * as m from '@/paraglide/messages'
+import { getLocale } from '@/paraglide/runtime'
+import type { CookieRow } from '@/routes/app/knowledge/$kbSlug/-kb-types'
+import {
+  CookieJsonError,
+  cookieCoversHost,
+  isManualRow,
+  ownerHost,
+  parseCookieEditorJson,
+} from '@/routes/app/knowledge/-connector-shared/cookieHosts'
+
+interface CookieHostPasteProps {
+  host: string
+  baseHost: string
+  chainHosts: string[]
+  /** All cookie rows of the wizard, across hosts. */
+  rows: CookieRow[]
+  onChange: (rows: CookieRow[]) => void
+  idPrefix: string
+}
+
+function sameCookie(a: CookieRow, b: CookieRow): boolean {
+  return a.name === b.name && (a.domain ?? '') === (b.domain ?? '') && (a.path ?? '/') === (b.path ?? '/')
+}
+
+export function CookieHostPaste({ host, baseHost, chainHosts, rows, onChange, idPrefix }: CookieHostPasteProps) {
+  const [text, setText] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const listed = rows.filter(
+    (row) => !isManualRow(row, baseHost, chainHosts) && ownerHost(row, baseHost, chainHosts) === host,
+  )
+
+  function addCookies() {
+    let parsed: CookieRow[]
+    try {
+      parsed = parseCookieEditorJson(text, host)
+    } catch (e) {
+      if (!(e instanceof CookieJsonError)) throw e
+      setError(m.admin_connectors_webcrawler_cookies_json_invalid({ reason: e.message }))
+      return
+    }
+    const knownHosts = [baseHost, ...chainHosts]
+    const foreign = parsed.filter((c) => !knownHosts.some((h) => cookieCoversHost(c.domain ?? '', h)))
+    if (foreign.length > 0) {
+      setError(
+        m.admin_connectors_webcrawler_cookies_json_other_host({
+          names: foreign.map((c) => `${c.name} (${c.domain})`).join(', '),
+        }),
+      )
+      return
+    }
+    setError(null)
+    setText('')
+    onChange([...rows.filter((row) => !parsed.some((c) => sameCookie(c, row))), ...parsed])
+  }
+
+  return (
+    <div className="space-y-2">
+      {listed.length > 0 && (
+        <ul className="space-y-1">
+          {listed.map((row) => (
+            <li key={`${row.name}|${row.domain}|${row.path}`} className="flex items-center gap-2 text-xs text-gray-900">
+              <span className="font-mono">{row.name}</span>
+              <span className="text-gray-600">{row.domain}</span>
+              <span className="text-gray-600">
+                {row.expires
+                  ? m.admin_connectors_webcrawler_cookie_expires({
+                      date: new Date(row.expires).toLocaleDateString(getLocale()),
+                    })
+                  : row.imported
+                    ? m.admin_connectors_webcrawler_cookie_session()
+                    : m.admin_connectors_webcrawler_cookie_saved()}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-label={m.admin_connectors_webcrawler_cookie_remove({ name: row.name })}
+                onClick={() => onChange(rows.filter((r) => r !== row))}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Textarea
+        id={`${idPrefix}-json`}
+        rows={3}
+        value={text}
+        spellCheck={false}
+        placeholder={m.admin_connectors_webcrawler_cookies_json_placeholder()}
+        className="font-mono text-xs"
+        aria-label={m.admin_connectors_webcrawler_cookies_json_label({ host })}
+        onChange={(e) => setText(e.target.value)}
+      />
+      {error && <p className="text-xs text-[var(--color-destructive)]">{error}</p>}
+      <Button type="button" variant="outline" size="sm" disabled={!text.trim()} onClick={addCookies}>
+        {m.admin_connectors_webcrawler_cookies_json_add()}
+      </Button>
+    </div>
+  )
+}

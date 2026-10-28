@@ -2991,16 +2991,48 @@ async def test_crawl_requests_claim_a_current_chrome_not_crawl4ais_default(
     assert stealth["enable_stealth"] is True
 
 
-def test_cookie_hooks_use_declarative_add_cookies_action() -> None:
+def test_cookie_hooks_carry_each_cookie_with_its_own_domain() -> None:
     """Cookies travel via the declarative ``add_cookies`` hook - crawl4ai's
-    server-validated, currently-supported replacement for raw
-    ``BrowserConfig.cookies`` (see ``hook_registry.py`` on the crawl4ai
-    server: the action is described there as "Add cookies to the browser
-    context before navigation (auth)" - exactly this use case)."""
-    cookies = [{"name": "session", "value": "abc", "domain": "example.com", "path": "/"}]
+    server-validated replacement for raw ``BrowserConfig.cookies``. Since
+    2026-10-28 the jar can hold cookies for the host a site signs in through
+    as well, so each cookie keeps its own domain (one without gets the host
+    of the crawled URL), only the fields add_cookies accepts are sent, and
+    more than 20 cookies are split over several hooks."""
+    page = "https://wiki.example.com/docs/page"
+    cookies = [
+        {"name": "sid", "value": "w"},
+        {
+            "name": "idp_session",
+            "value": "i",
+            "domain": "idp.example.com",
+            "path": "/",
+            "expires": "2026-10-28T20:00:00+00:00",
+            "secure": True,
+            "httpOnly": True,
+        },
+    ] + [{"name": f"c{i}", "value": "v", "domain": "wiki.example.com"} for i in range(19)]
 
-    hooks = crawl4ai_client._build_cookie_hooks(cookies)
-    assert hooks == {"hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]}
+    hooks = crawl4ai_client._build_cookie_hooks(cookies, page)
 
-    assert crawl4ai_client._build_cookie_hooks(None) is None
-    assert crawl4ai_client._build_cookie_hooks([]) is None
+    assert hooks is not None
+    assert [h["action"] for h in hooks["hooks"]] == ["add_cookies", "add_cookies"]
+    first, second = (h["params"]["cookies"] for h in hooks["hooks"])
+    assert (len(first), len(second)) == (20, 1)
+    assert first[0] == {
+        "name": "sid",
+        "value": "w",
+        "domain": "wiki.example.com",
+        "path": "/",
+        "secure": False,
+        "httpOnly": False,
+    }
+    assert first[1] == {
+        "name": "idp_session",
+        "value": "i",
+        "domain": "idp.example.com",
+        "path": "/",
+        "secure": True,
+        "httpOnly": True,
+    }
+    assert crawl4ai_client._build_cookie_hooks(None, page) is None
+    assert crawl4ai_client._build_cookie_hooks([], page) is None

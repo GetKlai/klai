@@ -998,7 +998,11 @@ def _build_browser_config(*, stealth: bool = False) -> dict[str, Any]:
     return {"type": "BrowserConfig", "params": params}
 
 
-def _build_cookie_hooks(cookies: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+# crawl4ai 0.9.5's add_cookies action takes at most 20 cookies per hook.
+_COOKIES_PER_HOOK = 20
+
+
+def _build_cookie_hooks(cookies: list[dict[str, Any]] | None, url: str) -> dict[str, Any] | None:
     """Build the declarative ``hooks`` payload that injects cookies.
 
     crawl4ai's server-side "untrusted-config boundary" (introduced fixing
@@ -1021,15 +1025,41 @@ def _build_cookie_hooks(cookies: list[dict[str, Any]] | None) -> dict[str, Any] 
     Accepting the request is not the same as applying the cookies, and only
     the second one matters: see deploy/tests/crawl4ai-cookie-contract.sh.
 
+    Each cookie keeps its own domain: since 2026-10-28 a connector's jar can
+    hold the cookies of the host its site signs in through as well, and the
+    browser must hold them the way a visitor's browser does. A cookie
+    without a domain belongs to the host of ``url``. Only the fields
+    ``add_cookies`` accepts are sent, in hooks of at most 20 cookies.
+
     Returns ``None`` when no cookies are provided, so callers can do:
 
-        hooks = _build_cookie_hooks(cookies)
+        hooks = _build_cookie_hooks(cookies, url)
         if hooks:
             payload["hooks"] = hooks
     """
     if not cookies:
         return None
-    return {"hooks": [{"action": "add_cookies", "params": {"cookies": cookies}}]}
+    host = urlparse(url).hostname or ""
+    browser_cookies = [
+        {
+            "name": c["name"],
+            "value": c["value"],
+            "domain": c.get("domain") or host,
+            "path": c.get("path") or "/",
+            "secure": bool(c.get("secure")),
+            "httpOnly": bool(c.get("httpOnly")),
+        }
+        for c in cookies
+    ]
+    return {
+        "hooks": [
+            {
+                "action": "add_cookies",
+                "params": {"cookies": browser_cookies[i : i + _COOKIES_PER_HOOK]},
+            }
+            for i in range(0, len(browser_cookies), _COOKIES_PER_HOOK)
+        ]
+    }
 
 
 async def crawl_page(
@@ -1115,7 +1145,7 @@ async def _crawl_page_with_config(
         "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
         "browser_config": _build_browser_config(stealth=stealth),
     }
-    hooks = _build_cookie_hooks(cookies)
+    hooks = _build_cookie_hooks(cookies, url)
     if hooks:
         payload["hooks"] = hooks
 
@@ -2272,7 +2302,7 @@ async def _fetch_seed_page(
         "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
         "browser_config": _build_browser_config(),
     }
-    hooks = _build_cookie_hooks(cookies)
+    hooks = _build_cookie_hooks(cookies, start_url)
     if hooks:
         payload["hooks"] = hooks
 
@@ -3389,7 +3419,7 @@ async def _chunked_bulk_fetch_with_session(
             "crawler_config": {"type": "CrawlerRunConfig", "params": crawler_config},
             "browser_config": _build_browser_config(stealth=stealth),
         }
-        hooks = _build_cookie_hooks(cookies)
+        hooks = _build_cookie_hooks(cookies, chunk_urls[0])
         if hooks:
             payload["hooks"] = hooks
 

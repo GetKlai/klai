@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,8 +95,37 @@ class CookieEntry(BaseModel):
 
     name: str
     value: str | None = None
+    # Empty means the base host. A sign-in host's cookie names that host, and
+    # must be one of WebcrawlerConfig.auth_chain_hosts.
     domain: str = ""
     path: str = "/"
+    expires: datetime | None = None
+    secure: bool = True
+    httpOnly: bool = False
+
+    @field_serializer("expires")
+    def _expires_as_iso(self, value: datetime | None) -> str | None:
+        # The cookie list is stored as JSON in the credential vault.
+        return value.isoformat() if value else None
+
+
+# A host name as it appears in a URL: no scheme, port or path. Anything else
+# would let a chain host carry more than a host into the keep-alive fetch.
+_HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+
+def _domain_covers(cookie_domain: str, host: str) -> bool:
+    """True when a cookie scoped to ``cookie_domain`` is sent to ``host``.
+
+    The same rule as knowledge-ingest's ``CookieJar.jar_for_host``, which
+    decides what the crawler sends. Browsers export ``.example.com`` for a
+    cookie that app.example.com also receives, so a parent domain counts only
+    with that leading dot; without it the cookie is host-only. A bare suffix
+    such as ``.com`` never counts.
+    """
+    domain = cookie_domain.lower()
+    bare = domain.lstrip(".")
+    return host == bare or (domain.startswith(".") and "." in bare and host.endswith(domain))
 
 
 class WebcrawlerConfig(BaseModel):
@@ -120,6 +149,9 @@ class WebcrawlerConfig(BaseModel):
     max_depth: int = 3
     content_selector: str | None = None
     cookies: list[CookieEntry] | None = None
+    # Other hosts the site signs in through (SSO/OAuth), found by the wizard.
+    # The only extra domains a cookie may name; the keep-alive walks them.
+    auth_chain_hosts: list[str] = Field(default_factory=list)
 
     # SPEC-CRAWL-003 new optional fields — safe None defaults
     canary_url: str | None = None
@@ -188,6 +220,21 @@ class WebcrawlerConfig(BaseModel):
         self._ssrf_check("canary_url", self.canary_url)
         self._ssrf_check("discovery_seed_url", self.discovery_seed_url)
         self._ssrf_check("test_url", self.test_url)
+
+        # Sign-in hosts are fetched by the keep-alive, so they get the same
+        # guard as base_url, and a cookie may only name a host we know about.
+        self.auth_chain_hosts = [host.strip().lower() for host in self.auth_chain_hosts]
+        for host in self.auth_chain_hosts:
+            if not _HOSTNAME_RE.match(host):
+                raise ValueError(f"auth_chain_hosts: {host!r} is not a host name")
+            self._ssrf_check("auth_chain_hosts", f"https://{host}/")
+        known_hosts = [(urlsplit(self.base_url).hostname or "").lower(), *self.auth_chain_hosts]
+        for cookie in self.cookies or []:
+            if cookie.domain and not any(_domain_covers(cookie.domain, host) for host in known_hosts):
+                raise ValueError(
+                    f"cookie {cookie.name!r} is for {cookie.domain!r}, which is neither the base host "
+                    "nor a detected sign-in host"
+                )
 
         url_set = self.canary_url is not None
         fp_set = self.canary_fingerprint is not None
