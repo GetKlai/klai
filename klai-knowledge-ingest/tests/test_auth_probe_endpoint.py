@@ -25,6 +25,7 @@ bug-pattern memory (no end-user on this internal-secret route).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -83,6 +84,10 @@ _REDCACTUS_COOKIES = [
     },
 ]
 
+# Cookies are only replayed on the host they name, so tests that probe
+# example.com need cookies for it.
+_COOKIES_FOR_EXAMPLE_COM = [{**c, "domain": "example.com"} for c in _REDCACTUS_COOKIES]
+
 
 # ---------------------------------------------------------------------------
 # Outcome labels
@@ -138,7 +143,7 @@ def test_auth_probe_status_code_split_returns_auth_ok(client: TestClient) -> Non
             "/ingest/v1/crawl/auth-probe",
             json={
                 "url": "https://example.com/dashboard",
-                "cookies": _REDCACTUS_COOKIES,
+                "cookies": _COOKIES_FOR_EXAMPLE_COM,
             },
         )
     body = resp.json()
@@ -224,7 +229,7 @@ def test_auth_probe_auth_ok_emits_canary_fingerprint(client: TestClient) -> None
             "/ingest/v1/crawl/auth-probe",
             json={
                 "url": "https://example.com/page",
-                "cookies": _REDCACTUS_COOKIES,
+                "cookies": _COOKIES_FOR_EXAMPLE_COM,
             },
         )
     body = resp.json()
@@ -333,3 +338,45 @@ def test_auth_probe_passes_org_id_to_identity_assert(
     assert spy.await_count == 1
     _, kwargs = spy.await_args
     assert kwargs.get("claimed_org_id") == provided_org_id
+
+
+# ---------------------------------------------------------------------------
+# Cookie scope
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("domain", "sent"),
+    [("wiki.example.com", False), (".wiki.example.com", True)],
+)
+def test_auth_probe_sends_a_host_only_cookie_to_that_host_and_never_to_its_subdomains(
+    client: TestClient, domain: str, sent: bool
+) -> None:
+    """A cookie domain without a leading dot is host-only, as in a browser."""
+    seen: list[dict[str, str] | None] = []
+
+    async def _fetch(
+        url: str, pin_map: dict[str, str], cookies: dict[str, str] | None = None
+    ) -> _ProbeResponse:
+        seen.append(cookies)
+        return _probe()
+
+    with (
+        patch(
+            "knowledge_ingest.routes.crawl.validate_url_pinned",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    hostname="docs.wiki.example.com", preferred_ip="93.184.216.34"
+                )
+            ),
+        ),
+        patch("knowledge_ingest.routes.crawl._probe_fetch", new=AsyncMock(side_effect=_fetch)),
+    ):
+        client.post(
+            "/ingest/v1/crawl/auth-probe",
+            json={
+                "url": "https://docs.wiki.example.com/page",
+                "cookies": [{"name": "session", "value": "made-up", "domain": domain}],
+            },
+        )
+    assert ({"session": "made-up"} in seen) is sent

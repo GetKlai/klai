@@ -27,6 +27,22 @@ jobs:
     defaults:
       run:
         working-directory: klai-slack
+    # The repository tests (migrations up and down, purge) need a real
+    # PostgreSQL; without it they skip and a broken migration only shows at deploy.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: klai
+          POSTGRES_PASSWORD: klai
+          POSTGRES_DB: klai_slack
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U klai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v7
@@ -52,6 +68,11 @@ jobs:
 
       - name: Test (pytest)
         run: uv run pytest -q --tb=short
+
+      - name: Test against PostgreSQL (migrations, repository)
+        env:
+          SLACK_TEST_DATABASE_URL: postgresql+asyncpg://klai:klai@localhost:5432/klai_slack
+        run: uv run pytest -q --tb=short -m postgres
 
   build-push:
     needs: quality

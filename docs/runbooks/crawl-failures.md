@@ -67,6 +67,19 @@ For `crawler_config_rejected`: check the crawl4ai image tag in `deploy/docker-co
 
 Each crawl4ai request carries one URL and a host receives at most one request per second, halved (down to 0.2 per second) after a 429 or anti-bot response and raised again after clean crawls. Do not batch URLs per request to speed a crawl up: crawl4ai fetches a multi-URL request with 20 parallel sessions, which caused 71 429s in 244 fetches on 2026-10-28.
 
+## Sessions that sign in through a second host
+
+Some sites behind a login sign in through another host. The wiki seen on 2026-10-28 answers `/login` with a 302 to `https://<portal>/oauth/authorize?prompt=auto`, which redirects straight back to `/login/callback` when it still holds a session of its own. Both hosts keep a rolling session of two hours. A browser survives a lapsed wiki session because it holds cookies for both hosts and walks that chain without the visitor noticing; the keep-alive held only the wiki's cookies, so from 2026-09-28 every probe ended in `embedded_login_gate` and a fresh cookie paste lasted at most two days.
+
+klai-connector calls the keep-alive (`POST /ingest/v1/crawl/keep-alive` on knowledge-ingest) every 30 minutes. It first fetches the probe page with the site's own cookies. When that page is a login wall, or redirects off the host, it walks the sign-in chain: it follows the page's login link (or `/login`) redirect by redirect, only over https and only to the site's own host or a host in the connector's `auth_chain_hosts`, re-pinning each hop against SSRF, and keeps every cookie a host sets in a jar per host. Then it fetches the page once more. Whatever the hosts issued is written back to the connector's credentials, as soon as the page opens again or a chain host renewed its cookie, and the crawl sends the whole jar with each cookie's own domain. Two log reasons tell the outcomes apart (VictoriaLogs, `service:knowledge-ingest AND message:crawl_keepalive_*`):
+
+- `crawl_keepalive_session_reminted hosts=[…]`: the chain signed the session in again; nothing to do.
+- `crawl_keepalive_session_logged_out reason=chain_broken_at:<host>`: the chain reached a host we hold no cookies for, so its session has to be pasted. `reason=embedded_login_gate` (or another wall reason) after a walked chain means every host answered but the page stayed walled; the session at the identity host has expired too. `reason=redirect_left_host:<host>` names a host that is not in `auth_chain_hosts`.
+
+The owner must paste cookies for every host in the chain, not only for the site itself; the crawler wizard takes them per sign-in host.
+
+Two alerts (`crawl-session-rules.yaml`, component `crawl`) watch this. `crawl_session_chain_broken` fires on `chain_broken_at:<host>` within 2 hours: the label `reason` names the host, and the owner pastes that host's cookies in the connector wizard. It fires once per transition (the log line is not repeated while the connector stays logged out), so a source that stays broken is then only visible through the crawl alerts above. `crawl_session_cookie_expiring` fires when `crawl_keepalive_cookie_expiring` (logged on every tick, never with the cookie value) names a cookie of the site or a chain host that lapses within 7 days; paste fresh cookies for that host before the `expires` date and the alert clears.
+
 ## crawl_jobs_silent: dead scheduler
 
 The scheduler is klai-connector's APScheduler; see `docs/runbooks/connector-schedules.md`. Check its log for `Scheduler refreshed with N scheduled connectors` and for errors on that connector. Sources scheduled weekly, or not at all, are not covered by this alert.

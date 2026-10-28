@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from knowledge_ingest import pg_store
+from knowledge_ingest.connector_cookies import CookieJar
 from knowledge_ingest.crawl4ai_client import (
     CrawlResult,
     LinkedPageSample,
@@ -712,10 +713,10 @@ class _ProbeResponse:
     # redirects and to feed classify_auth_wall's cookie heuristic.
     location: str | None = None
     set_cookie: str | None = None
-    # Cookies this response set for the requested host itself, keyed by
-    # (name, path), so crawl_keepalive can store a session value the site
-    # rotated without touching a same-named cookie on another path.
-    new_cookies: dict[tuple[str, str], str] = field(default_factory=dict)
+    # Every Set-Cookie header of the response, for crawl_keepalive's per-host
+    # jar. Not ``r.cookies``: the pinned transport rewrites the request host
+    # to the IP, so the stdlib jar would scope a host-only cookie to the IP.
+    set_cookies: list[str] = field(default_factory=list)
 
 
 _PROBE_UA = (
@@ -743,8 +744,9 @@ async def _probe_fetch(
         timeout=_PROBE_TIMEOUT,
         follow_redirects=False,
         headers={"User-Agent": _PROBE_UA},
+        cookies=cookies,
     ) as client:
-        r = await client.get(url, cookies=cookies or {})
+        r = await client.get(url)
         return _ProbeResponse(
             status_code=r.status_code,
             word_count=len(r.text.split()),
@@ -752,11 +754,7 @@ async def _probe_fetch(
             text=r.text,
             location=r.headers.get("location"),
             set_cookie=r.headers.get("set-cookie"),
-            new_cookies={
-                (c.name, c.path): c.value
-                for c in r.cookies.jar
-                if c.value and c.domain.lstrip(".") == r.url.host
-            },
+            set_cookies=r.headers.get_list("set-cookie"),
         )
 
 
@@ -810,11 +808,12 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
             auth_guard=None,
         )
 
-    cookie_dict: dict[str, str] = {
-        c["name"]: c["value"]
-        for c in body.cookies
-        if isinstance(c, dict) and c.get("name") and c.get("value")
-    }
+    # A site that signs in through a second host sends us that host's cookies
+    # too; they belong to the sign-in host and must not be replayed here. The
+    # jar decides that with the same scope rule the keep-alive uses.
+    cookie_dict = CookieJar(body.cookies, validated.hostname).jar_for_host(
+        validated.hostname, urlparse(body.url).path or "/"
+    )
     pin_map = {validated.hostname: validated.preferred_ip}
 
     try:

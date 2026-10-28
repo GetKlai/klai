@@ -31,7 +31,12 @@ vi.mock('@tanstack/react-router', async () => {
 const apiFetchMock = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/apiFetch', async () => {
   const actual = await vi.importActual<typeof import('@/lib/apiFetch')>('@/lib/apiFetch')
-  return { ...actual, apiFetch: (...args: unknown[]) => apiFetchMock(...args) }
+  // The sign-in host check runs when the auth step opens; it is not what these tests script.
+  return {
+    ...actual,
+    apiFetch: (...args: unknown[]) =>
+      String(args[0]).endsWith('/auth-chain') ? Promise.resolve({ hosts: [] }) : apiFetchMock(...args),
+  }
 })
 
 vi.mock('@/lib/auth', () => ({

@@ -100,8 +100,13 @@ provisioning sync — the helper is single-file only.
 ### When you change a Class A file
 
 Just `git push`. The workflow rsyncs + force-recreates. ~30s end-
-to-end. Health check fails the workflow on container-not-running;
-operator's recovery is `git revert + push`.
+to-end. A red gate (SPEC-INFRA-AUTO-ROLLBACK-001 S3,
+`deploy/scripts/compose-rollback.sh`) restores the `*.prev` copies the
+run made, recreates and verifies once more, and still ends the job red:
+exit 3 = rolled back, exit 4 = rollback failed (needs a human). Exception:
+when a self-migrating image (Twenty, LiteLLM, GlitchTip, Zitadel) changed in
+the same sync nothing is restored and the run ends 4 with gate
+`self-migrating-image`; recovery is then a human decision.
 
 ### When you change a Class A-dir file
 

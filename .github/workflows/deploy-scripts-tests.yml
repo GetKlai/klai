@@ -134,6 +134,11 @@ jobs:
       - name: rollback-rehearsal assertion suite
         run: bash deploy/scripts/tests/rollback-rehearsal-assert.test.sh
 
+      # A red gate in deploy-compose.yml puts the previous files back; a helper
+      # that restores the wrong set of files turns a bad deploy into a worse one.
+      - name: compose rollback suite
+        run: bash deploy/scripts/tests/compose-rollback.test.sh
+
       - name: LibreChat regenerate suite
         run: bash deploy/scripts/tests/tenant-config-regenerate.test.sh
 

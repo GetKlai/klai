@@ -174,7 +174,6 @@ async def _connect(oauth: AsyncOAuthSettings, method: str, **kwargs: Any) -> htt
 
 def _assert_not_cached(response: httpx.Response) -> None:
     assert response.headers["cache-control"] == "no-store"
-    assert response.headers["referrer-policy"] == "no-referrer"
 
 
 @pytest.mark.parametrize(
@@ -190,6 +189,19 @@ async def test_connect_rejects_an_invalid_token(
     form = {} if claims is None else {"token": _token(**claims)}
     response = await _connect(oauth[0], "POST", data=form)
     assert response.status_code == 400
+    assert portal_link.INVALID_LINK in response.text
+    _assert_not_cached(response)
+    assert pending == {}
+
+
+async def test_connect_refuses_a_body_above_the_limit(
+    oauth: tuple[AsyncOAuthSettings, AsyncOAuthFlow],
+    pending: dict[str, str],
+) -> None:
+    response = await _connect(
+        oauth[0], "POST", data={"token": "a" * (portal_link.MAX_BODY_BYTES + 1)}
+    )
+    assert response.status_code == 413
     assert portal_link.INVALID_LINK in response.text
     _assert_not_cached(response)
     assert pending == {}

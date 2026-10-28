@@ -109,6 +109,9 @@ class SessionKeepAlive:
                 connector_id=str(item.connector_id),
                 org_id=item.org_id,
                 url=url,
+                # The hosts the site signs in through; the keep-alive walks the
+                # sign-in chain across them when the page shows a login wall.
+                auth_chain_hosts=config.config.get("auth_chain_hosts") or [],
             )
         except Exception:
             logger.warning(

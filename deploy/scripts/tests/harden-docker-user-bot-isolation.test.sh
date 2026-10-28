@@ -154,7 +154,7 @@ check "a missing pin fails the firewall unit" \
 # into compose-env-drift-recreate.sh. The workflow must still call it, or the
 # cases below test a script nothing runs.
 check "deploy-compose.yml runs the env-drift sweep script" \
-    grep -q '^ */opt/klai/scripts/compose-env-drift-recreate\.sh$' "$WORKFLOW"
+    grep -qE '^ *(rb_gate compose compose-up-verification )?/opt/klai/scripts/compose-env-drift-recreate\.sh$' "$WORKFLOW"
 
 # Execute the real sweep with boundary commands stubbed. This catches ordering
 # and exit-code bugs without SSH or Docker.

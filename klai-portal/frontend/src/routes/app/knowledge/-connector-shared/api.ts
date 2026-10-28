@@ -50,6 +50,11 @@ export function buildCrawlerCookies(rows: CookieRow[], baseUrl: string): unknown
       ...(value ? { value } : {}),
       domain: row.domain ?? domain,
       path: row.path ?? '/',
+      // Only an imported cookie knows these; a typed or kept row sends none and
+      // the backend applies its defaults.
+      ...(row.expires ? { expires: row.expires } : {}),
+      ...(row.secure === undefined ? {} : { secure: row.secure }),
+      ...(row.httpOnly === undefined ? {} : { httpOnly: row.httpOnly }),
     }
   })
 }
@@ -72,6 +77,17 @@ function savedCredentialFields(
     connector_id: connectorId,
     use_saved_credentials: useSavedCredentials,
   }
+}
+
+// Other hosts the site signs in through (SSO/OAuth), found server-side by
+// following /login without cookies. Rejects when the check itself fails, so
+// the wizard can say so instead of implying the site has no second host.
+export async function detectAuthChainHosts(kbSlug: string, url: string): Promise<string[]> {
+  const { hosts } = await apiFetch<{ hosts: string[] }>(
+    `/api/app/knowledge-bases/${kbSlug}/connectors/auth-chain`,
+    { method: 'POST', body: JSON.stringify({ url }) },
+  )
+  return hosts
 }
 
 export function probeCrawlerAuth(
