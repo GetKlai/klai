@@ -1,4 +1,11 @@
-name: Sync docker-compose.yml + config + smoke-test to core-01
+name: Sync compose and config to core-01
+# A plain name on purpose. Until 2026-10-28 it was "Sync docker-compose.yml +
+# config + smoke-test to core-01", and no workflow_run consumer of it (the CI
+# failure notice, E2E prod-tenant, the LiteLLM hook deploy) ever started: ten
+# red syncs since August opened no issue, and the hook deploy never ran from a
+# sync. GitHub matches the `workflows:` filter with its pattern syntax, where
+# `+` quantifies the character before it, so the name with " + " in it could
+# not match itself. Keep this name free of `*`, `?`, `+`, `[` and `!`.
 
 on:
   push:

@@ -50,7 +50,7 @@ def test_litellm_prisma_migrations_are_preflight_gated():
     # snapshots; this workflow runs after a green sync and must never copy the
     # compose file itself.
     assert "- 'deploy/docker-compose.yml'" not in litellm_deploy_text
-    assert "workflows: ['Sync docker-compose.yml + config + smoke-test to core-01']" in litellm_deploy_text
+    assert "workflows: ['Sync compose and config to core-01']" in litellm_deploy_text
     assert "rsync -av deploy/docker-compose.yml" not in litellm_deploy_text
     env_drift_text = ENV_DRIFT_SCRIPT.read_text(encoding="utf-8")
     assert "awk '$0 != \"litellm\"'" in env_drift_text
