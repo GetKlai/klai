@@ -208,6 +208,7 @@ function ClusterTableRow({ cluster, onOpen }: { cluster: ClusterRow; onOpen: () 
             <Badge variant="secondary">{decisionLabel(cluster.decision)}</Badge>
           )}
           {cluster.has_proposal && <Badge variant="info">{m.gaps_clusters_has_proposal()}</Badge>}
+          {!cluster.decidable && <span className="text-xs text-gray-500">{m.gaps_clusters_not_decidable_marker()}</span>}
         </div>
       </DataTableCell>
     </DataTableRow>

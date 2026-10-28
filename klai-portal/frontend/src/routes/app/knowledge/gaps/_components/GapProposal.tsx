@@ -25,6 +25,7 @@ import { formatRelativeTime } from '../-gap-types'
 import {
   clusterPath,
   isWebUrl,
+  notDecidableReason,
   type ClusterDecision,
   type ClusterProposal,
   type ClusterRow,
@@ -117,7 +118,7 @@ export function GapProposal({ cluster }: { cluster: ClusterRow }) {
         </p>
       )}
 
-      {proposalQuery.isSuccess && !proposal && !decided && (
+      {cluster.decidable && proposalQuery.isSuccess && !proposal && !decided && (
         <div className="space-y-2">
           <Button size="sm" disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>
             {createMutation.isPending ? m.gaps_proposal_creating() : m.gaps_proposal_create()}
@@ -196,6 +197,10 @@ export function GapProposal({ cluster }: { cluster: ClusterRow }) {
 
       {decided ? (
         <DecisionLine decision={decided} />
+      ) : !cluster.decidable ? (
+        <p className="text-sm text-gray-600">
+          {m.gaps_clusters_not_decidable({ reason: notDecidableReason(clusterKey) })}
+        </p>
       ) : (
         proposalQuery.isSuccess && (
           <div className="flex items-center gap-2">

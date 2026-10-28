@@ -34,6 +34,9 @@ export interface ClusterRow {
   decided_by: string | null
   decided_at: string | null
   has_proposal: boolean
+  // false for internal-only clusters and clusters without topic words: the
+  // proposal and decision endpoints answer 409 for them.
+  decidable: boolean
 }
 
 export interface ClustersResponse {
@@ -82,6 +85,12 @@ export function clusterKindLabel(kind: ClusterKind): string {
 
 export function clusterTitle(cluster: Pick<ClusterRow, 'product' | 'topic'>): string {
   return cluster.product ? `${cluster.product} · ${cluster.topic}` : cluster.topic
+}
+
+export function notDecidableReason(clusterKey: string): string {
+  return clusterKey.startsWith('internal|')
+    ? m.gaps_clusters_not_decidable_internal()
+    : m.gaps_clusters_not_decidable_no_topic()
 }
 
 export function decisionLabel(decision: ClusterDecision): string {

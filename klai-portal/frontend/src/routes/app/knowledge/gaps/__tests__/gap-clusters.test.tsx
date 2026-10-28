@@ -90,6 +90,7 @@ function cluster(overrides: Record<string, unknown> = {}) {
     decided_by: null,
     decided_at: null,
     has_proposal: false,
+    decidable: true,
     ...overrides,
   }
 }
@@ -187,6 +188,14 @@ describe('GapClustersPage', () => {
     render(<Wrapper><GapClustersPage /></Wrapper>)
 
     expect(await screen.findByText(/interne chat, zonder tekst|internal chat, no text/i)).toBeTruthy()
+  })
+
+  it('marks a non-decidable cluster in the list', async () => {
+    mockApi({ clusters: [cluster({ decidable: false })] })
+
+    render(<Wrapper><GapClustersPage /></Wrapper>)
+
+    expect(await screen.findByText(/^(niet te beslissen|cannot be decided)$/i)).toBeTruthy()
   })
 
   it('refetches with the chosen period and with decided clusters when asked', async () => {
@@ -313,6 +322,20 @@ describe('GapClusterDetailPage', () => {
     expect(screen.queryByRole('button', { name: /^(afwijzen|reject)$/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /^(buiten scope|out of scope)$/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /maak voorstel|create proposal/i })).toBeNull()
+  })
+
+  it('shows why a non-decidable cluster cannot be decided and offers no proposal or decision button', async () => {
+    mockApi({
+      clusters: [cluster({ decidable: false })],
+      get: notFound,
+    })
+
+    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+
+    expect(await screen.findByText(/niet te beslissen: geen onderwerpwoorden|cannot be decided: no topic words/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /maak voorstel|create proposal/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^(afwijzen|reject)$/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^(buiten scope|out of scope)$/i })).toBeNull()
   })
 
   it('shows a not-found state when the cluster is not in the list', async () => {
