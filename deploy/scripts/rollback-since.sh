@@ -101,7 +101,9 @@ exec > >(tee "$LOG") 2>&1
 
 TOOLS="$(mktemp -d)"
 trap 'rm -rf "$TOOLS"' EXIT
-if ! cp "$DEPLOY" "$TOOLS/deploy-with-rollback.sh" || ! cp "$COMPOSE_ROLLBACK" "$TOOLS/compose-rollback.sh"; then
+# compose-rollback.sh sources datastore-rollback.sh from its own directory.
+if ! cp "$DEPLOY" "$TOOLS/deploy-with-rollback.sh" || ! cp "$COMPOSE_ROLLBACK" "$TOOLS/compose-rollback.sh" \
+    || ! cp "$(dirname "$COMPOSE_ROLLBACK")/datastore-rollback.sh" "$TOOLS/datastore-rollback.sh"; then
     echo "::error::could not copy the rollback scripts to $TOOLS; nothing changed"
     exit 1
 fi

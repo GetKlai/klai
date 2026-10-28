@@ -432,6 +432,36 @@ check "  refusal printed" 1 "$(grep -c 'dry mode is for stores only' "$case_dir/
 check "  flag removed" no "$([[ -e "$case_dir/.datastore-dry" ]] && echo yes || echo no)"
 check "  live restore, no throwaway" "1 0" "$(calls 'exec -T crm-postgres psql .*DROP') $(calls 'docker run')"
 
+# --- S6 replay: a red E2E after a green sync restores that sync's snapshot ----
+# replay [age-seconds]: a second shell, as rollback-since.sh runs it.
+replay() {
+  local snap
+  snap="$(snapdir crm)"
+  [[ -z "${1:-}" ]] || sed -i.bak "s/^epoch=.*/epoch=$(( $(date -u +%s) - $1 ))/" "$snap/meta"
+  set +e
+  # shellcheck source=deploy/scripts/compose-rollback.sh
+  ( source "$helper" && rb_replay e2e ) < /dev/null > "$case_dir/out" 2>&1
+  rc=$?
+  set -e
+}
+for age in "" 1860; do
+  new_case "replay_${age:-in_window}"
+  : > "$case_dir/fake/new_writes"
+  run_driver "$TWENTY_BUMP"
+  check "green Twenty sync (replay setup) -> exit 0" 0 "$rc"
+  export FAKE="$case_dir/fake" KLAI_COMPOSE_DIR="$case_dir"
+  PATH="$bin:$PATH" replay "$age"
+  unset FAKE KLAI_COMPOSE_DIR
+  if [[ -z "$age" ]]; then
+    check "  replay within the window -> exit 3" 3 "$rc"
+    check "  twenty restored to the snapshot" 20 "$(count crm-postgres/twenty/core.fieldMetadata)"
+    check "  Twenty back on its previous image" twentycrm/twenty:v2.51.0 "$(running crm)"
+  else
+    check "  replay at +31 min -> exit 4, gate restore-window" "4 restore-window" "$rc $(report gate)"
+    check "  nothing restored" "0 25" "$(calls 'DROP DATABASE') $(count crm-postgres/twenty/core.fieldMetadata)"
+  fi
+done
+
 # --- the window counts from the end of the dumps -------------------------------
 new_case epoch_after_dumps
 run_driver "$UMAMI_BUMP" 'echo "epoch line count: $(grep -c ^epoch= "${DS_SNAPSHOTS[0]}/meta") last: $(tail -n1 "${DS_SNAPSHOTS[0]}/meta" | cut -d= -f1)"'

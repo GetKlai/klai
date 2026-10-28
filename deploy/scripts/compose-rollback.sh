@@ -169,6 +169,8 @@ rb_finish() {
         for f in "${RB_KEPT[@]}"; do printf 'kept=%s\n' "$f"; done
         for f in "${RB_NEW[@]}"; do printf 'new=%s\n' "$f"; done
         for f in "${RB_TOUCHED[@]}"; do printf 'touched=%s\n' "$f"; done
+        # The data snapshots of this sync, so a replay restores them within R4's window.
+        for f in "${DS_SNAPSHOTS[@]}"; do printf 'snapshot=%s\n' "$f"; done
       } > "$RB_STATE" ;;
     rolled_back)
       code=3
@@ -211,6 +213,7 @@ rb_replay() {
   RB_KEPT=()
   RB_NEW=()
   RB_TOUCHED=()
+  DS_SNAPSHOTS=()
   while IFS='=' read -r key val; do
     case "$key" in
       from) RB_FROM="$val" ;;
@@ -218,6 +221,7 @@ rb_replay() {
       kept) RB_KEPT+=("$val") ;;
       new) RB_NEW+=("$val") ;;
       touched) RB_TOUCHED+=("$val") ;;
+      snapshot) DS_SNAPSHOTS+=("$val") ;;
     esac
   done < "$RB_STATE"
   mkdir -p "$RB_REPORT_DIR"
