@@ -17,11 +17,12 @@
 # Caddy deploy has to pass.
 FROM caddy:2.11.7-builder-alpine AS builder
 
-# The two --replace lines pin transitive dependencies, not plugins. Caddy
+# The three --replace lines pin transitive dependencies, not plugins. Caddy
 # 2.11.4's own graph selects versions that Trivy flags with a fix available:
 #
 #   golang.org/x/net        CVE-2026-46600, CVE-2026-78669     fixed in 0.60.0
 #   google.golang.org/grpc  CVE-2026-84304, CVE-2026-84445     fixed in 1.83.2
+#   go-jose/go-jose/v4      CVE-2026-116587                    fixed in 4.1.6
 #
 # Both get fixed at source rather than earning a .trivyignore entry, which is
 # reserved for findings that have no fix to apply.
@@ -40,18 +41,21 @@ RUN xcaddy build \
     --with github.com/caddy-dns/hetzner/v2 \
     --with github.com/mholt/caddy-ratelimit \
     --replace golang.org/x/net=golang.org/x/net@v0.60.0 \
-    --replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2
+    --replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2 \
+    --replace github.com/go-jose/go-jose/v4=github.com/go-jose/go-jose/v4@v4.1.6
 
 FROM caddy:2.11.7-alpine
 
 # Apply Alpine package security updates that landed AFTER the
 # `caddy:2.11.4-alpine` image was published. These packages are exposed
 # through Caddy's HTTPS edge, so real package fixes are preferred over
-# ignore-entries. Keep this list targeted so the build stays reproducible;
-# broader base-image movement remains Renovate-owned.
+# ignore-entries. brotli-libs is listed for CVE-2026-111497 (fixed in
+# 1.2.1-r0, while the base image still ships 1.2.0-r0). Keep this list
+# targeted so the build stays reproducible; broader base-image movement
+# remains Renovate-owned.
 RUN apk update && apk upgrade --no-cache \
         nghttp2 nghttp2-libs libcrypto3 libssl3 \
-        curl libcurl c-ares
+        curl libcurl c-ares brotli-libs
 
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 
