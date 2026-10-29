@@ -144,3 +144,18 @@ async def test_retry_resets_claim_and_attempts_and_requeues(
     assert response.status == "transcribed"
     assert record.attempts == 1
     assert record.language_hint == "nl"
+
+
+async def test_retry_on_a_processing_row_is_refused(queue: FakeSession) -> None:
+    """The queue owns a processing row; a second job on the same audio is never started."""
+    record = make_record("txn_busy", status="processing", claimed_at=datetime.now(UTC))
+    queue.store[record.id] = record
+    queue.select_result = record
+
+    with pytest.raises(HTTPException) as exc_info:
+        await transcribe_api.retry_transcription(
+            txn_id="txn_busy", language=None, caller=_CALLER, db=queue
+        )
+
+    assert exc_info.value.status_code == 409
+    assert record.claimed_at is not None

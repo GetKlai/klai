@@ -8,6 +8,7 @@ seconds. The second finisher must leave a row alone once it is no longer
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -55,6 +56,28 @@ async def test_finisher_does_not_overwrite_a_row_finished_meanwhile(
     assert (audio_dir / "user1" / "txn_a.wav").exists()
 
 
+async def test_finisher_that_lost_its_claim_writes_nothing(
+    audio_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale takeover, a retry or a startup release re-claims the row while
+    the first job is still running; the first job's result must not land."""
+    record = make_record(claimed_at=datetime.now(UTC))
+    session = FakeSession({record.id: record})
+
+    class _OvertakenProvider:
+        async def transcribe(self, audio_wav: bytes, language: str | None):
+            record.claimed_at = datetime.now(UTC)  # another claim took the row
+            return Result()
+
+    monkeypatch.setattr(jobs, "get_provider", lambda: _OvertakenProvider())
+
+    await jobs.run_job(session, record.id)
+
+    assert record.status == "processing"
+    assert record.text is None
+    assert (audio_dir / "user1" / "txn_a.wav").exists()
+
+
 async def test_missing_audio_on_processing_row_marks_audio_missing(
     audio_dir: Path,
 ) -> None:
@@ -98,12 +121,14 @@ async def test_startup_releases_claims_and_fails_exhausted_rows(
 
     await jobs._recover_on_startup()
 
-    release, exhaust = (_sql(call.args[0]) for call in session.execute.await_args_list)
-    assert "SET claimed_at=NULL" in release
-    assert "status = 'processing'" in release
+    exhaust, release = (_sql(call.args[0]) for call in session.execute.await_args_list)
     assert "status='failed'" in exhaust
     assert "error_reason='attempts_exhausted'" in exhaust
     assert "attempts >= 3" in exhaust
+    # A row still held by a live claim is not exhausted from under its job.
+    assert "claimed_at IS NULL OR scribe.transcriptions.claimed_at <" in exhaust
+    assert "SET claimed_at=NULL" in release
+    assert "status = 'processing'" in release
     session.commit.assert_awaited_once()
 
 

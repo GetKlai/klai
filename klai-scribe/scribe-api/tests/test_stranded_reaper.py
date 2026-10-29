@@ -147,7 +147,7 @@ async def test_reaper_skips_queued_rows_and_reaps_rows_without_audio() -> None:
 
     where = _sql(session.execute.await_args.args[0]).split("WHERE", 1)[1]
     assert "status = 'processing'" in where
-    assert (
-        "(scribe.transcriptions.audio_path IS NULL OR scribe.transcriptions.attempts >= 3)" in where
-    )
+    assert "audio_path IS NULL OR scribe.transcriptions.attempts >= 3 AND (" in where
+    # Out of attempts but still held by a live claim: the job may still finish.
+    assert "claimed_at IS NULL OR scribe.transcriptions.claimed_at <" in where
     assert "created_at <" in where

@@ -228,7 +228,9 @@ async def retry_transcription(
             detail="Transcript niet gevonden",
         )
 
-    if record.status not in ("failed", "processing"):
+    # A `processing` row is owned by the queue (or recovered by it after a
+    # restart); re-queueing it would start a second job on the same audio.
+    if record.status != "failed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Alleen mislukte transcripties kunnen opnieuw worden geprobeerd",

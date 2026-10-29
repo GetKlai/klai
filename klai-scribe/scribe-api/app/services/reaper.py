@@ -21,11 +21,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.transcription import Transcription
-from app.services.jobs import MAX_ATTEMPTS
+from app.services.jobs import MAX_ATTEMPTS, stale_claim_filter
 
 logger = structlog.get_logger(__name__)
 
@@ -42,9 +42,10 @@ async def reap_stranded(session: AsyncSession, timeout_min: int) -> int:
     this function commits its own changes once and returns.
 
     Notes for the operator:
-    - Only rows the queue cannot claim are reaped: `audio_path IS NULL` or
-      `attempts >= 3` (the queue's `MAX_ATTEMPTS`). A queued or running row
-      with audio is never touched, however long the queue is.
+    - Only rows the queue cannot claim are reaped: `audio_path IS NULL`, or
+      `attempts >= 3` (the queue's `MAX_ATTEMPTS`) with no live claim. A
+      queued or running row with audio is never touched, however long the
+      queue is.
     - `created_at` is the row insert time and serves as the age; see
       `Settings.scribe_stranded_timeout_min`.
     - When N replicas of scribe-api start simultaneously, all N race to
@@ -62,7 +63,8 @@ async def reap_stranded(session: AsyncSession, timeout_min: int) -> int:
         .where(
             or_(
                 Transcription.audio_path.is_(None),
-                Transcription.attempts >= MAX_ATTEMPTS,
+                # Out of attempts, and not held by a job that is still running.
+                and_(Transcription.attempts >= MAX_ATTEMPTS, stale_claim_filter()),
             )
         )
         .where(Transcription.created_at < cutoff)
