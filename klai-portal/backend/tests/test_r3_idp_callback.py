@@ -51,7 +51,11 @@ def _make_portal_user(org_id: int, org_name: str = "Acme", slug: str = "acme") -
 
 
 def _make_portal_org(
-    org_id: int, name: str = "Acme", slug: str = "acme", primary_domain: str = "acme.example.com", auto_accept: bool = False
+    org_id: int,
+    name: str = "Acme",
+    slug: str = "acme",
+    primary_domain: str = "acme.example.com",
+    auto_accept: bool = False,
 ) -> MagicMock:
     org = MagicMock()
     org.id = org_id

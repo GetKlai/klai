@@ -84,7 +84,9 @@ class TestArtifactDisplayMetadata:
             meta = await search.fetch_artifact_display_metadata(["artifact-abc"], req)
 
         assert meta["artifact-abc"]["title"] == "Nummerbehoud aanvragen"
-        assert meta["artifact-abc"]["source_url"] == "https://help.example.com/nummerbehoud-aanvragen"
+        assert (
+            meta["artifact-abc"]["source_url"] == "https://help.example.com/nummerbehoud-aanvragen"
+        )
 
     @pytest.mark.asyncio
     async def test_a_large_document_cannot_starve_a_small_one(self):

@@ -244,7 +244,9 @@ class TestAC11_LogSchemaStability:
     ) -> None:
         monkeypatch.setattr(imap_listener, "find_tenant", AsyncMock(return_value=None))
         monkeypatch.setattr(imap_listener, "schedule_invite", AsyncMock())
-        monkeypatch.setattr(imap_listener, "parse_ics", MagicMock(return_value=_fake_invite("boss@customer.example.com")))
+        monkeypatch.setattr(
+            imap_listener, "parse_ics", MagicMock(return_value=_fake_invite("boss@customer.example.com"))
+        )
         monkeypatch.setattr(imap_listener, "_extract_ics_parts", lambda _msg: [ics_part])
 
         raw = build_email(from_addr="boss@customer.example.com")

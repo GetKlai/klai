@@ -549,7 +549,9 @@ class TestIdpCallbackNewUser:
         zit.retrieve_idp_intent = AsyncMock(return_value={"idpInformation": {}})  # no userId
         zit.create_zitadel_user_from_idp = AsyncMock(return_value="znew-1")
         zit.create_session_for_user_idp = AsyncMock(return_value={"sessionId": "sid", "sessionToken": "stk"})
-        zit.get_session_details = AsyncMock(return_value={"zitadel_user_id": "znew-1", "email": "piet@bedrijf.example.com"})
+        zit.get_session_details = AsyncMock(
+            return_value={"zitadel_user_id": "znew-1", "email": "piet@bedrijf.example.com"}
+        )
         db = self._db_with(members=[], domain_orgs=[_org()])
         svc = MagicMock()
         svc.return_value.store = AsyncMock(return_value="ref-new")

@@ -98,9 +98,7 @@ class TestDetector:
         assert text_contains_pasted_correspondence("---------- Forwarded message ----------\ninhoud") is True
 
     def test_quote_line_with_email_address_detected(self):
-        text = (
-            "Op vr 14 aug 2026 om 21:22 schreef Naam Achternaam <klant@example.net>:\n> wij zien geen fout aan onze kant"
-        )
+        text = "Op vr 14 aug 2026 om 21:22 schreef Naam Achternaam <klant@example.net>:\n> wij zien geen fout aan onze kant"
         assert text_contains_pasted_correspondence(text) is True
 
     def test_quote_line_without_email_address_is_not_detected(self):
@@ -121,7 +119,8 @@ class TestDetector:
     def test_language_variants_of_same_label_count_once(self):
         # "Van:" + "From:" + "Aan:" is only from+to → below threshold.
         assert (
-            text_contains_pasted_correspondence("Van: a@example.net\nFrom: a@example.net\nAan: b@example.net\n") is False
+            text_contains_pasted_correspondence("Van: a@example.net\nFrom: a@example.net\nAan: b@example.net\n")
+            is False
         )
 
     def test_empty_and_non_string_inputs(self):

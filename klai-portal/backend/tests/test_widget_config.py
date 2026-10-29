@@ -308,14 +308,19 @@ def test_widget_appointments_integration_scheme_policy():
         assert result["enabled"] is False, bad
 
     # Toggle off → disabled, and the URL is not handed to the visitor either.
-    assert _widget_appointments_integration(_appointments_config({"enabled": False, "booking_url": "https://x.example.com"})) == {
+    assert _widget_appointments_integration(
+        _appointments_config({"enabled": False, "booking_url": "https://x.example.com"})
+    ) == {
         "enabled": False,
         "booking_url": "",
     }
     # Absent or malformed integration blocks read as disabled, never raise.
     assert _widget_appointments_integration({}) == {"enabled": False, "booking_url": ""}
     assert _widget_appointments_integration({"integrations": None}) == {"enabled": False, "booking_url": ""}
-    assert _widget_appointments_integration({"integrations": {"appointments": "junk"}}) == {"enabled": False, "booking_url": ""}
+    assert _widget_appointments_integration({"integrations": {"appointments": "junk"}}) == {
+        "enabled": False,
+        "booking_url": "",
+    }
 
 
 @pytest.mark.asyncio

@@ -605,7 +605,8 @@ async def test_conversational_reply_is_shown_only_without_unsupported_claims(cla
 
 async def test_passed_reply_is_stripped_of_links_before_the_check_and_the_visitor_see_it():
     litellm = _LiteLLM(
-        model_text="Kijk eventueel op https://evil.example.com/phish of www.example.com/hulp [1]. " + CLARIFYING_QUESTION,
+        model_text="Kijk eventueel op https://evil.example.com/phish of www.example.com/hulp [1]. "
+        + CLARIFYING_QUESTION,
     )
 
     text, _, _ = await _answer(litellm, stream=True)
