@@ -208,9 +208,13 @@ def _augment_messages_with_system_prompt(
     page_context: PageContext | None = None,
     *,
     response_language: str | None,
+    source_language: str | None = None,
     profile: ChatProfile = ChatProfile(surface="widget"),
 ) -> list[dict]:
     """Assemble the provider payload: system prompt, turns, language contract.
+
+    ``source_language`` is the language of the retrieved passages, so the
+    final instruction can name the contrast when it differs from the target.
 
     ``profile.surface`` decides whether an image or file part in the
     conversation reaches the model: kept for partner and internal, collapsed
@@ -254,7 +258,7 @@ def _augment_messages_with_system_prompt(
     ]
     language_reminder = {
         "role": "system",
-        "content": final_response_language_reminder(response_language),
+        "content": final_response_language_reminder(response_language, source_language),
     }
     page_context_message = _render_page_context_message(page_context)
     if not page_context_message:
@@ -350,6 +354,35 @@ def _strip_web_search_tools(tools: list[dict] | None) -> list[dict] | None:
     return kept or None
 
 
+def reply_language_schema(language: str) -> dict[str, Any]:
+    """The language-first output shape: the model writes the decided language before one word of the reply.
+
+    An instruction to answer in the user's language is read and then dropped
+    once the model is deep in a prompt of Dutch passages: on 29 October 2026
+    the replayed English widget questions over a Dutch knowledge base came
+    back in Dutch on 8 of 20 turns, whatever the instruction's wording,
+    position or temperature. Made to write ``reply_language`` first, with the
+    decided code as its only allowed value, the model stayed in that language
+    on 20 of 20 turns: it builds every next word on what it already wrote.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "reply_in_language",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "reply_language": {"type": "string", "enum": [language]},
+                    "reply": {"type": "string"},
+                },
+                "required": ["reply_language", "reply"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
 def _llm_request_body(
     model: str,
     messages: list[dict],
@@ -359,17 +392,24 @@ def _llm_request_body(
     tools: list[dict] | None,
     tool_choice: Any | None,
     delegated_org_id: str | None,
+    language_schema: str | None = None,
 ) -> dict[str, Any]:
     """The body of one generation call to LiteLLM.
 
     ``delegated_org_id`` is set for an internal-chat turn. The call runs on the
     master key, which belongs to no tenant, so LiteLLM's PII enforcer only masks
-    the text for its org when the org travels with the call.
+    the text for its org when the org travels with the call. ``language_schema``
+    is the decided reply language the output shape enforces
+    (:func:`reply_language_schema`), with or without tools: probed on
+    29 October 2026, the model answers in the shape and still calls a tool
+    as a tool call when it wants one.
     """
     body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "stream": stream}
     if tools:
         body["tools"] = tools
         if tool_choice is not None:
             body["tool_choice"] = tool_choice
+    if language_schema:
+        body["response_format"] = reply_language_schema(language_schema)
     with_feature_tag(body, "portal:partner-chat-answer")
     return with_delegated_org(body, delegated_org_id)
