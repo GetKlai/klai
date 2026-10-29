@@ -1073,6 +1073,8 @@
   "app_transcribe_status_processing": "Bezig...",
   "app_transcribe_retry_button": "Opnieuw proberen",
   "app_transcribe_failed_hint": "Transcriptie mislukt - je opname is bewaard.",
+  "app_transcribe_queued_body": "Je opname wordt op de achtergrond verwerkt. Je vindt hem in de lijst; die ververst vanzelf zodra hij klaar is.",
+  "app_transcribe_go_to_list": "Naar de lijst",
   "app_transcribe_retry_success": "Transcriptie gelukt!",
   "admin_users_col_status": "Status",
   "admin_users_col_account_type": "Accounttype",

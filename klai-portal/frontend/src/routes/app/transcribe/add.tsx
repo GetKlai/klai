@@ -155,6 +155,7 @@ function AddTranscribePage() {
           isRetrying={retryMutation.isPending}
           onRetry={retryTranscription}
           onBack={clearFeedback}
+          onGoToList={() => void navigate({ to: '/app/transcribe' })}
         />
       </div>
     </PageContainer>

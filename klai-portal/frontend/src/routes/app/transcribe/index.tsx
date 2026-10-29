@@ -14,6 +14,7 @@ import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { ProductGuard } from '@/components/layout/ProductGuard'
 import { TranscriptionTable } from './_components/TranscriptionTable'
+import { hasActiveItems } from './-list-helpers'
 import type {
   TranscriptionItem,
   TranscriptionListResponse,
@@ -38,7 +39,6 @@ export const Route = createFileRoute('/app/transcribe/')({
 
 const SCRIBE_BASE = '/api/scribe/v1'
 const BOTS_BASE = '/api/bots'
-const ACTIVE_MEETING_STATUSES = ['pending', 'joining', 'recording', 'stopping', 'processing']
 
 function toUnified(item: TranscriptionItem): UnifiedItem {
   const statusMap: Record<string, string> = { transcribed: 'done', processing: 'processing', failed: 'failed' }
@@ -92,17 +92,14 @@ function TranscribePage() {
     queryKey: ['transcriptions'],
     queryFn: async () => apiFetch<TranscriptionListResponse>(`${SCRIBE_BASE}/transcriptions?limit=50`),
     enabled: auth.isAuthenticated,
+    refetchInterval: (query) => (hasActiveItems(query.state.data?.items, undefined) ? 5000 : false),
   })
 
   const { data: meetingsData, isLoading: meetingsLoading, error: meetingsError, refetch: refetchMeetings } = useQuery<MeetingListResponse>({
     queryKey: ['meetings'],
     queryFn: async () => apiFetch<MeetingListResponse>(`${BOTS_BASE}/meetings?limit=50`),
     enabled: auth.isAuthenticated,
-    refetchInterval: (query) => {
-      const data = query.state.data
-      if (!data) return false
-      return data.items.some((mtg) => ACTIVE_MEETING_STATUSES.includes(mtg.status)) ? 5000 : false
-    },
+    refetchInterval: (query) => (hasActiveItems(undefined, query.state.data?.items) ? 5000 : false),
   })
 
   const allItems: UnifiedItem[] = [
@@ -112,9 +109,7 @@ function TranscribePage() {
 
   const isLoading = transcriptionsLoading || meetingsLoading
   const queryError = transcriptionsError || meetingsError
-  const hasActiveMeetings = (meetingsData?.items ?? []).some((mtg) =>
-    ACTIVE_MEETING_STATUSES.includes(mtg.status),
-  )
+  const hasActive = hasActiveItems(transcriptionsData?.items, meetingsData?.items)
 
   const deleteUploadMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -203,7 +198,7 @@ function TranscribePage() {
         <p>{m.app_transcribe_intro_meetings()}</p>
       </PageIntro>
 
-      {hasActiveMeetings && (
+      {hasActive && (
         <div className="flex items-center gap-2 text-sm text-gray-600">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span>{m.app_transcribe_auto_refresh()}</span>

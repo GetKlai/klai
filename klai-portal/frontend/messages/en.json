@@ -1073,6 +1073,8 @@
   "app_transcribe_status_processing": "Processing...",
   "app_transcribe_retry_button": "Retry",
   "app_transcribe_failed_hint": "Transcription failed - your recording is saved.",
+  "app_transcribe_queued_body": "Your recording is being processed in the background. You will find it in the list, which refreshes by itself when it is done.",
+  "app_transcribe_go_to_list": "Go to the list",
   "app_transcribe_retry_success": "Transcription successful!",
   "admin_users_col_status": "Status",
   "admin_users_col_account_type": "Account type",
