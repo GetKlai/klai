@@ -202,8 +202,10 @@ authorization to mutate GitHub.
   messages, PR text, and above all tests and fixtures, which use `example.com`
   (or `.test`). A name next to no number is still a leak: a customer's wiki
   hostname once sat in 46 files. The name list lives outside the repository
-  (`~/.config/klai/tenant-names.txt`, secret `KLAI_TENANT_NAMES`) and is
-  refreshed from the portal's orgs and connector hosts. Enforced by
+  (`~/.config/klai/tenant-names.txt`, secret `KLAI_TENANT_NAMES`). It is
+  generated nightly on core-01 by `deploy/scripts/refresh-tenant-names.py` from
+  orgs, users and connectors, fetched to each developer machine at session start
+  and pushed to the CI secret from there. Enforced by
   `scripts/audit-public-tenant-data.py` in pre-commit, pre-push and the required
   `customer-data-guard` CI check; vendor domains a test may mock are listed in
   `scripts/allowed-test-domains.txt`.

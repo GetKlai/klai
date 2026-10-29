@@ -44,9 +44,10 @@ The customer names for rules 3 and 4 never live in this repository, because the 
 would itself be the disclosure. They come from ``KLAI_TENANT_NAMES`` (one per
 line; a GitHub secret in CI) or from ``~/.config/klai/tenant-names.txt``
 locally. A name may be a hostname or domain; lines starting with ``#`` and blank
-lines are ignored. Without a list, rules 1, 2 and 5 still run and the script says
-loudly that rules 3 and 4 are off. A tenant added after the list was written is
-not covered until the list is refreshed from ``portal_orgs``.
+lines are ignored. The list is generated nightly on core-01 by
+``deploy/scripts/refresh-tenant-names.py``, and a local file older than 7 days
+draws a warning. Without a list, rules 1, 2 and 5 still run and the script says
+loudly that rules 3 and 4 are off.
 
 Only added lines are judged, so what is already in the tree does not fail a
 push. ``--tree`` scans the whole working tree with rules 4 and 5 and prints
@@ -62,6 +63,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 _TENANT_WORD = re.compile(
@@ -74,6 +76,9 @@ _SEPARATOR_CELL = re.compile(r"^:?-{2,}:?$")
 _LIBRECHAT_DB = re.compile(r"\blibrechat-([a-z0-9][a-z0-9-]{2,})\b")
 _DIGIT = re.compile(r"\d")
 _NAMES_FILE = Path.home() / ".config" / "klai" / "tenant-names.txt"
+# The list is regenerated nightly on core-01 and fetched at session start, so a
+# week without an update means the fetch is broken, not that nothing changed.
+_STALE_AFTER_DAYS = 7
 _ALLOWED_DOMAINS_FILE = Path(__file__).resolve().parent / "allowed-test-domains.txt"
 
 _TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|fixtures?|stories|seeds?|e2e)(/|$)|(\.|_|-)(test|spec|stories)\.")
@@ -107,7 +112,7 @@ _ADVICE = (
     "  example.com-style names (tests and fixtures: example.com, example.net, example.org, .test).\n"
     "  Per-customer figures belong in the private klai-infra documentation.\n"
     "  Keep the shape of the distribution here if the decision needs it, without the\n"
-    "  names or the counts: \"one tenant accounted for almost all cited answers; three had none\"."
+    '  names or the counts: "one tenant accounted for almost all cited answers; three had none".'
 )
 
 
@@ -152,12 +157,7 @@ def _has_real_hostname(body: str, allowed: list[str]) -> bool:
         # path or port. A bare ``customer.nl`` in prose is still a finding.
         before = text[match.start() - 1] if match.start() > 0 else " "
         after = text[match.end()] if match.end() < len(text) else " "
-        if (
-            len(labels) == 2
-            and labels[-1] == "org"
-            and before not in "\"'`/@"
-            and after not in "/:"
-        ):
+        if len(labels) == 2 and labels[-1] == "org" and before not in "\"'`/@" and after not in "/:":
             continue
         # Module paths and snake_case attributes carry underscores; versions and
         # IP literals end in a digit label; neither is a hostname.
@@ -170,7 +170,9 @@ def _has_real_hostname(body: str, allowed: list[str]) -> bool:
     return False
 
 
-def _line_findings(path: str, line_no: int, body: str, customer: re.Pattern[str] | None, allowed: list[str]) -> list[str]:
+def _line_findings(
+    path: str, line_no: int, body: str, customer: re.Pattern[str] | None, allowed: list[str]
+) -> list[str]:
     """Rules 4 and 5 for one added line. Kinds only, never the matched text."""
     found = []
     if customer and customer.search(body):
@@ -274,6 +276,19 @@ def load_names() -> list[str]:
     return [line.strip() for line in raw.splitlines() if line.strip() and not line.startswith("#")]
 
 
+def _stale_list_warning() -> str | None:
+    """Only the local file can go stale; the CI secret is pushed from the fresh copy."""
+    if os.environ.get("KLAI_TENANT_NAMES") is not None or not _NAMES_FILE.is_file():
+        return None
+    age_days = (time.time() - _NAMES_FILE.stat().st_mtime) / 86400
+    if age_days <= _STALE_AFTER_DAYS:
+        return None
+    return (
+        f"public-tenant-data: the customer-name list {_NAMES_FILE} is older than {_STALE_AFTER_DAYS} days "
+        f"({int(age_days)}); new customers are NOT covered: fetch the current list from core-01."
+    )
+
+
 def _known_librechat_names() -> set[str]:
     """Names already on the default branch stay; only new ones are the risk."""
     for ref in ("origin/main", "main"):
@@ -308,15 +323,20 @@ def main() -> int:
             f"{_NAMES_FILE}); rules 3 and 4 are OFF: customer names are NOT checked.",
             file=sys.stderr,
         )
+    stale = _stale_list_warning()
+    if stale:
+        print(stale, file=sys.stderr)
     if "--tree" in sys.argv:
-        root = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip())
+        root = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
+            ).stdout.strip()
+        )
         problems = scan_tree(root, names)
         _print_tree(problems)
         return 1 if problems else 0
     if "--staged" in sys.argv:
-        diff = subprocess.run(
-            ["git", "diff", "--cached", "-U3"], capture_output=True, text=True, check=True
-        ).stdout
+        diff = subprocess.run(["git", "diff", "--cached", "-U3"], capture_output=True, text=True, check=True).stdout
     elif "--text" in sys.argv:
         label = sys.argv[sys.argv.index("--text") + 1]
         diff = as_diff(sys.stdin.read(), label)

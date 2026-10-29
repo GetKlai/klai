@@ -8,7 +8,9 @@ so the negative cases matter as much as the positive ones.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -202,6 +204,32 @@ def test_the_warning_without_a_list_says_rules_3_and_4_are_off(monkeypatch, caps
     assert "rules 3 and 4 are OFF" in capsys.readouterr().err
 
 
+def _run_main_with_list_file(monkeypatch, tmp_path, age_days):
+    names = tmp_path / "tenant-names.txt"
+    names.write_text("# generated\nzorblax\n")
+    old = time.time() - age_days * 86400
+    os.utime(names, (old, old))
+    monkeypatch.delenv("KLAI_TENANT_NAMES", raising=False)
+    monkeypatch.setattr(audit, "_NAMES_FILE", names)
+    monkeypatch.setattr(sys, "argv", ["audit", "--text", "x"])
+    monkeypatch.setattr(sys, "stdin", __import__("io").StringIO("nothing here\n"))
+    return audit.main()
+
+
+def test_a_list_file_older_than_seven_days_is_called_out_on_one_line(monkeypatch, tmp_path, capsys):
+    assert _run_main_with_list_file(monkeypatch, tmp_path, age_days=8) == 0
+
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) == 1
+    assert "older than 7 days" in err
+
+
+def test_a_fresh_list_file_gives_no_warning(monkeypatch, tmp_path, capsys):
+    assert _run_main_with_list_file(monkeypatch, tmp_path, age_days=1) == 0
+
+    assert capsys.readouterr().err == ""
+
+
 # ---- A real hostname in a test or fixture (rule 5, no list needed) ----
 
 _TEST = "klai-portal/backend/tests/test_x.py"
@@ -220,6 +248,13 @@ def test_a_real_looking_hostname_in_a_test_is_blocked_in_every_shape():
         "+host: shop.example-customer.com:8443",
     ):
         assert _host(line) == [f"{_TEST}:1: real-hostname"], line
+
+
+def test_an_email_address_is_judged_by_its_domain_in_a_test():
+    assert _host("+owner = 'jane@mail.example-customer.nl'") == [f"{_TEST}:1: real-hostname"]
+    assert _host("+owner = 'jane@example.com'") == []
+    assert _host("+owner = 'jane@corp.test'") == []
+    assert _host("+owner = 'jane@gmail.com'") == []
 
 
 def test_the_rule_covers_every_test_and_fixture_location():
