@@ -109,6 +109,8 @@ jobs:
           bash deploy/scripts/tests/compose-rollback.test.sh
           # Its data half: snapshot before, restore on red (S8a).
           bash deploy/scripts/tests/datastore-rollback.test.sh
+          # The daily image sweep installed with the other scripts (S-disk).
+          bash deploy/scripts/tests/docker-image-sweep.test.sh
           bash deploy/scripts/tests/datastore-restore-rehearsal.test.sh
           # The env-drift sweep at the end of the sync step, installed here too.
           bash deploy/scripts/tests/compose-env-drift-recreate.test.sh
@@ -280,6 +282,11 @@ jobs:
             # docs/runbooks/widget-probe.md ("Install").
             install -m 0644 deploy/systemd/widget-probe.service /opt/klai/systemd/widget-probe.service
             install -m 0644 deploy/systemd/widget-probe.timer /opt/klai/systemd/widget-probe.timer
+            # The units are symlinked into /etc/systemd/system once (runbook
+            # container-hygiene-systemd-install.md); a changed ExecStart only
+            # takes effect after a reload, which this sync never did before
+            # 2026-10-29 (the image sweep would have waited for a person).
+            sudo -n systemctl daemon-reload || echo "::warning::systemctl daemon-reload failed; the changed units apply after the next reboot or a manual reload"
 
             # SPEC-SEC-024 M4.2 — sync Grafana provisioning. Grafana loads
             # provisioning only at startup, so we need to restart when files

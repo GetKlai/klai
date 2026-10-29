@@ -15,6 +15,10 @@ Requires=docker.service
 Type=oneshot
 # Dangling images (untagged, unreferenced) — 100% safe
 ExecStart=/usr/bin/docker image prune -f
+# Tagged images are never dangling, and every deploy leaves one: 221 unused
+# images filled core-01 to 100% on 2026-10-29. The sweep keeps what a rollback
+# or a local build needs (see the script) and removes the rest after 24 h.
+ExecStart=/opt/klai/scripts/docker-image-sweep.sh
 # Exited containers older than 24h — 24h rollback-buffer voor debug
 ExecStart=/usr/bin/docker container prune -f --filter until=24h
 # Unused networks — geen container houdt referentie
