@@ -23,6 +23,7 @@ from app.services.providers import (
     _MAX_RETRIES,
     TranscriptionResult,
     WhisperHttpProvider,
+    split_wav,
 )
 
 
@@ -376,3 +377,33 @@ class TestLongAudioIsChunked:
 
         assert len(client.calls) == 1
         assert client.calls[0]["files"]["file"][1] == audio
+
+    async def test_language_detected_on_a_later_chunk_names_the_result(
+        self, patch_client, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(providers.settings, "transcription_chunk_seconds", 20, raising=False)
+        patch_client(
+            [
+                _success_response(text="", language="und", duration=19.0),
+                _success_response(text="hallo", language="nl", duration=6.0),
+            ]
+        )
+
+        result = await WhisperHttpProvider().transcribe(
+            _wav(seconds=25, quiet_ranges=[(19.0, 20.0)]), language=None
+        )
+
+        assert result.language == "nl"
+        assert result.text == "hallo"
+
+    def test_split_makes_progress_when_chunks_are_shorter_than_the_search_span(self) -> None:
+        # Silence in the very first window would otherwise be "the quietest
+        # frame" for a boundary whose search window reaches back to frame 0,
+        # and the split would never advance.
+        audio = _wav(seconds=12, quiet_ranges=[(0.0, 0.1)])
+
+        chunks = split_wav(audio, max_seconds=5)
+
+        seconds = [_wav_seconds(c) for c in chunks]
+        assert sum(seconds) == 12.0
+        assert all(0 < s <= 5.0 for s in seconds)
