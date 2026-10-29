@@ -87,5 +87,9 @@ ziggo.nl
 kpnmail.nl
 
 # Platforms and vendors where a customer is identified by a subdomain or not at all
+mijndomein.nl
+visma.com
+visma.net
 intermedia.com
+ascendcloud.com
 europa.eu

@@ -29,9 +29,6 @@ from urllib.parse import urlsplit
 
 DEFAULT_PSQL = "docker exec -i klai-core-postgres-1 psql -U klai -d klai -At -F"
 DEFAULT_OUTPUT = Path("/opt/klai/private/tenant-names.txt")
-# Platform and vendor domains that cannot go in the public allowlist because the
-# guard would then see them as customer names; one per line, optional.
-DEFAULT_EXTRA_ALLOWED = Path("/opt/klai/private/platform-domains.txt")
 DEFAULT_ALLOWED = (
     Path(__file__).resolve().parents[2] / "scripts" / "allowed-test-domains.txt"
     if len(Path(__file__).resolve().parents) > 2
@@ -246,7 +243,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--allowed", type=Path, default=DEFAULT_ALLOWED)
-    parser.add_argument("--extra-allowed", type=Path, default=DEFAULT_EXTRA_ALLOWED)
     parser.add_argument(
         "--dry-run", action="store_true", help="print counts only, write nothing"
     )
@@ -255,8 +251,6 @@ def main(argv: list[str] | None = None) -> int:
     psql = shlex.split(args.psql) if args.psql else [*shlex.split(DEFAULT_PSQL), "\t"]
     try:
         allowed = load_allowed(args.allowed)
-        if args.extra_allowed.is_file():
-            allowed += load_allowed(args.extra_allowed)
     except OSError as exc:
         print(
             f"refresh-tenant-names: allowlist unavailable ({exc}); pass --allowed",
