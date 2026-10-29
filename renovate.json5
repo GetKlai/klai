@@ -167,14 +167,19 @@
   // catching something. Every service now gates on lint + pip-audit + its own
   // test suite, a failed deploy opens a ci-failure issue, and the refresh
   // lands as one squash commit that `git revert` undoes cleanly.
-  // 'at any time' on purpose, and it is NOT redundant: lockFileMaintenance
-  // defaults to its own 'before 4am on monday' window, which would walk
-  // straight back into the bug described above — the cron fires at 03:00 UTC
-  // (05:00 Amsterdam) and GitHub's 1-3h delay pushes the actual run past 04:00.
-  // The workflow cron stays the only scheduler.
+  // Weekends, not 'at any time'. 'at any time' was right while the hourly
+  // cron was the only scheduler, but since 2026-10-29 Renovate also runs after
+  // every merge to main, and a refresh is then found on every run: seven
+  // refreshes merged between 17:41 and 19:32 UTC that day, each a daily
+  // release of a transitive package crossing the 3-day cooldown (one uv.lock
+  // per service), and each one rebuilt and redeployed that service. A
+  // weekend window gives one refresh wave a week; the cron and the merges of
+  // Saturday and Sunday are more than enough runs to hit it, where the
+  // default 'before 4am on monday' could be missed when no merge lands in
+  // those four hours and the cron is late.
   lockFileMaintenance: {
     enabled: true,
-    schedule: ['at any time'],
+    schedule: ['every weekend'],
     automerge: true,
     rebaseWhen: 'conflicted',
     commitMessageAction: 'Refresh lock files',
