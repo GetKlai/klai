@@ -430,8 +430,13 @@
       overridePackageName: 'https://github.com/aquasecurity/trivy.git',
     },
     {
-      description: 'Auto-merge patch and minor updates once CI is green',
-      matchUpdateTypes: ['patch', 'minor'],
+      description:
+        'Auto-merge patch, minor and digest updates once CI is green. Digests \
+        are in the list because a grouped PR automerges only when every \
+        update in it may: the Docker images group carried two presidio digest \
+        pins next to its minors and sat open for a week with green checks \
+        (#1927, 2026-10-22 to 2026-10-29) because digest had no automerge rule.',
+      matchUpdateTypes: ['patch', 'minor', 'digest', 'pinDigest'],
       automerge: true,
       automergeStrategy: 'squash',
       // main does not require branches to be current. Rebasing every remaining
