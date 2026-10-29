@@ -113,14 +113,18 @@ NL: dict[str, str] = {
         "Klai antwoordt alleen uit de vrijgegeven kennisbanken en kan zich vergissen. "
         "Controleer belangrijke antwoorden in de bron."
     ),
-    "prompt_1_title": "Wat staat er over verlof?",
-    "prompt_1_message": "Wat zijn de regels voor verlof?",
-    "prompt_2_title": "Hoe werkt onze onboarding?",
-    "prompt_2_message": "Hoe ziet de onboarding van een nieuwe collega eruit?",
-    "prompt_3_title": "Vat een procedure samen",
-    "prompt_3_message": "Vat de belangrijkste procedures uit onze kennisbank samen.",
-    "prompt_4_title": "Waar vind ik…?",
-    "prompt_4_message": "Waar vind ik informatie over onze declaratieregels?",
+    "prompts_title": (
+        "Ik zoek in alle kennisbanken die jullie organisatie voor Slack heeft vrijgegeven. "
+        'Wil je in minder zoeken? Kies onder een antwoord "Kennisbanken kiezen".'
+    ),
+    "prompt_1_title": "Beleid opzoeken",
+    "prompt_1_message": "Wat is ons beleid voor thuiswerken?",
+    "prompt_2_title": "Iets regelen",
+    "prompt_2_message": "Hoe vraag ik verlof aan?",
+    "prompt_3_title": "Waar vind ik…?",
+    "prompt_3_message": "Waar vind ik de regels voor declaraties?",
+    "prompt_4_title": "Nieuw in het team",
+    "prompt_4_message": "Wat moet ik regelen in mijn eerste week als nieuwe collega?",
 }
 
 EN: dict[str, str] = {
@@ -222,14 +226,18 @@ EN: dict[str, str] = {
         "Klai only answers from the released knowledge bases and can be wrong. Check "
         "important answers in the source."
     ),
-    "prompt_1_title": "What about leave?",
-    "prompt_1_message": "What are the rules for leave?",
-    "prompt_2_title": "How does onboarding work?",
-    "prompt_2_message": "What does onboarding look like for a new colleague?",
-    "prompt_3_title": "Summarise a procedure",
-    "prompt_3_message": "Summarise the most important procedures in our knowledge base.",
-    "prompt_4_title": "Where do I find…?",
-    "prompt_4_message": "Where do I find information about our expense rules?",
+    "prompts_title": (
+        "I search every knowledge base your organisation has released for Slack. "
+        'Want to search fewer? Use "Choose knowledge bases" under an answer.'
+    ),
+    "prompt_1_title": "Look up a policy",
+    "prompt_1_message": "What is our policy on working from home?",
+    "prompt_2_title": "Get something done",
+    "prompt_2_message": "How do I request leave?",
+    "prompt_3_title": "Where do I find…?",
+    "prompt_3_message": "Where do I find the rules for expense claims?",
+    "prompt_4_title": "New on the team",
+    "prompt_4_message": "What do I need to arrange in my first week as a new colleague?",
 }
 
 _STRINGS = {"nl": NL, "en": EN}

@@ -1025,11 +1025,10 @@ def _build_cookie_hooks(cookies: list[dict[str, Any]] | None, url: str) -> dict[
     Accepting the request is not the same as applying the cookies, and only
     the second one matters: see deploy/tests/crawl4ai-cookie-contract.sh.
 
-    Each cookie keeps its own domain: since 2026-10-28 a connector's jar can
-    hold the cookies of the host its site signs in through as well, and the
-    browser must hold them the way a visitor's browser does. A cookie
-    without a domain belongs to the host of ``url``. Only the fields
-    ``add_cookies`` accepts are sent, in hooks of at most 20 cookies.
+    Each cookie keeps its own domain, so a pasted browser export is replayed
+    the way a visitor's browser holds it. A cookie without a domain belongs
+    to the host of ``url``. Only the fields ``add_cookies`` accepts are sent,
+    in hooks of at most 20 cookies.
 
     Returns ``None`` when no cookies are provided, so callers can do:
 

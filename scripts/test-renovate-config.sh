@@ -94,6 +94,19 @@ assert_contains "$config" \
 assert_contains "$config" \
   "overridePackageName: 'https://github.com/aquasecurity/trivy.git'" \
   'Trivy must use its public Git repository for lookups'
+# The cooldown is 3 days everywhere (owner decision 2026-10-29): Renovate, npm
+# in the portal and uv in the connector. The Semgrep registry rules that used
+# to guard these files accept nothing under 7 and are excluded in semgrep.yml,
+# so this is the check that a cooldown is present and not shorter.
+assert_line "$config" \
+  "  minimumReleaseAge: '3 days'," \
+  'the Renovate cooldown must be 3 days'
+assert_line "$repo_root/klai-portal/frontend/.npmrc" \
+  'min-release-age=3' \
+  'the portal .npmrc must keep its 3-day cooldown for people at a keyboard'
+assert_line "$repo_root/klai-connector/pyproject.toml" \
+  'exclude-newer = "3 days"' \
+  'the connector uv setting must keep its 3-day cooldown'
 assert_line "$config" \
   "  minimumReleaseAgeBehaviour: 'timestamp-optional'," \
   'an update without a release timestamp (GHCR images, lock file refresh, Git tags) must not stay pending forever'
@@ -126,8 +139,8 @@ for pkg in 'getmeili/meilisearch:v' 'image: mongo:' 'image: redis:' 'image: rabb
   fi
 done
 for name in 'mongodb/mongo' 'redis/redis' 'rabbitmq/rabbitmq-server' 'meilisearch/meilisearch'; do
-  if [ "$(grep -cF "        '${name}'," "$config")" -lt 2 ]; then
-    echo "FAIL: ${name} must be listed in the data-store group and the strict rule" >&2
+  if [ "$(grep -cF "        '${name}'," "$config")" -lt 3 ]; then
+    echo "FAIL: ${name} must be listed in the data-store group, the one-minor-per-PR rule and the strict rule" >&2
     exit 1
   fi
 done
@@ -180,11 +193,12 @@ for c in chunks:
         fail.append("no rule may park an update on the Dependency Dashboard")
     if re.search(r"(?m)^\s+automerge: false,", c):
         fail.append("no rule may hold an update back from automerge: " + (re.search(r"description:\s*'([^'\\]{0,60})", c).group(1) if re.search(r"description:\s*'", c) else c[:60]))
+store = next((c for c in chunks if "separateMultipleMinor: true" in c and "'mongodb/mongo'" in c), "")
+if not store or re.search(r"(?m)^\s+matchUpdateTypes:", store):
+    fail.append("the data-store group must propose one minor per PR (MongoDB starts only on the FCV of the release before it)")
 major = next((c for c in chunks if "matchUpdateTypes: ['major']" in c and "matchPackageNames" not in c), "")
 if "automerge: true" not in major:
     fail.append("majors must automerge")
-if "mongodb/mongo" in "".join(c for c in chunks if "allowedVersions:" in c):
-    fail.append("the mongo LTS ceiling was a policy hold, not a breakage; it stays lifted")
 
 # Vexa automerges because deploy-compose.yml pulls the bot image (an env value
 # that `compose up` never fetches) before it replaces any file. The pull and the
