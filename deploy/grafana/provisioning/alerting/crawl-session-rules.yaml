@@ -19,6 +19,13 @@
 
 apiVersion: 1
 
+# File provisioning never removes a rule it stops listing: the chain-broken
+# rule left with the second sign-in host layer on 2026-10-29 and has to be
+# deleted by uid, or it keeps evaluating a query no code emits.
+deleteRules:
+  - orgId: 1
+    uid: crawl-session-chain-broken
+
 groups:
   - orgId: 1
     name: crawl-session
