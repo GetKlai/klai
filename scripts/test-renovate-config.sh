@@ -175,7 +175,7 @@ for line in '    enabled: true,' '    minimumReleaseAge: null,' "    prCreation:
 done
 # Rules are read from the file itself: a rule is the text between two lines that
 # open a 4-space object, which is how customManagers and packageRules are laid out.
-if ! python3 - "$config" <<'PY'
+if ! python3 - "$config" "$repo_root/.github/workflows/deploy-compose.yml" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 chunks = re.split(r"(?m)^    \{$", text)
@@ -191,9 +191,7 @@ def names(chunk, key):
 for c in chunks:
     if "dependencyDashboardApproval: true" in c:
         fail.append("no rule may park an update on the Dependency Dashboard")
-    # Vexa keeps its hold until the bot-image pre-pull is part of the compose
-    # sync (feat/vexa-bot-prepull); that PR deletes this exemption.
-    if re.search(r"(?m)^\s+automerge: false,", c) and "matchPackageNames: ['vexaai/**']" not in c:
+    if re.search(r"(?m)^\s+automerge: false,", c):
         fail.append("no rule may hold an update back from automerge: " + (re.search(r"description:\s*'([^'\\]{0,60})", c).group(1) if re.search(r"description:\s*'", c) else c[:60]))
 store = next((c for c in chunks if "separateMultipleMinor: true" in c and "'mongodb/mongo'" in c), "")
 if not store or re.search(r"(?m)^\s+matchUpdateTypes:", store):
@@ -201,6 +199,18 @@ if not store or re.search(r"(?m)^\s+matchUpdateTypes:", store):
 major = next((c for c in chunks if "matchUpdateTypes: ['major']" in c and "matchPackageNames" not in c), "")
 if "automerge: true" not in major:
     fail.append("majors must automerge")
+
+# Vexa automerges because deploy-compose.yml pulls the bot image (an env value
+# that `compose up` never fetches) before it replaces any file. The pull and the
+# automerge are one decision: the no-hold check above covers the rule, this one
+# keeps the pull in the workflow and the group that stops a pending Vexa bump
+# from holding the other images.
+vexa = next((c for c in chunks if "matchPackageNames: ['vexaai/**']" in c), "")
+if "groupName: 'Vexa bot pipeline'" not in vexa:
+    fail.append("vexaai/** needs its own group so a pending bump holds nothing else back")
+sync = open(sys.argv[2]).read()
+if "bash deploy/scripts/vexa-bot-prepull.sh deploy/docker-compose.yml" not in sync:
+    fail.append("Vexa may only automerge while deploy-compose.yml runs vexa-bot-prepull.sh")
 
 # A custom manager that reads a data store from GitHub changes the datasource
 # and sometimes the packageName. A version ceiling written for the Docker Hub

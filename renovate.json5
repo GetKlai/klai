@@ -183,12 +183,12 @@
   // changelog, so a patch-level protocol change between the two is not
   // something a reviewer can rule out.
   //
-  // This makes the pin visible so the whole set moves as one PR. It does NOT
-  // make the upgrade automatic: deploy/docker-compose.yml documents that the
-  // bot image must be pulled on core-01 BEFORE the first spawn, because
-  // docker-socket-proxy has IMAGES disabled (SPEC-SEC-024) and `compose up`
-  // never fetches an env-valued image. Nothing in the pipeline enforces that,
-  // so a Vexa bump stays a deliberate operation with a manual step.
+  // This makes the pin visible so the whole set moves as one PR. The pull the
+  // pin needs is part of the compose sync: deploy/docker-compose.yml's bot
+  // image must be on core-01 BEFORE the first spawn, because docker-socket-proxy
+  // has IMAGES disabled (SPEC-SEC-024) and `compose up` never fetches an
+  // env-valued image, so deploy-compose.yml pulls it from the commit being
+  // deployed before it replaces any file (deploy/scripts/vexa-bot-prepull.sh).
   customManagers: [
     {
       // litellm-tests.yml runs the hook tests against the litellm PyPI
@@ -456,21 +456,23 @@
     },
     {
       description:
-        'Vexa is the one image set that may never automerge. A bump is not \
-        self-contained: the bot image is an ENV value, so `compose up` never \
-        fetches it and it must be pulled on core-01 BEFORE the first spawn \
-        (docker-socket-proxy has IMAGES disabled, SPEC-SEC-024). An automerge \
-        would sync a runtime that then spawns a bot image the host does not \
-        have. Vexa is also pre-1.0 and publishes no changelog, so Renovate \
-        reads v0.12.26 -> v0.13.1 as a minor where upstream means breaking. \
-        No matchManagers: this must cover both the three compose `image:` \
-        refs and the BROWSER_IMAGE pin from the custom manager above. Its \
-        own groupName matters as much as the exemption: left in the Docker \
+        'Vexa automerges like every other image through the global rules, because \
+        a bump is now self-contained. The bot image is an ENV value, so `compose \
+        up` never fetches it and docker-socket-proxy cannot either (IMAGES \
+        disabled, SPEC-SEC-024); deploy-compose.yml therefore pulls the \
+        BROWSER_IMAGE of the commit being deployed \
+        (deploy/scripts/vexa-bot-prepull.sh) before it replaces any file on \
+        core-01, and a tag that does not exist ends the sync red with the host \
+        untouched. Vexa is still pre-1.0 and publishes no changelog, so Renovate \
+        reads v0.12.26 -> v0.13.1 as a minor where upstream means breaking; the \
+        meeting E2E and the compose rollback are what catch that, as for every \
+        other image. No matchManagers: this must cover both the three compose \
+        `image:` refs and the BROWSER_IMAGE pin from the custom manager above. \
+        Its own groupName matters as much as the rule: left in the Docker \
         images group, one pending vexa bump would hold every automergeable \
         image behind it and rebuild the jam this config just removed.',
       matchPackageNames: ['vexaai/**'],
       groupName: 'Vexa bot pipeline',
-      automerge: false,
     },
     {
       description:

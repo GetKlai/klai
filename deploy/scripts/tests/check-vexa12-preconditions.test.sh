@@ -25,6 +25,9 @@ trap 'rm -rf "$STUB_DIR"' EXIT
 #   STUB_TABLES=<n>|fail          — answers `docker exec`; `fail` exits non-zero,
 #                                   standing in for a missing postgres container
 #                                   or an unreachable daemon
+# The script reads the bot image from the compose file the host runs.
+export KLAI_COMPOSE_FILE="$STUB_DIR/compose.yml"
+printf 'services:\n  vexa12-runtime:\n    environment:\n      BROWSER_IMAGE: vexaai/vexa-bot:v9.9.9\n' > "$KLAI_COMPOSE_FILE"
 export STUB_INSPECT_LOG="$STUB_DIR/inspect-calls"; : > "$STUB_INSPECT_LOG"
 
 cat > "$STUB_DIR/docker" <<'STUB'
@@ -93,7 +96,8 @@ echo
 echo "── check 1 red ──"
 out=$(STUB_IMAGE_PRESENT=no STUB_TABLES=3 run 1 "red: bot image missing")
 expect_contains "$out" "is NOT on this host" "red: names the missing image"
-expect_contains "$out" "docker pull vexaai/vexa-bot:" "red: gives the fix"
+expect_contains "$out" "vexa-bot-prepull.sh" "red: gives the fix"
+expect_contains "$out" "vexaai/vexa-bot:v9.9.9" "red: names the tag from the compose file"
 
 echo
 echo "── check 2 red ──"
@@ -122,20 +126,22 @@ else
 fi
 
 echo
-echo "── the pinned bot image must match compose ──"
-# The script hardcodes BOT_IMAGE because it is piped over SSH and runs on a host
-# with no checkout. That makes it drift silently: on 2026-09-01 compose moved to
-# v0.12.26 while this still read v0.12.22, so the readiness check would have
-# confirmed the presence of an image the runtime no longer spawns -- green, and
-# wrong, which is this suite's entire subject.
-COMPOSE_BOT=$(grep -oE 'BROWSER_IMAGE:[[:space:]]+vexaai/vexa-bot:[^[:space:]]+' \
-  "$REPO_ROOT/deploy/docker-compose.yml" | sed 's/.*[[:space:]]//')
-SCRIPT_BOT=$(grep -oE '^BOT_IMAGE="[^"]+"' "$SCRIPT" | sed 's/^BOT_IMAGE="//; s/"$//')
-if [ -n "$COMPOSE_BOT" ] && [ "$COMPOSE_BOT" = "$SCRIPT_BOT" ]; then
-  pass "bot image matches compose ($SCRIPT_BOT)"
+echo "── the bot image comes from compose, never from a literal ──"
+# The script used to hardcode BOT_IMAGE, and a hardcoded tag drifts: on
+# 2026-09-01 compose moved to v0.12.26 while this still read v0.12.22, so the
+# check would have confirmed an image the runtime no longer spawned. With Vexa
+# bumps merging on their own, every bump would also have gone red here. Reading
+# the compose file removes the second copy.
+if grep -qE 'vexaai/vexa-bot:v[0-9]' "$SCRIPT"; then
+  fail "the script still contains a literal bot image tag"
 else
-  fail "bot image drift: script has '$SCRIPT_BOT', compose has '$COMPOSE_BOT'"
+  pass "no literal bot image tag in the script"
 fi
+out=$(STUB_IMAGE_PRESENT=yes STUB_TABLES=3 KLAI_COMPOSE_FILE="$REPO_ROOT/deploy/docker-compose.yml" run 0 "green: reads the real deploy/docker-compose.yml")
+expect_contains "$out" "bot image vexaai/vexa-bot:v" "real compose: names a bot image"
+printf 'services: {}\n' > "$STUB_DIR/empty.yml"
+out=$(STUB_IMAGE_PRESENT=yes STUB_TABLES=3 KLAI_COMPOSE_FILE="$STUB_DIR/empty.yml" run 1 "red: compose without BROWSER_IMAGE is a failure, not a pass")
+expect_contains "$out" "no BROWSER_IMAGE" "red: says why"
 
 echo
 COUNT=$(wc -l < "$FAILFILE" | tr -d ' ')

@@ -257,7 +257,7 @@ Once 4.a to 4.c are live and their rehearsals are green:
 - The only holds left are ceilings that pin a reproduced breakage, each with
   what lifts it (typescript-eslint, VictoriaLogs healthcheck, react-table
   migration, spacy wheels, eslint-config-next, ragas).
-- Vexa automerges once the bot image pre-pull is part of the compose sync.
+- Vexa automerges since the compose sync pre-pulls the bot image (`deploy/scripts/vexa-bot-prepull.sh`) before it replaces any file.
 
 ## 6. E2E-triggered rollback
 
