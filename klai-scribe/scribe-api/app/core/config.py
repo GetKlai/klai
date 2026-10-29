@@ -49,6 +49,14 @@ class Settings(BaseSettings):
 
     # Upload limits
     max_upload_mb: int = 100
+    # Audio is sent to the transcription backend in chunks of at most this
+    # many seconds. 1200 s of 16 kHz mono int16 WAV is 38.4 MB, under the
+    # 100 MB body limit of the transcription LB (deploy/vexa-transcription/
+    # nginx.conf) and short enough to finish inside its 300 s read timeout.
+    # The upload limit above counts compressed bytes: an 80 MB iPhone AAC
+    # recording decodes to roughly 320 MB of WAV and was rejected with 413
+    # on 2026-10-29 when it was posted in one piece.
+    transcription_chunk_seconds: int = 1200
 
     # Audio file storage (persists recordings for retry on transcription failure)
     audio_storage_dir: str = "/data/audio"

@@ -9,6 +9,10 @@ Covers:
 
 from __future__ import annotations
 
+import io
+import math
+import wave
+
 import httpx
 import pytest
 from fastapi import HTTPException
@@ -19,6 +23,7 @@ from app.services.providers import (
     _MAX_RETRIES,
     TranscriptionResult,
     WhisperHttpProvider,
+    split_wav,
 )
 
 
@@ -55,17 +60,44 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(providers.asyncio, "sleep", _instant)
 
 
-def _success_response() -> httpx.Response:
+def _success_response(
+    text: str = "hallo wereld", language: str = "nl", duration: float = 12.3
+) -> httpx.Response:
     return httpx.Response(
         200,
         json={
-            "text": "hallo wereld",
-            "language": "nl",
-            "duration": 12.3,
+            "text": text,
+            "language": language,
+            "duration": duration,
             "inference_time_seconds": 1.1,
             "model": "large-v3-turbo",
         },
     )
+
+
+_RATE = 16000
+
+
+def _wav(seconds: float, quiet_ranges: list[tuple[float, float]] | None = None) -> bytes:
+    """16 kHz mono int16 WAV: a loud 440 Hz tone, silent inside `quiet_ranges`."""
+    frames = bytearray()
+    for i in range(int(seconds * _RATE)):
+        t = i / _RATE
+        quiet = any(lo <= t < hi for lo, hi in quiet_ranges or [])
+        sample = 0 if quiet else int(20000 * math.sin(2 * math.pi * 440 * t))
+        frames += sample.to_bytes(2, "little", signed=True)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(_RATE)
+        out.writeframes(bytes(frames))
+    return buf.getvalue()
+
+
+def _wav_seconds(data: bytes) -> float:
+    with wave.open(io.BytesIO(data), "rb") as src:
+        return src.getnframes() / src.getframerate()
 
 
 def _busy_response(retry_after: str | None = "2") -> httpx.Response:
@@ -109,7 +141,7 @@ def patch_client(monkeypatch: pytest.MonkeyPatch):
 class TestTierDeferredIsPosted:
     async def test_request_carries_deferred_tier(self, patch_client) -> None:
         client = patch_client([_success_response()])
-        result = await WhisperHttpProvider().transcribe(b"audio-bytes", language="nl")
+        result = await WhisperHttpProvider().transcribe(_wav(1), language="nl")
 
         assert isinstance(result, TranscriptionResult)
         assert result.text == "hallo wereld"
@@ -133,7 +165,7 @@ class TestModelFieldIsPosted:
 
     async def test_request_carries_model_even_without_language(self, patch_client) -> None:
         client = patch_client([_success_response()])
-        await WhisperHttpProvider().transcribe(b"audio-bytes", language=None)
+        await WhisperHttpProvider().transcribe(_wav(1), language=None)
 
         assert len(client.calls) == 1
         posted = client.calls[0]
@@ -148,7 +180,7 @@ class TestModelFieldIsPosted:
 class TestBackpressureRetry:
     async def test_503_then_200_returns_result(self, patch_client) -> None:
         client = patch_client([_busy_response(retry_after="2"), _success_response()])
-        result = await WhisperHttpProvider().transcribe(b"audio", language=None)
+        result = await WhisperHttpProvider().transcribe(_wav(1), language=None)
 
         assert result.text == "hallo wereld"
         assert len(client.calls) == 2
@@ -159,7 +191,7 @@ class TestBackpressureRetry:
         client = patch_client(script)
 
         with pytest.raises(HTTPException) as exc_info:
-            await WhisperHttpProvider().transcribe(b"audio", language=None)
+            await WhisperHttpProvider().transcribe(_wav(1), language=None)
 
         assert exc_info.value.status_code == 503
         # On the final attempt the retry branch is skipped and the non-200
@@ -169,14 +201,14 @@ class TestBackpressureRetry:
     async def test_retry_after_header_is_clamped(self, patch_client) -> None:
         # Server may send outrageous Retry-After values; provider must clamp.
         client = patch_client([_busy_response(retry_after="9999"), _success_response()])
-        result = await WhisperHttpProvider().transcribe(b"audio", language=None)
+        result = await WhisperHttpProvider().transcribe(_wav(1), language=None)
 
         assert result.text == "hallo wereld"
         assert len(client.calls) == 2
 
     async def test_missing_retry_after_uses_floor(self, patch_client) -> None:
         client = patch_client([_busy_response(retry_after=None), _success_response()])
-        result = await WhisperHttpProvider().transcribe(b"audio", language=None)
+        result = await WhisperHttpProvider().transcribe(_wav(1), language=None)
 
         assert result.text == "hallo wereld"
         assert len(client.calls) == 2
@@ -190,7 +222,7 @@ class TestTransportErrorRetry:
                 _success_response(),
             ]
         )
-        result = await WhisperHttpProvider().transcribe(b"audio", language=None)
+        result = await WhisperHttpProvider().transcribe(_wav(1), language=None)
 
         assert result.text == "hallo wereld"
         assert len(client.calls) == 2
@@ -203,7 +235,7 @@ class TestTransportErrorRetry:
             ]
         )
         with pytest.raises(HTTPException) as exc_info:
-            await WhisperHttpProvider().transcribe(b"audio", language=None)
+            await WhisperHttpProvider().transcribe(_wav(1), language=None)
         assert exc_info.value.status_code == 503
         assert len(client.calls) == _MAX_RETRIES
 
@@ -213,7 +245,7 @@ class TestNon200Non503Surfaces503:
         # A 500 is not a backpressure signal — fail fast.
         client = patch_client([httpx.Response(500, text="kapoet")])
         with pytest.raises(HTTPException) as exc_info:
-            await WhisperHttpProvider().transcribe(b"audio", language=None)
+            await WhisperHttpProvider().transcribe(_wav(1), language=None)
         assert exc_info.value.status_code == 503
         assert len(client.calls) == 1
 
@@ -250,7 +282,7 @@ class TestPayloadFieldsAreOptional:
             ]
         )
 
-        result = await WhisperHttpProvider().transcribe(b"audio", language=None)
+        result = await WhisperHttpProvider().transcribe(_wav(1), language=None)
 
         assert isinstance(result, TranscriptionResult)
         assert result.text == ""
@@ -263,10 +295,115 @@ class TestPayloadFieldsAreOptional:
         # Pathological-but-spec-allowed: only `text` is present.
         patch_client([httpx.Response(200, json={"text": "hi"})])
 
-        result = await WhisperHttpProvider().transcribe(b"audio", language=None)
+        result = await WhisperHttpProvider().transcribe(_wav(1), language=None)
 
         assert result.text == "hi"
         assert result.language == "und"
         assert result.duration_seconds == 0.0
         assert result.inference_time_seconds == 0.0
         assert result.model == "large-v3-turbo"
+
+
+class TestLongAudioIsChunked:
+    """A long recording is posted in chunks that stay under the transcription
+    LB body limit (100 MB nginx) and its 300 s read timeout. An iPhone recording
+    of 80 MB AAC became a 320 MB WAV and failed with 413 on 2026-10-29."""
+
+    async def test_long_wav_is_split_and_results_are_merged(
+        self, patch_client, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(providers.settings, "transcription_chunk_seconds", 20, raising=False)
+        client = patch_client(
+            [
+                _success_response(text="een", language="nl", duration=19.0),
+                _success_response(text="twee", language="nl", duration=19.0),
+                _success_response(text="drie", language="nl", duration=12.0),
+            ]
+        )
+        # Quiet just before the first boundary (20 s) and before the second
+        # one, which is 20 s after the first cut.
+        audio = _wav(seconds=50, quiet_ranges=[(19.0, 20.0), (38.0, 39.0)])
+
+        result = await WhisperHttpProvider().transcribe(audio, language=None)
+
+        assert [_wav_seconds(c["files"]["file"][1]) for c in client.calls] == [19.0, 19.0, 12.0]
+        assert result.text == "een twee drie"
+        assert result.language == "nl"
+        assert result.duration_seconds == 50.0
+
+    async def test_detected_language_is_pinned_for_later_chunks(
+        self, patch_client, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(providers.settings, "transcription_chunk_seconds", 20, raising=False)
+        client = patch_client(
+            [
+                _success_response(text="a", language="nl", duration=20.0),
+                _success_response(text="b", language="nl", duration=5.0),
+            ]
+        )
+
+        await WhisperHttpProvider().transcribe(
+            _wav(seconds=25, quiet_ranges=[(19.0, 20.0)]), language=None
+        )
+
+        assert "language" not in client.calls[0]["data"]
+        assert client.calls[1]["data"]["language"] == "nl"
+
+    async def test_cut_lands_on_the_quiet_part_before_the_boundary(
+        self, patch_client, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(providers.settings, "transcription_chunk_seconds", 20, raising=False)
+        client = patch_client(
+            [
+                _success_response(text="a", duration=15.0),
+                _success_response(text="b", duration=10.0),
+            ]
+        )
+        # Loud everywhere except seconds 14-16, so the cut must land there
+        # instead of at exactly 20 s.
+        audio = _wav(seconds=25, quiet_ranges=[(14.0, 16.0)])
+
+        await WhisperHttpProvider().transcribe(audio, language=None)
+
+        first = _wav_seconds(client.calls[0]["files"]["file"][1])
+        assert 14.0 <= first <= 16.0
+
+    async def test_short_wav_is_posted_whole(self, patch_client, monkeypatch) -> None:
+        monkeypatch.setattr(providers.settings, "transcription_chunk_seconds", 20, raising=False)
+        client = patch_client([_success_response()])
+        audio = _wav(seconds=20)
+
+        await WhisperHttpProvider().transcribe(audio, language=None)
+
+        assert len(client.calls) == 1
+        assert client.calls[0]["files"]["file"][1] == audio
+
+    async def test_language_detected_on_a_later_chunk_names_the_result(
+        self, patch_client, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(providers.settings, "transcription_chunk_seconds", 20, raising=False)
+        patch_client(
+            [
+                _success_response(text="", language="und", duration=19.0),
+                _success_response(text="hallo", language="nl", duration=6.0),
+            ]
+        )
+
+        result = await WhisperHttpProvider().transcribe(
+            _wav(seconds=25, quiet_ranges=[(19.0, 20.0)]), language=None
+        )
+
+        assert result.language == "nl"
+        assert result.text == "hallo"
+
+    def test_split_makes_progress_when_chunks_are_shorter_than_the_search_span(self) -> None:
+        # Silence in the very first window would otherwise be "the quietest
+        # frame" for a boundary whose search window reaches back to frame 0,
+        # and the split would never advance.
+        audio = _wav(seconds=12, quiet_ranges=[(0.0, 0.1)])
+
+        chunks = split_wav(audio, max_seconds=5)
+
+        seconds = [_wav_seconds(c) for c in chunks]
+        assert sum(seconds) == 12.0
+        assert all(2.5 <= s <= 5.0 for s in seconds[:-1])
