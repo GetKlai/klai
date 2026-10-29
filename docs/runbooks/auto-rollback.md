@@ -60,6 +60,38 @@ The snapshot directory holds `meta` (images, consumers), the data
 (`volume.tar`, `dump.rdb`, `definitions.json` or one `.dump` per database) and
 the baseline the restore is compared against. The ledger line has kind `data`.
 
+## Postgres majors and the Mongo FCV
+
+A Postgres major (18 to 19) needs no person. Just before the env-drift sweep
+the gate `datastore-major` stops the store's consumers, dumps every database
+and the roles (`globals.sql`), renames the old data directory to
+`/var/lib/postgresql/<old>/docker.aside` inside the same volume, starts the new
+image on an empty directory (its entrypoint runs initdb with the compose
+environment and init scripts), restores roles and databases and compares the
+probe counts with the dump. The ledger shows `snapshot`, then `migrated`, then
+the compose line `deployed`. A red gate within 30 minutes renames the old
+directory back and starts the previous image on it (ledger `restored`); no
+pg_restore runs on the live store then. Past the window the new major is the
+state, and the first sync after it removes the `.aside` directory
+(`settle: ... removing`); the dump under `backups/pre-*` stays.
+
+- `datastore-major` red with `extension <x> of the old cluster is not in
+  <image>`: the new image lacks an extension (pgvector) a database uses. The
+  store is back on its previous major; pick an image that carries it.
+- `<store> no longer runs <image>: something recreated it before the cutover`:
+  another deploy started the new major before the cutover. Put back, nothing
+  lost; find what recreated it.
+- The consumers are down from the dump to the end of the restore. The main
+  Postgres holds 5.5 GB on disk (litellm 4.7 GB of it, 2026-10-29), so expect
+  minutes.
+
+Mongo: a new MongoDB version runs on the previous featureCompatibilityVersion,
+and each version only starts on the FCV of the one before it. At the start of
+every compose sync, once no `pre-mongodb-*` snapshot is inside its window,
+the sync raises the FCV to the running version (ledger `fcv_raised`), so the
+next minor can start. A failed `setFeatureCompatibilityVersion` stops that sync
+before it changes anything, with the server's answer in the log.
+
 ## The datastore restore rehearsal is missing
 
 No `datastore_restore_rehearsal` event with outcome `ok` reached VictoriaLogs
