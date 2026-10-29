@@ -247,11 +247,20 @@ service_container_id() {
     # boot, renamed by a half-finished recreate — is invisible to -q, which
     # would make the checks below unreachable in exactly the situations they
     # were written for.
-    local service="$1" ids id created best="" best_key=""
+    #
+    # -a also lists `docker compose run` one-offs, which carry the service's
+    # labels. deploy-portal-api.sh runs its alembic step that way, outside the
+    # host lock; on 2026-10-29 that one-off was newer than the portal-api a
+    # data-store sync had just recreated, was the container judged, and was
+    # removed seconds later, so a healthy recreate read as "container gone"
+    # and rolled mongo 9.0.4 back. A one-off is never the service.
+    local service="$1" ids id created oneoff best="" best_key=""
     ids="$("$DOCKER" compose ps -aq "$service" 2>/dev/null || true)"
     while IFS= read -r id; do
         [[ -n "$id" ]] || continue
-        created="$(ts_key "$(inspect_field "$id" '{{.Created}}')")"
+        read -r created oneoff <<< "$(inspect_field "$id" '{{.Created}} {{index .Config.Labels "com.docker.compose.oneoff"}}')"
+        [[ "$oneoff" != True ]] || continue
+        created="$(ts_key "$created")"
         if [[ -z "$best" || "$created" > "$best_key" ]]; then
             best="$id"; best_key="$created"
         fi
