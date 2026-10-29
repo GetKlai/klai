@@ -3,7 +3,7 @@
 #
 # Why: pre-cleanup, the slug template ``personal-<zitadel_user_id>`` was
 # reconstructed inline in 5 services (portal-api, retrieval-api,
-# knowledge-mcp, knowledge-ingest, deploy/litellm). The Jantine incident
+# knowledge-mcp, knowledge-ingest, deploy/litellm). The Noor incident
 # (2026-05-27) surfaced that this kind of multi-file string contract
 # drifts silently (pitfall: url-shape-multi-file-drift).
 #

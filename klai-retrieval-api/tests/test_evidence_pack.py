@@ -209,7 +209,7 @@ def test_evidence_pack_preserves_heading_metadata_for_prompt_context():
 
 # ─── 2026-05-27: uploaded-document chunks must reach the citations panel ───
 #
-# Live bug: Jantine (GetKlai org, Persoonlijk KB) uploaded
+# Live bug: Noor (GetKlai org, Persoonlijk KB) uploaded
 # ``CV_Alex_Example.pdf``. Knowledge-ingest stored 9 chunks in
 # Qdrant via the docling pipeline. Every chunk had:
 #   - artifact_id      = "853797a1-3a22-4d90-872e-6a917d996c9a"
@@ -217,7 +217,7 @@ def test_evidence_pack_preserves_heading_metadata_for_prompt_context():
 #   - source_label     = "personal-364818484816773122"  (kb_slug fallback)
 #   - text             = "WERKERVARING: Mede-oprichter bij Klai...", etc.
 #
-# When she asked "Wat staat er in het CV van Jantine?", retrieval-api
+# When she asked "Wat staat er in het CV van Noor?", retrieval-api
 # returned 11 candidates (2 web_crawler + 9 CV) and reranker scored the
 # CV chunks 0.04 / 0.0002 / 0.0001 etc. — but those numbers don't
 # matter: ``build_evidence_pack`` filtered EVERY chunk without a

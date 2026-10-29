@@ -568,7 +568,7 @@ async def test_docling_skip_chunking_writes_parent_chunks() -> None:
     insert_parent_chunks block was skipped. PDF uploads landed chunks in
     Qdrant but parent_chunks stayed empty for the artifact, breaking
     retrieval-api's child→parent lookup and causing chat to hallucinate
-    from off-topic chunks (Jantine's "Wie is Frank?" incident).
+    from off-topic chunks (Noor's "Wie is Frank?" incident).
     """
     req = _make_request("Preview only")
     req.content_hash = "docling-sha256"

@@ -135,7 +135,7 @@ seven days by their salient query tokens:
 | "zoek" | 3 | a fragment |
 | "medewerker spreken wil" | 3 | asking for a person — escalation |
 | "dus vandaag wel" | 2 | a follow-up fragment |
-| "afspraak nerds wil" | 2 | asking for an appointment — escalation |
+| "afspraak supportpartner wil" | 2 | asking for an appointment — escalation |
 | "also can english talk" | 2 | the reported turn — class three |
 | "assign call calling ... international number polish team" | 2 | **a real question retrieval missed** |
 

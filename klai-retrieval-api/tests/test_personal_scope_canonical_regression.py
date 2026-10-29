@@ -1,6 +1,6 @@
-"""SPEC-RAG-PERSONAL-SCOPE-001 REQ-7 — Jantine scenario regression.
+"""SPEC-RAG-PERSONAL-SCOPE-001 REQ-7 — Noor scenario regression.
 
-The Jantine incident (2026-05-27 ~17:00 CEST): a user with two private
+The Noor incident (2026-05-27 ~17:00 CEST): a user with two private
 knowledge bases — canonical Persoonlijk (slug ``personal-<user_id>``)
 and a user-created KB called ``test2`` — selected only "Persoonlijk" in
 the chat dropdown but received chunks from ``test2`` anyway. The leak
@@ -39,10 +39,10 @@ def test_scope_personal_canonical_filter_applies_for_every_role(role: str) -> No
     role-driven strip.
     """
     req = RetrieveRequest(
-        query="wie is jantine?",
+        query="wie is noor?",
         org_id="o1",
         scope="personal",
-        user_id="jantine-zitadel-sub",
+        user_id="noor-zitadel-sub",
         effective_role=role,
     )
     conditions = _scope_filter(req)
@@ -52,7 +52,7 @@ def test_scope_personal_canonical_filter_applies_for_every_role(role: str) -> No
     assert len(slug_conditions) == 1, (
         f"expected exactly one kb_slug filter for role={role!r}, got {len(slug_conditions)}"
     )
-    assert slug_conditions[0].match.value == personal_kb_slug("jantine-zitadel-sub"), (
+    assert slug_conditions[0].match.value == personal_kb_slug("noor-zitadel-sub"), (
         f"role={role!r}: expected canonical slug filter, got {slug_conditions[0].match.value!r}"
     )
 

@@ -1,6 +1,6 @@
 # RAG-systemen voor communicatiedata — vergelijkingsrapport & toetsingskader
 
-*Casus: superdock/TalkWithData (Jantine Doornbos) vs. Engram (Mark Vletter) vs. Klai — juli 2026*
+*Casus: a partner's data-chat product (TalkWithData) vs. Engram (Mark Vletter) vs. Klai — juli 2026*
 
 > **Positie in de research-set** (toegevoegd aug 2026): dit rapport is het derde communicatie-onderzoeksdocument en levert de laag die de andere twee missen — het **datamodel** (conversation/message/participant, canonical entity layer, ontology-registry) en het elf-dimensies-toetsingskader.
 > - `communicatie-als-kennisbron.md` — het basisdocument: extractie-aanpak per communicatietype + de onafhankelijk getoetste Cerebras-casestudy. De daar bevestigde verdicten (thread als indexeer-eenheid; expertise-features vereisen canonieke personen) onderbouwen D2/D3 hieronder.

@@ -1321,7 +1321,7 @@ async def list_kb_sources(
     # raise 503 so the frontend's isError branch fires ("Kon bronnen niet
     # laden — probeer opnieuw"). Returning an empty list misleads users
     # into thinking their just-uploaded source disappeared
-    # (incident 2026-05-28 — Jantine personal-KB).
+    # (incident 2026-05-28 — Noor personal-KB).
     aggregates = await knowledge_ingest_client.get_kb_sources(org.zitadel_org_id, kb.slug)
     if aggregates is None:
         raise HTTPException(
@@ -1705,7 +1705,7 @@ async def delete_kb_upload(
     on a still-processing upload sent the kb_uploads.id to knowledge-ingest
     as if it were artifact_id, which 404'd, which left the kb_uploads row
     in place. On the next refresh the row reappeared, reading as "delete
-    didn't do anything" (incident 2026-05-28 — Jantine).
+    didn't do anything" (incident 2026-05-28 — Noor).
     """
     org = await _load_org_or_500(db, perms.org_id)
     kb = await _get_kb_or_404(kb_slug, perms.org_id, db)

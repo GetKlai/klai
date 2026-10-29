@@ -725,7 +725,7 @@ def test_short_dutch_question_with_protocol_acronym_is_not_english() -> None:
 # Typical short widget questions. langid abstains on these or lands below the
 # short-text confidence bar; the unambiguous function words decide instead.
 SHORT_NL_QUESTIONS = (
-    "Wie is Jantine?",
+    "Wie is Noor?",
     "Wat kost dit?",
     "Hoe log ik in?",
     "Welke nummers heb ik?",
@@ -733,7 +733,7 @@ SHORT_NL_QUESTIONS = (
     "Wat is TCP/IP?",
 )
 SHORT_EN_QUESTIONS = (
-    "Who is Jantine?",
+    "Who is Noor?",
     "What does this cost?",
     "How do I log in?",
     "Which numbers do I have?",
@@ -970,7 +970,7 @@ def test_short_german_question_is_not_hijacked_by_the_dutch_function_word_table(
     for text in ("Wie funktioniert das?", "Wie geht es Ihnen?", "Kann ich das ändern?"):
         assert clm.resolve_conversation_language([{"role": "user", "content": text}]).language == "de", text
     # The tie-break itself still works for the languages it exists for.
-    assert clm.resolve_conversation_language([{"role": "user", "content": "Wie is Jantine?"}]).language == "nl"
+    assert clm.resolve_conversation_language([{"role": "user", "content": "Wie is Noor?"}]).language == "nl"
     assert clm.resolve_conversation_language([{"role": "user", "content": "How does it work?"}]).language == "en"
 
 

@@ -286,7 +286,7 @@ find what it is standing in front of.
 
 **This gate is permanent, not a stopgap.** HubSpot is Klai's own support inbox
 and stays that way. Voys does not escalate to HubSpot and never will — it
-escalates to the support partner (the Nerds), today through their booking
+escalates to the support partner, today through their booking
 module and later through their API (§4). Nobody is waiting on a per-tenant
 HubSpot channel, because no other tenant is meant to have one.
 
@@ -347,7 +347,7 @@ down here: the tone-of-voice profile observes that Voys' own articles sometimes
 close with the support number, and that observation does not transfer to the
 bot. Article style and product policy are different things.
 
-**And the destination is the Nerds, not HubSpot.** HubSpot is Klai's own support
+**And the destination is the support partner, not HubSpot.** HubSpot is Klai's own support
 inbox, used by the platform tenant only. A Voys visitor who needs a human goes
 to the support partner — booking module today, their API later. So a sentence
 like "Voys cannot use the HubSpot handoff yet" is wrong twice over: it is not a
