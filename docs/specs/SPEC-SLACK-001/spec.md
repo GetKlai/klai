@@ -153,7 +153,7 @@ Both directions use the one cross-service secret already shared by portal-api an
 
 ### 7.4 Slack app (manifest)
 
-- `features`: `bot_user` (display name "Klai"), `app_home` (home tab, messages tab, not read-only), `agent_view` (description ≤ 300 chars, 4 `suggested_prompts`), `slash_commands`: `/klai` with usage hint `kb | help`.
+- `features`: `bot_user` (display name "Klai"), `app_home` (home tab, messages tab, not read-only), `agent_view` (description ≤ 300 chars, no static `suggested_prompts`: they block the per-language prompts set on `app_home_opened` with `static_prompts_configured`), `slash_commands`: `/klai` with usage hint `kb | help`.
 - Bot scopes: `app_mentions:read`, `chat:write`, `im:history`, `im:write`, `channels:history`, `groups:history`, `commands`, `users:read`, `assistant:write`.
 - Events: `app_mention`, `message.im`, `app_home_opened`, `app_uninstalled`, `tokens_revoked`.
 - Interactivity on. Request URL for everything: `https://api.getklai.com/slack/events`; OAuth redirect `https://api.getklai.com/slack/oauth_redirect`; install `https://api.getklai.com/slack/install`.

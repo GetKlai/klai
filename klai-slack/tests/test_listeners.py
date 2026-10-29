@@ -203,13 +203,17 @@ async def test_help_and_unknown_subcommands_explain_the_channel_scope(
     assert "slack://app?team=T1&id=A1&tab=home" in said[0]
 
 
-async def test_messages_tab_sets_four_prompts_without_thread_ts(slack: FakeSlack) -> None:
+async def test_messages_tab_explains_scope_and_switching_above_four_prompts(
+    slack: FakeSlack,
+) -> None:
     event = {"type": "app_home_opened", "user": "U1", "channel": "D1", "tab": "messages"}
     await listeners.on_app_home_opened(body={"team_id": "T1"}, event=event, client=slack)  # pyright: ignore[reportArgumentType]
     (call,) = slack.named("assistant_threads_setSuggestedPrompts")
     assert call["channel_id"] == "D1"
     assert "thread_ts" not in call
     assert len(call["prompts"]) == 4
+    assert "alle kennisbanken" in call["title"]
+    assert "Kennisbanken kiezen" in call["title"]
 
 
 async def test_home_tab_publishes_status_kbs_and_channel_defaults(

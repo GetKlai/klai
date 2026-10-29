@@ -16,7 +16,11 @@ klai-slack answers through the Partner API of portal-api with one managed
 3. Slack asks to verify the events Request URL once. It only succeeds after the
    service is deployed (section 3), so create the app first, deploy, then press
    **Retry** on the verification.
-4. From **Basic Information** copy the client id, client secret and signing
+4. A later change to `manifest.yml` reaches Slack only by hand: **App Manifest**,
+   paste the file, save, and reinstall when Slack asks for it (new scopes or
+   events). Static `suggested_prompts` must stay out of it, because Slack then
+   refuses the prompts the app sets itself (`static_prompts_configured`).
+5. From **Basic Information** copy the client id, client secret and signing
    secret for the SOPS file below. Do not paste them into chat, tickets or git.
 
 ## 2. SOPS entries (names only, values never in this repo)
