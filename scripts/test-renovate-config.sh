@@ -183,7 +183,7 @@ for c in chunks:
     if re.search(r"(?m)^\s+automerge: false,", c) and "matchPackageNames: ['vexaai/**']" not in c:
         fail.append("no rule may hold an update back from automerge: " + (re.search(r"description:\s*'([^'\\]{0,60})", c).group(1) if re.search(r"description:\s*'", c) else c[:60]))
 store = next((c for c in chunks if "separateMultipleMinor: true" in c and "'mongodb/mongo'" in c), "")
-if "matchUpdateTypes" in store or not store:
+if not store or re.search(r"(?m)^\s+matchUpdateTypes:", store):
     fail.append("the data-store group must propose one minor per PR (MongoDB starts only on the FCV of the release before it)")
 major = next((c for c in chunks if "matchUpdateTypes: ['major']" in c and "matchPackageNames" not in c), "")
 if "automerge: true" not in major:
