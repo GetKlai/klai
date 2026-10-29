@@ -40,8 +40,11 @@ class PublicTextGuardTest(unittest.TestCase):
     def test_an_api_call_carrying_a_body_is_checked(self):
         self.assertEqual(run("gh api repos/GetKlai/klai/issues -f body='Acme Telecom: 40 tickets a day'"), 2)
 
-    def test_a_pr_number_and_a_date_next_to_a_name_are_not_counts(self):
-        self.assertEqual(run('gh pr create --title "fix: Acme Telecom widget (#1520), 18 sep" --body ok'), 0)
+    def test_a_customer_name_in_a_title_is_blocked_even_without_a_count(self):
+        # Since 2026-10-29 the name alone is the finding; a PR number or a
+        # date next to it no longer makes it pass.
+        self.assertEqual(run('gh pr create --title "fix: Acme Telecom widget (#1520), 18 sep" --body ok'), 2)
+        self.assertEqual(run('gh pr create --title "fix: widget (#1520), 18 sep" --body ok'), 0)
 
     def test_commands_that_publish_nothing_pass(self):
         self.assertEqual(run("echo Acme Telecom had 272 answers"), 0)

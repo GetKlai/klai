@@ -1,0 +1,67 @@
+# Domains a test or fixture may name besides the reserved example domains
+# (example.com/.net/.org, localhost, .test/.example/.invalid/.localhost) and IP
+# literals. One per line, subdomains included, "#" starts a comment.
+#
+# Only vendors and our own product domains that tests legitimately mock belong
+# here. Never a customer or partner, and never a domain that merely looks
+# harmless: a test needing an attacker or a tenant host uses example.com.
+# Enforced by scripts/audit-public-tenant-data.py (rule 5).
+
+# Our own product domains
+getklai.com
+klai.com
+klai.nl
+klai.io
+klai.app
+
+# Code hosting, registries, package indexes, standards
+github.com
+githubusercontent.com
+ghcr.io
+docker.io
+pypi.org
+npmjs.com
+httpbin.org
+w3.org
+schema.org
+json-schema.org
+sitemaps.org
+
+# Model and API vendors
+anthropic.com
+claude.ai
+openai.com
+chatgpt.com
+mistral.ai
+vexa.ai
+unstructured.io
+pydantic.dev
+crawl4ai.com
+litellm.ai
+
+# Connector vendors and Microsoft's fictional contoso tenant
+slack.com
+notion.com
+notion.so
+hubspot.com
+hubapi.com
+airtable.com
+zoom.us
+google.com
+googleapis.com
+microsoft.com
+microsoftonline.com
+sharepoint.com
+amazonaws.com
+chromiumapp.org
+contoso.com
+
+# Mail providers named in personal-address tests
+gmail.com
+googlemail.com
+outlook.com
+hotmail.com
+yahoo.com
+icloud.com
+protonmail.com
+fastmail.com

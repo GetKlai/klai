@@ -24,14 +24,17 @@ on:
 permissions:
   contents: read
 
-# The customer names for the name-next-to-a-number rule come from a secret, never
+# The customer names for the customer-name rules come from a secret, never
 # from this repository; the script prints a warning instead when it is absent
 # (pull requests from forks get no secrets).
 env:
   KLAI_TENANT_NAMES: ${{ secrets.KLAI_TENANT_NAMES }}
 
 jobs:
-  guard:
+  # Not "guard": two other workflows already have a job of that name, and this
+  # one is a required status check, which is matched by job name.
+  customer-data-guard:
+    name: customer-data-guard
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:

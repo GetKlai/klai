@@ -15,9 +15,22 @@ What it looks for:
    leaked: a name and a count on the same row.
 2. A LibreChat database name (``librechat-<slug>``) that does not already appear
    on the default branch. Those names are per-customer by construction.
-3. A customer name and a count in the same sentence of added prose, a table row,
-   or a code comment: "<customer> had 272 answers" leaks as much as the table did, and
-   the first version let it through.
+3. A customer name and a count in the same sentence. Folded into rule 4 on
+   2026-10-29: a name with a count is a finding, and so is a name without one.
+4. A customer name in ANY added line (prose, comment, code, fixture, commit
+   message, pull-request text), number or not. Rule 3 only blocked a name next
+   to a number, and a customer's wiki hostname then sat in 46 files of tests,
+   fixtures and comments because no number stood beside it. The owner's rule is
+   absolute: no customer or partner name, ever.
+5. A real hostname in an added line of a test or fixture path (``tests/``,
+   ``__tests__/``, ``fixtures/``, ``stories/``, ``seeds/``, ``e2e/``, ``*.test.*``,
+   ``*.spec.*``, ``*_test.*``, ``*.stories.*``). Needs no name list. Allowed:
+   the reserved example domains (RFC 2606/6761), ``localhost``, IP literals, and
+   what ``scripts/allowed-test-domains.txt`` lists. A token only counts as a
+   hostname when its last label is a known top-level domain (a fixed set below,
+   so ``user.id``, ``foo.py`` and module paths are not hostnames). The ceiling:
+   a customer host under a top-level domain missing from that set passes rule 5
+   (rule 4 still catches it once its name is on the list).
 
 Only added rows are reported, but the surrounding context is read, because a
 row appended to a table whose header is untouched would otherwise be invisible.
@@ -27,12 +40,17 @@ It never prints the offending text. A finding names the file, the line and the
 kind — echoing the row would copy the customer data into a CI log, and workflow
 logs of a public repository are themselves public.
 
-The customer names for rule 3 never live in this repository, because the list
+The customer names for rules 3 and 4 never live in this repository, because the list
 would itself be the disclosure. They come from ``KLAI_TENANT_NAMES`` (one per
 line; a GitHub secret in CI) or from ``~/.config/klai/tenant-names.txt``
-locally. Without either, rules 1 and 2 still run and the script says loudly that
-rule 3 is off. A tenant added after the list was written is not covered until
-the list is refreshed from ``portal_orgs``.
+locally. A name may be a hostname or domain; lines starting with ``#`` and blank
+lines are ignored. Without a list, rules 1, 2 and 5 still run and the script says
+loudly that rules 3 and 4 are off. A tenant added after the list was written is
+not covered until the list is refreshed from ``portal_orgs``.
+
+Only added lines are judged, so what is already in the tree does not fail a
+push. ``--tree`` scans the whole working tree with rules 4 and 5 and prints
+file:line:kind and a total, for the cleanup and for a scheduled audit.
 
 ``--text <label>`` checks plain text instead of a diff: commit messages before a
 push, and pull-request or issue bodies before they are sent.
@@ -55,19 +73,28 @@ _TABLE_LINE = re.compile(r"^\s*\|?[^|]*\|.*$")
 _SEPARATOR_CELL = re.compile(r"^:?-{2,}:?$")
 _LIBRECHAT_DB = re.compile(r"\blibrechat-([a-z0-9][a-z0-9-]{2,})\b")
 _DIGIT = re.compile(r"\d")
-# A count, not a number that is part of a name: "SPEC-VOYS-001", "v2", "#1527",
-# "privacy1" and dates ("18 sep", "2026") are not usage data.
-_COUNT = re.compile(
-    r"(?<![\w.#/-])\d+(?:[.,]\d+)*(?![\w-])(?!\s*(?:jan|feb|mar|maa|apr|mei|may|jun|jul|aug|sep|okt|oct|nov|dec)\w*\b)",
-    re.IGNORECASE,
-)
-_YEAR = re.compile(r"^20\d\d$")
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-# Code files are checked in their comments only: a fixture with an org slug and
-# an id is not a leak, a comment reporting that org's volume is.
-_CODE_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".sh", ".sql", ".go", ".rs", ".css"}
-_COMMENT = re.compile(r"^\s*(#|//|/\*|\*|--)")
 _NAMES_FILE = Path.home() / ".config" / "klai" / "tenant-names.txt"
+_ALLOWED_DOMAINS_FILE = Path(__file__).resolve().parent / "allowed-test-domains.txt"
+
+_TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|fixtures?|stories|seeds?|e2e)(/|$)|(\.|_|-)(test|spec|stories)\.")
+_DOTTED = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+")
+# Reserved by RFC 2606 / 6761: never resolve to a real party. Their reserved TLDs
+# (.test, .example, .invalid, .localhost) and "localhost" are not in _TLDS, so a
+# host under them is never a hostname here.
+_RESERVED_DOMAINS = ("example.com", "example.net", "example.org")
+# Top-level domains a hostname token may end in. A fixed set, not "any two
+# letters": that would make file names (``foo.py``, ``x.md``), property access
+# (``row.id``, ``list.at``) and module paths hostnames. Left out on purpose:
+# the codes that are also common file extensions or identifiers, and ``app``,
+# ``email``, ``info``, ``page``, which are mostly Python and JS attributes.
+_TLDS = {
+    # generic
+    "com", "net", "org", "io", "dev", "cloud", "ai", "co", "biz", "eu", "xyz", "online", "tech", "wiki", "edu", "gov",
+    # country codes
+    "nl", "be", "de", "fr", "uk", "es", "it", "ch", "dk", "se", "fi", "pl", "cz", "pt", "ie", "lu", "us", "ca", "au",
+    "nz", "jp", "cn", "br", "mx", "ru", "ua", "tr", "gr", "hu", "ro", "bg", "sk", "si", "hr",
+}  # fmt: skip
+
 
 # This guard's own tests exist to contain the shapes it detects, so scanning
 # them blocks every change to them. Exactly one path, spelled out: anything
@@ -75,7 +102,9 @@ _NAMES_FILE = Path.home() / ".config" / "klai" / "tenant-names.txt"
 _EXEMPT = "scripts/tests/test_audit_public_tenant_data.py"
 
 _ADVICE = (
-    "Per-customer figures belong in the private klai-infra documentation.\n"
+    "No customer or partner name and no real hostname belongs in this repository: use\n"
+    "  example.com-style names (tests and fixtures: example.com, example.net, example.org, .test).\n"
+    "  Per-customer figures belong in the private klai-infra documentation.\n"
     "  Keep the shape of the distribution here if the decision needs it, without the\n"
     "  names or the counts: \"one tenant accounted for almost all cited answers; three had none\"."
 )
@@ -90,15 +119,45 @@ def _is_separator(line: str) -> bool:
     return bool(cells) and all(_SEPARATOR_CELL.match(cell) for cell in cells if cell)
 
 
-def _has_count(text: str) -> bool:
-    return any(not _YEAR.match(m.group(0)) for m in _COUNT.finditer(text))
-
-
 def _names_pattern(names: list[str]) -> re.Pattern[str] | None:
     if not names:
         return None
     alternatives = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+    # Only [\w-] bounds a name, never a dot: a name that is a domain must match
+    # inside a URL or a dotted host ("https://wiki.<name>.cloud/x"), and so must
+    # a bare slug that is one label of such a host.
     return re.compile(rf"(?<![\w-])(?:{alternatives})(?![\w-])", re.IGNORECASE)
+
+
+def _allowed_domains() -> list[str]:
+    if not _ALLOWED_DOMAINS_FILE.is_file():
+        return []
+    lines = (line.split("#", 1)[0].strip().lower() for line in _ALLOWED_DOMAINS_FILE.read_text("utf-8").splitlines())
+    return [line for line in lines if line]
+
+
+def _has_real_hostname(body: str, allowed: list[str]) -> bool:
+    for token in _DOTTED.findall(body):
+        labels = token.lower().split(".")
+        # Module paths and snake_case attributes carry underscores; versions and
+        # IP literals end in a digit label; neither is a hostname.
+        if "_" in token or labels[-1] not in _TLDS or not any(c.isalpha() for c in labels[-2]):
+            continue
+        host = ".".join(labels)
+        if any(host == d or host.endswith("." + d) for d in (*_RESERVED_DOMAINS, *allowed)):
+            continue
+        return True
+    return False
+
+
+def _line_findings(path: str, line_no: int, body: str, customer: re.Pattern[str] | None, allowed: list[str]) -> list[str]:
+    """Rules 4 and 5 for one added line. Kinds only, never the matched text."""
+    found = []
+    if customer and customer.search(body):
+        found.append(f"{path}:{line_no}: customer-name")
+    if _TEST_PATH.search(path) and _has_real_hostname(body, allowed):
+        found.append(f"{path}:{line_no}: real-hostname")
+    return found
 
 
 def check(diff: str, names: list[str] | None = None) -> list[str]:
@@ -106,24 +165,14 @@ def check(diff: str, names: list[str] | None = None) -> list[str]:
     problems: list[str] = []
     known = _known_librechat_names()
     customer = _names_pattern(names or [])
+    allowed = _allowed_domains()
     path = ""
     line_no = 0
     in_tenant_table = False
     exempt = False
-    prose: list[tuple[int, str]] = []
-
-    def flush() -> None:
-        if customer and prose:
-            text = " ".join(body for _, body in prose)
-            for sentence in _SENTENCE_END.split(text):
-                if customer.search(sentence) and _has_count(customer.sub("", sentence)):
-                    problems.append(f"{path}:{prose[0][0]}: a customer name next to a number")
-                    break
-        prose.clear()
 
     for raw in diff.splitlines():
         if raw.startswith("+++ b/"):
-            flush()
             path = raw[6:]
             exempt = path == _EXEMPT
             # Table state may not survive a file boundary: a header at the end of
@@ -132,12 +181,11 @@ def check(diff: str, names: list[str] | None = None) -> list[str]:
             line_no = 0
             continue
         if raw.startswith("@@"):
-            flush()
             match = re.search(r"\+(\d+)", raw)
             line_no = int(match.group(1)) - 1 if match else 0
             in_tenant_table = False
             continue
-        if raw.startswith("---") or raw.startswith("diff "):
+        if raw.startswith(("---", "diff ")):
             continue
 
         added = raw.startswith("+")
@@ -149,19 +197,9 @@ def check(diff: str, names: list[str] | None = None) -> list[str]:
         if exempt:
             continue
 
-        is_code = Path(path).suffix in _CODE_SUFFIXES
-        if added and body.strip() and (not is_code or _COMMENT.match(body)):
-            if _TABLE_LINE.match(body):
-                flush()
-                prose.append((line_no, " ".join(_cells(body)) + "."))
-                flush()
-            else:
-                prose.append((line_no, body.strip()))
-        else:
-            flush()
-
-        # Before the table logic: a database name on a header line is still one.
         if added:
+            problems.extend(_line_findings(path, line_no, body, customer, allowed))
+            # Before the table logic: a database name on a header line is still one.
             for match in _LIBRECHAT_DB.finditer(body):
                 if match.group(1) not in known:
                     problems.append(f"{path}:{line_no}: a customer database name that is new here")
@@ -179,8 +217,26 @@ def check(diff: str, names: list[str] | None = None) -> list[str]:
         if in_tenant_table and added and any(_DIGIT.search(cell) for cell in _cells(body)):
             problems.append(f"{path}:{line_no}: a per-tenant row carrying numbers")
 
-    flush()
     return list(dict.fromkeys(problems))
+
+
+def scan_tree(root: Path, names: list[str]) -> list[str]:
+    """Rules 4 and 5 over every tracked file as it is on disk now."""
+    customer = _names_pattern(names)
+    allowed = _allowed_domains()
+    listing = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True).stdout
+    problems: list[str] = []
+    for rel in filter(None, listing.decode("utf-8").split("\0")):
+        file = root / rel
+        if rel == _EXEMPT or file.is_symlink() or not file.is_file():
+            continue
+        try:
+            text = file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue  # a binary file
+        for number, line in enumerate(text.splitlines(), start=1):
+            problems.extend(_line_findings(rel, number, line, customer, allowed))
+    return problems
 
 
 def as_diff(text: str, label: str) -> str:
@@ -212,11 +268,31 @@ def _known_librechat_names() -> set[str]:
     return set()
 
 
+def _print_tree(problems: list[str]) -> None:
+    for problem in problems:
+        print(problem)
+    for kind in ("customer-name", "real-hostname"):
+        print(f"{kind}: {sum(p.endswith(': ' + kind) for p in problems)}")
+    print(f"total: {len(problems)}")
+
+
 def main() -> int:
     # An explicit flag, not a guess at stdin: a git hook runs with stdin already
     # redirected, and the first version read an empty string there and let a real
     # table through. Context lines are requested because a row appended under an
     # untouched header is invisible without them.
+    names = load_names()
+    if not names:
+        print(
+            "public-tenant-data: no customer-name list (KLAI_TENANT_NAMES or "
+            f"{_NAMES_FILE}); rules 3 and 4 are OFF: customer names are NOT checked.",
+            file=sys.stderr,
+        )
+    if "--tree" in sys.argv:
+        root = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip())
+        problems = scan_tree(root, names)
+        _print_tree(problems)
+        return 1 if problems else 0
     if "--staged" in sys.argv:
         diff = subprocess.run(
             ["git", "diff", "--cached", "-U3"], capture_output=True, text=True, check=True
@@ -226,17 +302,10 @@ def main() -> int:
         diff = as_diff(sys.stdin.read(), label)
     else:
         diff = sys.stdin.read()
-    names = load_names()
-    if not names:
-        print(
-            "public-tenant-data: no customer-name list (KLAI_TENANT_NAMES or "
-            f"{_NAMES_FILE}); names next to numbers in prose are NOT checked.",
-            file=sys.stderr,
-        )
     problems = check(diff, names)
     if not problems:
         return 0
-    print("public-tenant-data: customer usage data may not enter this public repository.\n")
+    print("public-tenant-data: customer data may not enter this public repository.\n")
     for problem in problems:
         print(f"  {problem}")
     print(f"\n{_ADVICE}")
