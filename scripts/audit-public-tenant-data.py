@@ -145,13 +145,19 @@ def _has_real_hostname(body: str, allowed: list[str]) -> bool:
     for match in _DOTTED.finditer(text):
         token = match.group(0).lstrip("-")
         labels = token.lower().split(".")
-        # ``self.org`` or ``state.org`` is attribute access, not a host: a bare
-        # two-label token counts only when it sits in a string, a URL or an
-        # address (the character before it is a quote, a slash or an @), or
-        # continues as a path or port.
+        # ``self.org`` or ``state.org`` is attribute access, not a host. Only
+        # the ``.org`` ending doubles as a common attribute name, so only a bare
+        # two-label ``.org`` token is excused, and only outside a string, URL
+        # or address (no quote, slash or @ before it) and not followed by a
+        # path or port. A bare ``customer.nl`` in prose is still a finding.
         before = text[match.start() - 1] if match.start() > 0 else " "
         after = text[match.end()] if match.end() < len(text) else " "
-        if len(labels) == 2 and before not in "\"'`/@" and after not in "/:":
+        if (
+            len(labels) == 2
+            and labels[-1] == "org"
+            and before not in "\"'`/@"
+            and after not in "/:"
+        ):
             continue
         # Module paths and snake_case attributes carry underscores; versions and
         # IP literals end in a digit label; neither is a hostname.

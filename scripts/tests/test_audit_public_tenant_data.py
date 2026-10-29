@@ -298,6 +298,9 @@ def test_attribute_access_on_a_two_label_name_is_not_a_hostname():
     assert audit.check(diff, []) == []
     diff = audit.as_diff('url = "acme.nl"', "tests/test_x.py")
     assert audit.check(diff, []) == ["tests/test_x.py:1: real-hostname"]
+    # A bare domain in prose is still a host; only the .org attribute shape is excused.
+    diff = audit.as_diff("# compare with customer.nl before merging", "tests/test_x.py")
+    assert audit.check(diff, []) == ["tests/test_x.py:1: real-hostname"]
 
 
 def test_module_paths_versions_and_file_names_are_not_hostnames():
