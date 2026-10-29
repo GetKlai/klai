@@ -119,12 +119,12 @@ NL: dict[str, str] = {
     ),
     "prompt_1_title": "Beleid opzoeken",
     "prompt_1_message": "Wat is ons beleid voor thuiswerken?",
-    "prompt_2_title": "Iets regelen",
-    "prompt_2_message": "Hoe vraag ik verlof aan?",
-    "prompt_3_title": "Waar vind ik…?",
-    "prompt_3_message": "Waar vind ik de regels voor declaraties?",
-    "prompt_4_title": "Nieuw in het team",
-    "prompt_4_message": "Wat moet ik regelen in mijn eerste week als nieuwe collega?",
+    "prompt_2_title": "Proces volgen",
+    "prompt_2_message": "Hoe onboarden we een nieuwe klant?",
+    "prompt_3_title": "Prijs opzoeken",
+    "prompt_3_message": "Wat zijn onze prijzen en pakketten?",
+    "prompt_4_title": "Voorwaarden nakijken",
+    "prompt_4_message": "Wat zijn onze voorwaarden voor het opzeggen van een contract?",
 }
 
 EN: dict[str, str] = {
@@ -230,14 +230,14 @@ EN: dict[str, str] = {
         "I search every knowledge base your organisation has released for Slack. "
         'Want to search fewer? Use "Choose knowledge bases" under an answer.'
     ),
-    "prompt_1_title": "Look up a policy",
+    "prompt_1_title": "Check a policy",
     "prompt_1_message": "What is our policy on working from home?",
-    "prompt_2_title": "Get something done",
-    "prompt_2_message": "How do I request leave?",
-    "prompt_3_title": "Where do I find…?",
-    "prompt_3_message": "Where do I find the rules for expense claims?",
-    "prompt_4_title": "New on the team",
-    "prompt_4_message": "What do I need to arrange in my first week as a new colleague?",
+    "prompt_2_title": "Follow a process",
+    "prompt_2_message": "How do we onboard a new customer?",
+    "prompt_3_title": "Look up a price",
+    "prompt_3_message": "What are our prices and plans?",
+    "prompt_4_title": "Check our terms",
+    "prompt_4_message": "What are our terms for cancelling a contract?",
 }
 
 _STRINGS = {"nl": NL, "en": EN}
