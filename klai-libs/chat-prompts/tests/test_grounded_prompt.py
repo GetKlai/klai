@@ -387,3 +387,17 @@ def test_all_three_prompts_share_identical_preamble():
     preamble = GROUNDED_CHAT_SYSTEM_PROMPT[:preamble_end]
     assert GENERAL_CHAT_SYSTEM_PROMPT.startswith(preamble + "\n\n")
     assert META_CHAT_SYSTEM_PROMPT.startswith(preamble + "\n\n")
+
+
+def test_the_final_reminder_names_the_contrast_between_source_and_user_language() -> None:
+    """On 29 October 2026 "Respond in English" alone left 8 of 20 replayed widget
+    answers in Dutch; naming that the sources are Dutch and the user expects
+    English brought that to 3 of 20."""
+    from klai_chat_prompts import final_response_language_reminder
+
+    contrast = final_response_language_reminder("en", "nl")
+    assert contrast.startswith("[FINAL RESPONSE LANGUAGE] Respond in English.")
+    assert "written in Dutch" in contrast and "expects English" in contrast
+    # Same language, or an unknown source: the plain contract.
+    assert "written in" not in final_response_language_reminder("nl", "nl")
+    assert final_response_language_reminder("en", None) == final_response_language_reminder("en")

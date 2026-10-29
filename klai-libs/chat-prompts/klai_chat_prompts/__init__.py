@@ -575,8 +575,16 @@ FINAL_RESPONSE_LANGUAGE_REMINDER: Final[str] = (
 )
 
 
-def final_response_language_reminder(target_lang: str | None) -> str:
+def final_response_language_reminder(target_lang: str | None, source_lang: str | None = None) -> str:
     """Render the response-language contract as the LAST provider instruction.
+
+    ``source_lang`` is the language the retrieved passages are written in. When
+    it is known and differs from the target, the instruction names both: on
+    the replayed English widget questions over a Dutch knowledge base of
+    29 October 2026, "Respond in English" alone left the model writing Dutch
+    on 8 of 20 turns, and naming the contrast ("the sources are Dutch, the
+    user expects English") brought that to 3 of 20. The language-first output
+    schema (klai-portal ``reply_language_schema``) does the rest.
 
     KB_CONTEXT_LANGUAGE_REMINDER sits next to the retrieved chunks, thousands
     of characters before generation. Production showed Mistral still follows
@@ -594,6 +602,14 @@ def final_response_language_reminder(target_lang: str | None) -> str:
     name = LANGUAGE_NAMES.get(target_lang or "")
     if not name:
         return FINAL_RESPONSE_LANGUAGE_REMINDER
+    source = LANGUAGE_NAMES.get(source_lang or "")
+    if source and source_lang != target_lang:
+        return (
+            f"[FINAL RESPONSE LANGUAGE] Respond in {name}. The sources, the quoted source lines and the style "
+            f"instructions above are written in {source}; the user writes in {name} and expects {name}. Write the "
+            f"whole reply in {name}: translate what the sources say and keep only the names of menus, buttons and "
+            f"settings as the source names them. Not a single sentence of the reply may be in {source}."
+        )
     return (
         f"[FINAL RESPONSE LANGUAGE] Respond in {name}. The user's most recent "
         f"substantive message is in {name} ({target_lang}). Retrieved sources, "

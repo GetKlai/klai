@@ -186,10 +186,14 @@ class _LiteLLM:
             self.repair_requests.append(body)
             return httpx.Response(200, json={"choices": [{"message": {"content": self.repaired}}]})
         self.answer_requests.append(body)
+        text = self.model_text
+        if "response_format" in body:
+            language = body["response_format"]["json_schema"]["schema"]["properties"]["reply_language"]["enum"][0]
+            text = json.dumps({"reply_language": language, "reply": self.model_text})
         if body.get("stream"):
-            frame = json.dumps({"choices": [{"index": 0, "delta": {"content": self.model_text}}]})
+            frame = json.dumps({"choices": [{"index": 0, "delta": {"content": text}}]})
             return httpx.Response(200, content=f"data: {frame}\n\ndata: [DONE]\n\n".encode())
-        message = {"role": "assistant", "content": self.model_text}
+        message = {"role": "assistant", "content": text}
         return httpx.Response(200, json={"choices": [{"index": 0, "message": message, "finish_reason": "stop"}]})
 
     def _structured(self, schema: str | None, body: dict) -> httpx.Response | None:
@@ -1042,6 +1046,9 @@ _TAG_FOR_KIND = {
 
 def _call_kind(body: dict) -> str:
     schema = (body.get("response_format") or {}).get("json_schema", {}).get("name")
+    if schema == "reply_in_language":
+        # The writer's language-first shape: still the answer call.
+        return "answer"
     if schema:
         return schema
     if "You edit a reply" in body["messages"][0]["content"]:

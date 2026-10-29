@@ -116,6 +116,9 @@ class _LiteLLM:
     @staticmethod
     def _kind(body: dict) -> str:
         schema = (body.get("response_format") or {}).get("json_schema", {}).get("name")
+        if schema == "reply_in_language":
+            # The writer's language-first shape: still the answer call.
+            return "answer"
         if schema:
             return schema
         if "You edit a reply" in body["messages"][0]["content"]:
@@ -139,10 +142,14 @@ class _LiteLLM:
             replies[kind] = self.case
         if kind in replies:
             return _reply(replies[kind])
+        answer = self.answer
+        if "response_format" in body:
+            language = body["response_format"]["json_schema"]["schema"]["properties"]["reply_language"]["enum"][0]
+            answer = json.dumps({"reply_language": language, "reply": self.answer})
         if body.get("stream"):
-            frame = json.dumps({"choices": [{"index": 0, "delta": {"content": self.answer}}]})
+            frame = json.dumps({"choices": [{"index": 0, "delta": {"content": answer}}]})
             return httpx.Response(200, content=f"data: {frame}\n\ndata: [DONE]\n\n".encode())
-        message = {"role": "assistant", "content": self.answer}
+        message = {"role": "assistant", "content": answer}
         return httpx.Response(200, json={"choices": [{"index": 0, "message": message, "finish_reason": "stop"}]})
 
 

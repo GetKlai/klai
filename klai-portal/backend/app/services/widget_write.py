@@ -30,7 +30,6 @@ from typing import Any
 import httpx
 import structlog
 from klai_chat_prompts import (
-    LANGUAGE_NAMES,
     appointment_offer_sentence,
     chat_contract_article,
     strip_appointment_offer_marker,
@@ -99,16 +98,6 @@ _STREAM_GUARD_TAIL_CHARS = 32
 # Word tokens, as the language module counts them.
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
-# A streamed reply shows nothing until this many words are written, because
-# that is when the language of what the model writes can be told: on
-# 29 October 2026 the model answered English questions in Dutch under a
-# "Respond in English" instruction (3 to 4 of 6 replayed widget turns on main,
-# the source lines being Dutch), and a streamed reply cannot be taken back.
-# Six words is what identify_surface_language needs to decide between Dutch
-# and English on an opening line; on the model's pace that is well under a
-# second.
-_LANGUAGE_GATE_WORDS = 6
-
 
 def without_dashes(text: str) -> str:
     """The widget owner wants no dash as punctuation in a reply; the model copies them from the prompt."""
@@ -168,15 +157,13 @@ async def write_reply(
     turn = knowledge_turn if knowledge_turn is not None else KnowledgeTurn(answer_mode=profile.kb_mode)
     decision = None if pasted_correspondence else resolve_conversation_language(messages)
     response_language = decision.language if decision else None
-    # The writer repairs a reply's language only when the decision is firm: an
-    # explicit request, the user's own function words, or langid on a question
-    # of at least LONG_PROSE_WORDS words. A langid guess on a shorter question
-    # is not enough to translate a reply by: "Ondersteunt Klai SIP-trunking?"
-    # is identified as German at full confidence, and translating a correct
-    # Dutch answer into German would be worse than the Dutch answer the model
-    # gives. On the replayed widget questions of 29 October 2026, 5 of 6 were
-    # langid decisions on 9 to 11 words.
-    repair_language = (
+    # The output shape enforces the decided language only when the decision is
+    # firm: an explicit request, the user's own function words, or langid on a
+    # question of at least LONG_PROSE_WORDS words. A langid guess on a shorter
+    # question is not enough to pin a reply to: "Ondersteunt Klai SIP-trunking?"
+    # is identified as German at full confidence, and a Dutch answer forced
+    # into German would be worse than the Dutch answer the model gives.
+    enforced_language = (
         response_language
         if decision is not None
         and (
@@ -185,8 +172,23 @@ async def write_reply(
         )
         else None
     )
+    # The passages' own language, so the final instruction can name the
+    # contrast with the user's: only on a firm decision, because the contrast
+    # pushes harder than the plain contract and a soft decision ("Ondersteunt
+    # Klai SIP-trunking?" read as German) must not be pushed at all. None
+    # without passages or when they are mixed.
+    source_language = (
+        identify_surface_language(" ".join(str(c.get("text") or "") for c in citation_chunks or []))
+        if enforced_language
+        else None
+    )
     augmented = _augment_messages_with_system_prompt(
-        messages, system_prompt, page_context, response_language=response_language, profile=profile
+        messages,
+        system_prompt,
+        page_context,
+        response_language=response_language,
+        source_language=source_language,
+        profile=profile,
     )
     strict = profile.kb_mode == "strict"
     reply = Reply(
@@ -226,7 +228,6 @@ async def write_reply(
         pasted_correspondence=pasted_correspondence,
         profile=profile,
         include_sources=include_sources,
-        repair_language=repair_language,
     )
     generation: dict[str, Any] = {
         "model": model,
@@ -235,6 +236,7 @@ async def write_reply(
         "org_id": org_id,
         "delegated_org_id": delegated_org_id,
         "language": response_language,
+        "language_schema": enforced_language,
         "tools": _strip_web_search_tools(tools) if strict else tools,
         # A forced choice of a tool Strict just stripped would name a tool the
         # request no longer carries.
@@ -244,10 +246,7 @@ async def write_reply(
     }
     if stream:
         reply.deltas = _streamed(
-            _generate_streamed(augmented, **generation),
-            pasted_correspondence=pasted_correspondence,
-            settle=settle,
-            target=repair_language,
+            _generate_streamed(augmented, **generation), pasted_correspondence=pasted_correspondence, settle=settle
         )
         return reply
     generation_started = time.perf_counter()
@@ -295,15 +294,10 @@ async def _settle(
     pasted_correspondence: bool,
     profile: ChatProfile,
     include_sources: bool,
-    repair_language: str | None,
 ) -> None:
     """Compose, check and decide the written ``draft``, and put the outcome in ``reply``.
 
     ``shown`` is what a streamed reply already put on screen, None on a held one.
-    ``repair_language`` is the language the reply is translated into when the
-    model wrote another one; the judge and the citations work on the draft as
-    written, because they match it against the source passages in their own
-    language, and only the accepted text is translated.
     """
     turn, response_language = reply.turn, reply.language
     helpdesk = profile.surface != "internal"
@@ -407,22 +401,6 @@ async def _settle(
         decision=decision,
     )
     _log_citation_rescues(decision, org_id=org_id)
-    if not decision.get("output_blocked") and (shown is None or not shown.emitted):
-        # A held reply, or a streamed one the gate kept back: what the reader
-        # gets is the accepted text, translated when the model wrote the
-        # source language. A streamed reply that was shown cannot be taken back.
-        content = await _in_decided_language(
-            content,
-            reply,
-            target=repair_language,
-            model=model,
-            settings=settings,
-            org_id=org_id,
-            delegated_org_id=delegated_org_id,
-            language=response_language,
-        )
-        if helpdesk and "language_repaired" in reply.signals:
-            content = without_dashes(content)
     _fill_answer_signals(
         answer_signals,
         decision=decision,
@@ -528,8 +506,14 @@ async def _generate(
     language: str | None,
     tools: list[dict] | None,
     tool_choice: Any | None,
+    language_schema: str | None = None,
 ) -> tuple[dict[str, Any], str, list[dict] | None]:
-    """The answer model's text, the id, model and usage it came with, and the tools it called."""
+    """The answer model's text, the id, model and usage it came with, and the tools it called.
+
+    With ``language_schema`` the text is the ``reply`` field of the
+    language-first shape (:func:`reply_language_schema`); a body that is not
+    that shape is kept as written and logged, never dropped.
+    """
     chat_url = f"{settings.litellm_base_url}/v1/chat/completions"
     request_json = _llm_request_body(
         model,
@@ -539,6 +523,7 @@ async def _generate(
         tools=tools,
         tool_choice=tool_choice,
         delegated_org_id=delegated_org_id,
+        language_schema=language_schema,
     )
     try:
         # 120 s: the longer of the two budgets the streamed and the plain call had.
@@ -566,6 +551,8 @@ async def _generate(
     choices = body.get("choices") or []
     message = (choices[0].get("message") or {}) if choices else {}
     text = message.get("content") or ""
+    if language_schema and "response_format" in request_json and isinstance(text, str) and text:
+        text = _reply_field(text, org_id=org_id)
     completion = {key: value for key, value in body.items() if key != "choices"}
     if choices and choices[0].get("finish_reason"):
         # A truncated answer keeps saying so ("length"), as the plain body always did.
@@ -584,8 +571,13 @@ async def _generate_streamed(
     language: str | None,
     tools: list[dict] | None,
     tool_choice: Any | None,
+    language_schema: str | None = None,
 ) -> AsyncIterator[str | list[dict]]:
     """The answer model's text deltas, and its tool-call deltas, as they arrive.
+
+    With ``language_schema`` the deltas are the ``reply`` field of the
+    language-first shape, decoded as it streams (:class:`_ReplyField`), so the
+    reader sees the model's words as it writes them and never the shape.
 
     A tool-call delta never enters the text, so it can never reach the citation
     composer or the grounding check. Once the stream has started a failure
@@ -601,7 +593,9 @@ async def _generate_streamed(
         tools=tools,
         tool_choice=tool_choice,
         delegated_org_id=delegated_org_id,
+        language_schema=language_schema,
     )
+    field = _ReplyField() if "response_format" in request_json else None
     try:
         async with (
             httpx.AsyncClient(timeout=120.0) as client,
@@ -629,7 +623,12 @@ async def _generate_streamed(
                     yield tool_calls
                 text = delta.get("content")
                 if isinstance(text, str) and text:
-                    yield text
+                    if field is not None:
+                        text = field.feed(text)
+                    if text:
+                        yield text
+            if field is not None and (text := field.finish(org_id=org_id)):
+                yield text
     except httpx.TransportError as exc:
         logger.warning("partner_chat_upstream_unreachable", org_id=org_id, target=chat_url, exc_info=True)
         raise AnswerUpstreamError("Chat service unavailable", language) from exc
@@ -640,65 +639,125 @@ async def _generate_streamed(
         raise AnswerUpstreamError("Chat service error", language) from exc
 
 
-async def _in_decided_language(
-    text: str,
-    reply: Reply,
-    *,
-    target: str | None,
-    model: str,
-    settings: Settings,
-    org_id: int | str | None,
-    delegated_org_id: str | None,
-    language: str | None,
-) -> str:
-    """The accepted text, translated into ``target`` when the model wrote another language.
+def _reply_field(text: str, *, org_id: int | str | None) -> str:
+    """The ``reply`` of a held language-first body, decoded as the streamed one is.
 
-    The final system instruction names the language, and the model still
-    follows its source lines often enough (3 to 4 of 6 replayed English widget
-    turns on a Dutch knowledge base, 29 October 2026) that the instruction
-    alone is not the contract. One translation call, only on a mismatch.
-    ``target`` is None when the turn's decision is not firm enough to
-    translate by (see ``write_reply``). The judge has already accepted the
-    text against the passages in their own language: translating the draft
-    first made the Strict judge refuse a correct answer in 2 of 2 replayed
-    rounds, because it no longer matched the Dutch passages word for word.
+    One decoder for both paths: an empty reply is an empty draft (the composer
+    refuses it), a body cut off by the token limit yields the readable text up
+    to the cut, and free text is kept as written.
     """
-    if not target:
-        return text
-    written = identify_surface_language(text)
-    if not written or written == target:
-        return text
-    name = LANGUAGE_NAMES.get(target, target)
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                # The marker pattern is described, not shown: shown as "[n]"
-                # in this instruction, the model wrote a literal "[n]" into a
-                # translated step on 29 October 2026.
-                f"Translate the reply below into {name}. Keep the markdown, the links, the numbered citation "
-                "markers in square brackets and the names of menus, buttons and settings exactly as they are; "
-                "translate everything else. Reply with the translation only."
-            ),
-        },
-        {"role": "user", "content": text},
-    ]
-    _, translated, _ = await _generate(
-        messages,
-        model=model,
-        temperature=0.0,
-        settings=settings,
-        org_id=org_id,
-        delegated_org_id=delegated_org_id,
-        language=language,
-        tools=None,
-        tool_choice=None,
-    )
-    if not translated.strip():
-        return text
-    reply.signals["language_repaired"] = {"from": written, "to": target}
-    logger.info("partner_chat_language_repaired", org_id=org_id, written=written, target=target)
-    return translated
+    field = _ReplyField()
+    return field.feed(text) + field.finish(org_id=org_id)
+
+
+_REPLY_KEY = '"reply"'
+_REPLY_OPENS = re.compile(r'\s*:\s*"')
+_REPLY_KEY_PENDING = re.compile(r"\s*(:\s*)?")
+_JSON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", '"': '"', "\\": "\\", "/": "/"}
+
+
+def _decode_json_string(buf: str) -> tuple[str, str, bool]:
+    """Decode the start of a JSON string body: (text, what is left undecodable yet, whether the string closed)."""
+    out: list[str] = []
+    i = 0
+    while i < len(buf):
+        ch = buf[i]
+        if ch == '"':
+            return "".join(out), "", True
+        if ch != "\\":
+            out.append(ch)
+            i += 1
+            continue
+        if i + 1 >= len(buf):
+            break
+        nxt = buf[i + 1]
+        if nxt != "u":
+            out.append(_JSON_ESCAPES.get(nxt, nxt))
+            i += 2
+            continue
+        if i + 6 > len(buf):
+            break
+        code = _hex4(buf[i + 2 : i + 6])
+        if code is None:
+            # Not an escape the schema can produce: shown as written.
+            out.append(buf[i : i + 2])
+            i += 2
+            continue
+        if 0xD800 <= code <= 0xDBFF:
+            # A high surrogate needs its low half; wait only while the next
+            # characters can still become one, never on something else.
+            tail = buf[i + 6 :]
+            if len(tail) < 2 or (tail[:2] == "\\u" and len(tail) < 6):
+                break
+            low = _hex4(tail[2:6]) if tail[:2] == "\\u" else None
+            if low is None or not 0xDC00 <= low <= 0xDFFF:
+                out.append("\ufffd")
+                i += 6
+                continue
+            code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+            i += 12
+        else:
+            i += 6
+        out.append(chr(code))
+    return "".join(out), buf[i:], False
+
+
+def _hex4(text: str) -> int | None:
+    try:
+        return int(text, 16) if len(text) == 4 else None
+    except ValueError:
+        return None
+
+
+class _ReplyField:
+    """The ``reply`` string of a streamed language-first body, decoded as it arrives.
+
+    ``reply_language`` comes first in the shape and ``reply`` last, so
+    everything up to the reply's opening quote is skipped and everything after
+    its closing quote is ignored. A JSON escape may be split across deltas and
+    waits for its remaining characters; a surrogate pair waits for both halves.
+    """
+
+    def __init__(self) -> None:
+        self.head = ""
+        self.opened = False
+        self.closed = False
+        self.plain = False
+        self.pending = ""
+
+    def feed(self, delta: str) -> str:
+        if self.plain:
+            return delta
+        if self.closed:
+            return ""
+        if not self.opened:
+            self.head += delta
+            if self.head.lstrip() and not self.head.lstrip().startswith("{"):
+                # Free text, not the shape: shown as it comes.
+                self.plain = True
+                return self.head
+            key = self.head.find(_REPLY_KEY)
+            if key < 0:
+                return ""
+            rest = self.head[key + len(_REPLY_KEY) :]
+            opening = _REPLY_OPENS.match(rest)
+            if opening is None:
+                if _REPLY_KEY_PENDING.fullmatch(rest):
+                    return ""
+                # Not the shape after all: the stream shows what it got.
+                self.plain = True
+                return self.head
+            self.opened = True
+            delta = rest[opening.end() :]
+        decoded, self.pending, self.closed = _decode_json_string(self.pending + delta)
+        return decoded
+
+    def finish(self, *, org_id: int | str | None) -> str:
+        """Close the field; a shape that never reached its reply is an empty answer, never raw JSON on screen."""
+        if not self.opened and not self.plain and self.head:
+            logger.warning("partner_chat_language_schema_unparsed", org_id=org_id, length=len(self.head))
+        self.closed = True
+        return ""
 
 
 @dataclass
@@ -706,34 +765,14 @@ class _StreamedText:
     """What the model has written so far on a streamed reply, and what of it the reader has seen."""
 
     pasted_correspondence: bool
-    target: str | None = None
     raw: list[str] = field(default_factory=list)
     emitted: list[str] = field(default_factory=list)
     held_back: str = ""
     marker_buffer: str = ""
-    # The language gate: closed until the opening words can be judged, then
-    # either open or, when the model writes another language than the turn
-    # decided, shut for good: the reader then sees the translation only.
-    gate_closed: bool = True
-    wrong_language: bool = False
 
-    def take(self, text: str, *, final: bool = False) -> str:
+    def take(self, text: str) -> str:
         """Keep a content delta and return the part of it that is safe to send now."""
-        if text:
-            self.raw.append(text)
-        if self.gate_closed:
-            if self.target is None:
-                self.gate_closed = False
-            else:
-                head = "".join(self.raw)
-                if len(head.split()) < _LANGUAGE_GATE_WORDS and not final:
-                    return ""
-                written = identify_surface_language(head)
-                self.gate_closed = False
-                self.wrong_language = bool(written) and written != self.target
-                text = head
-        if self.wrong_language:
-            return ""
+        self.raw.append(text)
         if self.pasted_correspondence:
             text, self.marker_buffer = pop_answer_contract_stream_text(self.marker_buffer + text, final=False)
         shown, self.held_back = _pop_streamable_text(self.held_back + text)
@@ -747,7 +786,6 @@ async def _streamed(
     *,
     pasted_correspondence: bool,
     settle: Callable[..., Awaitable[None]],
-    target: str | None,
 ) -> AsyncIterator[str | list[dict]]:
     """Pass the model's deltas on as the reader may see them, then settle the reply on the whole text.
 
@@ -755,7 +793,7 @@ async def _streamed(
     composed once, on the accumulated text, never re-rendered mid-stream, which
     is what keeps the footer's numbering in step with what the reader saw.
     """
-    text = _StreamedText(pasted_correspondence=pasted_correspondence, target=target)
+    text = _StreamedText(pasted_correspondence=pasted_correspondence)
     tool_calls: list[dict] = []
     generation_started = time.perf_counter()
     async for delta in deltas:
@@ -764,11 +802,6 @@ async def _streamed(
             yield delta
         elif shown := text.take(delta):
             yield shown
-    # A reply shorter than the gate is judged on what there is. When the gate
-    # kept the whole reply back, nothing was shown: settle translates the
-    # accepted text and the reader gets it as the reply's final frames.
-    if shown := text.take("", final=True):
-        yield shown
     await settle(
         "".join(text.raw),
         generation_ms=_elapsed_ms(generation_started),
