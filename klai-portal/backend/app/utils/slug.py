@@ -12,7 +12,7 @@ reject empty-string slugs with HTTP 400 (see SPEC-CHAT-TEMPLATES-001
 REQ-TEMPLATES-CRUD-U2).
 
 Extracted from the inline `_slugify` helpers in `app/api/app_rules.py` and
-`app/api/app_templates.py` (Jantine's `feat/chat-first-redesign`) — same
+`app/api/app_templates.py` (Noor's `feat/chat-first-redesign`) — same
 semantics, single source of truth.
 """
 

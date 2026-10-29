@@ -151,7 +151,7 @@ def _scope_filter(request: RetrieveRequest) -> list[FieldCondition | Filter]:
             # recover from connectors that did not stamp user_id.
             # However, the user_id-OR branch let chunks from non-canonical
             # user-owned KBs (e.g. ``test2``) leak through whenever the
-            # caller was the chunk's owner — exactly the Jantine bug we
+            # caller was the chunk's owner — exactly the Noor bug we
             # want to close. The canonical-slug branch alone matches both
             # cases the OR was designed to handle:
             #   - Modern chunks (kb_slug=canonical, user_id=me): pass

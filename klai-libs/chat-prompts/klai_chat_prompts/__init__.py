@@ -348,7 +348,7 @@ def _language_is_dutch(language: object) -> bool:
     "No decision" (None, "und", empty) falls back to DUTCH, not English.
     Measured 2026-09-09 on ten typical short Dutch widget questions: the
     identifier abstains on five of them ("Hoe log ik in?", "Wie is
-    Jantine?") because short prose must reach 0.99 confidence, while it
+    Noor?") because short prose must reach 0.99 confidence, while it
     decides four of five equally short ENGLISH questions. Klai's customers
     are overwhelmingly Dutch, so an undecided short turn is far more likely
     Dutch than English, and an English user is rarely undecided in the

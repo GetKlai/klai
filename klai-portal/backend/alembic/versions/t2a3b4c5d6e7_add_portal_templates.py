@@ -14,7 +14,7 @@ Schema:
   that will be injected into every LiteLLM chat call for every user
   with this template active.
 - CHECK scope IN ('org', 'personal') — no cross-tenant or other variants
-  (see SPEC: the Jantine branch used "global" which was dropped).
+  (see SPEC: the Noor branch used "global" which was dropped).
 - Index on (org_id, is_active) — fast lookup path used by
   `/internal/templates/effective`.
 """

@@ -24,7 +24,7 @@ from app.services.default_knowledge_bases import personal_kb_slug
     "user_id, expected",
     [
         ("300000000000000002", "personal-300000000000000002"),
-        ("jantine-zitadel-sub", "personal-jantine-zitadel-sub"),
+        ("noor-zitadel-sub", "personal-noor-zitadel-sub"),
         ("u1", "personal-u1"),
     ],
 )
@@ -42,7 +42,7 @@ def test_personal_kb_slug_matches_legacy_inline_pattern() -> None:
     A drift here breaks server-side narrowing silently. Loud failure here
     is the only thing keeping the contract honest.
     """
-    samples = ["jantine-zitadel-sub", "u1", "300000000000000002", ""]
+    samples = ["noor-zitadel-sub", "u1", "300000000000000002", ""]
     for user_id in samples:
         legacy = f"personal-{user_id}"
         assert personal_kb_slug(user_id) == legacy, (

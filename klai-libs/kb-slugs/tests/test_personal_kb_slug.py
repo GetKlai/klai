@@ -43,7 +43,7 @@ def test_personal_kb_slug_matches_legacy_inline_pattern() -> None:
     This test pins the byte-equal output so that a future contributor
     cannot silently introduce a different template via this library.
     """
-    samples = ["jantine-zitadel-sub", "u1", "300000000000000002", ""]
+    samples = ["noor-zitadel-sub", "u1", "300000000000000002", ""]
     for user_id in samples:
         legacy_inline = f"personal-{user_id}"
         assert personal_kb_slug(user_id) == legacy_inline, (

@@ -192,7 +192,7 @@ class TestPersonalRoleRewriteChainsIntoCanonicalNarrow:
         # became None, and _scope_filter's user_id-OR-kb_slug let test2
         # chunks through via the user_id branch.
         req = RetrieveRequest(
-            query="wie is jantine?",
+            query="wie is noor?",
             org_id="o1",
             scope="org",
             kb_slugs=["sneaky-org-kb"],

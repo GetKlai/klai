@@ -15,7 +15,7 @@ or it WILL be forgotten. The platform-admin page is the only catalogue.
 # @MX:ANCHOR fan_in=2 — used by platform.py (read endpoint) and
 #   tested via test_platform_subdomains.py
 # @MX:REASON: Hand-curated; drift between this file and reality has
-#   real user impact (Jantine cannot see what services exist).
+#   real user impact (Noor cannot see what services exist).
 # @MX:NOTE: Tenant-specific subdomains (chat-<slug>-<id>, docs-<slug>,
 #   <slug>) are NOT in this list — they are appended dynamically from
 #   portal_orgs at request time. This file is only for STATIC infra.
@@ -77,7 +77,7 @@ _MARKETING: list[Subdomain] = [
         description="Publieke marketing-website (Astro).",
         category="marketing",
         host="public-01",
-        owner="Jantine",
+        owner="Noor",
     ),
     Subdomain(
         subdomain="www",
@@ -86,7 +86,7 @@ _MARKETING: list[Subdomain] = [
         description="Alias-redirect naar getklai.com.",
         category="marketing",
         host="public-01",
-        owner="Jantine",
+        owner="Noor",
     ),
     Subdomain(
         subdomain="cdn",
@@ -269,7 +269,7 @@ _TOOLING: list[Subdomain] = [
         description="Externe feedback-tool (productfeedback van klanten).",
         category="tooling",
         host="core-01",
-        owner="Jantine",
+        owner="Noor",
     ),
     Subdomain(
         subdomain="analytics",
@@ -278,7 +278,7 @@ _TOOLING: list[Subdomain] = [
         description="Privacy-vriendelijke website-analytics.",
         category="tooling",
         host="core-01",
-        owner="Jantine",
+        owner="Noor",
     ),
     Subdomain(
         subdomain="firecrawl",
@@ -296,7 +296,7 @@ _TOOLING: list[Subdomain] = [
         description="DNS-entry voor inkomende mail. Verwerkt door externe provider.",
         category="tooling",
         host="external",
-        owner="Jantine",
+        owner="Noor",
     ),
 ]
 

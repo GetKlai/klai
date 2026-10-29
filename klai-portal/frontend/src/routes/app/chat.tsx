@@ -40,7 +40,7 @@ interface ChatHealth {
  *      `redirect_to: https://{actual_slug}.getklai.com/api/me`
  *   3. apiFetch does window.location.replace(redirect_to) - iframe location
  *      flips to /api/me, browser renders the JSON viewer
- * (Diagnosed 2026-05-11 - Jantine on my.getklai.com saw raw /api/me JSON in
+ * (Diagnosed 2026-05-11 - Noor on my.getklai.com saw raw /api/me JSON in
  * the chat tab.)
  *
  * Returns null until workspace_url is known.

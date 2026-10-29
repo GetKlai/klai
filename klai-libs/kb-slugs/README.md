@@ -8,7 +8,7 @@ and `klai-retrieval-api` (search side). One library = one slug template = no dri
 The slug template ``personal-<zitadel_user_id>`` was originally defined inline in
 ``klai-portal/backend/app/services/default_knowledge_bases.py`` and reconstructed
 ad-hoc in the LiteLLM hook (since removed) and elsewhere. The 2026-05-27
-"Jantine incident" surfaced that this kind of multi-file string contract drifts
+"Noor incident" surfaced that this kind of multi-file string contract drifts
 silently (see ``url-shape-multi-file-drift`` pitfall in
 ``.claude/rules/klai/pitfalls/process-rules.md``).
 

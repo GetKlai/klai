@@ -112,7 +112,7 @@ def _qdrant_set_parent_chunk_ids(
     Qdrant exposes a per-point ``set_payload`` endpoint; we send one
     request per point (the bulk endpoint requires identical payloads
     across points which we don't have here). N≈18 per artifact in the
-    Jantine case so the per-point overhead is fine.
+    Noor case so the per-point overhead is fine.
     """
     api_key = os.environ.get("QDRANT_API_KEY") or ""
     headers = {"Content-Type": "application/json"}
