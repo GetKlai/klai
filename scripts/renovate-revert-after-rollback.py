@@ -12,9 +12,12 @@ lands once `quality` is green.
 
 Our own code is never reverted (decision D3): only commits authored by
 klai-renovate[bot] with a `chore(deps): update` subject count. A rollback with
-no such commit in its range does nothing and exits 0. Only `rolled_back` acts:
-after `rollback_failed` the host is in a state nobody verified, and that is for
-a person (the ci-failure issue carries the `rollback-failed` label).
+no such commit in its range does nothing and exits 0. `rolled_back` acts, and
+so does `shadow_failed`: a data store's new image failed on a copy of its data
+before the sync switched anything, so the version is bad for our data and the
+next compose change must not try it again. After `rollback_failed` the host is
+in a state nobody verified, and that is for a person (the ci-failure issue
+carries the `rollback-failed` label).
 
 Usage, from the root of a full-history checkout of main, with GH_TOKEN set:
 
@@ -97,8 +100,12 @@ def split_ref(ref: str) -> tuple[str, str]:
     return repo, tag
 
 
+# What happened to the version, as the PR title and body say it.
+ACTS_ON = {"rolled_back": "rolled back by", "shadow_failed": "failed its shadow in"}
+
+
 def acts_on(report: dict) -> bool:
-    return report.get("kind") == "compose" and report.get("outcome") == "rolled_back"
+    return report.get("kind") == "compose" and report.get("outcome") in ACTS_ON
 
 
 def renovate_bumps(frm: str, to: str) -> list[Bump]:
@@ -277,7 +284,8 @@ def run(args: argparse.Namespace) -> int:
         for old, new in b.lines:
             lines = [old if line == new else line for line in lines]
         config = add_exclusion(config, b.repo, b.new, note)
-    title = f"revert(renovate): {', '.join(b.label for b in todo)}, rolled back by run {args.run_id}"
+    what = ACTS_ON[report["outcome"]]
+    title = f"revert(renovate): {', '.join(b.label for b in todo)}, {what} run {args.run_id}"
 
     git("checkout", "--quiet", "-B", branch, "origin/main")
     Path(COMPOSE).write_text("\n".join(lines) + "\n")
@@ -286,14 +294,14 @@ def run(args: argparse.Namespace) -> int:
     git(
         "-c", f"user.name={RENOVATE_AUTHOR}", "-c", f"user.email={RENOVATE_EMAIL}",
         "commit", "--quiet", "-m", title, "-m",
-        f"The core-01 compose sync rolled back {to[:12]} ({report.get('outcome')}, gate "
-        f"{report.get('gate')}). Run: {args.run_url}",
+        f"The core-01 compose sync of {to[:12]}: {what} run {args.run_url} ({report.get('outcome')}, "
+        f"gate {report.get('gate')}).",
     )
     git("push", "--quiet", "--force", "origin", f"HEAD:refs/heads/{branch}")
 
     rows = "\n".join(f"| `{b.repo}` | `{b.new}` | `{b.old}` |" for b in todo)
     body = (
-        f"The core-01 compose sync of `{to[:12]}` was rolled back by run {args.run_url} "
+        f"The core-01 compose sync of `{to[:12]}`: {what} run {args.run_url} "
         f"(ci-failure issue {issue}). This puts the image lines back and excludes each exact "
         f"version in `{CONFIG}`, so the next compose change does not deploy it again and "
         "Renovate does not propose it again; later versions keep flowing.\n\n"

@@ -151,6 +151,23 @@ class RevertAfterRollback(unittest.TestCase):
         self.assertIn("outcome `rolled_back`", calls)
         self.assertIn(f"pr merge {branch} --auto --squash", calls)
 
+    def test_a_failed_shadow_reverts_the_version_like_a_rollback(self) -> None:
+        # The new image failed on a copy of the store's data, before anything was
+        # switched: the version is bad for that data, so it is reverted and excluded.
+        self.bump("acme/alpha", "v1.4.0", "v1.5.0")
+        result = self.run_script(outcome="shadow_failed", gate="datastore-shadow")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        branch = "revert/renovate-acme-alpha-v1.5.0-777"
+        self.assertIn("image: acme/alpha:v1.4.0", self.remote_file(branch, "deploy/docker-compose.yml"))
+        pattern = excluded(self.remote_file(branch, "renovate.json5"), "acme/alpha")
+        self.assertTrue(pattern.match("v1.5.0"))
+        self.assertFalse(pattern.match("v1.5.1"))
+        calls = self.gh_calls()
+        self.assertIn(" --title revert(renovate): acme/alpha v1.5.0 -> v1.4.0, failed its shadow in run 777", calls)
+        self.assertIn("outcome `shadow_failed`", calls)
+        self.assertIn(f"pr merge {branch} --auto --squash", calls)
+
     def test_two_bumps_in_the_range_land_in_one_pr(self) -> None:
         self.bump("acme/alpha", "v1.4.0", "v1.5.0")
         self.bump("ghcr.io/acme/beta", "2.0.0-alpine", "2.1.0-alpine")

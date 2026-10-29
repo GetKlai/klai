@@ -21,6 +21,9 @@
 # calls in the shapes real Qdrant 1.19/1.20, Redis 8.10, Meilisearch 1.55,
 # Mongo 8.0, RabbitMQ 4.4 and Garage 2.4 produced on 2026-10-28.
 # Switches: fake/probe_red (a live store's facts fail until it is restored),
+# fake/bad_image (any container on the image it names fails its facts, a
+# shadow included), fake/bad_live_image (the live store fails its facts while
+# it runs the image named there),
 # fake/corrupt_snapshot (a snapshot taken now does not read back),
 # fake/stop_fails (docker compose stop exits 1), fake/pg_dump_fails, fake/fcv_fails
 # (setFeatureCompatibilityVersion answers an error).
@@ -38,7 +41,8 @@ name_of() { local c="${1#cid-}"; echo "${c%%:*}"; }
 get() { sed -n "s/^$2=//p" "$F/eng/$1" 2>/dev/null; }
 put() { local f="$F/eng/$1"; touch "$f"; grep -v "^$2=" "$f" > "$f.tmp"; echo "$2=$3" >> "$f.tmp"; mv "$f.tmp" "$f"; }
 live() { [[ -e "$F/compose_svc_$1" ]]; }
-red() { live "$1" && [[ -e "$F/probe_red" ]]; }
+on_image() { [[ -e "$F/$2" && "$(cat "$F/running/$1" 2>/dev/null)" == "$(cat "$F/$2")" ]]; }
+red() { { live "$1" && { [[ -e "$F/probe_red" ]] || on_image "$1" bad_live_image; }; } || on_image "$1" bad_image; }
 pgmajor() { local t="${1##*:}"; [[ "$t" == *-pg* ]] && t="${t##*-pg}"; echo "${t%%[.-]*}"; }
 pgkey() { local k="${1#/var/lib/postgresql/}"; echo "${k//\//_}"; }
 pgdata() { pgenv "$1" | sed -n 's/^PGDATA=//p'; }
@@ -77,11 +81,11 @@ in_store() {
         local first=1 k name cnt
         while read -r k name cnt; do
           if [[ "$k" == FAKEDUMP ]]; then db="$name"; mkdir -p "$F/db/$t/$db"; continue; fi
-          if [[ -e "$F/restore_short" && "$first" == 1 ]]; then cnt=$((cnt - 1)); fi
+          if [[ -e "$F/restore_short" && "$first" == 1 ]] && live "$t"; then cnt=$((cnt - 1)); fi
           first=0
           echo "$cnt" > "$F/db/$t/$db/$name"
         done
-        rm -f "$F/probe_red"
+        ! live "$t" || rm -f "$F/probe_red"
       fi ;;
     psql)
       while (( $# )); do case "$1" in -d) db="$2" ;; -c|-Atc) sql="$2" ;; esac; shift; done
@@ -93,7 +97,7 @@ in_store() {
         "select datname"*) for a in "$F/db/$t"/*; do [[ -e "$a" && "$(basename "$a")" != postgres ]] && basename "$a"; done; true ;;
         "DROP DATABASE"*) a="${sql#*\"}"; rm -rf "$F/db/$t/${a%%\"*}" ;;
         "select count(*)"*)
-          [[ -e "$F/probe_red" ]] && exit 1
+          red "$t" && exit 1
           a="${sql#*from \"}"; a="${a//\"/}"
           cat "$F/db/$t/$db/$a" 2>/dev/null ;;
       esac ;;

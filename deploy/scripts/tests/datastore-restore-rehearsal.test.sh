@@ -56,7 +56,7 @@ old_snapshot() {
 
 run_rehearsal() {
   set +e
-  PATH="$bin:$PATH" FAKE="$case_dir/fake" KLAI_COMPOSE_DIR="$case_dir" bash "$rehearsal" "$@" > "$case_dir/out" 2>&1
+  PATH="$bin:$PATH" FAKE="$case_dir/fake" KLAI_COMPOSE_DIR="$case_dir" KLAI_DS_SHADOW="${SHADOW:-}" bash "$rehearsal" "$@" > "$case_dir/out" 2>&1
   rc=$?
   set -e
 }
@@ -132,6 +132,21 @@ echo 1 > "$case_dir/fake/df_avail"
 run_rehearsal redis qdrant
 check "no disk -> exit 1, nothing stopped, no throwaway" "1 0 0" "$rc $(calls 'stop -t 120 qdrant') $(calls 'docker run -d')"
 check "  both reported failed" "redis failed,qdrant failed" "$(events)"
+
+# --- a newer image proven on the latest snapshot: reported, never failing -----
+new_case shadow_next
+old_snapshot qdrant qdrant volume.tar $'collection klai_knowledge\ncount klai_knowledge 120' > /dev/null
+old_snapshot redis redis dump.rdb 'count keys 57' > /dev/null
+echo redis:9.0.0-alpine > "$case_dir/fake/bad_image"
+SHADOW="qdrant=qdrant/qdrant:v1.99.0 redis=redis:9.0.0-alpine" run_rehearsal qdrant redis
+check "shadow of two newer images, one red -> exit 0, the restores ok" 0 "$rc"
+check "  each event carries its shadow" "qdrant qdrant/qdrant:v1.99.0 ok,redis redis:9.0.0-alpine failed" "$(python3 -c '
+import json, sys
+for line in open(sys.argv[1]):
+    e = json.loads(line)
+    print(e["store"], e["shadow_image"], e["shadow"])' "$case_dir/logs/auto-rollback.log" | paste -sd, -)"
+check "  the shadows ran on the named images" "1 1" "$(calls 'run -d --name klai-datastore-shadow-qdrant .*qdrant/qdrant:v1.99.0') $(calls 'run -d --name klai-datastore-shadow-redis .*redis:9.0.0-alpine')"
+check "  an image with a shell character is refused before anything runs" "1 0" "$(SHADOW='qdrant=qdrant/qdrant:v1;id' run_rehearsal qdrant; echo "$rc $(calls 'klai-datastore-shadow-qdrant .*v1;id')")"
 
 # --- a name outside the inventory is refused ----------------------------------
 new_case unknown

@@ -19,6 +19,13 @@
 # is not a rollback point, so its ledger line goes to a scratch file and the
 # snapshot is removed afterwards. redis-ephemeral keeps no state and is skipped.
 #
+# KLAI_DS_SHADOW="<store>=<image> ..." also runs the shadow of each named store
+# on that image from the same snapshot (ds_shadow: the deploy's own proof, in a
+# throwaway), so a next version is proven on a copy of our data before Renovate
+# offers it. Its result is a fact about that version, not about the snapshot:
+# it goes into the store's event (shadow_image, shadow ok|failed) and never
+# fails the run.
+#
 # One event line per store in the auto-rollback log, which Alloy ships to
 # VictoriaLogs:
 #   {"event":"datastore_restore_rehearsal","outcome":"ok"|"failed","store":...}
@@ -47,10 +54,11 @@ latest_snapshot() {
   done < <(find "$DS_BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name "pre-$1-*" 2>/dev/null | sort -r)
 }
 
+# event <store> <ok|failed> <snapshot> [<shadow image> <ok|failed>]
 event() {
   local line
-  line="$(printf '{"service":"auto-rollback","level":"%s","event":"datastore_restore_rehearsal","outcome":"%s","store":"%s","engine":"%s","snapshot":"%s","_time":"%s"}' \
-    "$([[ "$2" == ok ]] && echo info || echo error)" "$2" "$1" "$(ds_engine "$1")" "$(rb_json "$3")" "$(rb_now)")"
+  line="$(printf '{"service":"auto-rollback","level":"%s","event":"datastore_restore_rehearsal","outcome":"%s","store":"%s","engine":"%s","snapshot":"%s","shadow_image":"%s","shadow":"%s","_time":"%s"}' \
+    "$([[ "$2" == ok ]] && echo info || echo error)" "$2" "$1" "$(ds_engine "$1")" "$(rb_json "$3")" "$(rb_json "${4:-}")" "${5:-}" "$(rb_now)")"
   echo "$line"
   { mkdir -p "$(dirname "$RB_EVENT_LOG")" && printf '%s\n' "$line" >> "$RB_EVENT_LOG"; } 2>/dev/null \
     || { echo "::error::could not append to $RB_EVENT_LOG; the dead-man's switch will fire"; return 1; }
@@ -61,6 +69,14 @@ stores=("$@")
 for store in "${stores[@]}"; do
   ds_is_store "$store" || { echo "::error::$store is not in the datastore inventory" >&2; exit 1; }
 done
+for pair in ${KLAI_DS_SHADOW:-}; do
+  ds_is_store "${pair%%=*}" && [[ "$pair" =~ ^[a-z0-9-]+=[A-Za-z0-9._/:@-]+$ ]] \
+    || { echo "::error::KLAI_DS_SHADOW: '$pair' is not <store>=<image> for a store in the inventory" >&2; exit 1; }
+done
+shadow_image() {
+  local pair
+  for pair in ${KLAI_DS_SHADOW:-}; do [[ "${pair%%=*}" != "$1" ]] || echo "${pair#*=}"; done
+}
 
 failed=()
 for store in "${stores[@]}"; do
@@ -99,7 +115,13 @@ for store in "${stores[@]}"; do
     failed+=("$store")
     echo "::error::$store: the restore of $dir failed"
   fi
-  event "$store" "$outcome" "$dir" || failed+=("event-log")
+  image="$(shadow_image "$store")"
+  shadow=""
+  if [[ -n "$image" && "$outcome" == ok ]]; then
+    echo "==> $store: shadow of $image on $dir"
+    if ds_shadow "$dir" "$image"; then shadow=ok; else shadow=failed; echo "::warning::$store: $image failed its shadow on $dir"; fi
+  fi
+  event "$store" "$outcome" "$dir" "$image" "$shadow" || failed+=("event-log")
   (( fresh == 0 )) || rm -rf "$dir"
 done
 

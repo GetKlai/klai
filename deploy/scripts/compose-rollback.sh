@@ -18,7 +18,8 @@
 #   rb_deployed                           last line of a green run: ledger + report
 #   rb_replay <gate>                      after the run, undo the last green sync (rollback-since.sh)
 #
-# Exit codes of a red run: 3 rolled back, 4 rollback failed. The ledger line,
+# Exit codes of a red run: 3 rolled back, 4 rollback failed (and not_started or
+# shadow_failed, which changed nothing). The ledger line,
 # the report (<reports>/compose.json, also printed as "ROLLBACK_REPORT <json>")
 # and the auto_rollback event follow the contract of deploy-with-rollback.sh.
 #
@@ -36,8 +37,10 @@
 #
 # Data stores (slices S8a and S8b, datastore-rollback.sh, sourced below): an
 # image change of a data store or of an app that migrates its own database is
-# snapshotted before the sync changes anything, and a red gate within 30
-# minutes restores the snapshots together with the files. Past the window
+# snapshotted before the sync changes anything, and a store's new image is
+# first proven on a copy of it (the shadow; red ends the run shadow_failed
+# before any file changed). A red gate within 30 minutes restores the
+# snapshots together with the files. Past the window
 # nothing is restored (gate restore-window); an inventory entry this sync does
 # not snapshot (LiteLLM) restores nothing either (gate self-migrating-image),
 # and neither does a Mongo whose FCV was raised since its snapshot (gate
@@ -147,7 +150,7 @@ rb_recreate() {
   "$RB_DIR/scripts/compose-env-drift-recreate.sh"
 }
 
-# rb_finish <service> <gate> <deployed|rolled_back|rollback_failed|not_started>
+# rb_finish <service> <gate> <deployed|rolled_back|rollback_failed|not_started|shadow_failed>
 # not_started: the run refused before the first file was replaced (disk
 # headroom, a snapshot that failed or did not read back). The host is in its
 # verified state, nothing was rolled back and nothing needs a person; it is
@@ -155,6 +158,10 @@ rb_recreate() {
 # event, the report and the ledger say what happened instead of crying
 # rollback_failed (which Grafana mails as "production may be broken", as it
 # did on 2026-10-29 16:04 UTC for a mongodb snapshot that did not read back).
+# shadow_failed: the same host state, reached because the new image of a data
+# store failed on a copy of its data (gate datastore-shadow). The version is
+# bad for that data, so renovate-revert-after-rollback.py reverts it as it
+# does after rolled_back.
 rb_finish() {
   local service="$1" gate="$2" outcome="$3" ts report event code=0
   ts="$(rb_now)"
@@ -191,13 +198,14 @@ rb_finish() {
       code=4
       rm -f "$RB_STATE"
       # Keep the first failure's commit and gate; later runs only report.
-      # not_started ends the run before any file is replaced, so the host is
-      # still in its verified state and gets no flag.
-      [[ -e "$RB_FAILED_FLAG" || "$outcome" == not_started ]] || printf 'commit=%s gate=%s\n' "$RB_TO" "$gate" > "$RB_FAILED_FLAG" ;;
+      # not_started and shadow_failed end the run before any file is replaced,
+      # so the host is still in its verified state and gets no flag.
+      [[ -e "$RB_FAILED_FLAG" || "$outcome" == not_started || "$outcome" == shadow_failed ]] \
+        || printf 'commit=%s gate=%s\n' "$RB_TO" "$gate" > "$RB_FAILED_FLAG" ;;
   esac
   if (( code != 0 )); then
     event="$(printf '{"service":"auto-rollback","level":"%s","event":"auto_rollback","outcome":"%s","deploy_service":"%s","gate":"%s","commit":"%s","_time":"%s"}' \
-      "$([[ "$outcome" == not_started ]] && echo warning || echo error)" "$outcome" "$(rb_json "$service")" "$(rb_json "$gate")" "$(rb_json "$RB_TO")" "$ts")"
+      "$([[ "$outcome" == not_started || "$outcome" == shadow_failed ]] && echo warning || echo error)" "$outcome" "$(rb_json "$service")" "$(rb_json "$gate")" "$(rb_json "$RB_TO")" "$ts")"
     printf '%s\n' "$event"
     if ! { mkdir -p "$(dirname "$RB_EVENT_LOG")" && printf '%s\n' "$event" >> "$RB_EVENT_LOG"; } 2>/dev/null; then
       echo "WARN: could not append to $RB_EVENT_LOG; the auto_rollback event will not reach VictoriaLogs" >&2
