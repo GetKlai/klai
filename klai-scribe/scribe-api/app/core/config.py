@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     # recording decodes to roughly 320 MB of WAV and was rejected with 413
     # on 2026-10-29 when it was posted in one piece.
     transcription_chunk_seconds: int = 1200
+    # How long POST /v1/transcribe and /retry wait for the background job
+    # before answering `processing`: 20 s still returns a short memo's text
+    # straight away and stays far under the portal BFF's 300 s proxy timeout.
+    transcribe_wait_seconds: int = 20
+    # Concurrent transcription jobs in this process: the GPU's deferred tier
+    # has 19 slots shared with meeting bots, and scribe runs single-replica.
+    transcription_workers: int = 2
 
     # Audio file storage (persists recordings for retry on transcription failure)
     audio_storage_dir: str = "/data/audio"

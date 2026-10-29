@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { ArrowLeft, Loader2, Copy, CheckCheck, Download } from 'lucide-react'
@@ -10,6 +10,8 @@ import Markdown from 'react-markdown'
 import * as m from '@/paraglide/messages'
 import { apiFetch } from '@/lib/apiFetch'
 import { PageContainer } from '@/components/ui/page-container'
+import { ListFrame } from '@/components/ui/list'
+import { ListLoadingState } from '@/components/ui/list-state'
 
 export const Route = createFileRoute('/app/transcribe/$transcriptionId')({
   component: TranscriptionDetailPage,
@@ -20,9 +22,10 @@ const SCRIBE_BASE = '/api/scribe/v1'
 interface TranscriptionDetail {
   id: string
   name: string | null
-  text: string
-  language: string
-  duration_seconds: number
+  status: 'processing' | 'transcribed' | 'failed'
+  text: string | null
+  language: string | null
+  duration_seconds: number | null
   created_at: string
   summary_json: {
     type: 'meeting' | 'recording'
@@ -56,6 +59,7 @@ function TranscriptionDetailPage() {
     queryKey: ['transcription', transcriptionId],
     queryFn: async () => apiFetch<TranscriptionDetail>(`${SCRIBE_BASE}/transcriptions/${transcriptionId}`),
     enabled: auth.isAuthenticated,
+    refetchInterval: (query) => (query.state.data?.status === 'processing' ? 5000 : false),
   })
 
   const summarizeMutation = useMutation({
@@ -116,10 +120,11 @@ function TranscriptionDetailPage() {
 
   if (!transcription) return null
 
+  const text = transcription.text ?? ''
   const displayTitle = transcription.name ?? (
-    transcription.text.length > 60
-      ? transcription.text.slice(0, 60) + '...'
-      : transcription.text
+    text.length > 60
+      ? text.slice(0, 60) + '...'
+      : text || m.app_transcribe_detail_transcript_title()
   )
 
   return (
@@ -138,126 +143,140 @@ function TranscriptionDetailPage() {
         </Button>
       </div>
 
-      <div className="space-y-6">
+      {transcription.status === 'processing' ? (
+        <ListFrame>
+          <ListLoadingState label={m.app_transcribe_processing()} />
+          <p className="pb-6 text-center text-xs text-gray-600">{m.app_transcribe_processing_hint()}</p>
+        </ListFrame>
+      ) : transcription.status === 'failed' ? (
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="text-base font-medium">
-              {m.app_transcribe_detail_transcript_title()}
-            </CardTitle>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={copyTranscript}>
-                {copied ? (
-                  <>
-                    <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
-                    {m.app_meetings_copy_done()}
-                  </>
-                ) : (
-                  <>
-                    <Copy className="mr-1.5 h-3.5 w-3.5" />
-                    {m.app_meetings_copy()}
-                  </>
-                )}
-              </Button>
-              <Button variant="outline" size="sm" onClick={downloadTranscript}>
-                <Download className="mr-1.5 h-3.5 w-3.5" />
-                {m.app_meetings_download()}
-              </Button>
-            </div>
+          <CardHeader className="pb-2">
+            <CardTitle>{m.app_transcribe_status_failed()}</CardTitle>
+            <CardDescription>{m.app_transcribe_failed_hint()}</CardDescription>
           </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600 whitespace-pre-wrap">
-              {transcription.text}
-            </p>
-          </CardContent>
         </Card>
-
-        {transcription.text.trim() && (
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium text-gray-900 shrink-0">
-              {m.app_transcribe_summary_type_label()}
-            </label>
-            <Select
-              value={recordingType}
-              onChange={(e) => setRecordingType(e.target.value as 'meeting' | 'recording')}
-              className="w-48"
-            >
-              <option value="recording">{m.app_transcribe_summary_type_recording()}</option>
-              <option value="meeting">{m.app_transcribe_summary_type_meeting()}</option>
-            </Select>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => summarizeMutation.mutate(!!transcription.summary_json)}
-              disabled={summarizeMutation.isPending}
-            >
-              {summarizeMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {m.app_transcribe_summary_loading()}
-                </>
-              ) : transcription.summary_json ? (
-                m.app_transcribe_resummarize_button()
-              ) : (
-                m.app_transcribe_summarize_button()
-              )}
-            </Button>
-          </div>
-        )}
-
-        {summarizeMutation.error && (
-          <Card className="border-[var(--color-destructive)]">
-            <CardContent className="pt-4">
-              <p className="text-sm font-medium text-[var(--color-destructive)]">
-                {m.app_transcribe_summary_error()}
-              </p>
-              <p className="mt-1 text-sm text-gray-600">{summarizeMutation.error.message}</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {transcription.summary_json && (
+      ) : (
+        <div className="space-y-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-3">
               <CardTitle className="text-base font-medium">
-                {m.app_transcribe_detail_summary_title()}
+                {m.app_transcribe_detail_transcript_title()}
               </CardTitle>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={copySummaryText}>
-                  {summaryCopied === 'text' ? (
+                <Button variant="outline" size="sm" onClick={copyTranscript}>
+                  {copied ? (
                     <>
                       <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
-                      {m.app_transcribe_summary_copy_done()}
+                      {m.app_meetings_copy_done()}
                     </>
                   ) : (
                     <>
                       <Copy className="mr-1.5 h-3.5 w-3.5" />
-                      {m.app_transcribe_summary_copy_text()}
+                      {m.app_meetings_copy()}
                     </>
                   )}
                 </Button>
-                <Button variant="outline" size="sm" onClick={copySummaryMarkdown}>
-                  {summaryCopied === 'markdown' ? (
-                    <>
-                      <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
-                      {m.app_transcribe_summary_copy_done()}
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="mr-1.5 h-3.5 w-3.5" />
-                      {m.app_transcribe_summary_copy_markdown()}
-                    </>
-                  )}
+                <Button variant="outline" size="sm" onClick={downloadTranscript}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  {m.app_meetings_download()}
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-sm text-gray-900 space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
-                <Markdown>{transcription.summary_json.markdown}</Markdown>
-              </div>
+              <p className="text-sm text-gray-600 whitespace-pre-wrap">
+                {text}
+              </p>
             </CardContent>
           </Card>
-        )}
-      </div>
+
+          {text.trim() && (
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-gray-900 shrink-0">
+                {m.app_transcribe_summary_type_label()}
+              </label>
+              <Select
+                value={recordingType}
+                onChange={(e) => setRecordingType(e.target.value as 'meeting' | 'recording')}
+                className="w-48"
+              >
+                <option value="recording">{m.app_transcribe_summary_type_recording()}</option>
+                <option value="meeting">{m.app_transcribe_summary_type_meeting()}</option>
+              </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => summarizeMutation.mutate(!!transcription.summary_json)}
+                disabled={summarizeMutation.isPending}
+              >
+                {summarizeMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {m.app_transcribe_summary_loading()}
+                  </>
+                ) : transcription.summary_json ? (
+                  m.app_transcribe_resummarize_button()
+                ) : (
+                  m.app_transcribe_summarize_button()
+                )}
+              </Button>
+            </div>
+          )}
+
+          {summarizeMutation.error && (
+            <Card className="border-[var(--color-destructive)]">
+              <CardContent className="pt-4">
+                <p className="text-sm font-medium text-[var(--color-destructive)]">
+                  {m.app_transcribe_summary_error()}
+                </p>
+                <p className="mt-1 text-sm text-gray-600">{summarizeMutation.error.message}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {transcription.summary_json && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-3">
+                <CardTitle className="text-base font-medium">
+                  {m.app_transcribe_detail_summary_title()}
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={copySummaryText}>
+                    {summaryCopied === 'text' ? (
+                      <>
+                        <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
+                        {m.app_transcribe_summary_copy_done()}
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-1.5 h-3.5 w-3.5" />
+                        {m.app_transcribe_summary_copy_text()}
+                      </>
+                    )}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={copySummaryMarkdown}>
+                    {summaryCopied === 'markdown' ? (
+                      <>
+                        <CheckCheck className="mr-1.5 h-3.5 w-3.5 text-[var(--color-success-text)]" />
+                        {m.app_transcribe_summary_copy_done()}
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-1.5 h-3.5 w-3.5" />
+                        {m.app_transcribe_summary_copy_markdown()}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-sm text-gray-900 space-y-1 [&_h1]:font-semibold [&_h1]:mt-3 [&_h2]:font-semibold [&_h2]:mt-3 [&_h3]:font-semibold [&_h3]:mt-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mt-0.5 [&_strong]:font-semibold [&_p]:leading-relaxed">
+                  <Markdown>{transcription.summary_json.markdown}</Markdown>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
     </PageContainer>
   )
 }

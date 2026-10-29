@@ -11,6 +11,7 @@ interface TranscriptionResultCardsProps {
   isRetrying: boolean
   onRetry: (id: string) => void
   onBack: () => void
+  onGoToList: () => void
 }
 
 export function TranscriptionResultCards({
@@ -18,6 +19,7 @@ export function TranscriptionResultCards({
   isRetrying,
   onRetry,
   onBack,
+  onGoToList,
 }: TranscriptionResultCardsProps) {
   const [copied, setCopied] = useState(false)
 
@@ -27,6 +29,23 @@ export function TranscriptionResultCards({
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
+  }
+
+  if (result?.status === 'processing') {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle>{m.app_transcribe_status_processing()}</CardTitle>
+          <CardDescription>{m.app_transcribe_processing_hint()}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-gray-600">{m.app_transcribe_queued_body()}</p>
+          <div className="flex gap-3 pt-2">
+            <Button onClick={onGoToList}>{m.app_transcribe_go_to_list()}</Button>
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   if (result?.status === 'failed') {

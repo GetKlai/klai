@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import ClassVar
 
-from sqlalchemy import JSON, NUMERIC, TEXT, TIMESTAMP, VARCHAR, Column
+from sqlalchemy import INTEGER, JSON, NUMERIC, TEXT, TIMESTAMP, VARCHAR, Column
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -34,3 +34,8 @@ class Transcription(Base):
     # `processing` to `failed` after worker restart. Nullable: legitimate
     # transitions to `failed` (whisper error during transcribe) leave it null.
     error_reason = Column(VARCHAR(64), nullable=True)
+    # Background-job bookkeeping (app.services.jobs): how often the row was
+    # claimed, when the running claim started, and the caller's language hint.
+    attempts = Column(INTEGER, nullable=False, default=0, server_default="0")
+    claimed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    language_hint = Column(VARCHAR(16), nullable=True)
