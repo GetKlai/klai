@@ -182,14 +182,50 @@ async def test_reaper_fails_only_rows_the_queue_can_no_longer_run(factory):
     await _insert(factory, "queued", created_at=old, attempts=1)
     await _insert(factory, "no_audio", created_at=old, audio_path=None)
     await _insert(factory, "held", created_at=old, attempts=3, claimed_at=_ago(1))
+    await _insert(factory, "exhausted", created_at=old, attempts=3, claimed_at=_ago(20))
 
     async with factory() as session:
-        assert await reap_stranded(session, timeout_min=10) == 1
+        assert await reap_stranded(session, timeout_min=10) == 2
 
     assert (await _row(factory, "queued")).status == "processing"
     assert (await _row(factory, "held")).status == "processing"
-    reaped = await _row(factory, "no_audio")
-    assert (reaped.status, reaped.error_reason) == ("failed", "worker_restart_stranded")
+    for txn_id in ("no_audio", "exhausted"):
+        reaped = await _row(factory, txn_id)
+        assert (reaped.status, reaped.error_reason) == ("failed", "worker_restart_stranded")
+
+
+async def test_reaper_skips_a_row_a_job_is_finishing(factory):
+    """The finisher holds the row lock while it writes; the reaper must skip
+    that row instead of waiting for it and flipping it afterwards."""
+    await _insert(factory, "finishing", created_at=_ago(60), audio_path=None)
+
+    async with factory() as holder:
+        await holder.execute(
+            text("SELECT id FROM scribe.transcriptions WHERE id = 'finishing' FOR UPDATE")
+        )
+        async with factory() as session:
+            reaped = await asyncio.wait_for(reap_stranded(session, timeout_min=10), timeout=5)
+        await holder.rollback()
+
+    assert reaped == 0
+    assert (await _row(factory, "finishing")).status == "processing"
+
+
+async def test_claim_skips_a_row_locked_by_another_transaction(factory):
+    """SKIP LOCKED: a row held under an uncommitted lock is passed over, not
+    waited for, so a second worker takes the next row at once."""
+    await _insert(factory, "locked", created_at=_ago(3))
+    await _insert(factory, "free", created_at=_ago(2))
+
+    async with factory() as holder:
+        await holder.execute(
+            text("SELECT id FROM scribe.transcriptions WHERE id = 'locked' FOR UPDATE")
+        )
+        async with factory() as session:
+            claimed = await asyncio.wait_for(jobs._claim(session), timeout=5)
+        await holder.rollback()
+
+    assert claimed == "free"
 
 
 async def test_run_job_transcribes_and_deletes_the_audio(factory, monkeypatch, tmp_path: Path):
