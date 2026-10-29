@@ -533,6 +533,10 @@
         'falkordb/falkordb',
       ],
       groupName: 'Data store series bumps',
+      // One minor per PR, like Twenty: a data store moves one series at a
+      // time, so a failing series rolls back alone and MongoDB's FCV step
+      // (one release at a time) can follow each merge.
+      separateMultipleMinor: true,
       // Automerge since 2026-10-29 (AGENTS.md: automatic by default, proof
       // instead of approval). The compose sync snapshots every store before
       // its image changes, probes after, and restores within 30 minutes when

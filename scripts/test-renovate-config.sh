@@ -182,6 +182,9 @@ for c in chunks:
     # sync (feat/vexa-bot-prepull); that PR deletes this exemption.
     if re.search(r"(?m)^\s+automerge: false,", c) and "matchPackageNames: ['vexaai/**']" not in c:
         fail.append("no rule may hold an update back from automerge: " + (re.search(r"description:\s*'([^'\\]{0,60})", c).group(1) if re.search(r"description:\s*'", c) else c[:60]))
+store = next((c for c in chunks if "groupName: 'Data store series bumps'" in c), "")
+if "separateMultipleMinor: true" not in store:
+    fail.append("the data-store group must propose one minor per PR (MongoDB starts only on the FCV of the release before it)")
 major = next((c for c in chunks if "matchUpdateTypes: ['major']" in c and "matchPackageNames" not in c), "")
 if "automerge: true" not in major:
     fail.append("majors must automerge")
