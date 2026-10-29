@@ -5,8 +5,32 @@
 # (checked 2026-10-28). Builds on agent_view, not the retired assistant_view.
 display_information:
   name: Klai
-  description: Antwoorden uit de kennisbanken van jouw organisatie, met bronnen.
-  background_color: "#1a1a1a"
+  # Slack shows one language to every user, so the app's own listing is in
+  # English; the messages Klai sends follow each user's Slack language. The
+  # icon is not part of a manifest: upload assets/app-icon.png under Basic
+  # Information -> Display Information.
+  description: Answers from your organisation's knowledge bases, with sources.
+  long_description: >-
+    Klai answers your team's questions from the knowledge bases your
+    organisation has connected to Klai, and shows the sources behind every
+    answer.
+
+
+    Ask Klai in a direct message, where only you see the question and the
+    answer, or mention @Klai in a channel. Klai always replies in a thread.
+
+
+    By default Klai searches every knowledge base your organisation has
+    released for Slack. Use "Choose knowledge bases" under an answer to narrow
+    the search for that conversation. Workspace admins set the knowledge bases
+    for a channel with /klai kb, and /klai help shows what Klai searches in a
+    channel.
+
+
+    Which knowledge bases Slack may use is decided by your Klai administrator
+    in the Klai portal. Klai can make mistakes, so check important answers in
+    the source.
+  background_color: "#191918"
 features:
   bot_user:
     display_name: Klai
@@ -20,14 +44,14 @@ features:
     # per-language prompts the app sets on app_home_opened with
     # static_prompts_configured (seen in production on 2026-10-29).
     agent_description: >-
-      Klai zoekt het antwoord in alle kennisbanken die jouw organisatie voor
-      Slack heeft vrijgegeven en toont de bronnen. Wil je in minder zoeken?
-      Kies onder een antwoord Kennisbanken kiezen. Welke kennisbanken het zijn,
-      zie je op het tabblad Home.
+      Klai answers from every knowledge base your organisation has released
+      for Slack and shows the sources. Want to search fewer? Use "Choose
+      knowledge bases" under an answer. The Home tab lists which knowledge
+      bases they are.
   slash_commands:
     - command: /klai
       url: https://api.getklai.com/slack/events
-      description: Klai instellen en gebruiken
+      description: Set up and use Klai
       usage_hint: kb | help
       should_escape: false
 oauth_config:
