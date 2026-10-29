@@ -49,6 +49,20 @@ A nested `AGENTS.md` closer to the file you edit overrides anything here.
   the problem demands it. No SPEC for something that affects 1–5 people. Report
   what you deliberately left out as a decision: what, why, and when it must
   still happen.
+- **automatic by default, proof instead of approval** — An update merges
+  and deploys on its own whenever a machine can measure before and prove
+  after: the baseline is taken before the change, the new version is deployed,
+  the proof runs (probe, error watch, data counts, E2E), and a green proof is
+  the switch-over while a red one is a rollback. A human gate (approval
+  rule, dashboard, "after N green runs", a version ceiling "to be safe") is
+  not safety but a missing proof, and the task is then to build the proof,
+  not to keep the gate. The only ceilings that stay are the ones that pin a
+  known, reproduced breakage, and each of those is a work item with what
+  lifts it. Decided by the owner on 2026-10-29 after the auto-rollback work
+  had grown three such gates nobody asked for (data-store minors held for
+  review, data-store majors on the dashboard, "three green rehearsals
+  first"). Klai is meant to be the worked example of AI-driven development
+  and operations at scale; a system that waits for a person is not that.
 - **ship the better path by default** — When a change makes the product better,
   it goes live for every customer at once. No improvement behind a flag that is
   off by default, no separate test widget or tenant to prove it first. Build the
@@ -249,7 +263,7 @@ Three tools answer "where is this, who calls it, what does this area do" without
 
 ## codebase-memory-mcp (code graph, CLI only)
 
-This repo is indexed by `codebase-memory-mcp` (pinned v0.12.1 in `~/bin`), used only through its CLI: no MCP server, no file watcher, no hooks. The graph is a precomputed map, not a source of truth: verify every hit in the source.
+This repo is indexed by `codebase-memory-mcp` (pinned v0.10.8 in `~/bin`), used only through its CLI: no MCP server, no file watcher, no hooks. The graph is a precomputed map, not a source of truth: verify every hit in the source.
 
 - **Index (first use in a worktree, after a merge, and after your own changes):** `codebase-memory-mcp cli index_repository --repo-path .` (about 10 s, incremental on rerun). The `project` field in its output is the project name for the commands below — it is the worktree path as a slug, so passing `klai` returns "project not found". `.cbmignore` un-skips code directories the built-in skip-list would drop.
 - **Impact before changing a shared symbol:** `codebase-memory-mcp cli trace_path --project <name> --function-name <fn> --direction inbound` with `--depth 1` lists the callers you must check before editing; the default depth 3 is the blast radius for your report; go deeper only to find the route or entry point that reaches the symbol. On an ambiguous name pass the `qualified_name` it suggests. `search_graph --project <name> --name-pattern "<regex>" [--label Function|Method|Class|Route]` finds symbols and HTTP routes.

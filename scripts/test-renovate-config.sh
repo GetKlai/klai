@@ -113,7 +113,7 @@ assert_line "$config" \
   'Qdrant must only be proposed from a published GitHub release'
 assert_line "$config" \
   "      matchDatasources: ['docker', 'github-releases', 'github-tags']," \
-  'a Qdrant series bump from GitHub releases must stay in the non-automerge data store group'
+  'a Qdrant series bump from GitHub releases must stay in the data store group'
 # Docker Hub drops every timestamp for an image with more than 1000 tags, so
 # these come from GitHub (#1730: meilisearch v1.56.0 passed the age check 43
 # minutes after its push). Each needs its custom manager, and its GitHub name
@@ -126,8 +126,8 @@ for pkg in 'getmeili/meilisearch:v' 'image: mongo:' 'image: redis:' 'image: rabb
   fi
 done
 for name in 'mongodb/mongo' 'redis/redis' 'rabbitmq/rabbitmq-server' 'meilisearch/meilisearch'; do
-  if [ "$(grep -cF "        '${name}'," "$config")" -lt 3 ]; then
-    echo "FAIL: ${name} must be listed in the data-store group, the major rule and the strict rule" >&2
+  if [ "$(grep -cF "        '${name}'," "$config")" -lt 2 ]; then
+    echo "FAIL: ${name} must be listed in the data-store group and the strict rule" >&2
     exit 1
   fi
 done
@@ -154,7 +154,7 @@ assert_line "$config" \
   '  osvVulnerabilityAlerts: true,' \
   'vulnerability alerts must also read the OSV database'
 vuln_block=$(awk '/^  vulnerabilityAlerts: \{/{f=1} f{print} /^  \},/{f=0}' "$config")
-for line in '    enabled: true,' '    minimumReleaseAge: null,' "    prCreation: 'immediate',"; do
+for line in '    enabled: true,' '    minimumReleaseAge: null,' "    prCreation: 'immediate'," "    npmrc: 'legacy-peer-deps=true\\nmin-release-age=0',"; do
   if ! printf '%s\n' "$vuln_block" | grep -qxF "$line"; then
     echo "FAIL: vulnerabilityAlerts must contain '${line#    }' (a security fix may not wait out the release age)" >&2
     exit 1
@@ -172,27 +172,21 @@ def names(chunk, key):
     m = re.search(key + r": \[(.*?)\]", chunk, re.S)
     return re.findall(r"'([^']+)'", m.group(1)) if m else []
 
-# Majors of an action automerge only when a pull request run executes it. The
-# deploy, registry, token, artifact and SARIF-upload steps run first on main (or
-# only after a failure), so they stay manual.
-allow = next((c for c in chunks if "matchManagers: ['github-actions']" in c and "matchUpdateTypes: ['major']" in c and "automerge: true" in c), "")
-allowed = names(allow, "matchPackageNames")
-if "actions/checkout" not in allowed:
-    fail.append("actions/checkout majors must automerge (CI runs it on every pull request)")
-for name in allowed:
-    if re.match(r"(appleboy|webfactory|docker|renovatebot|aquasecurity)/|github/codeql-action|actions/(create-github-app-token|github-script|upload-artifact)", name):
-        fail.append(f"{name} majors must stay manual: no pull request run executes it")
-# Python dev groups: a klai-libs/* group is installed by no workflow, so a major
-# there would merge without a test having run it.
-py = next((c for c in chunks if "matchManagers: ['pep621']" in c and "matchUpdateTypes: ['major']" in c and "automerge: true" in c), "")
-if "!klai-libs/**" not in names(py, "matchFileNames"):
-    fail.append("pep621 dev majors must exclude klai-libs/** (no workflow runs a lib's own dev group)")
-dev = next((c for c in chunks if "matchDepTypes: ['devDependencies']" in c), "")
-if "automerge: true" not in dev or "matchUpdateTypes: ['major']" not in dev:
-    fail.append("npm devDependencies majors must automerge")
-files = names(dev, "matchFileNames")
-if not files or any(not f.startswith(("klai-portal/frontend/", "klai-docs/", "klai-widget/")) for f in files):
-    fail.append("npm dev automerge is limited to the packages with a CI job")
+# AGENTS.md, "automatic by default, proof instead of approval" (2026-10-29):
+# no rule may hold an update back for a person. The proof after the deploy is
+# the gate; a ceiling is allowed only for a reproduced breakage.
+for c in chunks:
+    if "dependencyDashboardApproval: true" in c:
+        fail.append("no rule may park an update on the Dependency Dashboard")
+    # Vexa keeps its hold until the bot-image pre-pull is part of the compose
+    # sync (feat/vexa-bot-prepull); that PR deletes this exemption.
+    if re.search(r"(?m)^\s+automerge: false,", c) and "matchPackageNames: ['vexaai/**']" not in c:
+        fail.append("no rule may hold an update back from automerge: " + (re.search(r"description:\s*'([^'\\]{0,60})", c).group(1) if re.search(r"description:\s*'", c) else c[:60]))
+major = next((c for c in chunks if "matchUpdateTypes: ['major']" in c and "matchPackageNames" not in c), "")
+if "automerge: true" not in major:
+    fail.append("majors must automerge")
+if "mongodb/mongo" in "".join(c for c in chunks if "allowedVersions:" in c):
+    fail.append("the mongo LTS ceiling was a policy hold, not a breakage; it stays lifted")
 
 # A custom manager that reads a data store from GitHub changes the datasource
 # and sometimes the packageName. A version ceiling written for the Docker Hub
@@ -221,11 +215,8 @@ for c in chunks:
             fail.append(f"ceiling for {dep} must list both '{dep}' and '{pkg}'")
         if datasources and ds not in datasources:
             fail.append(f"ceiling for {dep} must include datasource '{ds}'")
-if "mongo" not in moved or checked == 0:
-    fail.append("the mongo ceiling must be found and checked against the GitHub-sourced mongo manager")
-mongo = next((c for c in chunks if "allowedVersions: '<8.1'" in c), "")
-if not all(n in names(mongo, "matchPackageNames") for n in ("mongo", "mongodb/mongo")):
-    fail.append("the mongo '<8.1' ceiling must match both 'mongo' and 'mongodb/mongo'")
+if "mongo" not in moved:
+    fail.append("mongo must still be read by its GitHub-sourced custom manager")
 for f in fail:
     print("FAIL: " + f, file=sys.stderr)
 sys.exit(1 if fail else 0)

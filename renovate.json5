@@ -55,7 +55,7 @@
   platformAutomerge: false,
 
   // Renovate's default prConcurrentLimit is 10, and on 2026-08-22 that default
-  // deadlocked the whole queue. Majors are automerge: false by policy, so six
+  // deadlocked the whole queue. Majors were automerge: false back then, so six
   // of them sat open waiting for review; three BlockNote PRs were failing for a
   // config reason nobody had diagnosed yet; one eslint PR could never go green.
   // Ten unmergeable PRs, ten of ten slots, and a debug run saying it plainly:
@@ -86,11 +86,14 @@
   // protects against a flood, and removing both at once WOULD be reckless.
   prConcurrentLimit: 0,
 
-  // Mirrors min-release-age=7 in klai-portal/frontend/.npmrc. Without it
+  // Mirrors min-release-age=3 in klai-portal/frontend/.npmrc and exclude-newer
+  // in klai-connector. Three days, Dependabot's default since July 2026: the
+  // hijacked npm releases of 2025 were gone after 2.5 h (chalk/debug) and 12 h
+  // (Shai-Hulud 2.0), so 7 days bought nothing but a week of delay (2026-10-29). Without it
   // Renovate would propose a version the npm CLI then refuses to install while
   // generating the lockfile, producing a PR that cannot build. Keep the two
   // numbers in sync; the npm one also applies to every manual install.
-  minimumReleaseAge: '7 days',
+  minimumReleaseAge: '3 days',
   // Since Renovate 42 an update WITHOUT a release timestamp counts as never
   // aged, and is held forever. GHCR, Quay, MCR and every other non-Docker-Hub
   // registry publish no timestamp, and neither does a lock file refresh. From
@@ -120,6 +123,11 @@
     enabled: true,
     minimumReleaseAge: null,
     prCreation: 'immediate',
+    // The lock-file update of a security PR runs npm with THIS npmrc instead
+    // of the repo's (npmrcMerge is false), so a fix younger than the cooldown
+    // in klai-portal/frontend/.npmrc still resolves. The repo file keeps its
+    // cooldown for people at a keyboard; legacy-peer-deps is copied from it.
+    npmrc: 'legacy-peer-deps=true\nmin-release-age=0',
   },
   // Renovate otherwise installs the newest npm to regenerate lock files. npm
   // 12 defaults allow-remote to 'none' and refused the tarball of
@@ -335,7 +343,7 @@
   packageRules: [
     {
       description:
-        'npm waits for its own 7 days (min-release-age=7 in .npmrc) and refuses \
+        'npm waits for its own 3 days (min-release-age=3 in .npmrc) and refuses \
         a younger version while regenerating the lock file. With flexible, a \
         dependency whose every new release is still inside the window got a \
         branch at the newest pending version anyway, npm answered ETARGET, and \
@@ -525,15 +533,12 @@
         'falkordb/falkordb',
       ],
       groupName: 'Data store series bumps',
-      // Unchanged on 2026-10-28 on purpose (SPEC-INFRA-AUTO-ROLLBACK-001 S9):
-      // data-store minors would move to automerge, one minor per PR, once the
-      // restore rehearsal (S8b) has proven that a snapshot can be put back.
-      // It has not run yet. The condition is three green monthly restore
-      // rehearsals in a row on main; until then a restore is a claim, not a
-      // measurement, and a minor of a data store is the one change a rollback
-      // cannot undo. Postgres majors stay human for good (D1), the other
-      // data-store majors wait for the same three months (D2).
-      automerge: false,
+      // Automerge since 2026-10-29 (AGENTS.md: automatic by default, proof
+      // instead of approval). The compose sync snapshots every store before
+      // its image changes, probes after, and restores within 30 minutes when
+      // the probe is red (deploy/scripts/datastore-rollback.sh, proven on
+      // umami-postgres on 2026-10-28); that proof is the gate, not a person.
+      automerge: true,
     },
     {
       description:
@@ -554,113 +559,18 @@
     },
     {
       description:
-        'Major upgrades get human eyes, except the three dev-tooling rules \
-        right below. Everything else stays here: runtime dependencies, \
-        Docker images (Twenty, ubuntu, nvidia/cuda, Vexa, python), the data \
-        stores and every action CI cannot exercise before the merge.',
-      matchUpdateTypes: ['major'],
-      automerge: false,
-    },
-    {
-      description:
-        'Majors of GitHub Actions automerge, but only for the actions that a \
-        pull request run itself executes: checkout, setup-node, setup-python, \
-        setup-uv, paths-filter and ast-grep. A major that breaks one of them \
-        turns quality red and never merges; SHA pinning \
-        (helpers:pinGitHubActionDigests) means what merges is the exact \
-        commit CI just ran. NOT covered, so still manual: appleboy/*, \
-        webfactory/ssh-agent, docker/* (login, buildx, build-push), \
-        create-github-app-token, renovatebot/github-action and github-script, \
-        which run only on main or on a schedule with deploy keys, registry \
-        credentials or the Renovate app token; and upload-artifact and \
-        github/codeql-action, whose steps sit in push-to-main or scheduled \
-        jobs or run on a PR only when a job has already failed. The first \
-        run of a new major of any of these would be the production run. \
-        aquasecurity/* is not matched either: its lookups use the git-tags \
-        override above. Same for the ubuntu runner image, which is not an \
-        action.',
-      matchManagers: ['github-actions'],
-      matchDatasources: ['github-tags', 'github-releases'],
-      matchPackageNames: [
-        'actions/checkout',
-        'actions/setup-node',
-        'actions/setup-python',
-        'astral-sh/setup-uv',
-        'dorny/paths-filter',
-        'ast-grep/action',
-      ],
+        'Majors automerge like everything else (2026-10-29, AGENTS.md: \
+        automatic by default, proof instead of approval). What a pull request \
+        can test fails there and never merges; what only a production run can \
+        test is deployed through deploy-with-rollback.sh or the compose sync, \
+        proven by probe, error watch, data counts and E2E, and rolled back on \
+        red with an issue and a revert PR (S5). A deploy or token action whose \
+        new major breaks only on main fails that workflow closed: nothing is \
+        deployed, the CI failure notice opens the issue, the next merge \
+        carries the fix. The ceilings below are the only holds left, and each \
+        pins a reproduced breakage with what lifts it.',
       matchUpdateTypes: ['major'],
       automerge: true,
-    },
-    {
-      description:
-        'Majors of npm devDependencies automerge in the three packages whose \
-        lint, type check, build, unit tests and (portal) visual tests run on \
-        every pull request: klai-portal/frontend, klai-docs and klai-widget. \
-        Dev tooling cannot reach a customer except through those gates, and a \
-        failing gate keeps the PR open. NOT covered: runtime `dependencies`, \
-        any package with an allowedVersions ceiling below (typescript, \
-        eslint in klai-docs: the ceiling filters the major out before this \
-        rule sees it), and package.json files without a CI job, such as \
-        .agents/skills/playwright-skill.',
-      matchManagers: ['npm'],
-      matchDepTypes: ['devDependencies'],
-      matchFileNames: [
-        'klai-portal/frontend/package.json',
-        'klai-docs/package.json',
-        'klai-widget/package.json',
-      ],
-      matchUpdateTypes: ['major'],
-      automerge: true,
-    },
-    {
-      description:
-        'Majors of Python dev tooling (pytest, ruff, pyright and friends) \
-        automerge: each service workflow runs ruff, pyright and pytest on \
-        every pull request. Every optional-dependencies and dependency-groups \
-        entry in this repo is the `dev` extra, which is why the depType is \
-        enough; a runtime extra added later has to be named here first. NOT \
-        covered: `project.dependencies` (runtime), build-system.requires and \
-        klai-libs/*, whose own dev group no workflow installs (the service \
-        workflows install the service\'s group), so a major there would merge \
-        without any test having run it.',
-      matchManagers: ['pep621'],
-      matchFileNames: ['!klai-libs/**'],
-      matchDepTypes: [
-        'dependency-groups',
-        'project.optional-dependencies',
-        'tool.uv.dev-dependencies',
-      ],
-      matchUpdateTypes: ['major'],
-      automerge: true,
-    },
-    {
-      description:
-        'Majors of the data stores, the CI runner OS and the CUDA base wait on \
-        the Dependency Dashboard instead of opening a PR (decision \
-        2026-09-27). Each is a migration rather than a version bump (a \
-        Postgres major alone needs a dump and restore), the current lines \
-        still get security patches, and an open \
-        PR nobody will merge only trains people to skip Renovate. Tick one \
-        on the dashboard when there is a reason to move.',
-      matchUpdateTypes: ['major'],
-      matchPackageNames: [
-        'mongo',
-        'mongodb/mongo',
-        'postgres',
-        'redis',
-        'redis/redis',
-        'rabbitmq',
-        'rabbitmq/rabbitmq-server',
-        'pgvector/pgvector',
-        'getmeili/meilisearch',
-        'meilisearch/meilisearch',
-        'qdrant/qdrant',
-        'falkordb/falkordb',
-        'ubuntu',
-        'nvidia/cuda',
-      ],
-      dependencyDashboardApproval: true,
     },
 
     // ---------------------------------------------------------------------
@@ -726,34 +636,18 @@
     },
     {
       description:
-        'MongoDB stays on the 8.0 LTS line. The 8.1-8.3 minors are short-lived \
-        releases, 8.3 needs FCV 8.2 before it starts, and Community has no \
-        binary downgrade, so leaving 8.0 is a one-way step. Move to the next \
-        LTS (9.0) deliberately.',
-      // Both names, both datasources: since #2085 the version is read from
-      // GitHub tags (packageName mongodb/mongo) and the Hub name is only the
-      // depName. A ceiling that names only the Hub name and datasource matched
-      // nothing, and 8.3 was one run away from being proposed. The test
-      // script checks every ceiling against the custom managers above.
-      matchDatasources: ['docker', 'github-tags'],
-      matchPackageNames: ['mongo', 'mongodb/mongo'],
-      allowedVersions: '<8.1',
-    },
-    {
-      description:
-        'Python base-image minors are a runtime upgrade of every service at \
-        once (3.11/3.12 -> 3.13 arrived inside the Docker images group on \
-        2026-09-25 and broke two image scans). Their own group, merged by a \
-        person; patches stay in the Docker images group. Parked on the \
-        Dependency Dashboard (decision 2026-09-27): no PR until someone ticks \
-        it there, because the move to 3.13 is a tested upgrade of its own, \
-        not a PR that waits for review.',
+        'Python base-image minors and majors are a runtime upgrade of every \
+        service at once (3.11/3.12 -> 3.13 arrived inside the Docker images \
+        group on 2026-09-25 and broke two image scans), so they travel in \
+        their own group: one PR, every service rebuilt and deployed through \
+        the rollback path, and a red scan or probe rolls that one PR back \
+        instead of the whole Docker images group. Automerge since \
+        2026-10-29; patches stay in the Docker images group.',
       matchDatasources: ['docker'],
       matchPackageNames: ['python'],
       matchUpdateTypes: ['minor', 'major'],
       groupName: 'Python base image',
-      automerge: false,
-      dependencyDashboardApproval: true,
+      automerge: true,
     },
     {
       description:
