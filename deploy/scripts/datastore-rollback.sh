@@ -26,6 +26,38 @@
 #                         previous image and compare the counts; never touches
 #                         the live store (dry mode, datastore-restore-rehearsal.sh)
 #   ds_fcv_unchanged      0 unless a mongo snapshot's FCV differs from the live one
+#   ds_cutover            just before the sweep: a gate per Postgres major (below)
+#   ds_settle             at the start of every sync, before the snapshot: what
+#                         waits for a window to close (below)
+#
+# Postgres majors. A new major cannot open the data directory of the previous
+# one, so its data comes over by dump and restore. ds_snapshot reads the major
+# and PGDATA of the running container and of the new image (pulled for it); a
+# major defers the dump to ds_major_cutover, a gate that runs right before the
+# sweep starts anything: consumers stop, every database and the roles are
+# dumped (the final state, nothing writes any more), the store is recreated on
+# the new image, whose entrypoint runs initdb with the compose environment and
+# init scripts on an empty directory, and the roles and databases are restored
+# and counted. Since postgres:18 the official images keep PGDATA at
+# /var/lib/postgresql/<major>/docker inside the volume mounted at
+# /var/lib/postgresql (verified on 18.6 and 19rc1, and on the running stores of
+# core-01, 2026-10-29), so the new major gets a directory of its own. Its
+# entrypoint refuses to initialise while /var/lib/postgresql, .../data or any
+# .../*/docker holds a PG_VERSION (seen on 19rc1), so the cutover renames the
+# old directory to <old>.aside in the same volume: a rename, no copy. The
+# put-back of a red gate within the window: stop, remove the new directory,
+# rename the old one back, start the previous image on it, no pg_restore. An
+# image whose PGDATA is the old one, or outside the volume, is refused at the
+# snapshot. A missing extension (pgvector) in the new image is a red gate
+# before anything is restored. Past the window the new major is the state, and
+# ds_settle removes the .aside directory at the start of a later sync.
+#
+# Mongo FCV. An image change within one FCV runs the new binary on the old
+# featureCompatibilityVersion, which the previous binary still opens: that is
+# what makes a restore possible within the window, and why ds_fcv_unchanged
+# refuses a restore over a changed FCV. Once no mongo snapshot is inside its
+# window, ds_settle raises the FCV to the running version, so the next version
+# starts from it.
 #
 # Other engines (slice S8b, DS_ENGINE_STORES): the snapshot depends on what the
 # engine can read back.
@@ -85,7 +117,9 @@
 # not exist, and on the rollback restores into a throwaway container instead of
 # the live store; the live store only gets its previous image back on the same
 # volume, which a Postgres patch release reads unchanged. The file is removed
-# when it is used, so it applies once. Stores only: a new app image would
+# when it is used, so it applies once. A Postgres major is the exception: its
+# put-back renames the old data directory back and runs no pg_restore, so dry
+# mode takes that real put-back, which is the part worth proving. Stores only: a new app image would
 # migrate the live database, and putting its old image back without a live
 # restore is the state this file exists to prevent.
 #
@@ -112,7 +146,12 @@
 #     fail. Their writes are also why a live restore compares counts as "at
 #     least" rather than exact.
 #   - A Mongo FCV that cannot be read (the new image does not answer) counts as
-#     unchanged: a bump needs a running server and someone to issue it.
+#     unchanged: a bump needs a running server, and ds_settle only issues it
+#     after the window.
+#   - A Postgres major is a dump and restore with the store's consumers
+#     stopped, so the outage grows with the data: the main Postgres holds
+#     5.5 GB on disk (litellm 4.7 GB of it, 2026-10-29). Upgrade path:
+#     pg_upgrade --link from an image carrying both majors.
 #   - Dry mode is refused for the volume engines: their previous image cannot
 #     open the volume the new one has already started on.
 #
@@ -204,6 +243,10 @@ DS_SNAPSHOTS=()
 
 ds_now_epoch() { date -u +%s; }
 ds_compose() { docker compose --project-directory "$RB_DIR" "$@"; }
+ds_set_meta() { { grep -v "^$2=" "$1/meta"; echo "$2=$3"; } > "$1/meta.tmp" && mv "$1/meta.tmp" "$1/meta"; }
+ds_image_env() {
+  docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null | sed -n "s/^$2=//p" | head -n1
+}
 
 # ds_x <target> <cmd...>: run a command in a store. Target "ctr:<name>" is a
 # plain container (the throwaway restore), anything else a compose service.
@@ -719,9 +762,9 @@ ds_put_back() {
   return "$rc"
 }
 
-# Restoring a Mongo snapshot after someone raised the FCV would silently throw
-# that away (spec 4.c: an FCV bump stays a human step). Called before anything
-# is restored.
+# Restoring a Mongo snapshot after the FCV was raised would silently throw that
+# away; ds_settle raises it only after the window, so inside it a changed FCV
+# was someone else's step. Called before anything is restored.
 ds_fcv_unchanged() {
   local dir want got
   for dir in "${DS_SNAPSHOTS[@]}"; do
@@ -735,9 +778,29 @@ ds_fcv_unchanged() {
   done
 }
 
-# ds_snapshot <name> <old-compose> <new-compose>: dump, baseline, ledger.
+# ds_dump_dbs <dir> <store> <superuser> <databases>: one pg_dump -Fc per
+# database, and its probe counts read back from the dump into baseline.counts.
+ds_dump_dbs() {
+  local dir="$1" store="$2" su="$3" db n
+  for db in $4; do
+    echo "snapshot: pg_dump -Fc $store/$db -> $dir/$db.dump"
+    ds_x "$store" pg_dump -U "$su" -Fc -d "$db" > "$dir/$db.dump" \
+      || { echo "::error::pg_dump of $store/$db failed"; return 1; }
+    # shellcheck disable=SC2046 # one word per table
+    n="$(ds_baseline "$store" "$db" "$dir/$db.dump" $(ds_probe_tables "$store" "$db"))" \
+      || { echo "::error::the dump of $store/$db does not read back"; return 1; }
+    if grep -q ' MISSING$' <<< "$n"; then
+      echo "::error::probe table $(awk '$3 == "MISSING" { print $2 }' <<< "$n" | paste -sd' ' -) not in the dump of $store/$db; fix DS_PROBES in datastore-rollback.sh"
+      return 1
+    fi
+    [[ -z "$n" ]] || printf '%s\n' "$n" >> "$dir/baseline.counts"
+  done
+}
+
+# ds_snapshot <name> <old-compose> <new-compose>: dump, baseline, ledger; for
+# a Postgres major only the plan, the dump waits for ds_major_cutover.
 ds_snapshot() {
-  local name="$1" old="$2" new="$3" store su dbs consumers storecons dir db n app
+  local name="$1" old="$2" new="$3" store su dbs consumers storecons dir app cid img oldm oldd newm="" newd=""
   app="$(ds_app_row "$name")"
   if [[ -z "$app" && "$(ds_engine "$name")" != postgres ]]; then
     ds_snapshot_engine "$@"
@@ -755,6 +818,27 @@ ds_snapshot() {
       "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1" | tr '\n' ' ')" \
       || { echo "::error::could not list the databases of $store"; return 1; }
   fi
+  # The major and data directory of what runs and of what will run, read from
+  # the container and the image rather than from the tag. The restore
+  # rehearsal snapshots without an image change and skips this.
+  img="$(ds_image_of "$new" "$store")"
+  if [[ -z "$app" && "$(ds_image_of "$old" "$store")" != "$img" ]]; then
+    cid="$(ds_ctr "$store")"
+    oldm="$(ds_env_of "$cid" PG_MAJOR)"; oldd="$(ds_env_of "$cid" PGDATA)"
+    if docker pull -q "$img" > /dev/null; then
+      newm="$(ds_image_env "$img" PG_MAJOR)"; newd="$(ds_image_env "$img" PGDATA)"
+    fi
+    if [[ -z "$oldm" || -z "$newm" ]]; then
+      echo "::error::could not read PG_MAJOR of the running $store or of $img"
+      return 1
+    fi
+    if [[ "$oldm" == "$newm" ]]; then
+      newd=""
+    elif ! [[ "$oldd" == /var/lib/postgresql/?* && "$newd" == /var/lib/postgresql/?* && "$oldd" != "$newd" ]]; then
+      echo "::error::$store $oldm -> $newm: the new major needs a data directory of its own inside the volume at /var/lib/postgresql, beside the old one ($oldd); $img uses $newd"
+      return 1
+    fi
+  fi
   dir="$DS_BACKUP_ROOT/pre-$name-$(date -u +%Y%m%dT%H%M%SZ)"
   # A dump holds customer data: readable for the deploy user only.
   (umask 077 && mkdir -p "$dir") || return 1
@@ -768,28 +852,25 @@ ds_snapshot() {
     echo "old_image=$(ds_image_of "$old" "$name")"
     echo "new_image=$(ds_image_of "$new" "$name")"
     echo "store_image=$(ds_image_of "$old" "$store")"
+    [[ -z "$newd" ]] || printf 'pg_major=%s %s\nold_pgdata=%s\nnew_pgdata=%s\n' "$oldm" "$newm" "$oldd" "$newd"
   } > "$dir/meta"
   : > "$dir/baseline.counts"
-  for db in $dbs; do
-    echo "snapshot: pg_dump -Fc $store/$db -> $dir/$db.dump"
-    ds_x "$store" pg_dump -U "$su" -Fc -d "$db" > "$dir/$db.dump" \
-      || { echo "::error::pg_dump of $store/$db failed"; return 1; }
-    # shellcheck disable=SC2046 # one word per table
-    n="$(ds_baseline "$store" "$db" "$dir/$db.dump" $(ds_probe_tables "$store" "$db"))" \
-      || { echo "::error::the dump of $store/$db does not read back"; return 1; }
-    if grep -q ' MISSING$' <<< "$n"; then
-      echo "::error::probe table $(awk '$3 == "MISSING" { print $2 }' <<< "$n" | paste -sd' ' -) not in the dump of $store/$db; fix DS_PROBES in datastore-rollback.sh"
-      return 1
-    fi
-    [[ -z "$n" ]] || printf '%s\n' "$n" >> "$dir/baseline.counts"
-  done
+  if [[ -n "$newd" ]]; then
+    echo "snapshot: $store $oldm -> $newm is a major; it is dumped at the cutover before the sweep, with its consumers stopped"
+    DS_SNAPSHOTS+=("$dir")
+    return 0
+  fi
+  ds_dump_dbs "$dir" "$store" "$su" "$dbs" || return 1
   ds_ledger "$name" "$dir" "$(ds_image_of "$new" "$name")" snapshot
   DS_SNAPSHOTS+=("$dir")
   echo "snapshot of $name taken: $dir"
 }
 
 # ds_disk_ok <name>...: 0 when the backup root has twice the data volume of
-# every named store (an app row counts its store) free (AT-c2).
+# every named store (an app row counts its store) free (AT-c2). A Postgres
+# major covers the same room: the dump (at most the data, compressed and
+# without indexes) and the new major's directory (about the data) beside the
+# old one, which stays in the volume for the window.
 ds_disk_ok() {
   local name store bytes need=0 free
   for name in "$@"; do
@@ -824,7 +905,7 @@ ds_snapshot_changed() {
       elif [[ "$(ds_kind "$(ds_engine "$name")")" == volume ]]; then
         echo "::warning::datastore dry mode is refused for $name: the dry path starts its previous image on the volume the new version already opened, which $(ds_engine "$name") cannot read back. Flag removed; this sync runs normally."
       else
-        echo "::warning::datastore dry mode for $name: the probe is forced red and the restore goes to a throwaway container"
+        echo "::warning::datastore dry mode for $name: the probe is forced red and the restore goes to a throwaway container (a Postgres major: back to its old data directory)"
         DS_DRY="$name"
       fi
     fi
@@ -856,6 +937,96 @@ ds_probe() {
     ds_count_live "$store" "$su" postgres "$DS_DRY_TABLE" > /dev/null || { echo "probe: dry mode, forced red"; return 1; }
   fi
   echo "probe: $store answers on every probe table"
+}
+
+# Up to 2 minutes, over TCP: the image's init server listens on the socket only,
+# so a socket check would pass before initialisation has finished.
+ds_pg_wait() {
+  local i
+  for (( i = 0; i < 60; i++ )); do
+    ds_x "$1" pg_isready -h 127.0.0.1 -U "$2" > /dev/null 2>&1 < /dev/null && return 0
+    sleep 2
+  done
+  echo "::error::$1 did not accept connections within 120s"
+  return 1
+}
+
+# ds_pg_rm <store> <pgdata>: remove a data directory that is not the store's
+# live one, through the volumes of its (stopped) container.
+ds_pg_rm() {
+  local cid
+  [[ "$2" == /var/lib/postgresql/?* ]] || { echo "::error::refusing to remove $2: not inside /var/lib/postgresql"; return 1; }
+  cid="$(ds_ctr "$1")" && [[ -n "$cid" ]] || return 1
+  docker run --rm --volumes-from "$cid" "$DS_TOOL_IMAGE" rm -rf "$2"
+}
+# ds_pg_mv <store> <from> <to>: rename a data directory of a stopped store;
+# fails when <from> is missing or <to> exists, so nothing is ever overwritten.
+ds_pg_mv() {
+  local cid
+  cid="$(ds_ctr "$1")" && [[ -n "$cid" ]] || return 1
+  docker run --rm --volumes-from "$cid" "$DS_TOOL_IMAGE" sh -c '[ -d "$1" ] && [ ! -e "$2" ] && mv "$1" "$2"' sh "$2" "$3" \
+    || { echo "::error::could not move $2 to $3 in $1"; return 1; }
+}
+
+# ds_major_cutover <dir>: see "Postgres majors" at the top. Holds the host
+# container lock, as a restore does, so no deploy starts a consumer meanwhile.
+ds_major_cutover() {
+  local dir="$1" name store su consumers newd rc
+  name="$(ds_meta "$dir" name)"; store="$(ds_meta "$dir" store)"; su="$(ds_meta "$dir" superuser)"
+  consumers="$(ds_meta "$dir" consumers)"; newd="$(ds_meta "$dir" new_pgdata)"
+  (
+    exec 8> "$DS_LOCK_FILE"
+    flock -w 900 8 || { echo "::error::host container lock $DS_LOCK_FILE busy for 15 minutes"; exit 1; }
+    # shellcheck disable=SC2086 # one word per service
+    ds_compose stop $consumers || exit 1
+    # Anything that started the new image before now gave it an empty cluster.
+    [[ "$(ds_container_images "$store")" == "$(ds_meta "$dir" store_image)" ]] \
+      || { echo "::error::$store no longer runs $(ds_meta "$dir" store_image): something recreated it before the cutover; nothing dumped"; exit 1; }
+    ds_dump_dbs "$dir" "$store" "$su" "$(ds_meta "$dir" databases)" || exit 1
+    ds_x "$store" pg_dumpall -U "$su" --globals-only < /dev/null > "$dir/globals.sql" \
+      || { echo "::error::pg_dumpall --globals-only of $store failed"; exit 1; }
+    exts=""
+    for db in $(ds_meta "$dir" databases); do
+      exts+=" $(ds_x "$store" psql -U "$su" -d "$db" -v ON_ERROR_STOP=1 -Atc "select extname from pg_extension" < /dev/null)" || exit 1
+    done
+    ds_set_meta "$dir" extensions "$(xargs -n1 <<< "$exts" | sort -u | xargs)"
+    # The window starts here, at the end of the dump.
+    ds_set_meta "$dir" epoch "$(ds_now_epoch)"
+    ds_ledger "$name" "$dir" "$(ds_meta "$dir" new_image)" snapshot
+    ds_compose stop -t 120 "$store" || exit 1
+    # Left by an earlier attempt that was rolled back; the running image never opens it.
+    ds_pg_rm "$store" "$newd" || exit 1
+    ds_pg_mv "$store" "$(ds_meta "$dir" old_pgdata)" "$(ds_meta "$dir" old_pgdata).aside" || exit 1
+    # From here on a red gate must rename it back, whatever image ran.
+    ds_set_meta "$dir" moved_aside yes
+    echo "cutover: $(ds_meta "$dir" old_pgdata) moved aside; $store starts $(ds_meta "$dir" new_image) on an empty $newd, whose entrypoint runs initdb with the compose environment"
+    ds_compose up -d --no-deps --force-recreate "$store" || exit 1
+    ds_pg_wait "$store" "$su" || exit 1
+    for ext in $(ds_meta "$dir" extensions); do
+      [[ "$(ds_x "$store" psql -U "$su" -d postgres -Atc "select 1 from pg_available_extensions where name = '$ext'" < /dev/null)" == 1 ]] \
+        || { echo "probe: extension $ext of the old cluster is not in $(ds_meta "$dir" new_image)"; exit 1; }
+    done
+    # Roles are cluster-wide, outside every per-database dump. The init
+    # scripts (deploy/postgres/init.sql) already created some, with placeholder
+    # passwords; the dumped ALTER ROLE then sets the real hash.
+    sed -E 's/^CREATE ROLE (.+);$/DO $$ BEGIN CREATE ROLE \1; EXCEPTION WHEN duplicate_object THEN NULL; END $$;/' "$dir/globals.sql" \
+      | ds_x "$store" psql -U "$su" -d postgres -v ON_ERROR_STOP=1 -q > /dev/null \
+      || { echo "::error::the roles of $store did not restore"; exit 1; }
+    ds_restore_dbs "$dir" "$store" && ds_compare "$dir" "$store"
+  )
+  rc=$?
+  (( rc != 0 )) || ds_ledger "$name" "$dir" "$(ds_meta "$dir" new_image)" migrated
+  return "$rc"
+}
+
+# Just before the sweep: one gate per Postgres major of this run. Consumers stay
+# stopped; the sweep starts them and ds_gates recreates and probes them.
+ds_cutover() {
+  local dir
+  for dir in "${DS_SNAPSHOTS[@]}"; do
+    [[ -n "$(ds_meta "$dir" new_pgdata)" ]] || continue
+    rb_gate "$(ds_meta "$dir" name)" datastore-major ds_major_cutover "$dir"
+  done
 }
 
 ds_gates() {
@@ -945,12 +1116,16 @@ ds_restore_snapshot() {
   local svcs="$store"
   [[ "$name" == "$store" ]] || svcs="$consumers"
   # shellcheck disable=SC2086 # one word per service
-  if ! ds_container_images $svcs | grep -qvxF "$(ds_meta "$dir" old_image)"; then
+  if [[ -z "$(ds_meta "$dir" moved_aside)" ]] && ! ds_container_images $svcs | grep -qvxF "$(ds_meta "$dir" old_image)"; then
     echo "restore: no container of [$svcs] ran anything but $(ds_meta "$dir" old_image); the database is as it was, nothing to restore"
     ds_ledger "$name" "$dir" "$(ds_meta "$dir" old_image)" not_needed
     return 0
   fi
-  if [[ "${DS_DRY:-}" == "$name" ]]; then
+  # A major is put back on its old directory, which no live restore touches,
+  # so dry mode takes the same path there: that put-back is what it proves.
+  local newd
+  newd="$(ds_meta "$dir" new_pgdata)"
+  if [[ "${DS_DRY:-}" == "$name" && -z "$newd" ]]; then
     echo "restore (dry): into a throwaway container; live would stop [$consumers], restore $store from $dir, recreate [$consumers]"
     ds_restore_into "$dir" "klai-datastore-dry-$name" \
       && { [[ "$name" != "$store" ]] || "$RB_DIR/scripts/compose-up.sh" --no-pull --force-recreate "$store"; } \
@@ -969,13 +1144,17 @@ ds_restore_snapshot() {
     # shellcheck disable=SC2086 # one word per service
     ds_compose stop $consumers || exit 1
     [[ "$(ds_dir_engine "$dir")" == postgres ]] || { ds_put_back "$dir"; exit; }
+    if [[ -n "$newd" ]]; then
+      echo "restore: $store back on its previous image and the data directory it left at the cutover; $newd removed"
+      ds_compose stop -t 120 "$store" && ds_pg_rm "$store" "$newd" \
+        && ds_pg_mv "$store" "$(ds_meta "$dir" old_pgdata).aside" "$(ds_meta "$dir" old_pgdata)" \
+        && ds_compose up -d --no-deps --force-recreate "$store" \
+        && ds_pg_wait "$store" "$su" && ds_compare "$dir" "$store"
+      exit
+    fi
     if [[ "$name" == "$store" ]]; then
       ds_compose up -d --no-deps --force-recreate "$store" || exit 1
-      for i in $(seq 1 60); do
-        ds_x "$store" pg_isready -h 127.0.0.1 -U "$su" > /dev/null 2>&1 && break
-        (( i == 60 )) && { echo "::error::$store did not come back on its previous image"; exit 1; }
-        sleep 2
-      done
+      ds_pg_wait "$store" "$su" || exit 1
     fi
     ds_restore_dbs "$dir" "$store" && ds_compare "$dir" "$store"
   )
@@ -993,5 +1172,53 @@ ds_restore_all() {
   local i
   for (( i = ${#DS_SNAPSHOTS[@]} - 1; i >= 0; i-- )); do
     ds_restore_snapshot "${DS_SNAPSHOTS[i]}" || return 1
+  done
+}
+
+# ds_settle: at the start of every sync, before ds_snapshot_changed, finish
+# what had to wait for a window to close. A store with any snapshot still
+# inside its window is left alone.
+#   Postgres major: remove the old data directory renamed aside at the cutover
+#   (a put-back renamed it back); the dump under backups/pre-* stays.
+#   Mongo: raise featureCompatibilityVersion to the running version.
+# Returns 1 when an FCV bump is refused, so the sync stops before it changes
+# anything; a mongo that does not answer is a warning, retried next sync.
+ds_settle() {
+  local meta dir epoch now open=" " olds=() store cid old v fcv out
+  now="$(ds_now_epoch)"
+  for meta in "$DS_BACKUP_ROOT"/pre-*/meta; do
+    [[ -e "$meta" ]] || continue
+    dir="${meta%/meta}"; epoch="$(ds_meta "$dir" epoch | tail -n1)"
+    [[ -n "$epoch" ]] || continue
+    if (( now - epoch <= DS_WINDOW_SECONDS )); then
+      open+="$(ds_meta "$dir" store) "
+    elif [[ -n "$(ds_meta "$dir" old_pgdata)" && -z "$(ds_meta "$dir" settled)" ]]; then
+      olds+=("$dir")
+    fi
+  done
+  for dir in "${olds[@]}"; do
+    store="$(ds_meta "$dir" store)"; old="$(ds_meta "$dir" old_pgdata).aside"
+    [[ "$open" != *" $store "* ]] || continue
+    echo "settle: $store is past the window of $dir; removing $old"
+    ds_pg_rm "$store" "$old" || { echo "::warning::could not remove $old from $store; retried next sync"; continue; }
+    ds_set_meta "$dir" settled "$(ds_now_epoch)"
+  done
+  for store in $(awk '$2 == "mongo" { print $1 }' <<< "$DS_ENGINE_STORES"); do
+    if [[ "$open" == *" $store "* ]]; then
+      echo "settle: $store has a snapshot inside its window; its featureCompatibilityVersion stays"
+      continue
+    fi
+    cid="$(ds_ctr "$store")" && [[ -n "$cid" ]] || continue
+    out="$(ds_mongo "$store" 'var v = db.version().split("."); print(v[0] + "." + v[1] + " " + db.adminCommand({getParameter: 1, featureCompatibilityVersion: 1}).featureCompatibilityVersion.version)' 2>/dev/null)" \
+      || { echo "::warning::$store does not answer; its featureCompatibilityVersion is checked again next sync"; continue; }
+    read -r v fcv <<< "$out"
+    [[ -n "$fcv" && "$v" != "$fcv" && "$(printf '%s\n' "$fcv" "$v" | sort -V | tail -n1)" == "$v" ]] || continue
+    echo "settle: $store runs $v on featureCompatibilityVersion $fcv, past every window; raising it to $v"
+    out="$(ds_mongo "$store" "print(db.adminCommand({setFeatureCompatibilityVersion: \"$v\", confirm: true}).ok)" 2>&1)"
+    if [[ "$out" != 1 ]]; then
+      echo "::error::setFeatureCompatibilityVersion $v on $store failed: $out"
+      return 1
+    fi
+    ds_ledger "$store" "fcv $fcv" "fcv $v" fcv_raised
   done
 }

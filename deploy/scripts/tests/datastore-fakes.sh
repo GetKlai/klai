@@ -5,7 +5,12 @@
 #
 # Postgres: fake/db/<store>/<db>/<schema.table> holds a row count. The
 # pg_dump/pg_restore/psql command shapes were checked against a real
-# postgres:18.6-alpine on 2026-10-28.
+# postgres:18.6-alpine on 2026-10-28. For a major the data directories live in
+# fake/pgdir/<store>/<path under /var/lib/postgresql, / as _>, and
+# fake/db/<store> links to the one the running image opens; PG_MAJOR and
+# PGDATA follow the image tag as the official images set them (18.6 and 19rc1
+# checked on 2026-10-29). fake/db/<store>/<db>/.ext
+# lists extensions besides plpgsql, fake/missing_ext the ones a new image lacks.
 #
 # Other engines: fake/eng/<container> is the store's data as key=value lines
 # (points= for Qdrant, keys= and graphs= for Redis and FalkorDB, queues= for
@@ -17,7 +22,8 @@
 # Mongo 8.0, RabbitMQ 4.4 and Garage 2.4 produced on 2026-10-28.
 # Switches: fake/probe_red (a live store's facts fail until it is restored),
 # fake/corrupt_snapshot (a snapshot taken now does not read back),
-# fake/stop_fails (docker compose stop exits 1).
+# fake/stop_fails (docker compose stop exits 1), fake/fcv_fails
+# (setFeatureCompatibilityVersion answers an error).
 
 ds_fakes_install() {
   local bin="$1"
@@ -33,12 +39,25 @@ get() { sed -n "s/^$2=//p" "$F/eng/$1" 2>/dev/null; }
 put() { local f="$F/eng/$1"; touch "$f"; grep -v "^$2=" "$f" > "$f.tmp"; echo "$2=$3" >> "$f.tmp"; mv "$f.tmp" "$f"; }
 live() { [[ -e "$F/compose_svc_$1" ]]; }
 red() { live "$1" && [[ -e "$F/probe_red" ]]; }
+pgmajor() { local t="${1##*:}"; [[ "$t" == *-pg* ]] && t="${t##*-pg}"; echo "${t%%[.-]*}"; }
+pgkey() { local k="${1#/var/lib/postgresql/}"; echo "${k//\//_}"; }
+pgdata() { pgenv "$1" | sed -n 's/^PGDATA=//p'; }
+# The store's data as a link into pgdir, moving a plain fixture directory there first.
+pgnorm() {
+  [[ -d "$F/db/$1" && ! -L "$F/db/$1" ]] || return 0
+  local k; k="$(pgkey "$(pgdata "$(cat "$F/running/$1")")")"
+  mkdir -p "$F/pgdir/$1" && mv "$F/db/$1" "$F/pgdir/$1/$k" && ln -s "$F/pgdir/$1/$k" "$F/db/$1"
+}
+pgenv() { local m; m="$(pgmajor "$1")"; echo "PG_MAJOR=$m"; if (( m >= 18 )); then echo "PGDATA=/var/lib/postgresql/$m/docker"; else echo "PGDATA=/var/lib/postgresql/data"; fi; }
 
 in_store() {
   local t="$1" db="" sql="" a; shift
   local cmd="$1"; shift
   case "$cmd" in
     pg_isready) [[ ! -e "$F/pg_down" ]] ;;
+    pg_dumpall)
+      [[ "$1" == -U ]] && echo "CREATE ROLE $2;" && echo "ALTER ROLE $2 WITH SUPERUSER LOGIN;"
+      echo "CREATE ROLE grafana_reader;" ;;
     pg_dump)
       while (( $# )); do [[ "$1" == -d ]] && db="$2"; shift; done
       echo "FAKEDUMP $db"
@@ -66,6 +85,10 @@ in_store() {
     psql)
       while (( $# )); do case "$1" in -d) db="$2" ;; -c|-Atc) sql="$2" ;; esac; shift; done
       case "$sql" in
+        "") cat > "$F/globals_applied_$t" ;;
+        "select extname"*) echo plpgsql; cat "$F/db/$t/$db/.ext" 2>/dev/null; true ;;
+        "select 1 from pg_available_extensions"*)
+          a="${sql##*name = \'}"; grep -qx "${a%\'}" "$F/missing_ext" 2>/dev/null || echo 1 ;;
         "select datname"*) for a in "$F/db/$t"/*; do [[ -e "$a" && "$(basename "$a")" != postgres ]] && basename "$a"; done; true ;;
         "DROP DATABASE"*) a="${sql#*\"}"; rm -rf "$F/db/$t/${a%%\"*}" ;;
         "select count(*)"*)
@@ -105,6 +128,10 @@ in_store() {
         *mongosh*)
           red "$t" && [[ "$JS" == *listDatabases* ]] && exit 1
           case "$JS" in
+            *setFeatureCompatibilityVersion*)
+              [[ -e "$F/fcv_fails" ]] && { echo "MongoServerError: cannot set"; exit 0; }
+              a="${JS#*setFeatureCompatibilityVersion: \"}"; put "$t" fcv "${a%%\"*}"; echo 1 ;;
+            *db.version*) a="$(get "$t" version)"; echo "${a%.*} $(get "$t" fcv)" ;;
             *listDatabases*)
               echo "fcv $(get "$t" fcv)"
               for a in $(get "$t" dbs); do echo "db $a"; done
@@ -167,6 +194,11 @@ run() {
   fi
   if [[ "$img" == alpine:* ]]; then
     case "$*" in
+      *"rm -rf /var/lib/postgresql/"*) pgnorm "$vf"; rm -rf "$F/pgdir/$vf/$(pgkey "${!#}")" ;;
+      *'mv "$1" "$2"'*)
+        pgnorm "$vf"; a="$F/pgdir/$vf/$(pgkey "${*: -2:1}")"
+        [[ -d "$a" && ! -e "$F/pgdir/$vf/$(pgkey "${!#}")" ]] || exit 1
+        mv "$a" "$F/pgdir/$vf/$(pgkey "${!#}")" ;;
       *"tar -cf"*)
         if [[ -e "$F/corrupt_snapshot" ]]; then echo CORRUPT > "$dir/volume.tar"; else cp "$F/eng/$vf" "$dir/volume.tar"; fi ;;
       *"tar -xf"*) if [[ -n "$vf" ]]; then cp "$dir/volume.tar" "$F/eng/$vf"; rm -f "$F/probe_red"; else cp "$dir/volume.tar" "$F/vol/$vol"; fi ;;
@@ -192,7 +224,15 @@ if [[ "$1" == compose ]]; then
     ps) for a in "$@"; do [[ "$a" == -* || "$a" == ps ]] || { echo "cid-$a"; : > "$F/compose_svc_$a"; }; done ;;
     stop) [[ ! -e "$F/stop_fails" ]] ;;
     start) : ;;
-    up) svc="${!#}"; img_of "$svc" > "$F/running/$svc" ;;
+    up)
+      svc="${!#}"; img="$(img_of "$svc")"
+      # A Postgres store opens the directory of its image's major; an empty one is a fresh initdb.
+      if [[ -e "$F/db/$svc" || -L "$F/db/$svc" ]]; then
+        pgnorm "$svc"; rm "$F/db/$svc"
+        mkdir -p "$F/pgdir/$svc/$(pgkey "$(pgdata "$img")")"
+        ln -s "$F/pgdir/$svc/$(pgkey "$(pgdata "$img")")" "$F/db/$svc"
+      fi
+      echo "$img" > "$F/running/$svc" ;;
   esac
 elif [[ "$1" == exec ]]; then
   shift
@@ -205,10 +245,14 @@ elif [[ "$1" == inspect ]]; then
       *Mounts*) echo "/var/lib/docker/volumes/${c#cid-}" ;;
       *Config.Image*) cat "$F/running/${c#cid-}" ;;
       *Config.Cmd*) [[ "$c" == cid-redis ]] && printf 'redis-server\n--requirepass\nfake-redis-pw\n' ;;
-      *Config.Env*) [[ "$c" == cid-qdrant ]] && echo "QDRANT__SERVICE__API_KEY=fake-qdrant-key" ;;
+      *Config.Env*)
+        [[ "$c" == cid-qdrant ]] && echo "QDRANT__SERVICE__API_KEY=fake-qdrant-key"
+        [[ -e "$F/db/${c#cid-}" ]] && pgenv "$(cat "$F/running/${c#cid-}")" ;;
     esac
   done
   true
+elif [[ "$1" == image ]]; then
+  pgenv "${!#}"
 elif [[ "$1" == cp ]]; then
   src="${2%%:*}"; cp "$F/eng/$(name_of "$src").rdb" "$3"
 elif [[ "$1" == run ]]; then
@@ -241,7 +285,7 @@ ds_fakes_engines() {
   mkdir -p "$f"
   printf 'points=120\n' > "$f/qdrant"
   printf 'indexes=tenant_a_messages:40 tenant_a_convos:9\n' > "$f/meilisearch"
-  printf 'fcv=8.0\ndbs=admin config tenant_a tenant_b\ncolls=tenant_a.messages:40 tenant_b.messages:7\n' > "$f/mongodb"
+  printf 'version=8.0.34\nfcv=8.0\ndbs=admin config tenant_a tenant_b\ncolls=tenant_a.messages:40 tenant_b.messages:7\n' > "$f/mongodb"
   printf 'keys=57\n' > "$f/redis"
   printf 'keys=4\n' > "$f/vexa12-redis"
   printf 'keys=0\n' > "$f/crm-redis"
