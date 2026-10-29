@@ -2119,7 +2119,7 @@ services:
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
     logging: *log-rotation
-    image: qdrant/qdrant:v1.19.2
+    image: qdrant/qdrant:v1.20.0
     restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
