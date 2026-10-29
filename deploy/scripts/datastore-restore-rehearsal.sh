@@ -13,7 +13,8 @@
 # a throwaway container of the image that took it (ds_restore_into: own volumes,
 # --network none, label klai.adhoc=datastore-restore, limited memory and CPU,
 # removed afterwards; never the live volume) and requires the restored facts to
-# equal the snapshot's baseline exactly. A store without a snapshot gets a fresh
+# equal the snapshot's baseline exactly (a snapshot a cutover refreshed: at
+# least the facts read just before its copy). A store without a snapshot gets a fresh
 # one first, taken the way a deploy takes it (for Qdrant, Meilisearch, Mongo and
 # Garage that stops the store for the seconds of a cold copy); a fresh snapshot
 # is not a rollback point, so its ledger line goes to a scratch file and the

@@ -104,6 +104,14 @@ check "  restored from that snapshot" 1 "$(grep -c "restoring $snap" "$case_dir/
 check "  the snapshot is kept" yes "$([[ -d "$snap" ]] && echo yes || echo no)"
 check "  event ok" "redis ok" "$(events)"
 
+# --- a snapshot a cutover refreshed: compared with the facts read just before
+# its fresh copy, at least, since tenants outside compose may still write -----
+new_case after_cutover
+snap="$(old_snapshot qdrant qdrant volume.tar $'collection klai_knowledge\ncount klai_knowledge 100')"
+printf 'collection klai_knowledge\ncount klai_knowledge 118\n' > "$snap/cutover.facts"
+run_rehearsal qdrant
+check "qdrant snapshot refreshed by a cutover (120 points, 118 read before the copy) -> exit 0" "0 qdrant ok" "$rc $(events | tr , ' ')"
+
 # --- a snapshot whose sync never finished is not used -------------------------
 new_case incomplete
 snap="$(old_snapshot redis redis dump.rdb 'count keys 57')"

@@ -198,7 +198,8 @@
 #   - The cutover's probe compares counts as "at least" the fresh snapshot's.
 #     A delete by a writer outside compose (a LibreChat tenant on mongodb,
 #     meilisearch or redis) in the seconds between reads red and restores.
-#     Upgrade path: read the fresh baseline from the fresh copy in a
+#     The restore rehearsal compares a snapshot a cutover refreshed the same
+#     way. Upgrade path: read the fresh baseline from the fresh copy in a
 #     throwaway, at the cost of that start inside the outage.
 #   - Apps that migrate their own database (Twenty, GlitchTip, Zitadel, Umami)
 #     have no shadow: proving their migration on a copy needs the app itself
@@ -1270,11 +1271,14 @@ ds_restore_dbs() {
 }
 
 ds_restore_into() {
-  local dir="$1" ctr="$2" image="${3:-$(ds_meta "$1" store_image)}" su i rc=0 facts
+  local dir="$1" ctr="$2" image="${3:-$(ds_meta "$1" store_image)}" su i rc=0 facts mode=exact
   if [[ "$(ds_dir_engine "$dir")" != postgres ]]; then
     [[ "$(ds_kind "$(ds_dir_engine "$dir")")" != none ]] || { echo "restore: $(ds_meta "$dir" store) keeps no state"; return 0; }
+    # After a cutover the data is its fresh copy, whose reference are the facts
+    # read just before it; tenants outside compose may have written since.
+    [[ "$(ds_ref_facts "$dir")" == */baseline.facts ]] || mode=atleast
     facts="$(mktemp)"
-    ds_throwaway "$dir" "$ctr" "$image" > "$facts" && ds_compare_facts "$dir/baseline.facts" "$facts" exact || rc=1
+    ds_throwaway "$dir" "$ctr" "$image" > "$facts" && ds_compare_facts "$(ds_ref_facts "$dir")" "$facts" "$mode" || rc=1
     rm -f "$facts"
     return "$rc"
   fi
