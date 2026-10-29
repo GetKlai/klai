@@ -124,6 +124,20 @@ def test_open_mode_is_not_held_to_the_source_s_own_words():
     assert "Do not add a step, menu, cause or example that is not in the source." in open_mode
 
 
+def test_open_mode_translates_the_source_lines_too():
+    """An English question on a Dutch knowledge base: on 29 October 2026 the
+    internal Open writer, briefed with the Dutch source lines and told to
+    build on them, answered in Dutch under a "Respond in English" instruction.
+    Only the Strict brief said to translate."""
+    selection = _selection(Evidence(passage=1, quote=_STEP), need="aansluiten")
+
+    strict = writer_brief(selection, _SECTIONS, internal=True, source_only=True)
+    open_mode = writer_brief(selection, _SECTIONS, internal=True, source_only=False)
+
+    assert "translated into the user's language" in strict
+    assert "translated into the user's language" in open_mode
+
+
 def test_a_turn_answered_from_the_passages_is_not_also_told_to_say_the_articles_lack_something():
     """A turn either answers from the passages or says it cannot, never both.
 

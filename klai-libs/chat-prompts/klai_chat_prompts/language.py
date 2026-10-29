@@ -612,6 +612,31 @@ _REQUEST_SKIPPABLE_ARTICLES = frozenset(
     {"het", "de", "den", "dem", "der", "die", "das", "la", "le", "el", "lo", "o", "a", "the"}
 )
 
+# A turn that asks WHY, or that negates, BEFORE it names the language is a
+# complaint about the language the assistant used, not a request for it:
+# "Why do you answer in Dutch?" wants the other language, whichever that is,
+# so the turn casts no explicit vote and the conversation keeps the language
+# the user's own words establish. On 29 October 2026 such a complaint
+# switched an English conversation to Dutch with the weight of an explicit
+# request, and the measurement logged it as a correct Dutch answer to a
+# Dutch question. Only the words before the first language name count:
+# "Antworte auf Englisch, nicht so ausführlich" negates the length, not the
+# request. "no" is listed for Spanish and Portuguese ("No respondas en
+# español") although Portuguese also uses it as a preposition ("no
+# português"): a request that loses its explicit vote this way falls back
+# to the language it is written in, which for such a turn is the same one.
+# Contractions lose their apostrophe in _WORD_RE ("don't" -> "don", "t"),
+# so the English negated auxiliaries are listed as that first token.
+_REQUEST_COMPLAINT_WORDS = frozenset(
+    {
+        "why", "not", "never", "stop", "don", "doesn", "didn", "isn", "aren", "won",  # en
+        "waarom", "niet", "nooit",  # nl
+        "warum", "nicht", "nie",  # de
+        "pourquoi", "pas", "jamais",  # fr
+        "porque", "porqué", "no", "não", "nao", "nunca",  # pt / es
+    }
+)
+
 
 def detect_explicit_language_request(prose: str) -> str | None:
     """Return the requested target code when ``prose`` IS the request.
@@ -623,10 +648,15 @@ def detect_explicit_language_request(prose: str) -> str | None:
     "In English") or a request verb/preposition from the hint table is present
     ("In English please", "Auf Deutsch antworten"). A long analytical paragraph
     that merely mentions a language name is not a request. Two different names
-    ("translate English to Dutch") are ambiguous and also not a request.
+    ("translate English to Dutch") are ambiguous and also not a request, and
+    so is a complaint ("Why do you answer in Dutch?", "Don't reply in Dutch",
+    see :data:`_REQUEST_COMPLAINT_WORDS`).
     """
     words = [w.lower() for w in _WORD_RE.findall(prose)]
     if not words or len(words) > MAX_EXPLICIT_REQUEST_WORDS:
+        return None
+    first_name = next((i for i, w in enumerate(words) if w in EXPLICIT_LANGUAGE_NAMES), len(words))
+    if any(w in _REQUEST_COMPLAINT_WORDS for w in words[:first_name]):
         return None
 
     langs = {EXPLICIT_LANGUAGE_NAMES[w] for w in words if w in EXPLICIT_LANGUAGE_NAMES}
