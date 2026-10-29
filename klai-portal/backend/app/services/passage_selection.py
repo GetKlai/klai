@@ -422,7 +422,8 @@ def writer_brief(
             "split or complete a step, and name a menu, button or setting exactly as the source names it. Where the "
             "source gives no cause, give none; where it gives no example, give none."
             if source_only
-            else "\nBuild the reply on these lines and the steps that stand with them in the source. Do not add a "
+            else f"\nBuild the reply on these lines and the steps that stand with them in the source (translated into "
+            f"the {who}'s language when needed). Do not add a "
             "step, menu, cause or example that is not in the source. An e-mail address, a link, a phone number, a "
             "price or an amount appears in the reply only when it stands in the lines above; otherwise say that "
             f"the {what} {'does' if internal else 'do'} not give it."

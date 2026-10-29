@@ -360,6 +360,41 @@ def test_two_language_names_are_ambiguous_not_request() -> None:
     assert clm.detect_explicit_language_request(turn) is None
 
 
+def test_complaint_about_a_language_is_not_a_request() -> None:
+    """A complaint such as "Why do you answer in Dutch?" asks for the OTHER language.
+
+    On 29 October 2026 the owner asked in English, got Dutch, complained in
+    English, and the complaint switched the conversation to Dutch with the
+    weight of an explicit request; the measurement then logged the turn as a
+    correct Dutch answer to a Dutch question.
+    """
+    assert clm.detect_explicit_language_request("Why do you answer in Dutch?") is None
+    assert clm.detect_explicit_language_request("Please stop answering in Dutch") is None
+    assert clm.detect_explicit_language_request("I did not ask this in Dutch") is None
+    assert clm.detect_explicit_language_request("Don't reply in Dutch") is None
+    assert clm.detect_explicit_language_request("Waarom antwoord je in het Engels?") is None
+    assert clm.detect_explicit_language_request("Warum antwortest du auf Englisch?") is None
+    assert clm.detect_explicit_language_request("No respondas en español") is None
+    assert clm.detect_explicit_language_request("Not Dutch") is None
+    # A request phrased as a question or with a verb stays a request, and a
+    # negation AFTER the language name negates something else.
+    assert clm.detect_explicit_language_request("Can you answer in English?") == "en"
+    assert clm.detect_explicit_language_request("Please reply in English") == "en"
+    assert clm.detect_explicit_language_request("Antworte bitte auf Englisch, nicht so ausführlich") == "en"
+    assert clm.detect_explicit_language_request("Réponds en anglais, pas de problème") == "en"
+
+
+def test_a_complaint_does_not_switch_the_conversation() -> None:
+    messages = [
+        {"role": "user", "content": "How do I add a user to the portal and give them a licence?"},
+        {"role": "assistant", "content": "Je voegt een gebruiker toe via Instellingen en kent een licentie toe."},
+        {"role": "user", "content": "Why do you answer in Dutch?"},
+    ]
+    decision = clm.resolve_conversation_language(messages)
+    assert decision.language == "en"
+    assert decision.method != clm.METHOD_EXPLICIT_REQUEST
+
+
 def test_long_paragraph_mentioning_language_is_not_request() -> None:
     paragraph = (
         "Voor de evaluatie van onze klantcorrespondentie willen we graag weten in "
