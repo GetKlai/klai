@@ -40,7 +40,7 @@ with nothing:
 
 | Tool | State | Committed? |
 |---|---|---|
-| zvec-grep | `.zvec-grep/` at the worktree root | no, gitignored |
+| zvec-grep | `.zvec-grep/` at the worktree root, registered with the shared daemon until dropped | no, gitignored |
 | Serena | `.serena/cache` (config in `.serena/project.yml`) | cache no, config yes |
 | codebase-memory-mcp | `~/.cache/codebase-memory-mcp` | outside the repo |
 
@@ -134,6 +134,14 @@ run against a daemon with any other cwd. `scripts/code-daemon-guard.sh` is the
 repair: it restarts any daemon whose cwd is missing or is not `$HOME`. It runs
 from Conductor's `archive`, the moment a daemon is about to be orphaned and the
 last moment the directory still exists, and by hand.
+
+Archive also runs `dev-code-tools archive`, which drops the workspace's
+zvec-grep index from the daemon before the directory goes. The daemon keeps a
+root registered until that happens, and refreshing a root that no longer
+exists is the other way it degrades: on 2026-10-29 two removed worktrees left
+it at 3.3 GB and unable to answer the MCP version probe ("fetch failed") while
+`zg server status` still said ready. A worktree removed by hand gets the same
+treatment with `zg index <root> --drop --yes` before `git worktree remove`.
 
 ```bash
 make code-doctor              # report only, exits 1 if the invariant is broken

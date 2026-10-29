@@ -93,6 +93,10 @@ def test_archiving_a_workspace_rehomes_the_shared_daemons() -> None:
     # failure for every repo on the machine, not just this one.
     settings = tomllib.loads(CONDUCTOR_SETTINGS.read_text())
     assert "code-daemon-guard.sh" in settings["scripts"]["archive"]
+    # And the index itself: the shared zg daemon keeps an archived root
+    # registered until its index is dropped, and refreshing that ghost is what
+    # grew it to 3.3 GB and stopped it answering on 2026-10-29.
+    assert settings["scripts"]["archive"].startswith('~/bin/dev-code-tools archive "$PWD"')
 
 
 def test_conductor_json_has_not_come_back() -> None:
