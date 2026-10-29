@@ -406,4 +406,4 @@ class TestLongAudioIsChunked:
 
         seconds = [_wav_seconds(c) for c in chunks]
         assert sum(seconds) == 12.0
-        assert all(0 < s <= 5.0 for s in seconds)
+        assert all(2.5 <= s <= 5.0 for s in seconds[:-1])

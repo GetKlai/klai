@@ -104,13 +104,15 @@ def split_wav(audio_wav: bytes, max_seconds: int) -> list[bytes]:
     while start < total:
         end = min(start + max_seconds * rate, total)
         if end < total:
-            window = int(_CUT_WINDOW_SECONDS * rate)
-            # The search never reaches back into the current chunk's first
-            # window, so every cut makes progress even when the chunk length
-            # is shorter than the search span (an operator-set value below
-            # _CUT_SEARCH_SECONDS would otherwise loop forever on silence).
+            # The search never reaches back past the middle of the chunk, so a
+            # chunk is at least half of max_seconds and the split always
+            # advances; an operator-set chunk length below the search span
+            # would otherwise loop forever (or emit 100 ms chunks) on silence.
             end = _quietest_frame(
-                frames, max(end - _CUT_SEARCH_SECONDS * rate, start + window), end, window
+                frames,
+                max(end - _CUT_SEARCH_SECONDS * rate, start + (end - start) // 2),
+                end,
+                int(_CUT_WINDOW_SECONDS * rate),
             )
         buf = io.BytesIO()
         with wave.open(buf, "wb") as out:
@@ -140,6 +142,8 @@ class WhisperHttpProvider:
             # noisy later chunk cannot flip the transcript to another language.
             if language is None and result.language != "und":
                 language = result.language
+        if len(results) == 1:
+            return results[0]
         first = results[0]
         return TranscriptionResult(
             text=" ".join(r.text.strip() for r in results if r.text.strip()),
