@@ -181,3 +181,6 @@ async def test_wait_budget_counts_from_the_start_of_the_request(
 
     assert response.status == "processing"
     assert 0.3 <= elapsed < 0.5  # decode time only, no extra wait
+    # A spent budget cancels the wait before it runs; it must not leave a
+    # waiter behind that only a finishing job would clear.
+    assert response.id not in jobs._waiters

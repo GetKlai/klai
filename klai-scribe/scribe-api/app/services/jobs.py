@@ -76,16 +76,18 @@ def enqueue(txn_id: str) -> Awaitable[None]:
     """Wake the workers and return an awaitable that resolves when `txn_id` finishes.
 
     The caller bounds the wait with `asyncio.wait_for`; a timeout only drops
-    this waiter, the job itself keeps running.
+    this waiter, the job itself keeps running. The waiter is registered when
+    the awaitable starts, so a zero budget (which cancels it before it runs)
+    registers nothing and leaks nothing.
     """
-    fut: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-    _waiters.setdefault(txn_id, []).append(fut)
     if _wake is not None:
         _wake.set()
-    return _wait(txn_id, fut)
+    return _wait(txn_id)
 
 
-async def _wait(txn_id: str, fut: asyncio.Future[None]) -> None:
+async def _wait(txn_id: str) -> None:
+    fut: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    _waiters.setdefault(txn_id, []).append(fut)
     try:
         await fut
     finally:
@@ -224,9 +226,9 @@ async def _worker(
                 pass
 
 
-def stale_claim_filter():
-    """Rows nobody is running: never claimed, or claimed longer than STALE_MINUTES ago."""
-    cutoff = datetime.now(UTC) - timedelta(minutes=STALE_MINUTES)
+def stale_claim_filter(minutes: int = STALE_MINUTES):
+    """Rows nobody is running: never claimed, or claimed longer than `minutes` ago."""
+    cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
     return or_(Transcription.claimed_at.is_(None), Transcription.claimed_at < cutoff)
 
 
