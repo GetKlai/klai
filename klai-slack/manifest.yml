@@ -16,19 +16,14 @@ features:
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
   agent_view:
+    # No suggested_prompts here: static prompts make Slack refuse the
+    # per-language prompts the app sets on app_home_opened with
+    # static_prompts_configured (seen in production on 2026-10-29).
     agent_description: >-
-      Stel een vraag en Klai zoekt het antwoord in de kennisbanken die jouw
-      organisatie heeft vrijgegeven. Elk antwoord laat zien waarin gezocht is en
-      toont de bronnen.
-    suggested_prompts:
-      - title: Wat weet Klai?
-        message: In welke kennisbanken kun je zoeken?
-      - title: Beleid opzoeken
-        message: Wat is ons beleid rond thuiswerken?
-      - title: Proces uitleggen
-        message: Hoe werkt het onboardingproces voor nieuwe collega's?
-      - title: Samenvatten
-        message: Vat de belangrijkste punten over onze producten samen.
+      Klai zoekt het antwoord in alle kennisbanken die jouw organisatie voor
+      Slack heeft vrijgegeven en toont de bronnen. Wil je in minder zoeken?
+      Kies onder een antwoord Kennisbanken kiezen. Welke kennisbanken het zijn,
+      zie je op het tabblad Home.
   slash_commands:
     - command: /klai
       url: https://api.getklai.com/slack/events

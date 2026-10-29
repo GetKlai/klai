@@ -194,7 +194,9 @@ async def on_app_home_opened(
         if event.get("tab") == "messages":
             # No thread_ts: for an agent app that makes the call fail silently (Slack docs).
             await client.assistant_threads_setSuggestedPrompts(
-                channel_id=event["channel"], prompts=suggested_prompts(lang)
+                channel_id=event["channel"],
+                title=t(lang, "prompts_title"),
+                prompts=suggested_prompts(lang),
             )
         elif event.get("tab") == "home":
             await client.views_publish(
