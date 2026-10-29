@@ -30,7 +30,7 @@ def _diff(*lines: str, path: str = "docs/x.md") -> str:
 
 
 def test_the_table_that_leaked_is_blocked():
-    problems = audit.check(_diff("+| Tenant | Antwoorden |", "+|---|---|", "+| privacy1 | 23 |"))
+    problems = audit.check(_diff("+| Tenant | Antwoorden |", "+|---|---|", "+| acme-labs | 23 |"))
 
     assert len(problems) == 1
     assert problems[0].startswith("docs/x.md:")
@@ -42,9 +42,9 @@ def test_a_finding_never_repeats_the_customer_row():
     Echoing the match would copy the very data the guard blocks into a second,
     permanent place.
     """
-    problems = audit.check(_diff("+| Tenant | Antwoorden |", "+|---|---|", "+| privacy1 | 23 |"))
+    problems = audit.check(_diff("+| Tenant | Antwoorden |", "+|---|---|", "+| acme-labs | 23 |"))
 
-    assert "privacy1" not in problems[0]
+    assert "acme-labs" not in problems[0]
     assert "23" not in problems[0].split(":")[-1]
 
 
@@ -106,7 +106,7 @@ def test_this_guards_own_tests_are_exempt():
     change to it. The exemption is one exact path: anything wider would let a
     real leak hide in a file with "test" in its name.
     """
-    leak = "+| Tenant | Gebruik |\n+|---|---|\n+| privacy1 | 23 |"
+    leak = "+| Tenant | Gebruik |\n+|---|---|\n+| acme-labs | 23 |"
     header = "+++ b/scripts/tests/test_audit_public_tenant_data.py\n@@ -1,0 +1,3 @@\n"
 
     assert audit.check(header + leak + "\n") == []
@@ -273,6 +273,13 @@ def test_a_domain_in_the_allow_file_passes_with_its_subdomains():
     assert _host("+url = 'https://raw.githubusercontent.com/x'") == []
     assert _host("+image = ghcr.io/org/app:1") == []
     assert _host("+url = 'https://notgetklai.com'") == [f"{_TEST}:1: real-hostname"]
+
+
+def test_shell_escapes_and_parameter_defaults_do_not_glue_onto_a_host():
+    """``$'\\tghcr.io'`` and ``${IMAGE:-ghcr.io/x}`` name the allowed ghcr.io, not tghcr.io or -ghcr.io."""
+    assert _host("+check $'\\timage\\tghcr.io/org/app:1\\tdeployed$'", "deploy/scripts/tests/a.test.sh") == []
+    assert _host('+run "${IMAGE:-ghcr.io/org/app:1}"', "deploy/scripts/tests/a.test.sh") == []
+    assert _host('+run "${URL:-https://wiki.example-customer.cloud}"') == [f"{_TEST}:1: real-hostname"]
 
 
 def test_the_allow_file_is_comment_and_blank_tolerant(monkeypatch, tmp_path):

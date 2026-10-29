@@ -78,6 +78,7 @@ _ALLOWED_DOMAINS_FILE = Path(__file__).resolve().parent / "allowed-test-domains.
 
 _TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|fixtures?|stories|seeds?|e2e)(/|$)|(\.|_|-)(test|spec|stories)\.")
 _DOTTED = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+")
+_ESCAPE = re.compile(r"\\[tnr]")
 # Reserved by RFC 2606 / 6761: never resolve to a real party. Their reserved TLDs
 # (.test, .example, .invalid, .localhost) and "localhost" are not in _TLDS, so a
 # host under them is never a hostname here.
@@ -137,7 +138,11 @@ def _allowed_domains() -> list[str]:
 
 
 def _has_real_hostname(body: str, allowed: list[str]) -> bool:
-    for token in _DOTTED.findall(body):
+    # A shell escape (``$'\tghcr.io'``) would otherwise glue its letter onto the
+    # host, and a parameter default (``${IMAGE:-ghcr.io}``) its dash; no host
+    # label starts with a dash.
+    for token in _DOTTED.findall(_ESCAPE.sub(" ", body)):
+        token = token.lstrip("-")
         labels = token.lower().split(".")
         # Module paths and snake_case attributes carry underscores; versions and
         # IP literals end in a digit label; neither is a hostname.

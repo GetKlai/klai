@@ -55,6 +55,9 @@ sharepoint.com
 amazonaws.com
 chromiumapp.org
 contoso.com
+atlassian.net
+atlassian.com
+microsoft.us
 
 # Mail providers named in personal-address tests
 gmail.com
@@ -65,3 +68,20 @@ yahoo.com
 icloud.com
 protonmail.com
 fastmail.com
+hotmail.nl
+outlook.nl
+live.nl
+msn.com
+aol.com
+me.com
+mac.com
+mail.com
+duck.com
+tuta.com
+mailbox.org
+zoho.com
+web.de
+yahoo.nl
+gmx.de
+ziggo.nl
+kpnmail.nl
