@@ -135,9 +135,6 @@ function AddConnectorPage() {
   // wizard collects them directly in the shape the backend persists and the
   // cron-sync consumes - no string-to-array parsing layer.
   const [wcCookieRows, setWcCookieRows] = useState<CookieRow[]>([])
-  // Hosts the site signs in through besides the base host, found when the auth
-  // step opens. Cookies for them are entered per host.
-  const [wcAuthChainHosts, setWcAuthChainHosts] = useState<string[]>([])
   const [notionConfig, setNotionConfig] = useState<NotionAddConfig>({
     access_token: '', database_ids: '', max_pages: '500',
   })
@@ -231,7 +228,6 @@ function AddConnectorPage() {
         }
         const cookies = buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url)
         if (cookies) config.cookies = cookies
-        if (cookies && wcAuthChainHosts.length > 0) config.auth_chain_hosts = wcAuthChainHosts
         // Auth-probe test URL ("URL to test"), persisted so the login-wall
         // page survives reopening the wizard. Kept only while it stays on
         // the base URL's origin - it is the destination decrypted saved
@@ -1006,10 +1002,7 @@ function AddConnectorPage() {
                     Hits REQ-2 /connectors/auth-probe; gates on classification === auth_ok. */}
                 {wcStep === 'auth-setup' && (
                   <CrawlerAuthSetupStep
-                    kbSlug={kbSlug}
                     baseUrl={webcrawlerConfig.base_url}
-                    authChainHosts={wcAuthChainHosts}
-                    onAuthChainHostsDetected={setWcAuthChainHosts}
                     testUrl={wcEffectiveTestUrl}
                     onTestUrlChange={(url) => {
                       setWcTestUrl(url)

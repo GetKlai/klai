@@ -2507,43 +2507,6 @@ async def auth_probe(
     )
 
 
-class AuthChainRequest(BaseModel):
-    url: str
-
-
-class AuthChainResponse(BaseModel):
-    hosts: list[str]
-
-
-@router.post(
-    "/knowledge-bases/{kb_slug}/connectors/auth-chain",
-    response_model=AuthChainResponse,
-    dependencies=[Depends(get_kb_with_access)],
-)
-async def auth_chain(
-    kb_slug: str,
-    body: AuthChainRequest,
-    perms: UserPermissions = Depends(get_caller),
-    db: AsyncSession = Depends(get_db),
-) -> AuthChainResponse:
-    """Other hosts the site signs in through, so the wizard can ask for their cookies.
-
-    Same access rule and org handling as auth_probe; no cookies are involved.
-    """
-    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
-    await require_connector_manage_access(kb, perms, db)
-    org = await _load_org_or_500(db, perms.org_id)
-    try:
-        hosts = await knowledge_ingest_client.auth_chain(url=body.url, org_id=org.zitadel_org_id)
-    except Exception as exc:
-        logger.warning("auth_chain_failed", url=body.url, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not check which hosts this site signs in through. Try again.",
-        ) from exc
-    return AuthChainResponse(hosts=hosts)
-
-
 # ---------------------------------------------------------------------------
 # App-level member picker endpoints (any org member, no admin required)
 # ---------------------------------------------------------------------------

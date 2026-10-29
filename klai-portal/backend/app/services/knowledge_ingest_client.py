@@ -309,26 +309,6 @@ async def auth_probe(
         }
 
 
-async def auth_chain(url: str, org_id: str = "") -> list[str]:
-    """Hosts the site's sign-in redirects through, from knowledge-ingest.
-
-    Raises on transport errors: a silent empty list would read as "this site
-    has no second sign-in host" and the wizard would collect too few cookies.
-    """
-    async with httpx.AsyncClient(
-        base_url=settings.knowledge_ingest_url,
-        headers={
-            "X-Internal-Secret": settings.knowledge_ingest_secret,
-            "X-Caller-Service": "portal-api",
-            **get_trace_headers(),
-        },
-        timeout=35.0,  # up to two walks of six hops, each capped by the probe timeout
-    ) as client:
-        resp = await client.post("/ingest/v1/crawl/auth-chain", json={"url": url, "org_id": org_id})
-        resp.raise_for_status()
-        return list(resp.json()["hosts"])
-
-
 async def trigger_taxonomy_bootstrap(org_id: str, kb_slug: str) -> dict:
     """Trigger bootstrap proposal generation for a KB.
 
