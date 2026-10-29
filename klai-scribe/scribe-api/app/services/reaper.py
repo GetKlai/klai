@@ -6,7 +6,10 @@ attending to it. The UI sees "still processing" forever and a manual DB
 fix is the only escape hatch.
 
 This reaper runs at worker startup (see `app.main.lifespan`) and flips
-stale `processing` rows to `failed` with `error_reason="worker_restart_stranded"`.
+stale `processing` rows that the job queue (`app.services.jobs`) can no
+longer run, because they have no audio or used up their attempts, to
+`failed` with `error_reason="worker_restart_stranded"`. A row with audio and
+attempts left is waiting or running in the queue and is left alone.
 The audio file is preserved (REQ-35.3) so a manual recovery / retry is
 still possible.
 
@@ -18,10 +21,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.transcription import Transcription
+from app.services.jobs import MAX_ATTEMPTS
 
 logger = structlog.get_logger(__name__)
 
@@ -32,21 +36,17 @@ _REAP_BATCH_LIMIT = 500
 
 
 async def reap_stranded(session: AsyncSession, timeout_min: int) -> int:
-    """Flip processing rows older than `timeout_min` to `failed`.
+    """Flip unrunnable processing rows older than `timeout_min` to `failed`.
 
     Returns the number of rows reaped. Caller owns the session lifecycle —
     this function commits its own changes once and returns.
 
     Notes for the operator:
-    - `created_at` is the row insert time (set at the very beginning of the
-      transcribe handler) and doubles as the "started_at" surrogate. There
-      is no separate `started_at` column. Pick `timeout_min` LARGER than
-      the longest realistic transcription duration (typical scribe meeting
-      is 30-60 min; default is 60 min — see `Settings.scribe_stranded_timeout_min`).
-      A `timeout_min` that is too short will false-reap a still-running
-      transcription. The mutation is recoverable (the original worker
-      finishes and `finalize_success` overwrites status), but the user
-      briefly sees `status="failed"` in the UI.
+    - Only rows the queue cannot claim are reaped: `audio_path IS NULL` or
+      `attempts >= 3` (the queue's `MAX_ATTEMPTS`). A queued or running row
+      with audio is never touched, however long the queue is.
+    - `created_at` is the row insert time and serves as the age; see
+      `Settings.scribe_stranded_timeout_min`.
     - When N replicas of scribe-api start simultaneously, all N race to
       reap the same rows. SQLAlchemy retries on row-lock conflict, so the
       net effect is correct but wastes a small amount of work. Scribe
@@ -59,6 +59,12 @@ async def reap_stranded(session: AsyncSession, timeout_min: int) -> int:
     result = await session.execute(
         select(Transcription)
         .where(Transcription.status == "processing")
+        .where(
+            or_(
+                Transcription.audio_path.is_(None),
+                Transcription.attempts >= MAX_ATTEMPTS,
+            )
+        )
         .where(Transcription.created_at < cutoff)
         .limit(_REAP_BATCH_LIMIT)
     )

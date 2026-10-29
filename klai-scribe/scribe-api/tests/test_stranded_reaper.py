@@ -1,9 +1,9 @@
 """HY-35 / REQ-35 — stranded `processing` row reaper regression test.
 
 Setup is mock-based: AsyncSession.execute is patched to return a hand-rolled
-list of records. The query construction is reviewed statically and run in
-staging — these tests pin the mutation contract (status flip, error_reason
-assignment, audio_path preservation).
+list of records. These tests pin the mutation contract (status flip,
+error_reason assignment, audio_path preservation) and the query predicate,
+which must leave rows waiting or running in the job queue alone.
 
 See SPEC-SEC-HYGIENE-001 REQ-35.
 """
@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import structlog
+from sqlalchemy.dialects import postgresql
 
 
 def _record(
@@ -23,13 +24,21 @@ def _record(
     status: str,
     minutes_ago: int,
     audio_path: str | None = None,
+    attempts: int = 3,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=txn_id,
         status=status,
         created_at=datetime.now(UTC) - timedelta(minutes=minutes_ago),
         audio_path=audio_path,
+        attempts=attempts,
         error_reason=None,
+    )
+
+
+def _sql(statement) -> str:
+    return str(
+        statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
     )
 
 
@@ -120,3 +129,25 @@ async def test_reaper_emits_structlog_event() -> None:
     assert len(events) == 1
     assert events[0]["txn_id"] == "txn_logged"
     assert events[0]["age_minutes"] >= 35  # AC-35 step 8 floor
+
+
+# ---------------------------------------------------------------------------
+# Queue-aware predicate — only rows the job queue can no longer run
+# ---------------------------------------------------------------------------
+
+
+async def test_reaper_skips_queued_rows_and_reaps_rows_without_audio() -> None:
+    """A processing row with audio and attempts < 3 is waiting or running in the
+    queue, however old; only a row without audio or out of attempts is reaped."""
+    from app.services import reaper
+
+    session = _session_returning([])
+
+    await reaper.reap_stranded(session, timeout_min=30)
+
+    where = _sql(session.execute.await_args.args[0]).split("WHERE", 1)[1]
+    assert "status = 'processing'" in where
+    assert (
+        "(scribe.transcriptions.audio_path IS NULL OR scribe.transcriptions.attempts >= 3)" in where
+    )
+    assert "created_at <" in where

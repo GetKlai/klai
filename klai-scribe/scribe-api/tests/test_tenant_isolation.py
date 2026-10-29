@@ -89,18 +89,7 @@ async def test_transcribe_persists_portal_verified_org(monkeypatch: pytest.Monke
         lambda user_id, txn_id, wav: f"{user_id}/{txn_id}.wav",
     )
 
-    provider = MagicMock()
-    provider.transcribe = AsyncMock(
-        return_value=SimpleNamespace(
-            text="hello",
-            language="en",
-            duration_seconds=1.0,
-            inference_time_seconds=0.2,
-            provider="test-provider",
-            model="test-model",
-        )
-    )
-    monkeypatch.setattr(transcribe_mod, "get_provider", lambda: provider)
+    monkeypatch.setattr(transcribe_mod.jobs, "enqueue", AsyncMock())
 
     response = await transcribe_mod.transcribe(
         file=_FakeUpload(),
@@ -112,7 +101,7 @@ async def test_transcribe_persists_portal_verified_org(monkeypatch: pytest.Monke
     assert db.added is not None
     assert db.added.user_id == "user-1"
     assert db.added.org_id == "org-1"
-    assert response.text == "hello"
+    assert response.id == db.added.id
 
 
 @pytest.mark.asyncio

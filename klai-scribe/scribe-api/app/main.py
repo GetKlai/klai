@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.logging_setup import RequestContextMiddleware, setup_logging
 from app.middleware.auth_guard import AuthGuardMiddleware
+from app.services import jobs
 from app.services.reaper import reap_stranded
 
 setup_logging()
@@ -42,7 +43,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The function is currently only callable on-demand; this slice intentionally
     # skipped scheduling per the SPEC scope discussion.
 
-    yield
+    # Background transcription workers (app.services.jobs).
+    await jobs.start()
+    try:
+        yield
+    finally:
+        await jobs.stop()
 
 
 app = FastAPI(

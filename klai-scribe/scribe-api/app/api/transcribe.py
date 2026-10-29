@@ -1,8 +1,8 @@
 """
 Transcription API endpoints:
 
-  POST /v1/transcribe                    - upload + persist audio + transcribe
-  POST /v1/transcriptions/{id}/retry     - retry failed transcription
+  POST /v1/transcribe                    - upload + persist audio + queue transcription
+  POST /v1/transcriptions/{id}/retry     - re-queue failed transcription
   GET  /v1/transcriptions                - list user's transcripts
   GET  /v1/transcriptions/{id}           - get single transcript
   PATCH /v1/transcriptions/{id}          - update name
@@ -12,6 +12,7 @@ Transcription API endpoints:
 """
 
 import asyncio
+import contextlib
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -27,23 +28,18 @@ from app.core.auth import CallerIdentity, get_authenticated_caller
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.transcription import Transcription
-from app.services import summarizer
-from app.services.audio_storage import (
-    delete_audio,
-    finalize_success,
-    read_audio,
-    save_audio,
-)
-from app.services.providers import get_provider
+from app.services import jobs, summarizer
+from app.services.audio_storage import delete_audio, save_audio
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["transcription"])
 _UPLOAD_FILE = File(...)
-_LANGUAGE_FORM = Form(default=None)
+# 16 is the width of `transcriptions.language_hint`; longer input is a 422, not a failed insert.
+_LANGUAGE_FORM = Form(default=None, max_length=16)
 _CALLER = Depends(get_authenticated_caller)
 _DB = Depends(get_db)
-_RETRY_LANGUAGE = Query(default=None)
+_RETRY_LANGUAGE = Query(default=None, max_length=16)
 _LIST_LIMIT = Query(default=20, ge=1, le=100)
 _LIST_OFFSET = Query(default=0, ge=0)
 _FORCE_SUMMARY = Query(default=False)
@@ -109,15 +105,10 @@ def normalize_audio(raw: bytes, filename: str) -> bytes:
     return _normalize_audio(raw, filename)
 
 
-def _title_from_text(text: str | None, max_words: int = 8) -> str | None:
-    """Generate a short title from the first words of a transcription."""
-    if not text:
-        return None
-    words = text.split()[:max_words]
-    title = " ".join(words)
-    if len(text.split()) > max_words:
-        title += "…"
-    return title
+async def _wait_for_job(txn_id: str) -> None:
+    """Wait up to `transcribe_wait_seconds`; the job keeps running after a timeout."""
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(jobs.enqueue(txn_id), timeout=settings.transcribe_wait_seconds)
 
 
 def _to_response(record: Transcription) -> TranscriptionResponse:
@@ -163,10 +154,11 @@ async def transcribe(
     caller: CallerIdentity = _CALLER,
     db: AsyncSession = _DB,
 ) -> TranscriptionResponse:
-    """Upload audio, persist to disk, attempt transcription.
+    """Upload audio, persist to disk, queue the transcription.
 
-    Audio is always saved before transcription starts. If whisper fails,
-    the record stays with status='failed' and the audio is retained for retry.
+    Audio is always saved before transcription starts. The answer carries the
+    record as it is after at most `transcribe_wait_seconds`: `transcribed`,
+    `failed` (audio retained for retry) or `processing` (the job continues).
     """
     raw = await file.read(settings.max_upload_bytes + 1)
     if len(raw) > settings.max_upload_bytes:
@@ -203,40 +195,13 @@ async def transcribe(
         name=filename if filename != "upload" else None,
         status="processing",
         audio_path=audio_path,
+        language_hint=language,
         created_at=datetime.now(UTC),
     )
     db.add(record)
     await db.commit()
 
-    # Attempt transcription
-    try:
-        provider = get_provider()
-        result = await provider.transcribe(wav_bytes, language)
-    except Exception:
-        record.status = "failed"
-        await db.commit()
-        await db.refresh(record)
-        # exc_info=True per `klai/projects/portal-logging-py.md` —
-        # except blocks MUST capture traceback, otherwise the same
-        # warning at 3am has no usable root cause in VictoriaLogs.
-        # Without this, we couldn't see the KeyError that surfaced
-        # during the 2026-05-03 e2e walkthrough.
-        logger.warning(
-            "transcription_failed",
-            txn_id=txn_id,
-            audio_path=audio_path,
-            exc_info=True,
-        )
-        return _to_response(record)
-
-    # Success — mutate record + purge audio from disk (retention policy).
-    finalize_success(record, result)
-
-    # Auto-generate a title from transcription when name is a generic filename
-    if record.name and record.name.lower().startswith("recording."):
-        record.name = _title_from_text(result.text)
-
-    await db.commit()
+    await _wait_for_job(txn_id)
     await db.refresh(record)
 
     return _to_response(record)
@@ -275,31 +240,14 @@ async def retry_transcription(
             detail="Audio bestand niet meer beschikbaar",
         )
 
-    # Read audio from disk
-    loop = asyncio.get_event_loop()
-    wav_bytes = await loop.run_in_executor(None, read_audio, record.audio_path)
-
     record.status = "processing"
+    record.claimed_at = None
+    record.attempts = 0
+    if language is not None:
+        record.language_hint = language
     await db.commit()
 
-    try:
-        provider = get_provider()
-        transcription_result = await provider.transcribe(wav_bytes, language)
-    except Exception:
-        record.status = "failed"
-        await db.commit()
-        await db.refresh(record)
-        logger.warning("retry_transcription_failed", txn_id=txn_id, exc_info=True)
-        return _to_response(record)
-
-    # Success — mutate record + purge audio from disk (retention policy).
-    finalize_success(record, transcription_result)
-
-    # Auto-generate a title from transcription when name is a generic filename
-    if record.name and record.name.lower().startswith("recording."):
-        record.name = _title_from_text(transcription_result.text)
-
-    await db.commit()
+    await _wait_for_job(txn_id)
     await db.refresh(record)
 
     return _to_response(record)
