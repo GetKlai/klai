@@ -121,9 +121,11 @@ dev = [
 ]
 
 [tool.uv]
-exclude-newer = "7 days"
-# Supply-chain cooldown above, the uv counterpart of Renovate's 7-day release
-# age: a freshly published version is not resolved for a week.
+exclude-newer = "3 days"
+# Supply-chain cooldown above, the uv counterpart of Renovate's 3-day release
+# age: a freshly published version is not resolved for three days. A
+# security fix younger than that is let through per package with
+# exclude-newer-package = { <name> = false } for that one PR.
 # unstructured pins filelock<4 but only calls FileLock(path, timeout=-1)
 # (unstructured/nlp/tokenize.py), which filelock 4 still provides. The whole
 # 3.x line carries thirteen advisories fixed only in 4.2.1 (CVE-2026-1129xx),
