@@ -155,7 +155,7 @@ describe("per-turn language switch", () => {
     await ask(container, "Can we speak English?");
     await waitFor(() => expect(placeholder(container)).toBe("Describe your question as specifically as you can..."));
 
-    // The Nerds panel frames a third-party page whose language is a product
+    // The booking panel frames a third-party page whose language is a product
     // decision of its own; it must not follow the conversation.
     expect(currentLocale()).toBe("nl");
   });

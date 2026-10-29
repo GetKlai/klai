@@ -96,7 +96,7 @@ def test_widget_config_footer_text_roundtrip():
 
     from app.api.admin_widgets import WidgetConfig, _widget_to_response
 
-    footer = "Plan een afspraak met [onze nerds](https://example.com/afspraak)."
+    footer = "Plan een afspraak met [onze specialisten](https://example.com/afspraak)."
     assert WidgetConfig(footer_text=footer).footer_text == footer
     with pytest.raises(ValueError):
         WidgetConfig(footer_text="x" * 2001)
@@ -142,24 +142,24 @@ def test_widget_config_footer_links_in_widget_roundtrip():
     assert _widget_to_response(widget, kb_access_count=0).widget_config.footer_links_in_widget is False
 
 
-def test_widget_config_nerds_integration_defaults_and_roundtrip():
-    """The nerds booking integration exists, defaults to disabled, and
+def test_widget_config_appointments_integration_defaults_and_roundtrip():
+    """The appointments booking integration exists, defaults to disabled, and
     survives the response mapping — so a PATCH with it stored reads back
     with the toggle and booking URL intact."""
     from app.api.admin_widgets import WidgetConfig, _widget_to_response
 
     config = WidgetConfig()
-    assert config.integrations.nerds.enabled is False
-    assert config.integrations.nerds.booking_url is None
+    assert config.integrations.appointments.enabled is False
+    assert config.integrations.appointments.booking_url is None
 
     saved = WidgetConfig(
         integrations={
             "hubspot": {"status": "not_connected"},
-            "nerds": {"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"},
+            "appointments": {"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"},
         }
     )
-    assert saved.integrations.nerds.enabled is True
-    assert saved.integrations.nerds.booking_url == "https://support.voys.nl/book/voys?t=abc"
+    assert saved.integrations.appointments.enabled is True
+    assert saved.integrations.appointments.booking_url == "https://support.example.com/book/voys?t=abc"
 
     widget = MagicMock()
     widget.id = "uuid-1"
@@ -173,8 +173,8 @@ def test_widget_config_nerds_integration_defaults_and_roundtrip():
     widget.created_at = "2026-01-01"
     widget.created_by = "user-1"
     response = _widget_to_response(widget, kb_access_count=0)
-    assert response.widget_config.integrations.nerds.enabled is True
-    assert response.widget_config.integrations.nerds.booking_url == "https://support.voys.nl/book/voys?t=abc"
+    assert response.widget_config.integrations.appointments.enabled is True
+    assert response.widget_config.integrations.appointments.booking_url == "https://support.example.com/book/voys?t=abc"
 
     # Widgets stored before the integration existed keep the disabled default.
     legacy = MagicMock()
@@ -188,7 +188,7 @@ def test_widget_config_nerds_integration_defaults_and_roundtrip():
     legacy.last_used_at = None
     legacy.created_at = "2026-01-01"
     legacy.created_by = "user-1"
-    assert _widget_to_response(legacy, kb_access_count=0).widget_config.integrations.nerds.enabled is False
+    assert _widget_to_response(legacy, kb_access_count=0).widget_config.integrations.appointments.enabled is False
 
 
 def test_widget_config_tone_register_defaults_restrained():

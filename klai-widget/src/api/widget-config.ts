@@ -20,13 +20,13 @@ export interface WidgetConfig {
   // absolute http(s) values (partner.py _widget_booking_url), so this can
   // go straight into an href. Unset/empty → no button, current behaviour.
   booking_url?: string;
-  // Nerds booking panel (Voys-specific support-partner integration). The
+  // Partner booking panel (Voys-specific support-partner integration). The
   // server only enables it when the toggle is on AND booking_url passed
-  // the absolute http(s) gate (partner.py _widget_nerds_integration), so
+  // the absolute http(s) gate (partner.py _widget_appointments_integration), so
   // an enabled block always carries a URL safe to use as an iframe src.
   // Absent/disabled → the widget renders exactly as it did before this
   // integration existed.
-  nerds?: {
+  appointments?: {
     enabled?: boolean;
     booking_url?: string;
   };

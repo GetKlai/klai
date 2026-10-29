@@ -158,7 +158,7 @@ import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
 // Test helpers
 // ---------------------------------------------------------------------------
 
-const FOOTER_WITH_LINK = 'Plan een afspraak met [onze nerds](https://voorbeeld.nl).'
+const FOOTER_WITH_LINK = 'Plan een afspraak met [onze specialisten](https://voorbeeld.example.com).'
 const FOOTER_WITHOUT_LINK = 'AI-antwoorden kunnen fouten bevatten.'
 
 function makeWidget(configOverrides?: Partial<WidgetConfig>): WidgetDetailResponse {

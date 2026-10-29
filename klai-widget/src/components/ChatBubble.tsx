@@ -95,8 +95,8 @@ export function ChatBubble(props: ChatBubbleProps = {}) {
           aiDisclosureOverride={chatState.config?.ai_disclosure_override}
           footerText={chatState.config?.footer_text}
           footerLinksInWidget={chatState.config?.footer_links_in_widget}
-          nerdsEnabled={chatState.config?.nerds?.enabled}
-          nerdsBookingUrl={chatState.config?.nerds?.booking_url}
+          appointmentsEnabled={chatState.config?.appointments?.enabled}
+          appointmentsBookingUrl={chatState.config?.appointments?.booking_url}
           collectUserInfo={chatState.config?.collect_user_info}
           manageHandoffStream={false}
         />

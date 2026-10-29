@@ -149,8 +149,8 @@ def _widget_conversation_starters(widget_config_data: dict[str, Any]) -> list[st
     return starters[:3] if isinstance(starters, list) else []
 
 
-def _widget_nerds_integration(widget_config_data: dict[str, Any]) -> dict[str, Any]:
-    """Nerds booking panel (Voys-specific support-partner integration).
+def _widget_appointments_integration(widget_config_data: dict[str, Any]) -> dict[str, Any]:
+    """Partner booking panel (Voys-specific support-partner integration).
 
     Delivered to the visitor-facing widget-config endpoints as
     ``{"enabled": bool, "booking_url": str}``. The booking URL is admin
@@ -164,10 +164,10 @@ def _widget_nerds_integration(widget_config_data: dict[str, Any]) -> dict[str, A
     same disabled shape as before it existed.
     """
     integrations = widget_config_data.get("integrations")
-    nerds = integrations.get("nerds") if isinstance(integrations, dict) else None
-    if not isinstance(nerds, dict) or not nerds.get("enabled"):
+    appointments = integrations.get("appointments") if isinstance(integrations, dict) else None
+    if not isinstance(appointments, dict) or not appointments.get("enabled"):
         return {"enabled": False, "booking_url": ""}
-    booking_url = _validated_http_url(nerds.get("booking_url"))
+    booking_url = _validated_http_url(appointments.get("booking_url"))
     return {"enabled": bool(booking_url), "booking_url": booking_url}
 
 
@@ -410,8 +410,8 @@ async def widget_config(
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
         # Interim appointment redirect (booking API pending) — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
-        # Voys-specific: in-widget Nerds booking panel — see _widget_nerds_integration.
-        "nerds": _widget_nerds_integration(widget_config_data),
+        # Voys-specific: in-widget partner booking panel — see _widget_appointments_integration.
+        "appointments": _widget_appointments_integration(widget_config_data),
         "handoff": {
             "hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(org=org, widget_config_data=widget_config_data)}
         },
@@ -549,8 +549,8 @@ async def public_bot_config(
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
         # Interim appointment redirect (booking API pending) — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
-        # Voys-specific: in-widget Nerds booking panel — see _widget_nerds_integration.
-        "nerds": _widget_nerds_integration(widget_config_data),
+        # Voys-specific: in-widget partner booking panel — see _widget_appointments_integration.
+        "appointments": _widget_appointments_integration(widget_config_data),
         "name": widget_row.name,
         "description": widget_row.description or "",
         "ai_disclosure_override": widget_config_data.get("ai_disclosure_override"),

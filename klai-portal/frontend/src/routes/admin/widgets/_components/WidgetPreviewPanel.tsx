@@ -25,7 +25,7 @@ interface Props {
 export function buildWidgetRendererConfig(widget: WidgetDetailResponse, preview: WidgetPreviewValues, session: WidgetPreviewSessionResponse) {
   const cssVariables = { ...(preview.cssVariables ?? widget.widget_config.css_variables) }
   if (preview.backgroundColor) cssVariables['--klai-background-color'] = preview.backgroundColor
-  const nerds = widget.widget_config.integrations?.nerds
+  const appointments = widget.widget_config.integrations?.appointments
   return {
     ...widget.widget_config,
     title: preview.headerTitle || preview.botName,
@@ -44,7 +44,7 @@ export function buildWidgetRendererConfig(widget: WidgetDetailResponse, preview:
     show_meta: preview.showMeta,
     collect_user_info: preview.collectUserInfo,
     page_context_enabled: false,
-    nerds: nerds ? { enabled: nerds.enabled, booking_url: nerds.booking_url ?? undefined } : undefined,
+    appointments: appointments ? { enabled: appointments.enabled, booking_url: appointments.booking_url ?? undefined } : undefined,
     chat_endpoint: session.chat_endpoint,
     session_token: session.session_token,
     session_expires_at: session.session_expires_at,

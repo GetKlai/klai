@@ -277,17 +277,17 @@ async def test_public_bot_config_strips_non_http_booking_url():
     assert json.loads(response.body.decode())["booking_url"] == ""
 
 
-def _nerds_config(nerds: object) -> dict:
-    """Widget config with a stored nerds integration block."""
-    return {"integrations": {"nerds": nerds}}
+def _appointments_config(appointments: object) -> dict:
+    """Widget config with a stored appointments integration block."""
+    return {"integrations": {"appointments": appointments}}
 
 
-def test_widget_nerds_integration_scheme_policy():
-    """The nerds booking_url becomes an iframe src: only absolute http(s) survives."""
-    from app.api.partner_widget_config import _widget_nerds_integration
+def test_widget_appointments_integration_scheme_policy():
+    """The appointments booking_url becomes an iframe src: only absolute http(s) survives."""
+    from app.api.partner_widget_config import _widget_appointments_integration
 
-    delivered = _widget_nerds_integration(
-        _nerds_config({"enabled": True, "booking_url": "https://support.voys.nl/book/x?t=1"})
+    delivered = _widget_appointments_integration(
+        _appointments_config({"enabled": True, "booking_url": "https://support.example.com/book/x?t=1"})
     )
     assert delivered == {"enabled": True, "booking_url": "https://support.example.com/book/x?t=1"}
 
@@ -302,27 +302,27 @@ def test_widget_nerds_integration_scheme_policy():
         None,
         42,
     ):
-        result = _widget_nerds_integration(_nerds_config({"enabled": True, "booking_url": bad}))
+        result = _widget_appointments_integration(_appointments_config({"enabled": True, "booking_url": bad}))
         assert result["booking_url"] == "", bad
         # A panel without a loadable URL is no panel — not delivered as enabled.
         assert result["enabled"] is False, bad
 
     # Toggle off → disabled, and the URL is not handed to the visitor either.
-    assert _widget_nerds_integration(_nerds_config({"enabled": False, "booking_url": "https://x.example.com"})) == {
+    assert _widget_appointments_integration(_appointments_config({"enabled": False, "booking_url": "https://x.example.com"})) == {
         "enabled": False,
         "booking_url": "",
     }
     # Absent or malformed integration blocks read as disabled, never raise.
-    assert _widget_nerds_integration({}) == {"enabled": False, "booking_url": ""}
-    assert _widget_nerds_integration({"integrations": None}) == {"enabled": False, "booking_url": ""}
-    assert _widget_nerds_integration({"integrations": {"nerds": "junk"}}) == {"enabled": False, "booking_url": ""}
+    assert _widget_appointments_integration({}) == {"enabled": False, "booking_url": ""}
+    assert _widget_appointments_integration({"integrations": None}) == {"enabled": False, "booking_url": ""}
+    assert _widget_appointments_integration({"integrations": {"appointments": "junk"}}) == {"enabled": False, "booking_url": ""}
 
 
 @pytest.mark.asyncio
-async def test_widget_config_delivers_enabled_nerds_integration():
+async def test_widget_config_delivers_enabled_appointments_integration():
     widget = FakeWidget()
     widget.widget_config.update(
-        _nerds_config({"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"})
+        _appointments_config({"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"})
     )
     org = FakeOrg()
     db = _make_db_chain(widget, org, [1])
@@ -340,14 +340,14 @@ async def test_widget_config_delivers_enabled_nerds_integration():
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
     body = json.loads(response.body.decode())
-    assert body["nerds"] == {"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}
+    assert body["appointments"] == {"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"}
 
 
 @pytest.mark.asyncio
-async def test_widget_config_strips_javascript_nerds_booking_url():
-    """A javascript: URL in the nerds integration never reaches the visitor."""
+async def test_widget_config_strips_javascript_appointments_booking_url():
+    """A javascript: URL in the appointments integration never reaches the visitor."""
     widget = FakeWidget()
-    widget.widget_config.update(_nerds_config({"enabled": True, "booking_url": "javascript:alert(1)"}))
+    widget.widget_config.update(_appointments_config({"enabled": True, "booking_url": "javascript:alert(1)"}))
     org = FakeOrg()
     db = _make_db_chain(widget, org, [1])
     request = _make_request("https://example.com")
@@ -364,12 +364,12 @@ async def test_widget_config_strips_javascript_nerds_booking_url():
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
     body = json.loads(response.body.decode())
-    assert body["nerds"] == {"enabled": False, "booking_url": ""}
+    assert body["appointments"] == {"enabled": False, "booking_url": ""}
 
 
 @pytest.mark.asyncio
-async def test_widget_config_without_nerds_integration_unchanged_for_widget():
-    """No nerds integration → the payload keeps the interim booking_url contract:
+async def test_widget_config_without_appointments_integration_unchanged_for_widget():
+    """No appointments integration → the payload keeps the interim booking_url contract:
     the legacy button URL is still delivered and the panel reads as disabled,
     so widgets without the integration render exactly as before."""
     widget = FakeWidget()
@@ -391,12 +391,12 @@ async def test_widget_config_without_nerds_integration_unchanged_for_widget():
 
     body = json.loads(response.body.decode())
     assert body["booking_url"] == "https://booking.example.com/voys"
-    assert body["nerds"] == {"enabled": False, "booking_url": ""}
+    assert body["appointments"] == {"enabled": False, "booking_url": ""}
 
 
 @pytest.mark.asyncio
-async def test_public_bot_config_strips_non_http_nerds_booking_url():
-    """The share-link endpoint runs the same nerds scheme validation."""
+async def test_public_bot_config_strips_non_http_appointments_booking_url():
+    """The share-link endpoint runs the same appointments scheme validation."""
     from app.api.partner_widget_config import public_bot_config
 
     org = FakeOrg()
@@ -408,7 +408,7 @@ async def test_public_bot_config_strips_non_http_nerds_booking_url():
             "welcome_message": "",
             "system_prompt": "",
             "css_variables": {},
-            **_nerds_config({"enabled": True, "booking_url": "javascript:alert(1)"}),
+            **_appointments_config({"enabled": True, "booking_url": "javascript:alert(1)"}),
         },
     )
     db = _make_db_chain(widget, org, [10])
@@ -424,11 +424,11 @@ async def test_public_bot_config_strips_non_http_nerds_booking_url():
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     body = json.loads(response.body.decode())
-    assert body["nerds"] == {"enabled": False, "booking_url": ""}
+    assert body["appointments"] == {"enabled": False, "booking_url": ""}
 
 
 @pytest.mark.asyncio
-async def test_public_bot_config_delivers_enabled_nerds_integration():
+async def test_public_bot_config_delivers_enabled_appointments_integration():
     from app.api.partner_widget_config import public_bot_config
 
     org = FakeOrg()
@@ -442,7 +442,7 @@ async def test_public_bot_config_delivers_enabled_nerds_integration():
             "css_variables": {},
             "ai_disclosure_override": "",
             "footer_text": "",
-            **_nerds_config({"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}),
+            **_appointments_config({"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"}),
         },
     )
     db = _make_db_chain(widget, org, [10])
@@ -458,7 +458,7 @@ async def test_public_bot_config_delivers_enabled_nerds_integration():
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     body = json.loads(response.body.decode())
-    assert body["nerds"] == {"enabled": True, "booking_url": "https://support.voys.nl/book/voys?t=abc"}
+    assert body["appointments"] == {"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"}
     assert body["ai_disclosure_override"] == ""
     assert body["footer_text"] == ""
     assert body["footer_links_in_widget"] is False

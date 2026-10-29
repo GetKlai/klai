@@ -672,17 +672,17 @@
   background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
 }
 
-/* ── Nerds booking panel (Voys-specific integration) ─────────────── */
+/* ── Partner booking panel (Voys-specific integration) ─────────────── */
 
 /* The panel is designed for a 460px-wide embed; widen the window for it
    while it is open, clamping to the viewport so narrow screens simply
    fill. Removing the class on close restores the default width. */
-.klai-window--nerds {
+.klai-window--appointments {
   width: min(460px, calc(100vw - 40px));
 }
 
 /* Overlay covering the chat while the booking panel is open. */
-.klai-nerds-panel {
+.klai-appointments-panel {
   position: absolute;
   inset: 0;
   z-index: 5;
@@ -691,7 +691,7 @@
   background-color: var(--klai-background-color);
 }
 
-.klai-nerds-panel-head {
+.klai-appointments-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -701,19 +701,19 @@
   flex-shrink: 0;
 }
 
-.klai-nerds-panel-title {
+.klai-appointments-panel-title {
   font-size: 14px;
   font-weight: 600;
   color: var(--klai-text-color);
 }
 
-.klai-nerds-panel-actions {
+.klai-appointments-panel-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.klai-nerds-panel-back {
+.klai-appointments-panel-back {
   display: inline-flex;
   text-decoration: none;
   align-items: center;
@@ -731,22 +731,22 @@
   transition: border-color 150ms ease, background-color 150ms ease;
 }
 
-.klai-nerds-panel-back:hover {
+.klai-appointments-panel-back:hover {
   border-color: var(--klai-primary-color);
   background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
 }
 
-.klai-nerds-panel-back:focus-visible {
+.klai-appointments-panel-back:focus-visible {
   border-color: var(--klai-text-color);
   background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
 }
 
-.klai-nerds-panel-back svg {
+.klai-appointments-panel-back svg {
   width: 13px;
   height: 13px;
 }
 
-.klai-nerds-frame {
+.klai-appointments-frame {
   flex: 1;
   width: 100%;
   border: 0;
@@ -755,7 +755,7 @@
 
 /* Frame never loaded: the same URL offered as a new-tab link, the
    behaviour this panel replaced. */
-.klai-nerds-panel-fallback {
+.klai-appointments-panel-fallback {
   flex: 1;
   display: flex;
   align-items: center;
@@ -763,7 +763,7 @@
   padding: 24px;
 }
 
-.klai-nerds-fallback-link {
+.klai-appointments-fallback-link {
   display: inline-block;
   border: 1px solid var(--klai-border-color);
   border-radius: 8px;
@@ -779,7 +779,7 @@
   transition: border-color 150ms ease, background-color 150ms ease;
 }
 
-.klai-nerds-fallback-link:hover {
+.klai-appointments-fallback-link:hover {
   border-color: var(--klai-primary-color);
   background: color-mix(in srgb, var(--klai-primary-color) 10%, transparent);
 }

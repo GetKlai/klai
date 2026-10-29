@@ -16,7 +16,7 @@ import { ChatWindow } from "../src/components/ChatWindow";
 
 afterEach(cleanup);
 
-const FOOTER_TEXT = "Plan een afspraak met [onze nerds](https://example.com/agenda).";
+const FOOTER_TEXT = "Plan een afspraak met [onze specialisten](https://example.com/agenda).";
 
 function renderWindow(props: Record<string, unknown> = {}) {
   return render(() => (
@@ -37,7 +37,7 @@ function footerAnchor(container: HTMLElement): HTMLAnchorElement {
 
 function panelBackButton(container: HTMLElement): HTMLButtonElement {
   return container.querySelector(
-    ".klai-nerds-panel-actions button.klai-nerds-panel-back",
+    ".klai-appointments-panel-actions button.klai-appointments-panel-back",
   ) as HTMLButtonElement;
 }
 
@@ -55,12 +55,12 @@ describe("footer link panel", () => {
     const click = new MouseEvent("click", { bubbles: true, cancelable: true });
     footerAnchor(container).dispatchEvent(click);
 
-    const panel = container.querySelector(".klai-nerds-panel");
+    const panel = container.querySelector(".klai-appointments-panel");
     expect(panel).not.toBeNull();
-    expect(panel!.querySelector("iframe.klai-nerds-frame")!.getAttribute("src")).toBe(
+    expect(panel!.querySelector("iframe.klai-appointments-frame")!.getAttribute("src")).toBe(
       "https://example.com/agenda",
     );
-    expect(panel!.querySelector(".klai-nerds-panel-title")!.textContent).toBe("onze nerds");
+    expect(panel!.querySelector(".klai-appointments-panel-title")!.textContent).toBe("onze specialisten");
     // The chat page must not be navigated away by the intercepted click.
     expect(click.defaultPrevented).toBe(true);
   });
@@ -72,13 +72,13 @@ describe("footer link panel", () => {
     // A destination that refuses to be framed renders an error page we cannot
     // detect, so the escape hatch cannot depend on the load event.
     const escape = container.querySelector(
-      ".klai-nerds-panel-actions a",
+      ".klai-appointments-panel-actions a",
     ) as HTMLAnchorElement;
     expect(escape.href).toBe("https://example.com/agenda");
     expect(escape.target).toBe("_blank");
     // A tenant's own footer destination gets none of the booking module's
     // clipboard/payment/geolocation permissions.
-    expect(container.querySelector("iframe.klai-nerds-frame")!.getAttribute("allow")).toBe("");
+    expect(container.querySelector("iframe.klai-appointments-frame")!.getAttribute("allow")).toBe("");
   });
 
   it("keeps opening a new tab when the flag is absent", () => {
@@ -86,7 +86,7 @@ describe("footer link panel", () => {
     const anchor = footerAnchor(container);
     fireEvent.click(anchor);
 
-    expect(container.querySelector(".klai-nerds-panel")).toBeNull();
+    expect(container.querySelector(".klai-appointments-panel")).toBeNull();
     expect(anchor.target).toBe("_blank");
     expect(anchor.rel).toBe("noopener noreferrer");
   });
@@ -100,7 +100,7 @@ describe("footer link panel", () => {
     });
     footerAnchor(container).dispatchEvent(click);
 
-    expect(container.querySelector(".klai-nerds-panel")).toBeNull();
+    expect(container.querySelector(".klai-appointments-panel")).toBeNull();
     expect(click.defaultPrevented).toBe(false);
   });
 
