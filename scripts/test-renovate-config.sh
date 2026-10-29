@@ -94,6 +94,19 @@ assert_contains "$config" \
 assert_contains "$config" \
   "overridePackageName: 'https://github.com/aquasecurity/trivy.git'" \
   'Trivy must use its public Git repository for lookups'
+# The cooldown is 3 days everywhere (owner decision 2026-10-29): Renovate, npm
+# in the portal and uv in the connector. The Semgrep registry rules that used
+# to guard these files accept nothing under 7 and are excluded in semgrep.yml,
+# so this is the check that a cooldown is present and not shorter.
+assert_line "$config" \
+  "  minimumReleaseAge: '3 days'," \
+  'the Renovate cooldown must be 3 days'
+assert_line "$repo_root/klai-portal/frontend/.npmrc" \
+  'min-release-age=3' \
+  'the portal .npmrc must keep its 3-day cooldown for people at a keyboard'
+assert_line "$repo_root/klai-connector/pyproject.toml" \
+  'exclude-newer = "3 days"' \
+  'the connector uv setting must keep its 3-day cooldown'
 assert_line "$config" \
   "  minimumReleaseAgeBehaviour: 'timestamp-optional'," \
   'an update without a release timestamp (GHCR images, lock file refresh, Git tags) must not stay pending forever'
