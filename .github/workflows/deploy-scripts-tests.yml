@@ -253,5 +253,10 @@ jobs:
       - name: vexa12 host-readiness suite
         run: bash deploy/scripts/tests/check-vexa12-preconditions.test.sh
 
+      # The bot image is fetched only by this helper; a bump merged without the
+      # pull fails the first meeting, which is what kept Vexa off automerge.
+      - name: vexa bot pre-pull suite
+        run: bash deploy/scripts/tests/vexa-bot-prepull.test.sh
+
       - name: container-hygiene preflight suite
         run: bash .claude/hooks/klai/tests/container-hygiene-preflight.test.sh

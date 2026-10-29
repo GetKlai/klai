@@ -11,8 +11,9 @@
 #      docker-socket-proxy has IMAGES disabled (SPEC-SEC-024), so vexa12-runtime
 #      CANNOT pull it — POST /containers/create returns "No such image" and every
 #      spawn fails. The image is an env value, not a compose service, so
-#      `compose up` does not fetch it either. It has to be pulled by hand, and
-#      again after every tag bump.
+#      `compose up` does not fetch it either. The compose sync pulls it
+#      (deploy/scripts/vexa-bot-prepull.sh) before it replaces any file; this
+#      check proves that held, and covers a restore or a fresh host.
 #
 #   2. Schema converged. meeting-api ships no alembic and never calls create_all;
 #      vexa12-admin-api owns ensure_schema(). An empty vexa_v012 means the tables
@@ -45,11 +46,12 @@
 
 set -eu
 
-# Must equal BROWSER_IMAGE on vexa12-runtime in deploy/docker-compose.yml.
-# This script is piped over SSH and runs on the host with no repo checkout,
-# so it cannot read that value -- the equality is asserted in CI instead, by
-# deploy/scripts/tests/check-vexa12-preconditions.test.sh. Bump both together.
-BOT_IMAGE="vexaai/vexa-bot:v0.13.1"
+# The bot image is read from the compose file the host actually runs, so a
+# Renovate bump of BROWSER_IMAGE cannot leave a stale literal here. The script is
+# piped over SSH and has no checkout, but deploy-compose.yml has synced
+# /opt/klai/docker-compose.yml from the deployed commit.
+COMPOSE_FILE="${KLAI_COMPOSE_FILE:-/opt/klai/docker-compose.yml}"
+BOT_IMAGE=$(sed -n 's/^[[:space:]]*BROWSER_IMAGE:[[:space:]]*\(vexaai\/vexa-bot:[A-Za-z0-9._-]*\)[[:space:]]*$/\1/p' "$COMPOSE_FILE" 2>/dev/null || true)
 FAIL=0
 
 say_fail() { echo "FAIL: $1"; echo "      fix: $2"; FAIL=1; }
@@ -58,11 +60,14 @@ say_ok()   { echo "OK:   $1"; }
 echo "── SPEC-VEXA-004 host readiness ──"
 
 # 1 — bot image on the host
-if docker image inspect "$BOT_IMAGE" >/dev/null 2>&1; then
+if [ -z "$BOT_IMAGE" ]; then
+    say_fail "no BROWSER_IMAGE (vexaai/vexa-bot:<tag>) found in $COMPOSE_FILE" \
+             "check that deploy-compose.yml has synced the compose file to this host"
+elif docker image inspect "$BOT_IMAGE" >/dev/null 2>&1; then
     say_ok "bot image $BOT_IMAGE present"
 else
     say_fail "bot image $BOT_IMAGE is NOT on this host" \
-             "docker pull $BOT_IMAGE   (the runtime cannot pull it: IMAGES disabled in docker-socket-proxy)"
+             "/opt/klai/scripts/vexa-bot-prepull.sh $COMPOSE_FILE   (the runtime cannot pull it: IMAGES disabled in docker-socket-proxy)"
 fi
 
 # 2 — schema converged in vexa_v012

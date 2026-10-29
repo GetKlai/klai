@@ -1880,15 +1880,15 @@ services:
   # meeting-api ships no alembic and never calls create_all, so without admin-api
   # the database stays empty.
   #
-  # DEPLOY PREREQUISITE: the bot image must be present on the host BEFORE the first
-  # spawn. docker-socket-proxy has IMAGES disabled (SPEC-SEC-024), so vexa12-runtime
-  # cannot pull it — POST /containers/create fails with "No such image". The bot
-  # image is an env value, not a compose service, so `compose up` does not fetch it
-  # either. Run on core-01:
-  #     docker pull vexaai/vexa-bot:v0.13.1
-  # Checked — not enforced — by scripts/check-vexa12-deploy-preconditions.sh,
-  # which is an operator command run by hand over SSH. No pipeline runs it, so
-  # nothing stops a deploy that skipped the pull.
+  # BOT IMAGE: it must be present on the host BEFORE the first spawn.
+  # docker-socket-proxy has IMAGES disabled (SPEC-SEC-024), so vexa12-runtime
+  # cannot pull it - POST /containers/create fails with "No such image". The bot
+  # image is an env value, not a compose service, so `compose up` does not fetch
+  # it either. deploy-compose.yml therefore pulls the BROWSER_IMAGE of the commit
+  # being deployed (deploy/scripts/vexa-bot-prepull.sh) before it replaces any
+  # file, and a tag that does not exist ends the sync red with the host
+  # untouched. That pull is what lets Renovate automerge Vexa bumps.
+  # scripts/check-vexa12-deploy-preconditions.sh checks the result by hand.
   # ══════════════════════════════════════════════════════════════════════════
 
   # ─── Vexa 0.12 Redis (bot state, pub/sub, streams) ──────────────────────

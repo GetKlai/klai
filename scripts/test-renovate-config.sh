@@ -162,7 +162,7 @@ for line in '    enabled: true,' '    minimumReleaseAge: null,' "    prCreation:
 done
 # Rules are read from the file itself: a rule is the text between two lines that
 # open a 4-space object, which is how customManagers and packageRules are laid out.
-if ! python3 - "$config" <<'PY'
+if ! python3 - "$config" "$repo_root/.github/workflows/deploy-compose.yml" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 chunks = re.split(r"(?m)^    \{$", text)
@@ -193,6 +193,24 @@ if "automerge: true" not in dev or "matchUpdateTypes: ['major']" not in dev:
 files = names(dev, "matchFileNames")
 if not files or any(not f.startswith(("klai-portal/frontend/", "klai-docs/", "klai-widget/")) for f in files):
     fail.append("npm dev automerge is limited to the packages with a CI job")
+
+# Vexa automerges because deploy-compose.yml pulls the bot image (an env value
+# that `compose up` never fetches) before it replaces any file. The pull and the
+# automerge are one decision: drop the pull and this rule must go back to manual.
+vexa_idx = next((i for i, c in enumerate(chunks) if "matchPackageNames: ['vexaai/**']" in c), None)
+major_idx = next((i for i, c in enumerate(chunks) if "matchUpdateTypes: ['major']" in c and "automerge: false" in c), None)
+if vexa_idx is None:
+    fail.append("the vexaai/** rule is missing")
+else:
+    if not re.search(r"(?m)^      automerge: true,$", chunks[vexa_idx]):
+        fail.append("vexaai/** must automerge: the sync pre-pulls the bot image")
+    if "groupName: 'Vexa bot pipeline'" not in chunks[vexa_idx]:
+        fail.append("vexaai/** needs its own group so a pending bump holds nothing else back")
+    if major_idx is None or major_idx < vexa_idx:
+        fail.append("the major rule must come after the vexaai/** rule so Vexa majors stay manual")
+sync = open(sys.argv[2]).read()
+if "bash deploy/scripts/vexa-bot-prepull.sh deploy/docker-compose.yml" not in sync:
+    fail.append("Vexa may only automerge while deploy-compose.yml runs vexa-bot-prepull.sh")
 
 # A custom manager that reads a data store from GitHub changes the datasource
 # and sometimes the packageName. A version ceiling written for the Docker Hub

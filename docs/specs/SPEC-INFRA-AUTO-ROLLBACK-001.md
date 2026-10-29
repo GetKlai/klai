@@ -258,7 +258,7 @@ Once 4.a to 4.c are live and their rehearsals are green:
   dependencies, Docker images, the deploy, registry and token actions that run
   first on main, upload-artifact and the CodeQL SARIF upload (only on main or
   on failure). Data-store majors keep `dependencyDashboardApproval` (D1, D2).
-- Vexa stays manual (bot image pre-pull, documented in `renovate.json5`).
+- Vexa automerges since 2026-10-29: the compose sync pre-pulls the bot image (`deploy/scripts/vexa-bot-prepull.sh`) before it replaces any file. Vexa majors stay manual.
 
 ## 6. E2E-triggered rollback
 
