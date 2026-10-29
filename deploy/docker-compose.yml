@@ -251,7 +251,7 @@ services:
   # ─── Redis ────────────────────────────────────────────────────────────────
   redis:
     logging: *log-rotation
-    image: redis:8.10.2-alpine
+    image: redis:8.10.3-alpine
     restart: unless-stopped
     volumes:
       - redis-data:/data
@@ -1898,7 +1898,7 @@ services:
   # channel names even on a different DB index. Vexa offers no channel prefix.
   vexa12-redis:
     logging: *log-rotation
-    image: redis:8.10.2-alpine
+    image: redis:8.10.3-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${VEXA_REDIS_PASSWORD}", "--appendfsync", "everysec"]
     deploy:
@@ -2591,7 +2591,7 @@ services:
 
   crm-redis:
     logging: *log-rotation
-    image: redis:8.10.2-alpine
+    image: redis:8.10.3-alpine
     restart: unless-stopped
     command: ["redis-server", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
     networks:
