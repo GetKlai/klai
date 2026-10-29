@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -33,7 +32,7 @@ def _scheduled(
     )
 
 
-def _config(config: dict[str, Any]) -> PortalConnectorConfig:
+def _config(config: dict[str, str]) -> PortalConnectorConfig:
     return PortalConnectorConfig(
         connector_id="conn-1",
         kb_id=1,
@@ -89,7 +88,6 @@ class TestTickPingsEligibleConnectors:
             connector_id=str(item.connector_id),
             org_id=item.org_id,
             url="https://help.voys.nl",
-            auth_chain_hosts=[],
         )
 
     @pytest.mark.asyncio
@@ -107,7 +105,6 @@ class TestTickPingsEligibleConnectors:
             connector_id=str(item.connector_id),
             org_id=item.org_id,
             url="https://help.voys.nl/index",
-            auth_chain_hosts=[],
         )
 
     @pytest.mark.asyncio
@@ -133,28 +130,6 @@ class TestTickPingsEligibleConnectors:
             connector_id=str(item.connector_id),
             org_id=item.org_id,
             url="https://wiki.example.com/en/handbook",
-            auth_chain_hosts=[],
-        )
-
-    @pytest.mark.asyncio
-    async def test_sends_the_sign_in_hosts_from_the_connector_config(self) -> None:
-        """A site that signs in through a second host stays alive only when
-        knowledge-ingest may follow the sign-in chain to that host; the hosts
-        live in the connector config, nowhere else."""
-        item = _scheduled()
-        cfg = _config({"base_url": "https://wiki.example.com", "auth_chain_hosts": ["idp.example.com"]})
-        keepalive, _, crawl_client = _make_keepalive(
-            scheduled=[item],
-            config_by_connector={item.connector_id: cfg},
-        )
-
-        await keepalive.tick()
-
-        crawl_client.crawl_keepalive.assert_awaited_once_with(
-            connector_id=str(item.connector_id),
-            org_id=item.org_id,
-            url="https://wiki.example.com",
-            auth_chain_hosts=["idp.example.com"],
         )
 
     @pytest.mark.asyncio

@@ -437,30 +437,26 @@ def test_redis_is_not_shared_with_another_vexa_stack() -> None:
         )
 
 
-def test_bot_image_is_pinned_and_flagged_as_a_pull_prerequisite() -> None:
+def test_bot_image_is_pinned_and_pulled_by_the_compose_sync() -> None:
     """docker-socket-proxy has IMAGES disabled, so the runtime cannot pull the bot.
 
     The bot image is an env value rather than a compose service, so `compose up`
-    does not fetch it either. It must be pre-pulled on the host; this test keeps the
-    requirement attached to the tag it applies to.
+    does not fetch it either. The sync workflow pulls it before replacing any
+    file, which is what lets Renovate automerge a Vexa bump; this test keeps that
+    step attached to the pin. No tag is asserted here: it would go stale on every
+    bump the pull exists to make safe.
     """
     services = _compose()["services"]
     image = services["vexa12-runtime"]["environment"]["BROWSER_IMAGE"]
     assert image.startswith("vexaai/vexa-bot:"), image
     assert image.rsplit(":", 1)[1] not in ("latest", "dev", "staging"), "bot image must be immutably pinned"
 
-    # Assert the EXACT ref, not just the prefix: a tag bump that forgets the pull
-    # instruction is precisely the drift this test exists to catch, and a
-    # prefix-only match would sail straight past it.
-    body = COMPOSE.read_text()
-    assert f"docker pull {image}" in body, (
-        f"BROWSER_IMAGE is {image} but the documented pre-pull instruction does not name that "
-        "exact ref. The runtime cannot fetch the image itself (IMAGES disabled in "
-        "docker-socket-proxy), so a stale instruction means the first spawn fails."
-    )
-    script = COMPOSE.resolve().parents[1] / "scripts" / "check-vexa12-deploy-preconditions.sh"
-    assert f'BOT_IMAGE="{image}"' in script.read_text(), (
-        f"check-vexa12-deploy-preconditions.sh must check for {image}, the tag actually deployed"
+    root = COMPOSE.resolve().parents[1]
+    workflow = (root / ".github" / "workflows" / "deploy-compose.yml").read_text()
+    assert "bash deploy/scripts/vexa-bot-prepull.sh deploy/docker-compose.yml" in workflow, (
+        "deploy-compose.yml must pull the bot image before it replaces any file: the runtime cannot "
+        "fetch it itself (IMAGES disabled in docker-socket-proxy), so without the pull the first spawn "
+        "after a bump fails."
     )
 
 
