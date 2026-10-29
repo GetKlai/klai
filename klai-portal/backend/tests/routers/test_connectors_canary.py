@@ -326,8 +326,8 @@ class TestValidateConnectorConfigErrorShape:
             _validate_connector_config(
                 "web_crawler",
                 {
-                    "base_url": "https://wiki.redcactus.cloud/nl",
-                    "discovery_seed_url": "https://wiki.redcactus.cloud/en/crm-software/accelerate",
+                    "base_url": "https://wiki.example.com/nl",
+                    "discovery_seed_url": "https://wiki.example.com/en/crm-software/accelerate",
                 },
             )
         detail = cast(list, exc_info.value.detail)

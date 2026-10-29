@@ -38,7 +38,7 @@ class TestSelectWorkspace:
                     "session_id": "sid",
                     "session_token": "stk",
                     "zitadel_user_id": "u1",
-                    "email": "a@b.com",
+                    "email": "a@b.example.net",
                     "auth_request_id": "ar1",
                     "entries": [
                         {
@@ -91,7 +91,7 @@ class TestSelectWorkspace:
                     "session_id": "sid",
                     "session_token": "stk",
                     "zitadel_user_id": "u1",
-                    "email": "a@b.com",
+                    "email": "a@b.example.net",
                     "auth_request_id": "ar1",
                     "entries": [
                         {

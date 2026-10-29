@@ -38,7 +38,7 @@ def _mock_portal_user() -> MagicMock:
     user.role = "company"
     user.preferred_language = "nl"
     user.display_name = "Test User"
-    user.email = "test@acme.nl"
+    user.email = "test@acme.example.com"
     return user
 
 
@@ -91,7 +91,7 @@ async def _call_me(perms: UserPermissions | None) -> MeResponse:
         patch("app.api.me.set_tenant", new_callable=AsyncMock),
     ):
         mock_zitadel.get_userinfo = AsyncMock(
-            return_value={"sub": "user-123", "email": "test@acme.nl", "name": "Test User"}
+            return_value={"sub": "user-123", "email": "test@acme.example.com", "name": "Test User"}
         )
         mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
         return await me(credentials=mock_credentials, db=mock_db)
@@ -124,7 +124,7 @@ class TestMeOrgFound:
 
         userinfo = {
             "sub": "user-123",
-            "email": "test@acme.nl",
+            "email": "test@acme.example.com",
             "name": "Test User",
         }
 
@@ -166,7 +166,7 @@ class TestMeOrgFound:
 
         userinfo = {
             "sub": "user-123",
-            "email": "test@acme.nl",
+            "email": "test@acme.example.com",
             "name": "Test User",
         }
 
@@ -242,7 +242,7 @@ class TestMeOrgFound:
         mock_credentials = MagicMock()
         mock_credentials.credentials = "test-token"
 
-        userinfo = {"sub": "user-789", "email": "test@acme.nl", "name": "Test User"}
+        userinfo = {"sub": "user-789", "email": "test@acme.example.com", "name": "Test User"}
 
         with (
             patch("app.api.me.zitadel") as mock_zitadel,
@@ -292,11 +292,11 @@ class TestMeOrgFound:
         from app.api.me import MeResponse
 
         # Default should be False
-        resp = MeResponse(user_id="u1", email="a@b.com", name="A")
+        resp = MeResponse(user_id="u1", email="a@b.example.net", name="A")
         assert resp.org_found is False
 
         # Can be set to True
-        resp2 = MeResponse(user_id="u1", email="a@b.com", name="A", org_found=True)
+        resp2 = MeResponse(user_id="u1", email="a@b.example.net", name="A", org_found=True)
         assert resp2.org_found is True
 
 
@@ -304,7 +304,7 @@ class TestMeOrgKbGate:
     """``can_create_org_kbs`` must mirror what ``POST /api/app/knowledge-bases`` enforces.
 
     Regression for the 2026-08-20 report "Admin kan geen nieuwe knowledgebase
-    aanmaken" (org Nerds, ``POST /api/app/knowledge-bases`` -> 403 in 4.9ms).
+    aanmaken" (a partner org, ``POST /api/app/knowledge-bases`` -> 403 in 4.9ms).
     ``assert_can_create_org_kb`` denies on ``profile AND plan``, but /api/me
     exposed no such field, so the wizard guessed with ``kb.connectors`` — a
     seat-derived capability that ``hasCapability`` reports as true for every

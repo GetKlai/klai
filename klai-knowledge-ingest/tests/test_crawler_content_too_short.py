@@ -1,6 +1,6 @@
 """Damage 2 (stop-the-bleeding fix): error pages must not be persisted as knowledge.
 
-Production incident (2026-08-18): openapi.eu-production.holodeck.voys.nl
+Production incident (2026-08-18): openapi.eu-production.holodeck.example.com
 served 13 pages that all successfully fetched (HTTP 200) and were all
 exactly 92 characters of the same OpenAPI-parser error text:
 
@@ -19,7 +19,7 @@ band as the error pages:
 
   - getklai.com/contact (85 chars): "# Contact\nHave a question about
     Klai? Send us a message"
-  - help.voys.nl/help-pages-nl (108 chars): "# Help Pages NL\nFreedom: Je
+  - help.example.com/help-pages-nl (108 chars): "# Help Pages NL\nFreedom: Je
     eerste keer\nDe Voys App..."
 
 A flat threshold above 118 would drop both. A flat threshold below 85
@@ -84,7 +84,7 @@ _NOT_FOUND_TEXT = "# 404\nPage not found. The page you are looking for does not 
 _CONTACT_PAGE_TEXT = "# Contact\nHave a question about Klai? Send us a message and we will reply."
 
 # Reconstructed, approximate match to the reported ~108-char length — a
-# real, unique page (help.voys.nl/help-pages-nl) from the same
+# real, unique page (help.example.com/help-pages-nl) from the same
 # measurement, also inside the error-page length band.
 _HELP_INDEX_TEXT = (
     "# Help Pages NL\nFreedom: Je eerste keer\nDe Voys App: instellen en gebruiken"
@@ -156,7 +156,7 @@ async def test_empty_page_is_rejected_below_hard_floor():
     """1-char page (production measurement: 3 completely empty pages) is
     always rejected -- no cluster lookup needed, no siblings required."""
     mock_conn = _make_mock_conn()
-    result = _make_crawl_result("https://wiki.redcactus.cloud/nl/empty-page", "x")
+    result = _make_crawl_result("https://wiki.example.com/nl/empty-page", "x")
 
     mock_pg, mock_ingest = await _run_ingest(result, mock_conn)
 
@@ -174,7 +174,7 @@ async def test_openapi_error_page_with_siblings_is_rejected():
     siblings = [compute_simhash(_OPENAPI_PARSE_ERROR_TEXT)] * 4
     mock_conn = _make_mock_conn(siblings)
     result = _make_crawl_result(
-        "https://openapi.eu-production.holodeck.voys.nl/call",
+        "https://openapi.eu-production.holodeck.example.com/call",
         _OPENAPI_PARSE_ERROR_TEXT,
     )
 
@@ -230,7 +230,7 @@ async def test_unique_short_help_index_page_is_persisted():
     """
     assert len(_HELP_INDEX_TEXT) < settings.ingest_min_content_length
     mock_conn = _make_mock_conn()  # no siblings
-    result = _make_crawl_result("https://help.voys.nl/help-pages-nl", _HELP_INDEX_TEXT)
+    result = _make_crawl_result("https://help.example.com/help-pages-nl", _HELP_INDEX_TEXT)
 
     _mock_pg, mock_ingest = await _run_ingest(result, mock_conn)
 

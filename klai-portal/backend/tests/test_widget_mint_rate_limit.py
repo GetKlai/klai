@@ -3,7 +3,7 @@
 REQ-7 (Finding B-4, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001):
 - widget-config must rate-limit before DB lookup: per client IP (20/min) then
   per widget abuse ceiling (120/min). The ceiling used to be 10/min, which was
-  a traffic cap shared by every visitor of a widget (help.voys.nl 429s).
+  a traffic cap shared by every visitor of a widget (help.example.com 429s).
 - public-bot-config must apply the same two layers before DB lookup: the
   client bucket widget_mint_ip:{id}:{ip} is shared with the embed path, so a
   share-link hammerer can never burn more of the 120/min widget_mint:{id}
@@ -104,7 +104,7 @@ def _mint_stubs() -> Any:
 
 # ---------------------------------------------------------------------------
 # Acceptance (real limiter, one minute, one widget):
-# reported symptom — the 11th visitor of help.voys.nl got 429.
+# reported symptom — the 11th visitor of help.example.com got 429.
 # ---------------------------------------------------------------------------
 
 
@@ -279,7 +279,7 @@ async def test_widget_config_429_when_client_limit_fires():
     assert response.headers["Retry-After"] == "45"
     # A browser on the customer's site must be able to read the 429: without
     # the origin echo it only sees an opaque CORS error and never the
-    # Retry-After (help.voys.nl, 2026-09-10).
+    # Retry-After (help.example.com, 2026-09-10).
     assert response.headers["Access-Control-Allow-Origin"] == "https://example.com"
     assert response.headers["Access-Control-Expose-Headers"] == "Retry-After"
     assert "access-control-allow-credentials" not in {k.lower() for k in response.headers}

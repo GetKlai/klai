@@ -57,7 +57,7 @@ class TestOutcomeForFailedUrlPreservesExceptionEvidence:
         assert outcome["observed"] is False
 
     def test_5xx_with_correlation_id_body_preserves_correlation_id(self) -> None:
-        """2026-08-14 intermedia.com shape: opaque 500 body carrying only
+        """2026-08-14 intermedia.example.net shape: opaque 500 body carrying only
         an 'error' string and a correlation_id — the only handle to cross-
         reference the failure against crawl4ai's own logs."""
         error = _http_status_error(

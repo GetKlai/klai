@@ -111,7 +111,7 @@ def test_enrich_interactive_has_its_own_lane():
     Procrastinate fetches the oldest todo across a worker's whole queue
     set — with ENRICH_INTERACTIVE inside the LLM lane, a bulk crawl's
     backlog of hundreds of enrich-bulk/graphiti-bulk jobs made a single
-    user-requested reindex wait for hours (intermedia.com incident,
+    user-requested reindex wait for hours (intermedia.example.net incident,
     2026-08-14).
     """
     assert queues.INTERACTIVE_QUEUES == [queues.ENRICH_INTERACTIVE]

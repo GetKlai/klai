@@ -1,7 +1,7 @@
 """A rebuild scoped to one language is expressed as a set of knowledge bases.
 
 A tenant mixes languages per KB. Voys keeps its Dutch help centre in `support`
-(help.voys.nl plus wiki.redcactus.cloud/nl) and an English vendor corpus in
+(help.example.com plus wiki.example.com/nl) and an English vendor corpus in
 `ascend`, which is 421 of its 959 episodes and 7,118 of its 18,031 edges. A
 rebuild of "the Dutch content" that cannot exclude `ascend` is not a rebuild of
 the Dutch content.

@@ -289,15 +289,15 @@ def test_widget_nerds_integration_scheme_policy():
     delivered = _widget_nerds_integration(
         _nerds_config({"enabled": True, "booking_url": "https://support.voys.nl/book/x?t=1"})
     )
-    assert delivered == {"enabled": True, "booking_url": "https://support.voys.nl/book/x?t=1"}
+    assert delivered == {"enabled": True, "booking_url": "https://support.example.com/book/x?t=1"}
 
     for bad in (
         "javascript:alert(1)",
         "JaVaScRiPt:alert(1)",
         "data:text/html;base64,PHNjcmlwdD4=",
-        "//support.voys.nl/book",
+        "//support.example.com/book",
         "/relative/booking",
-        "support.voys.nl/book",
+        "support.example.com/book",
         "",
         None,
         42,
@@ -798,7 +798,7 @@ def test_origin_allowed_exact_match():
     from app.services.widget_auth import origin_allowed
 
     assert origin_allowed("https://example.com", ["https://example.com"])
-    assert not origin_allowed("https://evil.com", ["https://example.com"])
+    assert not origin_allowed("https://evil.example.net", ["https://example.com"])
 
 
 def test_origin_allowed_wildcard_subdomain():
@@ -808,9 +808,9 @@ def test_origin_allowed_wildcard_subdomain():
     assert origin_allowed("https://app.example.com", ["https://*.example.com"])
     assert origin_allowed("https://test.example.com", ["https://*.example.com"])
     assert not origin_allowed("https://example.com", ["https://*.example.com"])
-    assert not origin_allowed("https://evil-example.com", ["https://*.example.com"])
+    assert not origin_allowed("https://evil-app.example.com", ["https://*.app.example.com"])
     assert not origin_allowed("https://example.com.evil.test", ["https://*.example.com"])
-    assert not origin_allowed("https://evil.com", ["https://*.example.com"])
+    assert not origin_allowed("https://evil.example.net", ["https://*.example.com"])
 
 
 def test_origin_allowed_combined():
@@ -821,7 +821,7 @@ def test_origin_allowed_combined():
     assert origin_allowed("https://getklai.com", origins)
     assert origin_allowed("https://voys.getklai.com", origins)
     assert origin_allowed("https://test.getklai.com", origins)
-    assert not origin_allowed("https://evil.com", origins)
+    assert not origin_allowed("https://evil.example.net", origins)
 
 
 def test_origin_allowed_empty_list_denied_by_default():
@@ -835,10 +835,10 @@ def test_origin_allowed_empty_list_denied_by_default():
     from app.services.widget_auth import origin_allowed
 
     assert not origin_allowed("https://example.com", [])
-    assert not origin_allowed("https://anything.else.com", [])
+    assert not origin_allowed("https://anything.example.net", [])
     # Explicit opt-in flips the default back for legitimate use cases.
     assert origin_allowed("https://example.com", [], allow_any_origin=True)
-    assert origin_allowed("https://anything.else.com", [], allow_any_origin=True)
+    assert origin_allowed("https://anything.example.net", [], allow_any_origin=True)
 
 
 def test_origin_allowed_trailing_slash():

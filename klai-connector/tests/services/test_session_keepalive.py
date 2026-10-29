@@ -75,7 +75,7 @@ class TestTickPingsEligibleConnectors:
     @pytest.mark.asyncio
     async def test_pings_web_crawler_with_saved_credentials_using_base_url(self) -> None:
         item = _scheduled()
-        cfg = _config({"base_url": "https://help.voys.nl"})
+        cfg = _config({"base_url": "https://help.example.com"})
         keepalive, _, crawl_client = _make_keepalive(
             scheduled=[item],
             config_by_connector={item.connector_id: cfg},
@@ -87,13 +87,13 @@ class TestTickPingsEligibleConnectors:
         crawl_client.crawl_keepalive.assert_awaited_once_with(
             connector_id=str(item.connector_id),
             org_id=item.org_id,
-            url="https://help.voys.nl",
+            url="https://help.example.com",
         )
 
     @pytest.mark.asyncio
     async def test_prefers_canary_url_over_base_url(self) -> None:
         item = _scheduled()
-        cfg = _config({"base_url": "https://help.voys.nl", "canary_url": "https://help.voys.nl/index"})
+        cfg = _config({"base_url": "https://help.example.com", "canary_url": "https://help.example.com/index"})
         keepalive, _, crawl_client = _make_keepalive(
             scheduled=[item],
             config_by_connector={item.connector_id: cfg},
@@ -104,7 +104,7 @@ class TestTickPingsEligibleConnectors:
         crawl_client.crawl_keepalive.assert_awaited_once_with(
             connector_id=str(item.connector_id),
             org_id=item.org_id,
-            url="https://help.voys.nl/index",
+            url="https://help.example.com/index",
         )
 
     @pytest.mark.asyncio
@@ -223,7 +223,7 @@ class TestTickPingsEligibleConnectors:
     @pytest.mark.asyncio
     async def test_one_bad_ping_does_not_abort_the_batch(self) -> None:
         good, bad = _scheduled(), _scheduled()
-        cfg = _config({"base_url": "https://help.voys.nl"})
+        cfg = _config({"base_url": "https://help.example.com"})
         keepalive, _, crawl_client = _make_keepalive(
             scheduled=[bad, good],
             config_by_connector={bad.connector_id: cfg, good.connector_id: cfg},

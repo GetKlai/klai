@@ -33,11 +33,11 @@ def _make_portal_config() -> PortalConnectorConfig:
         zitadel_org_id="100000000000000002",
         connector_type="web_crawler",
         config={
-            "base_url": "https://help.voys.nl",
+            "base_url": "https://example.com",
             "max_pages": 20,
             "path_prefix": None,
             "content_selector": "main",
-            "canary_url": "https://help.voys.nl/index",
+            "canary_url": "https://example.com/index",
             "canary_fingerprint": "deadbeef12345678",
             "login_indicator_selector": "#login-form",
             "max_depth": 3,
@@ -238,12 +238,12 @@ class TestCrawlSyncClientContract:
             kb_slug="support",
             generation="sync-run-42",
             config={
-                "base_url": "https://help.voys.nl",
+                "base_url": "https://help.example.com",
                 "max_pages": 20,
                 "max_depth": 2,
                 "path_prefix": "/nl",
                 "content_selector": "main",
-                "canary_url": "https://help.voys.nl/index",
+                "canary_url": "https://help.example.com/index",
                 "canary_fingerprint": "deadbeef12345678",
                 "login_indicator_selector": "#login-form",
             },
@@ -255,12 +255,12 @@ class TestCrawlSyncClientContract:
         assert body["org_id"] == "100000000000000002"
         assert body["kb_slug"] == "support"
         assert body["generation"] == "sync-run-42"
-        assert body["base_url"] == "https://help.voys.nl"
+        assert body["base_url"] == "https://help.example.com"
         assert body["max_pages"] == 20
         assert body["max_depth"] == 2
         assert body["path_prefix"] == "/nl"
         assert body["content_selector"] == "main"
-        assert body["canary_url"] == "https://help.voys.nl/index"
+        assert body["canary_url"] == "https://help.example.com/index"
         assert body["canary_fingerprint"] == "deadbeef12345678"
         assert body["login_indicator"] == "#login-form"
         assert captured["headers"]["x-internal-secret"] == "s3cr3t"

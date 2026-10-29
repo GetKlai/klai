@@ -209,10 +209,10 @@ def test_trip_rate_rounded_to_three_decimals(trip_rate_input: float) -> None:
 # ---------------------------------------------------------------------------
 # decide_fetch_failure_terminal_status — 2026-08-14 cause-independent
 # fetch-failure guard, sibling of the REQ-4 auth-wall guard above
-# (intermedia.com incident). Replaces the retired decide_antibot_
+# (intermedia.example.net incident). Replaces the retired decide_antibot_
 # terminal_status, which counted only BLOCKED_ANTI_BOT and therefore never
 # fired against a real crawl4ai deployment: production bulk-500 bodies are
-# opaque, so the intermedia.com failures classified unknown_exception, not
+# opaque, so the intermedia.example.net failures classified unknown_exception, not
 # blocked_anti_bot — see FETCH_FAILURE_DOMINANT_REASON's module docstring.
 # ---------------------------------------------------------------------------
 
@@ -234,7 +234,7 @@ def test_fetch_failure_above_threshold_marks_failed_partial() -> None:
     """16 of 18 discovered pages are real fetch failures (mixed reasons —
     http_5xx, unknown_exception, blocked_anti_bot) → failed_partial with
     the cause-independent reason, not a silent 'completed'. Mirrors the
-    intermedia.com incident shape, but with the reason_codes actually
+    intermedia.example.net incident shape, but with the reason_codes actually
     produced in production (mostly unknown_exception/http_5xx, not
     blocked_anti_bot)."""
     outcomes = _outcomes(

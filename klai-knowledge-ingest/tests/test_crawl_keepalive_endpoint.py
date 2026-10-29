@@ -2,7 +2,7 @@
 
 Background: a connector's stored session (browser cookies pasted once into
 the wizard) goes idle-timeout between the once-daily scheduled crawl and its
-previous use — proved in production on the Voys/support RedCactus connector,
+previous use — proved in production on the Voys/support partner-wiki connector,
 where a manual re-sync 45 minutes after a fresh cookie paste succeeded 100%
 but every unattended daily run since failed with auth_wall_detected on ~43%
 of pages. This endpoint is klai-connector's periodic "touch": one cheap
@@ -438,7 +438,7 @@ class TestCrawlKeepaliveEndpoint:
             patch(
                 "knowledge_ingest.routes.crawl_sync._probe_fetch",
                 new_callable=AsyncMock,
-                return_value=_probe(302, location="https://accounts.example-sso.com/login"),
+                return_value=_probe(302, location="https://accounts.sso.example.net/login"),
             ),
         ):
             client.post("/ingest/v1/crawl/keep-alive", json=_post(connector_id))

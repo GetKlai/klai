@@ -35,9 +35,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _walled_result() -> CrawlResult:
-    raw = (FIXTURES / "auth_walls" / "redcactus_hubspot.md").read_text(encoding="utf-8")
+    raw = (FIXTURES / "auth_walls" / "partner_wiki_hubspot.md").read_text(encoding="utf-8")
     return CrawlResult(
-        url="https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
+        url="https://wiki.example.com/nl/crm-software/HubSpot",
         fit_markdown=raw,
         raw_markdown=raw,
         html="<html><body>" + raw + "</body></html>",
@@ -52,9 +52,9 @@ def _walled_result() -> CrawlResult:
 
 
 def _clean_result() -> CrawlResult:
-    raw = (FIXTURES / "clean_pages" / "redcactus_ifttt.md").read_text(encoding="utf-8")
+    raw = (FIXTURES / "clean_pages" / "partner_wiki_ifttt.md").read_text(encoding="utf-8")
     return CrawlResult(
-        url="https://wiki.redcactus.cloud/nl/crm-software/IFTTT",
+        url="https://wiki.example.com/nl/crm-software/IFTTT",
         fit_markdown=raw,
         raw_markdown=raw,
         html="<html><body>" + raw + "</body></html>",

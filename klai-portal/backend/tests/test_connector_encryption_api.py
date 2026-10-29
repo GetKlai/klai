@@ -196,7 +196,7 @@ async def test_merge_saved_sensitive_credentials_drops_cookies_on_origin_change(
     connector = MagicMock()
     connector.connector_type = "web_crawler"
     connector.encrypted_credentials = b"ENCRYPTED"
-    connector.config = {"base_url": "https://wiki.redcactus.cloud/nl/"}
+    connector.config = {"base_url": "https://wiki.example.com/nl/"}
 
     with patch("app.api.connectors.credential_store") as mock_store:
         mock_store.decrypt_credentials = AsyncMock(return_value={"cookies": [{"name": "session", "value": FAKE_TOKEN}]})
@@ -219,7 +219,7 @@ async def test_merge_saved_sensitive_credentials_keeps_cookies_on_same_origin_pa
     connector = MagicMock()
     connector.connector_type = "web_crawler"
     connector.encrypted_credentials = b"ENCRYPTED"
-    connector.config = {"base_url": "https://wiki.redcactus.cloud/nl/"}
+    connector.config = {"base_url": "https://wiki.example.com/nl/"}
     cookies = [{"name": "session", "value": FAKE_TOKEN}]
 
     with patch("app.api.connectors.credential_store") as mock_store:
@@ -227,7 +227,7 @@ async def test_merge_saved_sensitive_credentials_keeps_cookies_on_same_origin_pa
 
         merged = await _merge_saved_sensitive_credentials(
             connector=connector,
-            config={"base_url": "https://wiki.redcactus.cloud/nl/login"},
+            config={"base_url": "https://wiki.example.com/nl/login"},
             org_id=8,
             db=AsyncMock(),
         )
@@ -246,7 +246,7 @@ class TestDropStaleCredentialsOnOriginChange:
         return connector
 
     def test_clears_on_origin_change_without_fresh_cookies(self) -> None:
-        connector = self._connector(base_url="https://wiki.redcactus.cloud/nl/")
+        connector = self._connector(base_url="https://wiki.example.com/nl/")
         _drop_stale_credentials_on_origin_change(
             connector=connector,
             new_config={"base_url": "https://attacker.example.com/"},
@@ -255,7 +255,7 @@ class TestDropStaleCredentialsOnOriginChange:
         assert connector.encrypted_credentials is None
 
     def test_keeps_credentials_when_fresh_cookies_supplied(self) -> None:
-        connector = self._connector(base_url="https://wiki.redcactus.cloud/nl/")
+        connector = self._connector(base_url="https://wiki.example.com/nl/")
         _drop_stale_credentials_on_origin_change(
             connector=connector,
             new_config={
@@ -267,10 +267,10 @@ class TestDropStaleCredentialsOnOriginChange:
         assert connector.encrypted_credentials == b"ENCRYPTED"
 
     def test_keeps_credentials_on_same_origin(self) -> None:
-        connector = self._connector(base_url="https://wiki.redcactus.cloud/nl/")
+        connector = self._connector(base_url="https://wiki.example.com/nl/")
         _drop_stale_credentials_on_origin_change(
             connector=connector,
-            new_config={"base_url": "https://wiki.redcactus.cloud/nl/login"},
+            new_config={"base_url": "https://wiki.example.com/nl/login"},
             clear_credentials=False,
         )
         assert connector.encrypted_credentials == b"ENCRYPTED"

@@ -56,7 +56,7 @@ def _samples() -> list[str]:
         "Hoe kan ik een nieuwe gebruiker uitnodigen in ons team?",
         "How do I invite a new user to my team and set their permissions?",
         "```\nprint('code must never vote')\n```",
-        "Subject: Re: Offerte\nFrom: jan@example.nl\n\nIk begrijp de factuur niet, legt u uit?",
+        "Subject: Re: Offerte\nFrom: jan@example.net\n\nIk begrijp de factuur niet, legt u uit?",
         "Klant schreef \"Please refund the full amount immediately today\" en vroeg om opheldering",
         '{"status": "error", "code": 500, "detail": "internal server failure on the primary host"}',
         "Antwoord in het Nederlands",

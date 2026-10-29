@@ -56,13 +56,13 @@ def test_whisper_url_accepted(url: str) -> None:
 @pytest.mark.parametrize(
     "url",
     [
-        "http://evil.com/",
-        "http://evil.com:8000/health",
+        "http://evil.example.net/",
+        "http://evil.example.net:8000/health",
         "http://169.254.169.254/",  # AWS instance metadata
         "http://10.0.0.5:8000",  # private RFC1918 — not in allowlist
         "http://192.168.1.1:8000",
         "http://internal-admin-api/health",
-        "http://whisper.evil.com/",  # subdomain trickery
+        "http://whisper.evil.example.net/",  # subdomain trickery
         "https://attacker.getklai.com.evil/",  # suffix bypass attempt
         "file:///etc/passwd",
         "ftp://whisper:8000/",

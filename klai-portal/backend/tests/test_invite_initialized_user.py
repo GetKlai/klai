@@ -1,6 +1,6 @@
 """Inviting an existing, fully-initialized account must add membership, not 500.
 
-Reproduction for the 2026-08-12 report (request f2b514c8): a voys.be user
+Reproduction for the 2026-08-12 report (request f2b514c8): a example.net user
 self-signed-up first; the admin invite then hit Zitadel 409 "User already
 exists", the identity recovery correctly reused the ACTIVE account, but
 ``send_invite_code`` failed with 400 "User is already initialized
@@ -45,7 +45,7 @@ def _org(org_id: int = 8, slug: str = "voys") -> MagicMock:
     return org
 
 
-def _body(email: str = "thijs.joos@voys.be") -> MagicMock:
+def _body(email: str = "thijs.joos@example.net") -> MagicMock:
     body = MagicMock()
     body.email = email
     body.first_name = "Thijs"
@@ -94,7 +94,7 @@ class TestInviteInitializedAccount:
         cleanup.assert_not_awaited()
         notify.assert_awaited_once()
         kwargs = notify.await_args.kwargs
-        assert kwargs["email"] == "thijs.joos@voys.be"
+        assert kwargs["email"] == "thijs.joos@example.net"
         assert kwargs["workspace_url"].startswith("https://")
 
     @pytest.mark.asyncio

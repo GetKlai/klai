@@ -15,7 +15,7 @@ async def test_tenant_can_save_clear_and_preserve_widget_style_defaults():
         name="Voys",
         default_language="nl",
         mfa_policy="optional",
-        primary_domain="voys.nl",
+        primary_domain="example.com",
         auto_accept_same_domain=False,
         telemetry_level="shadow",
         pii_masked_entities=[],

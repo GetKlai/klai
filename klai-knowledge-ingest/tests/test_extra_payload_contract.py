@@ -405,15 +405,15 @@ async def test_crawl_path_extra_payload_carries_source_domain_and_label():
     """Bulk crawl source_domain must survive into Phase-2 enrichment payload."""
     req = _build_request(
         source_type="crawl",
-        source_domain="wiki.example.cloud",
+        source_domain="wiki.example.org",
     )
     proc_app = _MockProcApp()
 
     _, update_extra_mock = await _run_with_mocks(req, proc_app)
 
     extra_payload = _captured_extra_payload(update_extra_mock)
-    assert extra_payload["source_domain"] == "wiki.example.cloud"
-    assert extra_payload["source_label"] == "wiki.example.cloud"
+    assert extra_payload["source_domain"] == "wiki.example.org"
+    assert extra_payload["source_label"] == "wiki.example.org"
 
 
 @pytest.mark.asyncio
@@ -497,19 +497,19 @@ async def test_explicit_title_wins_for_file_hash_paths_and_extra_payload():
         kb_slug="kb-contract",
         path="file:sha256:abc123",
         content="Plain content without a heading",
-        title="CV_Jantine_Doornbos.pdf",
+        title="CV_Alex_Example.pdf",
         source_type="file",
         content_type="document",
         source_ref="file:sha256:abc123",
-        extra={"title": "wrong-title-from-extra", "original_filename": "CV_Jantine_Doornbos.pdf"},
+        extra={"title": "wrong-title-from-extra", "original_filename": "CV_Alex_Example.pdf"},
     )
     proc_app = _MockProcApp()
 
     result, update_extra_mock = await _run_with_mocks(req, proc_app)
 
     extra_payload = _captured_extra_payload(update_extra_mock)
-    assert result["title"] == "CV_Jantine_Doornbos.pdf"
-    assert extra_payload["title"] == "CV_Jantine_Doornbos.pdf"
+    assert result["title"] == "CV_Alex_Example.pdf"
+    assert extra_payload["title"] == "CV_Alex_Example.pdf"
 
 
 @pytest.mark.asyncio
@@ -517,11 +517,11 @@ async def test_crawl_article_id_url_uses_document_heading_for_title():
     req = IngestRequest(
         org_id="org-contract",
         kb_slug="kb-contract",
-        path="https://support.ascendcloud.com/app/articles/detail/a_id/15937",
+        path="https://support.example.org/app/articles/detail/a_id/15937",
         content=("# Configure call forwarding\n\nInstructions for configuring call forwarding."),
         source_type="crawl",
         content_type="kb_article",
-        extra={"source_url": "https://support.ascendcloud.com/app/articles/detail/a_id/15937"},
+        extra={"source_url": "https://support.example.org/app/articles/detail/a_id/15937"},
     )
     proc_app = _MockProcApp()
 
@@ -537,12 +537,12 @@ async def test_bare_id_explicit_title_does_not_hide_document_h1():
     req = IngestRequest(
         org_id="org-contract",
         kb_slug="kb-contract",
-        path="https://support.ascendcloud.com/app/articles/detail/a_id/15937",
+        path="https://support.example.org/app/articles/detail/a_id/15937",
         content="# Configure call forwarding\n\nInstructions for configuring call forwarding.",
         title="15937",
         source_type="crawl",
         content_type="kb_article",
-        extra={"source_url": "https://support.ascendcloud.com/app/articles/detail/a_id/15937"},
+        extra={"source_url": "https://support.example.org/app/articles/detail/a_id/15937"},
     )
     proc_app = _MockProcApp()
 

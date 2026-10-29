@@ -98,10 +98,10 @@ async def test_localhost_short_circuit_preserved() -> None:
 
 @pytest.mark.asyncio
 async def test_external_host_raises_502() -> None:
-    """A non-getklai.com host is rejected before the allowlist check fires."""
+    """A host outside getklai.com is rejected before the allowlist check fires."""
     with _patch_allowlist({"voys"}):
         with pytest.raises(HTTPException) as exc_info:
-            await auth_module._validate_callback_url("https://evil.com/x")
+            await auth_module._validate_callback_url("https://evil.example.net/x")
     assert exc_info.value.status_code == 502
 
 
@@ -303,8 +303,8 @@ async def test_apex_lookalike_still_rejected() -> None:
         "https://attacker@my.getklai.com/x",
         "https://attacker:secret@my.getklai.com/x",
         # Query / fragment can contain anything — host check is unaffected
-        "https://my.getklai.com/cb?next=https://evil.com",
-        "https://my.getklai.com/cb#@evil.com",
+        "https://my.getklai.com/cb?next=https://evil.example.net",
+        "https://my.getklai.com/cb#@evil.example.net",
     ],
 )
 @pytest.mark.asyncio
@@ -329,7 +329,7 @@ async def test_adversarial_accepts_when_host_resolves_to_system_host(url: str) -
         # IPv6 loopback — only literal "127.0.0.1" / "localhost" pass the dev shortcut
         "https://[::1]/x",
         # Encoded dot in hostname — urlparse keeps %2E literal, no normalisation
-        "https://my.getklai.com%2Eevil.com/x",
+        "https://my.getklai.com%2Eevil.example.net/x",
         # Quad slash defeats urlparse — hostname is None
         "https:////my.getklai.com",
         # Bare URL — urlparse returns hostname None

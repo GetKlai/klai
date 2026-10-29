@@ -23,11 +23,11 @@ class TestDocumentRefIdentifierFields:
             size=0,
             content_type="text/plain",
             sender_email="user@example.com",
-            mentioned_emails=["a@x.com", "b@y.com"],
+            mentioned_emails=["a@x.example.net", "b@y.example.net"],
         )
 
         assert ref.sender_email == "user@example.com"
-        assert ref.mentioned_emails == ["a@x.com", "b@y.com"]
+        assert ref.mentioned_emails == ["a@x.example.net", "b@y.example.net"]
 
     def test_mentioned_emails_not_shared_across_instances(self) -> None:
         """Appending to one DocumentRef's mentioned_emails must not mutate another.
@@ -38,6 +38,6 @@ class TestDocumentRefIdentifierFields:
         ref_a = DocumentRef(path="a", ref="r", size=0, content_type="text/plain")
         ref_b = DocumentRef(path="b", ref="r", size=0, content_type="text/plain")
 
-        ref_a.mentioned_emails.append("x@y.com")
+        ref_a.mentioned_emails.append("x@y.example.net")
 
         assert ref_b.mentioned_emails == []

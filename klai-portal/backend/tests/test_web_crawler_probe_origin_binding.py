@@ -41,7 +41,7 @@ def _db_with_connector(*, base_url: str) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_cross_origin_probe_url_rejected_before_decrypt() -> None:
-    db = _db_with_connector(base_url="https://wiki.redcactus.cloud/nl/")
+    db = _db_with_connector(base_url="https://wiki.example.com/nl/")
     with pytest.raises(HTTPException) as exc_info:
         await _load_saved_web_crawler_cookies(
             _kb(),
@@ -60,14 +60,14 @@ async def test_same_origin_probe_url_passes_the_guard() -> None:
     reaches the next validation step - proven here by getting the DIFFERENT
     409 that fires when there are no stored credentials to decrypt, not the
     400 from the origin guard."""
-    db = _db_with_connector(base_url="https://wiki.redcactus.cloud/nl/")
+    db = _db_with_connector(base_url="https://wiki.example.com/nl/")
     with pytest.raises(HTTPException) as exc_info:
         await _load_saved_web_crawler_cookies(
             _kb(),
             "connector-1",
             org_id=8,
             db=db,
-            probe_url="https://wiki.redcactus.cloud/nl/login",
+            probe_url="https://wiki.example.com/nl/login",
         )
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == {"error_code": "saved_credentials_missing"}

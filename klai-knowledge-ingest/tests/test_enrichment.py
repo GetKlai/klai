@@ -147,7 +147,7 @@ async def test_enrich_chunks_semaphore_limits_concurrency():
 async def test_enrich_chunk_source_aware_happy_path():
     """Source fields are accepted and result contains valid content_type."""
     result_data = {
-        "context_prefix": "Voys Helpdesk via webscrape (help.voys.nl): uitleg over VoIP.",
+        "context_prefix": "Voys Helpdesk via webscrape (help.example.com): uitleg over VoIP.",
         "questions": ["Hoe werkt VoIP?", "Wat is een SIP trunk?"],
     }
 
@@ -165,7 +165,7 @@ async def test_enrich_chunk_source_aware_happy_path():
             path="help/voip.md",
             kb_name="Voys Helpdesk",
             connector_type="webscrape",
-            source_domain="help.voys.nl",
+            source_domain="help.example.com",
         )
 
     assert result is not None

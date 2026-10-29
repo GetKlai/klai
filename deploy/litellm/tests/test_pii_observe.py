@@ -521,7 +521,7 @@ async def test_tool_call_arguments_are_scanned(monkeypatch, caplog):
                     {
                         "function": {
                             "name": "send_mail",
-                            "arguments": '{"to": "jan.devries@example.nl"}',
+                            "arguments": '{"to": "jan.devries@example.net"}',
                         }
                     }
                 ],
@@ -536,12 +536,12 @@ async def test_tool_call_arguments_are_scanned(monkeypatch, caplog):
         await _drain_background_tasks()
 
     # The arguments string must have reached the analyzer payload.
-    assert "jan.devries@example.nl" in client.last_text
+    assert "jan.devries@example.net" in client.last_text
     assert "entity_counts={'EMAIL_ADDRESS': 1}" in "\n".join(
         r.message for r in caplog.records
     )
     # And the address itself must still not appear in the emitted event.
-    assert "jan.devries@example.nl" not in "\n".join(r.message for r in caplog.records)
+    assert "jan.devries@example.net" not in "\n".join(r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

@@ -104,7 +104,7 @@ class TestConfluenceConfigSsrf:
             with pytest.raises(ValidationError) as excinfo:
                 ConfluenceConfig(
                     base_url="https://attacker.example.com/wiki/",
-                    email="x@y.com",
+                    email="x@y.example.net",
                     api_token="t",
                 )
         msg = str(excinfo.value).lower()
@@ -116,7 +116,7 @@ class TestConfluenceConfigSsrf:
         with pytest.raises(ValidationError):
             ConfluenceConfig(
                 base_url="http://docker-socket-proxy:2375/",
-                email="x@y.com",
+                email="x@y.example.net",
                 api_token="t",
             )
 
@@ -127,7 +127,7 @@ class TestConfluenceConfigSsrf:
         with pytest.raises(ValidationError):
             ConfluenceConfig(
                 base_url="https://10.0.0.5/wiki",
-                email="x@y.com",
+                email="x@y.example.net",
                 api_token="t",
             )
 
@@ -184,7 +184,7 @@ class TestValidateConnectorConfig:
                 "confluence",
                 {
                     "base_url": "http://evil.example.com/",
-                    "email": "x@y.com",
+                    "email": "x@y.example.net",
                     "api_token": "t",
                 },
             )

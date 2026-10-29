@@ -412,7 +412,7 @@ async def test_has_active_connector_artifact_for_url_checks_source_url():
         org_id="org",
         kb_slug="kb",
         connector_id="conn-1",
-        url="https://jantinedoornbos.nl/",
+        url="https://example.net/",
     )
 
     assert result is True

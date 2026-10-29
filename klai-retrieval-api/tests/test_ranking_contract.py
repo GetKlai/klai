@@ -72,10 +72,10 @@ class TestRankingContractSnapshot:
         """Two chunks of the same source must occupy ONE source slot —
         first-N raw source_urls would double-count multi-chunk sources."""
         chunks = [
-            {"chunk_id": "c1", "source_url": "https://help.voys.nl/integraties"},
-            {"chunk_id": "c2", "source_url": "https://help.voys.nl/integraties"},
-            {"chunk_id": "c3", "source_url": "https://wiki.redcactus.cloud/nl/x"},
-            {"chunk_id": "c4", "source_url": "https://help.voys.nl/webhooks"},
+            {"chunk_id": "c1", "source_url": "https://help.example.com/integraties"},
+            {"chunk_id": "c2", "source_url": "https://help.example.com/integraties"},
+            {"chunk_id": "c3", "source_url": "https://wiki.example.com/nl/x"},
+            {"chunk_id": "c4", "source_url": "https://help.example.com/webhooks"},
             {"chunk_id": "c5", "source_url": "https://example.com/never-reached"},
             {"chunk_id": "c6", "source_url": "https://example.com/other"},
         ]
@@ -89,7 +89,7 @@ class TestRankingContractSnapshot:
         (mirrors build_evidence_pack's artifact fallback)."""
         chunks = [
             {"chunk_id": "c1", "artifact_id": "doc-123"},
-            {"chunk_id": "c2", "source_url": "https://help.voys.nl/integraties"},
+            {"chunk_id": "c2", "source_url": "https://help.example.com/integraties"},
         ]
         snapshot = _ranking_contract_snapshot(chunks)
         assert snapshot["evidence_source_keys"][0] == "artifact:doc-123"

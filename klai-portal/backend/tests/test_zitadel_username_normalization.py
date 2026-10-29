@@ -104,14 +104,14 @@ class TestInviteUserUsernameLowercased:
 
         await client.invite_user(
             org_id="org-1",
-            email="NewHire@Acme.IO",
+            email="NewHire@Acme.example.org",
             first_name="New",
             last_name="Hire",
         )
 
         _args, kwargs = mock_http.post.call_args
         body = kwargs["json"]
-        assert body["username"] == "newhire@acme.io"
+        assert body["username"] == "newhire@acme.example.org"
 
     @pytest.mark.asyncio
     async def test_email_field_preserves_original_case(self) -> None:
@@ -119,13 +119,13 @@ class TestInviteUserUsernameLowercased:
 
         await client.invite_user(
             org_id="org-1",
-            email="NewHire@Acme.IO",
+            email="NewHire@Acme.example.org",
             first_name="N",
             last_name="H",
         )
 
         _args, kwargs = mock_http.post.call_args
-        assert kwargs["json"]["email"]["email"] == "NewHire@Acme.IO"
+        assert kwargs["json"]["email"]["email"] == "NewHire@Acme.example.org"
 
     @pytest.mark.asyncio
     async def test_invite_user_does_not_trigger_zitadel_mail(self) -> None:
@@ -168,7 +168,7 @@ class TestCreateZitadelUserFromIdpUsernameLowercased:
                     "User": {
                         "given_name": "Mixed",
                         "family_name": "Case",
-                        "email": "Mixed.Case@Example.IO",
+                        "email": "Mixed.Case@Example.org",
                     }
                 },
             }
@@ -178,7 +178,7 @@ class TestCreateZitadelUserFromIdpUsernameLowercased:
 
         _args, kwargs = mock_http.post.call_args
         body = kwargs["json"]
-        assert body["username"] == "mixed.case@example.io"
+        assert body["username"] == "mixed.case@example.org"
 
     @pytest.mark.asyncio
     async def test_idp_email_preserved_for_display(self) -> None:
@@ -194,7 +194,7 @@ class TestCreateZitadelUserFromIdpUsernameLowercased:
                     "User": {
                         "given_name": "M",
                         "family_name": "C",
-                        "email": "Mixed.Case@Example.IO",
+                        "email": "Mixed.Case@Example.org",
                     }
                 },
             }
@@ -203,4 +203,4 @@ class TestCreateZitadelUserFromIdpUsernameLowercased:
         await client.create_zitadel_user_from_idp(intent_data, org_id="org-1")
 
         _args, kwargs = mock_http.post.call_args
-        assert kwargs["json"]["email"]["email"] == "Mixed.Case@Example.IO"
+        assert kwargs["json"]["email"]["email"] == "Mixed.Case@Example.org"

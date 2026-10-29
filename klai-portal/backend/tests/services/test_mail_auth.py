@@ -45,14 +45,14 @@ class TestAlignmentHelpers:
     @pytest.mark.parametrize(
         ("a", "b", "aligned"),
         [
-            ("customer.nl", "customer.nl", True),
-            ("mail.customer.nl", "customer.nl", True),  # org-domain match
-            ("customer.nl", "mail.customer.nl", True),
-            ("CUSTOMER.NL", "customer.nl", True),  # case-insensitive
-            ("spammer.net", "customer.nl", False),
-            ("customer.com", "customer.nl", False),
-            ("", "customer.nl", False),
-            ("customer.nl", "", False),
+            ("customer.example.com", "customer.example.com", True),
+            ("mail.customer.example.com", "customer.example.com", True),  # org-domain match
+            ("customer.example.com", "mail.customer.example.com", True),
+            ("CUSTOMER.EXAMPLE.COM", "customer.example.com", True),  # case-insensitive
+            ("spammer.example.org", "customer.example.com", False),
+            ("customer.example.net", "customer.example.com", False),
+            ("", "customer.example.com", False),
+            ("customer.example.com", "", False),
         ],
     )
     def test_aligned_truth_table(self, a: str, b: str, aligned: bool) -> None:
@@ -61,9 +61,9 @@ class TestAlignmentHelpers:
     @pytest.mark.parametrize(
         ("domain", "org"),
         [
-            ("customer.nl", "customer.nl"),
-            ("mail.customer.nl", "customer.nl"),
-            ("deep.sub.customer.nl", "customer.nl"),
+            ("example.com", "example.com"),
+            ("mail.example.com", "example.com"),
+            ("deep.sub.example.com", "example.com"),
         ],
     )
     def test_organizational_domain(self, domain: str, org: str) -> None:
@@ -72,13 +72,14 @@ class TestAlignmentHelpers:
     @pytest.mark.parametrize(
         ("a", "b"),
         [
-            # Public-suffix safety: two different SLDs under `.co.uk` MUST
-            # NOT align. A naive two-label heuristic would reduce both to
-            # `co.uk` and falsely accept the attacker's message.
-            ("evil.co.uk", "target.co.uk"),
-            ("sub.evil.co.uk", "target.co.uk"),
-            # Same story for `.com.au`, another multi-label public suffix.
-            ("evil.com.au", "target.com.au"),
+            # Public-suffix safety: two different SLDs under one public suffix
+            # MUST NOT align. `githubusercontent.com` is a public suffix (PSL
+            # private section), so a naive two-label heuristic would reduce both
+            # to that suffix and falsely accept the attacker's message.
+            ("evil.githubusercontent.com", "target.githubusercontent.com"),
+            ("sub.evil.githubusercontent.com", "target.githubusercontent.com"),
+            # Same story for a three-label public suffix.
+            ("evil.s3.amazonaws.com", "target.s3.amazonaws.com"),
         ],
     )
     def test_distinct_slds_under_public_suffix_do_not_align(self, a: str, b: str) -> None:
@@ -173,7 +174,7 @@ class TestAC1_NoDkim:
 
     @pytest.mark.asyncio
     async def test_forged_no_dkim_rejects(self) -> None:
-        raw = build_email(from_addr="ceo@customer.nl")
+        raw = build_email(from_addr="ceo@customer.example.com")
 
         result = await verify_mail_auth(
             raw,
@@ -183,8 +184,8 @@ class TestAC1_NoDkim:
 
         assert result.verified_from is None
         assert result.reason == "no_dkim_signature"
-        assert result.from_header.strip() == "ceo@customer.nl"
-        assert result.from_domain == "customer.nl"
+        assert result.from_header.strip() == "ceo@customer.example.com"
+        assert result.from_domain == "customer.example.com"
         assert result.dkim_result.present is False
         assert result.arc_result.present is False
 
@@ -193,13 +194,13 @@ class TestAC1_NoDkim:
 
 
 class TestAC2_DkimMisaligned:
-    """Valid DKIM signature for ``d=spammer.net`` with ``From: @customer.nl``."""
+    """Valid DKIM signature for ``d=spammer.example.org`` with ``From: @customer.example.com``."""
 
     @pytest.mark.asyncio
     async def test_dkim_valid_misaligned_rejects(self) -> None:
-        k = key_for("spammer.net")
-        raw = build_email(from_addr="ceo@customer.nl")
-        raw = dkim_sign(raw, signing_domain="spammer.net")
+        k = key_for("spammer.example.org")
+        raw = build_email(from_addr="ceo@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="spammer.example.org")
 
         result = await verify_mail_auth(
             raw,
@@ -210,9 +211,9 @@ class TestAC2_DkimMisaligned:
         assert result.verified_from is None
         assert result.reason == "dkim_misaligned"
         assert result.dkim_result.valid is True
-        assert result.dkim_result.d == "spammer.net"
+        assert result.dkim_result.d == "spammer.example.org"
         assert result.dkim_result.aligned is False
-        assert result.from_domain == "customer.nl"
+        assert result.from_domain == "customer.example.com"
 
 
 # ---------- AC-3 + AC-4: Valid DKIM aligned -------------------------------
@@ -223,9 +224,9 @@ class TestAC3AC4_DkimValidAligned:
 
     @pytest.mark.asyncio
     async def test_dkim_valid_aligned_corporate(self) -> None:
-        k = key_for("customer.nl")
-        raw = build_email(from_addr="boss@customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        k = key_for("customer.example.com")
+        raw = build_email(from_addr="boss@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
 
         result = await verify_mail_auth(
             raw,
@@ -233,11 +234,11 @@ class TestAC3AC4_DkimValidAligned:
             timeout_seconds=5.0,
         )
 
-        assert result.verified_from == "boss@customer.nl"
+        assert result.verified_from == "boss@customer.example.com"
         assert result.reason == ""
         assert result.dkim_result.valid is True
         assert result.dkim_result.aligned is True
-        assert result.from_domain == "customer.nl"
+        assert result.from_domain == "customer.example.com"
 
     @pytest.mark.asyncio
     async def test_dkim_valid_aligned_gmail(self) -> None:
@@ -258,10 +259,10 @@ class TestAC3AC4_DkimValidAligned:
 
     @pytest.mark.asyncio
     async def test_dkim_valid_org_domain_alignment(self) -> None:
-        """DKIM d=customer.nl signing a From=user@mail.customer.nl is aligned."""
-        k = key_for("customer.nl")
-        raw = build_email(from_addr="user@mail.customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        """DKIM d=customer.example.com signing a From=user@mail.customer.example.com is aligned."""
+        k = key_for("customer.example.com")
+        raw = build_email(from_addr="user@mail.customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
 
         result = await verify_mail_auth(
             raw,
@@ -269,7 +270,7 @@ class TestAC3AC4_DkimValidAligned:
             timeout_seconds=5.0,
         )
 
-        assert result.verified_from == "user@mail.customer.nl"
+        assert result.verified_from == "user@mail.customer.example.com"
         assert result.dkim_result.aligned is True
 
 
@@ -290,13 +291,13 @@ class TestAC5_RealArcCrypto:
     async def test_real_arc_chain_validates_and_accepts(self) -> None:
         sealer_key = key_for("getklai.com")
         raw = build_email(
-            from_addr="boss@customer.nl",
+            from_addr="boss@customer.example.com",
             extra_headers=[
                 # Upstream MX authenticated and stamped — arc_sign will
                 # copy this into the ARC-Authentication-Results header.
                 (
                     "Authentication-Results",
-                    "upstream-relay.test; dkim=pass header.d=customer.nl; spf=pass smtp.mailfrom=boss@customer.nl",
+                    "upstream-relay.test; dkim=pass header.d=customer.example.com; spf=pass smtp.mailfrom=boss@customer.example.com",
                 ),
             ],
         )
@@ -311,7 +312,7 @@ class TestAC5_RealArcCrypto:
             authserv_id="upstream-relay.test",
         )
 
-        assert result.verified_from == "boss@customer.nl"
+        assert result.verified_from == "boss@customer.example.com"
         assert result.reason == ""
         assert result.arc_result.present is True
         assert result.arc_result.valid is True
@@ -325,11 +326,11 @@ class TestAC5_RealArcCrypto:
     async def test_real_arc_untrusted_sealer_rejects(self) -> None:
         sealer_key = key_for("weird-provider.example")
         raw = build_email(
-            from_addr="boss@customer.nl",
+            from_addr="boss@customer.example.com",
             extra_headers=[
                 (
                     "Authentication-Results",
-                    "upstream-relay.test; dkim=pass header.d=customer.nl",
+                    "upstream-relay.test; dkim=pass header.d=customer.example.com",
                 ),
             ],
         )
@@ -357,7 +358,7 @@ class TestAC5_ArcTrustedForwarded:
     @pytest.mark.asyncio
     async def test_arc_trusted_with_inner_alignment_accepts(self) -> None:
         raw = build_email(
-            from_addr="boss@customer.nl",
+            from_addr="boss@customer.example.com",
             extra_headers=[
                 (
                     "ARC-Seal",
@@ -369,7 +370,7 @@ class TestAC5_ArcTrustedForwarded:
                 ),
                 (
                     "ARC-Authentication-Results",
-                    "i=1; mx.google.com; dkim=pass header.d=customer.nl; spf=pass smtp.mailfrom=boss@customer.nl",
+                    "i=1; mx.google.com; dkim=pass header.d=customer.example.com; spf=pass smtp.mailfrom=boss@customer.example.com",
                 ),
             ],
         )
@@ -399,7 +400,7 @@ class TestAC5_ArcTrustedForwarded:
                 timeout_seconds=5.0,
             )
 
-        assert result.verified_from == "boss@customer.nl"
+        assert result.verified_from == "boss@customer.example.com"
         assert result.reason == ""
         assert result.arc_result.valid is True
         assert result.arc_result.sealer == "google.com"
@@ -416,7 +417,7 @@ class TestAC6_ArcUntrustedSealer:
     @pytest.mark.asyncio
     async def test_arc_untrusted_sealer_rejects(self) -> None:
         raw = build_email(
-            from_addr="boss@customer.nl",
+            from_addr="boss@customer.example.com",
             extra_headers=[
                 (
                     "ARC-Seal",
@@ -424,7 +425,7 @@ class TestAC6_ArcUntrustedSealer:
                 ),
                 (
                     "ARC-Authentication-Results",
-                    "i=1; weird-provider.example; dkim=pass header.d=customer.nl",
+                    "i=1; weird-provider.example; dkim=pass header.d=customer.example.com",
                 ),
             ],
         )
@@ -465,8 +466,8 @@ class TestAC8_Timeout:
 
     @pytest.mark.asyncio
     async def test_dkim_timeout_rejects(self) -> None:
-        raw = build_email(from_addr="boss@customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        raw = build_email(from_addr="boss@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
 
         async def _slow_verify(*_args: Any, **_kwargs: Any) -> Any:
             await asyncio.sleep(10)  # would hit the 0.1s ceiling below
@@ -480,7 +481,7 @@ class TestAC8_Timeout:
 
         assert result.verified_from is None
         assert result.reason == "dkim_timeout"
-        assert result.from_domain == "customer.nl"
+        assert result.from_domain == "customer.example.com"
 
 
 # ---------- AC-9: Malformed headers fail closed ---------------------------
@@ -491,8 +492,8 @@ class TestAC9_Malformed:
 
     @pytest.mark.asyncio
     async def test_verify_crashes_rejects_fail_closed(self) -> None:
-        raw = build_email(from_addr="boss@customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        raw = build_email(from_addr="boss@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
 
         def _exploding_verify(*_args: Any, **_kwargs: Any) -> Any:
             raise ValueError("simulated unexpected crash in dkimpy")
@@ -537,7 +538,7 @@ class TestAC11_ResultSchema:
 
     @pytest.mark.asyncio
     async def test_reject_result_has_stable_shape(self) -> None:
-        raw = build_email(from_addr="ceo@customer.nl")
+        raw = build_email(from_addr="ceo@customer.example.com")
         result = await verify_mail_auth(raw)
 
         assert {f.name for f in dataclasses.fields(result.dkim_result)} == {
@@ -616,25 +617,25 @@ class TestSPFFromAuthResults:
     @pytest.mark.asyncio
     async def test_spf_misaligned_not_marked_aligned(self) -> None:
         # Two distinct registerable domains (different SLDs under the PSL).
-        k = key_for("dkim-only.com")
+        k = key_for("dkim-only.example.org")
         raw = build_email(
-            from_addr="boss@dkim-only.com",
+            from_addr="boss@dkim-only.example.org",
             extra_headers=[
                 (
                     "Authentication-Results",
-                    "mail.getklai.com; spf=pass smtp.mailfrom=forwarder@mail-relay.com; dkim=pass header.d=dkim-only.com",
+                    "mail.getklai.com; spf=pass smtp.mailfrom=forwarder@mail-relay.example.net; dkim=pass header.d=dkim-only.example.org",
                 )
             ],
         )
-        raw = dkim_sign(raw, signing_domain="dkim-only.com")
+        raw = dkim_sign(raw, signing_domain="dkim-only.example.org")
 
         result = await verify_mail_auth(raw, dnsfunc=make_dnsfunc(k), authserv_id="mail.getklai.com")
 
         # DKIM-aligned accept still happens; SPF is a soft signal per REQ-2.2.
-        assert result.verified_from == "boss@dkim-only.com"
+        assert result.verified_from == "boss@dkim-only.example.org"
         assert result.spf_result.result == "pass"
         assert result.spf_result.aligned is False
-        assert result.spf_result.smtp_mailfrom_domain == "mail-relay.com"
+        assert result.spf_result.smtp_mailfrom_domain == "mail-relay.example.net"
 
     @pytest.mark.asyncio
     async def test_authserv_id_filter_ignores_sender_injected_auth_results(self) -> None:
@@ -674,7 +675,7 @@ class TestARCEdgeCases:
     @pytest.mark.asyncio
     async def test_malformed_arc_auth_results_does_not_align(self) -> None:
         raw = build_email(
-            from_addr="boss@customer.nl",
+            from_addr="boss@customer.example.com",
             extra_headers=[
                 (
                     "ARC-Seal",
@@ -683,7 +684,7 @@ class TestARCEdgeCases:
                 # No i= prefix → defensive parse skips it.
                 (
                     "ARC-Authentication-Results",
-                    "no-prefix-here; dkim=pass header.d=customer.nl",
+                    "no-prefix-here; dkim=pass header.d=customer.example.com",
                 ),
                 # Garbage → parse raises → defensive skip.
                 ("ARC-Authentication-Results", "i=notanumber; broken"),
@@ -716,12 +717,12 @@ class TestARCEdgeCases:
     async def test_arc_inner_dkim_fail_does_not_align(self) -> None:
         """ARC-AR with dkim=fail (not pass) must not satisfy alignment."""
         raw = build_email(
-            from_addr="boss@customer.nl",
+            from_addr="boss@customer.example.com",
             extra_headers=[
                 ("ARC-Seal", "i=1; a=rsa-sha256; cv=none; d=google.com; s=test; t=1; b=XX"),
                 (
                     "ARC-Authentication-Results",
-                    "i=1; mx.google.com; dkim=fail header.d=customer.nl",
+                    "i=1; mx.google.com; dkim=fail header.d=customer.example.com",
                 ),
             ],
         )
@@ -746,7 +747,7 @@ class TestARCEdgeCases:
     @pytest.mark.asyncio
     async def test_arc_cv_fail_yields_arc_invalid(self) -> None:
         raw = build_email(
-            from_addr="boss@customer.nl",
+            from_addr="boss@customer.example.com",
             extra_headers=[
                 ("ARC-Seal", "i=1; a=rsa-sha256; cv=none; d=google.com; s=test; t=1; b=XX"),
             ],
@@ -773,7 +774,7 @@ class TestARCEdgeCases:
     async def test_arc_raises_yields_arc_invalid(self) -> None:
         """dkim.ARC.verify raising DKIMException maps to arc_invalid, not crash."""
         raw = build_email(
-            from_addr="boss@customer.nl",
+            from_addr="boss@customer.example.com",
             extra_headers=[("ARC-Seal", "i=1; d=google.com; s=test; t=1; b=XX")],
         )
 
@@ -802,10 +803,10 @@ class TestDkimInvalidBranches:
     @pytest.mark.asyncio
     async def test_dkim_exception_yields_dkim_invalid(self) -> None:
         """A DKIMException from verify (e.g. bad key) → dkim_invalid reject."""
-        raw = build_email(from_addr="boss@customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        raw = build_email(from_addr="boss@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
 
-        # Use a dnsfunc that returns a WRONG key for customer.nl so crypto fails.
+        # Use a dnsfunc that returns a WRONG key for customer.example.com so crypto fails.
         def bad_dns(name, *_a, **_kw):
             return b"v=DKIM1; k=rsa; p=INVALID_KEY"
 
@@ -821,8 +822,8 @@ class TestDkimInvalidBranches:
         self,
     ) -> None:
         """DKIM present but invalid; no ARC header → dkim_invalid (not no_dkim_signature)."""
-        raw = build_email(from_addr="boss@customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        raw = build_email(from_addr="boss@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
 
         with patch("app.services.mail_auth.dkim.DKIM") as mock_dkim_cls:
             mock_dkim = mock_dkim_cls.return_value

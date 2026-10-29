@@ -147,7 +147,7 @@ class TestCrawlSyncEndpoint:
                     "connector_id": str(uuid.uuid4()),
                     "org_id": "42",
                     "kb_slug": "support",
-                    "base_url": "https://help.voys.nl",
+                    "base_url": "https://help.example.com",
                 },
             )
         assert resp.status_code == 401
@@ -162,7 +162,7 @@ class TestCrawlSyncEndpoint:
                     "connector_id": str(uuid.uuid4()),
                     "org_id": "42",
                     "kb_slug": "support",
-                    "base_url": "https://help.voys.nl",
+                    "base_url": "https://help.example.com",
                 },
             )
         assert resp.status_code == 404
@@ -187,7 +187,7 @@ class TestCrawlSyncEndpoint:
                     "connector_id": str(uuid.uuid4()),
                     "org_id": "42",
                     "kb_slug": "support",
-                    "base_url": "https://help.voys.nl",
+                    "base_url": "https://help.example.com",
                 },
             )
         assert resp.status_code == 409
@@ -221,10 +221,10 @@ class TestCrawlSyncEndpoint:
                     "generation": "sync-run-42",
                     "org_id": "42",
                     "kb_slug": "support",
-                    "base_url": "https://help.voys.nl",
+                    "base_url": "https://help.example.com",
                     "max_pages": 20,
                     "login_indicator": "#login-form",
-                    "canary_url": "https://help.voys.nl/index",
+                    "canary_url": "https://help.example.com/index",
                     "canary_fingerprint": "deadbeef12345678",
                 },
             )
@@ -259,9 +259,9 @@ class TestCrawlSyncEndpoint:
             for value in kwargs.values():
                 assert plaintext["value"] not in str(value)
         assert kwargs["login_indicator_selector"] == "#login-form"
-        assert kwargs["canary_url"] == "https://help.voys.nl/index"
+        assert kwargs["canary_url"] == "https://help.example.com/index"
         assert kwargs["canary_fingerprint"] == "deadbeef12345678"
-        assert kwargs["start_url"] == "https://help.voys.nl"
+        assert kwargs["start_url"] == "https://help.example.com"
         assert kwargs["max_pages"] == 20
         assert kwargs["org_id"] == "42"
         assert kwargs["kb_slug"] == "support"
@@ -269,7 +269,7 @@ class TestCrawlSyncEndpoint:
     def test_path_prefix_is_prepended_to_start_url(self) -> None:
         """BFS must enter the allowed subtree; start_url = base_url + path_prefix.
 
-        Wiki.redcactus.cloud homepage only links to /en/... so starting BFS on the
+        Wiki.example.com homepage only links to /en/... so starting BFS on the
         bare root with include_patterns=['/nl/'] stops after 1 page (filter rejects
         every outgoing link). Starting on /nl/ gives BFS a seeded entry.
         """
@@ -289,13 +289,13 @@ class TestCrawlSyncEndpoint:
                     "connector_id": str(uuid.uuid4()),
                     "org_id": "42",
                     "kb_slug": "support",
-                    "base_url": "https://wiki.redcactus.cloud",
+                    "base_url": "https://wiki.example.com",
                     "path_prefix": "/nl/",
                 },
             )
         assert resp.status_code == 202, resp.text
         kwargs = defer_mock.await_args.kwargs
-        assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl/"
+        assert kwargs["start_url"] == "https://wiki.example.com/nl/"
         # URLPatternFilter exact-matches glob patterns without wildcards, so
         # '/nl/' alone would reject '/nl/6-bubble'. The /* suffix makes it a
         # PREFIX pattern so every URL whose path starts with /nl/ is allowed.
@@ -319,13 +319,13 @@ class TestCrawlSyncEndpoint:
                     "connector_id": str(uuid.uuid4()),
                     "org_id": "42",
                     "kb_slug": "support",
-                    "base_url": "https://wiki.redcactus.cloud/",
+                    "base_url": "https://wiki.example.com/",
                     "path_prefix": "/nl/",
                 },
             )
         assert resp.status_code == 202, resp.text
         kwargs = defer_mock.await_args.kwargs
-        assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl/"
+        assert kwargs["start_url"] == "https://wiki.example.com/nl/"
 
     def test_path_prefix_without_trailing_slash_is_normalised(self) -> None:
         """path_prefix='/nl' (no trailing /) still yields a valid PREFIX glob."""
@@ -345,7 +345,7 @@ class TestCrawlSyncEndpoint:
                     "connector_id": str(uuid.uuid4()),
                     "org_id": "42",
                     "kb_slug": "support",
-                    "base_url": "https://wiki.redcactus.cloud",
+                    "base_url": "https://wiki.example.com",
                     "path_prefix": "/nl",
                 },
             )
@@ -358,7 +358,7 @@ class TestCrawlSyncEndpoint:
         # trailing slash here means BFS starts on /nl (which the server
         # typically redirects to /nl/). That is acceptable behaviour for a
         # user who entered /nl without slash.
-        assert kwargs["start_url"] == "https://wiki.redcactus.cloud/nl"
+        assert kwargs["start_url"] == "https://wiki.example.com/nl"
 
     def test_path_prefix_without_leading_slash_is_normalised(self) -> None:
         """Portal config may store path_prefix='blog'; start_url must remain valid."""
@@ -441,13 +441,13 @@ class TestCrawlSyncEndpoint:
                     "connector_id": str(uuid.uuid4()),
                     "org_id": "42",
                     "kb_slug": "support",
-                    "base_url": "https://jantinedoornbos.nl/",
-                    "path_prefix": "https://jantinedoornbos.nl/",
+                    "base_url": "https://example.net/",
+                    "path_prefix": "https://example.net/",
                 },
             )
         assert resp.status_code == 202, resp.text
         kwargs = defer_mock.await_args.kwargs
-        assert kwargs["start_url"] == "https://jantinedoornbos.nl/"
+        assert kwargs["start_url"] == "https://example.net/"
         assert kwargs["include_patterns"] is None
 
     def test_legacy_full_url_path_prefix_uses_same_origin_path(self) -> None:

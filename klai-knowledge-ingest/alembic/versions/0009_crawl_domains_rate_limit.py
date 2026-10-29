@@ -1,6 +1,6 @@
 """Add rate_limit column to knowledge.crawl_domains
 
-2026-08-17 (intermedia.com + support.ascendcloud.com incident): stores a
+2026-08-17 (intermedia.com + support.example.org incident): stores a
 lowered per-domain rate_limit (requests/second) after a crawl hits
 RATE_LIMITED or BLOCKED_ANTI_BOT, so the NEXT crawl of that domain starts
 already paced down instead of walking into the same wall again. See

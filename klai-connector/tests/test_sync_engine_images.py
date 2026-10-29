@@ -73,7 +73,7 @@ class TestDownloadAndUploadImages:
         mock_http.get = AsyncMock(side_effect=Exception("Connection refused"))
 
         result = await download_and_upload_images(
-            image_urls=[("img", "https://broken.com/img.png")],
+            image_urls=[("img", "https://broken.example.net/img.png")],
             org_id="100000000000000001",
             kb_slug="kb-1",
             image_store=mock_store,

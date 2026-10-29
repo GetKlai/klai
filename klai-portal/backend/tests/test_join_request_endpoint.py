@@ -53,7 +53,7 @@ class TestJoinRequestEndpoint:
             patch("app.api.auth_join.generate_approval_token", return_value="a" * 64),
         ):
             mock_zitadel.get_userinfo = AsyncMock(
-                return_value={"sub": "user-sso-1", "email": "test@company.com", "name": "Test User"}
+                return_value={"sub": "user-sso-1", "email": "test@company.example.net", "name": "Test User"}
             )
             response = await create_join_request(
                 credentials=mock_credentials,
@@ -87,7 +87,7 @@ class TestJoinRequestEndpoint:
             patch("app.api.auth_join.zitadel") as mock_zitadel,
         ):
             mock_zitadel.get_userinfo = AsyncMock(
-                return_value={"sub": "user-sso-1", "email": "test@company.com", "name": "Test User"}
+                return_value={"sub": "user-sso-1", "email": "test@company.example.net", "name": "Test User"}
             )
             response = await create_join_request(
                 credentials=mock_credentials,

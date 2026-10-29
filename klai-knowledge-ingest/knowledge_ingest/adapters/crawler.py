@@ -282,7 +282,7 @@ def decide_terminal_status(
     @MX:NOTE — Threshold defaults to 0.30 in ``settings``; env var
     ``KLAI_INGEST_AUTHWALL_DIRTY_TRIP_RATE`` overrides per-deployment.
     Default calibrated against Voys help (0% trip-rate post-PR-#459)
-    and Redcactus pre-fix (70% trip-rate).
+    and a customer wiki pre-fix (70% trip-rate).
     @MX:REASON — Loud failure beats silent skip. Operator gets actionable
     error in connector.sync_runs.error_details; UI surfaces via REQ-5.
 
@@ -717,7 +717,7 @@ async def _build_link_graph(
 
 _UNSET = object()  # sentinel: stored_hash not yet fetched from DB
 
-# 2026-08-17 (intermedia.com + support.ascendcloud.com incident), extended
+# 2026-08-17 (intermedia.com + support.example.org incident), extended
 # 2026-08-18 with additive recovery (block B): a crawl that hits
 # RATE_LIMITED or BLOCKED_ANTI_BOT paces the NEXT crawl of that domain down
 # instead of walking into the same wall again, and a domain that has
@@ -989,7 +989,7 @@ async def run_crawl_job(
                 parse_login_indicator(login_indicator_selector)
             except ValueError as exc:
                 raise ValueError(f"login_indicator_invalid: {exc}") from exc
-        # 2026-08-17 (intermedia.com + support.ascendcloud.com incident): if
+        # 2026-08-17 (intermedia.com + support.example.org incident): if
         # a PREVIOUS crawl of this domain got rate-limited or anti-bot
         # blocked, start this one already paced down instead of hitting the
         # same wall again. See knowledge_ingest.domain_rate_limit_control
@@ -1153,7 +1153,7 @@ async def run_crawl_job(
         async with connection_factory() as conn:
             await ensure_crawl_execution_active(conn, job_id, execution_generation)
 
-            # 2026-08-17 (intermedia.com + support.ascendcloud.com incident),
+            # 2026-08-17 (intermedia.com + support.example.org incident),
             # extended 2026-08-18 (block B) and 2026-08-19 (ratio-based
             # congestion + evidence-scaled recovery): fold this job's
             # fetch_outcomes into the AIMD regelwet — halve on congestion (floor

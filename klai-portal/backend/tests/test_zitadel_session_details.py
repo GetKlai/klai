@@ -21,7 +21,7 @@ class TestGetSessionDetails:
                 "factors": {
                     "user": {
                         "id": "user-abc-123",
-                        "loginName": "test@acme.nl",
+                        "loginName": "test@acme.example.com",
                     }
                 }
             }
@@ -35,7 +35,7 @@ class TestGetSessionDetails:
         result = await client.get_session_details("session-id-1", "session-token-1")
 
         assert result["zitadel_user_id"] == "user-abc-123"
-        assert result["email"] == "test@acme.nl"
+        assert result["email"] == "test@acme.example.com"
 
     @pytest.mark.asyncio
     async def test_passes_session_token_header(self) -> None:
@@ -48,7 +48,7 @@ class TestGetSessionDetails:
                 "factors": {
                     "user": {
                         "id": "user-1",
-                        "loginName": "a@b.com",
+                        "loginName": "a@b.example.net",
                     }
                 }
             }

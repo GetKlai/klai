@@ -77,7 +77,7 @@ class TestClusterDetection:
 
     @pytest.mark.asyncio
     async def test_flags_when_5_others_match_exactly(self) -> None:
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         target = compute_simhash(wall_text)
         siblings = [target] * 5  # 5 OTHERS, all at distance 0
         conn = _FakeConn(siblings)
@@ -101,7 +101,7 @@ class TestClusterDetection:
     @pytest.mark.asyncio
     async def test_no_flag_when_only_4_others_match(self) -> None:
         """AC-02.4: cluster boundary at strict-N OTHERS (4 < 5 → no cluster)."""
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         target = compute_simhash(wall_text)
         siblings = [target] * 4
         conn = _FakeConn(siblings)
@@ -118,7 +118,7 @@ class TestClusterDetection:
     @pytest.mark.asyncio
     async def test_hamming_4_not_counted_strict_threshold(self) -> None:
         """AC-02.5: Hamming distance == 4 is OUTSIDE the cluster boundary."""
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         target = compute_simhash(wall_text)
         far_sibling = _hash_with_low_bits_flipped(target, 4)
         # Sanity: the helper produced exactly Hamming 4.
@@ -137,7 +137,7 @@ class TestClusterDetection:
     @pytest.mark.asyncio
     async def test_hamming_3_counted_at_threshold(self) -> None:
         """The boundary is inclusive: Hamming 3 IS in the cluster."""
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         target = compute_simhash(wall_text)
         boundary_sibling = _hash_with_low_bits_flipped(target, 3)
         assert hamming_distance(target, boundary_sibling) == 3
@@ -154,14 +154,14 @@ class TestClusterDetection:
         assert "cluster_size=5" in signal.evidence[0]
 
     @pytest.mark.asyncio
-    async def test_148_redcactus_walls_form_cluster(self) -> None:
+    async def test_148_partner_wiki_walls_form_cluster(self) -> None:
         """AC-02.1: 149-page production cluster yields cluster_size=148.
 
-        Production scenario: voys/support has 149 RedCactus walls. When we
+        Production scenario: voys/support has 149 partner-wiki walls. When we
         evaluate any one wall, the cluster query returns the OTHER 148 (URL
         exclusion drops the page's own row).
         """
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         target = compute_simhash(wall_text)
         conn = _FakeConn([target] * 148)
 
@@ -169,7 +169,7 @@ class TestClusterDetection:
             wall_text,
             org_id="org-voys",
             kb_slug="support",
-            url="https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
+            url="https://wiki.example.com/nl/crm-software/HubSpot",
             conn=conn,
         )
         assert signal is not None
@@ -188,7 +188,7 @@ class TestColdStart:
     @pytest.mark.asyncio
     async def test_zero_siblings_returns_none(self) -> None:
         """AC-03.1: brand-new tenant, 1 page total → None."""
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         conn = _FakeConn([])  # no other pages in this KB yet
 
         signal = await detect_anonymous_auth_wall(
@@ -203,7 +203,7 @@ class TestColdStart:
     @pytest.mark.asyncio
     async def test_below_threshold_siblings_returns_none(self) -> None:
         """AC-03.3: 4 OTHERS clustering → still below default 5 → None."""
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         target = compute_simhash(wall_text)
         conn = _FakeConn([target] * 4)
 
@@ -219,7 +219,7 @@ class TestColdStart:
     @pytest.mark.asyncio
     async def test_null_simhash_rows_skipped(self) -> None:
         """Sibling rows with NULL content_simhash (legacy, pre-backfill) are skipped."""
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         target = compute_simhash(wall_text)
         # 4 NULL siblings + 5 real → 5 cluster members, NULLs ignored
         siblings: list[int | None] = [None] * 4 + [target] * 5
@@ -237,14 +237,14 @@ class TestColdStart:
 
 
 # ---------------------------------------------------------------------------
-# REQ-02.2 production FPs do NOT cluster against RedCactus walls
+# REQ-02.2 production FPs do NOT cluster against partner-wiki walls
 # ---------------------------------------------------------------------------
 
 
 class TestProductionFalsePositives:
-    """The 5 captured production FPs must NOT cluster with RedCactus walls.
+    """The 5 captured production FPs must NOT cluster with partner-wiki walls.
 
-    Production scenario: voys/support has 148 RedCactus walls plus a handful
+    Production scenario: voys/support has 148 partner-wiki walls plus a handful
     of legitimate tutorials. When any FP page is evaluated against the wall
     cluster, its content fingerprint differs enough that 0 wall-siblings fall
     within Hamming 3 — so the FP returns None.
@@ -252,17 +252,17 @@ class TestProductionFalsePositives:
 
     FP_FIXTURES = (
         "voys_account_toegang.md",
-        "redcactus_ifttt.md",
-        "redcactus_zoom_setup_nl.md",
+        "partner_wiki_ifttt.md",
+        "partner_wiki_zoom_setup_nl.md",
         "auth_documentation_tutorial.md",
         "de_only_login.md",
     )
 
     @pytest.mark.parametrize("fp_name", FP_FIXTURES)
     @pytest.mark.asyncio
-    async def test_fp_not_in_redcactus_wall_cluster(self, fp_name: str) -> None:
+    async def test_fp_not_in_partner_wiki_wall_cluster(self, fp_name: str) -> None:
         fp_text = _read(CLEAN / fp_name)
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         wall_hash = compute_simhash(wall_text)
         wall_cluster = [wall_hash] * 148  # production-scale wall cluster
 
@@ -275,7 +275,7 @@ class TestProductionFalsePositives:
             conn=conn,
         )
         assert signal is None, (
-            f"{fp_name} clustered with the RedCactus wall cluster — FP regression"
+            f"{fp_name} clustered with the partner-wiki wall cluster — FP regression"
         )
 
 
@@ -322,7 +322,7 @@ class TestTenantIsolation:
 
     @pytest.mark.asyncio
     async def test_query_filters_by_org_and_kb(self) -> None:
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         conn = _FakeConn([])
 
         await detect_anonymous_auth_wall(
@@ -342,7 +342,7 @@ class TestTenantIsolation:
     @pytest.mark.asyncio
     async def test_query_excludes_self_via_url(self) -> None:
         """Backfill path: target page is in DB → must NOT count itself."""
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         conn = _FakeConn([])
         page_url = "https://x/the-page"
 
@@ -373,7 +373,7 @@ class TestSignalShape:
 
     @pytest.mark.asyncio
     async def test_signal_pattern_is_template_cluster(self) -> None:
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         target = compute_simhash(wall_text)
         conn = _FakeConn([target] * 5)
 
@@ -448,7 +448,7 @@ class TestConfigurableThreshold:
 
     @pytest.mark.asyncio
     async def test_lower_threshold_flags_smaller_cluster(self) -> None:
-        wall_text = _read(WALLS / "redcactus_hubspot.md")
+        wall_text = _read(WALLS / "partner_wiki_hubspot.md")
         target = compute_simhash(wall_text)
         conn = _FakeConn([target] * 3)  # 3 OTHERS
 

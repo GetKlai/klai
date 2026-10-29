@@ -29,8 +29,8 @@ from knowledge_ingest.utils.content_fingerprint import (
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
-REDCACTUS_WALL = FIXTURES_DIR / "auth_walls" / "redcactus_hubspot.md"
-REDCACTUS_CLEAN = FIXTURES_DIR / "clean_pages" / "redcactus_ifttt.md"
+PARTNER_WIKI_WALL = FIXTURES_DIR / "auth_walls" / "partner_wiki_hubspot.md"
+PARTNER_WIKI_CLEAN = FIXTURES_DIR / "clean_pages" / "partner_wiki_ifttt.md"
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ def test_compute_simhash_deterministic_short_input() -> None:
 
 def test_compute_simhash_deterministic_real_fixture() -> None:
     """Same real production page -> same fingerprint."""
-    content = REDCACTUS_WALL.read_text()
+    content = PARTNER_WIKI_WALL.read_text()
     first = compute_simhash(content)
     for _ in range(10):
         assert compute_simhash(content) == first
@@ -69,8 +69,8 @@ def test_compute_simhash_returns_signed_int64() -> None:
         "",
         "x",
         "The quick brown fox.",
-        REDCACTUS_WALL.read_text(),
-        REDCACTUS_CLEAN.read_text(),
+        PARTNER_WIKI_WALL.read_text(),
+        PARTNER_WIKI_CLEAN.read_text(),
         "lorem " * 5000,  # ~30KB of repetitive content
     ]
     for sample in samples:
@@ -132,21 +132,19 @@ def test_anchor_text_normalised_url_dropped() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_redcactus_wall_vs_clean_tutorial_outside_cluster_threshold() -> None:
-    """RedCactus wall vs IFTTT tutorial must fall outside the Hamming-3 cluster.
+def test_partner_wiki_wall_vs_clean_tutorial_outside_cluster_threshold() -> None:
+    """Partner-wiki wall vs IFTTT tutorial must fall outside the Hamming-3 cluster.
 
     AC-01.3 originally proposed ``> 10`` as the threshold, anticipating
-    "clearly distinguishable as different content". Empirically the two
-    fixtures share the RedCactus wiki template chrome (header, footer, tab
-    list) which gives them Hamming distance ~4. That is still operationally
-    correct: ``> 3`` puts the tutorial *outside* the Hamming-3 wall cluster,
-    so v2 will not falsely flag it. The exact ``> 10`` figure was an
-    over-estimate at SPEC drafting time; what matters operationally is that
-    walls and clean pages of the same CMS land in different clusters, which
-    they do.
+    "clearly distinguishable as different content". The two fixtures share
+    the wiki template chrome (header, tab list, feature and parameter lists);
+    on the original captured pages that gave Hamming distance ~4, and the
+    synthetic fixtures that replaced them land at 19. What matters
+    operationally is ``> 3``: it puts the tutorial *outside* the Hamming-3
+    wall cluster, so v2 will not falsely flag it.
     """
-    wall_hash = compute_simhash(REDCACTUS_WALL.read_text())
-    clean_hash = compute_simhash(REDCACTUS_CLEAN.read_text())
+    wall_hash = compute_simhash(PARTNER_WIKI_WALL.read_text())
+    clean_hash = compute_simhash(PARTNER_WIKI_CLEAN.read_text())
     distance = hamming_distance(wall_hash, clean_hash)
     assert distance > 3, (
         f"Wall and clean tutorial fingerprints are within the Hamming-3 cluster "
@@ -157,10 +155,10 @@ def test_redcactus_wall_vs_clean_tutorial_outside_cluster_threshold() -> None:
 def test_cross_cms_pages_hash_far_apart() -> None:
     """Across CMS / template families, Hamming distance must be clearly large."""
     voys_clean = (FIXTURES_DIR / "clean_pages" / "voys_account_toegang.md").read_text()
-    redcactus_wall = REDCACTUS_WALL.read_text()
+    partner_wiki_wall = PARTNER_WIKI_WALL.read_text()
     distance = hamming_distance(
         compute_simhash(voys_clean),
-        compute_simhash(redcactus_wall),
+        compute_simhash(partner_wiki_wall),
     )
     assert distance > 10, f"Cross-CMS fingerprints produced Hamming {distance}, expected > 10"
 
@@ -215,7 +213,7 @@ def test_simhash_p99_under_5ms_on_100kb() -> None:
     back toward the raw single-core figure — measure on a quiet box if you need
     a real benchmark.
     """
-    sample = (REDCACTUS_WALL.read_text() + "\n") * 30  # ~100 KB if fixture is ~3 KB
+    sample = (PARTNER_WIKI_WALL.read_text() + "\n") * 30  # ~100 KB if fixture is ~3 KB
     # Ensure we hit the 100 KB target even with a smaller fixture
     while len(sample) < 100_000:
         sample = sample + sample

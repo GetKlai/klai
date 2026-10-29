@@ -21,8 +21,8 @@ from app.services.answer_epistemics import (
 
 _INCIDENT_QUERY = """Kun je dit analyseren?
 
-Van: Klant <klant@example.nl>
-Aan: Support <support@example.nl>
+Van: Klant <klant@example.net>
+Aan: Support <support@example.net>
 Onderwerp: SIP 404
 
 Volgens ons veroorzaakt een fraudeblokkade deze fout.

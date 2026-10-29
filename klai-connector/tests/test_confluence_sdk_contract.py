@@ -49,7 +49,7 @@ def _clear_cache() -> None:
 def _connector(space_keys: list[str] | None = None) -> SimpleNamespace:
     config: dict[str, Any] = {
         "base_url": BASE_URL,
-        "email": "x@y.com",
+        "email": "x@y.example.net",
         "api_token": "t",
     }
     if space_keys is not None:
@@ -61,7 +61,7 @@ class TestConfluenceSdkContract:
     """The SDK surface ``ConfluenceAdapter`` depends on, asserted for real."""
 
     def _client(self) -> Any:
-        return _build_confluence_client(BASE_URL, "x@y.com", "token")
+        return _build_confluence_client(BASE_URL, "x@y.example.net", "token")
 
     def test_client_targets_cloud_v2(self) -> None:
         client = self._client()

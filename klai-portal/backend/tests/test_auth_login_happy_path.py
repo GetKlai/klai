@@ -44,7 +44,7 @@ async def test_password_totp_login_happy_path(fake_redis: Any, monkeypatch: pyte
       happy path.
     """
     # -- Step 1: POST /api/auth/login --------------------------------------
-    body = LoginRequest(email="alice@acme.com", password="correct horse", auth_request_id="ar-happy-1")
+    body = LoginRequest(email="alice@acme.example.net", password="correct horse", auth_request_id="ar-happy-1")
     response = MagicMock(spec=Response)
     db = AsyncMock(spec=AsyncSession)
 

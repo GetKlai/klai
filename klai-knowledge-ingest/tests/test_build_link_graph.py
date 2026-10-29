@@ -137,7 +137,7 @@ async def test_build_link_graph_skips_empty_internal_links():
         # links only has external
         _make_crawl_result(
             url="https://example.com/external-only",
-            links={"external": [{"href": "https://other.com/page", "text": "Other"}]},
+            links={"external": [{"href": "https://other.example.net/page", "text": "Other"}]},
         ),
     ]
     mock_conn = _make_mock_conn()

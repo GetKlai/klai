@@ -166,13 +166,13 @@ class TestBuildCandidateSet:
     def test_cross_domain_filtered_out(self) -> None:
         candidates = _build_candidate_set(
             start_url="https://example.com",
-            sitemap_urls=["https://other.com/external"],
+            sitemap_urls=["https://other.example.net/external"],
             bfs_seed_urls=["https://example.com/local"],
             base_domain="example.com",
             max_pages=10,
             include_patterns=None,
         )
-        assert "https://other.com/external" not in candidates
+        assert "https://other.example.net/external" not in candidates
         assert "https://example.com/local" in candidates
 
     def test_include_patterns_filters_substrings(self) -> None:
@@ -245,7 +245,7 @@ def _opaque_bulk_500_http_status_error(
 ) -> httpx.HTTPStatusError:
     """Build a 500 HTTPStatusError with crawl4ai's REAL production bulk body.
 
-    2026-08-14 intermedia.com incident: a live bulk request to crawl4ai for
+    2026-08-14 intermedia.example.net incident: a live bulk request to crawl4ai for
     blocked pages returned exactly this shape — no diagnosable reason, no
     "blocked by anti-bot protection" marker, just an opaque error +
     correlation_id. This is the body every bulk-5xx transport error in
@@ -309,12 +309,12 @@ class TestClassifyFetchOutcome:
         )
 
     def test_opaque_bulk_500_transport_error_classifies_http_5xx(self) -> None:
-        """2026-08-14 intermedia.com: crawl4ai's REAL production bulk-500
+        """2026-08-14 intermedia.example.net: crawl4ai's REAL production bulk-500
         body is opaque (no diagnosable reason) — it must classify honestly
         as HTTP_5XX, never BLOCKED_ANTI_BOT (unproven) and never
         unknown_exception (the pre-fix bug: PR #945's body-match never
         fired against this exact shape, so every one of the 17 failed
-        intermedia.com pages classified unknown_exception instead)."""
+        intermedia.example.net pages classified unknown_exception instead)."""
         exc = _opaque_bulk_500_http_status_error()
         assert _classify_fetch_outcome(None, error=exc) == FetchReasonCode.HTTP_5XX.value
 
@@ -363,7 +363,7 @@ class TestClassifyFetchOutcome:
         )
 
     def test_404_with_structural_antibot_marker_classifies_gone(self) -> None:
-        """2026-08-18 support.ascendcloud.com incident: a 404 (the site
+        """2026-08-18 support.example.org incident: a 404 (the site
         genuinely doesn't have this page — it was a link built from
         un-rendered template syntax) whose tiny error body trips crawl4ai's
         STRUCTURAL anti-bot heuristic ("minimal_text on small page") must
@@ -475,7 +475,7 @@ class TestClassifyFetchOutcome:
 
 
 class TestClassifyFetchOutcomeRateLimitAndRefusal:
-    """2026-08-19 (intermedia.com incident #3 / support.ascendcloud.com) —
+    """2026-08-19 (intermedia.example.net incident #3 / support.example.org) —
     onderdeel 1: one place judges the WHOLE response (status + error text
     + headers) for rate-limiting and refusal signals, regardless of which
     of the three actually carries the signal."""
@@ -979,8 +979,8 @@ async def test_crawl_site_frontier_fetches_listing_children(
     _patch_seed(
         monkeypatch,
         _seed(
-            "https://wiki.redcactus.cloud/nl",
-            internal=["https://wiki.redcactus.cloud/nl/crm-software"],
+            "https://wiki.example.com/nl",
+            internal=["https://wiki.example.com/nl/crm-software"],
         ),
     )
 
@@ -991,7 +991,7 @@ async def test_crawl_site_frontier_fetches_listing_children(
     ) -> crawl4ai_client.ChunkedFetchResult:
         pages: list[dict[str, Any]] = []
         for url in urls:
-            if url == "https://wiki.redcactus.cloud/nl/crm-software":
+            if url == "https://wiki.example.com/nl/crm-software":
                 pages.append(
                     {
                         "url": url,
@@ -1002,15 +1002,15 @@ async def test_crawl_site_frontier_fetches_listing_children(
                         "links": {
                             "internal": [
                                 {
-                                    "href": "https://wiki.redcactus.cloud/nl/crm-software/zoho-bigin",
+                                    "href": "https://wiki.example.com/nl/crm-software/zoho-bigin",
                                     "text": "Zoho Bigin",
                                 },
                                 {
-                                    "href": "https://wiki.redcactus.cloud/nl/crm-software/zoho-crm",
+                                    "href": "https://wiki.example.com/nl/crm-software/zoho-crm",
                                     "text": "Zoho CRM",
                                 },
                                 {
-                                    "href": "https://wiki.redcactus.cloud/nl/crm-software/zoho-desk",
+                                    "href": "https://wiki.example.com/nl/crm-software/zoho-desk",
                                     "text": "Zoho Desk",
                                 },
                             ]
@@ -1035,20 +1035,20 @@ async def test_crawl_site_frontier_fetches_listing_children(
     monkeypatch.setattr(crawl4ai_client, "_chunked_bulk_fetch", _fake_bulk_fetch)
 
     results, outcomes = await crawl4ai_client.crawl_site(
-        start_url="https://wiki.redcactus.cloud/nl",
+        start_url="https://wiki.example.com/nl",
         max_depth=2,
         max_pages=10,
         include_patterns=["/nl/"],
     )
 
     outcome_urls = {outcome["url"] for outcome in outcomes}
-    assert "https://wiki.redcactus.cloud/nl/crm-software/zoho-bigin" in outcome_urls
-    assert "https://wiki.redcactus.cloud/nl/crm-software/zoho-crm" in outcome_urls
-    assert "https://wiki.redcactus.cloud/nl/crm-software/zoho-desk" in outcome_urls
+    assert "https://wiki.example.com/nl/crm-software/zoho-bigin" in outcome_urls
+    assert "https://wiki.example.com/nl/crm-software/zoho-crm" in outcome_urls
+    assert "https://wiki.example.com/nl/crm-software/zoho-desk" in outcome_urls
     assert {
-        "https://wiki.redcactus.cloud/nl/crm-software/zoho-bigin",
-        "https://wiki.redcactus.cloud/nl/crm-software/zoho-crm",
-        "https://wiki.redcactus.cloud/nl/crm-software/zoho-desk",
+        "https://wiki.example.com/nl/crm-software/zoho-bigin",
+        "https://wiki.example.com/nl/crm-software/zoho-crm",
+        "https://wiki.example.com/nl/crm-software/zoho-desk",
     }.issubset({result.url for result in results})
 
 
@@ -1356,7 +1356,7 @@ class TestCombineBulkResponsesPositionalGuard:
         raw_results = [
             {
                 # WRONG site — out-of-order response from a parallel batch.
-                "url": "https://attacker.com/exploit",
+                "url": "https://attacker.example.net/exploit",
                 "success": True,
                 "status_code": 200,
                 "html": "<html>not ours</html>",
@@ -1372,7 +1372,7 @@ class TestCombineBulkResponsesPositionalGuard:
             base_domain="example.com",
         )
         # Outcome surfaces as UNKNOWN_EXCEPTION, NOT as a fake SUCCESS on
-        # the candidate URL with attacker.com's content.
+        # the candidate URL with attacker.example.net's content.
         assert outcomes[0]["url"] == "https://example.com/old-page"
         assert outcomes[0]["reason_code"] == FetchReasonCode.UNKNOWN_EXCEPTION.value
         # No CrawlResult — we refused to fabricate one from cross-domain data.
@@ -1478,14 +1478,14 @@ def test_combine_bulk_responses_opaque_5xx_transport_error_all_http_5xx() -> Non
     guessed BLOCKED_ANTI_BOT — so the caller (crawl_site) can detect it and
     trigger sequential recovery (see _is_bulk_5xx_error)."""
     candidates = [
-        "https://intermedia.com/products/unite",
-        "https://intermedia.com/products/ai",
+        "https://intermedia.example.net/products/unite",
+        "https://intermedia.example.net/products/ai",
     ]
     results, outcomes = _combine_bulk_responses(
         candidates=candidates,
         raw_results=[],
         transport_error=_opaque_bulk_500_http_status_error(),
-        base_domain="intermedia.com",
+        base_domain="intermedia.example.net",
     )
     assert results == []
     assert len(outcomes) == 2
@@ -1529,7 +1529,7 @@ class TestIsRecoverableBulkFailure:
 
 
 # ---------------------------------------------------------------------------
-# crawl_site — sequential bulk-5xx recovery (2026-08-14, intermedia.com)
+# crawl_site — sequential bulk-5xx recovery (2026-08-14, intermedia.example.net)
 # ---------------------------------------------------------------------------
 
 
@@ -1541,7 +1541,7 @@ async def test_crawl_site_recovers_batch_via_sequential_bulk_5xx_fallback(
     production body; sequential single-page retry recovers the URLs that
     pass the (intermittent) challenge and marks the rest HTTP_5XX
     (honestly — never a guessed BLOCKED_ANTI_BOT). Regression test for the
-    exact intermedia.com production bug: /products/unite passed,
+    exact intermedia.example.net production bug: /products/unite passed,
     /products/ai stayed blocked, seconds apart, via the same single-page
     path — and the bulk failure body carried no diagnosable reason at all."""
 
@@ -1749,7 +1749,7 @@ async def test_crawl_site_recovers_batch_via_sequential_bulk_timeout_fallback(
     does — ``_is_recoverable_bulk_failure`` widens the old 5xx-only trigger
     (``_is_bulk_5xx_error``) to include ``httpx.TimeoutException``.
 
-    Regression test for the 17-08 22:00 production run (intermedia.com,
+    Regression test for the 17-08 22:00 production run (intermedia.example.net,
     rate_limit=0.5): ``crawl_sequential_recovery_started`` was 0 while 5
     bulk chunks failed on read-timeout, so the real 429 signal crawl4ai
     itself logged (254 occurrences in the container log) never reached
@@ -1886,7 +1886,7 @@ async def test_crawl_site_bulk_timeout_recovery_cap_marks_timeout_not_http_5xx(
 # Sequential recovery pacing: cooldown, circuit breaker, wall-clock budget
 #
 # crawl4ai reuses ONE browser per crawl, so a flagged session stays flagged:
-# measured on intermedia.com 2026-08-14, the 1st standalone fetch succeeded
+# measured on intermedia.example.net 2026-08-14, the 1st standalone fetch succeeded
 # and the 2nd and 3rd both 500'd. Its pool drops an idle browser after ~53s,
 # after which a fresh session passes again. The recovery therefore waits
 # before every attempt, and bounds that waiting three ways.
@@ -2098,7 +2098,7 @@ async def test_recovery_breaker_still_fires_when_nothing_was_recovered(
 # ---------------------------------------------------------------------------
 # Stealth escalation: one retry of the same batch before the slow path
 #
-# Measured on intermedia.com 2026-08-15: the plain bulk request 500s
+# Measured on intermedia.example.net 2026-08-15: the plain bulk request 500s
 # wholesale, the identical batch with crawl4ai's enable_stealth
 # returns 200 with 5 of 6 pages. Seconds instead of the ~20 minutes the
 # sequential path costs, so it is tried first — but only after a failure, so
@@ -2432,7 +2432,7 @@ async def test_http_error_page_crawl4ai_reports_as_success_is_never_ingested(
 
 
 class TestClassifyFetchOutcomeRateLimitedWrapper:
-    """2026-08-17 (intermedia.com rate-limit incident): crawl4ai wraps a
+    """2026-08-17 (intermedia.example.net rate-limit incident): crawl4ai wraps a
     real target-site 429 inside the SAME "Blocked by anti-bot protection"
     marker used for genuine anti-bot challenges — e.g. "Blocked by anti-bot
     protection: HTTP 429 Too Many Requests". The 429 / "too many requests"
@@ -2565,7 +2565,7 @@ async def test_recovery_stops_immediately_on_rate_limited(
 
 
 def test_recovery_timeout_exceeds_crawl4ai_internal_backoff_ceiling() -> None:
-    """2026-08-17 (intermedia.com incident, second act): crawl4ai's own
+    """2026-08-17 (intermedia.example.net incident, second act): crawl4ai's own
     RateLimiter retries a 429 up to ``max_retries=3`` times with backoff
     capped at ``max_delay=60.0`` seconds each — hardcoded inside crawl4ai's
     dispatcher, not exposed via CrawlerRunConfig (only mean_delay /
@@ -2580,7 +2580,7 @@ def test_recovery_timeout_exceeds_crawl4ai_internal_backoff_ceiling() -> None:
     loop then sees an ``httpx.TimeoutException`` instead of the 429, and
     ``_classify_fetch_outcome`` — which is otherwise correct — has nothing
     to classify but a timeout. Confirmed in production 2026-08-17 on
-    intermedia.com: 105 of 107 crawl4ai container-log failures were
+    intermedia.example.net: 105 of 107 crawl4ai container-log failures were
     literally ``Error: Blocked by anti-bot protection: HTTP 429 Too Many
     Requests``, while ``crawl_jobs.fetch_outcomes`` recorded 110x
     ``timeout``, 2x ``blocked_anti_bot``, and 0x ``rate_limited``."""

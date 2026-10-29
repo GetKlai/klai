@@ -19,7 +19,7 @@ import httpx
 import pytest
 from helpers import make_request
 
-INTENT_EMAIL = "anne.daalman@voys.nl"
+INTENT_EMAIL = "anne.daalman@example.com"
 
 # Completed Google intent for a person Zitadel has no IdP link for.
 INTENT_NO_LINKED_USER = {

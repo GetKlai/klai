@@ -98,7 +98,7 @@ def test_nested_paragraph_extracted() -> None:
 def test_child_page_skipped() -> None:
     blocks = [
         _paragraph("Before"),
-        _child_page("Support wiki Voys en Nerds!"),
+        _child_page("Support wiki Voys en partners!"),
         _paragraph("After"),
     ]
     result = _flatten_block_texts(blocks)

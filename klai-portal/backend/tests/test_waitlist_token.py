@@ -32,10 +32,10 @@ def test_sign_and_verify_round_trip(_key: str) -> None:
     """A freshly-signed token verifies and yields the same fields."""
     from app.services.waitlist_token import sign_invite_token, verify_invite_token
 
-    token = sign_invite_token("eline@vermeer.nl", "Vermeer Advocaten")
+    token = sign_invite_token("eline@vermeer.example.com", "Vermeer Advocaten")
     payload = verify_invite_token(token)
     assert payload is not None
-    assert payload.email == "eline@vermeer.nl"
+    assert payload.email == "eline@vermeer.example.com"
     assert payload.company == "Vermeer Advocaten"
     assert payload.exp > int(time.time())
     assert payload.exp <= int(time.time()) + DEFAULT_TTL_SECONDS + 5
@@ -44,16 +44,16 @@ def test_sign_and_verify_round_trip(_key: str) -> None:
 def test_sign_normalises_email_to_lowercase(_key: str) -> None:
     from app.services.waitlist_token import sign_invite_token, verify_invite_token
 
-    token = sign_invite_token("ELINE@Vermeer.NL", "Vermeer Advocaten")
+    token = sign_invite_token("ELINE@Vermeer.example.com", "Vermeer Advocaten")
     payload = verify_invite_token(token)
     assert payload is not None
-    assert payload.email == "eline@vermeer.nl"
+    assert payload.email == "eline@vermeer.example.com"
 
 
 def test_verify_rejects_tampered_payload(_key: str) -> None:
     from app.services.waitlist_token import sign_invite_token
 
-    token = sign_invite_token("eline@vermeer.nl", "Vermeer Advocaten")
+    token = sign_invite_token("eline@vermeer.example.com", "Vermeer Advocaten")
     payload_b64, sig_b64 = token.split(".")
     # Swap one byte in the payload — sig will not match.
     tampered = payload_b64[:-1] + ("A" if payload_b64[-1] != "A" else "B")
@@ -78,7 +78,7 @@ def test_verify_rejects_expired(_key: str) -> None:
     """An expired token (negative TTL) returns None."""
     from app.services.waitlist_token import sign_invite_token, verify_invite_token
 
-    token = sign_invite_token("eline@vermeer.nl", "Vermeer Advocaten", ttl_seconds=-10)
+    token = sign_invite_token("eline@vermeer.example.com", "Vermeer Advocaten", ttl_seconds=-10)
     assert verify_invite_token(token) is None
 
 
@@ -94,7 +94,7 @@ def test_sign_raises_when_key_unconfigured(monkeypatch: pytest.MonkeyPatch) -> N
     wt = importlib.import_module("app.services.waitlist_token")
 
     with pytest.raises(wt.WaitlistTokenUnavailable):
-        wt.sign_invite_token("a@b.com", "Co")
+        wt.sign_invite_token("a@b.example.net", "Co")
 
 
 def test_verify_returns_none_when_key_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -108,7 +108,7 @@ def test_verify_returns_none_when_key_unconfigured(monkeypatch: pytest.MonkeyPat
     sys.modules.pop("app.services.waitlist_token", None)
     importlib.import_module("app.core.config")
     wt = importlib.import_module("app.services.waitlist_token")
-    token = wt.sign_invite_token("a@b.com", "Co")
+    token = wt.sign_invite_token("a@b.example.net", "Co")
 
     # Then clear the key and verify — should be None, not raise.
     monkeypatch.setenv("WAITLIST_TOKEN_KEY", "")
@@ -129,7 +129,7 @@ def test_verify_rejects_token_signed_with_different_key(monkeypatch: pytest.Monk
     sys.modules.pop("app.services.waitlist_token", None)
     importlib.import_module("app.core.config")
     wt = importlib.import_module("app.services.waitlist_token")
-    token = wt.sign_invite_token("a@b.com", "Co")
+    token = wt.sign_invite_token("a@b.example.net", "Co")
 
     monkeypatch.setenv("WAITLIST_TOKEN_KEY", "key-B")
     sys.modules.pop("app.core.config", None)

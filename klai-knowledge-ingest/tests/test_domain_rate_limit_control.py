@@ -87,12 +87,12 @@ def _outcomes(*reason_codes: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# THE regression test — support.ascendcloud.com, 2026-08-19
+# THE regression test — support.example.org, 2026-08-19
 # ---------------------------------------------------------------------------
 
 
 def test_ascend_incident_one_signal_in_475_attempts_does_not_trigger_congestion() -> None:
-    """support.ascendcloud.com: 474 SUCCESS + 1 BLOCKED_ANTI_BOT out of 475
+    """support.example.org: 474 SUCCESS + 1 BLOCKED_ANTI_BOT out of 475
     real attempts (0.21% ratio) must NOT be classified as congestion, and
     must NOT reset a domain sitting at the floor — it must instead let that
     domain raise, because the old event-based design treated this single
@@ -346,7 +346,7 @@ def test_decay_congestion_yesterday_does_not_decay() -> None:
 
 
 def test_decay_treats_missing_congestion_timestamp_as_already_expired_evidence() -> None:
-    """The www.intermedia.com production case: rate_limit stored, but
+    """The www.intermedia.example.net production case: rate_limit stored, but
     last_congestion_at is NULL (lowered before the column existed). This
     decays immediately regardless of decay_after — proven here with a long
     30-day window so it is clearly not just "the null case coincidentally
@@ -407,7 +407,7 @@ def test_count_rate_limit_observations_blocked_anti_bot_is_congestion() -> None:
 
 
 def test_count_rate_limit_observations_refused_is_not_congestion() -> None:
-    """2026-08-19 (onderdeel 3, intermedia.com / support.ascendcloud.com
+    """2026-08-19 (onderdeel 3, intermedia.example.net / support.example.org
     "weigering" incident): a REFUSED outcome (the site explicitly refuses
     automated access — see reason_codes.py) must NOT lower the domain's
     stored rate_limit. Slowing down does not fix a refusal, unlike real

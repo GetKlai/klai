@@ -20,7 +20,7 @@ class TestPendingSessionService:
         ]
         serialized = (
             '{"session_id":"sid","session_token":"stk","zitadel_user_id":"u1",'
-            '"email":"a@b.com","auth_request_id":"ar1",'
+            '"email":"a@b.example.net","auth_request_id":"ar1",'
             '"entries":[{"org_id":1,"name":"Acme","slug":"acme","kind":"member","auto_accept":false},'
             '{"org_id":2,"name":"Beta","slug":"beta","kind":"domain_match","auto_accept":true}]}'
         )
@@ -35,7 +35,7 @@ class TestPendingSessionService:
                 session_id="sid",
                 session_token="stk",
                 zitadel_user_id="u1",
-                email="a@b.com",
+                email="a@b.example.net",
                 auth_request_id="ar1",
                 entries=entries,
             )
@@ -68,7 +68,7 @@ class TestPendingSessionService:
 
         mock_pool = AsyncMock()
         mock_pool.get = AsyncMock(
-            return_value='{"session_id":"sid","session_token":"stk","zitadel_user_id":"u1","email":"a@b.com","auth_request_id":"ar1","entries":[{"org_id":1,"name":"Acme","slug":"acme","kind":"member","auto_accept":false}]}'
+            return_value='{"session_id":"sid","session_token":"stk","zitadel_user_id":"u1","email":"a@b.example.net","auth_request_id":"ar1","entries":[{"org_id":1,"name":"Acme","slug":"acme","kind":"member","auto_accept":false}]}'
         )
         mock_pool.delete = AsyncMock()
 

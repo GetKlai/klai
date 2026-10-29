@@ -10,7 +10,7 @@ def _ps(org_id, kind, auto_accept=False):
         "session_id": "sid",
         "session_token": "stk",
         "zitadel_user_id": "zu1",
-        "email": "t@acme.nl",
+        "email": "t@acme.example.com",
         "auth_request_id": "ar1",
         "entries": [{"org_id": org_id, "name": "Acme", "slug": "acme", "kind": kind, "auto_accept": auto_accept}],
     }
@@ -26,7 +26,7 @@ def _org(org_id=1, slug="acme"):
 
 def _admin():
     u = MagicMock()
-    u.email = "admin@acme.nl"
+    u.email = "admin@acme.example.com"
     u.display_name = "Admin"
     return u
 

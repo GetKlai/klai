@@ -97,7 +97,7 @@ class TestRewritePreservesSubject:
         assert (
             rewrite_preserves_subject(
                 "Werkt het met Salesforce?",
-                "Voys Salesforce CRM-koppeling Bubble RedCactus",
+                "Voys Salesforce CRM-koppeling Bubble Partnerwiki",
             )
             is True
         )

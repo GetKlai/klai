@@ -201,7 +201,7 @@ async def test_llm_worker_subscribed_to_llm_queues_only(stub_procrastinate):
 @pytest.mark.asyncio
 async def test_interactive_worker_subscribed_to_interactive_queue_only(stub_procrastinate):
     """Interactive lane: user-triggered re-syncs must not share a worker with
-    bulk queues, or a crawl backlog starves them (intermedia.com incident,
+    bulk queues, or a crawl backlog starves them (intermedia.example.net incident,
     2026-08-14: a re-sync sat behind ~550 bulk jobs)."""
     from knowledge_ingest.worker import WorkerLifecycle
 

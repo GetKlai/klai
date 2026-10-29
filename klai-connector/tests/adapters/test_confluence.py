@@ -138,7 +138,7 @@ def test_extract_config_happy_path(confluence_adapter: Any) -> None:
 
 def test_extract_config_missing_base_url_raises(confluence_adapter: Any) -> None:
     """_extract_config raises ValueError when base_url is absent."""
-    connector = _make_connector({"email": "u@e.com", "api_token": "tok"})
+    connector = _make_connector({"email": "u@e.example.net", "api_token": "tok"})
     with pytest.raises(ValueError, match="base_url"):
         confluence_adapter._extract_config(connector)
 
@@ -152,7 +152,7 @@ def test_extract_config_missing_email_raises(confluence_adapter: Any) -> None:
 
 def test_extract_config_missing_api_token_raises(confluence_adapter: Any) -> None:
     """_extract_config raises ValueError when api_token is absent."""
-    connector = _make_connector({"base_url": "https://x.atlassian.net", "email": "u@e.com"})
+    connector = _make_connector({"base_url": "https://x.atlassian.net", "email": "u@e.example.net"})
     with pytest.raises(ValueError, match="api_token"):
         confluence_adapter._extract_config(connector)
 

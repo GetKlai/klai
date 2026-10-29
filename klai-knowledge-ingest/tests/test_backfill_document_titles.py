@@ -12,11 +12,11 @@ def test_derives_title_from_stored_heading_for_numeric_article_id():
     update = title_update_from_row(
         {
             "id": "0f7d44ca-e32d-45b4-91af-834270a87d3f",
-            "path": "https://support.ascendcloud.com/app/articles/detail/a_id/15937",
+            "path": "https://support.example.org/app/articles/detail/a_id/15937",
             "extra": json.dumps(
                 {
                     "title": "15937",
-                    "source_url": "https://support.ascendcloud.com/app/articles/detail/a_id/15937",
+                    "source_url": "https://support.example.org/app/articles/detail/a_id/15937",
                     "document_text": "# Configure call forwarding\n\nInstructions.",
                 }
             ),
@@ -34,10 +34,10 @@ def test_leaves_numeric_title_when_stored_content_has_no_better_source():
     update = title_update_from_row(
         {
             "id": "0f7d44ca-e32d-45b4-91af-834270a87d3f",
-            "path": "https://support.ascendcloud.com/app/articles/detail/a_id/15937",
+            "path": "https://support.example.org/app/articles/detail/a_id/15937",
             "extra": {
                 "title": "15937",
-                "source_url": "https://support.ascendcloud.com/app/articles/detail/a_id/15937",
+                "source_url": "https://support.example.org/app/articles/detail/a_id/15937",
                 "document_text": "Instructions without a heading.",
             },
         }

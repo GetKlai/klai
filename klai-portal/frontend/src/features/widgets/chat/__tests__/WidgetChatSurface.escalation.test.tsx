@@ -86,8 +86,8 @@ function sendUserMessage(content: string) {
   fireEvent.keyDown(textbox, { key: 'Enter' })
 }
 
-const BOOKING_URL_WITH_QUERY = 'https://support.voys.nl/book/voys?t=abc'
-const BOOKING_URL_BARE = 'https://support.voys.nl/agenda/abc/workflow/voys'
+const BOOKING_URL_WITH_QUERY = 'https://support.example.com/book/voys?t=abc'
+const BOOKING_URL_BARE = 'https://support.example.com/agenda/abc/workflow/voys'
 
 afterEach(() => {
   vi.unstubAllGlobals()

@@ -180,7 +180,7 @@ def test_general_prompt_carries_anti_hallucination_block():
     # fabricate company / product / URL facts and must point the user
     # at Web Search or KB selection. The original GENERAL prompt only
     # said "answer from general knowledge" — for "what's on company
-    # X's website?" that produced a hallucinated voys.nl + invented
+    # X's website?" that produced a hallucinated example.com + invented
     # tagline ("volledig groene telefonie"). The follow-up adds an
     # explicit anti-fabrication block.
     text = GENERAL_CHAT_SYSTEM_PROMPT
@@ -195,7 +195,7 @@ def test_general_prompt_carries_anti_hallucination_block():
     # Must also mention KB selection as the second escape hatch.
     assert "knowledge base" in text.lower()
     # Must explicitly forbid fabricating URLs/domains — that was the
-    # exact regression: 'voys.nl' invented out of thin air.
+    # exact regression: 'example.com' invented out of thin air.
     assert "URL" in text
 
 

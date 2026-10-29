@@ -1,6 +1,6 @@
 """Dead-entry-point fallback: seed the crawl from a validated interior page.
 
-A client-rendered homepage/hub (support.ascendcloud.com) yields no ingestable
+A client-rendered homepage/hub (support.example.org) yields no ingestable
 pages because the crawler can't follow its links — they arrive as unrendered
 template tokens. When the operator validated a specific article in the preview,
 ``run_crawl_job`` retries the crawl from that ``discovery_seed_url`` instead,
@@ -20,8 +20,8 @@ from knowledge_ingest.adapters.crawler import run_crawl_job
 from knowledge_ingest.crawl4ai_client import CrawlResult
 from tests.conftest import connection_factory_for
 
-HUB = "https://support.ascendcloud.com/"
-ARTICLE = "https://support.ascendcloud.com/app/articles/detail/a_id/16781"
+HUB = "https://support.example.org/"
+ARTICLE = "https://support.example.org/app/articles/detail/a_id/16781"
 
 
 def _mock_conn() -> MagicMock:
@@ -199,5 +199,5 @@ async def test_seed_equal_to_start_url_is_not_re_crawled() -> None:
     repeat the same empty crawl — skip it."""
     crawl_site = AsyncMock(return_value=([], []))
     # HUB with and without trailing slash canonicalise the same.
-    await _run(crawl_site, discovery_seed_url="https://support.ascendcloud.com")
+    await _run(crawl_site, discovery_seed_url="https://support.example.org")
     assert crawl_site.await_count == 1

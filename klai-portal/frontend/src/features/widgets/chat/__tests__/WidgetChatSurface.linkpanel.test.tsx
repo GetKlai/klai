@@ -149,7 +149,7 @@ describe('WidgetChatSurface booking panel', () => {
 
     const frame = document.querySelector('iframe')
     expect(frame?.getAttribute('src')).toBe(
-      'https://support.voys.nl/agenda/workflow/voys?embed=1&lng=nl',
+      'https://support.example.com/agenda/workflow/voys?embed=1&lng=nl',
     )
     // Only this known destination may use the booking module's capabilities.
     expect(frame?.getAttribute('allow')).toBe('clipboard-write; payment; geolocation')

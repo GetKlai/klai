@@ -26,11 +26,11 @@ def _make_status_error(body: str) -> httpx.HTTPStatusError:
 def test_secret_substring_is_replaced() -> None:
     """REQ-4.1: known secret value is replaced by <redacted>; unrelated text survives."""
     secret = "my-internal-secret-12345"
-    body = f"gRPC error: invalid token {secret} for user mark@voys.nl"
+    body = f"gRPC error: invalid token {secret} for user mark@example.com"
     out = sanitize_response_body(_make_response(body), [secret])
     assert secret not in out
     assert "<redacted>" in out
-    assert "mark@voys.nl" in out  # email is not a secret
+    assert "mark@example.com" in out  # email is not a secret
 
 
 def test_secret_in_status_error_response_is_replaced() -> None:

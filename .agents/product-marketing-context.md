@@ -64,9 +64,9 @@ Knowledge is technologisch ver voor op de markt. De geavanceerde connectors zijn
 - Kennisintensief werk met compliance-blokkade of schaduw-AI probleem
 
 **Sectoren bevestigd door klantdata:**
-- Support teams / helpdesk (Voys, The Nerds)
+- Support teams / helpdesk (Voys, een MSP-partner)
 - Overheid — provincies, uitvoeringsorganisaties (Drenthe, Groningen, Omgevingsdienst)
-- MSP / IT-dienstverleners (The Nerds)
+- MSP / IT-dienstverleners (een MSP-partner)
 
 **Sectoren bevestigd door marktonderzoek (nog geen klanten):**
 - Financiële dienstverlening (Rabobank-patroon)
@@ -97,7 +97,7 @@ Knowledge is technologisch ver voor op de markt. De geavanceerde connectors zijn
 5. On-brand AI: tone of voice en merkrichtlijnen centraliseren zodat alle content consistent is — zonder die data naar een extern model te sturen
 
 **Use cases (bevestigd door klantdata):**
-- **KCC / Klant Contact Centrum:** medewerkers die snel bij procesdocumentatie en klantkennis willen — Voys, The Nerds, drie overheden
+- **KCC / Klant Contact Centrum:** medewerkers die snel bij procesdocumentatie en klantkennis willen — Voys, een MSP-partner, drie overheden
 - **Overheid:** compliancy-first AI voor organisaties met ongelabelde gevoelige data en Cloud Act-blokkade
 - **MSP / IT-dienstverlener:** kennis van meerdere klanten tegelijk beheren, snel onboarden bij nieuwe opdracht
 - **On-brand AI:** tone of voice handboek als kennislaag — alle medewerkers communiceren consistent zonder externe model-training
@@ -115,7 +115,7 @@ Knowledge is technologisch ver voor op de markt. De geavanceerde connectors zijn
 - **Product:** Knowledge
 - **Inzicht:** Instap via Knowledge. Grote kennisbehoefte voor interne support / KCC.
 
-### The Nerds
+### MSP-partner
 - **Sector:** Managed services / IT-support
 - **Use cases:** Klantkennis snel opnemen bij nieuwe opdracht, medewerkers trainen, interne kennisbank processen + technische documentatie, bellende klanten sneller helpen
 - **Product:** Knowledge
@@ -140,12 +140,12 @@ Knowledge is technologisch ver voor op de markt. De geavanceerde connectors zijn
 - **Use case:** Medewerkers die snel bij procesdocumentatie en regelgeving willen
 
 ### Wat dit valideert
-- ✅ **Support / KCC-sector bevestigd** — Voys, The Nerds, én drie overheidsinstanties
+- ✅ **Support / KCC-sector bevestigd** — Voys, een MSP-partner, én drie overheidsinstanties
 - ✅ **Knowledge is de primaire instap**, niet Chat
 - ✅ **Overheid is een actief segment** — niet alleen hypothese, drie concrete prospects
 - ✅ **Cloud Act is de blokkade**, niet alleen GDPR — overheden noemen dit expliciet
 - 🆕 **Data-governance probleem** — overheid heeft ongelabelde gevoelige data, kan geen AI inzetten zonder risico
-- 🆕 **MSP-segment** zichtbaar via The Nerds
+- 🆕 **MSP-segment** zichtbaar via een MSP-partner
 - 🆕 **On-brand AI / tone of voice** als apart use case (zie hieronder)
 
 ---
@@ -156,8 +156,8 @@ Knowledge is technologisch ver voor op de markt. De geavanceerde connectors zijn
 
 | Persona | Functie | Pijnpunt | Wat wij beloven | Status |
 |---------|---------|----------|-----------------|--------|
-| **De helpdesk-lead** | Support teamlead, IT-manager | "Onze kennis zit overal — in hoofden, Confluence, mail" | Één doorzoekbare kennislaag voor het hele team | ✅ Bevestigd door Voys + The Nerds |
-| **De MSP-eigenaar** | Directeur IT-dienstverlener | "Bij elke nieuwe klant moeten we opnieuw alles leren" | Klantkennis snel opbouwen en hergebruiken | 🆕 Nieuw — The Nerds |
+| **De helpdesk-lead** | Support teamlead, IT-manager | "Onze kennis zit overal — in hoofden, Confluence, mail" | Één doorzoekbare kennislaag voor het hele team | ✅ Bevestigd door Voys + de MSP-partner |
+| **De MSP-eigenaar** | Directeur IT-dienstverlener | "Bij elke nieuwe klant moeten we opnieuw alles leren" | Klantkennis snel opbouwen en hergebruiken | 🆕 Nieuw — een MSP-partner |
 | **De compliance-buyer** | Partner / directeur | "We mogen ChatGPT niet gebruiken met klantdata" | Zelfde ervaring, geen compliance-risico | Hypothese — nog valideren |
 | **De kenniswerker** | Teamlead, consultant | "Ik upload steeds dezelfde documenten opnieuw" | Persistent, gedeeld, voedt terug in de org | Hypothese — nog valideren |
 
@@ -375,7 +375,7 @@ Zoeken naar alternatieven:
 |---------|------|-------|-----------|
 | MKB 20–200 mnd | Schaduw-AI + AI under control | IT-manager, ops, teamlead | Hypothese |
 | (Semi-)overheid | Compliance + Cloud Act | Informatiemanager, projectleider | ✅ 3 klanten |
-| KCC (niche) | Kennis op de lijn | Operationeel manager, directeur | ✅ Voys, The Nerds, overheden |
+| KCC (niche) | Kennis op de lijn | Operationeel manager, directeur | ✅ Voys, een MSP-partner, overheden |
 
 ### Beste positionering (uit onderzoek + klantdata)
 Niet: "ChatGPT-alternatief"
@@ -474,12 +474,12 @@ Compliance-sectoren (overheid, zorg, finance, legal) zijn de snelste converters.
 
 ## Openstaande vragen (valideren met echte klantdata)
 
-- Welke functietitels kopen echt? (partner vs. teamlead vs. ops) — vragen aan Voys + The Nerds
+- Welke functietitels kopen echt? (partner vs. teamlead vs. ops) — vragen aan Voys + de MSP-partner
 - Is de MSP / IT-dienstverlener een eigen segment met eigen GTM-aanpak nodig?
 - Stappen toekomstige klanten ook direct in via Knowledge, of via Chat/Focus eerst?
-- Wat zeggen Voys en The Nerds letterlijk over waarom ze kozen voor Klai? (verbatim quotes nodig)
+- Wat zeggen Voys en de MSP-partner letterlijk over waarom ze kozen voor Klai? (verbatim quotes nodig)
 - Hoe lang duurt de time-to-first-value (signup → eerste echte query)?
 - Wanneer is Docs volwassen genoeg om publiek te communiceren?
 - Klopt de compliance-buyer hypothese, of is de primaire driver "kennis organiseren" (niet privacy)?
 
-*Volgende update: na eerste gesprek met Voys en The Nerds over hun ervaring.*
+*Volgende update: na eerste gesprek met Voys en de MSP-partner over hun ervaring.*

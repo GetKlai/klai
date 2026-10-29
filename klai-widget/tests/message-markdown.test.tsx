@@ -8,7 +8,7 @@ function renderAnswer(content: string) {
   const { container } = render(() => (
     <MessageList
       messages={[{ role: "assistant", content, sources: [
-        { label: "1", title: "Belplan toevoegen", url: "https://help.voys.nl/belplan" },
+        { label: "1", title: "Belplan toevoegen", url: "https://help.example.com/belplan" },
       ] }]}
       isStreaming={false}
       error={null}
@@ -37,7 +37,7 @@ describe("help answer Markdown", () => {
     expect(answer.querySelectorAll("ol > li")).toHaveLength(2);
     expect(answer.querySelectorAll("ul > li")).toHaveLength(2);
     expect(answer.querySelector("pre code")?.textContent).toContain("<script>alert(1)</script>");
-    expect(answer.querySelector("a.klai-citation")?.getAttribute("href")).toBe("https://help.voys.nl/belplan");
+    expect(answer.querySelector("a.klai-citation")?.getAttribute("href")).toBe("https://help.example.com/belplan");
     expect(answer.querySelector('script, [onerror], a[href^="javascript:"]')).toBeNull();
   });
 });

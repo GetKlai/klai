@@ -222,7 +222,7 @@ def classify_auth_wall(
                 break
 
     # Rule 4b — repeated marker anywhere in body. Real production case
-    # (wiki.redcactus.cloud article pages with multiple tabs, 2026-05-07):
+    # (wiki.example.com article pages with multiple tabs, 2026-05-07):
     # the auth-wall message "Log in when you want to read this article"
     # appears ONCE PER TAB, in the middle of the body — never at the end.
     # D-13 alone misses these. But a single phrase repeating 2+ times in

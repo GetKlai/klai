@@ -22,7 +22,7 @@ def _payload(password: str, **overrides: str) -> dict[str, str]:
     base = {
         "first_name": "Mark",
         "last_name": "Vletter",
-        "email": "mark@voys.nl",
+        "email": "mark@example.com",
         "password": password,
         "company_name": "Voys",
         "preferred_language": "nl",
@@ -69,13 +69,13 @@ def test_user_input_context_is_passed_to_zxcvbn() -> None:
                     "Mark!Vletter2026",
                     first_name="Mark",
                     last_name="Vletter",
-                    email="mark@voys.nl",
+                    email="mark@example.com",
                     company_name="Voys",
                 )
             )
 
     zxcvbn.assert_called_once()
-    assert zxcvbn.call_args.kwargs["user_inputs"] == ["mark@voys.nl", "Mark", "Vletter", "Voys"]
+    assert zxcvbn.call_args.kwargs["user_inputs"] == ["mark@example.com", "Mark", "Vletter", "Voys"]
     assert "Wachtwoord is te zwak" in str(exc_info.value)
 
 
@@ -87,7 +87,7 @@ def test_user_context_password_can_be_rejected_by_zxcvbn() -> None:
                 "QwertyQwertyQwerty",
                 first_name="Mark",
                 last_name="Vletter",
-                email="mark@voys.nl",
+                email="mark@example.com",
                 company_name="Voys",
             )
         )

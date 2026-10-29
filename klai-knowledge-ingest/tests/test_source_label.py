@@ -17,8 +17,8 @@ def _make_request(**kwargs) -> IngestRequest:
 
 def test_compute_source_label_webcrawl():
     """source_type=crawl + source_domain → domain as label."""
-    req = _make_request(source_type="crawl", source_domain="help.mitel.nl")
-    assert _compute_source_label(req) == "help.mitel.nl"
+    req = _make_request(source_type="crawl", source_domain="help.example.org")
+    assert _compute_source_label(req) == "help.example.org"
 
 
 def test_compute_source_label_direct_url_uses_hostname():
@@ -41,8 +41,8 @@ def test_compute_source_label_crawl_no_domain_falls_back_to_kb_slug():
 
 def test_compute_source_label_connector_with_connector_type():
     """source_type=connector + connector_type → connector_type as label."""
-    req = _make_request(source_type="connector", connector_type="redcactus-wiki")
-    assert _compute_source_label(req) == "redcactus-wiki"
+    req = _make_request(source_type="connector", connector_type="partner-wiki")
+    assert _compute_source_label(req) == "partner-wiki"
 
 
 def test_compute_source_label_connector_with_source_connector_id_fallback():
@@ -82,9 +82,9 @@ def test_source_label_in_extra_payload():
     """source_label must appear in extra_payload after _compute_source_label is called
     and the field is set in ingest.py logic. This test verifies the field value
     independently from the full ingest pipeline."""
-    req = _make_request(source_type="crawl", source_domain="docs.voys.nl")
+    req = _make_request(source_type="crawl", source_domain="docs.example.com")
     label = _compute_source_label(req)
     # Simulate what ingest.py does
     extra_payload: dict = {}
     extra_payload["source_label"] = label
-    assert extra_payload["source_label"] == "docs.voys.nl"
+    assert extra_payload["source_label"] == "docs.example.com"

@@ -69,24 +69,24 @@ def _patch_probe_fetch(with_cookies: _ProbeResponse, without_cookies: _ProbeResp
     )
 
 
-_REDCACTUS_COOKIES = [
+_PARTNER_WIKI_COOKIES = [
     {
         "name": "prod-knowledgebase-session",
         "value": "eyJ.fake.value",
-        "domain": "wiki.redcactus.cloud",
+        "domain": "wiki.example.com",
         "path": "/",
     },
     {
         "name": "XSRF-TOKEN",
         "value": "eyJ.fake.value",
-        "domain": "wiki.redcactus.cloud",
+        "domain": "wiki.example.com",
         "path": "/",
     },
 ]
 
 # Cookies are only replayed on the host they name, so tests that probe
 # example.com need cookies for it.
-_COOKIES_FOR_EXAMPLE_COM = [{**c, "domain": "example.com"} for c in _REDCACTUS_COOKIES]
+_COOKIES_FOR_EXAMPLE_COM = [{**c, "domain": "example.com"} for c in _PARTNER_WIKI_COOKIES]
 
 
 # ---------------------------------------------------------------------------
@@ -121,15 +121,15 @@ def test_auth_probe_significant_word_diff_returns_auth_ok(client: TestClient) ->
         resp = client.post(
             "/ingest/v1/crawl/auth-probe",
             json={
-                "url": "https://wiki.redcactus.cloud/nl/article",
-                "cookies": _REDCACTUS_COOKIES,
+                "url": "https://example.com/nl/article",
+                "cookies": _COOKIES_FOR_EXAMPLE_COM,
             },
         )
     body = resp.json()
     assert body["classification"] == "auth_ok"
     assert body["word_count"] == 7299
     assert body["auth_guard"] is not None
-    assert body["auth_guard"]["canary_url"] == "https://wiki.redcactus.cloud/nl/article"
+    assert body["auth_guard"]["canary_url"] == "https://example.com/nl/article"
 
 
 def test_auth_probe_status_code_split_returns_auth_ok(client: TestClient) -> None:
@@ -161,8 +161,8 @@ def test_auth_probe_no_diff_returns_auth_failed_still_walled(
         resp = client.post(
             "/ingest/v1/crawl/auth-probe",
             json={
-                "url": "https://wiki.redcactus.cloud/nl/",
-                "cookies": _REDCACTUS_COOKIES,
+                "url": "https://example.com/nl/",
+                "cookies": _COOKIES_FOR_EXAMPLE_COM,
             },
         )
     body = resp.json()
@@ -225,8 +225,8 @@ def test_auth_probe_tiny_diff_under_threshold_is_still_walled(
         resp = client.post(
             "/ingest/v1/crawl/auth-probe",
             json={
-                "url": "https://wiki.redcactus.cloud/nl/",
-                "cookies": _REDCACTUS_COOKIES,
+                "url": "https://example.com/nl/",
+                "cookies": _COOKIES_FOR_EXAMPLE_COM,
             },
         )
     body = resp.json()
@@ -244,7 +244,7 @@ def test_auth_probe_fetch_failure_returns_auth_failed_unreachable(
             "/ingest/v1/crawl/auth-probe",
             json={
                 "url": "https://example.com/page",
-                "cookies": _REDCACTUS_COOKIES,
+                "cookies": _PARTNER_WIKI_COOKIES,
             },
         )
     body = resp.json()
@@ -318,7 +318,7 @@ def test_auth_probe_rejects_ssrf_url(client: TestClient) -> None:
             "/ingest/v1/crawl/auth-probe",
             json={
                 "url": "http://docker-socket-proxy:2375/v1.42/info",
-                "cookies": _REDCACTUS_COOKIES,
+                "cookies": _PARTNER_WIKI_COOKIES,
             },
         )
     assert resp.status_code == 400
@@ -340,7 +340,7 @@ def test_auth_probe_match_reasons_is_list(client: TestClient) -> None:
             "/ingest/v1/crawl/auth-probe",
             json={
                 "url": "https://example.com/page",
-                "cookies": _REDCACTUS_COOKIES,
+                "cookies": _PARTNER_WIKI_COOKIES,
             },
         )
     body = resp.json()
@@ -374,7 +374,7 @@ def test_auth_probe_passes_org_id_to_identity_assert(
             "/ingest/v1/crawl/auth-probe",
             json={
                 "url": "https://example.com/page",
-                "cookies": _REDCACTUS_COOKIES,
+                "cookies": _PARTNER_WIKI_COOKIES,
                 "org_id": provided_org_id,
             },
         )

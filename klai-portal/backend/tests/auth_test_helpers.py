@@ -34,7 +34,7 @@ from app.models.portal import PortalOrg, PortalUser
 # Constants
 # ---------------------------------------------------------------------------
 
-_TEST_EMAIL = "alice@acme.com"
+_TEST_EMAIL = "alice@acme.example.net"
 
 
 # ---------------------------------------------------------------------------

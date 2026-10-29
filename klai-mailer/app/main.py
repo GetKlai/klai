@@ -140,7 +140,7 @@ async def health() -> dict:
 #     removes the wrong-link duplicate and keeps the correct invite mail.
 #   - Regular signup uses `create_human_user_v2_with_verify` →
 #     `user.human.email.code.added` (NOT init-code). Verified: real
-#     signup lars.houben@nerds.nl 2026-05-20 fired email.code.added and
+#     signup 2026-05-20 fired email.code.added and
 #     reached ACTIVE+verified. So the 2026-05-13 failure mode (drop kills
 #     signup verify-mail) CANNOT recur — signup no longer touches init-code.
 #   - `create_human_user` (`sendCodes: true`, the only other init-code

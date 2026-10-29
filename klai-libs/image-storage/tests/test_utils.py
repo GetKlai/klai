@@ -44,25 +44,25 @@ class TestExtractMarkdownImageUrls:
 class TestResolveRelativeUrl:
     def test_absolute_url_unchanged(self) -> None:
         assert (
-            resolve_relative_url("https://example.com/img.png", "https://site.com/page")
+            resolve_relative_url("https://example.com/img.png", "https://site.example.net/page")
             == "https://example.com/img.png"
         )
 
     def test_relative_path_resolved(self) -> None:
         assert (
-            resolve_relative_url("images/photo.png", "https://site.com/docs/page.html")
-            == "https://site.com/docs/images/photo.png"
+            resolve_relative_url("images/photo.png", "https://site.example.net/docs/page.html")
+            == "https://site.example.net/docs/images/photo.png"
         )
 
     def test_root_relative_path(self) -> None:
         assert (
-            resolve_relative_url("/assets/logo.png", "https://site.com/docs/page.html")
-            == "https://site.com/assets/logo.png"
+            resolve_relative_url("/assets/logo.png", "https://site.example.net/docs/page.html")
+            == "https://site.example.net/assets/logo.png"
         )
 
     def test_parent_traversal(self) -> None:
         assert (
-            resolve_relative_url("../img.png", "https://site.com/docs/sub/page.html") == "https://site.com/docs/img.png"
+            resolve_relative_url("../img.png", "https://site.example.net/docs/sub/page.html") == "https://site.example.net/docs/img.png"
         )
 
     def test_empty_base_returns_original(self) -> None:

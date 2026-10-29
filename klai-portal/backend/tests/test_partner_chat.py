@@ -1242,7 +1242,7 @@ def test_augment_messages_language_contract_ignores_dutch_page_context():
         conversation,
         "System rules",
         {
-            "url": "https://www.voys.nl/klantenservice",
+            "url": "https://www.example.com/klantenservice",
             "path": "/klantenservice",
             "title": "Klantenservice",
             "excerpt": "Alles over onze telefooncentrale, je nummers en de facturen die je ontvangt.",
@@ -2355,7 +2355,7 @@ def test_internal_evidence_labels_never_reach_the_visitor():
             "chunk_id": "c1",
             "source_title": "Permissiegroepen",
             "text": "Ga naar Beheer en kies Permissiegroepen.",
-            "source_url": "https://help.voys.nl/permissiegroepen",
+            "source_url": "https://help.example.com/permissiegroepen",
         }
     ]
     content = _answer_without_retrieved_sources("Zoals beschreven in Evidence E1 en (E1) kan dat.", chunks)

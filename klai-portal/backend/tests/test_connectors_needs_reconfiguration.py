@@ -12,7 +12,7 @@ which lives in klai-connector's separate database. The proxy used here:
         AND last_sync_status == "failed"
     )
 
-Covers AC-9: the existing Redcactus connector with last_sync_status='failed'
+Covers AC-9: the existing customer-wiki connector with last_sync_status='failed'
 gets surfaced. False positives (a web_crawler that failed for an unrelated
 reason) are acceptable: clicking "Investigate" will still drop the user
 into the wizard, which now has the REQ-2 / REQ-3 gates to surface the real

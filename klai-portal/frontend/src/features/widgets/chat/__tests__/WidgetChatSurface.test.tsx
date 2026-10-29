@@ -42,7 +42,7 @@ vi.mock('@/paraglide/messages', () =>
 
 import { WidgetChatSurface } from '../WidgetChatSurface'
 
-const BOOKING_URL = 'https://support.voys.nl/book/voys?t=abc'
+const BOOKING_URL = 'https://support.example.com/book/voys?t=abc'
 
 function renderSurface(props: Partial<ComponentProps<typeof WidgetChatSurface>> = {}) {
   return render(

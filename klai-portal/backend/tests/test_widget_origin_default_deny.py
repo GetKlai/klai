@@ -5,8 +5,8 @@ SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-2.
 AC-tested:
 - AC2.1: origin_allowed(origin, [], allow_any_origin=False) -> False
 - AC2.2: origin_allowed(origin, [], allow_any_origin=True) -> True
-- AC2.3: origin_allowed(origin, ["https://a.com"], allow_any_origin=False) -> True for matching
-- AC2.4: origin_allowed(origin, ["https://a.com"], allow_any_origin=False) -> False for non-matching
+- AC2.3: origin_allowed(origin, ["https://a.example.net"], allow_any_origin=False) -> True for matching
+- AC2.4: origin_allowed(origin, ["https://a.example.net"], allow_any_origin=False) -> False for non-matching
 - AC2.5: allow_any_origin defaults to False (backward-compat break must be explicit)
 """
 
@@ -41,11 +41,11 @@ class TestOriginAllowedDefaultDeny:
 
     def test_non_empty_list_still_denies_non_matching(self):
         """AC2.4 — Non-empty allowed_origins denies an origin not in the list."""
-        assert origin_allowed("https://other.com", ["https://example.com"], allow_any_origin=False) is False
+        assert origin_allowed("https://other.example.net", ["https://example.com"], allow_any_origin=False) is False
 
     def test_allow_any_origin_true_with_non_empty_list_still_allows(self):
         """allow_any_origin=True is an open-world flag — list content is irrelevant."""
-        assert origin_allowed("https://any.com", ["https://example.com"], allow_any_origin=True) is True
+        assert origin_allowed("https://any.example.net", ["https://example.com"], allow_any_origin=True) is True
 
     def test_allow_any_origin_false_preserves_wildcard_subdomain_matching(self):
         """Wildcard subdomain matching still works when allow_any_origin=False."""
@@ -78,4 +78,4 @@ class TestOriginAllowedWidgetRowIntegration:
         """Widget with allow_any_origin=False + empty list denies all origins."""
         # Real widget rows migrated from public_share_enabled=False get explicit subdomain
         # in allowed_origins, but this tests the guard itself.
-        assert origin_allowed("https://anything.com", [], allow_any_origin=False) is False
+        assert origin_allowed("https://anything.example.net", [], allow_any_origin=False) is False
