@@ -48,16 +48,16 @@ jobs:
 
       - name: SAST scan (Semgrep — local, no cloud)
         run: |
+          # The registry's cooldown rules (excluded below) accept nothing under
+          # 7 days. The owner set 3 days on 2026-10-29 (Dependabot's default;
+          # the hijacked npm releases of 2025 were gone after 2.5 to 12 hours),
+          # so scripts/test-renovate-config.sh asserts the value instead and
+          # fails when a cooldown is missing or shorter than 3 days.
           semgrep scan \
             --config auto \
             --config p/owasp-top-ten \
             --config .semgrep/rules/ \
             --exclude 'klai-portal/frontend/public/widget/*.js' \
-            # The registry's cooldown rules accept nothing under 7 days. The owner
-            # set 3 days on 2026-10-29 (Dependabot's default; the hijacked npm
-            # releases of 2025 were gone after 2.5 to 12 hours), so the value is
-            # asserted by scripts/test-renovate-config.sh instead, which fails
-            # when a cooldown is missing or shorter than 3 days.
             --exclude-rule 'package_managers.npm.npm-missing-minimum-release-age.npm-missing-minimum-release-age' \
             --exclude-rule 'package_managers.uv.uv-missing-dependency-cooldown.uv-missing-dependency-cooldown' \
             --exclude-rule 'python.django.security.django-no-csrf-token.django-no-csrf-token' \
