@@ -7,11 +7,19 @@ Calls the Vexa transcription-service (OpenAI-compatible) with
 ``transcription_tier=deferred`` — Scribe audio uploads are best-effort
 and yield to real-time meeting traffic (tier=realtime reserved slots).
 On HTTP 503 we honour ``Retry-After`` up to `_MAX_RETRIES` attempts.
+
+Long recordings are split into chunks of at most
+``settings.transcription_chunk_seconds`` (cut at the quietest moment shortly
+before each boundary) and transcribed one after the other; the backend's body
+limit and read timeout apply per request, not per recording.
 """
 
 from __future__ import annotations
 
 import asyncio
+import io
+import wave
+from array import array
 from dataclasses import dataclass
 from typing import Final, Protocol
 
@@ -29,6 +37,10 @@ logger = structlog.get_logger(__name__)
 _DEFERRED_TIER: Final = "deferred"
 _MAX_RETRIES: Final = 3
 _RETRY_AFTER_CLAMP: Final = (1, 30)  # seconds — lower/upper bounds for server-sent Retry-After
+# A chunk boundary may move up to this far back to land on the quietest
+# 100 ms window, so a cut does not fall in the middle of a word.
+_CUT_SEARCH_SECONDS: Final = 10
+_CUT_WINDOW_SECONDS: Final = 0.1
 
 
 @dataclass
@@ -61,10 +73,82 @@ def _clamped_retry_after(header_value: str | None) -> int:
     return max(lo, min(raw, hi))
 
 
+def _quietest_frame(frames: bytes, lo: int, hi: int, window: int) -> int:
+    """Frame index in [lo, hi) where the lowest-energy run of `window` frames starts."""
+    samples = array("h")
+    samples.frombytes(frames[lo * 2 : hi * 2])
+    best_at, best_energy = hi, None
+    for at in range(0, len(samples) - window + 1, window):
+        energy = sum(abs(v) for v in samples[at : at + window])
+        if best_energy is None or energy < best_energy:
+            best_at, best_energy = lo + at, energy
+    return best_at
+
+
+def split_wav(audio_wav: bytes, max_seconds: int) -> list[bytes]:
+    """Split a 16-bit mono WAV into chunks of at most `max_seconds`.
+
+    Each cut is placed on the quietest 100 ms window in the 10 s before the
+    nominal boundary. Audio shorter than `max_seconds` is returned unchanged.
+    """
+    with wave.open(io.BytesIO(audio_wav), "rb") as src:
+        rate = src.getframerate()
+        params = src.getparams()
+        total = src.getnframes()
+        if total <= max_seconds * rate:
+            return [audio_wav]
+        frames = src.readframes(total)
+
+    chunks: list[bytes] = []
+    start = 0
+    while start < total:
+        end = min(start + max_seconds * rate, total)
+        if end < total:
+            end = _quietest_frame(
+                frames,
+                end - _CUT_SEARCH_SECONDS * rate,
+                end,
+                int(_CUT_WINDOW_SECONDS * rate),
+            )
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as out:
+            out.setparams(params)
+            out.writeframes(frames[start * 2 : end * 2])
+        chunks.append(buf.getvalue())
+        start = end
+    return chunks
+
+
 class WhisperHttpProvider:
     """Calls the Vexa transcription-service POST /v1/audio/transcriptions with tier=deferred."""
 
     async def transcribe(
+        self,
+        audio_wav: bytes,
+        language: str | None,
+    ) -> TranscriptionResult:
+        chunks = split_wav(audio_wav, settings.transcription_chunk_seconds)
+        results: list[TranscriptionResult] = []
+        for index, chunk in enumerate(chunks):
+            if len(chunks) > 1:
+                logger.info("transcription_chunk", index=index + 1, total=len(chunks))
+            result = await self._transcribe_chunk(chunk, language)
+            results.append(result)
+            # Pin the language detected on the first chunk so a quiet or
+            # noisy later chunk cannot flip the transcript to another language.
+            if language is None and result.language != "und":
+                language = result.language
+        first = results[0]
+        return TranscriptionResult(
+            text=" ".join(r.text.strip() for r in results if r.text.strip()),
+            language=first.language,
+            duration_seconds=sum(r.duration_seconds for r in results),
+            inference_time_seconds=sum(r.inference_time_seconds for r in results),
+            provider=first.provider,
+            model=first.model,
+        )
+
+    async def _transcribe_chunk(
         self,
         audio_wav: bytes,
         language: str | None,

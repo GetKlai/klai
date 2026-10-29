@@ -12,12 +12,12 @@ Transcription API endpoints:
 """
 
 import asyncio
-import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import delete, func, select
@@ -36,7 +36,7 @@ from app.services.audio_storage import (
 )
 from app.services.providers import get_provider
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["transcription"])
 _UPLOAD_FILE = File(...)
@@ -469,10 +469,10 @@ async def summarize_transcription(
             org_id=caller.org_id,
         )
     except httpx.HTTPStatusError as exc:
-        logger.error("LiteLLM HTTP error during summarization: %s", exc)
+        logger.exception("summarization_litellm_error", status=exc.response.status_code)
         raise HTTPException(status_code=502, detail="Summarization failed") from exc
     except Exception as exc:
-        logger.error("Unexpected error during summarization: %s", exc)
+        logger.exception("summarization_unexpected_error")
         raise HTTPException(status_code=502, detail="Summarization failed") from exc
 
     record.summary_json = summary_result
