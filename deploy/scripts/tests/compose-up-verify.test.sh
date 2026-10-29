@@ -71,7 +71,8 @@ case "$1" in
     cid="$2"; tmpl="$4"
     [[ -f "$fx/status_$cid" ]] || exit 1
     case "$tmpl" in
-      '{{.Created}}')       read_fx "created_$cid" ;;
+      '{{.Created}} {{index .Config.Labels "com.docker.compose.oneoff"}}')
+                            echo "$(read_fx "created_$cid") $(read_fx "oneoff_$cid")" ;;
       '{{.Name}}')          read_fx "name_$cid" ;;
       '{{.State.Status}}')  read_fx "status_$cid" ;;
       '{{.RestartCount}}')
@@ -474,6 +475,23 @@ fx exitcode_cid123 "0"
 fx restart_policy_cid123 "unless-stopped"
 run_target demo
 check "unless-stopped service that exited 0 -> 1" 1 "$rc"
+
+# A `docker compose run` one-off carries the service's compose labels, and
+# `compose ps -a` lists it. On 2026-10-29 deploy-portal-api.sh ran its alembic
+# step as `compose run --rm portal-api` right after a data-store sync had
+# recreated portal-api; the one-off was the newest container, was judged, and
+# was removed seconds later, so a healthy recreate read as "container gone"
+# and mongo 9.0.4 was rolled back. An empty status is that removed container.
+new_case multi_oneoff_run_container
+svc librechat-getklai l1 l2 running
+svc portal-api p1 p2 running
+printf 'p2\nr9\n' > "$case_dir/fixtures/cid_post_portal-api"
+printf '/%s\n' "klai-core-portal-api-run-0123abcd" > "$case_dir/fixtures/name_r9"
+: > "$case_dir/fixtures/status_r9"
+echo "2026-08-14T11:00:05Z" > "$case_dir/fixtures/created_r9"
+echo "True" > "$case_dir/fixtures/oneoff_r9"
+run_target --no-pull --force-recreate librechat-getklai portal-api
+check "a newer one-off run container of the service -> 0, the service is judged" 0 "$rc"
 
 # The parallel verifications must not look their container up again. Each
 # lookup is a `docker compose ps`, which parses the whole compose file and .env
