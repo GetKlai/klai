@@ -34,7 +34,7 @@ The mail names the service, the failed gate and the outcome.
   not come up with the same data, so the compose sync stopped before it
   replaced a single file. The live store, its consumers and the files are
   untouched; nothing to restore. The revert PR excludes the version, as after
-  `rolled_back`. The run log shows why (the throwaway's last log lines, or
+  `rolled_back` (not for gate `datastore-shadow-dry`, the dry flag below). The run log shows why (the throwaway's last log lines, or
   the facts that differ, `<` snapshot and `>` new image).
 
 In VictoriaLogs:
@@ -53,10 +53,11 @@ An image change of a data store (Postgres, Qdrant, Meilisearch, Mongo, Redis,
 FalkorDB, Garage, RabbitMQ) is snapshotted into `/opt/klai/backups/pre-<store>-<time>/`
 before the compose sync replaces any file (`datastore-rollback.sh`), and the
 new image of a store is proven on a copy first (the shadow, above). Then the
-gate `datastore-cutover`, right after the compose file is replaced, stops the
-store's consumers, takes a fresh snapshot, starts the new image and probes it
-at once; red there restores the fresh snapshot, so only the seconds since it
-are lost. The ledger shows `snapshot`, `shadow_green`, `cutover`, then
+gate `datastore-cutover`, right after the compose file is replaced, takes a
+fresh snapshot (a Postgres store is dumped with its consumers running, the
+other engines are copied with them stopped), stops the consumers, starts the
+new image and probes it at once; red there restores the fresh snapshot, so
+only the writes since it are lost (for Postgres, since the dump began). The ledger shows `snapshot`, `shadow_green`, `cutover`, then
 `deployed` or `restored` per store; the time between `cutover` and the next
 line is what a red verdict cost in writes. Three
 gates restore nothing on purpose and end `rollback_failed`, leaving the new
@@ -114,8 +115,10 @@ before it changes anything, with the server's answer in the log.
 
 `echo <store> > /opt/klai/.datastore-dry` on core-01, then merge any patch
 bump of that store. The sync takes the real snapshot, runs the real shadow
-and then forces it red: the run ends `shadow_failed`, the live store, its
-consumers and the files stay as they were, a revert PR and an issue follow.
+and then forces it red: the run ends `shadow_failed` with gate
+`datastore-shadow-dry`, the live store, its consumers and the files stay as
+they were, and an issue opens. No revert PR: the revert job skips that gate,
+because the shadow proved the version fine.
 The flag is removed when it is used. It works for every store except the
 self-migrating apps, which have no shadow.
 

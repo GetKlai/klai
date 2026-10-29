@@ -15,7 +15,9 @@ klai-renovate[bot] with a `chore(deps): update` subject count. A rollback with
 no such commit in its range does nothing and exits 0. `rolled_back` acts, and
 so does `shadow_failed`: a data store's new image failed on a copy of its data
 before the sync switched anything, so the version is bad for our data and the
-next compose change must not try it again. After `rollback_failed` the host is
+next compose change must not try it again; except under gate
+`datastore-shadow-dry`, where the dry flag forced a green shadow red and the
+version is fine. After `rollback_failed` the host is
 in a state nobody verified, and that is for a person (the ci-failure issue
 carries the `rollback-failed` label).
 
@@ -236,6 +238,9 @@ def slug(text: str) -> str:
 
 def run(args: argparse.Namespace) -> int:
     report = json.loads(Path(args.report).read_text())
+    if report.get("gate") == "datastore-shadow-dry":
+        print("gate datastore-shadow-dry: the dry flag forced a green shadow red; the version is fine, no revert")
+        return 0
     if not acts_on(report):
         print(f"outcome {report.get('outcome')} (gate {report.get('gate')}): nothing was restored on the host, no revert")
         return 0

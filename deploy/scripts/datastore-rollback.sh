@@ -55,10 +55,13 @@
 #
 # Green, ds_cutover runs right after the compose file is replaced, before the
 # sync recreates anything else (a `compose up` of librechat-getklai recreates a
-# changed mongodb or redis it depends on). Under the host container lock it
-# stops the consumers, takes a FRESH snapshot (another cold copy, BGSAVE,
-# export or dump: the first one is stale by the shadow's duration), starts the
-# store on the new image and probes it at once: ready, and its facts at least
+# changed mongodb or redis it depends on). It takes a FRESH snapshot (the
+# first one is stale by the shadow's duration): a Postgres store is dumped
+# with its consumers still running, since pg_dump is consistent on its own;
+# the other engines get their cold copy, BGSAVE or export with the consumers
+# stopped (seconds). Under the host container lock, with the consumers
+# stopped, it then starts the store on the new image and probes it at once:
+# ready, and its facts at least
 # those of the fresh snapshot (Mongo's fcv line unchanged). Then the consumers
 # are recreated. A red step restores the fresh snapshot, so the writes at risk
 # are those between the fresh snapshot and the verdict. The ledger has a line
@@ -128,6 +131,11 @@
 # least every count, because LibreChat tenant containers outside compose keep
 # writing while it runs.
 #
+# Consumers are recreated with --no-deps everywhere here: they depend on more
+# than one store (librechat-getklai on mongodb and redis), and without it a
+# recreate starts a second store of the same sync on its new image before that
+# store's own shadow and cutover.
+#
 # Throwaway containers run with --network none, label klai.adhoc=datastore-restore,
 # limited memory and CPU, and on their own volumes; they are removed afterwards.
 #
@@ -154,8 +162,9 @@
 # Dry mode, for proving the path on production: a file $RB_DIR/.datastore-dry
 # holding one store name (e.g. meilisearch). The next sync that changes that
 # store takes the real snapshot, runs the real shadow and then forces the
-# shadow red, so the sync ends shadow_failed with the live store, every file
-# and every consumer untouched, and the revert PR and the issue follow. Any
+# shadow red, so the sync ends shadow_failed (gate datastore-shadow-dry) with
+# the live store, every file and every consumer untouched, and the issue
+# follows; the revert job skips that gate, since the version proved fine. Any
 # engine, because the shadow never touches live. The file is removed when it
 # is used, so it applies once. Stores only: an app row has no shadow, and the
 # flag is then removed with a warning.
@@ -191,10 +200,10 @@
 #     pg_upgrade --link from an image carrying both majors. Its shadow adds a
 #     dump and a restore into a throwaway to the sync, before anything changes
 #     and without an outage.
-#   - A Postgres minor's cutover dumps again with the consumers stopped, so its
-#     outage is that dump, as a major's (the main Postgres: minutes). Upgrade
-#     path: a minor reads the same files, so its put-back could be the previous
-#     image on them, without the fresh dump.
+#   - A Postgres store's fresh dump runs with the consumers up, and pg_dump
+#     holds the state of its start, so the writes at risk on a red cutover are
+#     those since the dump began: the dump's duration (minutes for the main
+#     Postgres) plus the switch. Its consumers are down only for the switch.
 #   - The cutover's probe compares counts as "at least" the fresh snapshot's.
 #     A delete by a writer outside compose (a LibreChat tenant on mongodb,
 #     meilisearch or redis) in the seconds between reads red and restores.
@@ -917,7 +926,7 @@ ds_snapshot() {
   } > "$dir/meta"
   ds_dump_dbs "$dir" "$store" "$su" "$dbs" || return 1
   if [[ -n "$newd" ]]; then
-    echo "snapshot: $store $oldm -> $newm is a major; this dump is the shadow's, restored into a throwaway of $newm, and the cutover dumps again with the consumers stopped"
+    echo "snapshot: $store $oldm -> $newm is a major; this dump is the shadow's, restored into a throwaway of $newm, and the cutover dumps again with the consumers stopped (ds_major_cutover)"
     ds_pg_extensions "$dir" "$store" "$su" || { echo "::error::could not list the extensions of $store"; return 1; }
   fi
   ds_ledger "$name" "$dir" "$(ds_image_of "$new" "$name")" snapshot
@@ -970,9 +979,17 @@ ds_snapshot_changed() {
   done
   local now dir
   # Stores only: an app's migration needs the app itself, which no throwaway runs.
+  # A dry-forced red has its own gate, so the revert job leaves the version be.
+  local rc
   for dir in "${DS_SNAPSHOTS[@]}"; do
     [[ "$(ds_meta "$dir" name)" == "$(ds_meta "$dir" store)" ]] || continue
-    ds_shadow "$dir" || rb_finish "$(ds_meta "$dir" name)" datastore-shadow shadow_failed
+    rc=0
+    ds_shadow "$dir" || rc=$?
+    case "$rc" in
+      0) ;;
+      2) rb_finish "$(ds_meta "$dir" name)" datastore-shadow-dry shadow_failed ;;
+      *) rb_finish "$(ds_meta "$dir" name)" datastore-shadow shadow_failed ;;
+    esac
   done
   # The window starts after the last dump, just before the first file changes.
   now="$(ds_now_epoch)"
@@ -981,6 +998,7 @@ ds_snapshot_changed() {
 
 # ds_shadow <dir> [image]: the snapshot in a throwaway of the new image (or
 # <image>), compared exactly with its baseline. See "Shadow, then cutover".
+# Returns 2 for a green shadow the dry flag forced red.
 ds_shadow() {
   local dir="$1" image="${2:-$(ds_meta "$1" new_image)}" name t0 rc=0
   name="$(ds_meta "$dir" name)"; t0="$(ds_now_epoch)"
@@ -992,7 +1010,7 @@ ds_shadow() {
   fi
   if (( rc == 0 )) && [[ "${DS_DRY:-}" == "$name" ]]; then
     echo "shadow: dry mode, forced red"
-    rc=1
+    rc=2
   fi
   echo "shadow: $name $( ((rc == 0)) && echo green || echo red) on $image after $(( $(ds_now_epoch) - t0 ))s"
   ds_ledger "$name" "$dir" "$image" "$( ((rc == 0)) && echo shadow_green || echo shadow_failed)"
@@ -1007,13 +1025,28 @@ ds_fresh_snapshot() {
   name="$(ds_meta "$dir" name)"; store="$(ds_meta "$dir" store)"
   engine="$(ds_dir_engine "$dir")"; kind="$(ds_kind "$engine")"
   case "$kind" in
-    dump) ds_dump_dbs "$dir" "$store" "$(ds_meta "$dir" superuser)" "$(ds_meta "$dir" databases)" || return 1 ;;
-    volume|rdb|definitions)
-      ds_facts "$store" "$engine" > "$dir/cutover.facts" || { echo "::error::$store does not answer its $engine probe before the cutover"; return 1; }
-      ds_take "$store" "$dir" stopped || return 1 ;;
+    dump)
+      # pg_dump reads one MVCC snapshot from its start, so the window and the
+      # ledger line count from before the dump.
+      ds_set_meta "$dir" epoch "$(ds_now_epoch)"
+      ds_ledger "$name" "$dir" "$(ds_meta "$dir" new_image)" cutover
+      ds_dump_dbs "$dir" "$store" "$(ds_meta "$dir" superuser)" "$(ds_meta "$dir" databases)" ;;
+    *)
+      if [[ "$kind" != none ]]; then
+        ds_facts "$store" "$engine" > "$dir/cutover.facts" || { echo "::error::$store does not answer its $engine probe before the cutover"; return 1; }
+        ds_take "$store" "$dir" stopped || return 1
+      fi
+      ds_set_meta "$dir" epoch "$(ds_now_epoch)"
+      ds_ledger "$name" "$dir" "$(ds_meta "$dir" new_image)" cutover ;;
   esac
-  ds_set_meta "$dir" epoch "$(ds_now_epoch)"
-  ds_ledger "$name" "$dir" "$(ds_meta "$dir" new_image)" cutover
+}
+
+# 0 while the store still runs the image it was snapshotted on. Otherwise the
+# new image already ran on live data without a fresh snapshot, and the red
+# gate restores the first one.
+ds_still_old() {
+  [[ "$(ds_container_images "$(ds_meta "$1" store)")" == "$(ds_meta "$1" store_image)" ]] \
+    || { echo "::error::$(ds_meta "$1" store) no longer runs $(ds_meta "$1" store_image): something recreated it before the cutover"; return 1; }
 }
 
 # The live store right after the switch: it answers, and its facts are at least
@@ -1042,22 +1075,24 @@ ds_probe_cutover() {
 }
 
 # ds_store_cutover <dir>: a store other than a Postgres major onto its new
-# image. Holds the host container lock from the consumer stop to the probe, as
-# a restore does; compose-up.sh takes the same lock, so the consumers are
-# recreated after it.
+# image. A Postgres store is dumped first, with its consumers running: pg_dump
+# is consistent on its own, so their outage is only the switch. The other
+# engines are copied with the consumers stopped (a cold copy takes seconds).
+# Holds the host container lock from the consumer stop to the probe, as a
+# restore does; compose-up.sh takes the same lock, so the consumers are
+# recreated after it, with --no-deps (below).
 ds_store_cutover() {
-  local dir="$1" name store consumers rc
+  local dir="$1" name store consumers rc pg=0
   name="$(ds_meta "$dir" name)"; store="$(ds_meta "$dir" store)"; consumers="$(ds_meta "$dir" consumers)"
+  [[ "$(ds_dir_engine "$dir")" != postgres ]] || pg=1
+  if (( pg )); then ds_still_old "$dir" && ds_fresh_snapshot "$dir" || return 1; fi
   (
     exec 8> "$DS_LOCK_FILE"
     flock -w 900 8 || { echo "::error::host container lock $DS_LOCK_FILE busy for 15 minutes"; exit 1; }
     # shellcheck disable=SC2086 # one word per service
     ds_compose stop $consumers || exit 1
-    # Then the new image already ran on live data without a fresh snapshot,
-    # and the red gate restores the first one.
-    [[ "$(ds_container_images "$store")" == "$(ds_meta "$dir" store_image)" ]] \
-      || { echo "::error::$store no longer runs $(ds_meta "$dir" store_image): something recreated it before the cutover"; exit 1; }
-    ds_fresh_snapshot "$dir" || exit 1
+    ds_still_old "$dir" || exit 1
+    (( pg )) || ds_fresh_snapshot "$dir" || exit 1
     echo "cutover: $store starts $(ds_meta "$dir" new_image)"
     ds_compose up -d --no-deps --force-recreate "$store" || exit 1
     ds_probe_cutover "$dir"
@@ -1065,14 +1100,14 @@ ds_store_cutover() {
   rc=$?
   if (( rc == 0 )); then
     # shellcheck disable=SC2086 # one word per service
-    "$RB_DIR/scripts/compose-up.sh" --no-pull --force-recreate $consumers || rc=1
+    "$RB_DIR/scripts/compose-up.sh" --no-pull --no-deps --force-recreate $consumers || rc=1
   elif [[ "$(ds_container_images "$store")" == "$(ds_meta "$dir" store_image)" ]]; then
     # Never switched, so the restore finds nothing to restore; the store and
     # its consumers come back here, on the previous image and its own data.
     echo "cutover: $store failed before it switched; starting it and its consumers again"
     ds_compose start "$store" || true
     # shellcheck disable=SC2086 # one word per service
-    "$RB_DIR/scripts/compose-up.sh" --no-pull --force-recreate $consumers || true
+    "$RB_DIR/scripts/compose-up.sh" --no-pull --no-deps --force-recreate $consumers || true
   fi
   (( rc )) || ds_ledger "$name" "$dir" "$(ds_meta "$dir" new_image)" deployed
   return "$rc"
@@ -1086,7 +1121,7 @@ ds_probe() {
   store="$(ds_meta "$dir" store)"; su="$(ds_meta "$dir" superuser)"
   if [[ "$(ds_meta "$dir" name)" == "$store" ]]; then
     # shellcheck disable=SC2046 # one word per service
-    "$RB_DIR/scripts/compose-up.sh" --no-pull --force-recreate $(ds_meta "$dir" consumers) || return 1
+    "$RB_DIR/scripts/compose-up.sh" --no-pull --no-deps --force-recreate $(ds_meta "$dir" consumers) || return 1
   fi
   for db in $(ds_meta "$dir" databases); do
     for table in $(ds_probe_tables "$store" "$db"); do
@@ -1193,7 +1228,7 @@ ds_major_cutover() {
     echo "cutover: $store failed before its data directory moved; starting it and its consumers again"
     ds_compose start "$store" || true
     # shellcheck disable=SC2086 # one word per service
-    "$RB_DIR/scripts/compose-up.sh" --no-pull --force-recreate $consumers || true
+    "$RB_DIR/scripts/compose-up.sh" --no-pull --no-deps --force-recreate $consumers || true
   fi
   return "$rc"
 }
@@ -1349,7 +1384,7 @@ ds_restore_snapshot() {
   rc=$?
   if (( rc == 0 )); then
     # shellcheck disable=SC2086 # one word per service
-    "$RB_DIR/scripts/compose-up.sh" --no-pull --force-recreate $consumers || rc=1
+    "$RB_DIR/scripts/compose-up.sh" --no-pull --no-deps --force-recreate $consumers || rc=1
   fi
   ds_ledger "$name" "$dir" "$(ds_meta "$dir" old_image)" "$( ((rc == 0)) && echo restored || echo restore_failed)"
   return "$rc"

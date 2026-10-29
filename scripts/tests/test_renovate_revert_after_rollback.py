@@ -168,6 +168,15 @@ class RevertAfterRollback(unittest.TestCase):
         self.assertIn("outcome `shadow_failed`", calls)
         self.assertIn(f"pr merge {branch} --auto --squash", calls)
 
+    def test_a_dry_shadow_is_not_reverted(self) -> None:
+        # The dry flag forced a green shadow red: the version is fine, nothing to exclude.
+        self.bump("acme/alpha", "v1.4.0", "v1.5.0")
+        result = self.run_script(outcome="shadow_failed", gate="datastore-shadow-dry")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("dry flag", result.stdout)
+        self.assertEqual(self.remote_branches(), ["main"])
+        self.assertEqual(self.gh_calls(), "")
+
     def test_two_bumps_in_the_range_land_in_one_pr(self) -> None:
         self.bump("acme/alpha", "v1.4.0", "v1.5.0")
         self.bump("ghcr.io/acme/beta", "2.0.0-alpine", "2.1.0-alpine")

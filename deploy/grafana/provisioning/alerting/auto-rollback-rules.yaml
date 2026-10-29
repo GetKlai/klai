@@ -98,7 +98,8 @@ groups:
             snapshot and did not come up with the same data (or the dry flag
             /opt/klai/.datastore-dry forced it red), so the sync stopped before it
             replaced a single file: the live store, its consumers and the files are
-            untouched. A revert PR excludes the version; the CI failure issue
+            untouched. A revert PR excludes the version (not for gate
+            datastore-shadow-dry, the dry proof); the CI failure issue
             (label shadow-failed) holds the run log with the difference.{{ else }}A new version failed its gate and the previous one is serving again. Nothing
             is broken now, but the new version is still on main: the next deploy
             of this service will fail the same way until it is fixed.{{ end }}

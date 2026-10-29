@@ -222,8 +222,9 @@ jobs:
             done
             # Each changed data store onto its new image, before anything below
             # recreates a service (librechat-getklai's recreate would start a
-            # changed mongodb or redis it depends on): consumers stop, a fresh
-            # snapshot, the new image, an immediate probe, consumers recreated.
+            # changed mongodb or redis it depends on): a fresh snapshot (a
+            # Postgres dump with the consumers still up), consumers stop, the new
+            # image, an immediate probe, consumers recreated with --no-deps.
             # A Postgres major is the dump-and-restore cutover. Red restores the
             # fresh snapshot, so only the seconds since it are at risk.
             ds_cutover

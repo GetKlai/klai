@@ -208,9 +208,12 @@ is the inventory and already names a backup kind per data volume (`sql`,
   `shadow_failed` (exit 4, a warning event, gate `datastore-shadow`), and the
   revert PR follows as after `rolled_back`, because the version is bad for our
   data. Green, a cutover gate runs right after the compose file is replaced:
-  the consumers stop, a fresh snapshot is taken (the first is stale by the
-  shadow's duration), the store starts on the new image and is probed at once
-  (facts at least the fresh snapshot's), and the consumers are recreated. A
+  a fresh snapshot is taken (the first is stale by the shadow's duration; a
+  Postgres store is dumped with its consumers running, the cold-copied
+  engines with them stopped), the consumers stop, the store starts on the new
+  image and is probed at once (facts at least the fresh snapshot's), and the
+  consumers are recreated with `--no-deps`, so a consumer of two stores never
+  starts the second one before its own shadow and cutover. A
   red cutover restores the fresh snapshot. The ledger has `snapshot`,
   `shadow_green`, `cutover`, then `deployed` or `restored` per store.
   Self-migrating apps (Twenty, GlitchTip, Zitadel, Umami) have no shadow.
@@ -219,9 +222,11 @@ is the inventory and already names a backup kind per data volume (`sql`,
   the restore: 14 s in the local proof (Mongo 8.3 to 9.0), against 580 s on
   2026-10-29 before the shadow (mongodb snapshot 16:57:39 UTC, restore
   17:07:19). A red later gate (E2E) inside the 30-minute window loses the
-  writes since the fresh snapshot. A Postgres store's cutover dumps again with
-  its consumers stopped, so its outage is that dump (minutes for the main
-  Postgres); a major's shadow adds a dump and a restore to the sync, without
+  writes since the fresh snapshot. A Postgres store's fresh dump runs with
+  its consumers up, so its outage is only the switch, but pg_dump holds the
+  state of its start: the writes at risk are those of the dump's duration
+  plus the switch. A major keeps its dump-and-restore cutover (consumers down
+  for the dump); its shadow adds a dump and a restore to the sync, without
   an outage.
 - **Postgres majors (as built, 2026-10-29; D1 withdrawn):** a new major cannot
   open the old data directory, so the deploy migrates it. After a green
@@ -267,8 +272,9 @@ is the inventory and already names a backup kind per data volume (`sql`,
   before any directory moved, and green with it. On production the dry flag
   (`/opt/klai/.datastore-dry` holding a store name) forces that store's
   shadow red after it ran, for any engine: the next patch bump of that store
-  ends `shadow_failed` with the live store untouched, a revert PR and an
-  issue. The rehearsal can run the shadow of a newer image on the latest
+  ends `shadow_failed` under its own gate `datastore-shadow-dry`, with the
+  live store untouched and an issue; the revert job skips that gate, because
+  the version proved fine. The rehearsal can run the shadow of a newer image on the latest
   snapshot (`KLAI_DS_SHADOW` / the workflow input `shadow`), so a next major
   is proven on a copy before Renovate offers it.
 
