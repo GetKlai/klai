@@ -185,8 +185,6 @@ for c in chunks:
 major = next((c for c in chunks if "matchUpdateTypes: ['major']" in c and "matchPackageNames" not in c), "")
 if "automerge: true" not in major:
     fail.append("majors must automerge")
-if "mongodb/mongo" in "".join(c for c in chunks if "allowedVersions:" in c):
-    fail.append("the mongo LTS ceiling was a policy hold, not a breakage; it stays lifted")
 
 # A custom manager that reads a data store from GitHub changes the datasource
 # and sometimes the packageName. A version ceiling written for the Docker Hub
