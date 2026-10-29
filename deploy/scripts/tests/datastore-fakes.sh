@@ -161,7 +161,7 @@ run() {
       --volumes-from) vf="$(name_of "$2")"; shift 2 ;;
       --network) net="$2"; shift 2 ;;
       -v) vols+=("$2"); shift 2 ;;
-      -e|--label|--memory|--cpus|--entrypoint|-u) shift 2 ;;
+      -e|--label|--memory|--cpus|--ulimit|--entrypoint|-u) shift 2 ;;
       -d) detach=1; shift ;;
       --rm|-i) shift ;;
       *) img="$1"; shift; break ;;

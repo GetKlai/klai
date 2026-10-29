@@ -147,7 +147,14 @@ rb_recreate() {
   "$RB_DIR/scripts/compose-env-drift-recreate.sh"
 }
 
-# rb_finish <service> <gate> <deployed|rolled_back|rollback_failed>
+# rb_finish <service> <gate> <deployed|rolled_back|rollback_failed|not_started>
+# not_started: the run refused before the first file was replaced (disk
+# headroom, a snapshot that failed or did not read back). The host is in its
+# verified state, nothing was rolled back and nothing needs a person; it is
+# still exit 4 so the run is red and the notice opens its issue, but the
+# event, the report and the ledger say what happened instead of crying
+# rollback_failed (which Grafana mails as "production may be broken", as it
+# did on 2026-10-29 16:04 UTC for a mongodb snapshot that did not read back).
 rb_finish() {
   local service="$1" gate="$2" outcome="$3" ts report event code=0
   ts="$(rb_now)"
@@ -184,13 +191,13 @@ rb_finish() {
       code=4
       rm -f "$RB_STATE"
       # Keep the first failure's commit and gate; later runs only report.
-      # disk-headroom and snapshot end the run before any file is replaced, so
-      # the host is still in its verified state and gets no flag.
-      [[ -e "$RB_FAILED_FLAG" || "$gate" == disk-headroom || "$gate" == snapshot ]] || printf 'commit=%s gate=%s\n' "$RB_TO" "$gate" > "$RB_FAILED_FLAG" ;;
+      # not_started ends the run before any file is replaced, so the host is
+      # still in its verified state and gets no flag.
+      [[ -e "$RB_FAILED_FLAG" || "$outcome" == not_started ]] || printf 'commit=%s gate=%s\n' "$RB_TO" "$gate" > "$RB_FAILED_FLAG" ;;
   esac
   if (( code != 0 )); then
-    event="$(printf '{"service":"auto-rollback","level":"error","event":"auto_rollback","outcome":"%s","deploy_service":"%s","gate":"%s","commit":"%s","_time":"%s"}' \
-      "$outcome" "$(rb_json "$service")" "$(rb_json "$gate")" "$(rb_json "$RB_TO")" "$ts")"
+    event="$(printf '{"service":"auto-rollback","level":"%s","event":"auto_rollback","outcome":"%s","deploy_service":"%s","gate":"%s","commit":"%s","_time":"%s"}' \
+      "$([[ "$outcome" == not_started ]] && echo warning || echo error)" "$outcome" "$(rb_json "$service")" "$(rb_json "$gate")" "$(rb_json "$RB_TO")" "$ts")"
     printf '%s\n' "$event"
     if ! { mkdir -p "$(dirname "$RB_EVENT_LOG")" && printf '%s\n' "$event" >> "$RB_EVENT_LOG"; } 2>/dev/null; then
       echo "WARN: could not append to $RB_EVENT_LOG; the auto_rollback event will not reach VictoriaLogs" >&2

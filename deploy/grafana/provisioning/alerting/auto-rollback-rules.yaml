@@ -82,7 +82,7 @@ groups:
           service_group: deploy
           alert_type: auto_rollback
         annotations:
-          summary: '{{ if eq $labels.outcome "rollback_failed" }}ROLLBACK FAILED, human needed now: {{ $labels.deploy_service }} (gate {{ $labels.gate }}){{ else }}Rolled back automatically: {{ $labels.deploy_service }} (gate {{ $labels.gate }}){{ end }}'
+          summary: '{{ if eq $labels.outcome "rollback_failed" }}ROLLBACK FAILED, human needed now: {{ $labels.deploy_service }} (gate {{ $labels.gate }}){{ else if eq $labels.outcome "not_started" }}Deploy not started, nothing changed: {{ $labels.deploy_service }} (gate {{ $labels.gate }}){{ else }}Rolled back automatically: {{ $labels.deploy_service }} (gate {{ $labels.gate }}){{ end }}'
           runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/auto-rollback.md#a-deploy-was-rolled-back'
           description: |
             Service: {{ $labels.deploy_service }}
@@ -91,7 +91,10 @@ groups:
 
             {{ if eq $labels.outcome "rollback_failed" }}The rollback did not hold (or there was no previous image to go back
             to), so production may be broken right now. This is the one outcome
-            that needs a human immediately; nothing retries it.{{ else }}A new version failed its gate and the previous one is serving again. Nothing
+            that needs a human immediately; nothing retries it.{{ else if eq $labels.outcome "not_started" }}The sync refused before it replaced a single file (not enough disk for
+            a snapshot, or a snapshot that failed or did not read back). The host
+            runs what it ran; the next sync tries again. The CI failure issue
+            holds the reason.{{ else }}A new version failed its gate and the previous one is serving again. Nothing
             is broken now, but the new version is still on main: the next deploy
             of this service will fail the same way until it is fixed.{{ end }}
 
