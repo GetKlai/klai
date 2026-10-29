@@ -38,7 +38,7 @@ ALIAS_LABEL = "Also known as: "
 ANCHOR_LABEL = "Linked as: "
 # Bump when anchor_filter.py or the anchor line changes: it is part of the hashed
 # blob, so kb_patch sees every stored chunk as stale once and rewrites its line.
-ANCHOR_RULES_VERSION = 1
+ANCHOR_RULES_VERSION = 2
 
 
 def layer_version(groups: list[list[str]], rules: list[dict[str, str]]) -> str:

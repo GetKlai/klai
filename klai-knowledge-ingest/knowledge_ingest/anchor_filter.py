@@ -36,9 +36,18 @@ MAX_CHARS = 80
 # One small universal set, multilingual, not per customer: a text made only of
 # these says "a link" and nothing about the target ("read more", "klik hier"),
 # while "learn more about unite" keeps its product name.
+# After the first patch run on a Dutch help centre (29 Oct 2026) the most
+# frequent kept names were "deze pagina", "deze link", "in deze handleiding"
+# and "zie hier": the list lacked the Dutch, German and French function words
+# and the nouns that only say "a page" or "a manual".
 GENERIC_WORDS = frozenset(
     "read learn more here click info information details see view page link the a an "
-    "lees meer hier klik bekijk de het een mehr lesen weiter voir plus this".split()
+    "this that these those in on at to of for and or about article manual guide website "
+    "lees meer hier klik bekijk zie kijk ga de het een deze dit die dat op naar van voor en "
+    "of over pagina artikel handleiding website hieronder hierboven verder "
+    "mehr lesen weiter hier sehen diese dieser dieses seite artikel anleitung zu zur zum "
+    "auf der das den dem ein eine und oder "
+    "voir plus ici cette ce cet page article guide le la les un une des du et ou sur".split()
 )
 
 _URL = re.compile(r"^(https?://|www\.)")
