@@ -12,6 +12,14 @@ on:
     # ready-to-merge for up to seven days. A run is ~2 minutes and does
     # nothing when there is nothing to do.
     - cron: '7 * * * *'
+  # The cron above is a hope, not a cadence: in the 24 hours before
+  # 2026-10-29 15:30 UTC it fired 4 times (18:13, 23:03, 02:17, 09:42), and
+  # a PR that only waited for the hourly limit sat for hours. A merge to main
+  # is the moment something changed (an automerged PR, a lifted limit, a
+  # policy change), so every merge runs Renovate too. The concurrency group
+  # below keeps one run active and one queued.
+  push:
+    branches: [main]
   # A branch update and Renovate's check-run query can be only seconds apart.
   # GitHub Actions may not have published any check-runs yet, so that run
   # correctly leaves the PR yellow. Nudge Renovate again once the required

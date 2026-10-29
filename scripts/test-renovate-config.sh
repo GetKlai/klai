@@ -57,6 +57,11 @@ assert_line "$workflow" \
 assert_line "$workflow" \
   "    branches: ['renovate/**']" \
   'quality completions must only nudge Renovate for Renovate branches'
+# GitHub's cron fired 4 times in 24 hours on 2026-10-29; a merge to main is the
+# reliable trigger for the next automerge and the next pending PR.
+assert_line "$workflow" \
+  "  push:" \
+  'Renovate must run after every merge to main'
 assert_line "$workflow" \
   '  group: renovate-automerge' \
   'Renovate runs must be serialized so completion nudges cannot race each other'
