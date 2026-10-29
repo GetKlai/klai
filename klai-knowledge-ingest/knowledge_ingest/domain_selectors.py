@@ -8,7 +8,7 @@ Two independent concerns share ``knowledge.crawl_domains``:
 - Rate limit: a lowered requests/second value for a domain that previously
   hit a rate-limit or anti-bot block, so the NEXT crawl starts already
   paced down instead of hitting the same wall again (2026-08-17,
-  intermedia.com + support.ascendcloud.com incident — see
+  intermedia.com + support.example.org incident — see
   ``knowledge_ingest.adapters.crawler.run_crawl_job``), PLUS the additive
   recovery counters (``clean_streak``, ``last_congestion_at``) that let the
   rate limit climb back up once the domain has behaved for a while (block

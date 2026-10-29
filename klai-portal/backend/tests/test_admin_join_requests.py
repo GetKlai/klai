@@ -27,7 +27,7 @@ def _mock_join_request(request_id: int = 1, status: str = "pending") -> MagicMoc
     jr = MagicMock()
     jr.id = request_id
     jr.zitadel_user_id = "user-sso-1"
-    jr.email = "test@company.com"
+    jr.email = "test@company.example.net"
     jr.display_name = "Test User"
     jr.org_id = 1
     jr.status = status
@@ -59,7 +59,7 @@ class TestListJoinRequests:
         )
 
         assert len(response.requests) == 1
-        assert response.requests[0].email == "test@company.com"
+        assert response.requests[0].email == "test@company.example.net"
 
 
 class TestApproveJoinRequest:

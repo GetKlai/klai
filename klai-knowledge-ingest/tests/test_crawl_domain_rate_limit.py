@@ -52,8 +52,8 @@ from knowledge_ingest.domain_selectors import DomainRateLimitWriteKind
 from knowledge_ingest.reason_codes import FetchReasonCode
 from tests.conftest import connection_factory_for
 
-START_URL = "https://intermedia.com/support"
-DOMAIN = "intermedia.com"
+START_URL = "https://intermedia.example.net/support"
+DOMAIN = "intermedia.example.net"
 
 _NO_OVERRIDE = DomainRateLimitState(rate_limit=None, clean_streak=0, last_congestion_at=None)
 
@@ -126,7 +126,7 @@ async def _run(
 def _outcomes(*reason_codes: str) -> list[dict]:
     return [
         {
-            "url": f"https://intermedia.com/support/{i}",
+            "url": f"https://intermedia.example.net/support/{i}",
             "reason_code": reason_code,
             "status_code": 200 if reason_code == FetchReasonCode.SUCCESS.value else None,
             "content_length": 100 if reason_code == FetchReasonCode.SUCCESS.value else 0,
@@ -287,7 +287,7 @@ async def test_in_job_slowdown_rate_is_persisted_for_the_next_crawl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The persisted rate must include every halving performed by Deel B."""
-    urls = [f"https://intermedia.com/support/{index}" for index in range(5)]
+    urls = [f"https://intermedia.example.net/support/{index}" for index in range(5)]
 
     async def _fake_seed(*, start_url: str, **_kwargs: Any) -> CrawlResult:
         return CrawlResult(
@@ -599,7 +599,7 @@ async def test_a_stored_override_with_no_congestion_timestamp_decays_before_the_
     """Decay wiring proven end-to-end, not just unit-tested in isolation
     (see apply_domain_rate_limit_decay's own tests in
     tests/test_domain_rate_limit_control.py): a stored override with
-    ``last_congestion_at IS NULL`` (the www.intermedia.com production
+    ``last_congestion_at IS NULL`` (the www.intermedia.example.net production
     case) must be cleared BEFORE crawl_site is invoked — so the job's own
     default rate_limit is used, not the stale override — and that clear
     must be PERSISTED, not just applied in-memory for this one job."""

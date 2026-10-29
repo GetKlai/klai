@@ -687,8 +687,8 @@ class TestGraphMetadata:
                 return_value={
                     "artifact-abc": {
                         "title": "Nummerbehoud aanvragen",
-                        "source_url": "https://help.voys.nl/nummerbehoud-aanvragen",
-                        "source_label": "help.voys.nl",
+                        "source_url": "https://help.example.com/nummerbehoud-aanvragen",
+                        "source_label": "help.example.com",
                         "original_filename": None,
                     }
                 },
@@ -717,7 +717,7 @@ class TestGraphMetadata:
         # showed the latter on 2026-08-21: "De paginamap identificeert de
         # Voys-app als een applicatie die kan worden gebruik".
         assert pack["sources"][0]["title"] == "Nummerbehoud aanvragen"
-        assert pack["sources"][0]["source_url"] == "https://help.voys.nl/nummerbehoud-aanvragen"
+        assert pack["sources"][0]["source_url"] == "https://help.example.com/nummerbehoud-aanvragen"
         # Graphiti's bi-temporal window survives to the served chunk.
         assert resp.json()["chunks"][0]["valid_at"] == "2026-03-11T00:00:00+00:00"
 

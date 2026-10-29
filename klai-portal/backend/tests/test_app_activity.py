@@ -558,7 +558,7 @@ async def test_visitor_key_follows_admin_role(role: str, visitor_expected: bool)
         messages=[_message(9001, role="user", sequence=1, signals=None)],
     )
     db.conversation.visitor_name = "Ada"
-    db.conversation.visitor_email = "ada@klant.nl"
+    db.conversation.visitor_email = "ada@klant.example.com"
 
     response = await _call(db, _perms(role), "get", "/api/app/activity/conversations/255")
 
@@ -566,7 +566,7 @@ async def test_visitor_key_follows_admin_role(role: str, visitor_expected: bool)
     body = response.json()
     assert ("visitor" in body) is visitor_expected
     if visitor_expected:
-        assert body["visitor"] == {"name": "Ada", "email": "ada@klant.nl"}
+        assert body["visitor"] == {"name": "Ada", "email": "ada@klant.example.com"}
 
 
 @pytest.mark.asyncio

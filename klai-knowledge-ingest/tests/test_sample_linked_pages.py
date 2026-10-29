@@ -4,7 +4,7 @@ A navigation hub is thin by nature, so the seed page alone cannot decide
 whether a site holds content. Sampling the pages behind it can — but only if
 it is cheap: routing through ``crawl_site`` re-fetched the seed and probed
 sitemaps first, three sequential network phases that blew the preview's
-wall-clock budget on support.ascendcloud.com (2026-08-06) and left the
+wall-clock budget on support.example.org (2026-08-06) and left the
 verdict at the very thin-content classification the sample exists to fix.
 
 These tests pin the contract: reuse the seed's links, issue exactly ONE bulk
@@ -88,7 +88,7 @@ def test_candidates_respect_the_limit() -> None:
 def test_candidates_drop_unrendered_template_urls() -> None:
     """A client-rendered site whose framework never boots leaves ``{{...}}``
     tokens in its hrefs. Those are unfetchable — sampling them would burn the
-    whole time budget for nothing (support.ascendcloud.com, 2026-08-12)."""
+    whole time budget for nothing (support.example.org, 2026-08-12)."""
     seed = _seed(
         "https://example.com/euf/themes/standard/{{item.URL}}",
         "https://example.com/euf/themes/standard/{{item.SeoTitle}}",
@@ -99,7 +99,7 @@ def test_candidates_drop_unrendered_template_urls() -> None:
 
 
 def test_all_template_urls_yield_no_candidates() -> None:
-    """The full ascendcloud base-URL shape: every link is a template token, so
+    """The full template-only base-URL shape: every link is a template token, so
     there is nothing to sample and the caller must not issue a bulk request."""
     seed = _seed(
         "https://example.com/euf/themes/standard/{{item.URL}}",
@@ -181,7 +181,7 @@ async def test_seed_without_links_costs_no_request() -> None:
 
 @pytest.mark.asyncio
 async def test_seed_with_only_template_links_costs_no_request() -> None:
-    """The ascendcloud case end-to-end: all links are unrendered tokens, so no
+    """The template-only case end-to-end: all links are unrendered tokens, so no
     bulk request fires and the sample returns instantly (no wasted budget)."""
     seed = _seed(
         "https://example.com/euf/themes/standard/{{item.URL}}",

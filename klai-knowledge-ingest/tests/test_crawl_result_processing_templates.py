@@ -1,6 +1,6 @@
 """Unrendered ``{{...}}`` template residue must not reach the KB.
 
-Regression context (2026-08-06, support.ascendcloud.com): the site is an
+Regression context (2026-08-06, support.example.org): the site is an
 AngularJS app that fails to bootstrap in the crawler browser, so nav items
 arrive as literal ``{{item.Name}}`` bullets and ``{{selectedCountryPhone...}}``
 fragments — which then showed up verbatim in the connector preview and would
@@ -14,7 +14,7 @@ from knowledge_ingest.crawl_result_processing import (
     strip_unrendered_template_lines,
 )
 
-# Mirrors the actual junk observed in the ascendcloud preview.
+# Mirrors the actual junk observed in a template-only site preview.
 _ASCEND_LIKE = """# Welcome to the Support Center!
 Dedicated and reliable support, accessible from anywhere.
 Get Support by Product

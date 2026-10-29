@@ -13,7 +13,7 @@ import type { WidgetConfig, WidgetDetailResponse } from '../../-types'
 import { useUpdateWidget } from '../../-hooks'
 
 // Use the user's current portal origin (could be my.getklai.com OR a
-// tenant subdomain like nerds-37376105.getklai.com). The widget's
+// tenant subdomain like example-12345678.getklai.com). The widget's
 // allowed_origins gate is exact-match, so adding a different host
 // would not unblock the test page on the host the user is actually on.
 

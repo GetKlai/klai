@@ -44,7 +44,7 @@ class IngestRequest(BaseModel):
     allowed_assertion_modes: list[str] | None = None
     # SPEC-KB-021: source-aware enrichment
     kb_name: str | None = None  # Human-readable KB name (e.g. "Voys Helpdesk")
-    connector_type: str | None = None  # Connector type slug (e.g. "redcactus-wiki", "webscrape")
+    connector_type: str | None = None  # Connector type slug (e.g. "partner-wiki", "webscrape")
     source_domain: str | None = None  # Domain for crawl sources (e.g. "help.mitel.nl")
 
 

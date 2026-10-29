@@ -92,9 +92,9 @@ class TestDomainValidationHelpersPreserved:
     def test_normalize_domain_importable(self) -> None:
         from app.services.domain_validation import normalize_domain
 
-        assert normalize_domain("  ACME.NL  ") == "acme.nl"
+        assert normalize_domain("  ACME.EXAMPLE.COM  ") == "acme.example.com"
 
     def test_is_valid_domain_importable(self) -> None:
         from app.services.domain_validation import is_valid_domain
 
-        assert is_valid_domain("acme.nl") is True
+        assert is_valid_domain("acme.example.com") is True

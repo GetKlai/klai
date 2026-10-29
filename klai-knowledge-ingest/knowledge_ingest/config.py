@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-02 — cluster threshold. A page is
     # flagged as a wall iff this many OR MORE OTHER pages in the same
     # (org_id, kb_slug) have a SimHash within Hamming distance 3 of the page's
-    # own. Default 5 catches RedCactus's 149-page cluster easily and protects
+    # own. Default 5 catches a customer wiki's 149-page cluster easily and protects
     # single/few-page pseudo-walls under cold-start permissiveness (REQ-03).
     ingest_template_cluster_min: int = 5
     # SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-4 / D-7 — sync-time hard-fail
@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     # so operators see the connector is broken — instead of the silent
     # "synced 5 days ago, 25 docs indexed" UI lie that this SPEC fixes.
     # 0.30 is calibrated against Voys help (0% trip-rate post-PR-#459) and
-    # Redcactus 2026-05-07 morning (70% trip-rate). Env-tunable so prod
+    # a customer wiki 2026-05-07 morning (70% trip-rate). Env-tunable so prod
     # can adjust if a legitimate edge case emerges without code change.
     ingest_authwall_dirty_trip_rate: float = Field(
         default=0.30,

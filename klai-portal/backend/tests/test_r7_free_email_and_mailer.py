@@ -54,8 +54,8 @@ class TestFreeEmailSignupConfirmed:
 
         assert is_free_email_provider("gmail.com") is True
         assert is_free_email_provider("outlook.com") is True
-        assert is_free_email_provider("voys.nl") is False
-        assert is_free_email_provider("company.com") is False
+        assert is_free_email_provider("example.com") is False
+        assert is_free_email_provider("company.example.net") is False
 
 
 class TestAutoJoinAdminNotification:
@@ -86,18 +86,18 @@ class TestAutoJoinAdminNotification:
                 from app.services.notifications import notify_auto_join_admin
 
                 await notify_auto_join_admin(
-                    email="user@voys.nl",
+                    email="user@example.com",
                     display_name="Test User",
-                    domain="voys.nl",
+                    domain="example.com",
                     org_id=1,
-                    admin_email="admin@voys.nl",
+                    admin_email="admin@example.com",
                 )
 
         assert len(captured) == 1
         assert captured[0]["template"] == "auto_join_admin_notification"
-        assert captured[0]["to"] == "admin@voys.nl"
-        assert captured[0]["variables"]["domain"] == "voys.nl"
-        assert captured[0]["variables"]["admin_email"] == "admin@voys.nl"
+        assert captured[0]["to"] == "admin@example.com"
+        assert captured[0]["variables"]["domain"] == "example.com"
+        assert captured[0]["variables"]["admin_email"] == "admin@example.com"
 
     def test_auto_join_admin_notification_template_files_exist(self) -> None:
         """R7: auto_join_admin_notification template files exist in klai-mailer/theme/internal/."""

@@ -45,7 +45,7 @@ import { WidgetChatSurface } from '../WidgetChatSurface'
 // message-list update.
 Element.prototype.scrollIntoView = vi.fn()
 
-const FOOTER_TEXT = 'Plan een afspraak met [onze nerds](https://example.com/agenda).'
+const FOOTER_TEXT = 'Plan een afspraak met [onze specialisten](https://example.com/agenda).'
 
 function renderSurface(props: Partial<ComponentProps<typeof WidgetChatSurface>> = {}) {
   return render(
@@ -66,7 +66,7 @@ function renderSurface(props: Partial<ComponentProps<typeof WidgetChatSurface>> 
  * `act` keeps React's re-render inside the dispatch, as a browser click does.
  */
 function clickFooterLink(init: MouseEventInit = {}) {
-  const anchor = screen.getByRole('link', { name: 'onze nerds' })
+  const anchor = screen.getByRole('link', { name: 'onze specialisten' })
   const event = new MouseEvent('click', { bubbles: true, cancelable: true, ...init })
   act(() => {
     anchor.dispatchEvent(event)
@@ -92,15 +92,15 @@ describe('WidgetChatSurface footer link panel', () => {
     expect(frame?.getAttribute('src')).toBe('https://example.com/agenda')
 
     // The panel head names the link it is showing.
-    const panel = screen.getByRole('region', { name: 'onze nerds' })
-    expect(within(panel).getByText('onze nerds')).toBeTruthy()
+    const panel = screen.getByRole('region', { name: 'onze specialisten' })
+    expect(within(panel).getByText('onze specialisten')).toBeTruthy()
   })
 
   it('offers the same URL as a new-tab link and gives a footer frame no browser rights', () => {
     renderSurface({ footerLinksInWidget: true })
     clickFooterLink()
 
-    const panel = screen.getByRole('region', { name: 'onze nerds' })
+    const panel = screen.getByRole('region', { name: 'onze specialisten' })
     const newTabLink = within(panel).getByRole('link', { name: 'widget_chat_panel_open_new_tab' })
     expect(newTabLink.getAttribute('href')).toBe('https://example.com/agenda')
     expect(newTabLink.getAttribute('target')).toBe('_blank')
@@ -119,7 +119,7 @@ describe('WidgetChatSurface footer link panel', () => {
 
     expect(event.defaultPrevented).toBe(false)
     expect(document.querySelector('iframe')).toBeNull()
-    const anchor = screen.getByRole('link', { name: 'onze nerds' })
+    const anchor = screen.getByRole('link', { name: 'onze specialisten' })
     expect(anchor.getAttribute('target')).toBe('_blank')
     expect(anchor.getAttribute('rel')).toBe('noopener noreferrer')
   })
@@ -138,27 +138,27 @@ describe('WidgetChatSurface booking panel', () => {
   it('opens the booking module in the same panel, with the rights it needs', () => {
     renderSurface({
       footerText: null,
-      nerdsEnabled: true,
-      nerdsBookingUrl: 'https://support.voys.nl/agenda/workflow/voys',
+      appointmentsEnabled: true,
+      appointmentsBookingUrl: 'https://support.example.com/agenda/workflow/voys',
     })
 
-    const anchor = screen.getByRole('link', { name: 'onze nerds' })
+    const anchor = screen.getByRole('link', { name: 'onze specialisten' })
     act(() => {
       anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     })
 
     const frame = document.querySelector('iframe')
     expect(frame?.getAttribute('src')).toBe(
-      'https://support.voys.nl/agenda/workflow/voys?embed=1&lng=nl',
+      'https://support.example.com/agenda/workflow/voys?embed=1&lng=nl',
     )
     // Only this known destination may use the booking module's capabilities.
     expect(frame?.getAttribute('allow')).toBe('clipboard-write; payment; geolocation')
-    expect(screen.getByRole('region', { name: 'onze nerds' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'onze specialisten' })).toBeTruthy()
   })
 
   it('moves focus into the panel and makes the chat behind it inert', () => {
     renderSurface({ footerLinksInWidget: true })
-    const anchor = screen.getByRole('link', { name: 'onze nerds' })
+    const anchor = screen.getByRole('link', { name: 'onze specialisten' })
     anchor.focus()
 
     clickFooterLink()

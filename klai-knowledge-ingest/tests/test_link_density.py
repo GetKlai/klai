@@ -26,10 +26,10 @@ def test_empty_string_returns_zero() -> None:
 
 
 def test_pure_link_navigation_returns_high_density() -> None:
-    """Redcactus-style nav-only output: link density should exceed threshold.
+    """Partner-wiki-style nav-only output: link density should exceed threshold.
 
     The fixture mimics a real failing nav-dominated page: many links with
-    longer anchor texts and short URLs. Real Redcactus broken output had
+    longer anchor texts and short URLs. Real partner-wiki broken output had
     80%+ link density.
     """
     md = (
@@ -62,7 +62,7 @@ def test_real_article_with_few_links_returns_low_density() -> None:
 
 def test_threshold_is_zero_point_four() -> None:
     """REQ-3 D-6: threshold is 0.40 (40% link density), calibrated against
-    Voys help (~5-10%) and Redcactus broken nav (80%+)."""
+    Voys help (~5-10%) and partner-wiki broken nav (80%+)."""
     assert LINK_DENSITY_THRESHOLD == 0.40
 
 
@@ -92,8 +92,8 @@ def test_link_density_returns_float_in_zero_one_range(md: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_real_redcactus_nav_dominated_page_exceeds_threshold() -> None:
-    """REGRESSION (production 2026-05-07): wiki.redcactus.cloud/ nav menu has
+def test_real_partner_wiki_nav_dominated_page_exceeds_threshold() -> None:
+    """REGRESSION (production 2026-05-07): wiki.example.com/ nav menu has
     short anchor text (Home, Bubble, Login) but long URLs (/nl/45-bubble-api-
     van-derden, /nl/cloudbeheerconsole). Under the OLD formula (denominator =
     full markdown length INCLUDING URL syntax), the page scored ~28% and was
@@ -125,21 +125,21 @@ def test_real_redcactus_nav_dominated_page_exceeds_threshold() -> None:
         "[Bubble365 Teams App](/nl/48-bubble365-teams-app) "
         "[Bubble365 iFrame](/nl/51-bubble365-iframe) "
         "[Bubble365 Mobile App](/nl/52-bubble365-mobiele-app) "
-        "[FAQ](/nl/11-faq) [Bubble web portal](https://portal.eu.redcactus.cloud/) "
-        "[Status monitor](https://status.redcactus.nl/) Language: [Login](/login)"
+        "[FAQ](/nl/11-faq) [Bubble web portal](https://portal.example.com/) "
+        "[Status monitor](https://status.example.net/) Language: [Login](/login)"
     )
     density = link_density(md)
     # Visible text is dominated by anchor labels; small bits of plain prose
     # ("Configuration", "Bubble Cloud", "Applications", "Language:").
     assert density > LINK_DENSITY_THRESHOLD, (
-        f"Real Redcactus nav-only fixture must score above {LINK_DENSITY_THRESHOLD} "
+        f"Partner-wiki nav-only fixture must score above {LINK_DENSITY_THRESHOLD} "
         f"to surface as selector_required; got {density:.3f}"
     )
 
 
 def test_link_density_long_urls_do_not_dilute_density() -> None:
     """A page with VERY long URLs but short anchor text must still register
-    as high-density. Tests the exact dilution bug from the redcactus case
+    as high-density. Tests the exact dilution bug from the partner-wiki case
     (short anchors + long URLs).
 
     Under the OLD formula this scored ~5% (anchor 1 char per link, total

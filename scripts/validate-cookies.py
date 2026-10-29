@@ -17,7 +17,7 @@ Usage:
 
 Example:
   python validate-cookies.py \\
-    'https://wiki.redcactus.cloud/nl/43-bubble-desktop-pop-up' \\
+    'https://wiki.example.com/nl/43-bubble-desktop-pop-up' \\
     'prod-knowledgebase-session=eyJ...0%3D' \\
     'XSRF-TOKEN=eyJ...0%3D'
 

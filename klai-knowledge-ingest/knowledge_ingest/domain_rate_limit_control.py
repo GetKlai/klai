@@ -1,6 +1,6 @@
 """Pure AIMD regelwet for per-domain crawl rate-limit recovery.
 
-2026-08-17 (intermedia.com + support.ascendcloud.com incident) added
+2026-08-17 (intermedia.com + support.example.org incident) added
 ``lower_domain_rate_limit``: a domain that hits RATE_LIMITED or
 BLOCKED_ANTI_BOT gets its rate limit halved (floor 0.2 req/s) so the NEXT
 crawl of that domain starts already paced down. That is half of an AIMD
@@ -12,12 +12,12 @@ throttled forever, because nothing ever raises the limit back up.
 hysteresis so a single good crawl right after a bad one does not
 immediately erase the backoff (that would just repeat the incident).
 
-2026-08-19 (support.ascendcloud.com / www.intermedia.com follow-up) fixed
+2026-08-19 (support.example.org / www.intermedia.com follow-up) fixed
 three problems in that first cut:
 
 1. Congestion used to be detected as "any single RATE_LIMITED/
    BLOCKED_ANTI_BOT signal in a job" — an event, not a ratio. A crawl of
-   support.ascendcloud.com with 457 SUCCESS and exactly one
+   support.example.org with 457 SUCCESS and exactly one
    ``blocked_anti_bot`` signal out of ~475 real attempts got treated as
    full congestion and reset all recovery progress, even though the crawl
    was overwhelmingly clean. Congestion is now a ratio decision

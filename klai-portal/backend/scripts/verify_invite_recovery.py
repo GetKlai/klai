@@ -5,7 +5,7 @@ could be stuck behind an expired/invalid invite link.
 
 Usage, inside the portal-api environment:
     uv run python -m scripts.verify_invite_recovery \\
-        --org-slug mijndomein-37476129 \\
+        --org-slug example-12345678 \\
         colleague1@example.com colleague2@example.com colleague3@example.com
 
 The script exits non-zero when any supplied email is not ready for the customer
@@ -157,7 +157,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("emails", nargs="+", help="Customer user email address(es) to verify")
     parser.add_argument("--org-id", type=int, help="Portal org id")
-    parser.add_argument("--org-slug", help="Portal org slug, e.g. mijndomein-37476129")
+    parser.add_argument("--org-slug", help="Portal org slug, e.g. example-12345678")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     return asyncio.run(amain(parser.parse_args()))
 

@@ -27,17 +27,17 @@ def _clear_cache():
 
 CATALOG = [
     KBEntry(
-        source_label="help.mitel.nl",
+        source_label="help.example.org",
         name="Mitel Helpcenter",
         description="Documentatie voor Mitel-telefoons",
     ),
     KBEntry(
-        source_label="help.voys.nl", name="Voys Helpdesk", description="Voys klantondersteuning"
+        source_label="help.example.com", name="Voys Helpdesk", description="Voys klantondersteuning"
     ),
     KBEntry(
-        source_label="redcactus-wiki",
-        name="Redcactus Wiki",
-        description="Interne Redcactus documentatie",
+        source_label="partner-wiki",
+        name="Partner Wiki",
+        description="Interne partnerwiki-documentatie",
     ),
     KBEntry(
         source_label="ascend-help", name="Ascend Helpcenter", description="Ascend telefoniedocs"
@@ -91,9 +91,9 @@ class TestRouteToSources:
     async def test_brand_name_does_not_override_semantic_abstention(self):
         async def near_tie_centroids(catalog, org_id):
             return {
-                "help.mitel.nl": [1.0, 0.0],
-                "help.voys.nl": [0.999, 0.001],
-                "redcactus-wiki": [0.998, 0.002],
+                "help.example.org": [1.0, 0.0],
+                "help.example.com": [0.999, 0.001],
+                "partner-wiki": [0.998, 0.002],
             }
 
         decision = await route_to_sources(
@@ -110,9 +110,9 @@ class TestRouteToSources:
     async def test_layer2_with_compute_fn(self):
         async def fake_compute(catalog, org_id):
             return {
-                "help.mitel.nl": [1.0, 0.0, 0.0],
-                "help.voys.nl": [0.0, 1.0, 0.0],
-                "redcactus-wiki": [0.0, 0.0, 1.0],
+                "help.example.org": [1.0, 0.0, 0.0],
+                "help.example.com": [0.0, 1.0, 0.0],
+                "partner-wiki": [0.0, 0.0, 1.0],
                 "ascend-help": [0.3, 0.3, 0.4],
                 "notion-internal": [0.2, 0.5, 0.3],
             }
@@ -127,7 +127,7 @@ class TestRouteToSources:
         )
         assert decision.layer_used == "semantic"
         assert decision.selected_source_labels is not None
-        assert "help.mitel.nl" in decision.selected_source_labels
+        assert "help.example.org" in decision.selected_source_labels
 
     @pytest.mark.asyncio
     @pytest.mark.asyncio

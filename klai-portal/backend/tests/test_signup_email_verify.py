@@ -22,7 +22,7 @@ def _no_domain_match_by_default():
 _BASE = {
     "first_name": "Founder",
     "last_name": "Person",
-    "email": "founder@bedrijf.nl",
+    "email": "founder@bedrijf.example.com",
     "password": "VeryStrongPassw0rd!",
     "company_name": "Bedrijf BV",
     "preferred_language": "nl",

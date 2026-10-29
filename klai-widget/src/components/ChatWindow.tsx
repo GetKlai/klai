@@ -56,15 +56,15 @@ interface ChatWindowProps {
   // templated "Je praat met een AI-assistent…" + the auto-appended booking
   // sentence). Used verbatim, no {name} substitution, nothing auto-appended
   // — the tenant already wrote their own complete sentence, e.g. because
-  // they show their own escalation route elsewhere (the nerds footer link).
+  // they show their own escalation route elsewhere (the booking footer link).
   // Empty renders nothing; null/unset keeps the legacy default/toggle.
   aiDisclosureOverride?: string | null;
-  // Nerds booking panel (Voys-specific). The server only delivers
+  // Partner booking panel (Voys-specific). The server only delivers
   // enabled=true together with an absolute http(s) booking_url
-  // (partner.py _widget_nerds_integration), but the widget re-checks
+  // (partner.py _widget_appointments_integration), but the widget re-checks
   // before rendering a frame anyway. Both unset → renders as before.
-  nerdsEnabled?: boolean;
-  nerdsBookingUrl?: string;
+  appointmentsEnabled?: boolean;
+  appointmentsBookingUrl?: string;
   collectUserInfo?: boolean;
   manageHandoffStream?: boolean;
 }
@@ -149,10 +149,10 @@ export function ChatWindow(props: ChatWindowProps) {
   // ── In-widget link panel ───────────────────────────────────────────
   // The panel replaces the widget's contents with an iframe on the target
   // page while it is open; the close button returns to the chat. Two
-  // callers share this one panel: the Nerds booking route and, when
+  // callers share this one panel: the partner booking route and, when
   // footerLinksInWidget is on, a link in the tenant's footer text.
   // The booking page is built for a 460x680 embed, so the window widens
-  // for the duration (CSS .klai-window--nerds; narrow viewports fill).
+  // for the duration (CSS .klai-window--appointments; narrow viewports fill).
   const [panelLink, setPanelLink] = createSignal<{ url: string; title: string; allow: string } | null>(
     null,
   );
@@ -165,19 +165,19 @@ export function ChatWindow(props: ChatWindowProps) {
   // panel head carries a new-tab link at all times.
   const PANEL_FRAME_LOAD_TIMEOUT_MS = 12000;
 
-  const nerdsActive = () => Boolean(props.nerdsEnabled && props.nerdsBookingUrl?.trim());
+  const appointmentsActive = () => Boolean(props.appointmentsEnabled && props.appointmentsBookingUrl?.trim());
   // The booking module needs these to complete an appointment; they stay
   // scoped to that one known destination.
-  const NERDS_FRAME_ALLOW = "clipboard-write; payment; geolocation";
-  // Exactly what the Nerds' own embed.js requests of their booking
+  const APPOINTMENTS_FRAME_ALLOW = "clipboard-write; payment; geolocation";
+  // Exactly what the booking partner's own embed.js requests of their booking
   // module: the configured URL plus embed and language parameters.
   // The separator has to be chosen, not assumed: a booking URL without a
   // query string turns "&embed=1" into part of the path, and their router
   // answers that with a 404 page inside our panel. The configured Voys URL
   // has no query string, so hardcoding "&" broke exactly the case we ship.
   // Same rule their own embed.js applies before appending lng.
-  const nerdsEmbedUrl = () => {
-    const base = props.nerdsBookingUrl!.trim();
+  const appointmentsEmbedUrl = () => {
+    const base = props.appointmentsBookingUrl!.trim();
     const sep = base.includes("?") ? "&" : "?";
     return `${base}${sep}embed=1&lng=${currentLocale()}`;
   };
@@ -586,7 +586,7 @@ export function ChatWindow(props: ChatWindowProps) {
 
   const windowClass = () => {
     const base = props.inline ? "klai-window klai-window--inline" : "klai-window";
-    return panelLink() && !props.inline ? `${base} klai-window--nerds` : base;
+    return panelLink() && !props.inline ? `${base} klai-window--appointments` : base;
   };
 
   return (
@@ -820,7 +820,7 @@ export function ChatWindow(props: ChatWindowProps) {
           isStreaming={chatState.isStreaming}
           error={chatState.error}
           onBroadConsent={(offerIndex) => void handleBroadConsentClick(offerIndex)}
-          onAppointment={nerdsActive() ? () => openPanel(nerdsEmbedUrl(), t().nerdsPanelTitle, NERDS_FRAME_ALLOW) : undefined}
+          onAppointment={appointmentsActive() ? () => openPanel(appointmentsEmbedUrl(), t().appointmentsPanelTitle, APPOINTMENTS_FRAME_ALLOW) : undefined}
         />
       </Show>
 
@@ -897,12 +897,12 @@ export function ChatWindow(props: ChatWindowProps) {
           (partner.py _widget_booking_url), so it is safe as an href.
           Unset → no element rendered, current behaviour unchanged.
 
-          With the nerds panel wired up the bar disappears entirely: the
+          With the booking panel wired up the bar disappears entirely: the
           appointment is then offered in the conversation, under the answer
           that offered it, and a second permanent route to the same booking
-          module would only compete with it. Widgets without the nerds
+          module would only compete with it. Widgets without the appointments
           integration keep this bar exactly as it was. */}
-      <Show when={props.bookingUrl?.trim() && !nerdsActive()}>
+      <Show when={props.bookingUrl?.trim() && !appointmentsActive()}>
         <div class="klai-booking-bar">
           <a
             class="klai-booking-btn"
@@ -977,19 +977,19 @@ export function ChatWindow(props: ChatWindowProps) {
         }
       >
         <Show
-          when={nerdsActive()}
+          when={appointmentsActive()}
           fallback={<p class="klai-disclaimer">{t().disclaimer}</p>}
         >
           <p class="klai-disclaimer">
-            {t().nerdsDisclosureBefore}
+            {t().appointmentsDisclosureBefore}
             <button
               type="button"
               class="klai-disclaimer-link"
-              onClick={() => openPanel(nerdsEmbedUrl(), t().nerdsPanelTitle, NERDS_FRAME_ALLOW)}
+              onClick={() => openPanel(appointmentsEmbedUrl(), t().appointmentsPanelTitle, APPOINTMENTS_FRAME_ALLOW)}
             >
-              {t().nerdsDisclosureLink}
+              {t().appointmentsDisclosureLink}
             </button>
-            {t().nerdsDisclosureAfter}
+            {t().appointmentsDisclosureAfter}
           </p>
         </Show>
       </Show>
@@ -1007,19 +1007,19 @@ export function ChatWindow(props: ChatWindowProps) {
           opens the panel. */}
       <Show when={panelLink()}>
         {(link) => (
-          <div class="klai-nerds-panel" role="region" aria-label={link().title}>
-            <div class="klai-nerds-panel-head">
-              <span class="klai-nerds-panel-title">{link().title}</span>
-              <div class="klai-nerds-panel-actions">
+          <div class="klai-appointments-panel" role="region" aria-label={link().title}>
+            <div class="klai-appointments-panel-head">
+              <span class="klai-appointments-panel-title">{link().title}</span>
+              <div class="klai-appointments-panel-actions">
                 {/* Icon only: the head has to hold a title and two controls
                     inside a 320px-wide widget without wrapping. */}
                 <a
-                  class="klai-nerds-panel-back"
+                  class="klai-appointments-panel-back"
                   href={link().url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title={t().nerdsPanelFallback}
-                  aria-label={t().nerdsPanelFallback}
+                  title={t().appointmentsPanelFallback}
+                  aria-label={t().appointmentsPanelFallback}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M15 3h6v6" />
@@ -1029,7 +1029,7 @@ export function ChatWindow(props: ChatWindowProps) {
                 </a>
                 <button
                   type="button"
-                  class="klai-nerds-panel-back"
+                  class="klai-appointments-panel-back"
                   ref={panelBackRef}
                   onClick={closePanel}
                 >
@@ -1037,27 +1037,27 @@ export function ChatWindow(props: ChatWindowProps) {
                     <path d="M19 12H5" />
                     <path d="m12 19-7-7 7-7" />
                   </svg>
-                  {t().nerdsPanelClose}
+                  {t().appointmentsPanelClose}
                 </button>
               </div>
             </div>
             <Show
               when={!panelFrameFailed()}
               fallback={
-                <div class="klai-nerds-panel-fallback">
+                <div class="klai-appointments-panel-fallback">
                   <a
-                    class="klai-nerds-fallback-link"
+                    class="klai-appointments-fallback-link"
                     href={link().url}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    {t().nerdsPanelFallback}
+                    {t().appointmentsPanelFallback}
                   </a>
                 </div>
               }
             >
               <iframe
-                class="klai-nerds-frame"
+                class="klai-appointments-frame"
                 title={link().title}
                 src={link().url}
                 allow={link().allow}

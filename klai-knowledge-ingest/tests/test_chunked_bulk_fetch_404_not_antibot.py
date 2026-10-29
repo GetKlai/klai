@@ -1,4 +1,4 @@
-"""2026-08-18 support.ascendcloud.com incident — the storing itself.
+"""2026-08-18 support.example.org incident — the storing itself.
 
 Four un-rendered-template-syntax links (see
 ``tests/test_crawl_frontier_template_urls.py`` for the frontier-level fix)
@@ -34,7 +34,7 @@ _ONE_URL_PER_CHUNK_RATE_LIMIT = 0.05
 
 
 def _structural_404_page(url: str) -> dict[str, Any]:
-    """Exact production shape (support.ascendcloud.com, 2026-08-18): a 404
+    """Exact production shape (support.example.org, 2026-08-18): a 404
     for a URL built from un-rendered template syntax, whose tiny error page
     trips crawl4ai's STRUCTURAL anti-bot heuristic."""
     return {
@@ -129,13 +129,13 @@ async def test_four_structural_404s_do_not_stop_the_remaining_real_pages(
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
 
     urls = [
-        "https://support.ascendcloud.com/bogus-template-1",
-        "https://support.ascendcloud.com/bogus-template-2",
-        "https://support.ascendcloud.com/bogus-template-3",
-        "https://support.ascendcloud.com/bogus-template-4",
-        "https://support.ascendcloud.com/real/page-a",
-        "https://support.ascendcloud.com/real/page-b",
-        "https://support.ascendcloud.com/real/page-c",
+        "https://support.example.org/bogus-template-1",
+        "https://support.example.org/bogus-template-2",
+        "https://support.example.org/bogus-template-3",
+        "https://support.example.org/bogus-template-4",
+        "https://support.example.org/real/page-a",
+        "https://support.example.org/real/page-b",
+        "https://support.example.org/real/page-c",
     ]
 
     fetch = await _chunked_bulk_fetch(
@@ -155,11 +155,11 @@ async def test_four_structural_404s_do_not_stop_the_remaining_real_pages(
     }
     for i in range(1, 5):
         assert (
-            reason_by_url[f"https://support.ascendcloud.com/bogus-template-{i}"]
+            reason_by_url[f"https://support.example.org/bogus-template-{i}"]
             == FetchReasonCode.GONE.value
         )
     for suffix in ("a", "b", "c"):
         assert (
-            reason_by_url[f"https://support.ascendcloud.com/real/page-{suffix}"]
+            reason_by_url[f"https://support.example.org/real/page-{suffix}"]
             == FetchReasonCode.SUCCESS.value
         )

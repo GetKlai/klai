@@ -10,8 +10,8 @@ def test_episode_name_round_trips():
 def test_episode_name_keeps_colons_in_the_path():
     from klai_kb_slugs import episode_name, parse_episode_name
 
-    name = episode_name("support", "https://help.voys.nl/a:b")
-    assert parse_episode_name(name) == ("support", "https://help.voys.nl/a:b")
+    name = episode_name("support", "https://help.example.com/a:b")
+    assert parse_episode_name(name) == ("support", "https://help.example.com/a:b")
 
 
 def test_legacy_artifact_id_names_are_not_parsed():

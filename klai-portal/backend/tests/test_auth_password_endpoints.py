@@ -37,7 +37,7 @@ _STRONG_PASSWORD = "Correct horse battery staple 2026!"
 
 def _zitadel_user_response(
     *,
-    email: str = "mark@voys.nl",
+    email: str = "mark@example.com",
     first_name: str = "Mark",
     last_name: str = "Vletter",
 ) -> dict:
@@ -62,7 +62,7 @@ def _mock_password_set_user_context(
     respx_zitadel: respx.MockRouter,
     *,
     user_id: str = "uid-1",
-    email: str = "mark@voys.nl",
+    email: str = "mark@example.com",
     first_name: str = "Mark",
     last_name: str = "Vletter",
 ) -> respx.Route:
@@ -101,7 +101,7 @@ async def test_password_reset_known_email(respx_zitadel: respx.MockRouter) -> No
     # to avoid unmocked-request failures on paths the test does not care about.
     respx_zitadel.route().mock(return_value=httpx.Response(200, json={}))
 
-    body = PasswordResetRequest(email="alice@acme.com")
+    body = PasswordResetRequest(email="alice@acme.example.net")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         await password_reset(body=body)
@@ -110,7 +110,7 @@ async def test_password_reset_known_email(respx_zitadel: respx.MockRouter) -> No
     call_kwargs = audit_log.call_args.kwargs
     assert call_kwargs["action"] == "auth.password.reset"
     assert call_kwargs["actor"] == "anonymous"
-    assert call_kwargs["details"]["email_hash"] == _expected_email_hash("alice@acme.com")
+    assert call_kwargs["details"]["email_hash"] == _expected_email_hash("alice@acme.example.net")
     # No failure event on the happy path
     assert _capture_events(captured, "password_reset_failed") == []
 
@@ -126,7 +126,7 @@ async def test_password_reset_unknown_email(respx_zitadel: respx.MockRouter) -> 
     respx_zitadel.post("/v2/users").mock(return_value=httpx.Response(200, json={"result": []}))
     respx_zitadel.route().mock(return_value=httpx.Response(200, json={}))
 
-    body = PasswordResetRequest(email="ghost@acme.com")
+    body = PasswordResetRequest(email="ghost@acme.example.net")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         await password_reset(body=body)
@@ -135,7 +135,7 @@ async def test_password_reset_unknown_email(respx_zitadel: respx.MockRouter) -> 
     events = _capture_events(captured, "password_reset_failed")
     assert len(events) == 1
     assert events[0]["reason"] == "unknown_email"
-    assert events[0]["email_hash"] == _expected_email_hash("ghost@acme.com")
+    assert events[0]["email_hash"] == _expected_email_hash("ghost@acme.example.net")
     assert events[0]["outcome"] == "204"
     assert events[0]["log_level"] == "warning"
 
@@ -150,7 +150,7 @@ async def test_password_reset_find_user_5xx(respx_zitadel: respx.MockRouter) -> 
     respx_zitadel.post("/v2/users").mock(return_value=httpx.Response(502, json={"error": "bad gw"}))
     respx_zitadel.route().mock(return_value=httpx.Response(200, json={}))
 
-    body = PasswordResetRequest(email="alice@acme.com")
+    body = PasswordResetRequest(email="alice@acme.example.net")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         await password_reset(body=body)
@@ -177,7 +177,7 @@ async def test_password_reset_send_reset_5xx(respx_zitadel: respx.MockRouter) ->
     # send_password_reset uses POST /v2/users/{user_id}/password_reset (or similar)
     respx_zitadel.route().mock(return_value=httpx.Response(502, json={"error": "bad gw"}))
 
-    body = PasswordResetRequest(email="alice@acme.com")
+    body = PasswordResetRequest(email="alice@acme.example.net")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         await password_reset(body=body)
@@ -271,7 +271,7 @@ async def test_password_set_rejects_user_context_password_before_consuming_invit
     """Invite/reset password checks use the Zitadel user's email/name context."""
     _mock_password_set_user_context(
         respx_zitadel,
-        email="mark@voys.nl",
+        email="mark@example.com",
         first_name="Mark",
         last_name="Vletter",
     )
@@ -280,7 +280,7 @@ async def test_password_set_rejects_user_context_password_before_consuming_invit
     )
     password_patch_route = respx_zitadel.patch("/v2/users/uid-1").mock(return_value=httpx.Response(200, json={}))
 
-    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="mark@voys.nlmark")
+    body = PasswordSetRequest(user_id="uid-1", code="123456", new_password="mark@example.com mark")
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         with pytest.raises(HTTPException) as exc:

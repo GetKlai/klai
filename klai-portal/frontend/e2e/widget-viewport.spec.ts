@@ -32,7 +32,7 @@ test('floating widget overrides fit a small screen while inline widgets retain t
 // button (public floating layout offsets the window 88px above the bubble;
 // previewGeometry does not). Loads the real dist bundle in a real iframe.
 const previewConfig = {
-  title: 'E2E preview', welcome_message: 'Hi', footer_text: 'Plan met [onze nerds](https://example.com).',
+  title: 'E2E preview', welcome_message: 'Hi', footer_text: 'Plan met [onze specialisten](https://example.com).',
   css_variables: { '--klai-message-font-size': '15px', '--klai-message-line-height': '1.65' },
   chat_endpoint: 'https://widget.e2e/chat', session_token: 'e2e-preview-token',
   session_expires_at: '2030-01-01T00:00:00Z',

@@ -69,8 +69,8 @@ class HubSpotWidgetIntegration(BaseModel):
     last_error: str | None = None
 
 
-class WidgetNerdsIntegration(BaseModel):
-    # Voys-specific: the Nerds booking panel embedded in the widget instead
+class WidgetAppointmentsIntegration(BaseModel):
+    # Voys-specific: the partner booking panel embedded in the widget instead
     # of the new-tab link. booking_url is the support partner's booking
     # module address; the widget appends embed + language parameters itself.
     # Admin input that ends up in a visitor-facing iframe src, so only
@@ -82,7 +82,7 @@ class WidgetNerdsIntegration(BaseModel):
 
 class WidgetIntegrations(BaseModel):
     hubspot: HubSpotWidgetIntegration = Field(default_factory=HubSpotWidgetIntegration)
-    nerds: WidgetNerdsIntegration = Field(default_factory=WidgetNerdsIntegration)
+    appointments: WidgetAppointmentsIntegration = Field(default_factory=WidgetAppointmentsIntegration)
 
 
 _PHONE_SHAPE = re.compile(r"[0-9 +()\-]+")
@@ -469,7 +469,7 @@ async def create_widget(
     # Load KB names for the response BEFORE commit. PortalKnowledgeBase is
     # RLS-protected — after commit, the transaction-scoped tenant GUC is
     # cleared and the next query raises InsufficientPrivilegeError "RLS:
-    # app.current_org_id is not set" (2026-05-20 incident on Nerds widget
+    # app.current_org_id is not set" (2026-05-20 incident on a partner widget
     # create returned 500 even though the widget itself persisted).
     kb_access_list: list[dict] = []
     if body.kb_ids:

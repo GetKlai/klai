@@ -1,13 +1,14 @@
 import pytest
 
 
-def test_deepblue_slug_stays_readable_and_valid() -> None:
+def test_long_slug_stays_readable_and_valid() -> None:
     from app.core.provisioning_names import validate_slug_for_provisioning
 
-    names = validate_slug_for_provisioning("deepblue-security-intelligence-37491434", domain="getklai.com")
+    slug = "example-security-intelligence-37491434"
+    names = validate_slug_for_provisioning(slug, domain="getklai.com")
 
-    assert names.chat_label == "chat-deepblue-security-intelligence-37491434"
-    assert names.librechat_container == "librechat-deepblue-security-intelligence-37491434"
+    assert names.chat_label == f"chat-{slug}"
+    assert names.librechat_container == f"librechat-{slug}"
     assert names.mongodb_database == names.librechat_container
 
 

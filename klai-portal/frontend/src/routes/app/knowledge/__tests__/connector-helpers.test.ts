@@ -39,35 +39,35 @@ describe('JSON feed routing and secret-preserving edits', () => {
 
 describe('joinSeedUrl', () => {
   it('combines clean base + path with single slash', () => {
-    expect(joinSeedUrl('https://x.com', 'docs')).toBe('https://x.com/docs/')
+    expect(joinSeedUrl('https://x.example.net', 'docs')).toBe('https://x.example.net/docs/')
   })
 
   it('strips trailing slash from base', () => {
-    expect(joinSeedUrl('https://x.com/', 'docs')).toBe('https://x.com/docs/')
+    expect(joinSeedUrl('https://x.example.net/', 'docs')).toBe('https://x.example.net/docs/')
   })
 
   it('strips leading slash from path', () => {
-    expect(joinSeedUrl('https://x.com', '/docs')).toBe('https://x.com/docs/')
+    expect(joinSeedUrl('https://x.example.net', '/docs')).toBe('https://x.example.net/docs/')
   })
 
-  it('strips both - the redcactus case (the actual reported bug)', () => {
-    expect(joinSeedUrl('https://wiki.redcactus.cloud/', '/nl/')).toBe(
-      'https://wiki.redcactus.cloud/nl/',
+  it('strips both - the partner-wiki case (the actual reported bug)', () => {
+    expect(joinSeedUrl('https://wiki.example.com/', '/nl/')).toBe(
+      'https://wiki.example.com/nl/',
     )
   })
 
   it('handles multi-level path', () => {
-    expect(joinSeedUrl('https://x.com', '/nl/articles/')).toBe(
-      'https://x.com/nl/articles/',
+    expect(joinSeedUrl('https://x.example.net', '/nl/articles/')).toBe(
+      'https://x.example.net/nl/articles/',
     )
   })
 
   it('handles empty path → keeps trailing slash on base', () => {
-    expect(joinSeedUrl('https://x.com', '')).toBe('https://x.com/')
+    expect(joinSeedUrl('https://x.example.net', '')).toBe('https://x.example.net/')
   })
 
   it('handles undefined-equivalent (empty string from useState)', () => {
-    expect(joinSeedUrl('https://x.com/', '')).toBe('https://x.com/')
+    expect(joinSeedUrl('https://x.example.net/', '')).toBe('https://x.example.net/')
   })
 })
 
@@ -81,8 +81,8 @@ describe('joinSeedUrl', () => {
  * the time the preview step rendered the seed was gone from view.
  */
 describe('previewUrlOnDetailsAdvance', () => {
-  const BASE = 'https://support.ascendcloud.com'
-  const SEED = 'https://support.ascendcloud.com/app/articles/detail/a_id/15937'
+  const BASE = 'https://support.example.org'
+  const SEED = 'https://support.example.org/app/articles/detail/a_id/15937'
 
   it('keeps the stored interior seed instead of resetting to the base URL', () => {
     expect(previewUrlOnDetailsAdvance(SEED, BASE)).toBe(SEED)
@@ -101,7 +101,7 @@ describe('previewUrlOnDetailsAdvance', () => {
   })
 
   it('does not treat a look-alike host as in-scope (prefix-boundary safety)', () => {
-    expect(previewUrlOnDetailsAdvance('https://support.ascendcloud.com.evil.test/x', BASE)).toBe(BASE)
+    expect(previewUrlOnDetailsAdvance('https://support.example.org.evil.test/x', BASE)).toBe(BASE)
   })
 })
 
@@ -109,7 +109,7 @@ describe('previewUrlOnDetailsAdvance', () => {
  * Auth-probe test-URL retention on the details -> next step transition.
  *
  * Reported 2026-09-18: an operator validated authentication against an
- * interior page (the redcactus case: base_url is the redirecting site root,
+ * interior page (the partner-wiki case: base_url is the redirecting site root,
  * the actual login wall lives on a deeper page), then went back to Details
  * to fix something and forward again. The "next" button cleared the
  * validated test URL unconditionally, exactly the same bug class as
@@ -118,8 +118,8 @@ describe('previewUrlOnDetailsAdvance', () => {
  * URL every time.
  */
 describe('testUrlOnDetailsAdvance', () => {
-  const BASE = 'https://wiki.redcactus.cloud/nl/'
-  const TESTED = 'https://wiki.redcactus.cloud/nl/crm-software/HubSpot'
+  const BASE = 'https://wiki.example.com/nl/'
+  const TESTED = 'https://wiki.example.com/nl/crm-software/HubSpot'
 
   it('keeps the validated test URL instead of resetting to empty', () => {
     expect(testUrlOnDetailsAdvance(TESTED, BASE)).toBe(TESTED)
@@ -138,19 +138,19 @@ describe('testUrlOnDetailsAdvance', () => {
   })
 
   it('does not treat a look-alike host as same-origin (safety)', () => {
-    expect(testUrlOnDetailsAdvance('https://wiki.redcactus.cloud.evil.test/x', BASE)).toBe('')
+    expect(testUrlOnDetailsAdvance('https://wiki.example.com.evil.test/x', BASE)).toBe('')
   })
 })
 
 describe('isWithinBaseUrl', () => {
   it('accepts the base URL itself and any path below it', () => {
-    expect(isWithinBaseUrl('https://x.com', 'https://x.com')).toBe(true)
-    expect(isWithinBaseUrl('https://x.com/docs/a', 'https://x.com')).toBe(true)
+    expect(isWithinBaseUrl('https://x.example.net', 'https://x.example.net')).toBe(true)
+    expect(isWithinBaseUrl('https://x.example.net/docs/a', 'https://x.example.net')).toBe(true)
   })
 
   it('rejects a different site and a look-alike host', () => {
-    expect(isWithinBaseUrl('https://y.com/docs', 'https://x.com')).toBe(false)
-    expect(isWithinBaseUrl('https://x.com.evil.test/docs', 'https://x.com')).toBe(false)
+    expect(isWithinBaseUrl('https://y.example.net/docs', 'https://x.example.net')).toBe(false)
+    expect(isWithinBaseUrl('https://x.com.evil.test/docs', 'https://x.example.net')).toBe(false)
   })
 })
 

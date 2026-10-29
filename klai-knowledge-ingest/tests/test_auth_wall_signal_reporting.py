@@ -92,7 +92,7 @@ async def test_cluster_detection_does_not_report_auth_specific_confidence():
     0.9 was inherited from v1's tiered confidence design and never actually
     varied with anything about the observation.
     """
-    wall_text = (FIXTURES / "auth_walls" / "redcactus_hubspot.md").read_text(encoding="utf-8")
+    wall_text = (FIXTURES / "auth_walls" / "partner_wiki_hubspot.md").read_text(encoding="utf-8")
     target = compute_simhash(wall_text)
     conn = _FakeConn([target] * 5)
 

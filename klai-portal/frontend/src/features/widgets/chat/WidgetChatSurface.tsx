@@ -7,7 +7,7 @@ import { WIDGET_DEFAULT_PRIMARY_COLOR } from '@/features/widgets/config/appearan
 import { getLocale } from '@/paraglide/runtime'
 import * as m from '@/paraglide/messages'
 
-// Nerds booking integration (Voys-specific): while it is on, the footer
+// Partner booking integration (Voys-specific): while it is on, the footer
 // shows the client's own disclosure sentence instead of the portal-
 // translated accuracy disclaimer. The sentence is fixed, delivered verbatim
 // by the client for NL — reproducing it as a constant here (rather than a
@@ -15,24 +15,24 @@ import * as m from '@/paraglide/messages'
 // out of reach of the logged-in admin's portal language setting. The same
 // NL/EN fork as the widget's labels; locale here falls out of the page's
 // own language (the visitor's, on the public share link).
-const NERDS_DISCLOSURE = {
+const APPOINTMENTS_DISCLOSURE = {
   nl: {
     before:
       'De Voys AI chat baseert zich op zorgvuldig gekozen bronnen. Toch kunnen ook daar fouten in staan, dus vertrouw ze niet blind. Kom je er niet uit in de chat? Plan dan een afspraak in met ',
-    link: 'onze nerds',
+    link: 'onze specialisten',
     after: '.',
   },
   en: {
     before:
       "The Voys AI chat draws on carefully chosen sources. Even those can contain mistakes, so don't trust them blindly. Can't work it out in the chat? Then schedule an appointment with ",
-    link: 'our nerds',
+    link: 'our specialists',
     after: '.',
   },
 } as const
 
 // The booking module needs these to complete an appointment; they stay
 // scoped to that one known destination, never to a tenant's own footer link.
-const NERDS_FRAME_ALLOW = 'clipboard-write; payment; geolocation'
+const APPOINTMENTS_FRAME_ALLOW = 'clipboard-write; payment; geolocation'
 
 // Only a plain left-click is diverted into the panel; a middle-click or a
 // modifier click must still reach the anchor's own new tab. Returns whether
@@ -57,13 +57,13 @@ export interface WidgetChatSurfaceProps {
   welcomeMessage?: string
   conversationStarters?: string[]
   hideDisclaimer?: boolean
-  // Nerds booking panel (Voys-specific). Enabled + booking_url always
+  // Partner booking panel (Voys-specific). Enabled + booking_url always
   // arrive as a pair, pre-validated to absolute http(s) server-side
-  // (partner.py _widget_nerds_integration). Like the embeddable widget,
-  // "onze nerds" and the appointment offer open that URL in the in-page
+  // (partner.py _widget_appointments_integration). Like the embeddable widget,
+  // "onze specialisten" and the appointment offer open that URL in the in-page
   // panel. Both unset → footer stays as before.
-  nerdsEnabled?: boolean
-  nerdsBookingUrl?: string
+  appointmentsEnabled?: boolean
+  appointmentsBookingUrl?: string
   // Tenant footer links: on, a plain click opens them in the in-page panel
   // instead of a new tab. Mirrors footer_links_in_widget in the public
   // config; the booking panel does not depend on it.
@@ -202,8 +202,8 @@ export function WidgetChatSurface({
   welcomeMessage = '',
   conversationStarters = [],
   hideDisclaimer = false,
-  nerdsEnabled = false,
-  nerdsBookingUrl = '',
+  appointmentsEnabled = false,
+  appointmentsBookingUrl = '',
   footerLinksInWidget = false,
   primaryColor = WIDGET_DEFAULT_PRIMARY_COLOR,
   theme = 'light',
@@ -227,7 +227,7 @@ export function WidgetChatSurface({
   // once, and the embeddable widget owns its own "remember me" storage.
   const [identityDone, setIdentityDone] = useState(false)
   // In-page link panel: an iframe over the chat, opened by the footer links,
-  // the "onze nerds" sentence and the appointment offer. One panel for all
+  // the "onze specialisten" sentence and the appointment offer. One panel for all
   // three callers; `allow` carries the delegated browser rights, empty for a
   // tenant's own link.
   const [panelLink, setPanelLink] = useState<{ url: string; title: string; allow: string } | null>(null)
@@ -241,15 +241,15 @@ export function WidgetChatSurface({
   const primaryFaint = `${primaryColor}14`
   const isDark = theme === 'dark'
   const surfaceBackground = backgroundColor || (isDark ? 'var(--color-rl-dark)' : 'var(--color-rl-bg)')
-  const nerdsUrl = nerdsBookingUrl.trim()
-  const nerdsActive = nerdsEnabled && nerdsUrl.length > 0
-  const nerdsLang = getLocale() === 'nl' ? 'nl' : 'en'
+  const appointmentsUrl = appointmentsBookingUrl.trim()
+  const appointmentsActive = appointmentsEnabled && appointmentsUrl.length > 0
+  const appointmentsLang = getLocale() === 'nl' ? 'nl' : 'en'
   // Same embed request the widget's iframe panel makes. The server validated
   // the URL before delivering it.
   // Choose the separator; do not assume one. The configured Voys URL has no
   // query string, and appending "&embed=1" to a bare path makes their router
   // answer with a 404 page. Verified against the live booking URL.
-  const nerdsHref = `${nerdsUrl}${nerdsUrl.includes('?') ? '&' : '?'}embed=1&lng=${nerdsLang}`
+  const appointmentsHref = `${appointmentsUrl}${appointmentsUrl.includes('?') ? '&' : '?'}embed=1&lng=${appointmentsLang}`
   const identityFilled = visitorName.trim().length > 1 && visitorEmail.trim().includes('@')
   // Ask before the first message rather than alongside it: the visitor reads
   // why we want the address while nothing else competes for the space, and
@@ -445,11 +445,11 @@ export function WidgetChatSurface({
     setPanelLink({ url, title, allow })
   }
 
-  // Shared by the "onze nerds" sentence and the appointment offer: the same
+  // Shared by the "onze specialisten" sentence and the appointment offer: the same
   // panel, the same booking arguments.
-  function openNerdsPanel(event: React.MouseEvent<HTMLAnchorElement>) {
+  function openAppointmentsPanel(event: React.MouseEvent<HTMLAnchorElement>) {
     if (!claimPlainLinkClick(event)) return
-    openPanel(nerdsHref, NERDS_DISCLOSURE[nerdsLang].link, NERDS_FRAME_ALLOW)
+    openPanel(appointmentsHref, APPOINTMENTS_DISCLOSURE[appointmentsLang].link, APPOINTMENTS_FRAME_ALLOW)
   }
 
   return (
@@ -629,9 +629,9 @@ export function WidgetChatSurface({
                   isDark={isDark}
                   showSources={showSources}
                   showMeta={showMeta}
-                  nerdsActive={nerdsActive}
-                  nerdsHref={nerdsHref}
-                  onOpenNerds={openNerdsPanel}
+                  appointmentsActive={appointmentsActive}
+                  appointmentsHref={appointmentsHref}
+                  onOpenAppointments={openAppointmentsPanel}
                 />
               ))}
               <div ref={messagesEndRef} />
@@ -699,19 +699,19 @@ export function WidgetChatSurface({
                     </a>
                   ) }}
                 >{footerText}</Markdown>
-              ) : nerdsActive ? (
+              ) : appointmentsActive ? (
                 <>
-                  {NERDS_DISCLOSURE[nerdsLang].before}
+                  {APPOINTMENTS_DISCLOSURE[appointmentsLang].before}
                   <a
-                    href={nerdsHref}
+                    href={appointmentsHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline decoration-1 underline-offset-2"
-                    onClick={openNerdsPanel}
+                    onClick={openAppointmentsPanel}
                   >
-                    {NERDS_DISCLOSURE[nerdsLang].link}
+                    {APPOINTMENTS_DISCLOSURE[appointmentsLang].link}
                   </a>
-                  {NERDS_DISCLOSURE[nerdsLang].after}
+                  {APPOINTMENTS_DISCLOSURE[appointmentsLang].after}
                 </>
               ) : (
                 m.widget_ai_disclaimer()
@@ -818,7 +818,7 @@ function TypingIndicator({ isDark, bubble = false }: { isDark: boolean; bubble?:
 }
 
 // Offered under an assistant message that carried the escalation signal
-// (see normalizeEscalation). Opens the same panel the "onze nerds" footer
+// (see normalizeEscalation). Opens the same panel the "onze specialisten" footer
 // link uses; the anchor stays a real new-tab link, so a middle-click or a
 // modifier click still leaves the conversation.
 function EscalationCta({
@@ -857,9 +857,9 @@ function MessageBubble({
   isDark,
   showSources,
   showMeta,
-  nerdsActive,
-  nerdsHref,
-  onOpenNerds,
+  appointmentsActive,
+  appointmentsHref,
+  onOpenAppointments,
 }: {
   message: ChatMessage
   isLast: boolean
@@ -870,9 +870,9 @@ function MessageBubble({
   isDark: boolean
   showSources: boolean
   showMeta: boolean
-  nerdsActive: boolean
-  nerdsHref: string
-  onOpenNerds: (event: React.MouseEvent<HTMLAnchorElement>) => void
+  appointmentsActive: boolean
+  appointmentsHref: string
+  onOpenAppointments: (event: React.MouseEvent<HTMLAnchorElement>) => void
 }) {
   if (message.role === 'user') {
     return (
@@ -893,7 +893,7 @@ function MessageBubble({
     )
   }
 
-  const showEscalation = nerdsActive && message.escalation?.appointment === true
+  const showEscalation = appointmentsActive && message.escalation?.appointment === true
 
   if (variant === 'admin-preview') {
     return (
@@ -914,7 +914,7 @@ function MessageBubble({
           ) : isStreaming && isLast ? (
             <TypingIndicator isDark={isDark} />
           ) : null}
-          {showEscalation && <EscalationCta href={nerdsHref} isDark={isDark} onOpen={onOpenNerds} />}
+          {showEscalation && <EscalationCta href={appointmentsHref} isDark={isDark} onOpen={onOpenAppointments} />}
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
         </div>
       </div>
@@ -932,7 +932,7 @@ function MessageBubble({
               <Markdown>{message.content}</Markdown>
             </div>
           </div>
-          {showEscalation && <EscalationCta href={nerdsHref} isDark={isDark} onOpen={onOpenNerds} />}
+          {showEscalation && <EscalationCta href={appointmentsHref} isDark={isDark} onOpen={onOpenAppointments} />}
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
         </div>
       ) : isStreaming && isLast ? (

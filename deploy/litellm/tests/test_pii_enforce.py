@@ -467,21 +467,21 @@ async def test_streaming_and_non_streaming_both_restore_return_set_entities(monk
 
     # Non-streaming
     call_id_ns = "call-both-ns"
-    mod._pii_map_store.put(call_id_ns, {"<EMAIL_ADDRESS_1>": "jan@example.nl"})
+    mod._pii_map_store.put(call_id_ns, {"<EMAIL_ADDRESS_1>": "jan@example.net"})
     restored = await mod.klai_pii_enforcer.async_post_call_success_hook(
         {"litellm_call_id": call_id_ns}, _user_api_key("org1"), _response("mail: <EMAIL_ADDRESS_1>")
     )
-    assert "jan@example.nl" in restored.choices[0].message.content
+    assert "jan@example.net" in restored.choices[0].message.content
 
     # Streaming
     call_id_s = "call-both-s"
-    mod._pii_map_store.put(call_id_s, {"<EMAIL_ADDRESS_1>": "jan@example.nl"})
+    mod._pii_map_store.put(call_id_s, {"<EMAIL_ADDRESS_1>": "jan@example.net"})
     chunks = await _drain(
         mod.klai_pii_enforcer.async_post_call_streaming_iterator_hook(
             _user_api_key("org1"), _achunks("mail: ", "<EMAIL_ADDRESS_1>"), {"litellm_call_id": call_id_s}
         )
     )
-    assert "jan@example.nl" in _all_content(chunks)
+    assert "jan@example.net" in _all_content(chunks)
 
 
 # ===========================================================================
@@ -758,8 +758,8 @@ async def test_tool_call_arguments_are_masked(monkeypatch):
     mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "org1"})
     _stub_org_policy(mod, monkeypatch, frozenset({"EMAIL_ADDRESS"}))
 
-    args_text = '{"to": "jan.devries@example.nl"}'
-    email = "jan.devries@example.nl"
+    args_text = '{"to": "jan.devries@example.net"}'
+    email = "jan.devries@example.net"
     start, end = args_text.index(email), args_text.index(email) + len(email)
     client = _ScriptedAnalyzerClient(
         script={
@@ -953,7 +953,7 @@ async def test_wildcard_masks_never_restore_entities_for_an_org_with_empty_polic
     mod = _load_enforcer(monkeypatch, enforce=True, extra_env={"KLAI_PII_ENFORCE_ORG_IDS": "*"})
     _stub_org_policy(mod, monkeypatch, frozenset())
 
-    email = "jan@example.nl"
+    email = "jan@example.net"
     text = f"mijn bsn is 111222333 en mijn mail is {email}"
     bsn_start = text.index("111222333")
     email_start = text.index(email)
@@ -1591,7 +1591,7 @@ async def test_a_value_the_model_never_mentions_is_not_reported_as_damage(monkey
         call_id,
         {
             "<IBAN_CODE_1>": _TELEMETRY_IBAN,
-            "<EMAIL_ADDRESS_1>": "jan@example.nl",
+            "<EMAIL_ADDRESS_1>": "jan@example.net",
             "<PHONE_NUMBER_1>": "0612345678",
         },
     )

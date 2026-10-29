@@ -45,9 +45,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def _walled_result() -> CrawlResult:
     """Build a CrawlResult that contains the canonical login-wall phrase."""
-    raw = (FIXTURES / "auth_walls" / "redcactus_hubspot.md").read_text(encoding="utf-8")
+    raw = (FIXTURES / "auth_walls" / "partner_wiki_hubspot.md").read_text(encoding="utf-8")
     return CrawlResult(
-        url="https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
+        url="https://wiki.example.com/nl/crm-software/HubSpot",
         fit_markdown=raw,
         raw_markdown=raw,
         html="<html><body>" + raw + "</body></html>",
@@ -62,9 +62,9 @@ def _walled_result() -> CrawlResult:
 
 
 def _clean_result() -> CrawlResult:
-    raw = (FIXTURES / "clean_pages" / "redcactus_ifttt.md").read_text(encoding="utf-8")
+    raw = (FIXTURES / "clean_pages" / "partner_wiki_ifttt.md").read_text(encoding="utf-8")
     return CrawlResult(
-        url="https://wiki.redcactus.cloud/nl/crm-software/IFTTT",
+        url="https://wiki.example.com/nl/crm-software/IFTTT",
         fit_markdown=raw,
         raw_markdown=raw,
         html="<html><body>" + raw + "</body></html>",
@@ -179,14 +179,14 @@ class TestRejectMode:
                 await _ingest_crawl_result(
                     pool,
                     walled,
-                    "https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
+                    "https://wiki.example.com/nl/crm-software/HubSpot",
                     org_id="100000000000000002",
                     kb_slug="support",
                     stored=None,
                     login_indicator_selector=None,
                 )
 
-        assert excinfo.value.url == "https://wiki.redcactus.cloud/nl/crm-software/HubSpot"
+        assert excinfo.value.url == "https://wiki.example.com/nl/crm-software/HubSpot"
         assert excinfo.value.signal.pattern == "auth_wall_classifier"
         assert "embedded_login_gate" in excinfo.value.signal.evidence
         # ingest_document MUST NOT have been called for a rejected page.
@@ -252,7 +252,7 @@ class TestDegradeMode:
             await _ingest_crawl_result(
                 pool,
                 walled,
-                "https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
+                "https://wiki.example.com/nl/crm-software/HubSpot",
                 org_id="100000000000000002",
                 kb_slug="support",
                 stored=None,
@@ -288,7 +288,7 @@ class TestAuditOnlyMode:
             await _ingest_crawl_result(
                 pool,
                 walled,
-                "https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
+                "https://wiki.example.com/nl/crm-software/HubSpot",
                 org_id="100000000000000002",
                 kb_slug="support",
                 stored=None,
@@ -322,7 +322,7 @@ class TestCleanPageUntouched:
             await _ingest_crawl_result(
                 pool,
                 _clean_result(),
-                "https://wiki.redcactus.cloud/nl/crm-software/IFTTT",
+                "https://wiki.example.com/nl/crm-software/IFTTT",
                 org_id="100000000000000002",
                 kb_slug="support",
                 stored=None,
@@ -400,7 +400,7 @@ class TestDisabledFlag:
             await _ingest_crawl_result(
                 pool,
                 _walled_result(),
-                "https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
+                "https://wiki.example.com/nl/crm-software/HubSpot",
                 org_id="100000000000000002",
                 kb_slug="support",
                 stored=None,
@@ -443,7 +443,7 @@ class TestInvalidModeFailsSafe:
             await _ingest_crawl_result(
                 pool,
                 walled,
-                "https://wiki.redcactus.cloud/nl/crm-software/HubSpot",
+                "https://wiki.example.com/nl/crm-software/HubSpot",
                 org_id="100000000000000002",
                 kb_slug="support",
                 stored=None,

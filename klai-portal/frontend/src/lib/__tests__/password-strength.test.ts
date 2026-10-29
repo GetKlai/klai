@@ -51,7 +51,7 @@ describe("signup password strength", () => {
   it("rejects passwords based on personal context", async () => {
     const result = await evaluateSignupPassword(
       "Mark!Vletter",
-      ["mark@voys.nl", "Mark", "Vletter", "Voys"],
+      ["mark@example.com", "Mark", "Vletter", "Voys"],
       policy,
     );
 

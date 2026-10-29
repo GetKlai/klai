@@ -30,16 +30,16 @@ export interface WidgetLabels {
   aiDisclosureNoOrg: string
   aiDisclosureBooking: string
   bookingButton: string
-  // Nerds booking panel (Voys-specific). While the integration is on, the
+  // Partner booking panel (Voys-specific). While the integration is on, the
   // three disclosure fragments REPLACE the plain accuracy footer below the
   // input; the NL wording is client-supplied verbatim — do not rephrase.
   // The link fragment renders as a <button> that opens the iframe panel.
-  nerdsDisclosureBefore: string
-  nerdsDisclosureLink: string
-  nerdsDisclosureAfter: string
-  nerdsPanelTitle: string
-  nerdsPanelClose: string
-  nerdsPanelFallback: string
+  appointmentsDisclosureBefore: string
+  appointmentsDisclosureLink: string
+  appointmentsDisclosureAfter: string
+  appointmentsPanelTitle: string
+  appointmentsPanelClose: string
+  appointmentsPanelFallback: string
   handoffButton: string
   handoffConnecting: string
   handoffConnected: string
@@ -111,14 +111,14 @@ const nl: WidgetLabels = {
     " Kom je er samen niet uit, dan kun je een afspraak inplannen met een medewerker die je persoonlijk verderhelpt.",
   bookingButton: "Plan een afspraak",
   // Client-supplied verbatim — the sentence reads "… afspraak in met " +
-  // "onze nerds" + "."; the trailing/leading spaces carry the spacing.
-  nerdsDisclosureBefore:
+  // "onze specialisten" + "."; the trailing/leading spaces carry the spacing.
+  appointmentsDisclosureBefore:
     "De Voys AI chat baseert zich op zorgvuldig gekozen bronnen. Toch kunnen ook daar fouten in staan, dus vertrouw ze niet blind. Kom je er niet uit in de chat? Plan dan een afspraak in met ",
-  nerdsDisclosureLink: "onze nerds",
-  nerdsDisclosureAfter: ".",
-  nerdsPanelTitle: "Afspraak inplannen",
-  nerdsPanelClose: "Terug naar de chat",
-  nerdsPanelFallback: "Openen in een nieuw tabblad",
+  appointmentsDisclosureLink: "onze specialisten",
+  appointmentsDisclosureAfter: ".",
+  appointmentsPanelTitle: "Afspraak inplannen",
+  appointmentsPanelClose: "Terug naar de chat",
+  appointmentsPanelFallback: "Openen in een nieuw tabblad",
   handoffButton: "Praat met een medewerker",
   handoffConnecting: "Ik verbind je met een medewerker.",
   handoffConnected: "Je bent verbonden met een medewerker.",
@@ -180,13 +180,13 @@ const en: WidgetLabels = {
   aiDisclosureBooking:
     " If you don't work it out together, you can schedule an appointment with an employee who will help you personally.",
   bookingButton: "Schedule an appointment",
-  nerdsDisclosureBefore:
+  appointmentsDisclosureBefore:
     "The Voys AI chat draws on carefully chosen sources. Even those can contain mistakes, so don't trust them blindly. Can't work it out in the chat? Then schedule an appointment with ",
-  nerdsDisclosureLink: "our nerds",
-  nerdsDisclosureAfter: ".",
-  nerdsPanelTitle: "Schedule an appointment",
-  nerdsPanelClose: "Back to the chat",
-  nerdsPanelFallback: "Open in a new tab",
+  appointmentsDisclosureLink: "our specialists",
+  appointmentsDisclosureAfter: ".",
+  appointmentsPanelTitle: "Schedule an appointment",
+  appointmentsPanelClose: "Back to the chat",
+  appointmentsPanelFallback: "Open in a new tab",
   handoffButton: "Talk to a human",
   handoffConnecting: "I am connecting you with a human agent.",
   handoffConnected: "You are connected with a human agent.",
@@ -237,7 +237,7 @@ const locales: Record<string, WidgetLabels> = { nl, en }
 // the active label set changes mid-conversation (see setLanguage below).
 const [labelsSignal, setLabelsSignal] = createSignal<WidgetLabels>(nl)
 
-// Frozen at load time on purpose, unlike the label set above. The Nerds
+// Frozen at load time on purpose, unlike the label set above. The partner
 // booking panel is a third-party page loaded in an iframe; its language is
 // picked once from this value and stays out of the per-turn switching.
 let _initialLocale: "nl" | "en" = "nl"
@@ -264,7 +264,7 @@ export function setLanguage(code: "nl" | "en"): void {
   setLabelsSignal(locales[code])
 }
 
-// The locale the labels were resolved to at load time. The Nerds booking
+// The locale the labels were resolved to at load time. The partner booking
 // panel sends it as the embed's `lng` parameter; that framed page is loaded
 // externally and deliberately does NOT follow the conversation language, so
 // this must not read the label signal.

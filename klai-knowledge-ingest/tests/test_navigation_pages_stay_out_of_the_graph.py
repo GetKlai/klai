@@ -1,6 +1,6 @@
 """An index page holds no facts about the world, only about the documentation.
 
-GetKlai/klai#1148. Replaying https://help.voys.nl/ through extraction on
+GetKlai/klai#1148. Replaying https://help.example.com/ through extraction on
 2026-08-22 produced nothing but the meta-statements rule 1 forbids -- "Een van
 de documentatieartikelen voor Freedom is getiteld 'Statistieken'" and eleven
 siblings. Those edges cannot answer a question; they can only take up room in
@@ -9,10 +9,10 @@ klai-fast budget to produce.
 
 Shapes below are the real measured ones:
 
-    https://help.voys.nl/                       2283 chars   34 links     0 sentences
-    https://help.voys.nl/2fa-freedom            2620 chars    2 links    12 sentences
-    https://help.voys.nl/aan-de-slag            4725 chars    6 links    26 sentences
-    https://help.voys.nl/yealink-dect-functies 27868 chars   32 links   143 sentences
+    https://help.example.com/                       2283 chars   34 links     0 sentences
+    https://help.example.com/2fa-freedom            2620 chars    2 links    12 sentences
+    https://help.example.com/aan-de-slag            4725 chars    6 links    26 sentences
+    https://help.example.com/yealink-dect-functies 27868 chars   32 links   143 sentences
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from knowledge_ingest.enrichment_policy import graph_episode_skip_reason
 
 
 def _link_list(count: int) -> str:
-    return "\n".join(f"* [Artikel {i}](https://help.voys.nl/artikel-{i})" for i in range(count))
+    return "\n".join(f"* [Artikel {i}](https://help.example.com/artikel-{i})" for i in range(count))
 
 
 def _article(sentences: int, links: int) -> str:
@@ -60,7 +60,7 @@ def test_an_illustrated_walkthrough_is_not_a_link_list():
     the graph — a false positive costs a real article.
     """
     walkthrough = (
-        "\n".join(f"![stap {i}](https://img.voys.nl/stap-{i}.png)" for i in range(12))
+        "\n".join(f"![stap {i}](https://img.example.com/stap-{i}.png)" for i in range(12))
         + "\n\nKlik op Opslaan onderaan de pagina en wacht tot het toestel herstart."
     )
     assert graph_episode_skip_reason(walkthrough) is None
@@ -72,7 +72,7 @@ def test_a_link_list_punctuated_as_prose_is_still_a_link_list():
     Counting sentence-ending punctuation lets a list written this way pass as
     an article. Measuring what is left once the links are removed does not.
     """
-    punctuated = "\n".join(f"* [Artikel {i}](https://help.voys.nl/a-{i})." for i in range(20))
+    punctuated = "\n".join(f"* [Artikel {i}](https://help.example.com/a-{i})." for i in range(20))
     assert graph_episode_skip_reason(punctuated) == "navigation_page"
 
 

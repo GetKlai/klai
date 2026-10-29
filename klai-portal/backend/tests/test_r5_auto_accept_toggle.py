@@ -16,7 +16,7 @@ import pytest
 from tests.conftest import make_perms
 
 
-def _make_org(auto_accept: bool = False, primary_domain: str | None = "acme.nl") -> MagicMock:
+def _make_org(auto_accept: bool = False, primary_domain: str | None = "acme.example.com") -> MagicMock:
     org = MagicMock()
     org.id = 1
     org.name = "Acme"
@@ -131,7 +131,7 @@ class TestPatchSettingsAutoAccept:
         result = await get_org_settings(perms=perms, db=db)
 
         assert result.auto_accept_same_domain is True
-        assert result.primary_domain == "acme.nl"
+        assert result.primary_domain == "acme.example.com"
 
     @pytest.mark.asyncio
     async def test_get_settings_hides_unclaimable_primary_domain(self) -> None:

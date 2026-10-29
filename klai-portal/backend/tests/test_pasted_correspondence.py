@@ -29,9 +29,9 @@ from app.services.pasted_correspondence import (
 # forwarded customer email inside a chat message.
 _VOYS_INCIDENT_PASTE = """Dit is een aanvulling op de eerdere mail.
 
-Van: Naam Achternaam <klant@example.nl>
+Van: Naam Achternaam <klant@example.net>
 Verzonden: Vrijdag, 14 Augustus, 2026 21:22
-Aan: Support <support@example.nl>
+Aan: Support <support@example.net>
 CC: partner@example.net
 Onderwerp: RE: klant example URGENT
 
@@ -84,11 +84,11 @@ class TestDetector:
         assert extract_pasted_correspondence_text("What does SIP 404 mean?") == ""
 
     def test_bold_markdown_headers_detected(self):
-        text = "**Van:** Klant <k@example.nl>\n**Verzonden:** maandag 17 augustus 2026\n**Onderwerp:** storing\n"
+        text = "**Van:** Klant <k@example.net>\n**Verzonden:** maandag 17 augustus 2026\n**Onderwerp:** storing\n"
         assert text_contains_pasted_correspondence(text) is True
 
     def test_german_email_header_block_detected(self):
-        text = "Von: Kunde <kunde@example.de>\nAn: support@example.de\nBetreff: Störung dringend\n"
+        text = "Von: Kunde <kunde@example.org>\nAn: support@example.org\nBetreff: Störung dringend\n"
         assert text_contains_pasted_correspondence(text) is True
 
     def test_original_message_marker_alone_is_sufficient(self):
@@ -98,9 +98,7 @@ class TestDetector:
         assert text_contains_pasted_correspondence("---------- Forwarded message ----------\ninhoud") is True
 
     def test_quote_line_with_email_address_detected(self):
-        text = (
-            "Op vr 14 aug 2026 om 21:22 schreef Naam Achternaam <klant@example.nl>:\n> wij zien geen fout aan onze kant"
-        )
+        text = "Op vr 14 aug 2026 om 21:22 schreef Naam Achternaam <klant@example.net>:\n> wij zien geen fout aan onze kant"
         assert text_contains_pasted_correspondence(text) is True
 
     def test_quote_line_without_email_address_is_not_detected(self):
@@ -121,7 +119,8 @@ class TestDetector:
     def test_language_variants_of_same_label_count_once(self):
         # "Van:" + "From:" + "Aan:" is only from+to → below threshold.
         assert (
-            text_contains_pasted_correspondence("Van: a@example.nl\nFrom: a@example.nl\nAan: b@example.nl\n") is False
+            text_contains_pasted_correspondence("Van: a@example.net\nFrom: a@example.net\nAan: b@example.net\n")
+            is False
         )
 
     def test_empty_and_non_string_inputs(self):

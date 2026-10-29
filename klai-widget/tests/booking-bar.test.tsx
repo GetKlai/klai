@@ -3,11 +3,11 @@
  *
  * Two shapes exist side by side and must not bleed into each other:
  *
- * - nerds integration ON  → the appointment lives in the conversation, so the
- *   always-on bar is gone, and "onze nerds" in the footer is always a working
- *   escape route: clicking it opens the same nerds booking panel the
+ * - appointments integration ON  → the appointment lives in the conversation, so the
+ *   always-on bar is gone, and "onze specialisten" in the footer is always a working
+ *   escape route: clicking it opens the same appointments booking panel the
  *   in-conversation appointment button opens.
- * - nerds integration OFF → nothing changed at all. Widgets that never had
+ * - appointments integration OFF → nothing changed at all. Widgets that never had
  *   this integration must render byte-for-byte the same controls as before.
  */
 
@@ -35,7 +35,7 @@ function renderWindow(props: Record<string, unknown> = {}) {
 }
 
 describe("permanent booking bar", () => {
-  it("stays exactly as before for a widget without the nerds integration", () => {
+  it("stays exactly as before for a widget without the appointments integration", () => {
     const { container } = renderWindow();
     const bar = container.querySelector(".klai-booking-bar");
     expect(bar).not.toBeNull();
@@ -46,47 +46,47 @@ describe("permanent booking bar", () => {
     expect(container.querySelector(".klai-disclaimer")!.textContent).toBe(t().disclaimer);
   });
 
-  it("disappears once the nerds integration is on", () => {
+  it("disappears once the appointments integration is on", () => {
     const { container } = renderWindow({
-      nerdsEnabled: true,
-      nerdsBookingUrl: BOOKING_URL,
+      appointmentsEnabled: true,
+      appointmentsBookingUrl: BOOKING_URL,
     });
     expect(container.querySelector(".klai-booking-bar")).toBeNull();
   });
 
   it("keeps the disclosure sentence's wording, with a working escape link", () => {
     const { container } = renderWindow({
-      nerdsEnabled: true,
-      nerdsBookingUrl: BOOKING_URL,
+      appointmentsEnabled: true,
+      appointmentsBookingUrl: BOOKING_URL,
     });
     const disclaimer = container.querySelector(".klai-disclaimer")!;
     expect(disclaimer.textContent).toBe(
-      t().nerdsDisclosureBefore + t().nerdsDisclosureLink + t().nerdsDisclosureAfter,
+      t().appointmentsDisclosureBefore + t().appointmentsDisclosureLink + t().appointmentsDisclosureAfter,
     );
     const link = disclaimer.querySelector("button.klai-disclaimer-link") as HTMLButtonElement;
     expect(link).not.toBeNull();
-    expect(link.textContent).toBe(t().nerdsDisclosureLink);
+    expect(link.textContent).toBe(t().appointmentsDisclosureLink);
 
-    // Clicking it must always open the nerds panel — the visitor must
+    // Clicking it must always open the booking panel — the visitor must
     // always be able to escape to a human, from the footer, not just from
     // an in-conversation offer.
     fireEvent.click(link);
-    expect(container.querySelector(".klai-nerds-panel")).not.toBeNull();
+    expect(container.querySelector(".klai-appointments-panel")).not.toBeNull();
   });
 
-  it("keeps the nerds escape link even when hideDisclaimer white-labels the accuracy footer", () => {
+  it("keeps the booking escape link even when hideDisclaimer white-labels the accuracy footer", () => {
     // hideDisclaimer only white-labels the generic accuracy wording. With
-    // nerds active the permanent booking bar is already gone (the offer
+    // appointments active the permanent booking bar is already gone (the offer
     // lives in-conversation instead), so this link is the visitor's only
     // remaining permanent route to a human — it must survive the toggle.
     const { container } = renderWindow({
-      nerdsEnabled: true,
-      nerdsBookingUrl: BOOKING_URL,
+      appointmentsEnabled: true,
+      appointmentsBookingUrl: BOOKING_URL,
       hideDisclaimer: true,
     });
     const link = container.querySelector("button.klai-disclaimer-link");
     expect(link).not.toBeNull();
-    expect(link!.textContent).toBe(t().nerdsDisclosureLink);
+    expect(link!.textContent).toBe(t().appointmentsDisclosureLink);
   });
 
   it("hides the AI introduction while preserving the footer", () => {
@@ -102,10 +102,10 @@ describe("permanent booking bar", () => {
   it("renders explicit introduction and footer text despite the legacy hide flag", async () => {
     const { container } = renderWindow({
       hideDisclaimer: true,
-      nerdsEnabled: true,
-      nerdsBookingUrl: BOOKING_URL,
+      appointmentsEnabled: true,
+      appointmentsBookingUrl: BOOKING_URL,
       aiDisclosureOverride: "Je praat met de Voys-assistent.",
-      footerText: `Onze AI kan fouten maken. Plan bij [onze nerds](${BOOKING_URL}).`,
+      footerText: `Onze AI kan fouten maken. Plan bij [onze specialisten](${BOOKING_URL}).`,
     });
     await waitFor(() => {
       expect(container.querySelector(".klai-hero-ai-disclosure")!.textContent).toBe(
@@ -113,7 +113,7 @@ describe("permanent booking bar", () => {
       );
     });
     const footer = container.querySelector(".klai-disclaimer")!;
-    expect(footer.textContent).toBe("Onze AI kan fouten maken. Plan bij onze nerds.");
+    expect(footer.textContent).toBe("Onze AI kan fouten maken. Plan bij onze specialisten.");
     const link = footer.querySelector("a")!;
     expect(link.getAttribute("href")).toBe(BOOKING_URL);
     expect(link.target).toBe("_blank");

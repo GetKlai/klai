@@ -1,6 +1,6 @@
 """Preview must judge the SITE, not just the seed page.
 
-Regression context (2026-08-06, support.ascendcloud.com):
+Regression context (2026-08-06, support.example.org):
 
 A user adds a helpdesk whose entry URL is an SPA navigation hub. After JS
 rendering the hub yields ~92 visible words — eight short of
@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient
 from knowledge_ingest.crawl4ai_client import CrawlResult, LinkedPageSample
 
 # The hub: rich raw HTML (so it is not classified as an SPA shell), thin
-# rendered text. Mirrors the measured ascendcloud /app/main page.
+# rendered text. Mirrors the measured template-only /app/main page.
 _HUB_HTML = "<html>" + ("<div>nav</div>" * 1000) + "</html>"
 
 

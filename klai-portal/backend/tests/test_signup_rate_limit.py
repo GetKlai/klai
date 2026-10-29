@@ -58,8 +58,8 @@ def test_normalise_email(raw: str, expected: str) -> None:
 
 def test_email_sha256_is_normalised() -> None:
     """Different surface forms collapse to the same sha256 once normalised."""
-    assert email_sha256("Mark+signup@voys.nl") == email_sha256("mark@voys.nl")
-    assert email_sha256("Mark+signup@voys.nl") != email_sha256("other@voys.nl")
+    assert email_sha256("Mark+signup@example.com") == email_sha256("mark@example.com")
+    assert email_sha256("Mark+signup@example.com") != email_sha256("other@example.com")
 
 
 # REQ-19.1 + REQ-19.2: INCR + EXPIRE flow ---------------------------------- #

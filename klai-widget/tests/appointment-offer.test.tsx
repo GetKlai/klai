@@ -65,7 +65,7 @@ describe("appointment offer button", () => {
   });
 
   it("renders nothing when the widget has no booking route", () => {
-    // No onAppointment = no nerds integration configured. The signal may
+    // No onAppointment = no appointments integration configured. The signal may
     // arrive anyway; the widget must not promise a person it cannot reach.
     const { queryByText } = renderList([OFFER]);
     expect(queryByText(t().bookingButton)).toBeNull();

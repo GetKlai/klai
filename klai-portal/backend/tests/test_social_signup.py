@@ -60,7 +60,7 @@ def _encrypt_pending(
     session_token: str,
     user_id: str,
     *,
-    email: str = "jan@bedrijf.nl",
+    email: str = "jan@bedrijf.example.com",
     has_valid_invite: bool = False,
     ua_hash: str = "",
     ip_subnet: str = "127.0.0.0",
@@ -764,7 +764,7 @@ class TestSignupSocial:
         assert result.org_id == "zit-org-new"
         assert result.user_id == _FAKE_USER_ID
         assert mock_portal_org.call_args.kwargs["plan"] == "knowledge"
-        assert mock_portal_org.call_args.kwargs["primary_domain"] == "bedrijf.nl"
+        assert mock_portal_org.call_args.kwargs["primary_domain"] == "bedrijf.example.com"
         assert mock_portal_user.call_args.kwargs["role"] == "admin"
         assert mock_portal_user.call_args.kwargs["seat_type"] == "knowledge"
         response_mock.set_cookie.assert_called_once()
@@ -794,7 +794,7 @@ class TestSignupSocial:
             _FAKE_SESSION_ID,
             _FAKE_SESSION_TOKEN,
             _FAKE_USER_ID,
-            email="founder@bedrijf.nl",
+            email="founder@bedrijf.example.com",
         )
 
         with (
@@ -834,7 +834,7 @@ class TestSignupSocial:
             role="org:owner",
         )
         assert mock_portal_org.call_args.kwargs["plan"] == "knowledge"
-        assert mock_portal_org.call_args.kwargs["primary_domain"] == "bedrijf.nl"
+        assert mock_portal_org.call_args.kwargs["primary_domain"] == "bedrijf.example.com"
         assert mock_portal_org.call_args.kwargs["auto_accept_same_domain"] is False
         assert mock_portal_user.call_args.kwargs["zitadel_user_id"] == _FAKE_USER_ID
         assert mock_portal_user.call_args.kwargs["role"] == "admin"
@@ -844,8 +844,8 @@ class TestSignupSocial:
         sync_call = background_tasks.add_task.call_args_list[1]
         assert sync_call.args[0].__name__ == "_sync_signup_to_mailing"
         assert sync_call.kwargs == {
-            "email": "founder@bedrijf.nl",
-            "name": "founder@bedrijf.nl",
+            "email": "founder@bedrijf.example.com",
+            "name": "founder@bedrijf.example.com",
             "company": "Bedrijf BV",
             "org_id": org_row.id,
             "portal_user_id": 123,

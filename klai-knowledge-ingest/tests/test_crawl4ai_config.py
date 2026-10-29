@@ -1,6 +1,6 @@
 """Pin the selector-branch contract in build_crawl_config.
 
-Regression anchor for the wiki.redcactus.cloud /nl/ bug: when a CSS selector
+Regression anchor for the wiki.example.com /nl/ bug: when a CSS selector
 is set on a web-crawler connector, the shared Crawl4AI config must NOT use
 `css_selector` (that shrinks the raw HTML before BFS link discovery, so
 sidebar/nav links disappear — site crawls then return 1 page). It must use

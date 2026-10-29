@@ -26,13 +26,13 @@ class TestDiversifyMode:
 
     def test_distributes_across_sources(self):
         reranked = [
-            _chunk("a1", "help.voys.nl", 0.95),
-            _chunk("a2", "help.voys.nl", 0.90),
-            _chunk("a3", "help.voys.nl", 0.88),
-            _chunk("b1", "wiki.voys.nl", 0.85),
-            _chunk("a4", "help.voys.nl", 0.84),
+            _chunk("a1", "help.example.com", 0.95),
+            _chunk("a2", "help.example.com", 0.90),
+            _chunk("a3", "help.example.com", 0.88),
+            _chunk("b1", "wiki.example.com", 0.85),
+            _chunk("a4", "help.example.com", 0.84),
             _chunk("c1", "mitel-help", 0.82),
-            _chunk("b2", "wiki.voys.nl", 0.80),
+            _chunk("b2", "wiki.example.com", 0.80),
         ]
         selected, meta = source_aware_select(reranked, top_n=5, max_per_source=2)
         assert len(selected) == 5
@@ -82,8 +82,8 @@ class TestRouterIntegration:
             _chunk("m1", "mitel-help", 0.95),
             _chunk("m2", "mitel-help", 0.90),
             _chunk("m3", "mitel-help", 0.88),
-            _chunk("v1", "help.voys.nl", 0.85),
-            _chunk("v2", "help.voys.nl", 0.80),
+            _chunk("v1", "help.example.com", 0.85),
+            _chunk("v2", "help.example.com", 0.80),
         ]
         # Query does NOT mention "mitel" — but router identified it semantically
         selected, meta = source_aware_select(
@@ -99,9 +99,9 @@ class TestRouterIntegration:
     def test_router_signal_respected_even_with_low_scores(self):
         """A router preference is a tiebreak, not permission to erase score gaps."""
         reranked = [
-            _chunk("v1", "help.voys.nl", 0.95),
-            _chunk("v2", "help.voys.nl", 0.90),
-            _chunk("v3", "help.voys.nl", 0.88),
+            _chunk("v1", "help.example.com", 0.95),
+            _chunk("v2", "help.example.com", 0.90),
+            _chunk("v3", "help.example.com", 0.88),
             _chunk("m1", "mitel-help", 0.30),
             _chunk("m2", "mitel-help", 0.25),
         ]
@@ -232,18 +232,18 @@ class TestBoundedPreference:
 
     def test_counterfactual_reports_no_suppression_for_incident_score_shape(self):
         reranked = [
-            _chunk("help-strong", "help.voys.nl", 0.866),
+            _chunk("help-strong", "help.example.com", 0.866),
             _chunk("notion-gold", "notion", 0.658),
             _chunk("support-gold", "support", 0.616),
-            _chunk("help-weak", "help.voys.nl", 0.280),
-            _chunk("help-weaker", "help.voys.nl", 0.208),
+            _chunk("help-weak", "help.example.com", 0.280),
+            _chunk("help-weaker", "help.example.com", 0.208),
         ]
 
         selected, meta = source_aware_select(
             reranked,
             top_n=3,
             max_per_source=3,
-            preferred_labels={"help.voys.nl"},
+            preferred_labels={"help.example.com"},
             source_preference_boost=0.05,
         )
 
@@ -283,11 +283,11 @@ class TestBoundedPreference:
 class TestComparisonOnlyPreference:
     def test_brand_token_does_not_prefer_matching_source_label(self):
         reranked = [
-            _chunk("help-strong", "help.voys.nl", 0.866),
+            _chunk("help-strong", "help.example.com", 0.866),
             _chunk("notion-gold", "notion", 0.658),
             _chunk("support-gold", "support", 0.616),
-            _chunk("help-weak", "help.voys.nl", 0.280),
-            _chunk("help-weaker", "help.voys.nl", 0.208),
+            _chunk("help-weak", "help.example.com", 0.280),
+            _chunk("help-weaker", "help.example.com", 0.208),
         ]
 
         selected, meta = source_aware_select(

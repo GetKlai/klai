@@ -78,6 +78,7 @@ _ALLOWED_DOMAINS_FILE = Path(__file__).resolve().parent / "allowed-test-domains.
 
 _TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|fixtures?|stories|seeds?|e2e)(/|$)|(\.|_|-)(test|spec|stories)\.")
 _DOTTED = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+")
+_ESCAPE = re.compile(r"\\[tnr]")
 # Reserved by RFC 2606 / 6761: never resolve to a real party. Their reserved TLDs
 # (.test, .example, .invalid, .localhost) and "localhost" are not in _TLDS, so a
 # host under them is never a hostname here.
@@ -137,8 +138,27 @@ def _allowed_domains() -> list[str]:
 
 
 def _has_real_hostname(body: str, allowed: list[str]) -> bool:
-    for token in _DOTTED.findall(body):
+    # A shell escape (``$'\tghcr.io'``) would otherwise glue its letter onto the
+    # host, and a parameter default (``${IMAGE:-ghcr.io}``) its dash; no host
+    # label starts with a dash.
+    text = _ESCAPE.sub(" ", body)
+    for match in _DOTTED.finditer(text):
+        token = match.group(0).lstrip("-")
         labels = token.lower().split(".")
+        # ``self.org`` or ``state.org`` is attribute access, not a host. Only
+        # the ``.org`` ending doubles as a common attribute name, so only a bare
+        # two-label ``.org`` token is excused, and only outside a string, URL
+        # or address (no quote, slash or @ before it) and not followed by a
+        # path or port. A bare ``customer.nl`` in prose is still a finding.
+        before = text[match.start() - 1] if match.start() > 0 else " "
+        after = text[match.end()] if match.end() < len(text) else " "
+        if (
+            len(labels) == 2
+            and labels[-1] == "org"
+            and before not in "\"'`/@"
+            and after not in "/:"
+        ):
+            continue
         # Module paths and snake_case attributes carry underscores; versions and
         # IP literals end in a digit label; neither is a hostname.
         if "_" in token or labels[-1] not in _TLDS or not any(c.isalpha() for c in labels[-2]):

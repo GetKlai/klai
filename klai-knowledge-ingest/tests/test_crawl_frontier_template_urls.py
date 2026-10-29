@@ -1,10 +1,10 @@
 """A website crawl must not chase un-rendered client-side template syntax.
 
-support.ascendcloud.com's search-results widget emits an ``<a href>``
+support.example.org's search-results widget emits an ``<a href>``
 whose template placeholder never got interpolated (the templating
 framework's JS never ran, or crawl4ai captured the DOM before it mounted):
 
-    https://support.ascendcloud.com/euf/generated/optimized/1782421674/
+    https://support.example.org/euf/generated/optimized/1782421674/
     themes/standard/{{item.SearchResultURL != '' ?+item.SearchResultURL+...}}
 
 That is never a real page. Fetching it 404s with a tiny error body, and
@@ -40,9 +40,9 @@ from knowledge_ingest.adapters.crawler import (
 from knowledge_ingest.crawl4ai_client import CrawlLedger, CrawlResult
 from knowledge_ingest.reason_codes import FetchReasonCode
 
-# The exact production URL (2026-08-18, support.ascendcloud.com).
+# The exact production URL (2026-08-18, support.example.org).
 _PRODUCTION_TEMPLATE_URL = (
-    "https://support.ascendcloud.com/euf/generated/optimized/1782421674/"
+    "https://support.example.org/euf/generated/optimized/1782421674/"
     "themes/standard/{{item.SearchResultURL != '' ?+item.SearchResultURL+...}}"
 )
 
@@ -50,7 +50,7 @@ _PRODUCTION_TEMPLATE_URL = (
 # templating layer ran the (un-interpolated) placeholder through
 # encodeURIComponent before writing it into the href attribute.
 _PRODUCTION_TEMPLATE_URL_PERCENT_ENCODED = (
-    "https://support.ascendcloud.com/euf/generated/optimized/1782421674/"
+    "https://support.example.org/euf/generated/optimized/1782421674/"
     "themes/standard/%7B%7Bitem.SearchResultURL%20!%3D%20''%20%3F%2Bitem."
     "SearchResultURL%2B...%7D%7D"
 )
@@ -58,8 +58,8 @@ _PRODUCTION_TEMPLATE_URL_PERCENT_ENCODED = (
 
 def _ledger(**overrides: Any) -> CrawlLedger:
     defaults: dict[str, Any] = {
-        "start_url": "https://support.ascendcloud.com",
-        "base_domain": "support.ascendcloud.com",
+        "start_url": "https://support.example.org",
+        "base_domain": "support.example.org",
         "include_patterns": None,
         "exclude_patterns": None,
         "max_depth": 3,
@@ -80,7 +80,7 @@ def test_production_template_placeholder_url_is_never_added_to_the_frontier(url:
     added = ledger.add(
         url,
         depth=1,
-        discovered_from="https://support.ascendcloud.com",
+        discovered_from="https://support.example.org",
         source_kind="page_link",
         priority=50,
     )
@@ -129,14 +129,14 @@ def test_real_url_next_to_a_template_url_is_still_added() -> None:
     ledger.add(
         _PRODUCTION_TEMPLATE_URL,
         depth=1,
-        discovered_from="https://support.ascendcloud.com",
+        discovered_from="https://support.example.org",
         source_kind="page_link",
         priority=50,
     )
     added = ledger.add(
-        "https://support.ascendcloud.com/euf/assets/1782421674/Support",
+        "https://support.example.org/euf/assets/1782421674/Support",
         depth=1,
-        discovered_from="https://support.ascendcloud.com",
+        discovered_from="https://support.example.org",
         source_kind="page_link",
         priority=50,
     )
@@ -152,20 +152,20 @@ def test_a_crawl_with_only_skipped_template_urls_is_not_failed_partial() -> None
     test_crawl_frontier_document_extensions.py."""
     fetch_outcomes = [
         {
-            "url": "https://support.ascendcloud.com/{{article.url}}",
+            "url": "https://support.example.org/{{article.url}}",
             "reason_code": "not_fetched_excluded",
             "status_code": None,
             "content_length": 0,
             "filter_reason": "unrendered_template_syntax",
         },
         {
-            "url": "https://support.ascendcloud.com",
+            "url": "https://support.example.org",
             "reason_code": "success",
             "status_code": 200,
             "content_length": 500,
         },
         {
-            "url": "https://support.ascendcloud.com/euf/assets/1782421674/Support",
+            "url": "https://support.example.org/euf/assets/1782421674/Support",
             "reason_code": "success",
             "status_code": 200,
             "content_length": 500,

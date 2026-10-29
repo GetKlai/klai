@@ -3,7 +3,7 @@
 SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-3 / D-6.
 
 @MX:WARN — heuristic threshold (40%). Calibrated against Voys help
-(~5-10% link density on real articles) and the Redcactus broken output
+(~5-10% link density on real articles) and a customer wiki's broken output
 (80%+ link density on nav-only pages). Lower threshold means more false
 positives on legitimate link-heavy index pages; higher threshold misses
 real nav-leak. 40% sits cleanly between the two anchors. Adjust only
@@ -43,7 +43,7 @@ def link_density(markdown: str) -> float:
     Why visible-text and not total markdown? A nav menu of short anchors
     with long URLs (``[Home](/nl/45-bubble-api-van-derden) ...``) inflates
     ``len(markdown)`` so much that pure-nav pages score below the 40% gate.
-    Real production case (wiki.redcactus.cloud/, 2026-05-07): 281 words of
+    Real production case (wiki.example.com/, 2026-05-07): 281 words of
     nav text scored ~28% under the old formula and was incorrectly accepted
     as ``success``. With visible-text denominator it scores ~95% → correctly
     flagged as ``selector_required``.

@@ -371,7 +371,7 @@ def test_classification_dataclass_shape() -> None:
 
 
 def test_repeated_login_marker_anywhere_in_body_classified_as_walled() -> None:
-    """REGRESSION (production 2026-05-07): wiki.redcactus.cloud article pages
+    """REGRESSION (production 2026-05-07): wiki.example.com article pages
     with multiple tabs show "Log in when you want to read this article" once
     per tab, in the middle of the body — never at the end. The single-marker
     D-13 tail check missed this and the page was misclassified as ``success``
@@ -409,7 +409,7 @@ def test_single_embedded_login_gate_in_body_classified_as_walled() -> None:
     body = (
         "## Handleiding - CGM\n"
         + "Public CRM integration content with lots of useful words. " * 80
-        + "\n## [Log in](https://wiki.redcactus.cloud/login?redirect_to=...) "
+        + "\n## [Log in](https://wiki.example.com/login?redirect_to=...) "
         "when you want to read this article\n"
         "This article is providing information to users of our software. "
         "Information that contains things like, how to install our software, "

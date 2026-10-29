@@ -203,7 +203,7 @@ class TestRoundTrip:
         store = _make_store()
         db = AsyncMock()
         config = {
-            "url": "https://help.voys.nl",
+            "url": "https://help.example.com",
             "cookies": [{"name": "session", "value": "s-abc"}],
             "auth_headers": {"X-Sso": "token-xyz"},
         }
@@ -213,7 +213,7 @@ class TestRoundTrip:
             )
             assert "cookies" not in stripped
             assert "auth_headers" not in stripped
-            assert stripped["url"] == "https://help.voys.nl"
+            assert stripped["url"] == "https://help.example.com"
 
             assert blob is not None
             decrypted = await store.decrypt_credentials(org_id=42, encrypted_credentials=blob, db=db)

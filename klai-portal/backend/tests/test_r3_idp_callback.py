@@ -51,7 +51,11 @@ def _make_portal_user(org_id: int, org_name: str = "Acme", slug: str = "acme") -
 
 
 def _make_portal_org(
-    org_id: int, name: str = "Acme", slug: str = "acme", primary_domain: str = "acme.nl", auto_accept: bool = False
+    org_id: int,
+    name: str = "Acme",
+    slug: str = "acme",
+    primary_domain: str = "acme.example.com",
+    auto_accept: bool = False,
 ) -> MagicMock:
     org = MagicMock()
     org.id = org_id
@@ -62,7 +66,7 @@ def _make_portal_org(
     return org
 
 
-def _zitadel_mocks(email: str = "test@acme.nl") -> MagicMock:
+def _zitadel_mocks(email: str = "test@acme.example.com") -> MagicMock:
     # SPEC-AUTH-010 R3: idp_callback now retrieves the intent itself and
     # creates the session for the linked user (create_session_with_idp_intent
     # was removed).
@@ -102,14 +106,14 @@ class TestIdpCallbackCase1NoMemberNoDomain:
                 db=mock_db,
             )
         assert response.status_code == 302
-        assert response.headers.get("location") == "/no-account?email=test%40acme.nl"
+        assert response.headers.get("location") == "/no-account?email=test%40acme.example.com"
         assert "klai_sso" not in response.headers.get("set-cookie", "")
         assert "klai_idp_pending" in response.headers.get("set-cookie", "")
         pending_payload = mock_fernet.return_value.encrypt.call_args.args[0]
         assert b'"session_id": "sid"' in pending_payload
         assert b'"session_token": "stk"' in pending_payload
         assert b'"zitadel_user_id": "zuser1"' in pending_payload
-        assert b'"email": "test@acme.nl"' in pending_payload
+        assert b'"email": "test@acme.example.com"' in pending_payload
         assert b'"has_valid_invite": false' in pending_payload
         assert b'"ua_hash": ""' in pending_payload
         assert b'"ip_subnet": "127.0.0.0"' in pending_payload
@@ -285,11 +289,11 @@ class TestIdpCallbackCase4Multiple:
         mr = MagicMock()
         mr.scalars.return_value.all.return_value = [_make_portal_user(1, "Acme", "acme")]
         dr = MagicMock()
-        dr.scalars.return_value.all.return_value = [_make_portal_org(2, "Voys", "voys", "acme.nl", True)]
+        dr.scalars.return_value.all.return_value = [_make_portal_org(2, "Voys", "voys", "acme.example.com", True)]
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(side_effect=[mr, dr])
         with (
-            patch("app.api.auth.zitadel", _zitadel_mocks("test@acme.nl")),
+            patch("app.api.auth.zitadel", _zitadel_mocks("test@acme.example.com")),
             patch("app.api.auth.emit_event"),
             patch("app.api.auth.PendingSessionService") as MockSvc,
         ):

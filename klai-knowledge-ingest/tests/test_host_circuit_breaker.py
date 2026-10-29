@@ -1,6 +1,6 @@
 """Pure unit tests for knowledge_ingest.host_circuit_breaker.evaluate_chunk.
 
-Onderdeel 2 of the 2026-08-19 intermedia.com "20 minutes, zero pages"
+Onderdeel 2 of the 2026-08-19 intermedia.example.net "20 minutes, zero pages"
 fix — see the module docstring in host_circuit_breaker.py for the full
 rationale. Defaults used throughout mirror settings.py's:
 consecutive_failure_threshold=5, min_attempts_for_ratio=10,

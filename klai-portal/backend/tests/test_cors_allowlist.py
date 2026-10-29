@@ -782,7 +782,7 @@ def test_production_partner_router_answers_widget_preflights(path: str, method: 
 def test_production_widget_routes_carry_their_marker() -> None:
     """Review finding 4: the widget bundle's production endpoints must all
     declare their CORS mode, or a customer-domain widget breaks silently
-    (help.voys.nl, PR #1361). Import app.api.partner directly — no DB, no
+    (help.example.com, PR #1361). Import app.api.partner directly — no DB, no
     app — and assert the marker inventory on every route the bundle calls.
     An unmarked new widget endpoint fails here; marking a route nobody
     calls fails here too (equality, not subset)."""

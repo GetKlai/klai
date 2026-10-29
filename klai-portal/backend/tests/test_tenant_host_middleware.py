@@ -206,7 +206,7 @@ class TestPassThrough:
     @pytest.mark.parametrize(
         "bad_slug",
         [
-            "evil.com",  # would escape the .getklai.com suffix
+            "evil.example.net",  # would escape the .getklai.com suffix
             "bad/path",  # path separator
             "with space",  # whitespace
             "UPPERCASE",  # uppercase forbidden

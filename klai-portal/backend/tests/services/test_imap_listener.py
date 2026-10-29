@@ -58,7 +58,7 @@ def patch_mailauth_dnsfunc(monkeypatch: pytest.MonkeyPatch):
     async def _patched(raw_message: bytes, **kw):
         if "dnsfunc" not in kw or kw["dnsfunc"] is None:
             kw["dnsfunc"] = make_dnsfunc(
-                key_for("customer.nl"),
+                key_for("customer.example.com"),
                 key_for("gmail.com"),
                 key_for("accept-shape.test"),
             )
@@ -82,7 +82,7 @@ class TestAC10_RejectDoesNotCallFindTenant:
         monkeypatch.setattr(imap_listener, "schedule_invite", schedule_invite)
         monkeypatch.setattr(imap_listener, "parse_ics", parse_ics)
 
-        raw = build_email(from_addr="ceo@customer.nl")  # no DKIM
+        raw = build_email(from_addr="ceo@customer.example.com")  # no DKIM
         await imap_listener._process_email(_mock_imap(raw), b"1")
 
         assert find_tenant.called is False
@@ -115,18 +115,18 @@ class TestAC10_AcceptCallsFindTenantWithVerifiedFrom:
     ) -> None:
         find_tenant = AsyncMock(return_value=("zitadel-user-123", 42))
         schedule_invite = AsyncMock()
-        parse_ics = MagicMock(return_value=_fake_invite("attacker@evil.com"))
+        parse_ics = MagicMock(return_value=_fake_invite("attacker@evil.example.net"))
         monkeypatch.setattr(imap_listener, "find_tenant", find_tenant)
         monkeypatch.setattr(imap_listener, "schedule_invite", schedule_invite)
         monkeypatch.setattr(imap_listener, "parse_ics", parse_ics)
         monkeypatch.setattr(imap_listener, "_extract_ics_parts", lambda _msg: [ics_part])
 
-        raw = build_email(from_addr="boss@customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        raw = build_email(from_addr="boss@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
         await imap_listener._process_email(_mock_imap(raw), b"1")
 
         # REQ-5.2: find_tenant called with verified From, never with ICS organizer.
-        find_tenant.assert_awaited_once_with("boss@customer.nl")
+        find_tenant.assert_awaited_once_with("boss@customer.example.com")
         assert schedule_invite.await_count == 1
 
 
@@ -142,24 +142,24 @@ class TestAC7_OrganizerMismatchNonFatal:
     ) -> None:
         find_tenant = AsyncMock(return_value=("uid", 1))
         schedule_invite = AsyncMock()
-        parse_ics = MagicMock(return_value=_fake_invite("boss@customer.nl"))
+        parse_ics = MagicMock(return_value=_fake_invite("boss@customer.example.com"))
         monkeypatch.setattr(imap_listener, "find_tenant", find_tenant)
         monkeypatch.setattr(imap_listener, "schedule_invite", schedule_invite)
         monkeypatch.setattr(imap_listener, "parse_ics", parse_ics)
         monkeypatch.setattr(imap_listener, "_extract_ics_parts", lambda _msg: [ics_part])
 
-        raw = build_email(from_addr="pa@customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        raw = build_email(from_addr="pa@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
 
         with capture_logs() as logs:
             await imap_listener._process_email(_mock_imap(raw), b"1")
 
         mismatch = [lg for lg in logs if lg["event"] == "imap_organizer_mismatch"]
         assert len(mismatch) == 1
-        assert mismatch[0]["verified_from"] == "pa@customer.nl"
-        assert mismatch[0]["ics_organizer"] == "boss@customer.nl"
+        assert mismatch[0]["verified_from"] == "pa@customer.example.com"
+        assert mismatch[0]["ics_organizer"] == "boss@customer.example.com"
         # REQ-5.3: proceed using verified_from despite the mismatch.
-        find_tenant.assert_awaited_once_with("pa@customer.nl")
+        find_tenant.assert_awaited_once_with("pa@customer.example.com")
         assert schedule_invite.await_count == 1
 
     @pytest.mark.asyncio
@@ -168,14 +168,14 @@ class TestAC7_OrganizerMismatchNonFatal:
     ) -> None:
         find_tenant = AsyncMock(return_value=("uid", 1))
         schedule_invite = AsyncMock()
-        parse_ics = MagicMock(return_value=_fake_invite("boss@customer.nl"))
+        parse_ics = MagicMock(return_value=_fake_invite("boss@customer.example.com"))
         monkeypatch.setattr(imap_listener, "find_tenant", find_tenant)
         monkeypatch.setattr(imap_listener, "schedule_invite", schedule_invite)
         monkeypatch.setattr(imap_listener, "parse_ics", parse_ics)
         monkeypatch.setattr(imap_listener, "_extract_ics_parts", lambda _msg: [ics_part])
 
-        raw = build_email(from_addr="boss@customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        raw = build_email(from_addr="boss@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
 
         with capture_logs() as logs:
             await imap_listener._process_email(_mock_imap(raw), b"1")
@@ -223,7 +223,7 @@ class TestAC11_LogSchemaStability:
         monkeypatch.setattr(imap_listener, "schedule_invite", AsyncMock())
         monkeypatch.setattr(imap_listener, "parse_ics", MagicMock())
 
-        raw = build_email(from_addr="ceo@customer.nl")
+        raw = build_email(from_addr="ceo@customer.example.com")
         with capture_logs() as logs:
             await imap_listener._process_email(_mock_imap(raw), b"1")
 
@@ -244,11 +244,13 @@ class TestAC11_LogSchemaStability:
     ) -> None:
         monkeypatch.setattr(imap_listener, "find_tenant", AsyncMock(return_value=None))
         monkeypatch.setattr(imap_listener, "schedule_invite", AsyncMock())
-        monkeypatch.setattr(imap_listener, "parse_ics", MagicMock(return_value=_fake_invite("boss@customer.nl")))
+        monkeypatch.setattr(
+            imap_listener, "parse_ics", MagicMock(return_value=_fake_invite("boss@customer.example.com"))
+        )
         monkeypatch.setattr(imap_listener, "_extract_ics_parts", lambda _msg: [ics_part])
 
-        raw = build_email(from_addr="boss@customer.nl")
-        raw = dkim_sign(raw, signing_domain="customer.nl")
+        raw = build_email(from_addr="boss@customer.example.com")
+        raw = dkim_sign(raw, signing_domain="customer.example.com")
         with capture_logs() as logs:
             await imap_listener._process_email(_mock_imap(raw), b"1")
 

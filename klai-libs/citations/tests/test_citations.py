@@ -577,7 +577,7 @@ def test_trusted_sources_include_uploaded_documents_without_source_url() -> None
         "sources": [
             {
                 "source_id": "S1",
-                "title": "CV_Jantine_Doornbos.pdf",
+                "title": "CV_Alex_Example.pdf",
                 "source_url": None,
                 "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
                 "evidence_ids": ["E1"],
@@ -590,7 +590,7 @@ def test_trusted_sources_include_uploaded_documents_without_source_url() -> None
     assert sources == [
         {
             "label": "1",
-            "title": "CV_Jantine_Doornbos.pdf",
+            "title": "CV_Alex_Example.pdf",
             "url": "",
             "source_id": "S1",
             "evidence_ids": ["E1"],
@@ -599,7 +599,7 @@ def test_trusted_sources_include_uploaded_documents_without_source_url() -> None
             "relevance_score": None,
         }
     ]
-    assert format_sources_markdown(sources) == "- CV_Jantine_Doornbos.pdf"
+    assert format_sources_markdown(sources) == "- CV_Alex_Example.pdf"
 
 
 def test_trusted_sources_include_compact_evidence_snippets() -> None:
@@ -691,7 +691,7 @@ def test_trusted_source_composition_supports_uploaded_documents_without_url() ->
         [
             {
                 "label": "1",
-                "title": "CV_Jantine_Doornbos.pdf",
+                "title": "CV_Alex_Example.pdf",
                 "url": "",
                 "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
                 "evidence_ids": ["E1"],
@@ -701,15 +701,15 @@ def test_trusted_source_composition_supports_uploaded_documents_without_url() ->
             {
                 "evidence_id": "E1",
                 "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
-                "title": "CV_Jantine_Doornbos.pdf",
+                "title": "CV_Alex_Example.pdf",
                 "source_url": None,
                 "text": "Frank Wolters is verantwoordelijk voor Data Readiness.",
             }
         ],
     )
 
-    assert composed.sources == [{"label": "1", "title": "CV_Jantine_Doornbos.pdf", "url": ""}]
-    assert format_sources_markdown(composed.sources) == "- CV_Jantine_Doornbos.pdf"
+    assert composed.sources == [{"label": "1", "title": "CV_Alex_Example.pdf", "url": ""}]
+    assert format_sources_markdown(composed.sources) == "- CV_Alex_Example.pdf"
 
 
 def test_trusted_source_composition_never_reconstructs_sources_from_text_or_chunks() -> None:
@@ -878,7 +878,7 @@ def test_trusted_source_composition_does_not_cite_generic_voys_page_for_esim_ans
             {
                 "label": "1",
                 "title": "Overige problemen",
-                "url": "https://help.voys.nl/overige-problemen",
+                "url": "https://help.example.com/overige-problemen",
                 "evidence_ids": ["E1"],
                 "relevance_score": 0.2509,
             },
@@ -889,7 +889,7 @@ def test_trusted_source_composition_does_not_cite_generic_voys_page_for_esim_ans
         evidence_chunks=[
             {
                 "evidence_id": "E1",
-                "source_url": "https://help.voys.nl/overige-problemen",
+                "source_url": "https://help.example.com/overige-problemen",
                 "title": "Overige problemen",
                 "text": (
                     "Je hoort dit bericht als je gespreksbevestiging hebt "

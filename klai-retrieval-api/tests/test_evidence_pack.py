@@ -210,7 +210,7 @@ def test_evidence_pack_preserves_heading_metadata_for_prompt_context():
 # ─── 2026-05-27: uploaded-document chunks must reach the citations panel ───
 #
 # Live bug: Jantine (GetKlai org, Persoonlijk KB) uploaded
-# ``CV_Jantine_Doornbos.pdf``. Knowledge-ingest stored 9 chunks in
+# ``CV_Alex_Example.pdf``. Knowledge-ingest stored 9 chunks in
 # Qdrant via the docling pipeline. Every chunk had:
 #   - artifact_id      = "853797a1-3a22-4d90-872e-6a917d996c9a"
 #   - source_url       = None      (uploads have no public URL)
@@ -244,7 +244,7 @@ def test_evidence_pack_includes_uploaded_documents_without_source_url():
             {
                 "chunk_id": "cv-chunk-1",
                 "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
-                "title": "CV_Jantine_Doornbos.pdf",
+                "title": "CV_Alex_Example.pdf",
                 "text": "WERKERVARING\nMede-oprichter bij Klai jan 2026 - heden.",
                 "source_url": None,
                 "source_label": "personal-364818484816773122",
@@ -254,7 +254,7 @@ def test_evidence_pack_includes_uploaded_documents_without_source_url():
             {
                 "chunk_id": "cv-chunk-2",
                 "artifact_id": "853797a1-3a22-4d90-872e-6a917d996c9a",
-                "title": "CV_Jantine_Doornbos.pdf",
+                "title": "CV_Alex_Example.pdf",
                 "text": "VAARDIGHEDEN\nAI-ontwikkeling, consultancy, Azure.",
                 "source_url": None,
                 "source_label": "personal-364818484816773122",
@@ -266,9 +266,9 @@ def test_evidence_pack_includes_uploaded_documents_without_source_url():
             {
                 "chunk_id": "homepage-1",
                 "artifact_id": "d9382163-ef99-4ad8-b297-c300aa08cfe8",
-                "title": "Hi I'm Jantine",
+                "title": "Hi I'm Alex",
                 "text": "Freelance digital product designer.",
-                "source_url": "https://jantinedoornbos.nl/",
+                "source_url": "https://example.net/",
                 "source_label": "web_crawler",
                 "score": 0.9,
                 "reranker_score": 0.89,
@@ -283,8 +283,8 @@ def test_evidence_pack_includes_uploaded_documents_without_source_url():
         "appear in the evidence pack. Pre-fix bug dropped uploads."
     )
     titles = {source.title for source in pack.sources}
-    assert "CV_Jantine_Doornbos.pdf" in titles
-    assert "Hi I'm Jantine" in titles
+    assert "CV_Alex_Example.pdf" in titles
+    assert "Hi I'm Alex" in titles
 
     # Three items total — all 3 chunks contributed.
     assert len(pack.items) == 3
@@ -293,7 +293,7 @@ def test_evidence_pack_includes_uploaded_documents_without_source_url():
 
     # The CV source (no URL) still surfaces via evidence_pack_sources_payload:
     payload = evidence_pack_sources_payload(pack)
-    cv_entry = next(p for p in payload if p["title"] == "CV_Jantine_Doornbos.pdf")
+    cv_entry = next(p for p in payload if p["title"] == "CV_Alex_Example.pdf")
     assert cv_entry["url"] is None
     assert cv_entry["artifact_id"] == "853797a1-3a22-4d90-872e-6a917d996c9a"
     # Both source rows are surfaced — the URL-less one is no longer
@@ -311,7 +311,7 @@ def test_evidence_pack_prefers_original_filename_for_file_sha_upload_title():
                 "title": (
                     "file:sha256:59f8048203feeb17818abffa52de51405e0705c9e7907e2a57ebd5aa48c6697a"
                 ),
-                "original_filename": "CV_Jantine_Doornbos.pdf",
+                "original_filename": "CV_Alex_Example.pdf",
                 "text": "WERKERVARING\nMede-oprichter bij Klai jan 2026 - heden.",
                 "source_url": None,
                 "score": 0.4,
@@ -319,8 +319,8 @@ def test_evidence_pack_prefers_original_filename_for_file_sha_upload_title():
         ],
     )
 
-    assert pack.sources[0].title == "CV_Jantine_Doornbos.pdf"
-    assert evidence_pack_sources_payload(pack)[0]["title"] == "CV_Jantine_Doornbos.pdf"
+    assert pack.sources[0].title == "CV_Alex_Example.pdf"
+    assert evidence_pack_sources_payload(pack)[0]["title"] == "CV_Alex_Example.pdf"
 
 
 def test_evidence_pack_groups_upload_chunks_by_artifact_id():

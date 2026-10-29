@@ -11,7 +11,7 @@ signup relies on init-code. BOTH are outdated:
     at Zitadel's hosted UI (the WRONG link), on top of the correct
     ``invite.code.added`` mail. Init-code is the duplicate.
   - Regular signup uses ``create_human_user_v2_with_verify`` →
-    ``email.code.added`` (NOT init-code). Real signup lars.houben@nerds.nl
+    ``email.code.added`` (NOT init-code). A real signup
     2026-05-20 fired email.code.added and reached ACTIVE+verified. So the
     2026-05-13 failure mode cannot recur.
   - ``create_human_user`` (the only other init-code source) has zero

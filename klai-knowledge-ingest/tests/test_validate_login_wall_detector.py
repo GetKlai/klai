@@ -18,11 +18,11 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _wall() -> str:
-    return (FIXTURES / "auth_walls" / "redcactus_hubspot.md").read_text(encoding="utf-8")
+    return (FIXTURES / "auth_walls" / "partner_wiki_hubspot.md").read_text(encoding="utf-8")
 
 
 def _clean() -> str:
-    return (FIXTURES / "clean_pages" / "redcactus_ifttt.md").read_text(encoding="utf-8")
+    return (FIXTURES / "clean_pages" / "partner_wiki_ifttt.md").read_text(encoding="utf-8")
 
 
 def _row(
@@ -77,7 +77,7 @@ class TestClusterDiscovery:
         assert report["clusters"] == []
 
     def test_isolated_clean_page_not_clustered(self) -> None:
-        rows = [*_walls(6), _row(url="https://help.voys.nl/2fa-freedom", raw=_clean())]
+        rows = [*_walls(6), _row(url="https://help.example.com/2fa-freedom", raw=_clean())]
         report = _build_report(
             rows,
             org_id="org-1",
@@ -88,7 +88,7 @@ class TestClusterDiscovery:
         )
         assert len(report["clusters"]) == 1
         assert report["clusters"][0]["size"] == 6
-        assert "https://help.voys.nl/2fa-freedom" not in (report["clusters"][0]["sample_urls"])
+        assert "https://help.example.com/2fa-freedom" not in (report["clusters"][0]["sample_urls"])
 
     def test_sample_size_caps_url_list(self) -> None:
         report = _build_report(
@@ -112,7 +112,7 @@ class TestRecoveryCandidates:
     def test_purged_isolated_page_is_recovery_candidate(self) -> None:
         rows = [
             _row(
-                url="https://help.voys.nl/2fa-freedom",
+                url="https://help.example.com/2fa-freedom",
                 raw=_clean(),
                 content_hash=PURGED_PLACEHOLDER_HASH,
             )
@@ -125,7 +125,7 @@ class TestRecoveryCandidates:
             hamming_max=3,
             sample_size=10,
         )
-        assert report["recovery_candidates"] == ["https://help.voys.nl/2fa-freedom"]
+        assert report["recovery_candidates"] == ["https://help.example.com/2fa-freedom"]
 
     def test_purged_clustering_page_not_a_candidate(self) -> None:
         # 6 wall pages all purged, all still clustering → no recovery

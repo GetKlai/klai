@@ -13,7 +13,7 @@ async def crawl_page(url, selector=None):  # local stub for the fixture
 
 async def supplement_pages(supplement_urls, selector=None):
     # BAD: unbounded asyncio.gather over crawl_page — exactly the pattern
-    # that produced Bug A on help.voys.nl (167 parallel calls, ~0 ingested).
+    # that produced Bug A on help.example.com (167 parallel calls, ~0 ingested).
     return await asyncio.gather(
         *[crawl_page(u, selector=selector) for u in supplement_urls],
         return_exceptions=True,

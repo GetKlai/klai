@@ -65,7 +65,7 @@ async def test_fetch_seed_retries_relaxed_config_after_minimal_content_antibot(
         return {
             "results": [
                 {
-                    "url": "https://jantinedoornbos.nl/",
+                    "url": "https://example.net/",
                     "success": True,
                     "markdown": "Header content is visible after relaxed retry",
                     "links": {"internal": []},
@@ -76,7 +76,7 @@ async def test_fetch_seed_retries_relaxed_config_after_minimal_content_antibot(
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
 
     result = await crawl4ai_client._fetch_seed_page(
-        start_url="https://jantinedoornbos.nl/",
+        start_url="https://example.net/",
         crawler_config=crawl4ai_client.build_crawl_config(None),
         cookies=None,
     )
@@ -345,17 +345,17 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
 ) -> None:
     """include_patterns acts as a substring filter on the bulk candidate set."""
     sitemap_urls = [
-        "https://wiki.redcactus.cloud/nl/getting-started",
-        "https://wiki.redcactus.cloud/en/getting-started",
-        "https://wiki.redcactus.cloud/nl/advanced",
+        "https://wiki.example.com/nl/getting-started",
+        "https://wiki.example.com/en/getting-started",
+        "https://wiki.example.com/nl/advanced",
     ]
     _patch_seed(
         monkeypatch,
         _seed_result(
-            "https://wiki.redcactus.cloud",
+            "https://wiki.example.com",
             [
-                "https://wiki.redcactus.cloud/nl/blog",
-                "https://wiki.redcactus.cloud/en/blog",
+                "https://wiki.example.com/nl/blog",
+                "https://wiki.example.com/en/blog",
             ],
         ),
     )
@@ -376,7 +376,7 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
 
     with patch("httpx.AsyncClient.post", new=_fake_post):
         results, outcomes = await crawl4ai_client.crawl_site(
-            start_url="https://wiki.redcactus.cloud",
+            start_url="https://wiki.example.com",
             selector="main",
             max_pages=50,
             include_patterns=["/nl/"],
@@ -384,23 +384,23 @@ async def test_crawl_site_applies_include_patterns_to_candidates(
 
     # Seed (start_url) is included in results because the synthesised seed
     # is success + has content + same-domain.
-    assert any(r.url == "https://wiki.redcactus.cloud" for r in results)
+    assert any(r.url == "https://wiki.example.com" for r in results)
 
     payload = captured["payload"]
     urls_submitted = captured["urls"]
     # include_patterns is a substring filter — start_url with empty path
     # does not match "/nl/" anyway, but the more important guard is that
     # it never reaches the bulk request because the seed already covered it.
-    assert "https://wiki.redcactus.cloud" not in urls_submitted, (
+    assert "https://wiki.example.com" not in urls_submitted, (
         "start_url must not be in the bulk submission (it is the seed)"
     )
     for u in urls_submitted:
         assert "/nl/" in u, f"include_patterns leaked a non-/nl/ URL: {u}"
-    assert "https://wiki.redcactus.cloud/nl/getting-started" in urls_submitted
-    assert "https://wiki.redcactus.cloud/nl/advanced" in urls_submitted
-    assert "https://wiki.redcactus.cloud/nl/blog" in urls_submitted
-    assert "https://wiki.redcactus.cloud/en/getting-started" not in urls_submitted
-    assert "https://wiki.redcactus.cloud/en/blog" not in urls_submitted
+    assert "https://wiki.example.com/nl/getting-started" in urls_submitted
+    assert "https://wiki.example.com/nl/advanced" in urls_submitted
+    assert "https://wiki.example.com/nl/blog" in urls_submitted
+    assert "https://wiki.example.com/en/getting-started" not in urls_submitted
+    assert "https://wiki.example.com/en/blog" not in urls_submitted
     assert "deep_crawl_strategy" not in payload["crawler_config"]["params"]
     assert len(outcomes) == 1 + len(urls_submitted)
 
@@ -413,7 +413,7 @@ async def test_crawl_site_no_include_patterns_passes_all_same_domain(
     sitemap_urls = [
         "https://example.com/page-a",
         "https://example.com/page-b",
-        "https://other.com/skipped",  # cross-domain, must be filtered out
+        "https://other.example.net/skipped",  # cross-domain, must be filtered out
     ]
 
     async def _fake_sitemap(_base: str) -> list[str]:
@@ -447,7 +447,7 @@ async def test_crawl_site_no_include_patterns_passes_all_same_domain(
     assert "https://example.com/page-b" in urls_submitted
     assert "https://example.com/page-c" in urls_submitted
     # Cross-domain entry from sitemap MUST NOT leak through.
-    assert "https://other.com/skipped" not in urls_submitted
+    assert "https://other.example.net/skipped" not in urls_submitted
     assert "deep_crawl_strategy" not in payload["crawler_config"]["params"]
 
 

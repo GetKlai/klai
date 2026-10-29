@@ -1,6 +1,6 @@
 """Retry-strategy configuration for the enrichment tasks.
 
-Regression for the intermedia.com incident (2026-08-14): enrichment failures
+Regression for the intermedia.example.net incident (2026-08-14): enrichment failures
 are dominated by LiteLLM 429s during bulk crawls, and the previous
 ``RetryStrategy(max_attempts=2)`` (implicit wait=0) burned every attempt
 inside the same rate-limit window — the artifact failed 3x within 20 seconds

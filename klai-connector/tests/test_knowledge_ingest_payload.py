@@ -23,8 +23,8 @@ def _base_kwargs(**overrides) -> dict:
         "path": "index.md",
         "content": "hello",
         "source_connector_id": "414d4f82-f702-4ff2-abd4-c5ce38ae7d61",
-        "source_ref": "https://help.voys.nl/",
-        "source_url": "https://help.voys.nl/",
+        "source_ref": "https://help.example.com/",
+        "source_url": "https://help.example.com/",
         "content_type": "kb_article",
         "connector_type": "web_crawler",
     }
@@ -39,7 +39,7 @@ class TestWebCrawlerSourceLabel:
 
     def test_web_crawler_sets_source_domain_from_url(self):
         payload = _build_payload(**_base_kwargs())
-        assert payload["source_domain"] == "help.voys.nl"
+        assert payload["source_domain"] == "help.example.com"
 
     def test_web_crawler_with_subpath_still_uses_hostname(self):
         payload = _build_payload(**_base_kwargs(source_url="https://docs.example.com/a/b/c"))
@@ -83,7 +83,7 @@ class TestImageUrlsDedupInPayload:
 class TestExtraPassthrough:
     def test_source_url_in_extra(self):
         payload = _build_payload(**_base_kwargs())
-        assert payload["extra"]["source_url"] == "https://help.voys.nl/"
+        assert payload["extra"]["source_url"] == "https://help.example.com/"
 
     def test_connector_type_preserved(self):
         payload = _build_payload(**_base_kwargs())
@@ -149,12 +149,12 @@ class TestSenderEmailAndMentionedEmails:
     """SPEC-KB-CONNECTORS-001 Phase 1, R2.5 — identifier-capture fields."""
 
     def test_build_payload_includes_sender_email(self):
-        payload = _build_payload(**_base_kwargs(sender_email="x@y.com"))
-        assert payload["extra"]["sender_email"] == "x@y.com"
+        payload = _build_payload(**_base_kwargs(sender_email="x@y.example.net"))
+        assert payload["extra"]["sender_email"] == "x@y.example.net"
 
     def test_build_payload_includes_mentioned_emails(self):
-        payload = _build_payload(**_base_kwargs(mentioned_emails=["a@b.com"]))
-        assert payload["extra"]["mentioned_emails"] == ["a@b.com"]
+        payload = _build_payload(**_base_kwargs(mentioned_emails=["a@b.example.net"]))
+        assert payload["extra"]["mentioned_emails"] == ["a@b.example.net"]
 
     def test_build_payload_empty_sender_email_not_in_extra(self):
         payload = _build_payload(**_base_kwargs(sender_email=""))
@@ -176,8 +176,8 @@ class TestSenderEmailAndMentionedEmails:
             path="index.md",
             content="hello",
             source_connector_id="414d4f82-f702-4ff2-abd4-c5ce38ae7d61",
-            source_ref="https://help.voys.nl/",
-            source_url="https://help.voys.nl/",
+            source_ref="https://help.example.com/",
+            source_url="https://help.example.com/",
             content_type="kb_article",
             connector_type="web_crawler",
         )

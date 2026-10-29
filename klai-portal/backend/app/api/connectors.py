@@ -517,7 +517,7 @@ class ConnectorOut(BaseModel):
     # (error_details.reason == 'boilerplate_or_authwall_dominant') requires
     # querying connector.sync_runs in the klai-connector schema, which
     # portal-api cannot reach without an HTTP round-trip per connector.
-    # Existing Redcactus connector (id e7fac358-…) currently has
+    # Existing customer-wiki connector (id e7fac358-…) currently has
     # last_sync_status='failed' and IS surfaced by this approximation.
     needs_reconfiguration: bool = False
 
@@ -589,7 +589,7 @@ def _compute_needs_reconfiguration(c: PortalConnector) -> bool:
 
     See ConnectorOut.needs_reconfiguration docstring for the trade-off
     rationale. This proxy fires for any web_crawler whose most recent
-    sync ended 'failed' (covers AC-9: existing Redcactus connector).
+    sync ended 'failed' (covers AC-9: existing customer-wiki connector).
     """
     return c.connector_type == "web_crawler" and c.last_sync_status == "failed"
 

@@ -71,7 +71,7 @@ class TestAdapterExtractConfig:
             id="abc-123",
             config={
                 "base_url": base_url,
-                "email": "x@y.com",
+                "email": "x@y.example.net",
                 "api_token": "t",
             },
         )
@@ -95,4 +95,4 @@ class TestAdapterExtractConfig:
             connector = self._connector("https://klai.atlassian.net")
             cfg = ConfluenceAdapter._extract_config(connector)
         assert cfg["base_url"] == "https://klai.atlassian.net"
-        assert cfg["email"] == "x@y.com"
+        assert cfg["email"] == "x@y.example.net"

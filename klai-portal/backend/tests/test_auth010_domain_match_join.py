@@ -23,7 +23,7 @@ _FERNET_KEY = "R1c1-s96uO9Yz7k1E0kN6qz52gzd9PwNbAeZaks_PIc="  # nosec — test p
 _DOMAIN = "getklai.com"
 
 
-def _encrypt_pending(email: str = "piet@bedrijf.nl") -> str:
+def _encrypt_pending(email: str = "piet@bedrijf.example.com") -> str:
     payload = json.dumps(
         {
             "session_id": "sid-1",
@@ -43,7 +43,7 @@ def _org(org_id: int = 1, name: str = "Bedrijf BV", auto_accept: bool = False) -
     org.id = org_id
     org.name = name
     org.slug = "bedrijf-bv"
-    org.primary_domain = "bedrijf.nl"
+    org.primary_domain = "bedrijf.example.com"
     org.auto_accept_same_domain = auto_accept
     return org
 
@@ -54,7 +54,7 @@ def _signup_body(**overrides):
     base = {
         "first_name": "Piet",
         "last_name": "Peters",
-        "email": "piet@bedrijf.nl",
+        "email": "piet@bedrijf.example.com",
         "password": "Correct horse battery staple 2026!",
         "company_name": "Bedrijf BV",
         "preferred_language": "nl",
@@ -86,7 +86,7 @@ class TestPasswordSignupDomainMatch:
             result = await signup(body=_signup_body(), background_tasks=MagicMock(), db=db)
 
         assert result.kind == "domain_match"
-        assert result.domain == "bedrijf.nl"
+        assert result.domain == "bedrijf.example.com"
         assert "Bedrijf BV" not in (result.message or "")
         mz.create_org.assert_not_awaited()
         mz.create_human_user_v2_with_verify.assert_not_awaited()
@@ -187,7 +187,7 @@ class TestPasswordSignupDomainMatch:
 
         assert result.kind == "created"
         assert mock_org_cls.call_args.kwargs["auto_accept_same_domain"] is True
-        assert mock_org_cls.call_args.kwargs["primary_domain"] == "bedrijf.nl"
+        assert mock_org_cls.call_args.kwargs["primary_domain"] == "bedrijf.example.com"
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ class TestSocialSignupDomainMatch:
             )
 
         assert result.kind == "domain_match"
-        assert result.domain == "bedrijf.nl"
+        assert result.domain == "bedrijf.example.com"
         assert [o.name for o in result.orgs] == ["Bedrijf BV", "Pinger"]
         assert [o.auto_accept for o in result.orgs] == [True, False]
         mz.create_org.assert_not_awaited()
@@ -331,7 +331,7 @@ class TestSocialJoin:
         dup_result = MagicMock()
         dup_result.scalar_one_or_none = MagicMock(return_value=None)
         admin = MagicMock()
-        admin.email = "admin@bedrijf.nl"
+        admin.email = "admin@bedrijf.example.com"
         admins_result = MagicMock()
         admins_result.scalars.return_value.all.return_value = [admin]
         db.execute = AsyncMock(side_effect=[dup_result, admins_result])
@@ -364,7 +364,7 @@ class TestSocialJoin:
         assert "klai_sso" not in cookie_keys
         # L5: the R2 notification requirement is actually exercised.
         notify_mock.assert_awaited_once()
-        assert notify_mock.call_args.kwargs["admin_email"] == "admin@bedrijf.nl"
+        assert notify_mock.call_args.kwargs["admin_email"] == "admin@bedrijf.example.com"
 
     @pytest.mark.asyncio
     async def test_duplicate_pending_join_request_is_idempotent(self) -> None:
@@ -451,7 +451,7 @@ class TestLoginDomainMatchRouting:
         ):
             ref = await _maybe_select_workspace_ref(
                 zitadel_user_id="zu-1",
-                email="piet@bedrijf.nl",
+                email="piet@bedrijf.example.com",
                 auth_request_id="ar-1",
                 session_id="sid",
                 session_token="stk",
@@ -472,7 +472,7 @@ class TestLoginDomainMatchRouting:
         with patch("app.services.domain_match.find_domain_match_orgs", AsyncMock(return_value=[_org()])):
             ref = await _maybe_select_workspace_ref(
                 zitadel_user_id="zu-1",
-                email="piet@bedrijf.nl",
+                email="piet@bedrijf.example.com",
                 auth_request_id="ar-1",
                 session_id="sid",
                 session_token="stk",
@@ -493,7 +493,7 @@ class TestLoginDomainMatchRouting:
         ):
             ref = await _maybe_select_workspace_ref(
                 zitadel_user_id="zu-1",
-                email="piet@bedrijf.nl",
+                email="piet@bedrijf.example.com",
                 auth_request_id="ar-1",
                 session_id="sid",
                 session_token="stk",
@@ -517,7 +517,7 @@ class TestLoginDomainMatchRouting:
         ):
             ref = await _maybe_select_workspace_ref(
                 zitadel_user_id="zu-1",
-                email="piet@bedrijf.nl",
+                email="piet@bedrijf.example.com",
                 auth_request_id="ar-1",
                 session_id="sid",
                 session_token="stk",
@@ -549,7 +549,9 @@ class TestIdpCallbackNewUser:
         zit.retrieve_idp_intent = AsyncMock(return_value={"idpInformation": {}})  # no userId
         zit.create_zitadel_user_from_idp = AsyncMock(return_value="znew-1")
         zit.create_session_for_user_idp = AsyncMock(return_value={"sessionId": "sid", "sessionToken": "stk"})
-        zit.get_session_details = AsyncMock(return_value={"zitadel_user_id": "znew-1", "email": "piet@bedrijf.nl"})
+        zit.get_session_details = AsyncMock(
+            return_value={"zitadel_user_id": "znew-1", "email": "piet@bedrijf.example.com"}
+        )
         db = self._db_with(members=[], domain_orgs=[_org()])
         svc = MagicMock()
         svc.return_value.store = AsyncMock(return_value="ref-new")
@@ -653,7 +655,7 @@ class TestApproveTokenPathSetsTenant:
         jr.id = 5
         jr.org_id = 42
         jr.zitadel_user_id = "zu-5"
-        jr.email = "piet@bedrijf.nl"
+        jr.email = "piet@bedrijf.example.com"
         jr.display_name = "Piet"
         jr.expires_at = None
         db = AsyncMock()

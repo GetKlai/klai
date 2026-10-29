@@ -38,7 +38,7 @@ JSON_STIMULUS = (
     '{"status": "error", "code": 500, "detail": "internal server failure on the primary host"}'
 )
 MAIL_HEADERS = (
-    "From: jan@example.nl\n"
+    "From: jan@example.net\n"
     "To: admin@klai.nl\n"
     "Subject: Re: Offerte nummer 12\n"
     "Date: 2024-03-01T14:02:33+01:00\n"
@@ -233,12 +233,12 @@ def test_gate_rescues_one_substantive_prose_line_under_machine_majority() -> Non
     # Boundary of MIN_PROSE_SENTENCE_WORDS (9): a header-dominated turn
     # votes only when a full-length user sentence survives intact.
     rescued = clm.classify_turn_evidence(
-        "From: jan@example.nl\nTo: admin@klai.nl\n\n"
+        "From: jan@example.net\nTo: admin@klai.nl\n\n"
         "Waarom is het bedrag op deze factuur zo hoog"  # exactly 9 words
     )
     assert rescued.classification == clm.EVIDENCE_PROSE
     too_fragmentary = clm.classify_turn_evidence(
-        "From: jan@example.nl\nTo: admin@klai.nl\n\n"
+        "From: jan@example.net\nTo: admin@klai.nl\n\n"
         "Waarom is het bedrag op deze factuur zo"  # 8 words
     )
     assert too_fragmentary.classification == clm.EVIDENCE_MACHINE

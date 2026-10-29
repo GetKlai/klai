@@ -11,10 +11,10 @@ from knowledge_ingest.scripts.backfill_crawl_source_identity import (
 
 
 def test_source_identity_payload_derives_domain_and_label_from_source_url() -> None:
-    payload = source_identity_payload({"source_url": "https://wiki.example.cloud/nl/pagina"})
+    payload = source_identity_payload({"source_url": "https://wiki.example.org/nl/pagina"})
     assert payload == {
-        "source_domain": "wiki.example.cloud",
-        "source_label": "wiki.example.cloud",
+        "source_domain": "wiki.example.org",
+        "source_label": "wiki.example.org",
     }
 
 
@@ -92,32 +92,32 @@ def fake_client(monkeypatch: pytest.MonkeyPatch):
             # Group (a): crawl chunk missing source_domain, with taxonomy ids.
             "a1": {
                 "source_type": "crawl",
-                "source_url": "https://wiki.example.cloud/nl/pagina",
+                "source_url": "https://wiki.example.org/nl/pagina",
                 "taxonomy_node_ids": [1, 99],
                 "kb_slug": "support",
             },
             # Second group-(a) chunk on the same domain (batching check).
             "a2": {
                 "source_type": "crawl",
-                "source_url": "https://wiki.example.cloud/nl/andere",
+                "source_url": "https://wiki.example.org/nl/andere",
                 "kb_slug": "support",
             },
             # Group (b): stale taxonomy id on a chunk that ALREADY has a
             # source_domain — must still be cleaned (Scenario 10 group b).
             "b1": {
                 "source_type": "crawl",
-                "source_url": "https://help.example.nl/x",
-                "source_domain": "help.example.nl",
-                "source_label": "help.example.nl",
+                "source_url": "https://help.example.net/x",
+                "source_domain": "help.example.net",
+                "source_label": "help.example.net",
                 "taxonomy_node_ids": [2, 99],
                 "kb_slug": "support",
             },
             # Group (c): already correct — must stay byte-identical.
             "c1": {
                 "source_type": "crawl",
-                "source_url": "https://help.example.nl/y",
-                "source_domain": "help.example.nl",
-                "source_label": "help.example.nl",
+                "source_url": "https://help.example.net/y",
+                "source_domain": "help.example.net",
+                "source_label": "help.example.net",
                 "taxonomy_node_ids": [1, 2],
                 "kb_slug": "support",
             },
@@ -141,7 +141,7 @@ async def test_apply_without_clean_flag_never_touches_taxonomy(fake_client) -> N
     assert fake_client.points["b1"]["taxonomy_node_ids"] == [2, 99]
     assert all("taxonomy_node_ids" not in call["payload"] for call in fake_client.set_payload_calls)
     assert report["stale_taxonomy_cleaned_by_kb"] == {}
-    assert report["source_domain_counts"] == {"wiki.example.cloud": 2}
+    assert report["source_domain_counts"] == {"wiki.example.org": 2}
 
 
 @pytest.mark.asyncio
@@ -153,8 +153,8 @@ async def test_source_identity_updates_are_batched_per_domain(fake_client) -> No
     ]
     assert len(domain_calls) == 1
     assert sorted(domain_calls[0]["points"]) == ["a1", "a2"]
-    assert fake_client.points["a1"]["source_domain"] == "wiki.example.cloud"
-    assert fake_client.points["a2"]["source_label"] == "wiki.example.cloud"
+    assert fake_client.points["a1"]["source_domain"] == "wiki.example.org"
+    assert fake_client.points["a2"]["source_label"] == "wiki.example.org"
 
 
 @pytest.mark.asyncio
@@ -188,5 +188,5 @@ async def test_dry_run_writes_nothing(fake_client) -> None:
     assert report["dry_run"] is True
     assert fake_client.set_payload_calls == []
     assert fake_client.points == before
-    assert report["source_domain_counts"] == {"wiki.example.cloud": 2}
+    assert report["source_domain_counts"] == {"wiki.example.org": 2}
     assert report["stale_taxonomy_cleaned_by_kb"] == {"support": 2}

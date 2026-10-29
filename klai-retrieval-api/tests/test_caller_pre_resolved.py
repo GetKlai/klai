@@ -31,7 +31,7 @@ class TestCallerPreResolved:
     def test_distinct_raw_query_is_pre_resolved(self):
         # litellm hook: query=rewritten, raw_query=original user text.
         req = _req(
-            "Voys Salesforce CRM-koppeling Bubble RedCactus", "Staat er iets over salesforce?"
+            "Voys Salesforce CRM-koppeling Bubble Partnerwiki", "Staat er iets over salesforce?"
         )
         assert _caller_pre_resolved(req) is True
 

@@ -905,7 +905,7 @@ actual data path.
 
 ### Ops
 
-- Cleaned 1115 login-wall boilerplate chunks from Redcactus KB in Qdrant (1124 clean chunks remaining).
+- Cleaned 1115 login-wall boilerplate chunks from a customer wiki KB in Qdrant (1124 clean chunks remaining).
 
 ## [Unreleased] — 2026-04-16 — SPEC-KB-IMAGE-001: Adapter-owned image URL resolution (refactor)
 

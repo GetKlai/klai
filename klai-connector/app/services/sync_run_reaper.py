@@ -57,7 +57,7 @@ logger = get_logger(__name__)
 # sync_runs that slip through the SyncRunResolver-on-read path. In practice
 # nobody reads sync_runs unless the portal frontend opens the connectors
 # list, so the 24h delay meant a normal 5-10min crawl stayed RUNNING for a
-# full day after completion. Voys/support Redcactus sync 2026-05-07 sat
+# full day after completion. Voys/support partner-wiki sync 2026-05-07 sat
 # RUNNING for 1.5h while knowledge-ingest already returned status=completed
 # pages_done=110 — the upstream WAS done, only the reaper grace window was
 # longer than the entire crawl. Lowered to 5 minutes: still a real safety

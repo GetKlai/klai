@@ -24,7 +24,7 @@ def _no_domain_match_by_default():
 _BASE: dict = {
     "first_name": "Jan",
     "last_name": "Jansen",
-    "email": "founder@bedrijf.nl",
+    "email": "founder@bedrijf.example.com",
     "password": "Correct horse battery staple 2026!",
     "company_name": "Bedrijf BV",
     "preferred_language": "nl",
@@ -79,7 +79,7 @@ class TestPrimaryDomainSetAtSignup:
             await signup(body=body, background_tasks=MagicMock(), db=mock_db)
             kw = morg.call_args.kwargs
             assert "primary_domain" in kw
-            assert kw["primary_domain"] == "bedrijf.nl"
+            assert kw["primary_domain"] == "bedrijf.example.com"
             assert kw["plan"] == "knowledge"
             user_kw = muser.call_args.kwargs
             assert user_kw["role"] == "admin"
@@ -116,7 +116,7 @@ class TestPrimaryDomainSetAtSignup:
 
         mock_db = AsyncMock()
         mock_db.add = MagicMock()
-        body = SignupRequest(**{**_BASE, "email": "founder@BEDRIJF.NL"})
+        body = SignupRequest(**{**_BASE, "email": "founder@BEDRIJF.EXAMPLE.COM"})
         with (
             patch("app.api.signup.assert_zitadel_password_policy_compatible", AsyncMock()),
             patch("app.api.signup.check_signup_email_rate_limit", AsyncMock(return_value=True)),
@@ -131,7 +131,7 @@ class TestPrimaryDomainSetAtSignup:
             _mock_deps(mz, morg)
             await signup(body=body, background_tasks=MagicMock(), db=mock_db)
             kw = morg.call_args.kwargs
-            assert kw.get("primary_domain") == "bedrijf.nl"
+            assert kw.get("primary_domain") == "bedrijf.example.com"
 
     @pytest.mark.asyncio
     async def test_invited_free_email_signup_does_not_claim_primary_domain(self) -> None:

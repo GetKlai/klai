@@ -377,7 +377,7 @@ def _is_non_content_listing_page(result: CrawlResult) -> bool:
 # 100 rows): 91 of 100 carried a status code that itself contradicts "this
 # was a block" — 51x 200 (server delivered content), 26x 404 (+4 more with
 # the new "Structural: minimal_text" wording — nonexistent page, the exact
-# support.ascendcloud.com incident this subsumes), 10x 307 (redirect, not a
+# support.example.org incident this subsumes), 10x 307 (redirect, not a
 # block), 5x 500 (server error, not a block). Only 4x 403 — a status a real
 # anti-bot wall commonly answers with — looked genuinely consistent with a
 # block. Root cause: crawl4ai's "Blocked by anti-bot protection: <reason>"
@@ -407,7 +407,7 @@ def _is_non_content_listing_page(result: CrawlResult) -> bool:
 # rows above), so a guess stays trusted there.
 #
 # Supersedes a narrower, 404/410-only "definitively nonexistent" status set
-# from the support.ascendcloud.com incident fix (single-signal precedent):
+# from the support.example.org incident fix (single-signal precedent):
 # every 2xx/3xx/5xx status code contradicts a structural guess just as much
 # as 404/410 does, and a concrete detection needs to survive a contradicting
 # status code too (a Cloudflare challenge on a 200 is real). One mechanism,
@@ -459,7 +459,7 @@ def _status_contradicts_structural_anti_bot_guess(status: Any) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 2026-08-19 (intermedia.com / support.ascendcloud.com "weigering" incident)
+# 2026-08-19 (intermedia.com / support.example.org "weigering" incident)
 #
 # A rate-limit signal was previously derived purely from the HTTP status
 # code (429), which misses crawl4ai wrapping a real 429 inside a DIFFERENT
@@ -1584,7 +1584,7 @@ def _is_unrendered_template_href(url: str) -> bool:
 
     A client-rendered site whose framework fails to bootstrap in the crawler
     browser leaves its link targets as the template expression itself —
-    ``.../{{item.URL}}`` on Oracle RightNow (support.ascendcloud.com), the
+    ``.../{{item.URL}}`` on Oracle RightNow (support.example.org), the
     Vue/Handlebars equivalents elsewhere. Those never resolve, so sampling
     them wastes the time budget on URLs that 404 or hang.
 
@@ -3625,7 +3625,7 @@ def _build_candidate_set(
         # value like ``/nl/*`` is a prefix glob, not a substring. Plain
         # substring match (``p in u``) makes ``/nl/*`` literally never match
         # because no URL contains the asterisk character — observed live on
-        # wiki.redcactus.cloud (29 BFS-discovered URLs, 0 retained as
+        # wiki.example.com (29 BFS-discovered URLs, 0 retained as
         # candidates → 1 page ingested instead of ~150). We honour both:
         #
         #   * Patterns containing ``*`` or ``?`` ⇒ ``fnmatch`` against the

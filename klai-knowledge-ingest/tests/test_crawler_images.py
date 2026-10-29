@@ -85,7 +85,7 @@ async def test_srcset_debris_is_filtered() -> None:
     # Only the real URL should ever be fetched.
     client = _mock_http_client(
         {
-            "https://help.voys.nl/real.png": (200, _png_bytes()),
+            "https://help.example.com/real.png": (200, _png_bytes()),
         }
     )
 
@@ -101,9 +101,9 @@ async def test_srcset_debris_is_filtered() -> None:
             {"src": "quality=90"},
             {"src": "fit=scale-down"},
             {"src": "w=1920"},
-            {"src": "https://help.voys.nl/real.png"},
+            {"src": "https://help.example.com/real.png"},
         ],
-        base_url="https://help.voys.nl/index",
+        base_url="https://help.example.com/index",
         org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
@@ -114,7 +114,7 @@ async def test_srcset_debris_is_filtered() -> None:
     assert result == [f"/kb-images/100000000000000001/images/support/{expected_hash}.png"]
     # Confirm the filtered fragments never triggered a GET.
     called_urls = [c.args[0] for c in client.get.call_args_list]  # type: ignore[union-attr]
-    assert called_urls == ["https://help.voys.nl/real.png"]
+    assert called_urls == ["https://help.example.com/real.png"]
 
 
 @pytest.mark.asyncio()
@@ -123,7 +123,7 @@ async def test_dedups_identical_urls_across_srcset() -> None:
     store = _make_store()
     client = _mock_http_client(
         {
-            "https://help.voys.nl/img.png": (200, _png_bytes()),
+            "https://help.example.com/img.png": (200, _png_bytes()),
         }
     )
 
@@ -132,11 +132,11 @@ async def test_dedups_identical_urls_across_srcset() -> None:
 
     result = await download_and_upload_crawl_images(
         media_images=[
-            {"src": "https://help.voys.nl/img.png"},
-            {"src": "https://help.voys.nl/img.png"},
-            {"src": "https://help.voys.nl/img.png"},
+            {"src": "https://help.example.com/img.png"},
+            {"src": "https://help.example.com/img.png"},
+            {"src": "https://help.example.com/img.png"},
         ],
-        base_url="https://help.voys.nl/index",
+        base_url="https://help.example.com/index",
         org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
@@ -155,8 +155,8 @@ async def test_partial_http_failure_does_not_abort_page() -> None:
     good_bytes = _png_bytes(b"good")
     client = _mock_http_client(
         {
-            "https://help.voys.nl/broken.png": (404, b""),
-            "https://help.voys.nl/ok.png": (200, good_bytes),
+            "https://help.example.com/broken.png": (404, b""),
+            "https://help.example.com/ok.png": (200, good_bytes),
         }
     )
 
@@ -165,10 +165,10 @@ async def test_partial_http_failure_does_not_abort_page() -> None:
 
     result = await download_and_upload_crawl_images(
         media_images=[
-            {"src": "https://help.voys.nl/broken.png"},
-            {"src": "https://help.voys.nl/ok.png"},
+            {"src": "https://help.example.com/broken.png"},
+            {"src": "https://help.example.com/ok.png"},
         ],
-        base_url="https://help.voys.nl/index",
+        base_url="https://help.example.com/index",
         org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
@@ -185,7 +185,7 @@ async def test_relative_urls_resolved_against_base() -> None:
     store = _make_store()
     client = _mock_http_client(
         {
-            "https://help.voys.nl/assets/img.png": (200, _png_bytes()),
+            "https://help.example.com/assets/img.png": (200, _png_bytes()),
         }
     )
 
@@ -194,7 +194,7 @@ async def test_relative_urls_resolved_against_base() -> None:
 
     result = await download_and_upload_crawl_images(
         media_images=[{"src": "/assets/img.png"}],
-        base_url="https://help.voys.nl/pages/intro",
+        base_url="https://help.example.com/pages/intro",
         org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
@@ -204,7 +204,7 @@ async def test_relative_urls_resolved_against_base() -> None:
     expected_hash = hashlib.sha256(_png_bytes()).hexdigest()
     assert result == [f"/kb-images/100000000000000001/images/support/{expected_hash}.png"]
     called_urls = [c.args[0] for c in client.get.call_args_list]  # type: ignore[union-attr]
-    assert called_urls == ["https://help.voys.nl/assets/img.png"]
+    assert called_urls == ["https://help.example.com/assets/img.png"]
 
 
 @pytest.mark.asyncio()
@@ -213,7 +213,7 @@ async def test_empty_media_returns_empty_list() -> None:
     client = MagicMock(spec=httpx.AsyncClient)
     result = await download_and_upload_crawl_images(
         media_images=[],
-        base_url="https://help.voys.nl",
+        base_url="https://help.example.com",
         org_id="100000000000000001",
         kb_slug="support",
         image_store=store,
@@ -227,14 +227,14 @@ async def test_non_image_content_rejected() -> None:
     """A 200 response that doesn't pass magic-byte validation must not upload."""
     store = _make_store()
     client = _mock_http_client(
-        {"https://help.voys.nl/fake.png": (200, b"Hello, this is HTML, not a PNG")}
+        {"https://help.example.com/fake.png": (200, b"Hello, this is HTML, not a PNG")}
     )
     store._object_exists = AsyncMock(return_value=False)  # type: ignore[attr-defined]
     store.upload_image = AsyncMock()  # type: ignore[attr-defined]
 
     result = await download_and_upload_crawl_images(
-        media_images=[{"src": "https://help.voys.nl/fake.png"}],
-        base_url="https://help.voys.nl/",
+        media_images=[{"src": "https://help.example.com/fake.png"}],
+        base_url="https://help.example.com/",
         org_id="100000000000000001",
         kb_slug="support",
         image_store=store,

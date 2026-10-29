@@ -41,7 +41,7 @@ class TestFreeEmailBlocklist:
     def test_corporate_domain_is_allowed(self) -> None:
         from app.services.domain_validation import is_free_email_provider
 
-        assert is_free_email_provider("acme.nl") is False
+        assert is_free_email_provider("acme.example.com") is False
 
     def test_case_insensitive(self) -> None:
         from app.services.domain_validation import is_free_email_provider
@@ -84,7 +84,7 @@ class TestPrimaryDomainForEmailDomain:
     def test_corporate_domain_is_claimable(self) -> None:
         from app.services.domain_validation import primary_domain_for_email_domain
 
-        assert primary_domain_for_email_domain("Acme.NL") == "acme.nl"
+        assert primary_domain_for_email_domain("Acme.example.com") == "acme.example.com"
 
     @pytest.mark.parametrize("domain", ["gmail.com", "hotmail.nl", "protonmail.com", "me.com"])
     def test_personal_mail_domain_is_not_claimable(self, domain: str) -> None:
@@ -99,17 +99,17 @@ class TestDomainNormalization:
     def test_lowercase(self) -> None:
         from app.services.domain_validation import normalize_domain
 
-        assert normalize_domain("ACME.NL") == "acme.nl"
+        assert normalize_domain("ACME.EXAMPLE.COM") == "acme.example.com"
 
     def test_strip_whitespace(self) -> None:
         from app.services.domain_validation import normalize_domain
 
-        assert normalize_domain("  acme.nl  ") == "acme.nl"
+        assert normalize_domain("  acme.example.com  ") == "acme.example.com"
 
     def test_combined(self) -> None:
         from app.services.domain_validation import normalize_domain
 
-        assert normalize_domain("  ACME.NL  ") == "acme.nl"
+        assert normalize_domain("  ACME.EXAMPLE.COM  ") == "acme.example.com"
 
 
 class TestDomainFormatValidation:
@@ -118,12 +118,12 @@ class TestDomainFormatValidation:
     def test_valid_domain(self) -> None:
         from app.services.domain_validation import is_valid_domain
 
-        assert is_valid_domain("acme.nl") is True
+        assert is_valid_domain("acme.example.com") is True
 
     def test_valid_subdomain(self) -> None:
         from app.services.domain_validation import is_valid_domain
 
-        assert is_valid_domain("mail.acme.nl") is True
+        assert is_valid_domain("mail.acme.example.com") is True
 
     def test_invalid_no_tld(self) -> None:
         from app.services.domain_validation import is_valid_domain
@@ -133,12 +133,12 @@ class TestDomainFormatValidation:
     def test_invalid_with_protocol(self) -> None:
         from app.services.domain_validation import is_valid_domain
 
-        assert is_valid_domain("https://acme.nl") is False
+        assert is_valid_domain("https://acme.example.com") is False
 
     def test_invalid_with_path(self) -> None:
         from app.services.domain_validation import is_valid_domain
 
-        assert is_valid_domain("acme.nl/page") is False
+        assert is_valid_domain("acme.example.com/page") is False
 
     def test_invalid_empty(self) -> None:
         from app.services.domain_validation import is_valid_domain
@@ -148,4 +148,4 @@ class TestDomainFormatValidation:
     def test_invalid_with_at(self) -> None:
         from app.services.domain_validation import is_valid_domain
 
-        assert is_valid_domain("user@acme.nl") is False
+        assert is_valid_domain("user@acme.example.com") is False

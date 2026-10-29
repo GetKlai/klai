@@ -7,8 +7,8 @@
  *   Absent = no offer. Shape is exactly {"appointment": bool}.
  *
  * When an assistant message carries the signal, a button appears directly
- * under that message opening the booking URL (existing nerdsEnabled /
- * nerdsBookingUrl props) in a new tab. No signal, or no booking URL, means
+ * under that message opening the booking URL (existing appointmentsEnabled /
+ * appointmentsBookingUrl props) in a new tab. No signal, or no booking URL, means
  * no button and the message renders exactly as before.
  */
 import type { ComponentProps } from 'react'
@@ -86,8 +86,8 @@ function sendUserMessage(content: string) {
   fireEvent.keyDown(textbox, { key: 'Enter' })
 }
 
-const BOOKING_URL_WITH_QUERY = 'https://support.voys.nl/book/voys?t=abc'
-const BOOKING_URL_BARE = 'https://support.voys.nl/agenda/abc/workflow/voys'
+const BOOKING_URL_WITH_QUERY = 'https://support.example.com/book/voys?t=abc'
+const BOOKING_URL_BARE = 'https://support.example.com/agenda/abc/workflow/voys'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -96,7 +96,7 @@ afterEach(() => {
 describe('WidgetChatSurface appointment escalation', () => {
   it('shows the booking button under the assistant message that carries the signal', async () => {
     stubAssistantReply('Dat kan ik helaas niet volledig beantwoorden.', true)
-    renderSurface({ nerdsEnabled: true, nerdsBookingUrl: BOOKING_URL_WITH_QUERY })
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: BOOKING_URL_WITH_QUERY })
 
     sendUserMessage('Kun je warm doorverbinden?')
 
@@ -108,7 +108,7 @@ describe('WidgetChatSurface appointment escalation', () => {
 
   it('does not show a button when the reply carries no escalation signal', async () => {
     stubAssistantReply('Hier is het antwoord op je vraag.')
-    renderSurface({ nerdsEnabled: true, nerdsBookingUrl: BOOKING_URL_WITH_QUERY })
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: BOOKING_URL_WITH_QUERY })
 
     sendUserMessage('Wat zijn de openingstijden?')
 
@@ -118,7 +118,7 @@ describe('WidgetChatSurface appointment escalation', () => {
 
   it('does not show a button when the signal explicitly says no offer', async () => {
     stubAssistantReply('Hier is het antwoord op je vraag.', false)
-    renderSurface({ nerdsEnabled: true, nerdsBookingUrl: BOOKING_URL_WITH_QUERY })
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: BOOKING_URL_WITH_QUERY })
 
     sendUserMessage('Wat zijn de openingstijden?')
 
@@ -128,7 +128,7 @@ describe('WidgetChatSurface appointment escalation', () => {
 
   it('does not show a button when the signal is present but no booking URL is configured', async () => {
     stubAssistantReply('Dat kan ik helaas niet volledig beantwoorden.', true)
-    renderSurface({ nerdsEnabled: false, nerdsBookingUrl: '' })
+    renderSurface({ appointmentsEnabled: false, appointmentsBookingUrl: '' })
 
     sendUserMessage('Kun je warm doorverbinden?')
 
@@ -138,7 +138,7 @@ describe('WidgetChatSurface appointment escalation', () => {
 
   it('starts the query string when the booking URL has none (same separator rule as the footer link)', async () => {
     stubAssistantReply('Dat kan ik helaas niet volledig beantwoorden.', true)
-    renderSurface({ nerdsEnabled: true, nerdsBookingUrl: BOOKING_URL_BARE })
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: BOOKING_URL_BARE })
 
     sendUserMessage('Kun je warm doorverbinden?')
 

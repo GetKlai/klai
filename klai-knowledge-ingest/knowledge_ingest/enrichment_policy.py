@@ -65,9 +65,9 @@ _NAV_MIN_LINKS = 8
 # largest — and worst — index pages through. Measured on the Voys corpus
 # (2026-08-22):
 #
-#   redcactus.cloud/nl/phone-software    90 links     252 prose      2.8 per link
+#   example.com/nl/phone-software    90 links     252 prose      2.8 per link
 #   help.voys.nl/                        34 links     130 prose      3.8 per link
-#   redcactus.cloud/nl/crm-software     211 links     972 prose      4.6 per link
+#   example.com/nl/crm-software     211 links     972 prose      4.6 per link
 #   voys.nl/algemene-voorwaarden/       125 links    1231 prose      9.8 per link
 #   help.voys.nl/integraties             12 links     323 prose     26.9 per link
 #   help.voys.nl/aan-de-slag              6 links    3573 prose    595.5 per link

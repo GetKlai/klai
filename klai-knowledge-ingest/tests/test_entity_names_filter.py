@@ -9,15 +9,15 @@ from knowledge_ingest.qdrant_store import filter_entity_names_for_chunk
 
 
 def test_returns_only_names_present_in_chunk() -> None:
-    chunk = "Voys Freedom koppelen aan Bubble via RedCactus integratie."
-    doc_names = ["Voys", "Bubble", "RedCactus", "Salesforce", "WhatsApp"]
+    chunk = "Voys Freedom koppelen aan Bubble via Partnerwiki integratie."
+    doc_names = ["Voys", "Bubble", "Partnerwiki", "Salesforce", "WhatsApp"]
 
     result = filter_entity_names_for_chunk(chunk, doc_names)
 
     # Salesforce and WhatsApp belong to a different section of the same doc.
     assert "Voys" in result
     assert "Bubble" in result
-    assert "RedCactus" in result
+    assert "Partnerwiki" in result
     assert "Salesforce" not in result
     assert "WhatsApp" not in result
 

@@ -3,9 +3,9 @@ and percent-encoded protocol-relative URLs.
 
 The pre-fix function rejected only `//`-prefix and `://`-anywhere. An
 attacker could bypass it with:
-- `/\evil.com` — browser normalises backslash to forward-slash
-- `/%2fevil.com` — percent-decoded to `//evil.com`
-- `/\\evil.com` — double-backslash also browser-normalised
+- `/\evil.example.net` — browser normalises backslash to forward-slash
+- `/%2fevil.example.net` — percent-decoded to `//evil.example.net`
+- `/\\evil.example.net` — double-backslash also browser-normalised
 
 This test parametrises every input the AC-21 table specifies and asserts
 the safe output. The function MUST return the ORIGINAL (non-decoded)
@@ -25,12 +25,12 @@ from app.api.auth_bff import _client_ip, _safe_return_to
     "value, expected",
     [
         # Attack vectors → /app fallback
-        ("/\\evil.com", "/app"),
-        ("/%2fevil.com", "/app"),
-        ("/%2Fevil.com", "/app"),  # case insensitive
-        ("/\\\\evil.com", "/app"),
-        ("//evil.com", "/app"),
-        ("https://evil.com", "/app"),
+        ("/\\evil.example.net", "/app"),
+        ("/%2fevil.example.net", "/app"),
+        ("/%2Fevil.example.net", "/app"),  # case insensitive
+        ("/\\\\evil.example.net", "/app"),
+        ("//evil.example.net", "/app"),
+        ("https://evil.example.net", "/app"),
         ("javascript:alert(1)", "/app"),  # no leading /
         ("", "/app"),
         # Legitimate paths → unchanged ORIGINAL value (REQ-21.3)

@@ -293,7 +293,7 @@ def test_partial_overlap_not_just_full_containment_is_resolved():
 
 
 def test_non_overlapping_spans_are_both_kept():
-    text = "bel 06-12345678 of mail jan@example.nl"
+    text = "bel 06-12345678 of mail jan@example.net"
     spans = [
         DetectedSpan(entity_type="PHONE_NUMBER", start=4, end=15, score=0.9),
         DetectedSpan(entity_type="EMAIL_ADDRESS", start=25, end=39, score=0.9),
@@ -488,7 +488,7 @@ def test_identical_span_and_score_never_restore_entity_wins():
 # find_restorable_placeholders — REQ-0b survival, measured in production
 # ---------------------------------------------------------------------------
 def test_find_restorable_placeholders_counts_only_what_the_map_can_restore():
-    restore_map = {"<IBAN_CODE_1>": "NL91ABNA0417164300", "<EMAIL_ADDRESS_1>": "jan@example.nl"}
+    restore_map = {"<IBAN_CODE_1>": "NL91ABNA0417164300", "<EMAIL_ADDRESS_1>": "jan@example.net"}
     text = "Zie <IBAN_CODE_1> en <EMAIL_ADDRESS_1> en <PHONE_NUMBER_9>."
 
     # PHONE_NUMBER_9 is a well-formed placeholder that this map cannot restore,

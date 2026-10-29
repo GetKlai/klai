@@ -31,9 +31,9 @@ class TestIngestRequestValidation:
             kb_slug="test",
             path="file:sha256:abc123",
             content="plain uploaded content",
-            title="CV_Jantine_Doornbos.pdf",
+            title="CV_Alex_Example.pdf",
         )
-        assert req.title == "CV_Jantine_Doornbos.pdf"
+        assert req.title == "CV_Alex_Example.pdf"
 
 
 class TestRetrieveRequestValidation:

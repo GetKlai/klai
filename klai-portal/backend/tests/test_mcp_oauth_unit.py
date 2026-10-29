@@ -133,12 +133,12 @@ def test_redirect_uri_web_localhost_rejected() -> None:
 
 
 def test_redirect_uri_subdomain_wildcard_attack_rejected() -> None:
-    """attacker.openai.com.evil.com must not match *.openai.com.
+    """attacker.openai.com.evil.example.net must not match *.openai.com.
 
     Hardcoded list (no wildcards) is the structural defense — see
     research.md §11.
     """
-    assert is_redirect_uri_allowed("https://chat.openai.com.evil.com/cb", "web") is False
+    assert is_redirect_uri_allowed("https://chat.openai.com.evil.example.net/cb", "web") is False
 
 
 def test_redirect_uri_unknown_application_type_rejected() -> None:

@@ -143,8 +143,8 @@ async def test_platform_org_detail_exposes_delete_failure_state() -> None:
                 [
                     SimpleNamespace(
                         id=42,
-                        name="Yoobi",
-                        slug="yoobi",
+                        name="Example Partner",
+                        slug="example-partner",
                         plan="knowledge",
                         platform_unlocked_features=["partner_api"],
                         billing_status="active",

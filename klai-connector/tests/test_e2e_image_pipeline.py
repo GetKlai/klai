@@ -336,7 +336,7 @@ class TestResilienceE2E:
         http.get = mixed_get
 
         public_urls = await download_and_upload_images(
-            image_urls=[("a", "https://ok.com/1.png"), ("b", "https://fail.com/2.png"), ("c", "https://ok.com/3.png")],
+            image_urls=[("a", "https://ok.example.net/1.png"), ("b", "https://fail.example.net/2.png"), ("c", "https://ok.example.net/3.png")],
             org_id="100000000000000001",
             kb_slug="kb",
             image_store=store,

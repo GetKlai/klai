@@ -36,11 +36,11 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _walled_md() -> str:
-    return (FIXTURES / "auth_walls" / "redcactus_hubspot.md").read_text(encoding="utf-8")
+    return (FIXTURES / "auth_walls" / "partner_wiki_hubspot.md").read_text(encoding="utf-8")
 
 
 def _clean_md() -> str:
-    return (FIXTURES / "clean_pages" / "redcactus_ifttt.md").read_text(encoding="utf-8")
+    return (FIXTURES / "clean_pages" / "partner_wiki_ifttt.md").read_text(encoding="utf-8")
 
 
 def _row(
@@ -62,7 +62,7 @@ def _row(
 def _walled_cluster(count: int) -> list[dict]:
     """Build ``count`` rows, all sharing the wall content (= one cluster)."""
     base = _walled_md()
-    return [_row(url=f"https://wiki.redcactus.cloud/wall-{i}", raw=base) for i in range(count)]
+    return [_row(url=f"https://wiki.example.com/wall-{i}", raw=base) for i in range(count)]
 
 
 def _make_conn(rows: list[dict]):
@@ -172,7 +172,7 @@ class TestBackfillCluster:
         """Cluster + isolated FP page → only cluster members are purged."""
         _conn, qdrant, set_rows = patched_externals
         rows = _walled_cluster(6)
-        rows.append(_row(url="https://help.voys.nl/2fa-freedom", raw=_clean_md()))
+        rows.append(_row(url="https://help.example.com/2fa-freedom", raw=_clean_md()))
         set_rows(rows)
 
         result = await backfill_detect_login_walls(
@@ -383,7 +383,7 @@ class TestRecovery:
         set_rows(
             [
                 _row(
-                    url="https://help.voys.nl/2fa-freedom",
+                    url="https://help.example.com/2fa-freedom",
                     raw=_clean_md(),
                     content_hash=PURGED_PLACEHOLDER_HASH,
                 )
@@ -402,7 +402,7 @@ class TestRecovery:
             for c in conn.execute.await_args_list
             if c.args
             and "SET content_hash = ''" in c.args[0]
-            and "https://help.voys.nl/2fa-freedom" in c.args
+            and "https://help.example.com/2fa-freedom" in c.args
         ]
         assert len(clear_calls) == 1
 

@@ -1,4 +1,4 @@
-"""Onderdeel 2 (2026-08-19, intermedia.com incident #3 — "20 minutes, zero
+"""Onderdeel 2 (2026-08-19, intermedia.example.net incident #3 — "20 minutes, zero
 pages") — the host circuit breaker (knowledge_ingest.host_circuit_breaker)
 wired into ``_chunked_bulk_fetch``.
 
@@ -306,7 +306,7 @@ async def test_morning_incident_simulation_stops_within_a_handful_of_blocks(
 
     monkeypatch.setattr(crawl4ai_client, "_crawl_sync", _fake_crawl_sync)
 
-    urls = [f"https://www.intermedia.com/{i}" for i in range(50)]
+    urls = [f"https://www.intermedia.example.net/{i}" for i in range(50)]
     fetch = await _chunked_bulk_fetch(
         urls=urls,
         crawler_config={},

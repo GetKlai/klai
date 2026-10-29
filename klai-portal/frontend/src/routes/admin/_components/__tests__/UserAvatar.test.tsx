@@ -4,11 +4,11 @@ import { UserAvatar, userInitials, avatarColor } from '../UserAvatar'
 
 describe('userInitials', () => {
   it('returns first+last initials when both present', () => {
-    expect(userInitials({ first_name: 'Mark', last_name: 'Vletter', email: 'm@v.nl' })).toBe('MV')
+    expect(userInitials({ first_name: 'Mark', last_name: 'Vletter', email: 'm@v.example.com' })).toBe('MV')
   })
 
   it('falls back to email prefix when name is missing', () => {
-    expect(userInitials({ first_name: '', last_name: '', email: 'lisa@voys.nl' })).toBe('LI')
+    expect(userInitials({ first_name: '', last_name: '', email: 'lisa@example.com' })).toBe('LI')
     expect(userInitials({ email: 'peter@getklai.com' })).toBe('PE')
   })
 })
@@ -27,13 +27,13 @@ describe('avatarColor', () => {
 describe('UserAvatar component', () => {
   it('renders the initials of the user', () => {
     render(
-      <UserAvatar uid="u1" first_name="Mark" last_name="Vletter" email="m@v.nl" />,
+      <UserAvatar uid="u1" first_name="Mark" last_name="Vletter" email="m@v.example.com" />,
     )
     expect(screen.getByText('MV')).toBeTruthy()
   })
 
   it('uses the email prefix when name is empty', () => {
-    render(<UserAvatar uid="u2" email="lisa@voys.nl" />)
+    render(<UserAvatar uid="u2" email="lisa@example.com" />)
     expect(screen.getByText('LI')).toBeTruthy()
   })
 })

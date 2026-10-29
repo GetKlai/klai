@@ -10,8 +10,12 @@
 # Run on core-01:
 #   /opt/klai/scripts/kb-citation-smoke.sh
 #
+# Required env (the tenant to test; the values live in the private runbook):
+#   LIBRECHAT_CONTAINER=librechat-<org-slug>
+#   KB_SMOKE_USER_ID=<LibreChat Mongo user id>
+#   KB_SMOKE_USER_EMAIL=<that user's email>
+#
 # Optional env overrides:
-#   LIBRECHAT_CONTAINER=librechat-jantine-doornbos-37418563
 #   KB_SMOKE_QUERY='Wie is waarvoor verantwoordelijk?'
 #   KB_SMOKE_EXPECT_SOURCE='Verantwoordelijkheden per bouwblok'
 #   KB_SMOKE_EXPECT_REFUSAL=0
@@ -19,7 +23,8 @@
 
 set -euo pipefail
 
-LIBRECHAT_CONTAINER="${LIBRECHAT_CONTAINER:-librechat-jantine-doornbos-37418563}"
+LIBRECHAT_CONTAINER="${LIBRECHAT_CONTAINER:?set LIBRECHAT_CONTAINER to the tenant LibreChat container}"
+: "${KB_SMOKE_USER_ID:?set KB_SMOKE_USER_ID}" "${KB_SMOKE_USER_EMAIL:?set KB_SMOKE_USER_EMAIL}"
 KB_SMOKE_QUERY="${KB_SMOKE_QUERY:-Wie is waarvoor verantwoordelijk?}"
 KB_SMOKE_EXPECT_SOURCE="${KB_SMOKE_EXPECT_SOURCE:-Verantwoordelijkheden per bouwblok}"
 KB_SMOKE_EXPECT_REFUSAL="${KB_SMOKE_EXPECT_REFUSAL:-0}"
@@ -45,13 +50,13 @@ log "[*] tenant" "$LIBRECHAT_CONTAINER"
 log "[*] query" "$KB_SMOKE_QUERY"
 
 CONVERSATION_ID=$(
-  docker exec -i "$LIBRECHAT_CONTAINER" node - "$KB_SMOKE_QUERY" <<'NODE'
+  docker exec -i -e KB_SMOKE_USER_ID -e KB_SMOKE_USER_EMAIL "$LIBRECHAT_CONTAINER" node - "$KB_SMOKE_QUERY" <<'NODE'
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
 const query = process.argv[2];
-const userId = process.env.KB_SMOKE_USER_ID || '6a11717f85f622ea832fa63d';
-const email = process.env.KB_SMOKE_USER_EMAIL || 'info@jantinedoornbos.nl';
+const userId = process.env.KB_SMOKE_USER_ID;
+const email = process.env.KB_SMOKE_USER_EMAIL;
 const token = jwt.sign(
   { id: userId, username: email, provider: 'openid', email },
   process.env.JWT_SECRET,

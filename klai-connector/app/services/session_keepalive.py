@@ -2,7 +2,7 @@
 
 A cookie captured once via the connector wizard and replayed only at the
 next scheduled crawl can go stale from server-side inactivity long before
-that crawl runs — confirmed in production for the Voys/support RedCactus
+that crawl runs — confirmed in production for the Voys/support partner-wiki
 connector: a manual re-sync 45 minutes after a fresh cookie paste succeeded
 completely (0 pages walled), while every unattended daily run since then
 failed identically. This ticks far more often than any connector's crawl

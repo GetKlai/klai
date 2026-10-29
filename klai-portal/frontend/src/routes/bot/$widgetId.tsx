@@ -32,9 +32,9 @@ interface PublicConfig {
   show_meta?: boolean
   collect_user_info?: boolean
   page_context_enabled?: boolean
-  // Nerds booking panel (Voys-specific): server-validated {enabled,
-  // booking_url} pair, see partner.py _widget_nerds_integration.
-  nerds?: { enabled?: boolean; booking_url?: string }
+  // Partner booking panel (Voys-specific): server-validated {enabled,
+  // booking_url} pair, see partner.py _widget_appointments_integration.
+  appointments?: { enabled?: boolean; booking_url?: string }
   name?: string
   description?: string
 }
@@ -99,8 +99,8 @@ function PublicBotPage() {
       showMeta={cfg.show_meta}
       collectUserInfo={cfg.collect_user_info}
       pageContextEnabled={cfg.page_context_enabled}
-      nerdsEnabled={cfg.nerds?.enabled}
-      nerdsBookingUrl={cfg.nerds?.booking_url}
+      appointmentsEnabled={cfg.appointments?.enabled}
+      appointmentsBookingUrl={cfg.appointments?.booking_url}
       shareUrl={window.location.href}
     />
   )

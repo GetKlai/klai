@@ -72,8 +72,8 @@ class TestArtifactDisplayMetadata:
                 _point(
                     "artifact-abc",
                     title="Nummerbehoud aanvragen",
-                    source_url="https://help.voys.nl/nummerbehoud-aanvragen",
-                    source_label="help.voys.nl",
+                    source_url="https://help.example.com/nummerbehoud-aanvragen",
+                    source_label="help.example.com",
                 )
             ],
             None,
@@ -84,7 +84,9 @@ class TestArtifactDisplayMetadata:
             meta = await search.fetch_artifact_display_metadata(["artifact-abc"], req)
 
         assert meta["artifact-abc"]["title"] == "Nummerbehoud aanvragen"
-        assert meta["artifact-abc"]["source_url"] == "https://help.voys.nl/nummerbehoud-aanvragen"
+        assert (
+            meta["artifact-abc"]["source_url"] == "https://help.example.com/nummerbehoud-aanvragen"
+        )
 
     @pytest.mark.asyncio
     async def test_a_large_document_cannot_starve_a_small_one(self):
@@ -186,8 +188,8 @@ class TestGraphResultLabelling:
         meta = {
             "artifact-abc": {
                 "title": "Nummerbehoud aanvragen",
-                "source_url": "https://help.voys.nl/nummerbehoud-aanvragen",
-                "source_label": "help.voys.nl",
+                "source_url": "https://help.example.com/nummerbehoud-aanvragen",
+                "source_label": "help.example.com",
                 "original_filename": None,
             }
         }
@@ -200,7 +202,7 @@ class TestGraphResultLabelling:
 
         pack = build_evidence_pack(chunks)
         assert pack.sources[0].title == "Nummerbehoud aanvragen"
-        assert pack.sources[0].source_url == "https://help.voys.nl/nummerbehoud-aanvragen"
+        assert pack.sources[0].source_url == "https://help.example.com/nummerbehoud-aanvragen"
         assert "Nummerbehoud kan bij overstap" not in pack.sources[0].title
 
     def test_without_labels_the_source_is_the_truncated_fact(self):
@@ -218,15 +220,15 @@ class TestGraphResultLabelling:
             "score": 0.8,
             "artifact_id": "artifact-abc",
             "content_type": "kb_article",
-            "source_url": "https://help.voys.nl/nummerbehoud-aanvragen",
+            "source_url": "https://help.example.com/nummerbehoud-aanvragen",
             "title": "Nummerbehoud aanvragen",
             "scope": "org",
         }
         meta = {
             "artifact-abc": {
                 "title": "Nummerbehoud aanvragen",
-                "source_url": "https://help.voys.nl/nummerbehoud-aanvragen",
-                "source_label": "help.voys.nl",
+                "source_url": "https://help.example.com/nummerbehoud-aanvragen",
+                "source_label": "help.example.com",
                 "original_filename": None,
             }
         }
@@ -303,8 +305,8 @@ class TestStableDocumentResolution:
         meta = {
             ("support", "yealink-dect-configuratie"): {
                 "title": "Yealink Draadloze Telefoons (Basisstation) Instellen",
-                "source_url": "https://help.voys.nl/yealink-dect-configuratie",
-                "source_label": "help.voys.nl",
+                "source_url": "https://help.example.com/yealink-dect-configuratie",
+                "source_label": "help.example.com",
                 "original_filename": None,
                 "artifact_id": "artifact-current",
             }
@@ -322,7 +324,7 @@ class TestStableDocumentResolution:
         assert chunks[0]["artifact_id"] == "artifact-current"
         pack = build_evidence_pack(chunks)
         assert pack.sources[0].title == "Yealink Draadloze Telefoons (Basisstation) Instellen"
-        assert pack.sources[0].source_url == "https://help.voys.nl/yealink-dect-configuratie"
+        assert pack.sources[0].source_url == "https://help.example.com/yealink-dect-configuratie"
 
     @pytest.mark.asyncio
     async def test_legacy_edge_keeps_working_alongside_the_new_scheme(self):
@@ -341,8 +343,8 @@ class TestStableDocumentResolution:
                     return_value={
                         ("support", "webphone"): {
                             "title": "De Webphone",
-                            "source_url": "https://help.voys.nl/webphone",
-                            "source_label": "help.voys.nl",
+                            "source_url": "https://help.example.com/webphone",
+                            "source_label": "help.example.com",
                             "original_filename": None,
                             "artifact_id": "artifact-current",
                         }
@@ -356,8 +358,8 @@ class TestStableDocumentResolution:
                     return_value={
                         "artifact-legacy": {
                             "title": "Oud artikel",
-                            "source_url": "https://help.voys.nl/oud",
-                            "source_label": "help.voys.nl",
+                            "source_url": "https://help.example.com/oud",
+                            "source_label": "help.example.com",
                             "original_filename": None,
                         }
                     }

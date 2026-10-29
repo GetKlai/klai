@@ -45,7 +45,7 @@ class TestAuthAuditLogging:
         with action='auth.login'."""
         from app.api.auth import LoginRequest, login
 
-        body = LoginRequest(email="user@test.com", password="pass123", auth_request_id="ar-1")
+        body = LoginRequest(email="user@test.example.net", password="pass123", auth_request_id="ar-1")
         response = MagicMock()
         db = AsyncMock()
 
@@ -87,7 +87,7 @@ class TestAuthAuditLogging:
         action='auth.login.failed'."""
         from app.api.auth import LoginRequest, login
 
-        body = LoginRequest(email="bad@test.com", password="wrong", auth_request_id="ar-2")
+        body = LoginRequest(email="bad@test.example.net", password="wrong", auth_request_id="ar-2")
         response = MagicMock()
         db = AsyncMock()
 
@@ -253,7 +253,7 @@ class TestAuthAuditLogging:
         """If audit.log_event raises, login must still succeed (non-fatal)."""
         from app.api.auth import LoginRequest, login
 
-        body = LoginRequest(email="user@test.com", password="pass123", auth_request_id="ar-3")
+        body = LoginRequest(email="user@test.example.net", password="pass123", auth_request_id="ar-3")
         response = MagicMock()
         db = AsyncMock()
 
@@ -298,7 +298,7 @@ class TestMFAPolicyEnforcement:
         """When org.mfa_policy='required' and user has no MFA, login creates the setup session."""
         from app.api.auth import LoginRequest, login
 
-        body = LoginRequest(email="user@test.com", password="pass123", auth_request_id="ar-mfa-1")
+        body = LoginRequest(email="user@test.example.net", password="pass123", auth_request_id="ar-mfa-1")
         response = MagicMock()
         db = AsyncMock()
 
@@ -334,7 +334,7 @@ class TestMFAPolicyEnforcement:
         """When org.mfa_policy='required' and user has MFA, login proceeds normally."""
         from app.api.auth import LoginRequest, login
 
-        body = LoginRequest(email="user@test.com", password="pass123", auth_request_id="ar-mfa-2")
+        body = LoginRequest(email="user@test.example.net", password="pass123", auth_request_id="ar-mfa-2")
         response = MagicMock()
         db = AsyncMock()
 
@@ -369,7 +369,7 @@ class TestMFAPolicyEnforcement:
         """When org.mfa_policy='optional', has_any_mfa is NOT called."""
         from app.api.auth import LoginRequest, login
 
-        body = LoginRequest(email="user@test.com", password="pass123", auth_request_id="ar-mfa-3")
+        body = LoginRequest(email="user@test.example.net", password="pass123", auth_request_id="ar-mfa-3")
         response = MagicMock()
         db = AsyncMock()
 
@@ -412,7 +412,7 @@ class TestMFAPolicyEnforcement:
         """
         from app.api.auth import LoginRequest, login
 
-        body = LoginRequest(email="user@test.com", password="pass123", auth_request_id="ar-mfa-4")
+        body = LoginRequest(email="user@test.example.net", password="pass123", auth_request_id="ar-mfa-4")
         response = MagicMock()
         db = AsyncMock()
 

@@ -1,9 +1,9 @@
 /**
- * Tests for the nerds booking footer (Voys-specific integration).
+ * Tests for the appointments booking footer (Voys-specific integration).
  *
  * The public share link must never rewrite the client's fixed disclosure
  * sentence through the portal translation: with the integration on, the
- * footer shows the verbatim sentence and "onze nerds" links to the same
+ * footer shows the verbatim sentence and "onze specialisten" links to the same
  * embed request the widget's iframe panel makes. Without the integration,
  * the footer stays exactly what it was — the portal-translated disclaimer.
  */
@@ -42,7 +42,7 @@ vi.mock('@/paraglide/messages', () =>
 
 import { WidgetChatSurface } from '../WidgetChatSurface'
 
-const BOOKING_URL = 'https://support.voys.nl/book/voys?t=abc'
+const BOOKING_URL = 'https://support.example.com/book/voys?t=abc'
 
 function renderSurface(props: Partial<ComponentProps<typeof WidgetChatSurface>> = {}) {
   return render(
@@ -55,7 +55,7 @@ function renderSurface(props: Partial<ComponentProps<typeof WidgetChatSurface>> 
   )
 }
 
-describe('WidgetChatSurface nerds footer', () => {
+describe('WidgetChatSurface appointments footer', () => {
   it('previews the header title, background and custom footer independently of the introduction', () => {
     const { container } = renderSurface({
       variant: 'admin-preview', embedded: true, headerTitle: 'Customer support',
@@ -78,22 +78,22 @@ describe('WidgetChatSurface nerds footer', () => {
     expect(container.querySelector('[data-widget-footer]')).toBeNull()
   })
 
-  it('keeps the portal disclaimer for widgets without the nerds integration', () => {
+  it('keeps the portal disclaimer for widgets without the appointments integration', () => {
     renderSurface()
     // getBy* throws when absent: a plain render is the assertion.
     screen.getByText('widget_ai_disclaimer')
-    expect(screen.queryByText(/onze nerds/)).toBeNull()
+    expect(screen.queryByText(/onze specialisten/)).toBeNull()
   })
 
   it('shows the fixed client sentence instead of the portal disclaimer when enabled', () => {
-    renderSurface({ nerdsEnabled: true, nerdsBookingUrl: BOOKING_URL })
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: BOOKING_URL })
     screen.getByText(/baseert zich op zorgvuldig gekozen bronnen/)
     expect(screen.queryByText('widget_ai_disclaimer')).toBeNull()
   })
 
-  it('links "onze nerds" to the same embed request the widget panel makes', () => {
-    renderSurface({ nerdsEnabled: true, nerdsBookingUrl: BOOKING_URL })
-    const link = screen.getByRole('link', { name: 'onze nerds' })
+  it('links "onze specialisten" to the same embed request the widget panel makes', () => {
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: BOOKING_URL })
+    const link = screen.getByRole('link', { name: 'onze specialisten' })
     expect(link.getAttribute('href')).toBe(`${BOOKING_URL}&embed=1&lng=nl`)
     expect(link.getAttribute('target')).toBe('_blank')
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
@@ -104,21 +104,21 @@ describe('WidgetChatSurface nerds footer', () => {
     // their router serve a 404 page instead of the booking flow, so the
     // separator has to be chosen rather than assumed. The fixture above
     // carries a query string and therefore never exercised this branch.
-    const bare = 'https://support.voys.nl/agenda/abc/workflow/voys'
-    renderSurface({ nerdsEnabled: true, nerdsBookingUrl: bare })
-    expect(screen.getByRole('link', { name: 'onze nerds' }).getAttribute('href')).toBe(
+    const bare = 'https://support.example.com/agenda/abc/workflow/voys'
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: bare })
+    expect(screen.getByRole('link', { name: 'onze specialisten' }).getAttribute('href')).toBe(
       `${bare}?embed=1&lng=nl`,
     )
   })
 
   it('stays silent on the white-label toggle, same as the disclaimer it replaces', () => {
-    renderSurface({ nerdsEnabled: true, nerdsBookingUrl: BOOKING_URL, hideDisclaimer: true })
-    expect(screen.queryByText(/onze nerds/)).toBeNull()
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: BOOKING_URL, hideDisclaimer: true })
+    expect(screen.queryByText(/onze specialisten/)).toBeNull()
     expect(screen.queryByText('widget_ai_disclaimer')).toBeNull()
   })
 
   it('does not build a footer sentence when the integration is on without a URL', () => {
-    renderSurface({ nerdsEnabled: true, nerdsBookingUrl: '' })
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: '' })
     screen.getByText('widget_ai_disclaimer')
   })
 })

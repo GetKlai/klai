@@ -87,7 +87,7 @@ class TestSparseInputIncludesContextPrefix:
     def test_sparse_input_contains_prefix_for_prefixed_chunk(self):
         """Single chunk with non-empty context_prefix: sparse input starts with the prefix."""
         context_prefix = "Dit is een artikel over Voys telefonie-integraties."
-        chunk_text = "De Salesforce koppeling werkt via RedCactus."
+        chunk_text = "De Salesforce koppeling werkt via Partnerwiki."
 
         chunks = _build_enriched_chunks([(context_prefix, chunk_text)])
         sparse_inputs = _extract_sparse_inputs(chunks)
@@ -102,7 +102,7 @@ class TestSparseInputIncludesContextPrefix:
     def test_sparse_input_contains_chunk_text(self):
         """Sparse input must also contain the original chunk text."""
         context_prefix = "Dit artikel beschrijft CRM-koppelingen."
-        chunk_text = "Voys ondersteunt Bubble en RedCactus als CRM-koppeling."
+        chunk_text = "Voys ondersteunt Bubble en Partnerwiki als CRM-koppeling."
 
         chunks = _build_enriched_chunks([(context_prefix, chunk_text)])
         sparse_inputs = _extract_sparse_inputs(chunks)

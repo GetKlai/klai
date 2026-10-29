@@ -71,7 +71,7 @@ class FetchReasonCode(StrEnum):
     # "Shape guard only"); validation of individual reason codes is
     # application-side only.
     BLOCKED_ANTI_BOT = "blocked_anti_bot"
-    # 2026-08-19 (intermedia.com / support.ascendcloud.com "weigering"
+    # 2026-08-19 (intermedia.com / support.example.org "weigering"
     # incident): the site explicitly refuses automated access — a 403 (or
     # any status) carrying a concrete refusal marker crawl4ai's own
     # "blocked by anti-bot protection" detector does not surface (a
