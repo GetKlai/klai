@@ -243,22 +243,21 @@ Once 4.a to 4.c are live and their rehearsals are green:
 
 - Extend `helpers:pinGitHubActionDigests`. Today 28 `uses:` references are
   SHA-pinned and 192 are tag-pinned.
-- Keep `minimumReleaseAge: '7 days'`. Updates that fix a published
-  vulnerability skip it (configure the vulnerability-alert path; verify the key
-  against the pinned Renovate version in `test-renovate-config.sh`).
-- Data-store minors move from the review rule to automerge, one minor per PR,
-  after three green restore rehearsals in a row (4.c); until then a restore is
-  a claim, not a measurement. Not done in S9 on purpose.
-- Majors automerge only where a pull-request run executes the new version
-  before the merge (as built in S9): the GitHub Actions a PR job runs
-  (checkout, setup-node, setup-python, setup-uv, paths-filter, ast-grep),
-  npm devDependencies of the three packages with a CI job (portal frontend,
-  docs, widget) and Python dev groups outside `klai-libs` (no workflow runs a
-  library's own dev group). Everything else stays manual: runtime
-  dependencies, Docker images, the deploy, registry and token actions that run
-  first on main, upload-artifact and the CodeQL SARIF upload (only on main or
-  on failure). Data-store majors keep `dependencyDashboardApproval` (D1, D2).
-- Vexa stays manual (bot image pre-pull, documented in `renovate.json5`).
+- `minimumReleaseAge: '3 days'` (was 7; Dependabot's default, and the
+  hijacked npm releases of 2025 were gone after 2.5 to 12 hours). A fix for a
+  published vulnerability skips it, and its lock-file update runs with a
+  Renovate-side npmrc that lifts npm's own cooldown for that PR; uv's
+  cooldown is lifted per package with `exclude-newer-package` when needed.
+- Everything automerges: patches, minors and majors, data stores included
+  (owner decision 2026-10-29, AGENTS.md "automatic by default, proof instead
+  of approval"). The proof after the deploy is the gate. Decisions D1 and D2
+  below are withdrawn; the Postgres-major migration and the Mongo FCV bump
+  are built into the data-store helper so those majors succeed instead of
+  rolling back.
+- The only holds left are ceilings that pin a reproduced breakage, each with
+  what lifts it (typescript-eslint, VictoriaLogs healthcheck, react-table
+  migration, spacy wheels, eslint-config-next, ragas).
+- Vexa automerges once the bot image pre-pull is part of the compose sync.
 
 ## 6. E2E-triggered rollback
 
@@ -404,7 +403,7 @@ added to `deploy-scripts-tests.yml`, and the rehearsal once it exists.
 | S7 | Rehearsal and dead-man's switch: `rollback-canary` service, `rollback-rehearsal.yml`, Grafana mail rules (no Kuma) | 8 | `deploy/docker-compose.yml`, `deploy/volume-mounts.yaml` if needed, new workflow, `renovate.yml`, alerting rules | AT-f1, f2 | M | Sonnet |
 | S8a | Snapshot, probe, restore for Postgres (main and app databases) and the apps that migrate their own DB | 4.c, 4.b | helper under `deploy/scripts/`, its test, `deploy-compose.yml` | AT-c1, c2, c3 for Postgres | L | Opus |
 | S8b | Same for Qdrant, Meilisearch, Mongo, Redis, FalkorDB, Garage, RabbitMQ; restore rehearsal on the 1st and 15th | 4.c | same helper, new rehearsal workflow | AT-c1 to c4 | L | Opus |
-| S9 | Renovate policy: SHA pinning, vulnerability bypass, majors to automerge where a PR run executes them; data-store minors after three green rehearsals | 5 | `renovate.json5`, `scripts/test-renovate-config.sh` | AT-e1 | S | Sonnet |
+| S9 | Renovate policy: SHA pinning, vulnerability bypass, everything automerges (owner decision 2026-10-29) | 5 | `renovate.json5`, `scripts/test-renovate-config.sh` | AT-e1 | S | Sonnet |
 | S10 | public-01 previous-revision rollback and bad-revision marker (private infra repo) | 4.d | that repo's deploy script and its test | AT-d1 | S | Sonnet |
 | S11 | Post-deploy error-rate watch | 7 | helper under `deploy/scripts/`, alerting rules | threshold from 30 days of data, one forced breach rolls back | M | Sonnet |
 
@@ -415,13 +414,12 @@ S10 and S11. S9's SHA-pinning part has no dependency and can ship any time.
 
 ## 12. Open decisions for the owner
 
-- **D1.** Automerge Postgres majors? Recommendation: no. A major is a
-  dump-and-restore or `pg_upgrade` that cannot be undone in place; keep it a
-  scripted run on a copy with your yes.
-- **D2.** Automerge majors of the other data stores (Redis, Meilisearch,
-  Qdrant, Mongo, FalkorDB, Garage, RabbitMQ) once S8 is rehearsed? Recommendation:
-  yes for Redis and FalkorDB (cache, queues, rebuildable graph), no for the rest
-  until the monthly restore rehearsal has been green for three months.
+- **D1.** Withdrawn 2026-10-29 by the owner: Postgres majors automerge; the
+  helper migrates the data directory (dump, initdb on the new major, restore)
+  inside the deploy and puts the old directory back on a red gate.
+- **D2.** Withdrawn 2026-10-29 by the owner: majors of every data store
+  automerge, with the snapshot-and-restore path as the gate and the Mongo FCV
+  bump automated after the rollback window.
 - **D3.** Automatically merge a revert of our own code after an image rollback?
   Recommendation: no. Roll back the image, label the issue, and let the next
   commit (or the later AI fixer) carry the fix; an unrelated commit that
