@@ -30,11 +30,19 @@ from typing import Any
 import httpx
 import structlog
 from klai_chat_prompts import (
+    LANGUAGE_NAMES,
     appointment_offer_sentence,
     chat_contract_article,
     strip_appointment_offer_marker,
 )
 from klai_chat_prompts import no_citable_sources_message as _no_citable_sources_message
+from klai_chat_prompts.language import (
+    LONG_PROSE_WORDS,
+    METHOD_EXPLICIT_REQUEST,
+    METHOD_FUNCTION_WORDS,
+    identify_surface_language,
+    resolve_conversation_language,
+)
 
 from app.core.config import Settings
 from app.services.answer_check import AnswerCheck, check_hard_facts
@@ -60,7 +68,6 @@ from app.services.chat_prompting import (
     _emit_language_correctness_log,
     _is_web_search_tool,
     _llm_request_body,
-    _response_language,
     _strip_web_search_tools,
 )
 from app.services.chat_safety import (
@@ -88,6 +95,19 @@ _PUNCTUATION_DASH = re.compile(r"\s*\u2014\s*|\s+\u2013\s+")
 # What a streamed reply holds back at its end until the next delta shows it
 # is not the start of a link.
 _STREAM_GUARD_TAIL_CHARS = 32
+
+# Word tokens, as the language module counts them.
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+# A streamed reply shows nothing until this many words are written, because
+# that is when the language of what the model writes can be told: on
+# 29 October 2026 the model answered English questions in Dutch under a
+# "Respond in English" instruction (3 to 4 of 6 replayed widget turns on main,
+# the source lines being Dutch), and a streamed reply cannot be taken back.
+# Six words is what identify_surface_language needs to decide between Dutch
+# and English on an opening line; on the model's pace that is well under a
+# second.
+_LANGUAGE_GATE_WORDS = 6
 
 
 def without_dashes(text: str) -> str:
@@ -146,7 +166,25 @@ async def write_reply(
     once those deltas are exhausted (see widget_reply.streamed_frames).
     """
     turn = knowledge_turn if knowledge_turn is not None else KnowledgeTurn(answer_mode=profile.kb_mode)
-    response_language = _response_language(messages, pasted_correspondence=pasted_correspondence)
+    decision = None if pasted_correspondence else resolve_conversation_language(messages)
+    response_language = decision.language if decision else None
+    # The writer repairs a reply's language only when the decision is firm: an
+    # explicit request, the user's own function words, or langid on a question
+    # of at least LONG_PROSE_WORDS words. A langid guess on a shorter question
+    # is not enough to translate a reply by: "Ondersteunt Klai SIP-trunking?"
+    # is identified as German at full confidence, and translating a correct
+    # Dutch answer into German would be worse than the Dutch answer the model
+    # gives. On the replayed widget questions of 29 October 2026, 5 of 6 were
+    # langid decisions on 9 to 11 words.
+    repair_language = (
+        response_language
+        if decision is not None
+        and (
+            decision.method in (METHOD_EXPLICIT_REQUEST, METHOD_FUNCTION_WORDS)
+            or len(_WORD_RE.findall(_last_user_message(messages) or "")) >= LONG_PROSE_WORDS
+        )
+        else None
+    )
     augmented = _augment_messages_with_system_prompt(
         messages, system_prompt, page_context, response_language=response_language, profile=profile
     )
@@ -188,6 +226,7 @@ async def write_reply(
         pasted_correspondence=pasted_correspondence,
         profile=profile,
         include_sources=include_sources,
+        repair_language=repair_language,
     )
     generation: dict[str, Any] = {
         "model": model,
@@ -205,7 +244,10 @@ async def write_reply(
     }
     if stream:
         reply.deltas = _streamed(
-            _generate_streamed(augmented, **generation), pasted_correspondence=pasted_correspondence, settle=settle
+            _generate_streamed(augmented, **generation),
+            pasted_correspondence=pasted_correspondence,
+            settle=settle,
+            target=repair_language,
         )
         return reply
     generation_started = time.perf_counter()
@@ -253,10 +295,15 @@ async def _settle(
     pasted_correspondence: bool,
     profile: ChatProfile,
     include_sources: bool,
+    repair_language: str | None,
 ) -> None:
     """Compose, check and decide the written ``draft``, and put the outcome in ``reply``.
 
     ``shown`` is what a streamed reply already put on screen, None on a held one.
+    ``repair_language`` is the language the reply is translated into when the
+    model wrote another one; the judge and the citations work on the draft as
+    written, because they match it against the source passages in their own
+    language, and only the accepted text is translated.
     """
     turn, response_language = reply.turn, reply.language
     helpdesk = profile.surface != "internal"
@@ -360,6 +407,22 @@ async def _settle(
         decision=decision,
     )
     _log_citation_rescues(decision, org_id=org_id)
+    if not decision.get("output_blocked") and (shown is None or not shown.emitted):
+        # A held reply, or a streamed one the gate kept back: what the reader
+        # gets is the accepted text, translated when the model wrote the
+        # source language. A streamed reply that was shown cannot be taken back.
+        content = await _in_decided_language(
+            content,
+            reply,
+            target=repair_language,
+            model=model,
+            settings=settings,
+            org_id=org_id,
+            delegated_org_id=delegated_org_id,
+            language=response_language,
+        )
+        if helpdesk and "language_repaired" in reply.signals:
+            content = without_dashes(content)
     _fill_answer_signals(
         answer_signals,
         decision=decision,
@@ -577,19 +640,100 @@ async def _generate_streamed(
         raise AnswerUpstreamError("Chat service error", language) from exc
 
 
+async def _in_decided_language(
+    text: str,
+    reply: Reply,
+    *,
+    target: str | None,
+    model: str,
+    settings: Settings,
+    org_id: int | str | None,
+    delegated_org_id: str | None,
+    language: str | None,
+) -> str:
+    """The accepted text, translated into ``target`` when the model wrote another language.
+
+    The final system instruction names the language, and the model still
+    follows its source lines often enough (3 to 4 of 6 replayed English widget
+    turns on a Dutch knowledge base, 29 October 2026) that the instruction
+    alone is not the contract. One translation call, only on a mismatch.
+    ``target`` is None when the turn's decision is not firm enough to
+    translate by (see ``write_reply``). The judge has already accepted the
+    text against the passages in their own language: translating the draft
+    first made the Strict judge refuse a correct answer in 2 of 2 replayed
+    rounds, because it no longer matched the Dutch passages word for word.
+    """
+    if not target:
+        return text
+    written = identify_surface_language(text)
+    if not written or written == target:
+        return text
+    name = LANGUAGE_NAMES.get(target, target)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                # The marker pattern is described, not shown: shown as "[n]"
+                # in this instruction, the model wrote a literal "[n]" into a
+                # translated step on 29 October 2026.
+                f"Translate the reply below into {name}. Keep the markdown, the links, the numbered citation "
+                "markers in square brackets and the names of menus, buttons and settings exactly as they are; "
+                "translate everything else. Reply with the translation only."
+            ),
+        },
+        {"role": "user", "content": text},
+    ]
+    _, translated, _ = await _generate(
+        messages,
+        model=model,
+        temperature=0.0,
+        settings=settings,
+        org_id=org_id,
+        delegated_org_id=delegated_org_id,
+        language=language,
+        tools=None,
+        tool_choice=None,
+    )
+    if not translated.strip():
+        return text
+    reply.signals["language_repaired"] = {"from": written, "to": target}
+    logger.info("partner_chat_language_repaired", org_id=org_id, written=written, target=target)
+    return translated
+
+
 @dataclass
 class _StreamedText:
     """What the model has written so far on a streamed reply, and what of it the reader has seen."""
 
     pasted_correspondence: bool
+    target: str | None = None
     raw: list[str] = field(default_factory=list)
     emitted: list[str] = field(default_factory=list)
     held_back: str = ""
     marker_buffer: str = ""
+    # The language gate: closed until the opening words can be judged, then
+    # either open or, when the model writes another language than the turn
+    # decided, shut for good: the reader then sees the translation only.
+    gate_closed: bool = True
+    wrong_language: bool = False
 
-    def take(self, text: str) -> str:
+    def take(self, text: str, *, final: bool = False) -> str:
         """Keep a content delta and return the part of it that is safe to send now."""
-        self.raw.append(text)
+        if text:
+            self.raw.append(text)
+        if self.gate_closed:
+            if self.target is None:
+                self.gate_closed = False
+            else:
+                head = "".join(self.raw)
+                if len(head.split()) < _LANGUAGE_GATE_WORDS and not final:
+                    return ""
+                written = identify_surface_language(head)
+                self.gate_closed = False
+                self.wrong_language = bool(written) and written != self.target
+                text = head
+        if self.wrong_language:
+            return ""
         if self.pasted_correspondence:
             text, self.marker_buffer = pop_answer_contract_stream_text(self.marker_buffer + text, final=False)
         shown, self.held_back = _pop_streamable_text(self.held_back + text)
@@ -603,6 +747,7 @@ async def _streamed(
     *,
     pasted_correspondence: bool,
     settle: Callable[..., Awaitable[None]],
+    target: str | None,
 ) -> AsyncIterator[str | list[dict]]:
     """Pass the model's deltas on as the reader may see them, then settle the reply on the whole text.
 
@@ -610,7 +755,7 @@ async def _streamed(
     composed once, on the accumulated text, never re-rendered mid-stream, which
     is what keeps the footer's numbering in step with what the reader saw.
     """
-    text = _StreamedText(pasted_correspondence=pasted_correspondence)
+    text = _StreamedText(pasted_correspondence=pasted_correspondence, target=target)
     tool_calls: list[dict] = []
     generation_started = time.perf_counter()
     async for delta in deltas:
@@ -619,6 +764,11 @@ async def _streamed(
             yield delta
         elif shown := text.take(delta):
             yield shown
+    # A reply shorter than the gate is judged on what there is. When the gate
+    # kept the whole reply back, nothing was shown: settle translates the
+    # accepted text and the reader gets it as the reply's final frames.
+    if shown := text.take("", final=True):
+        yield shown
     await settle(
         "".join(text.raw),
         generation_ms=_elapsed_ms(generation_started),

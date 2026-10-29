@@ -221,10 +221,13 @@ async def test_strict_profile_strips_web_search_tool_before_forwarding(monkeypat
 
 @pytest.mark.asyncio
 async def test_open_internal_profile_yields_multiple_content_frames(monkeypatch):
+    # Long enough to pass the language gate (six words) with text to spare:
+    # a streamed reply shows nothing until its language can be told.
     events = [
         {"choices": [{"delta": {"content": "Klai "}}]},
         {"choices": [{"delta": {"content": "ondersteunt SIP-trunking "}}]},
-        {"choices": [{"delta": {"content": "voor elk plan."}}]},
+        {"choices": [{"delta": {"content": "voor elk plan, ook "}}]},
+        {"choices": [{"delta": {"content": "voor de kleinste bedrijven en hun partners."}}]},
     ]
     monkeypatch.setattr("app.services.widget_write.httpx.AsyncClient", lambda timeout: _RecordingClient(events))
 
