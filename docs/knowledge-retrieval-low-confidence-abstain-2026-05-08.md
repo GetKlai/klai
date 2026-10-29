@@ -46,7 +46,7 @@ but had three independent gaps that combined catastrophically on the
 brand-bridging-class:
 
 1. **Vocabulary gap**: The Voys help-pages explaining the Salesforce route
-   lead with `Bubble` / `RedCactus` / `CRM-pakket`. The literal string
+   lead with `Bubble` / a partner's CRM brand / `CRM-pakket`. The literal string
    `Salesforce` is absent from the most narrative-rich chunks. BGE-M3
    dense + sparse + reranker do not bridge `Salesforce ↔ Bubble`. Confirmed
    via Cypher on FalkorDB: `Salesforce` is not even an entity in Voys's
@@ -104,7 +104,7 @@ set on chunks but the reranker score never benefited from it.
 ### REQ-5: brand → category bridging in rewrite prompt
 - Extends `_QUERY_REWRITE_AND_CLASSIFY_PROMPT`: when the user's question mentions a third-party brand (Salesforce, HubSpot, Zoom, etc.), klai-fast also includes 2-4 broader category or related-brand terms in the rewritten query
 - Three in-context examples cover CRM, video conferencing, mail/calendar:
-  - `"Hoe koppel ik Voys aan Salesforce?" → "Voys Salesforce CRM-koppeling Bubble RedCactus"`
+  - `"Hoe koppel ik Voys aan Salesforce?" → "Voys Salesforce CRM-koppeling Bubble"`
   - `"Ondersteunen jullie Zoom?" → "Voys Zoom vergader-integratie telefoonkoppeling"`
   - `"Werkt Outlook met Voys?" → "Voys Outlook e-mailkoppeling agenda-integratie"`
 - Negative-instruction guard: "If NO third-party brand is mentioned, leave the rewrite unchanged" — prevents over-application on questions like "Hoe stel ik vakantie in?"

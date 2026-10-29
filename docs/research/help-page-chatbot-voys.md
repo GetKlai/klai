@@ -106,7 +106,7 @@ Deze stack is breed getest: ~20 widget-testbestanden in `klai-portal/backend/tes
 
 Er zijn **twee** plekken waar "hulppagina's" in het geding zijn:
 
-1. **help.voys.nl (extern, vandaag live)** — een Super.so/Next.js-site met Notion-content, `lang="nl"`, geïndexeerd door zoekmachines. Bron: live-fetch van de ruwe HTML, vandaag. (Let op: een samenvattende page-fetch meldde hier "geen chatwidget aanwezig"; dat is onjuist — de embed staat alleen in de ruwe HTML, niet in de zichtbare tekst. Verifieer dit soort claims op de HTML zelf.) Daarin is al een **Nerds helpdesk/booking-widget** ingebed (`https://helpdesk.nerds.nl/embed.js` + `cdn.nerds.nl/embed/voys/booking.css`) — dat is het "bel-icoontje rechtsonder" waar de pagina `/administratie/verhuizen` zelf naar verwijst. Gevolgen voor de Klai-widget: script-embed kan via Super's custom code, maar er botst een tweede bubble rechtsonder (placering/visibility afstemmen), en de Klai-contentbron voor deze pagina's is de **crawl van help.voys.nl** (die in de Voys-KB zit; zie `chat.yaml:365` dat `help.voys.nl` als bron noemt).
+1. **help.voys.nl (extern, vandaag live)** — een Super.so/Next.js-site met Notion-content, `lang="nl"`, geïndexeerd door zoekmachines. Bron: live-fetch van de ruwe HTML, vandaag. (Let op: een samenvattende page-fetch meldde hier "geen chatwidget aanwezig"; dat is onjuist — de embed staat alleen in de ruwe HTML, niet in de zichtbare tekst. Verifieer dit soort claims op de HTML zelf.) Daarin is al een **helpdesk/booking-widget van de supportpartner** ingebed (een `embed.js` en een `booking.css` van de partner) — dat is het "bel-icoontje rechtsonder" waar de pagina `/administratie/verhuizen` zelf naar verwijst. Gevolgen voor de Klai-widget: script-embed kan via Super's custom code, maar er botst een tweede bubble rechtsonder (placering/visibility afstemmen), en de Klai-contentbron voor deze pagina's is de **crawl van help.voys.nl** (die in de Voys-KB zit; zie `chat.yaml:365` dat `help.voys.nl` als bron noemt).
 2. **klai-docs (Klai-eigen helpcenter-product, per tenant)** — Next.js-reader op `{org}.getklai.com` (subdomain→org via `klai-docs/middleware.ts:1-36`), content in Gitea (`org-voys/help-center`, `docs.voys.nl` als custom-domain-plaatshouder: `klai-docs/migrations/001_docs_schema.sql:10-33`), ingest in de KB via `klai-docs/lib/knowledge_ingest.py`. **Er is nog géén chat-widget ingebed op de reader-pagina's** (grep op `widget` in `klai-docs/`: alleen middleware + arch-doc). De editor leeft in de portal (`/app/docs/`), zie `klai-docs/docs/architecture.md`.
 
 Beide kandidaten: de pilot op **help.voys.nl** test tegen de echte, live publieke content maar met een externe scraping-source-of-truth; de pilot op **klai-docs** test het eigen product maar met content die nog niet gelijkgetrokken is met de live hulppagina's. Zie § 9.
@@ -136,7 +136,7 @@ De `/retrieve`-pijplijn is gedeeld (arch-doc § Retrieval-api): coreference-rewr
 
 | Laag (geboren uit Voys-incidents) | Path A (hook) | Path B (widget) | Bewijs |
 |---|---|---|---|
-| Taxonomy/query-rewrite met **brand-bridging** (Voys↔Bubble/RedCactus, "SIP 404"-categorietalen) | ✅ apart LLM-rewrite + taxonomy-classify | ❌ alleen de coreference-rewrite binnen retrieval-api | `klai_kb_query_rewrite.py:120-140` vs afwezig in `partner_chat.py` |
+| Taxonomy/query-rewrite met **brand-bridging** (Voys↔Bubble/partner-CRM-merk, "SIP 404"-categorietalen) | ✅ apart LLM-rewrite + taxonomy-classify | ❌ alleen de coreference-rewrite binnen retrieval-api | `klai_kb_query_rewrite.py:120-140` vs afwezig in `partner_chat.py` |
 | **Distillatie geplakte correspondentie** (email/ticket in query) | ✅ | ❌ | `klai_kb_query_rewrite.py:83-110` |
 | **Low-confidence injectie** ("presenteer als algemene kennis / niet verzin") | ✅ beleid via `klai_kb_confidence_policy.py` | ❌ `confidence_band` wordt genegeerd in `retrieve_context` (`partner_chat.py` leest alleen `evidence_pack`; band gedefinieerd in `retrieval_api/models.py:197`) | — |
 | **Multi-question guard / fan-out** (per vraag wegen) | ✅ | ❌ (base-prompt heeft wél een multi-part paragraaf: `klai_chat_prompts/__init__.py:240-252`, maar zonder retrieval-fan-out) | `klai_kb_confidence_policy.py:55-75` |
@@ -266,7 +266,7 @@ De Azure-referentie-architectuur voor enterprise chat onderschrijft wat wij op p
 
 ### 6.7 Nederlands als taal van het oppervlak
 
-Nederlandstalige LLM-kwaliteit is dun gemeten: de meeste benchmarks zijn vertalingen met slechte lokale kalibratie (onderbouwing in de Fietje-paper, [arXiv:2412.15450](https://arxiv.org/html/2412.15450v1)); EuroEval meet systematisch per taal ([overzichtsdiscussie, r/thenetherlands](https://www.reddit.com/r/thenetherlands/comments/1moyqac/prestaties_van_grote_taalmodellen_llms_in_het/)) en Artificial Analysis heeft een multilingual-index ([artificialanalysis.ai/models/multilingual](https://artificialanalysis.ai/models/multilingual)). Praktijkconsequentie: de keuze voor Mistral Small/Medium als `klai-primary` is EU-hosted en taaltechnisch plausibel, maar **toets dat op de eigen 41-query NL-evalsuite**: meet Dutch-output-quality op Voys-content (bedrijfstijl "je"/"jullie", productnamen Bubble/Freedom/RedCactus), niet op een generieke benchmark. Dat sluit aan op het meetprotocol dat dit research-programma zelf aanbeveelt (RAGAS + Wilcoxon, zie [README.md](README.md)).
+Nederlandstalige LLM-kwaliteit is dun gemeten: de meeste benchmarks zijn vertalingen met slechte lokale kalibratie (onderbouwing in de Fietje-paper, [arXiv:2412.15450](https://arxiv.org/html/2412.15450v1)); EuroEval meet systematisch per taal ([overzichtsdiscussie, r/thenetherlands](https://www.reddit.com/r/thenetherlands/comments/1moyqac/prestaties_van_grote_taalmodellen_llms_in_het/)) en Artificial Analysis heeft een multilingual-index ([artificialanalysis.ai/models/multilingual](https://artificialanalysis.ai/models/multilingual)). Praktijkconsequentie: de keuze voor Mistral Small/Medium als `klai-primary` is EU-hosted en taaltechnisch plausibel, maar **toets dat op de eigen 41-query NL-evalsuite**: meet Dutch-output-quality op Voys-content (bedrijfstijl "je"/"jullie", productnamen Bubble/Freedom/partner-CRM-merk), niet op een generieke benchmark. Dat sluit aan op het meetprotocol dat dit research-programma zelf aanbeveelt (RAGAS + Wilcoxon, zie [README.md](README.md)).
 
 ---
 
@@ -303,7 +303,7 @@ De widget kent daarvoor nu maar één ingang: het 4000-char `system_prompt`-veld
 | G-9 | Page-context excerpt = aanvalsvector (injectie via hostpagina) — deels gemitigeerd | midden | open | § 6.3 |
 | G-10 | AI Act-artikel-50-disclosure niet expliciet ingericht (alleen nauwkeurigheid-disclaimer) | midden | **gebouwd** — REQ-6 | § 6.4; `labels.ts` (`disclaimer`) |
 | G-11 | Content-bron-kloof: help.voys.nl (Super/Notion, externe crawl) vs klai-docs (Gitea, ingest) vs interne support-KB; oud/tegenstrijdig materiaal levert conflicterende antwoorden op | midden | open | § 3; corroboration-laag is uitgesteld (zie [README](README.md) §3) |
-| G-12 | Twee chat-bubbels rechtsonder op help.voys.nl (Nerds booking-widget) | laag (UX) | open | HTML-fetch § 3 |
+| G-12 | Twee chat-bubbels rechtsonder op help.voys.nl (booking-widget van de supportpartner) | laag (UX) | open | HTML-fetch § 3 |
 | G-14 | **Rate limits zijn per widget, niet per bezoeker**: chat 60 rpm hardcoded en gedeeld door alle bezoekers, sessie-mint 10/min, geen caching op `/widget-config` | **Blocker voor publiek verkeer** | deels — REQ-2 ontlast de mint-limiet; de chatlimiet van 60 rpm per widget staat er nog | § 5.6; `partner_dependencies.py:210`; `partner.py:2577` |
 | G-15 | **Widget-pad voedt de gap-registratie niet**: gap-events komen alleen uit de LiteLLM-hook, dus het gaten-dashboard ziet geen klantvragen | hoog (en goedkoop te dichten) | **gebouwd** — REQ-1 | § 5.5; `klai_knowledge.py:1412` vs geen "gap" in `partner_chat.py` |
 | G-16 | Widget mint bij elke paginaweergave een sessietoken, ook voor de 90-97% die nooit chat; geen facade/lazy-load | hoog (lost G-14 op én versnelt de helppagina's) | **gebouwd** — REQ-2 | § 9.1 stap 8 |
@@ -355,7 +355,7 @@ Verwijs naar de helpartikelen die onder het antwoord getoond worden; noem zelf
 geen URLs.
 ```
 
-7. **Embed:** Super-site → custom head/code: `<script async src="https://widget.getklai.com/widget/n" data-widget-id="wgt_…" data-locale="nl">` (URL-vorm conform `widget-test.tsx`; exact prod-pad opvragen bij het uitrollen). Positionering: test of de bubble van Nerds en die van Klai botsen (G-12) — eventueel Klai inline op artikelpagina's (`data-mode="inline" data-container=…`, `main.ts:73-103`).
+7. **Embed:** Super-site → custom head/code: `<script async src="https://widget.getklai.com/widget/n" data-widget-id="wgt_…" data-locale="nl">` (URL-vorm conform `widget-test.tsx`; exact prod-pad opvragen bij het uitrollen). Positionering: test of de bubble van de supportpartner en die van Klai botsen (G-12) — eventueel Klai inline op artikelpagina's (`data-mode="inline" data-container=…`, `main.ts:73-103`).
 8. **Widget lui laden met een facade-bubbel (G-16), vóór livegang.** Vervangt het
    ophogen van de limiet uit G-14: in plaats van bij elke paginaweergave een
    sessietoken te minten, toont de pagina een lichtgewicht nepbubbel en wordt de
@@ -434,4 +434,4 @@ iemand die de Voys-inhoud kent.
 - web.dev, "Best practices for using third-party embeds" — <https://web.dev/articles/embed-best-practices>
 - Embed-encapsulatie-discussies — <https://stackoverflow.com/questions/49220533/how-are-javascript-widgets-made-without-iframes>, <https://www.reddit.com/r/webdev/comments/1hb0kw6/preferred_method_for_creating_3rd_party/>
 - Nederlandse LLM-evaluatie — <https://arxiv.org/html/2412.15450v1> (Fietje), <https://www.reddit.com/r/thenetherlands/comments/1moyqac/prestaties_van_grote_taalmodellen_llms_in_het/> (EuroEval), <https://artificialanalysis.ai/models/multilingual>
-- help.voys.nl — live-fetch van de homepage (HTML, vandaag): Super.so/Next.js-site, `lang="nl"`, Nerds helpdesk/booking-embed.
+- help.voys.nl — live-fetch van de homepage (HTML, vandaag): Super.so/Next.js-site, `lang="nl"`, helpdesk/booking-embed van de supportpartner.

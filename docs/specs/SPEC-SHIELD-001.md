@@ -4,7 +4,7 @@
 **Priority:** High
 **Service:** klai-portal, klai-knowledge-mcp, klai-retrieval-api, klai-shield-extension
 **Last updated:** 2026-06-02
-**Reference source:** `/Users/jantinedoornbos/Documents/Projects/Superdock`
+**Reference source:** a partner's local project checkout (path omitted)
 
 **Product problem this solves:**
 
