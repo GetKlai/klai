@@ -237,7 +237,12 @@ DS_TOOL_IMAGE="${KLAI_DS_TOOL_IMAGE:-alpine:3.22}"
 DS_CURL_IMAGE="${KLAI_CURL_IMAGE:-curlimages/curl:8.11.1}"
 # A throwaway holds one store's snapshot. The largest, FalkorDB, used 2.9 GiB
 # live on 2026-10-28 on a host with 62 GiB; one throwaway runs at a time.
-DS_THROWAWAY_LIMITS=(--memory 6g --cpus 2)
+# nofile: Docker's default of 1024 open files is what the live mongodb raises to
+# 64000 in the compose file, and the throwaway needs the same: counting the
+# 2107 collections of all tenants opened one WiredTiger file each and the
+# throwaway died with EMFILE on 2026-10-29 16:04 UTC, which read as "the
+# snapshot does not read back" and stopped the sync.
+DS_THROWAWAY_LIMITS=(--memory 6g --cpus 2 --ulimit nofile=64000:64000)
 
 DS_SNAPSHOTS=()
 
@@ -895,8 +900,8 @@ ds_snapshot_changed() {
   done
   (( ${#own[@]} > 0 )) || return 0
   echo "image change of a data store or a self-migrating app: ${own[*]}"
-  mkdir -p "$DS_BACKUP_ROOT" || rb_finish "${own[0]}" snapshot rollback_failed
-  ds_disk_ok "${own[@]}" || rb_finish "${own[0]}" disk-headroom rollback_failed
+  mkdir -p "$DS_BACKUP_ROOT" || rb_finish "${own[0]}" snapshot not_started
+  ds_disk_ok "${own[@]}" || rb_finish "${own[0]}" disk-headroom not_started
   for name in "${own[@]}"; do
     if [[ -f "$DS_DRY_FLAG" && "$(cat "$DS_DRY_FLAG")" == "$name" ]]; then
       rm -f "$DS_DRY_FLAG"
@@ -909,7 +914,7 @@ ds_snapshot_changed() {
         DS_DRY="$name"
       fi
     fi
-    ds_snapshot "$name" "$old" "$new" || rb_finish "$name" snapshot rollback_failed
+    ds_snapshot "$name" "$old" "$new" || rb_finish "$name" snapshot not_started
   done
   # The window starts after the last dump, just before the first file changes.
   local now dir

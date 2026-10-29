@@ -140,6 +140,7 @@ jobs:
             const ROLLBACK_LABELS = {
               rolled_back: { name: 'auto-rollback', color: 'fbca04', description: 'Deploy failed and the previous version was put back automatically' },
               rollback_failed: { name: 'rollback-failed', color: 'b60205', description: 'Deploy failed and the automatic rollback failed too: a human is needed now' },
+              not_started: { name: 'deploy-not-started', color: 'c5def5', description: 'The sync refused before any file changed (disk headroom or a snapshot that failed); nothing to roll back' },
             };
             const flat = (v) => String(v ?? '').replace(/[\r\n`]/g, ' ').slice(0, 200);
             let report = null;
@@ -185,7 +186,9 @@ jobs:
                 '',
                 report.outcome === 'rollback_failed'
                   ? '**Automatic rollback failed. Production may be broken: a human is needed now.**'
-                  : '**Rolled back automatically.** The previous version is serving again; the failing version is still on `main`.',
+                  : report.outcome === 'not_started'
+                    ? '**Not started.** The sync refused before it replaced a single file; the host runs what it ran and the next sync tries again.'
+                    : '**Rolled back automatically.** The previous version is serving again; the failing version is still on `main`.',
                 '',
                 `- Service: \`${flat(report.service)}\` (\`${flat(report.kind)}\`)`,
                 `- Outcome: \`${flat(report.outcome)}\``,
@@ -222,12 +225,11 @@ jobs:
             } else {
               // Swap, do not accumulate.
               const want = ROLLBACK_LABELS[report.outcome];
-              const other = report.outcome === 'rolled_back' ? ROLLBACK_LABELS.rollback_failed : ROLLBACK_LABELS.rolled_back;
               try {
                 await github.rest.issues.createLabel({ ...base, ...want });
               } catch (err) {
                 if (err.status !== 422) throw err; // 422 = the label already exists
               }
               await github.rest.issues.addLabels({ ...base, issue_number: number, labels: [want.name] });
-              await dropLabel(other.name);
+              for (const l of Object.values(ROLLBACK_LABELS)) if (l.name !== want.name) await dropLabel(l.name);
             }
