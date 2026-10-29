@@ -126,8 +126,8 @@ for pkg in 'getmeili/meilisearch:v' 'image: mongo:' 'image: redis:' 'image: rabb
   fi
 done
 for name in 'mongodb/mongo' 'redis/redis' 'rabbitmq/rabbitmq-server' 'meilisearch/meilisearch'; do
-  if [ "$(grep -cF "        '${name}'," "$config")" -lt 2 ]; then
-    echo "FAIL: ${name} must be listed in the data-store group and the strict rule" >&2
+  if [ "$(grep -cF "        '${name}'," "$config")" -lt 3 ]; then
+    echo "FAIL: ${name} must be listed in the data-store group, the one-minor-per-PR rule and the strict rule" >&2
     exit 1
   fi
 done
@@ -182,8 +182,8 @@ for c in chunks:
     # sync (feat/vexa-bot-prepull); that PR deletes this exemption.
     if re.search(r"(?m)^\s+automerge: false,", c) and "matchPackageNames: ['vexaai/**']" not in c:
         fail.append("no rule may hold an update back from automerge: " + (re.search(r"description:\s*'([^'\\]{0,60})", c).group(1) if re.search(r"description:\s*'", c) else c[:60]))
-store = next((c for c in chunks if "groupName: 'Data store series bumps'" in c), "")
-if "separateMultipleMinor: true" not in store:
+store = next((c for c in chunks if "separateMultipleMinor: true" in c and "'mongodb/mongo'" in c), "")
+if "matchUpdateTypes" in store or not store:
     fail.append("the data-store group must propose one minor per PR (MongoDB starts only on the FCV of the release before it)")
 major = next((c for c in chunks if "matchUpdateTypes: ['major']" in c and "matchPackageNames" not in c), "")
 if "automerge: true" not in major:
