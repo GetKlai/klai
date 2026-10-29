@@ -105,6 +105,19 @@ def test_the_legacy_raw_anchor_block_goes_but_a_real_alias_line_stays():
     assert after["text_enriched"] == f"Context.\n\n{NAMING}\n\n{ALIAS}"
 
 
+def test_a_chunk_whose_own_text_ends_with_a_label_paragraph_keeps_it():
+    """A glossary entry can end in "Also known as: ..." itself; only a paragraph
+    appended after the chunk's text is a derived line. Fresh ingest has no twin
+    in the prefix, so without this rule the chunk's last paragraph was cut."""
+    glossary = f"{OTHER}\n\nAlso known as: fax inbox\n\nLinked as: the fax page"
+    fresh = _enriched(glossary, text_enriched=f"Context.\n\n{glossary}")
+
+    once = cheap_layer.cheap_fields(fresh, [], [], ["Fax"])
+    assert once["text_enriched"] == f"Context.\n\n{glossary}\n\nLinked as: Fax"
+    again = cheap_layer.cheap_fields({**fresh, **once}, [], [], [])
+    assert again["text_enriched"] == f"Context.\n\n{glossary}"
+
+
 def test_the_layer_version_follows_the_anchor_rules_version(monkeypatch):
     before = cheap_layer.layer_version(GROUPS, RULES)
 

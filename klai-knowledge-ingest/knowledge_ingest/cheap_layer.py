@@ -65,12 +65,17 @@ def _anchor_line(anchors: list[str]) -> str:
     return ANCHOR_LABEL + " | ".join(" ".join(a.split()) for a in anchors) if anchors else ""
 
 
-def _without_last_paragraph(text: str, label: str) -> str:
-    head, sep, last = text.rpartition("\n\n")
-    return head if sep and last.startswith(label) else text
+def _without_last_paragraph(enriched: str, label: str, text: str) -> str:
+    # A paragraph the chunk's own text ends with is content, whatever it starts
+    # with (a glossary entry can end in "Also known as: ..."); only a paragraph
+    # appended after the text is ours to strip.
+    head, sep, last = enriched.rpartition("\n\n")
+    if sep and last.startswith(label) and not text.endswith(last):
+        return head
+    return enriched
 
 
-def _without_derived_lines(context_prefix: str, text_enriched: str) -> tuple[str, str]:
+def _without_derived_lines(context_prefix: str, text_enriched: str, text: str) -> tuple[str, str]:
     """Strip the lines a previous run added, from the end of both fields.
 
     The anchor line is the last line of the embedded text only. The alias line
@@ -79,11 +84,11 @@ def _without_derived_lines(context_prefix: str, text_enriched: str) -> tuple[str
     raw anchor texts as "Also known as: ..." to the embedded text alone: such a
     line without a twin at the end of the prefix is that old block, and goes too.
     """
-    enriched = _without_last_paragraph(text_enriched, ANCHOR_LABEL)
+    enriched = _without_last_paragraph(text_enriched, ANCHOR_LABEL, text)
     head, _, last = context_prefix.rpartition("\n")
     if last.startswith(ALIAS_LABEL) and enriched.endswith(f"\n\n{last}"):
         context_prefix, enriched = head, enriched[: -len(last) - 2]
-    return context_prefix, _without_last_paragraph(enriched, ALIAS_LABEL)
+    return context_prefix, _without_last_paragraph(enriched, ALIAS_LABEL, text)
 
 
 def cheap_fields(
@@ -107,10 +112,11 @@ def cheap_fields(
     ):
         fields["text_fingerprint"] = fingerprint
     if "text_enriched" in payload:
+        text = payload.get("text") or ""
         prefix, enriched = _without_derived_lines(
-            payload.get("context_prefix") or "", payload["text_enriched"]
+            payload.get("context_prefix") or "", payload["text_enriched"], text
         )
-        if line := _alias_line(payload.get("text") or "", groups):
+        if line := _alias_line(text, groups):
             prefix = f"{prefix}\n{line}".strip()
             enriched += f"\n\n{line}"
         if line := _anchor_line(anchors):
