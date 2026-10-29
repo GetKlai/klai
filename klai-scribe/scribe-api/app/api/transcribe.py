@@ -13,6 +13,7 @@ Transcription API endpoints:
 
 import asyncio
 import contextlib
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -105,10 +106,16 @@ def normalize_audio(raw: bytes, filename: str) -> bytes:
     return _normalize_audio(raw, filename)
 
 
-async def _wait_for_job(txn_id: str) -> None:
-    """Wait up to `transcribe_wait_seconds`; the job keeps running after a timeout."""
+async def _wait_for_job(txn_id: str, request_started: float) -> None:
+    """Wait for the job until `transcribe_wait_seconds` after the request started.
+
+    The budget covers the whole request, so a large upload that already spent
+    it on decoding is answered `processing` right away instead of waiting
+    another full budget on top. The job keeps running after a timeout.
+    """
+    remaining = settings.transcribe_wait_seconds - (time.monotonic() - request_started)
     with contextlib.suppress(TimeoutError):
-        await asyncio.wait_for(jobs.enqueue(txn_id), timeout=settings.transcribe_wait_seconds)
+        await asyncio.wait_for(jobs.enqueue(txn_id), timeout=max(0.0, remaining))
 
 
 def _to_response(record: Transcription) -> TranscriptionResponse:
@@ -160,6 +167,7 @@ async def transcribe(
     record as it is after at most `transcribe_wait_seconds`: `transcribed`,
     `failed` (audio retained for retry) or `processing` (the job continues).
     """
+    request_started = time.monotonic()
     raw = await file.read(settings.max_upload_bytes + 1)
     if len(raw) > settings.max_upload_bytes:
         raise HTTPException(
@@ -201,7 +209,7 @@ async def transcribe(
     db.add(record)
     await db.commit()
 
-    await _wait_for_job(txn_id)
+    await _wait_for_job(txn_id, request_started)
     await db.refresh(record)
 
     return _to_response(record)
@@ -218,6 +226,7 @@ async def retry_transcription(
     db: AsyncSession = _DB,
 ) -> TranscriptionResponse:
     """Retry transcription for a failed record using the preserved audio file."""
+    request_started = time.monotonic()
     result = await db.execute(
         select(Transcription).where(*_owned_transcription_filters(txn_id, caller))
     )
@@ -249,7 +258,7 @@ async def retry_transcription(
         record.language_hint = language
     await db.commit()
 
-    await _wait_for_job(txn_id)
+    await _wait_for_job(txn_id, request_started)
     await db.refresh(record)
 
     return _to_response(record)

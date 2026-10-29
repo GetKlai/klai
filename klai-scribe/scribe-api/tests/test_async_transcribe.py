@@ -159,3 +159,31 @@ async def test_retry_on_a_processing_row_is_refused(queue: FakeSession) -> None:
 
     assert exc_info.value.status_code == 409
     assert record.claimed_at is not None
+
+
+async def test_wait_budget_counts_from_the_start_of_the_request(
+    queue: FakeSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A large upload that spent the budget on decoding is answered `processing`
+    at once instead of waiting another full budget on top."""
+    monkeypatch.setattr(settings, "transcribe_wait_seconds", 0.2)
+    monkeypatch.setattr(jobs, "get_provider", lambda: _SlowProvider())
+
+    # The route runs normalize_audio in an executor; a sync sleep stands in
+    # for a long ffmpeg decode.
+    monkeypatch.setattr(
+        transcribe_api, "normalize_audio", lambda raw, filename: time.sleep(0.3) or b"RIFFwav"
+    )
+
+    started = time.monotonic()
+    response = await _upload(queue)
+    elapsed = time.monotonic() - started
+
+    assert response.status == "processing"
+    assert 0.3 <= elapsed < 0.8  # decode time only, no extra budget on top
+    # A spent budget cancels the wait before it runs; it must not leave a
+    # waiter behind that only a finishing job would clear, and the worker
+    # must still have been woken.
+    assert response.id not in jobs._waiters
+    await asyncio.sleep(0.05)
+    assert queue.store[response.id].attempts == 1

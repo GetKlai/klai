@@ -150,4 +150,6 @@ async def test_reaper_skips_queued_rows_and_reaps_rows_without_audio() -> None:
     assert "audio_path IS NULL OR scribe.transcriptions.attempts >= 3 AND (" in where
     # Out of attempts but still held by a live claim: the job may still finish.
     assert "claimed_at IS NULL OR scribe.transcriptions.claimed_at <" in where
+    # Rows are flipped under a row lock, skipping one a job is finishing.
+    assert "FOR UPDATE SKIP LOCKED" in where
     assert "created_at <" in where

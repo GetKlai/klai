@@ -63,12 +63,19 @@ async def reap_stranded(session: AsyncSession, timeout_min: int) -> int:
         .where(
             or_(
                 Transcription.audio_path.is_(None),
-                # Out of attempts, and not held by a job that is still running.
-                and_(Transcription.attempts >= MAX_ATTEMPTS, stale_claim_filter()),
+                # Out of attempts, and not held by a job that is still running:
+                # the claim must be older than the reaper's own timeout, which
+                # is longer than the queue's takeover window, so a slow third
+                # attempt is never failed from under its job.
+                and_(Transcription.attempts >= MAX_ATTEMPTS, stale_claim_filter(timeout_min)),
             )
         )
         .where(Transcription.created_at < cutoff)
         .limit(_REAP_BATCH_LIMIT)
+        # Lock the rows for this transaction and skip one a job is finishing
+        # right now, so the flip below can never land on a row that became
+        # `transcribed` between the select and the commit.
+        .with_for_update(skip_locked=True)
     )
     stranded = list(result.scalars().all())
 
