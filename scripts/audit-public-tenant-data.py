@@ -141,9 +141,18 @@ def _has_real_hostname(body: str, allowed: list[str]) -> bool:
     # A shell escape (``$'\tghcr.io'``) would otherwise glue its letter onto the
     # host, and a parameter default (``${IMAGE:-ghcr.io}``) its dash; no host
     # label starts with a dash.
-    for token in _DOTTED.findall(_ESCAPE.sub(" ", body)):
-        token = token.lstrip("-")
+    text = _ESCAPE.sub(" ", body)
+    for match in _DOTTED.finditer(text):
+        token = match.group(0).lstrip("-")
         labels = token.lower().split(".")
+        # ``self.org`` or ``state.org`` is attribute access, not a host: a bare
+        # two-label token counts only when it sits in a string, a URL or an
+        # address (the character before it is a quote, a slash or an @), or
+        # continues as a path or port.
+        before = text[match.start() - 1] if match.start() > 0 else " "
+        after = text[match.end()] if match.end() < len(text) else " "
+        if len(labels) == 2 and before not in "\"'`/@" and after not in "/:":
+            continue
         # Module paths and snake_case attributes carry underscores; versions and
         # IP literals end in a digit label; neither is a hostname.
         if "_" in token or labels[-1] not in _TLDS or not any(c.isalpha() for c in labels[-2]):

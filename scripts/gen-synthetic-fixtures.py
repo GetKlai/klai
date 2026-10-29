@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
+from typing import Any
 
 GENERATOR = "scripts/gen-synthetic-fixtures.py"
 OUT = Path(__file__).resolve().parents[1] / "klai-knowledge-ingest" / "tests" / "fixtures"
@@ -135,7 +136,7 @@ def _page(
     return "\n".join(lines) + "\n"
 
 
-FIXTURES = {
+FIXTURES: dict[str, dict[str, Any]] = {
     # Walled page: long parameter list, two protected FAQ tabs.
     "auth_walls/partner_wiki_hubspot.md": {
         "seed": 101,
