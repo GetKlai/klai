@@ -86,8 +86,9 @@
 # put-back of a red gate within the window: stop, remove the new directory,
 # rename the old one back, start the previous image on it, no pg_restore. An
 # image whose PGDATA is the old one, or outside the volume, is refused at the
-# snapshot. A missing extension (pgvector) in the new image is a red gate
-# before anything is restored. Past the window the new major is the state, and
+# snapshot. A missing extension (pgvector) in the new image turns the shadow
+# red before anything live moves, and is checked again at the cutover before
+# anything is restored. Past the window the new major is the state, and
 # ds_settle removes the .aside directory at the start of a later sync.
 #
 # Mongo FCV. An image change within one FCV runs the new binary on the old
@@ -542,11 +543,15 @@ ds_ready() {
   esac
 }
 # Up to 10 minutes: FalkorDB took 104 s to load its 1.1 GB dump on core-01
-# (2026-10-23) and answers LOADING until then.
+# (2026-10-23) and answers LOADING until then. A throwaway that exited never
+# answers (it has no restart policy), so that ends the wait: Meilisearch 1.56
+# exits 1 on a 1.55 database without MEILI_UPGRADE_DB, which kept a shadow
+# waiting the full 616 s in the local proof of 2026-10-29.
 ds_wait_ready() {
   local i
   for (( i = 0; i < 300; i++ )); do
     ds_ready "$1" "$2" && return 0
+    [[ "$1" != ctr:* || "$(docker inspect --format '{{.State.Running}}' "${1#ctr:}" 2>/dev/null)" == true ]] || return 1
     sleep 2
   done
   return 1

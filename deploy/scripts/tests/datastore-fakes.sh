@@ -22,7 +22,8 @@
 # Mongo 8.0, RabbitMQ 4.4 and Garage 2.4 produced on 2026-10-28.
 # Switches: fake/probe_red (a live store's facts fail until it is restored),
 # fake/bad_image (any container on the image it names fails its facts, a
-# shadow included), fake/bad_live_image (the live store fails its facts while
+# shadow included), fake/exits_image (a container on that image has exited
+# and answers nothing), fake/bad_live_image (the live store fails its facts while
 # it runs the image named there),
 # fake/corrupt_snapshot (a snapshot taken now does not read back),
 # fake/stop_fails (docker compose stop exits 1), fake/pg_dump_fails, fake/fcv_fails
@@ -56,6 +57,7 @@ pgenv() { local m; m="$(pgmajor "$1")"; echo "PG_MAJOR=$m"; if (( m >= 18 )); th
 
 in_store() {
   local t="$1" db="" sql="" a; shift
+  on_image "$t" exits_image && exit 1
   local cmd="$1"; shift
   case "$cmd" in
     pg_isready) [[ ! -e "$F/pg_down" ]] ;;
@@ -182,6 +184,7 @@ run() {
   if [[ "$img" == curlimages/* ]]; then
     local t port path
     t="$(name_of "${net#container:}")"; port="$3"; path="$5"
+    on_image "$t" exits_image && exit 7
     case "$port$path" in
       6333/readyz) echo "all shards are ready" ;;
       6333/collections)
@@ -249,6 +252,7 @@ elif [[ "$1" == inspect ]]; then
     case "$fmt" in
       *Mounts*) echo "/var/lib/docker/volumes/${c#cid-}" ;;
       *Config.Image*) cat "$F/running/${c#cid-}" ;;
+      *State.Running*) if on_image "${c#cid-}" exits_image; then echo false; else echo true; fi ;;
       *Config.Cmd*) [[ "$c" == cid-redis ]] && printf 'redis-server\n--requirepass\nfake-redis-pw\n' ;;
       *Config.Env*)
         [[ "$c" == cid-qdrant ]] && echo "QDRANT__SERVICE__API_KEY=fake-qdrant-key"

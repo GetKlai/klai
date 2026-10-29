@@ -572,6 +572,15 @@ check "  live untouched: consumers never stopped, store never recreated, previou
 check "  files untouched: compose file as it was, no .prev, no failure flag, no sweep" "mongo:8.0.34 yes 0" "$(image_of_case mongodb) $(untouched) $(calls '^sweep')"
 check "  ledger: snapshot, shadow_failed, then the compose line" "mongodb snapshot,mongodb shadow_failed shadow_failed" "$(data_ledger) $(tail -n1 "$case_dir/deploy-ledger.log" | cut -f7)"
 
+# A new image whose throwaway exits at once is red at once, not after the
+# 10-minute readiness wait (Meilisearch 1.56 without MEILI_UPGRADE_DB exits 1).
+new_case shadow_exits
+echo qdrant/qdrant:v1.20.0 > "$case_dir/fake/exits_image"
+started=$(date +%s)
+run_driver "$QDRANT_BUMP"
+check "qdrant v1.20.0 exits in its shadow -> exit 4, shadow_failed, within 30 s" "4 shadow_failed yes" "$rc $(report outcome) $( (( $(date +%s) - started < 30 )) && echo yes || echo no)"
+check "  its last log lines printed" 1 "$(calls 'docker logs --tail 20 klai-datastore-shadow-qdrant')"
+
 # AT-c1, volume kind: Qdrant cutover probe red, the fresh copy and image back.
 new_case at_c1_volume
 echo qdrant/qdrant:v1.20.0 > "$case_dir/fake/bad_live_image"
