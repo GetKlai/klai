@@ -24,7 +24,7 @@ ARG LIBRECHAT_TAG=v0.8.8
 # --------------------------------------------------------------------------
 # Lane A — @librechat/agents
 # --------------------------------------------------------------------------
-FROM node:24-alpine AS agents-build
+FROM node:26-alpine AS agents-build
 ARG AGENTS_REF
 RUN test -n "$AGENTS_REF" || (echo "FATAL: AGENTS_REF build-arg is required" >&2; exit 1)
 RUN apk add --no-cache git
@@ -68,7 +68,7 @@ RUN npm ci --no-audit --no-fund && npm run build
 # --------------------------------------------------------------------------
 # Lane B — LibreChat app source
 # --------------------------------------------------------------------------
-FROM node:24-alpine AS librechat-build
+FROM node:26-alpine AS librechat-build
 ARG LIBRECHAT_TAG
 RUN apk add --no-cache git
 WORKDIR /build
