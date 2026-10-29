@@ -105,7 +105,7 @@ def _get_anchor_texts_from_graph(
 ) -> AsyncMock:
     """Return an AsyncMock for link_graph.get_anchor_texts backed by in-memory graph."""
 
-    async def _impl(conn: object, url: str, org_id: str, kb_slug: str) -> list[str]:
+    async def _impl(conn: object, url: str, org_id: str, kb_slug: str, page_text: str) -> list[str]:
         texts = []
         for _from_url, links in graph.items():
             for link in links:

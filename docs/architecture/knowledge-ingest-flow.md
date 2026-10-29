@@ -561,10 +561,18 @@ If the LLM call fails, the chunk falls back to its original text — enrichment 
 never blocks a chunk from being retrievable.
 
 **Anchor text augmentation (SPEC-CRAWLER-003, crawled content only):** For documents
-ingested via the crawl pipeline, the chunk's `enriched_text` is extended with a
-deduplicated "Also known as: anchor1 | anchor2" block when anchor texts are available in
-`page_links`. This bridges the vocabulary gap between how other pages describe a URL and
-how the page itself uses language — a known cause of recall loss in sparse/keyword search.
+ingested via the crawl pipeline, the chunk's `enriched_text` ends with a
+"Linked as: anchor1 | anchor2" line (never in `context_prefix`, so the reranker does not
+read it) when `link_graph.get_anchor_texts` finds names for the page in `page_links`. This
+bridges the vocabulary gap between how other pages describe a URL and how the page itself
+uses language — a known cause of recall loss in sparse/keyword search. The raw link texts
+are mostly navigation boilerplate, so `get_anchor_texts` is the one filter point: SQL
+drops self-links and texts that point at 10 or more pages of the KB, and
+`anchor_filter.py` drops URLs, slugs, language codes, generic link words, over-long texts
+and anything the page text already contains, keeping at most five, most-linking pages
+first. The line is written by the cheap layer (`cheap_layer.py`), the same code
+`kb_patch` runs on stored chunks; `ANCHOR_RULES_VERSION` in `cheap_layer_version` marks
+chunks to rewrite when the rules change.
 
 **Step B — Dense re-embedding.**
 The enriched text (`context_prefix + "\n\n" + original_chunk`) is re-embedded via TEI.

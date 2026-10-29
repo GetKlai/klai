@@ -1042,17 +1042,7 @@ async def _enrich_document(
         )
         llm_ms = int((time.monotonic() - t0) * 1000)
 
-        # Anchor text augmentation: append vocabulary from pages linking to this page.
-        # Modifies enriched_text only -- original_text and context_prefix stay unchanged.
-        # SPEC-CRAWLER-003 R9, R10, R11
-        anchor_texts_raw = extra_payload.get("anchor_texts", []) if extra_payload else []
-        if anchor_texts_raw:
-            unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-            anchor_block = "\n\nAlso known as: " + " | ".join(unique_anchors)
-            for ec in enriched_chunks:
-                ec.enriched_text += anchor_block
-
-        # The cheap layer (aliases, product label, cheap_layer_version), computed
+        # The cheap layer (aliases, anchor line, product label, cheap_layer_version), computed
         # exactly as scripts/kb_patch.py recomputes it on stored chunks.
         cheap_layer.apply_to_enriched_chunks(
             enriched_chunks,

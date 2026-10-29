@@ -1,187 +1,48 @@
-"""Tests for anchor text augmentation in _enrich_document().
+"""Anchor texts reach the embedded text of a freshly enriched chunk as a "Linked as" line.
 
-SPEC-CRAWLER-003: R9, R10, R11
-Verifies that anchor texts from linking pages are deduplicated and appended
-to enriched_text only, leaving original_text and context_prefix unchanged.
+SPEC-CRAWLER-003 R9-R11, reworked: the crawler passes the filtered anchors in
+``extra_payload["anchor_texts"]`` (link_graph.get_anchor_texts), and the cheap
+layer, the same code kb_patch runs, writes the line. The enrichment step no
+longer appends a raw "Also known as" block of its own.
+
+Synthetic data only: invented names on example.com.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import inspect
 
-# ---------------------------------------------------------------------------
-# Fake EnrichedChunk -- mirrors knowledge_ingest.enrichment.EnrichedChunk
-# without pulling in the real module and its heavy transitive deps.
-# ---------------------------------------------------------------------------
+from knowledge_ingest import cheap_layer, enrichment_tasks
+from knowledge_ingest.enrichment import EnrichedChunk
 
-
-@dataclass
-class FakeEnrichedChunk:
-    original_text: str
-    enriched_text: str
-    context_prefix: str = ""
-    questions: list[str] = field(default_factory=list)
+SOURCE = {"source_type": "crawl", "source_url": "https://help.example.com/orbit/install"}
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-ANCHOR_BLOCK_PREFIX = "\n\nAnder pagina's noemen deze pagina: "
+def _chunk(text: str) -> EnrichedChunk:
+    return EnrichedChunk(text, f"Context.\n\n{text}", "Context.", ["What is this?"])
 
 
-def _make_chunks(texts: list[str]) -> list[FakeEnrichedChunk]:
-    """Build fake enriched chunks with enriched_text == original_text."""
-    return [
-        FakeEnrichedChunk(
-            original_text=t,
-            enriched_text=f"Context.\n\n{t}",
-            context_prefix="Context.",
-            questions=["Wat is dit?"],
+def test_anchor_texts_become_a_linked_as_line_on_the_embedded_text_only():
+    chunks = [_chunk("First paragraph."), _chunk("Second paragraph.")]
+    extra = {**SOURCE, "anchor_texts": ["Softphone setup", "Fax inbox"]}
+
+    cheap_layer.apply_to_enriched_chunks(chunks, extra, "orbit/install", [], [])
+
+    for chunk, text in zip(chunks, ["First paragraph.", "Second paragraph."], strict=True):
+        assert (
+            chunk.enriched_text == f"Context.\n\n{text}\n\nLinked as: Softphone setup | Fax inbox"
         )
-        for t in texts
-    ]
+        assert chunk.original_text == text
+        assert chunk.context_prefix == "Context."
 
 
-# ---------------------------------------------------------------------------
-# Scenario 4.1: Anchor text deduplicated and appended
-# ---------------------------------------------------------------------------
+def test_without_anchor_texts_the_embedded_text_is_unchanged():
+    chunk = _chunk("First paragraph.")
+
+    cheap_layer.apply_to_enriched_chunks([chunk], dict(SOURCE), "orbit/install", [], [])
+
+    assert chunk.enriched_text == "Context.\n\nFirst paragraph."
 
 
-class TestAnchorTextDeduplicatedAndAppended:
-    """Given enriched chunks and extra_payload with duplicate anchor_texts,
-    each ec.enriched_text ends with the deduplicated anchor block."""
-
-    def test_anchor_block_appended_to_enriched_text(self):
-        chunks = _make_chunks(["Eerste paragraaf.", "Tweede paragraaf."])
-        anchor_texts_raw = ["Handleiding", "Getting Started", "Handleiding"]
-
-        # -- act: apply the anchor text augmentation logic --
-        unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-        anchor_block = ANCHOR_BLOCK_PREFIX + " | ".join(unique_anchors)
-        for ec in chunks:
-            ec.enriched_text += anchor_block
-
-        # -- assert --
-        for ec in chunks:
-            assert ec.enriched_text.endswith(
-                "Ander pagina's noemen deze pagina: Handleiding | Getting Started"
-            )
-
-    def test_duplicate_removed(self):
-        anchor_texts_raw = ["Handleiding", "Getting Started", "Handleiding"]
-        unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-        assert unique_anchors == ["Handleiding", "Getting Started"]
-
-    def test_handleiding_appears_only_once(self):
-        chunks = _make_chunks(["Tekst."])
-        anchor_texts_raw = ["Handleiding", "Getting Started", "Handleiding"]
-
-        unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-        anchor_block = ANCHOR_BLOCK_PREFIX + " | ".join(unique_anchors)
-        for ec in chunks:
-            ec.enriched_text += anchor_block
-
-        for ec in chunks:
-            assert ec.enriched_text.count("Handleiding") == 1
-
-
-# ---------------------------------------------------------------------------
-# Scenario 4.2: Empty anchor_texts list -- no modification
-# ---------------------------------------------------------------------------
-
-
-class TestEmptyAnchorTextsNoModification:
-    """Given extra_payload with empty anchor_texts, enriched_text is unchanged."""
-
-    def test_empty_list_no_change(self):
-        chunks = _make_chunks(["Originele tekst."])
-        original_texts = [ec.enriched_text for ec in chunks]
-
-        anchor_texts_raw = []
-        if anchor_texts_raw:
-            unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-            anchor_block = ANCHOR_BLOCK_PREFIX + " | ".join(unique_anchors)
-            for ec in chunks:
-                ec.enriched_text += anchor_block
-
-        for ec, orig in zip(chunks, original_texts, strict=True):
-            assert ec.enriched_text == orig
-
-    def test_missing_key_no_change(self):
-        chunks = _make_chunks(["Originele tekst."])
-        original_texts = [ec.enriched_text for ec in chunks]
-        extra_payload: dict = {}
-
-        anchor_texts_raw = extra_payload.get("anchor_texts", [])
-        if anchor_texts_raw:
-            unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-            anchor_block = ANCHOR_BLOCK_PREFIX + " | ".join(unique_anchors)
-            for ec in chunks:
-                ec.enriched_text += anchor_block
-
-        for ec, orig in zip(chunks, original_texts, strict=True):
-            assert ec.enriched_text == orig
-
-    def test_none_extra_payload_no_change(self):
-        chunks = _make_chunks(["Originele tekst."])
-        original_texts = [ec.enriched_text for ec in chunks]
-        extra_payload = None
-
-        anchor_texts_raw = extra_payload.get("anchor_texts", []) if extra_payload else []
-        if anchor_texts_raw:
-            unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-            anchor_block = ANCHOR_BLOCK_PREFIX + " | ".join(unique_anchors)
-            for ec in chunks:
-                ec.enriched_text += anchor_block
-
-        for ec, orig in zip(chunks, original_texts, strict=True):
-            assert ec.enriched_text == orig
-
-
-# ---------------------------------------------------------------------------
-# Scenario 4.3: original_text and context_prefix unchanged
-# ---------------------------------------------------------------------------
-
-
-class TestOriginalFieldsUnchanged:
-    """Given anchor_texts, original_text and context_prefix must NOT be modified."""
-
-    def test_original_text_unchanged(self):
-        chunks = _make_chunks(["Mijn originele tekst."])
-        original_original = [ec.original_text for ec in chunks]
-
-        anchor_texts_raw = ["API Documentatie"]
-        unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-        anchor_block = ANCHOR_BLOCK_PREFIX + " | ".join(unique_anchors)
-        for ec in chunks:
-            ec.enriched_text += anchor_block
-
-        for ec, orig in zip(chunks, original_original, strict=True):
-            assert ec.original_text == orig
-
-    def test_context_prefix_unchanged(self):
-        chunks = _make_chunks(["Mijn originele tekst."])
-        original_prefixes = [ec.context_prefix for ec in chunks]
-
-        anchor_texts_raw = ["API Documentatie"]
-        unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-        anchor_block = ANCHOR_BLOCK_PREFIX + " | ".join(unique_anchors)
-        for ec in chunks:
-            ec.enriched_text += anchor_block
-
-        for ec, orig in zip(chunks, original_prefixes, strict=True):
-            assert ec.context_prefix == orig
-
-    def test_questions_unchanged(self):
-        chunks = _make_chunks(["Mijn originele tekst."])
-        original_questions = [list(ec.questions) for ec in chunks]
-
-        anchor_texts_raw = ["API Documentatie"]
-        unique_anchors = list(dict.fromkeys(anchor_texts_raw))
-        anchor_block = ANCHOR_BLOCK_PREFIX + " | ".join(unique_anchors)
-        for ec in chunks:
-            ec.enriched_text += anchor_block
-
-        for ec, orig in zip(chunks, original_questions, strict=True):
-            assert ec.questions == orig
+def test_the_enrichment_step_builds_no_raw_anchor_block_of_its_own():
+    assert "Also known as" not in inspect.getsource(enrichment_tasks._enrich_document)

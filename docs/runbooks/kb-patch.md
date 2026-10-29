@@ -15,6 +15,14 @@ changed (TEI and the sparse sidecar on our own GPU, batches of 200) and never
 touches the summary, context sentence or HyPE questions. Never use
 `rebuild_kb` for a settings change.
 
+The same patch also owns the "Linked as" line: the filtered anchor texts of the
+chunk's page (`link_graph.get_anchor_texts`, page text from `crawled_pages` or
+else the artifact's stored text; a chunk without `source_url` gets none), written
+to the embedded text only. It runs after a change to `ANCHOR_RULES_VERSION`
+(`cheap_layer.py`), which makes every stored chunk out of date once, and it
+removes the old raw "Also known as" anchor block that has no twin in the
+context prefix. The dry run needs read access to `knowledge.page_links` as well.
+
 ## Order (AGENTS.md: production knowledge data is rewritten only with approval per run)
 
 Run inside the knowledge-ingest container (see [rebuild-kb.md](rebuild-kb.md)
