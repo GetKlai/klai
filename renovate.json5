@@ -82,9 +82,15 @@
   // needing human review can permanently occupy, and reviewable-but-unreviewed
   // is the normal state of a major upgrade, not an exception.
   //
-  // 0 means unlimited. Keep prHourlyLimit at its default; it is what actually
-  // protects against a flood, and removing both at once WOULD be reckless.
+  // 0 means unlimited. prHourlyLimit stays as the flood brake, but at 10, not
+  // the default 2: with everything on automerge since 2026-10-29 the merges
+  // themselves fill the two slots, and a pending PR (meilisearch 1.56 on
+  // 2026-10-29) waited from 13:13 to past 15:35 for a slot. Ten an hour still
+  // drains a stale repo gradually and keeps a burst of quality runs within
+  // what the runners absorb; unlimited would let a policy change open fifty
+  // PRs in one run and stall every other check.
   prConcurrentLimit: 0,
+  prHourlyLimit: 10,
 
   // Mirrors min-release-age=3 in klai-portal/frontend/.npmrc and exclude-newer
   // in klai-connector. Three days, Dependabot's default since July 2026: the

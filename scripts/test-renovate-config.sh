@@ -103,6 +103,11 @@ assert_contains "$config" \
 # in the portal and uv in the connector. The Semgrep registry rules that used
 # to guard these files accept nothing under 7 and are excluded in semgrep.yml,
 # so this is the check that a cooldown is present and not shorter.
+# Two new PRs an hour (Renovate's default) is a throttle the automerges fill
+# by themselves; a pending PR then waits hours for a slot (2026-10-29).
+assert_line "$config" \
+  "  prHourlyLimit: 10," \
+  'the hourly PR limit must be 10: a flood brake, not a throttle on automerge'
 assert_line "$config" \
   "  minimumReleaseAge: '3 days'," \
   'the Renovate cooldown must be 3 days'
