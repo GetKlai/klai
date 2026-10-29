@@ -25,7 +25,7 @@ from knowledge_ingest.enrichment import EnrichedChunk
 from knowledge_ingest.scripts import kb_patch
 from knowledge_ingest.utils.content_fingerprint import compute_minhash
 
-ORG, KB = "org-test", "kb-test"
+ORG, KB, ART = "org-test", "kb-test", "00000000-0000-4000-8000-000000000001"
 GROUPS = [["Orbit Desk", "Orbit app", "softphone"]]
 RULES = [{"prefix": "help.example.com/orbit/", "product": "Orbit"}]
 NAMING = "Install Orbit Desk from the download page and sign in with your work account."
@@ -45,8 +45,8 @@ def _enriched(text: str, **extra) -> dict:
 
 
 def test_a_chunk_naming_an_alias_gets_the_other_names_and_another_chunk_none():
-    naming = cheap_layer.cheap_fields(_enriched(NAMING), GROUPS, [])
-    other = cheap_layer.cheap_fields(_enriched(OTHER), GROUPS, [])
+    naming = cheap_layer.cheap_fields(_enriched(NAMING), GROUPS, [], [])
+    other = cheap_layer.cheap_fields(_enriched(OTHER), GROUPS, [], [])
 
     assert naming["context_prefix"] == f"Context.\n{ALIAS}"
     assert naming["text_enriched"] == f"Context.\n\n{NAMING}\n\n{ALIAS}"
@@ -54,9 +54,9 @@ def test_a_chunk_naming_an_alias_gets_the_other_names_and_another_chunk_none():
 
 
 def test_removing_an_alias_group_removes_its_line_again():
-    stored = {**_enriched(NAMING), **cheap_layer.cheap_fields(_enriched(NAMING), GROUPS, [])}
+    stored = {**_enriched(NAMING), **cheap_layer.cheap_fields(_enriched(NAMING), GROUPS, [], [])}
 
-    after = cheap_layer.cheap_fields(stored, [], [])
+    after = cheap_layer.cheap_fields(stored, [], [], [])
 
     assert (after["context_prefix"], after["text_enriched"]) == (
         "Context.",
@@ -64,21 +64,73 @@ def test_removing_an_alias_group_removes_its_line_again():
     )
 
 
-def test_anchor_vocabulary_is_not_taken_for_an_alias_line():
-    """Ingest appends anchor texts to the embedded text with the same "Also known
-    as:" label, but never to the context prefix; the patch must leave it."""
-    anchored = _enriched(OTHER, text_enriched=f"Context.\n\n{OTHER}\n\nAlso known as: fax inbox")
+LINKED = "Linked as: fax inbox | e-fax"
 
-    after = cheap_layer.cheap_fields(anchored, [], [])
 
-    assert after["text_enriched"] == anchored["text_enriched"]
+def test_anchors_become_a_linked_as_line_at_the_end_of_the_embedded_text_only():
+    named = cheap_layer.cheap_fields(_enriched(NAMING), GROUPS, [], ["fax inbox", "e-fax"])
+
+    assert named["context_prefix"] == f"Context.\n{ALIAS}"
+    assert named["text_enriched"] == f"Context.\n\n{NAMING}\n\n{ALIAS}\n\n{LINKED}"
+    plain = cheap_layer.cheap_fields(_enriched(OTHER), [], [], ["fax inbox", "e-fax"])
+    assert (plain["context_prefix"], plain["text_enriched"]) == (
+        "Context.",
+        f"Context.\n\n{OTHER}\n\n{LINKED}",
+    )
+
+
+def test_a_changed_or_removed_anchor_line_is_replaced_not_stacked():
+    stored = _enriched(OTHER, text_enriched=f"Context.\n\n{OTHER}\n\n{LINKED}")
+
+    changed = cheap_layer.cheap_fields(stored, [], [], ["voicemail"])
+    removed = cheap_layer.cheap_fields(stored, [], [], [])
+
+    assert changed["text_enriched"] == f"Context.\n\n{OTHER}\n\nLinked as: voicemail"
+    assert removed["text_enriched"] == f"Context.\n\n{OTHER}"
+
+
+def test_the_legacy_raw_anchor_block_goes_but_a_real_alias_line_stays():
+    """Before the "Linked as" label, ingest appended raw anchor texts as "Also known
+    as:" to the embedded text only. An alias line has a twin in the context prefix."""
+    legacy = _enriched(OTHER, text_enriched=f"Context.\n\n{OTHER}\n\nAlso known as: fax inbox")
+    legacy_with_alias = _enriched(
+        NAMING,
+        text_enriched=f"Context.\n\n{NAMING}\n\nAlso known as: fax inbox\n\n{ALIAS}",
+        context_prefix=f"Context.\n{ALIAS}",
+    )
+
+    assert cheap_layer.cheap_fields(legacy, [], [], [])["text_enriched"] == (f"Context.\n\n{OTHER}")
+    after = cheap_layer.cheap_fields(legacy_with_alias, GROUPS, [], [])
+    assert after["context_prefix"] == f"Context.\n{ALIAS}"
+    assert after["text_enriched"] == f"Context.\n\n{NAMING}\n\n{ALIAS}"
+
+
+def test_a_chunk_whose_own_text_ends_with_a_label_paragraph_keeps_it():
+    """A glossary entry can end in "Also known as: ..." itself; only a paragraph
+    appended after the chunk's text is a derived line. Fresh ingest has no twin
+    in the prefix, so without this rule the chunk's last paragraph was cut."""
+    glossary = f"{OTHER}\n\nAlso known as: fax inbox\n\nLinked as: the fax page"
+    fresh = _enriched(glossary, text_enriched=f"Context.\n\n{glossary}")
+
+    once = cheap_layer.cheap_fields(fresh, [], [], ["Fax"])
+    assert once["text_enriched"] == f"Context.\n\n{glossary}\n\nLinked as: Fax"
+    again = cheap_layer.cheap_fields({**fresh, **once}, [], [], [])
+    assert again["text_enriched"] == f"Context.\n\n{glossary}"
+
+
+def test_the_layer_version_follows_the_anchor_rules_version(monkeypatch):
+    before = cheap_layer.layer_version(GROUPS, RULES)
+
+    monkeypatch.setattr(cheap_layer, "ANCHOR_RULES_VERSION", cheap_layer.ANCHOR_RULES_VERSION + 1)
+
+    assert cheap_layer.layer_version(GROUPS, RULES) != before
 
 
 def test_the_product_follows_the_first_matching_rule_and_is_absent_without_one():
     rules = [*RULES, {"prefix": "help.example.com/", "product": "Generic"}]
 
-    assert cheap_layer.cheap_fields(SOURCE, [], rules)["product"] == "Orbit"
-    assert "product" not in cheap_layer.cheap_fields(SOURCE, [], [])
+    assert cheap_layer.cheap_fields(SOURCE, [], rules, [])["product"] == "Orbit"
+    assert "product" not in cheap_layer.cheap_fields(SOURCE, [], [], [])
 
 
 # --- kb_patch over an in-memory collection -------------------------------------------------
@@ -127,6 +179,20 @@ def _settings(groups: list, rules: list):
     return patch.object(
         kb_patch.kb_config, "org_kb_settings", AsyncMock(return_value={KB: (groups, rules)})
     )
+
+
+_real_anchors_by_url = kb_patch._anchors_by_url
+
+
+@pytest.fixture(autouse=True)
+def no_link_graph():
+    """kb_patch reads the link graph from Postgres; these tests supply the anchors instead."""
+    with patch.object(kb_patch, "_anchors_by_url", AsyncMock(return_value={})):
+        yield
+
+
+def _anchored(anchors_by_url: dict):
+    return patch.object(kb_patch, "_anchors_by_url", AsyncMock(return_value=anchors_by_url))
 
 
 def _point(n: int, text: str, **extra) -> PointStruct:
@@ -252,6 +318,68 @@ async def test_only_aliases_leaves_the_version_so_a_full_run_still_removes_a_sta
     after = (await _stored(mem_client))[1].payload
     assert "product" not in after
     assert after["cheap_layer_version"] == cheap_layer.layer_version(GROUPS, RULES)
+
+
+async def test_the_patch_rewrites_only_the_chunks_whose_anchor_line_changes(mem_client, embedders):
+    url_new, url_same = "https://help.example.com/a", "https://help.example.com/b"
+    same = _point(2, OTHER, source_url=url_same)
+    same.payload["text_enriched"] += "\n\nLinked as: voicemail"
+    await mem_client.upsert(qs.COLLECTION, points=[_point(1, OTHER, source_url=url_new), same])
+    anchors = {url_new: ["fax inbox"], url_same: ["voicemail"]}
+    dense, _ = embedders
+    new_text = f"Context.\n\n{OTHER}\n\nLinked as: fax inbox"
+
+    with _settings([], []), _anchored(anchors):
+        dry = await kb_patch.patch_org(mem_client, ORG, execute=False)
+        assert dry[KB].changes["text_enriched"] == 1
+        assert [(pid, new) for pid, f, _, new in dry[KB].examples if f == "text_enriched"] == [
+            (1, new_text)
+        ]
+        dense.assert_not_awaited()
+
+        done = await kb_patch.patch_org(mem_client, ORG, execute=True)
+
+    assert (done[KB].written, done[KB].reembedded) == (2, 1)
+    dense.assert_awaited_once_with([new_text])
+
+
+async def test_anchors_use_the_crawled_text_then_the_artifact_text_and_skip_a_chunk_without_a_url():
+    points = [
+        PointStruct(id=n, vector=[0.0], payload=payload)
+        for n, payload in enumerate(
+            [
+                {"source_url": "https://help.example.com/crawled", "artifact_id": ART},
+                {"source_url": "https://help.example.com/uploaded", "artifact_id": ART},
+                {"text": "no page"},
+            ]
+        )
+    ]
+    conn = AsyncMock()
+    conn.fetchval = AsyncMock(return_value="artifact body")
+    crawled = AsyncMock(
+        side_effect=lambda _c, _o, _k, url: "crawl body" if url.endswith("crawled") else None
+    )
+    graph = AsyncMock(return_value=["anchor"])
+
+    class _Scope:
+        async def __aenter__(self):
+            return conn
+
+        async def __aexit__(self, *exc):
+            return None
+
+    with (
+        patch.object(kb_patch, "tenant_scoped_connection", lambda _org: _Scope()),
+        patch.object(kb_patch.pg_store, "get_crawled_page_markdown", crawled),
+        patch.object(kb_patch.link_graph, "get_anchor_texts", graph),
+    ):
+        result = await _real_anchors_by_url(ORG, KB, points)
+
+    assert result == {
+        "https://help.example.com/crawled": ["anchor"],
+        "https://help.example.com/uploaded": ["anchor"],
+    }
+    assert [call.args[4] for call in graph.await_args_list] == ["crawl body", "artifact body"]
 
 
 def test_execute_without_ingest_ok_writes_nothing_and_exits_2(monkeypatch):

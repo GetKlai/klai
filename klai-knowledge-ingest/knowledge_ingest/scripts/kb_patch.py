@@ -1,7 +1,9 @@
 """Operator command: apply changed knowledge-base settings to stored chunks, with no model call.
 
 Aliases and product rules (``portal_knowledge_bases``) feed only the cheap layer
-of a chunk (cheap_layer.py): the "Also known as" line, the ``product`` label, the
+of a chunk (cheap_layer.py): the "Also known as" line, the "Linked as" line (the
+anchor texts other pages use for the chunk's page, read from ``knowledge.page_links``
+through link_graph.get_anchor_texts), the ``product`` label, the
 ``text_fingerprint``, and the dense and sparse vectors of the embedded text. This
 recomputes that layer for the points whose ``cheap_layer_version`` differs from
 the KB's current settings, re-embeds (TEI and the sparse sidecar on our own GPU)
@@ -49,7 +51,15 @@ from qdrant_client.models import (
     UpdateVectorsOperation,
 )
 
-from knowledge_ingest import cheap_layer, embedder, kb_config, sparse_embedder
+from knowledge_ingest import (
+    cheap_layer,
+    embedder,
+    kb_config,
+    link_graph,
+    pg_store,
+    sparse_embedder,
+)
+from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.qdrant_store import COLLECTION, get_client
 
 _BATCH = 200
@@ -59,7 +69,15 @@ _FIELDS = {
     "products": ("product", "text_fingerprint"),
 }
 _FIELDS["all"] = (*_FIELDS["aliases"], *_FIELDS["products"], "cheap_layer_version")
-_PAYLOAD = ["source_type", "source_url", "source_ref", "path", "text", *_FIELDS["all"]]
+_PAYLOAD = [
+    "source_type",
+    "source_url",
+    "source_ref",
+    "artifact_id",
+    "path",
+    "text",
+    *_FIELDS["all"],
+]
 
 
 @dataclass
@@ -91,6 +109,36 @@ async def patch_org(
         slug: await _patch_kb(client, org_id, slug, *settings[slug], only=only, execute=execute)
         for slug in slugs
     }
+
+
+async def _anchors_by_url(org_id: str, kb_slug: str, points: list) -> dict[str, list[str]]:
+    """The filtered anchor texts of the pages the points belong to, by source_url.
+
+    The page text for the "already on the page" layer is the crawled markdown;
+    a page without a crawl row falls back to the artifact's stored document text.
+    A point without a source_url has no page, so no anchors.
+    """
+    artifacts = {
+        p.payload["source_url"]: p.payload.get("artifact_id")
+        for p in points
+        if (p.payload or {}).get("source_url")
+    }
+    anchors: dict[str, list[str]] = {}
+    if not artifacts:
+        return anchors
+    async with tenant_scoped_connection(org_id) as conn:
+        for url, artifact_id in artifacts.items():
+            text = await pg_store.get_crawled_page_markdown(conn, org_id, kb_slug, url)
+            if text is None and artifact_id:
+                text = await conn.fetchval(
+                    "SELECT extra->>'document_text' FROM knowledge.artifacts "
+                    "WHERE org_id = $1 AND kb_slug = $2 AND id = $3::uuid",
+                    org_id,
+                    kb_slug,
+                    artifact_id,
+                )
+            anchors[url] = await link_graph.get_anchor_texts(conn, url, org_id, kb_slug, text or "")
+    return anchors
 
 
 async def _patch_kb(
@@ -129,9 +177,14 @@ async def _patch_kb(
         )
         result.selected += len(points)
         updates = []  # (point id, payload to set, keys to delete, text to embed or None)
+        anchors = (
+            await _anchors_by_url(org_id, kb_slug, points) if "text_enriched" in fields else {}
+        )
         for point in points:
             old = point.payload or {}
-            new = cheap_layer.cheap_fields(old, groups, rules)
+            new = cheap_layer.cheap_fields(
+                old, groups, rules, anchors.get(old.get("source_url"), [])
+            )
             # A field cheap_fields leaves out is not its to change, except a
             # product no rule matches any more: that label is deleted.
             changed = [

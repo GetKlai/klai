@@ -54,43 +54,49 @@ async def test_get_outbound_urls_empty_when_no_links():
     assert result == []
 
 
-# -- Scenario 1.2: get_anchor_texts filters empty/whitespace strings --
+# -- Scenario 1.2: get_anchor_texts is the single filter point for anchor texts --
+
+TARGET = "https://docs.example.com/target"
+PAGE = "Orbit Desk answers calls from your laptop."
+
+
+async def _anchors(rows: list[dict], page_text: str = PAGE) -> tuple[list[str], MagicMock]:
+    conn = _make_conn()
+    conn.fetch = AsyncMock(return_value=rows)
+    result = await link_graph.get_anchor_texts(
+        conn, url=TARGET, org_id="org-1", kb_slug="docs", page_text=page_text
+    )
+    return result, conn
 
 
 @pytest.mark.asyncio
-async def test_get_anchor_texts_returns_non_empty_texts():
-    conn = _make_conn()
-    conn.fetch = AsyncMock(
-        return_value=[
-            {"link_text": "Pagina B"},
-            {"link_text": ""},
-            {"link_text": "   "},
-            {"link_text": "Pagina C"},
-            {"link_text": None},
-        ]
-    )
+async def test_get_anchor_texts_asks_for_no_self_links_and_no_texts_spread_over_many_pages():
+    _, conn = await _anchors([])
 
-    result = await link_graph.get_anchor_texts(
-        conn, url="https://docs.example.com/target", org_id="org-1", kb_slug="docs"
-    )
-
-    assert result == ["Pagina B", "Pagina C"]
+    conn.fetch.assert_awaited_once()  # one round-trip
+    sql, *params = conn.fetch.call_args[0]
+    assert "split_part(to_url, '#', 1) <> split_part(from_url, '#', 1)" in sql
+    assert "count(DISTINCT to_url) >= $4" in sql
+    assert "count(DISTINCT from_url) DESC" in sql
+    assert params == ["org-1", "docs", TARGET, link_graph.SPREAD_LIMIT]
 
 
 @pytest.mark.asyncio
-async def test_get_anchor_texts_empty_when_all_blank():
-    conn = _make_conn()
-    conn.fetch = AsyncMock(
-        return_value=[
-            {"link_text": ""},
-            {"link_text": "   "},
-            {"link_text": None},
-        ]
-    )
+async def test_get_anchor_texts_keeps_the_database_order_drops_boilerplate_and_caps_at_five():
+    rows = [
+        {"text": "Read more"},
+        {"text": "Orbit Desk"},
+        *({"text": f"Softphone {n}"} for n in range(1, 8)),
+    ]
 
-    result = await link_graph.get_anchor_texts(
-        conn, url="https://docs.example.com/target", org_id="org-1", kb_slug="docs"
-    )
+    result, _ = await _anchors(rows)
+
+    assert result == [f"Softphone {n}" for n in range(1, 6)]
+
+
+@pytest.mark.asyncio
+async def test_get_anchor_texts_is_empty_when_nothing_links_here():
+    result, _ = await _anchors([])
 
     assert result == []
 
@@ -145,7 +151,7 @@ async def test_get_anchor_texts_passes_org_and_kb_to_query():
     conn = _make_conn()
 
     await link_graph.get_anchor_texts(
-        conn, url="https://example.com/page", org_id="org-42", kb_slug="help-center"
+        conn, url="https://example.com/page", org_id="org-42", kb_slug="help-center", page_text=""
     )
 
     conn.fetch.assert_called_once()

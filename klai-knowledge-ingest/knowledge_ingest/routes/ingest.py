@@ -883,6 +883,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             {**extra_payload, "path": req.path},
             await kb_config.get_kb_aliases(req.org_id, req.kb_slug),
             await kb_config.get_kb_product_rules(req.org_id, req.kb_slug),
+            extra_payload.get("anchor_texts") or [],
         )
     )
     enrichment_skip = enrichment_skip_reason(chunk_count=len(texts), extra_payload=extra_payload)

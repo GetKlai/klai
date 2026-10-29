@@ -1023,7 +1023,7 @@ async def crawl_url(request: CrawlRequest, http_request: Request) -> CrawlRespon
                 conn, request.url, request.org_id, request.kb_slug
             )
             anchors = await link_graph.get_anchor_texts(
-                conn, request.url, request.org_id, request.kb_slug
+                conn, request.url, request.org_id, request.kb_slug, fit_md
             )
             incoming = await link_graph.get_incoming_count(
                 conn, request.url, request.org_id, request.kb_slug

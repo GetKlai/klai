@@ -1989,7 +1989,7 @@ async def _ingest_crawl_result(
         from knowledge_ingest import link_graph
 
         outbound = await link_graph.get_outbound_urls(conn, url, org_id, kb_slug)
-        anchors = await link_graph.get_anchor_texts(conn, url, org_id, kb_slug)
+        anchors = await link_graph.get_anchor_texts(conn, url, org_id, kb_slug, text)
         incoming = await link_graph.get_incoming_count(conn, url, org_id, kb_slug)
         extra["links_to"] = outbound[:20]
         extra["anchor_texts"] = anchors
