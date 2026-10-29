@@ -85,3 +85,7 @@ yahoo.nl
 gmx.de
 ziggo.nl
 kpnmail.nl
+
+# Platforms and vendors where a customer is identified by a subdomain or not at all
+intermedia.com
+europa.eu

@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -30,6 +29,9 @@ from urllib.parse import urlsplit
 
 DEFAULT_PSQL = "docker exec -i klai-core-postgres-1 psql -U klai -d klai -At -F"
 DEFAULT_OUTPUT = Path("/opt/klai/private/tenant-names.txt")
+# Platform and vendor domains that cannot go in the public allowlist because the
+# guard would then see them as customer names; one per line, optional.
+DEFAULT_EXTRA_ALLOWED = Path("/opt/klai/private/platform-domains.txt")
 DEFAULT_ALLOWED = (
     Path(__file__).resolve().parents[2] / "scripts" / "allowed-test-domains.txt"
     if len(Path(__file__).resolve().parents) > 2
@@ -41,36 +43,58 @@ MIN_WORD = 5
 
 STOPLIST = frozenset(
     [
-        "test",
-        "demo",
-        "support",
         "admin",
-        "klai",
-        "voys",
-        "example",
-        "local",
+        "b.v.",
+        "bv",
         "cloud",
-        "online",
-        "portal",
-        "wiki",
-    ]
-    + [
-        "docs",
-        "help",
-        "mail",
-        "info",
-        "shop",
-        "team",
-        "group",
-        "services",
-        "solutions",
+        "com",
         "company",
+        "demo",
+        "docs",
+        "energized",
+        "europa",
+        "example",
+        "getklai",
+        "group",
+        "growth",
+        "help",
         "holding",
+        "info",
+        "intelligence",
+        "internet",
+        "klai",
+        "local",
+        "mail",
+        "nieuw",
+        "nl",
+        "onderwijs",
+        "online",
+        "openbaar",
+        "partners",
+        "portal",
+        "privacy",
+        "prompters",
+        "python",
+        "report",
+        "security",
+        "services",
+        "shop",
+        "solutions",
+        "specs",
+        "stichting",
+        "studio",
+        "support",
+        "team",
+        "telecom",
+        "test",
+        "united",
+        "villa",
+        "voys",
+        "wiki",
+        "www",
     ]
-    + ["bv", "b.v.", "nl", "com", "www"]
 )
 _SECOND_LEVEL = frozenset({"co", "com", "org", "net", "eu"})
-_WORD = re.compile(r"[^\W\d_]+")
 
 SOURCES = {
     "orgs": "select name, slug, primary_domain from public.portal_orgs where deleted_at is null",
@@ -99,11 +123,9 @@ def _usable(label: str) -> bool:
 
 
 def host_entries(host: str, allowed: list[str]) -> set[str]:
-    """A registrable domain and its first label; on an allowed platform only the customer's subdomain."""
-    for platform in allowed:
-        if host == platform or host.endswith("." + platform):
-            sub = host[: -len(platform) - 1].split(".")[-1] if host != platform else ""
-            return {sub} if sub and _usable(sub) else set()
+    """A registrable domain and its first label; nothing for a vendor or platform host."""
+    if any(host == d or host.endswith("." + d) for d in allowed):
+        return set()
     domain = registrable(host)
     first = domain.split(".")[0]
     if first in STOPLIST:
@@ -111,17 +133,20 @@ def host_entries(host: str, allowed: list[str]) -> set[str]:
     return {domain} | ({first} if _usable(first) else set())
 
 
-def org_entries(name: str) -> set[str]:
+def org_entries(name: str, slug: str, domain_label: str) -> set[str]:
+    """A name is kept whole and only when it is specific: a phrase of two or more
+    words, or one word that is also the org's own domain label or slug (an
+    identifier, not a dictionary word). Names are never split into words."""
     name = " ".join(name.lower().split())
-    full = {name} if _usable(name) else set()
-    return full | {
-        w for w in _WORD.findall(name) if len(w) >= MIN_WORD and w not in STOPLIST
-    }
-
-
-def slug_entries(slug: str) -> set[str]:
-    slug = slug.strip().lower()
-    return {slug} if _usable(slug) else set()
+    if len(name.split()) >= 2:
+        return {name}
+    if (
+        len(name) >= MIN_WORD
+        and _usable(name)
+        and name in (slug.strip().lower(), domain_label)
+    ):
+        return {name}
+    return set()
 
 
 def email_entries(email: str, allowed: list[str]) -> set[str]:
@@ -136,8 +161,9 @@ def derive(rows: dict[str, list[list[str]]], allowed: list[str]) -> dict[str, se
     """Entries per source. Rows are lists of column values, empty string for NULL."""
     out: dict[str, set[str]] = {"orgs": set(), "users": set(), "connectors": set()}
     for name, slug, domain in (_pad(r, 3) for r in rows.get("orgs", [])):
-        out["orgs"] |= org_entries(name) | slug_entries(slug)
         host = host_of(domain)
+        label = registrable(host).split(".")[0] if host else ""
+        out["orgs"] |= org_entries(name, slug, label)
         if host:
             out["orgs"] |= host_entries(host, allowed)
     for (email,) in (_pad(r, 1) for r in rows.get("users", [])):
@@ -220,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--allowed", type=Path, default=DEFAULT_ALLOWED)
+    parser.add_argument("--extra-allowed", type=Path, default=DEFAULT_EXTRA_ALLOWED)
     parser.add_argument(
         "--dry-run", action="store_true", help="print counts only, write nothing"
     )
@@ -228,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
     psql = shlex.split(args.psql) if args.psql else [*shlex.split(DEFAULT_PSQL), "\t"]
     try:
         allowed = load_allowed(args.allowed)
+        if args.extra_allowed.is_file():
+            allowed += load_allowed(args.extra_allowed)
     except OSError as exc:
         print(
             f"refresh-tenant-names: allowlist unavailable ({exc}); pass --allowed",
