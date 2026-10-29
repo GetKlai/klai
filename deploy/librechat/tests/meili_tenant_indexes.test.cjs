@@ -77,16 +77,22 @@ for (const target of [entrypoint, getklaiEntrypoint]) {
   assert.match(target, /ambiguous LibreChat data-schemas dist shape/);
 }
 
-assert.match(dockerCompose, /image: getmeili\/meilisearch:v1\.55\.0/);
+// The tag itself is Renovate's to move (AGENTS.md, automatic by default): the
+// contract is that both compose files run the same release and set
+// MEILI_UPGRADE_DB, which is what lets a minor open the previous minor's
+// database. A bump that breaks the upgrade is caught by the compose sync's
+// snapshot and probe, not by a version pinned here.
+const meiliImage = dockerCompose.match(/image: getmeili\/meilisearch:(v\d+\.\d+\.\d+)/);
+assert.ok(meiliImage, 'deploy compose pins a getmeili/meilisearch release tag');
 assert.match(dockerCompose, /MEILI_DB_PATH: \/meili_data/);
 // Every Meilisearch minor refuses the previous minor's database without it.
 assert.match(dockerCompose, /MEILI_UPGRADE_DB: "true"/);
 assert.match(dockerCompose, /MEILI_MASTER_KEY: "\$\{GETKLAI_MEILI_API_KEY:\?set a Meili key scoped to getklai_messages,getklai_convos\}"/);
 assert.match(dockerCompose, /MEILI_MESSAGES_INDEX: getklai_messages/);
 assert.match(dockerCompose, /MEILI_CONVOS_INDEX: getklai_convos/);
-assert.match(dockerCompose, /ghcr\.io\/danny-avila\/librechat:v0\.8\.7/);
+assert.match(dockerCompose, /ghcr\.io\/danny-avila\/librechat:v\d+\.\d+\.\d+/);
 assert.match(dockerCompose, /librechat\/getklai\/entrypoint\.sh:\/klai-entrypoint\.sh:ro/);
-assert.match(devCompose, /image: getmeili\/meilisearch:v1\.55\.0/);
+assert.ok(devCompose.includes(`image: getmeili/meilisearch:${meiliImage[1]}`), 'dev compose runs the same Meilisearch release as deploy');
 assert.match(devCompose, /MEILI_DB_PATH: \/meili_data/);
 assert.match(devCompose, /MEILI_UPGRADE_DB: "true"/);
 
