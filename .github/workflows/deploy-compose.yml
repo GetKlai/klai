@@ -189,6 +189,11 @@ jobs:
             # Pulled here, from this commit's compose file, while no file on the
             # host has changed: a tag that does not exist ends the run red here.
             bash deploy/scripts/vexa-bot-prepull.sh deploy/docker-compose.yml
+            # What waited for a 30-minute window to close: the old data directory
+            # of a Postgres major goes, and Mongo's featureCompatibilityVersion is
+            # raised to the running version. A refused FCV bump stops here, before
+            # anything changed.
+            ds_settle
             # S8a: a Postgres image change, or one of an app that migrates its
             # own database (Twenty, GlitchTip, Zitadel), is dumped first, while
             # nothing has changed yet. Short on disk (twice the volume size) or a
@@ -467,6 +472,10 @@ jobs:
             # re-apply (also on failure). The incidents behind each part are in
             # the script; it was installed by the deploy/scripts loop above, so
             # it is the version from this commit.
+            # A Postgres major: consumers stop, the final dump, the new major on
+            # its own empty data directory, roles and databases restored and
+            # counted. Red puts the previous image back on the old directory.
+            ds_cutover
             rb_gate compose compose-up-verification /opt/klai/scripts/compose-env-drift-recreate.sh
             # S8a: per snapshot of this run, recreate a changed store's consumers
             # (they hold pools to the old container) and probe its tables. Red

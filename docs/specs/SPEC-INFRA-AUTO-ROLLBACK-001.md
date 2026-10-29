@@ -195,13 +195,31 @@ is the inventory and already names a backup kind per data volume (`sql`,
 - **Rolled back:** stop the store, put the snapshot back, start the previous
   image, run the probe again. Only inside the 30-minute window of R4.
 - **Cannot be rolled back:** writes after the snapshot; a Mongo FCV bump, which
-  therefore stays a separate human step; a Postgres major, which stays a
-  scripted dump-and-restore on a copy.
+  is therefore only raised after the window (below).
+- **Postgres majors (as built, 2026-10-29; D1 withdrawn):** a new major cannot
+  open the old data directory, so the deploy migrates it. A gate just before
+  the env-drift sweep stops the consumers, dumps every database and the roles,
+  renames the old directory to `<PGDATA>.aside` inside the volume (the 19
+  entrypoint refuses to initialise while another `*/docker` holds a
+  `PG_VERSION`), starts the new major on an empty directory whose entrypoint
+  runs initdb with the compose environment, and restores and counts. A missing
+  extension in the new image is a red gate. Red inside the window renames the
+  old directory back and starts the previous image; past it the next sync
+  removes the `.aside` copy. The disk check of twice the volume covers the
+  dump and the new directory. Verified with real Docker on 18.6 to 19rc1 and
+  pgvector 0.8.7 (pg18 to a pg19rc1 build): counts, a vector query and a role
+  login with its real password equal before and after; a forced red gate and a
+  missing pgvector both put the old directory back.
+- **Mongo FCV (as built, 2026-10-29):** at the start of every sync, once no
+  Mongo snapshot is inside its window, the FCV is raised to the running
+  version (`setFeatureCompatibilityVersion`, `confirm: true`), so the next
+  release starts from it. Inside the window a changed FCV still refuses a
+  restore (`mongo-fcv`).
 - **Automated after this spec:** patches and minors of every store listed
   above, one minor at a time (the Twenty pattern). For Postgres a Renovate
   "minor" (18.6 to 18.7) is a Postgres minor release with the same on-disk
-  format, which makes it the safest case, yet today the "Data store series
-  bumps" rule holds it for review. Majors: see D1 and D2.
+  format, which makes it the safest case. Majors as well (section 5; D1 and D2
+  withdrawn).
 - **Proven:** a restore rehearsal on the 1st and 15th (02:17 UTC) restores
   each store's latest snapshot into a throwaway container on core-01 (never
   the live volume) and requires the restored facts to equal the snapshot's

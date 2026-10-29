@@ -644,22 +644,6 @@
     },
     {
       description:
-        'mongo: pinned below 8.1 until the FCV step is automated (branch \
-        feat/datastore-major-migration lifts this ceiling). A reproduced \
-        breakage, not a policy: each MongoDB release only starts on the \
-        featureCompatibilityVersion of the release before it (8.2 needs FCV \
-        8.1, 8.3 needs 8.2), the FCV bump is a separate command after the \
-        upgrade, and Community has no binary downgrade. We ran 8.2 on FCV 8.0 \
-        until 2026-09-26 and went back to 8.0 with a mongodump/mongorestore \
-        (deploy/VERSIONS.md). With separateMultipleMinor in the data-store \
-        group and the automated FCV bump after each rollback window, the \
-        minors then flow one at a time on their own.',
-      matchDatasources: ['docker', 'github-tags'],
-      matchPackageNames: ['mongo', 'mongodb/mongo'],
-      allowedVersions: '<8.1',
-    },
-    {
-      description:
         'python (docker base): pinned below 3.14 — spacy 3.8.14 in \
         klai-connector publishes wheels for cp312/cp313 only, so a 3.14 base \
         image cannot install the dependency tree at all. Lift when spacy \

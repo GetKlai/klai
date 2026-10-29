@@ -78,6 +78,10 @@ REDIS_BUMP="${OLD_COMPOSE//redis:8.10.2-alpine/redis:8.10.3-alpine}"
 CRM_REDIS_BUMP="${OLD_COMPOSE//redis:8.8.0-alpine/redis:8.8.1-alpine}"
 MONGO_BUMP="${OLD_COMPOSE//mongo:8.0.34/mongo:8.0.35}"
 RABBIT_BUMP="${OLD_COMPOSE//rabbitmq:4.4.0-alpine/rabbitmq:4.4.1-alpine}"
+UMAMI_MAJOR="${OLD_COMPOSE//postgres:18.6-alpine
+  umami:/postgres:19.1-alpine
+  umami:}"
+PG_MAIN_MAJOR="${OLD_COMPOSE//pgvector:0.8.7-pg18/pgvector:0.8.7-pg19}"
 
 new_case() {
   case_dir="$work/$1"
@@ -140,12 +144,14 @@ run_driver() {
 set -e
 source "$helper"
 rb_init bbb222
+ds_settle
 ds_snapshot_changed "\$KLAI_COMPOSE_DIR/docker-compose.yml" "\$KLAI_COMPOSE_DIR/new-compose.yml"
 ${2:-}
 rb_keep "\$KLAI_COMPOSE_DIR/docker-compose.yml"
 cp "\$KLAI_COMPOSE_DIR/new-compose.yml" "\$KLAI_COMPOSE_DIR/docker-compose.yml"
 red() { echo "red: \$*"; return 1; }
 ${3:-}
+ds_cutover
 rb_gate compose compose-up-verification "\$KLAI_COMPOSE_DIR/scripts/compose-env-drift-recreate.sh"
 ds_gates
 ${4:-}
@@ -456,6 +462,82 @@ new_case epoch_after_dumps
 run_driver "$UMAMI_BUMP" 'echo "epoch line count: $(grep -c ^epoch= "${DS_SNAPSHOTS[0]}/meta") last: $(tail -n1 "${DS_SNAPSHOTS[0]}/meta" | cut -d= -f1)"'
 check "epoch written once, after the dump" "epoch line count: 1 last: epoch" "$(grep '^epoch line count' "$case_dir/out")"
 
+# --- Postgres majors ----------------------------------------------------------
+pgdir() { [[ -d "$case_dir/fake/pgdir/$1" ]] && echo yes || echo no; }
+
+# A minor reads its major from the images and stays on the plain path.
+check "  18.6 -> 18.7 is no major: no cutover, no roles dumped" "0 no" "$(grep -c pg_dumpall "$work/green_store/fake/calls" || true) $(grep -q '^new_pgdata=' "$(find "$work/green_store/backups" -maxdepth 1 -name 'pre-umami-postgres-*' | head -n1)/meta" && echo yes || echo no)"
+
+new_case major_green
+: > "$case_dir/fake/new_writes"
+# A write after the snapshot step reaches the new major: the dump waits for the cutover.
+run_driver "$UMAMI_MAJOR" 'echo 95 > "$FAKE/db/umami-postgres/umami/public.website_event"'
+snap="$(snapdir umami-postgres)"
+check "umami-postgres 18.6 -> 19.1, probe green -> exit 0" 0 "$rc"
+check "  major read from the running container and the pulled image" "pg_major=18 19,new_pgdata=/var/lib/postgresql/19/docker" "$(grep -E '^(pg_major|new_pgdata)=' "$snap/meta" | paste -sd, -)"
+check "  consumer stopped, then dumped, store recreated, then the sweep" yes "$( (( $(order_of 'stop umami$') < $(order_of pg_dump) && $(order_of pg_dump) < $(order_of 'up -d --no-deps --force-recreate umami-postgres') && $(order_of 'up -d --no-deps --force-recreate umami-postgres') < $(order_of ^sweep) )) && echo yes || echo no)"
+check "  baseline is the final state, write after the snapshot step included" "umami public.website_event 95,umami public.session 52" "$(paste -sd, "$snap/baseline.counts")"
+check "  roles restored, CREATE ROLE tolerating the ones init made" yes "$(grep -q 'DO \$\$ BEGIN CREATE ROLE grafana_reader; EXCEPTION WHEN duplicate_object' "$case_dir/fake/globals_applied_umami-postgres" && echo yes || echo no)"
+check "  new major restored from the dump, the new version writes on" "100 52" "$(count umami-postgres/umami/public.website_event) $(count umami-postgres/umami/public.session)"
+check "  old directory moved aside as the cutover found it" 95 "$(cat "$case_dir/fake/pgdir/umami-postgres/18_docker.aside/umami/public.website_event")"
+check "  store on the new major, consumer recreated after the sweep" "postgres:19.1-alpine 1" "$(running umami-postgres) $(calls 'compose-up --no-pull --force-recreate umami$')"
+check "  ledger: snapshot, migrated" "umami-postgres snapshot,umami-postgres migrated" "$(data_ledger)"
+
+# The next syncs: inside the window the old directory stays, past it it goes.
+run_driver "${UMAMI_MAJOR//caddy:2.9/caddy:2.10}"
+check "  next sync inside the window -> old directory kept" "0 yes" "$rc $(pgdir umami-postgres/18_docker.aside)"
+sed -i.bak "s/^epoch=.*/epoch=$(( $(date -u +%s) - 1860 ))/" "$snap/meta"
+# Past the window, but without proof the new cluster is the state to keep.
+sed -i.bak '/^migrated=/d' "$snap/meta"
+run_driver "${UMAMI_MAJOR//caddy:2.9/caddy:2.12}"
+check "  past the window without migrated=yes -> .aside kept" "0 yes 1" "$rc $(pgdir umami-postgres/18_docker.aside) $(grep -c 'never finished its restore' "$case_dir/out")"
+echo migrated=yes >> "$snap/meta"
+echo "commit=old gate=datastore-probe" > "$case_dir/.compose-rollback-failed"
+run_driver "${UMAMI_MAJOR//caddy:2.9/caddy:2.13}"
+check "  past the window with a rollback_failed flag -> .aside kept" "yes 1" "$(pgdir umami-postgres/18_docker.aside) $(grep -c 'ended rollback_failed' "$case_dir/out")"
+run_driver "${UMAMI_MAJOR//caddy:2.9/caddy:2.11}"
+check "  next sync past the window -> old directory removed, new one kept" "0 no yes" "$rc $(pgdir umami-postgres/18_docker.aside) $(pgdir umami-postgres/19_docker)"
+check "  removed once" 1 "$(calls 'rm -rf /var/lib/postgresql/18/docker.aside')"
+
+# The cutover fails before the old directory moves: store and consumers come back.
+new_case major_dump_fails
+: > "$case_dir/fake/pg_dump_fails"
+run_driver "$UMAMI_MAJOR"
+check "umami-postgres major, pg_dump fails at the cutover -> exit 3, gate datastore-major" "3 datastore-major" "$rc $(report gate)"
+check "  consumer started again before the rollback sweep" yes "$( (( $(order_of 'stop umami$') < $(order_of 'compose-up --no-pull --force-recreate umami$') && $(order_of 'compose-up --no-pull --force-recreate umami$') < $(order_of ^sweep) )) && echo yes || echo no)"
+check "  store untouched: old image, not recreated, nothing moved" "postgres:18.6-alpine 0 no 91" "$(running umami-postgres) $(calls 'up -d --no-deps --force-recreate umami-postgres') $(pgdir umami-postgres/18_docker.aside) $(count umami-postgres/umami/public.website_event)"
+
+# A red gate inside the window puts the old directory back.
+new_case major_red
+: > "$case_dir/fake/new_writes"
+run_driver "$UMAMI_MAJOR" "" "" 'rb_gate umami-postgres forced red'
+check "umami-postgres major, red gate after the probe -> exit 3" 3 "$rc"
+check "  compose file and previous image back" "postgres:18.6-alpine postgres:18.6-alpine" "$(umami_pg_image) $(running umami-postgres)"
+check "  old directory opened again, the new major's writes gone" "91 52" "$(count umami-postgres/umami/public.website_event) $(count umami-postgres/umami/public.session)"
+check "  new major's directory removed, the old one renamed back" "no yes no" "$(pgdir umami-postgres/19_docker) $(pgdir umami-postgres/18_docker) $(pgdir umami-postgres/18_docker.aside)"
+check "  no pg_restore for the put-back" 1 "$(calls 'pg_restore -U umami --create')"
+check "  consumer recreated after the put-back" yes "$( (( $(grep -n 'rm -rf /var/lib/postgresql/19/docker' "$case_dir/fake/calls" | tail -n1 | cut -d: -f1) < $(grep -n 'compose-up --no-pull --force-recreate umami$' "$case_dir/fake/calls" | tail -n1 | cut -d: -f1) )) && echo yes || echo no)"
+check "  ledger: snapshot, migrated, restored" "umami-postgres snapshot,umami-postgres migrated,umami-postgres restored" "$(data_ledger)"
+
+# Dry mode on a major: the probe is forced red and the put-back is the real one.
+new_case major_dry
+echo umami-postgres > "$case_dir/.datastore-dry"
+run_driver "$UMAMI_MAJOR"
+check "dry mode on a major -> forced red, exit 3" 3 "$rc"
+check "  put back on the old directory, no throwaway" "postgres:18.6-alpine 0 no" "$(running umami-postgres) $(calls klai-datastore-dry) $(pgdir umami-postgres/19_docker)"
+check "  ledger: snapshot, migrated, restored" "umami-postgres snapshot,umami-postgres migrated,umami-postgres restored" "$(data_ledger)"
+
+# The new image lacks an extension the old cluster uses: red before any restore.
+new_case major_ext_missing
+echo vector > "$case_dir/fake/db/postgres/glitchtip/.ext"
+echo vector > "$case_dir/fake/missing_ext"
+run_driver "$PG_MAIN_MAJOR"
+check "postgres pg18 -> pg19 without vector -> exit 3, gate datastore-major" "3 datastore-major" "$rc $(report gate)"
+check "  named in the log" 1 "$(grep -c 'extension vector of the old cluster is not in pgvector/pgvector:0.8.7-pg19' "$case_dir/out")"
+check "  nothing restored into the new major, no sweep before the rollback" "0 1" "$(calls 'pg_restore -U klai --create') $(calls '^sweep')"
+check "  previous image on the old directory, counts as before" "pgvector/pgvector:0.8.7-pg18 1 no" "$(running postgres) $(count postgres/glitchtip/public.users_user) $(pgdir postgres/19_docker)"
+check "  ledger: snapshot, restored" "postgres snapshot,postgres restored" "$(data_ledger)"
+
 # --- S8b: the other engines --------------------------------------------------
 eng() { sed -n "s/^$2=//p" "$case_dir/fake/eng/$1"; }
 image_of_case() { grep -A1 "^  $1:" "$case_dir/docker-compose.yml" | awk '/image:/ { print $2 }'; }
@@ -529,6 +611,24 @@ check "  report outcome" rollback_failed "$(report outcome)"
 check "  nothing restored, new compose file left in place" "0 mongo:8.0.35" "$(calls 'volumes-from cid-mongodb -v') $(image_of_case mongodb)"
 check "  failure flag written" yes "$([[ -e "$case_dir/.compose-rollback-failed" ]] && echo yes || echo no)"
 check "  baseline holds document counts per collection" "count tenant_a.messages 40,count tenant_b.messages 7" "$(grep '^count ' "$(snapdir mongodb)/baseline.facts" | paste -sd, -)"
+
+# FCV: raised at the start of a sync once no mongo snapshot is inside its window.
+fcv_case() {
+  new_case "$1"
+  sed -i.bak 's/^version=.*/version=8.2.3/' "$case_dir/fake/eng/mongodb"
+  mkdir -p "$case_dir/backups/pre-mongodb-20261029T080000Z"
+  printf 'name=mongodb\nstore=mongodb\nengine=mongo\nepoch=%s\n' "$(( $(date -u +%s) - $2 ))" > "$case_dir/backups/pre-mongodb-20261029T080000Z/meta"
+  [[ -z "${3:-}" ]] || : > "$case_dir/fake/$3"
+  run_driver "${OLD_COMPOSE//caddy:2.9/caddy:2.10}"
+}
+fcv_case fcv_inside_window 600
+check "mongo 8.2.3 on FCV 8.0, snapshot 10 min old -> FCV stays" "0 8.0 0" "$rc $(eng mongodb fcv) $(calls 'setFeatureCompatibilityVersion')"
+check "  reason printed" 1 "$(grep -c 'mongodb has a snapshot inside its window' "$case_dir/out")"
+fcv_case fcv_after_window 1860
+check "mongo 8.2.3 on FCV 8.0, snapshot 31 min old -> FCV 8.2" "0 8.2" "$rc $(eng mongodb fcv)"
+check "  raised before the snapshot step, ledger line" "mongodb fcv_raised" "$(data_ledger)"
+fcv_case fcv_refused 1860 fcv_fails
+check "setFeatureCompatibilityVersion fails -> the sync stops before any change" "1 0 caddy:2.9" "$rc $(calls '^sweep') $(image_of_case caddy)"
 
 # A cold copy whose stop reports an error still starts the store again.
 new_case stop_fails
