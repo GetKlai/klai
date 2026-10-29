@@ -177,6 +177,11 @@ jobs:
       - name: datastore rollback suite
         run: bash deploy/scripts/tests/datastore-rollback.test.sh
 
+      # The daily image sweep: removing a :previous tag or a compose tag would
+      # take away what the next rollback puts back.
+      - name: docker image sweep suite
+        run: bash deploy/scripts/tests/docker-image-sweep.test.sh
+
       # The rehearsal that proves those snapshots restore, and that one failing
       # store ends the run red without hiding the others.
       - name: datastore restore rehearsal suite

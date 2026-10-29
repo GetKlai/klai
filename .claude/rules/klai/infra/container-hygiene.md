@@ -92,7 +92,14 @@ runs checks and `exit 2` blocks the tool-call:
    `docker image prune -af`, `docker system prune -a`,
    `docker compose down --volumes`. These never have a one-shot
    legitimate use — REQ-6's daily `docker-cleanup.timer` is the canonical
-   safe-cleanup path.
+   safe-cleanup path. Since 2026-10-29 that unit also runs
+   `deploy/scripts/docker-image-sweep.sh`, which removes tagged images no
+   container uses after 24 h while keeping every `klai/*` tag (`:previous`
+   is the rollback target), the locally built crawl4ai and every tag in the
+   current or previous compose file. Tagged images are never dangling, and
+   with every update automerged the deploys left 221 of them (235 GB) in
+   two days; core-01 hit 100% disk at 16:33 UTC and the compose sync
+   refused its data-store snapshots for lack of headroom.
 2. **Tenant-pattern match:** target matches `librechat-*` (klasse-B
    provisioning-managed) OR ends in `-voys`/`-getklai`/`-<word>-tenant`.
    Hard block; the message points at the deprovisioning flow because
