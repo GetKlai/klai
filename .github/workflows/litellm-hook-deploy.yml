@@ -17,9 +17,17 @@ on:
     types: [completed]
     branches: [main]
 
-# Never beside the compose sync: both recreate containers on core-01.
+# Its own group, not the compose sync's. GitHub keeps one pending run per
+# group and cancels the older pending one whenever a new run arrives, and this
+# workflow arrives after every green sync: on 2026-10-29 16:48 UTC its
+# workflow_run start cancelled the two syncs queued behind the sync that had
+# just finished (and the same happened at 22:52 UTC the day before), so a
+# merged compose change never reached the host until the next merge. Mutual
+# exclusion on core-01 does not need the group: compose-up.sh takes the host
+# container lock, so a recreate here waits for a sync's recreate and the
+# other way round.
 concurrency:
-  group: deploy-compose-core-01
+  group: litellm-hook-deploy
   cancel-in-progress: false
 
 jobs:
