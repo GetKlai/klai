@@ -806,6 +806,24 @@
     // has a ceiling above is refused, because a second allowedVersions rule
     // replaces the first instead of adding to it.
     // ---------------------------------------------------------------------
+    {
+      description:
+        'Rolled back on core-01: Renovate must not propose these exact versions of mongo \
+        again; later releases still flow. Renovate never proposes a downgrade, so \
+        this entry can go once deploy/docker-compose.yml runs a newer version.',
+      matchDepNames: ['mongo'],
+      // 9.0.4: failed gate datastore-probe on mongodb, run https://github.com/GetKlai/klai/actions/runs/40916092747, issue "CI failure: Sync compose and config to core-01" (opened when this run ends)
+      allowedVersions: '!/^v?(9\\.0\\.4)$/',
+    },
+    {
+      description:
+        'Rolled back on core-01: Renovate must not propose these exact versions of falkordb/falkordb \
+        again; later releases still flow. Renovate never proposes a downgrade, so \
+        this entry can go once deploy/docker-compose.yml runs a newer version.',
+      matchDepNames: ['falkordb/falkordb'],
+      // 6.0.3: failed gate datastore-probe on mongodb, run https://github.com/GetKlai/klai/actions/runs/40916092747, issue "CI failure: Sync compose and config to core-01" (opened when this run ends)
+      allowedVersions: '!/^v?(6\\.0\\.3)$/',
+    },
     // End of the rolled-back versions: scripts/renovate-revert-after-rollback.py inserts above this line.
   ],
 }
