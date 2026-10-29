@@ -127,17 +127,18 @@ enforced here instead, and it is deliberately blunt:
 > A shared code-intelligence daemon runs from `$HOME`. Nothing else may start
 > one.
 
-`scripts/code-daemon-guard.sh` enforces it. It restarts any daemon whose cwd is
-missing or is not `$HOME`, and — the half that prevents rather than repairs —
-starts a *missing* daemon from `$HOME`, so that a later `zg server --stdio`
-finds a healthy daemon to reuse and never becomes the starter. It runs from
-three places: `make code-tools`, Conductor's `setup`, and Conductor's
-`archive`, that last one being the moment a daemon is about to be orphaned and
-the last moment the directory still exists.
+Two scripts enforce it. `dev-code-tools` (the index step) starts a *missing*
+daemon from `$HOME` before it indexes, so that a later `zg server --stdio`
+finds a healthy daemon to reuse and never becomes the starter, and refuses to
+run against a daemon with any other cwd. `scripts/code-daemon-guard.sh` is the
+repair: it restarts any daemon whose cwd is missing or is not `$HOME`. It runs
+from Conductor's `archive`, the moment a daemon is about to be orphaned and the
+last moment the directory still exists, and by hand.
 
 ```bash
-make code-doctor   # report only, exits 1 if the invariant is broken
-make code-tools    # enforces it, along with building the indexes
+make code-doctor              # report only, exits 1 if the invariant is broken
+scripts/code-daemon-guard.sh  # repair: restart a wrongly rooted daemon from $HOME
+make code-tools               # build the indexes; starts missing daemons from $HOME
 ```
 
 Restarting either daemon is non-destructive: the zvec-grep index lives in

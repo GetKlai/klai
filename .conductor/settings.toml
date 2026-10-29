@@ -1,11 +1,17 @@
 "$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
 
 [scripts]
-# make code-tools builds the per-worktree zvec-grep, Serena and
-# codebase-memory-mcp indexes. All three key their state off the working
-# directory, so a fresh workspace has none of it and the tools answer "no
-# index" rather than failing — see docs/setup/code-intelligence.md.
-setup = "make setup && make code-tools"
+# ~/bin/dev-code-tools (dotfiles repo ai-dev-workflow, shared by every repo
+# on this machine) builds the per-worktree zvec-grep, Serena and
+# codebase-memory-mcp indexes and records its state, so the SessionStart hook
+# waits for a build that is still running instead of reporting a missing
+# index: Conductor no longer holds the first chat for setup. It goes first,
+# because the index takes ~45 s and npm/uv can take minutes, and is joined
+# with ";" so a failed index never skips the dependency install. The dotfiles
+# installer prepends the same command when it is absent, which is how this
+# repo indexed every new workspace twice before 2026-10-29 — see
+# docs/setup/code-intelligence.md.
+setup = "~/bin/dev-code-tools setup \"$PWD\"; make setup"
 # Only codebase-memory-mcp stores its graph outside the workspace
 # (~/.cache/codebase-memory-mcp), so only it needs cleaning up on archive. The
 # zvec-grep index and the Serena cache live in the workspace and go with it.

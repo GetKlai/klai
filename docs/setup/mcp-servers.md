@@ -398,7 +398,7 @@ For other platforms: https://github.com/cli/cli#installation
 ## 7. Install codebase-memory-mcp (CLI, not MCP)
 
 The code knowledge graph for this repo, used through its CLI only. Install via the
-dotfiles `install.sh`: pinned `CBM_VERSION` (v0.10.8), sha256-checksummed download,
+dotfiles `install.sh`: pinned `CBM_VERSION` (v0.12.1), sha256-checksummed download,
 installed to `~/bin/codebase-memory-mcp`. It also sets `auto_watch`, `auto_index` and `ui_enabled` to false.
 
 `make code-tools` indexes it per worktree and prints the project name, which is

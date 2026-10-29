@@ -22,7 +22,6 @@ CONDUCTOR_SETTINGS = REPO_ROOT / ".conductor" / "settings.toml"
 MAKEFILE = REPO_ROOT / "Makefile"
 GITIGNORE = REPO_ROOT / ".gitignore"
 SETUP_DOC = REPO_ROOT / "docs" / "setup" / "code-intelligence.md"
-SETUP_SCRIPT = REPO_ROOT / "scripts" / "code-tools-setup.sh"
 GUARD_SCRIPT = REPO_ROOT / "scripts" / "code-daemon-guard.sh"
 SMOKE_SCRIPT = REPO_ROOT / ".claude" / "scripts" / "mcp-smoke.mjs"
 
@@ -61,34 +60,31 @@ def test_every_mcp_server_has_a_comment_explaining_itself() -> None:
 
 def test_new_worktrees_build_their_own_indexes() -> None:
     # All three tools key their state off the working directory and none of it
-    # is committed, so a fresh Conductor worktree starts empty. If setup stops
-    # calling this, the tools answer "no index" and agents fall back to grep.
+    # is committed, so a fresh Conductor worktree starts empty. The index step
+    # is the machine-wide ~/bin/dev-code-tools (dotfiles repo ai-dev-workflow),
+    # and it has to be the FIRST thing in setup: Conductor no longer waits for
+    # setup before the first chat, and the dotfiles installer prepends the same
+    # command to any setup that does not already start with it, which is how
+    # this repo indexed every new workspace twice until 2026-10-29.
     settings = tomllib.loads(CONDUCTOR_SETTINGS.read_text())
-    assert "make code-tools" in settings["scripts"]["setup"]
-    assert "code-tools:" in MAKEFILE.read_text()
-    assert SETUP_SCRIPT.exists()
+    assert settings["scripts"]["setup"].startswith('~/bin/dev-code-tools setup "$PWD"')
+    makefile = MAKEFILE.read_text()
+    assert "code-tools:" in makefile
+    assert 'dev-code-tools setup "$$PWD"' in makefile
 
 
-def test_setup_roots_the_shared_daemons_before_it_uses_them() -> None:
+def test_only_the_guard_starts_the_shared_daemons() -> None:
     # zvec-grep and codebase-memory-mcp run one daemon per MACHINE and each
-    # inherits the working directory of whoever starts it. Left to itself that
-    # starter is the `zg server --stdio` bootstrap Claude Code spawns inside a
-    # Conductor workspace, and archiving that workspace leaves the daemon with
-    # a deleted cwd: it still answers "ready" while every index write on the
-    # machine fails with uv_cwd ENOENT. Starting the daemons from $HOME first
-    # is what stops that, so it has to happen before anything here indexes.
-    setup = SETUP_SCRIPT.read_text()
+    # inherits the working directory of whoever starts it; a daemon rooted in
+    # a workspace that is later archived still answers "ready" while every
+    # index write on the machine fails with uv_cwd ENOENT. dev-code-tools
+    # starts a missing daemon from $HOME before it indexes and refuses one
+    # with another cwd (pinned by its own tests); the repair, restarting a
+    # wrongly rooted daemon, is this script, and nothing in this repo may
+    # start a daemon from a worktree (that rooted one in a disposable agent
+    # worktree on 2026-09-15).
     assert GUARD_SCRIPT.exists()
-    assert "code-daemon-guard.sh" in setup
-    guard_line = setup.index("code-daemon-guard.sh")
-    assert guard_line < setup.index("zg index"), "the guard must run before indexing"
-
-
-def test_setup_does_not_start_the_warm_daemon_from_the_worktree() -> None:
-    # Starting it here is what rooted the codebase-memory daemon in a
-    # disposable agent worktree on 2026-09-15. Only the guard starts daemons,
-    # and only from $HOME.
-    assert "daemon start" not in SETUP_SCRIPT.read_text()
+    assert "daemon start" not in MAKEFILE.read_text()
 
 
 def test_archiving_a_workspace_rehomes_the_shared_daemons() -> None:

@@ -137,8 +137,8 @@ frontend: ## Start Vite dev server (default port 5174, or CONDUCTOR_PORT)
 
 # ── Code intelligence ────────────────────────────────────────────────────────
 
-code-tools: ## Build the per-worktree zvec-grep, Serena and codebase-memory indexes
-	scripts/code-tools-setup.sh
+code-tools: ## Build the per-worktree zvec-grep, Serena and codebase-memory indexes (shared ~/bin/dev-code-tools)
+	~/bin/dev-code-tools setup "$$PWD"
 
 code-doctor: ## Check the shared daemons are rooted at $$HOME (exit 1 if not)
 	scripts/code-daemon-guard.sh --check
