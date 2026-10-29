@@ -7,7 +7,7 @@
 # deploy/docker-compose.yml's presidio-analyzer service (kept in sync with
 # Phase 0's pin — see that file's comment for why ghcr.io/data-privacy-stack
 # and never mcr.microsoft.com/presidio-analyzer, which is frozen post-transition).
-FROM ghcr.io/data-privacy-stack/presidio-analyzer@sha256:ae8f6f111ac2f04e3fec552f7f80edd0dcbfa2dd69ee1b9e030475be31669885
+FROM ghcr.io/data-privacy-stack/presidio-analyzer@sha256:036d2f9b3c274fb36497383acef8f2d5aea528a014801c2c3040fb067990c79c
 
 # The stock image's WORKDIR is /app, where its vendored presidio_analyzer
 # package lives (not pip-installed — see sitecustomize.py's module docstring).
