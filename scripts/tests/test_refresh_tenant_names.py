@@ -54,9 +54,16 @@ def test_a_host_gives_its_registrable_domain_and_first_label():
     }
 
 
-def test_a_label_from_a_platform_domain_is_dropped():
-    assert refresh.host_entries("zorblax.saas.test", ALLOWED) == set()
+def test_a_customer_on_an_allowed_platform_is_identified_by_the_label_below_it():
+    assert refresh.host_entries("zorblax.saas.test", ALLOWED) == {"zorblax"}
+    assert refresh.host_entries("team.zorblax.saas.test", ALLOWED) == {"zorblax"}
+
+
+def test_a_bare_or_generic_platform_host_yields_nothing():
     assert refresh.host_entries("saas.test", ALLOWED) == set()
+    assert refresh.host_entries("www.saas.test", ALLOWED) == set()
+    assert refresh.host_entries("abc.saas.test", ALLOWED) == set()
+    assert refresh.host_entries("support.saas.test", ALLOWED) == set()
 
 
 def test_generic_and_short_labels_are_dropped():
@@ -114,13 +121,23 @@ def test_derive_counts_each_source_and_tolerates_null_columns():
     assert out["connectors"] == {"fizzbuzz.test", "fizzbuzz"}
 
 
-def _fake_psql(tmp_path: Path, orgs: str, users: str, connectors: str) -> str:
+def _rows(*rows: list[str]) -> str:
+    """psql -A -F unit-separator -R record-separator output."""
+    return "".join("\x1f".join(row) + "\x1e" for row in rows) + "\n"
+
+
+def _fake_psql(
+    tmp_path: Path, orgs: str, users: str, connectors: str, fail: str = ""
+) -> str:
     script = tmp_path / "fake_psql.py"
     script.write_text(
         textwrap.dedent(
             f"""
             import sys
             sql = sys.stdin.read()
+            if {fail!r} and {fail!r} in sql:
+                sys.stderr.write("ERROR: boom")
+                sys.exit(1)
             if "portal_orgs" in sql:
                 sys.stdout.write({orgs!r})
             elif "portal_users" in sql:
@@ -153,9 +170,9 @@ def test_a_run_writes_a_sorted_private_file_and_prints_no_names(
 ):
     psql = _fake_psql(
         tmp_path,
-        "Zorblax Labs\tzorblax\tzorblax.test\n",
-        "anna@quuxcorp.test\nbob@quuxcorp.test\n",
-        "https://wiki.fizzbuzz.test/x\t\n",
+        _rows(["Zorblax Labs", "zorblax", "zorblax.test"]),
+        _rows(["anna@quuxcorp.test"], ["bob@quuxcorp.test"]),
+        _rows(["https://wiki.fizzbuzz.test/x", ""]),
     )
 
     code, out = _run(tmp_path, allowed_file, psql)
@@ -205,7 +222,7 @@ def test_a_list_more_than_30_percent_shorter_is_refused(tmp_path, allowed_file, 
     out.parent.mkdir()
     old = "".join(f"entry{i:02d}\n" for i in range(10))
     out.write_text(old)
-    psql = _fake_psql(tmp_path, "", "anna@quuxcorp.test\n", "")
+    psql = _fake_psql(tmp_path, "", _rows(["anna@quuxcorp.test"]), "")
 
     code = refresh.main(
         ["--psql", psql, "--output", str(out), "--allowed", str(allowed_file)]
@@ -222,7 +239,7 @@ def test_dry_run_reports_added_and_removed_and_writes_nothing(
     out = tmp_path / "private" / "names.txt"
     out.parent.mkdir()
     out.write_text("# old\nquuxcorp\nstale-entry\n")
-    psql = _fake_psql(tmp_path, "", "anna@quuxcorp.test\n", "")
+    psql = _fake_psql(tmp_path, "", _rows(["anna@quuxcorp.test"]), "")
 
     code = refresh.main(
         [
@@ -242,10 +259,51 @@ def test_dry_run_reports_added_and_removed_and_writes_nothing(
 
 
 def test_a_failing_database_command_stops_the_run(tmp_path, allowed_file):
-    with pytest.raises(SystemExit) as exc:
-        _run(tmp_path, allowed_file, "false")
+    code, out = _run(tmp_path, allowed_file, "false")
 
-    assert "exit 1" in str(exc.value)
+    assert code == 1
+    assert not out.exists()
+
+
+def test_one_failing_source_leaves_the_list_untouched_and_names_the_source(
+    tmp_path, allowed_file, capsys
+):
+    out = tmp_path / "private" / "names.txt"
+    out.parent.mkdir()
+    out.write_text("# old\nquuxcorp\n")
+    psql = _fake_psql(
+        tmp_path,
+        _rows(["Zorblax Labs", "", ""]),
+        _rows(["anna@quuxcorp.test"]),
+        "",
+        fail="portal_connectors",
+    )
+
+    code = refresh.main(
+        ["--psql", psql, "--output", str(out), "--allowed", str(allowed_file)]
+    )
+
+    assert code == 1
+    assert out.read_text() == "# old\nquuxcorp\n"
+    err = capsys.readouterr().err
+    assert "connectors" in err and "boom" not in err
+
+
+def test_a_tab_or_newline_inside_a_value_does_not_break_the_row(tmp_path, allowed_file):
+    psql = _fake_psql(
+        tmp_path, _rows(["Zorblax\tLabs\nHolding", "", ""]), "", _rows(["", ""])
+    )
+
+    code, out = _run(tmp_path, allowed_file, psql)
+
+    assert code == 0
+    assert "zorblax labs holding" in out.read_text().splitlines()
+
+
+def test_rows_split_on_the_unit_and_record_separators():
+    raw = _rows(["a\tb", "c\r\n"], ["", "d"])
+
+    assert refresh.parse_rows(raw) == [["a\tb", "c"], ["", "d"]]
 
 
 def test_atomic_write_leaves_no_temp_file_behind(tmp_path):

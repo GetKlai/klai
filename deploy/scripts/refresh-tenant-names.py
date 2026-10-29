@@ -27,7 +27,24 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
-DEFAULT_PSQL = "docker exec -i klai-core-postgres-1 psql -U klai -d klai -At -F"
+# ON_ERROR_STOP makes a failing query exit non-zero instead of printing the error
+# and carrying on. Unit and record separators keep a tab or newline inside a
+# value from splitting a row.
+UNIT, RECORD = "\x1f", "\x1e"
+DEFAULT_PSQL = [
+    *(
+        "docker",
+        "exec",
+        "-i",
+        "klai-core-postgres-1",
+        "psql",
+        "-U",
+        "klai",
+        "-d",
+        "klai",
+    ),
+    *("-v", "ON_ERROR_STOP=1", "-At", "-F", UNIT, "-R", RECORD),
+]
 DEFAULT_OUTPUT = Path("/opt/klai/private/tenant-names.txt")
 DEFAULT_ALLOWED = (
     Path(__file__).resolve().parents[2] / "scripts" / "allowed-test-domains.txt"
@@ -120,9 +137,15 @@ def _usable(label: str) -> bool:
 
 
 def host_entries(host: str, allowed: list[str]) -> set[str]:
-    """A registrable domain and its first label; nothing for a vendor or platform host."""
-    if any(host == d or host.endswith("." + d) for d in allowed):
-        return set()
+    """A registrable domain and its first label. Under a vendor or platform domain
+    only the label directly below it identifies the customer; the bare platform
+    host and the platform's own label yield nothing."""
+    for platform in allowed:
+        if host.endswith("." + platform):
+            sub = host[: -len(platform) - 1].split(".")[-1]
+            return {sub} if _usable(sub) else set()
+        if host == platform:
+            return set()
     domain = registrable(host)
     first = domain.split(".")[0]
     if first in STOPLIST:
@@ -195,16 +218,23 @@ def load_allowed(path: Path) -> list[str]:
     return [line for line in lines if line]
 
 
+class FetchError(Exception):
+    pass
+
+
+def parse_rows(raw: str) -> list[list[str]]:
+    rows = [[v.strip("\r\n") for v in rec.split(UNIT)] for rec in raw.split(RECORD)]
+    return [row for row in rows if any(row)]
+
+
 def fetch(psql: list[str], sql: str) -> list[list[str]]:
     result = subprocess.run(
         psql, input=sql, capture_output=True, text=True, check=False
     )
     if result.returncode != 0:
         # psql's stderr may quote row values; report the exit code only.
-        raise SystemExit(
-            f"refresh-tenant-names: the database command failed (exit {result.returncode})"
-        )
-    return [line.split("\t") for line in result.stdout.splitlines() if line.strip()]
+        raise FetchError(f"exit {result.returncode}")
+    return parse_rows(result.stdout)
 
 
 def read_list(path: Path) -> set[str]:
@@ -248,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    psql = shlex.split(args.psql) if args.psql else [*shlex.split(DEFAULT_PSQL), "\t"]
+    psql = shlex.split(args.psql) if args.psql else DEFAULT_PSQL
     try:
         allowed = load_allowed(args.allowed)
     except OSError as exc:
@@ -258,9 +288,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    per_source = derive(
-        {name: fetch(psql, sql) for name, sql in SOURCES.items()}, allowed
-    )
+    rows = {}
+    for name, sql in SOURCES.items():
+        try:
+            rows[name] = fetch(psql, sql)
+        except FetchError as exc:
+            print(
+                f"refresh-tenant-names: the {name} query failed ({exc}); nothing written",
+                file=sys.stderr,
+            )
+            return 1
+    per_source = derive(rows, allowed)
     entries = set().union(*per_source.values())
     old = read_list(args.output)
     for name, found in per_source.items():
