@@ -209,7 +209,7 @@ services:
   # ─── MongoDB ──────────────────────────────────────────────────────────────
   mongodb:
     logging: *log-rotation
-    image: mongo:8.2.12
+    image: mongo:8.3.13
     restart: unless-stopped
     ulimits:
       nofile:
