@@ -22,7 +22,7 @@
 # Mongo 8.0, RabbitMQ 4.4 and Garage 2.4 produced on 2026-10-28.
 # Switches: fake/probe_red (a live store's facts fail until it is restored),
 # fake/corrupt_snapshot (a snapshot taken now does not read back),
-# fake/stop_fails (docker compose stop exits 1), fake/fcv_fails
+# fake/stop_fails (docker compose stop exits 1), fake/pg_dump_fails, fake/fcv_fails
 # (setFeatureCompatibilityVersion answers an error).
 
 ds_fakes_install() {
@@ -59,6 +59,7 @@ in_store() {
       [[ "$1" == -U ]] && echo "CREATE ROLE $2;" && echo "ALTER ROLE $2 WITH SUPERUSER LOGIN;"
       echo "CREATE ROLE grafana_reader;" ;;
     pg_dump)
+      [[ -e "$F/pg_dump_fails" ]] && exit 1
       while (( $# )); do [[ "$1" == -d ]] && db="$2"; shift; done
       echo "FAKEDUMP $db"
       for a in "$F/db/$t/$db"/*; do [[ -e "$a" ]] && echo "T $(basename "$a") $(cat "$a")"; done ;;

@@ -487,9 +487,25 @@ check "  ledger: snapshot, migrated" "umami-postgres snapshot,umami-postgres mig
 run_driver "${UMAMI_MAJOR//caddy:2.9/caddy:2.10}"
 check "  next sync inside the window -> old directory kept" "0 yes" "$rc $(pgdir umami-postgres/18_docker.aside)"
 sed -i.bak "s/^epoch=.*/epoch=$(( $(date -u +%s) - 1860 ))/" "$snap/meta"
+# Past the window, but without proof the new cluster is the state to keep.
+sed -i.bak '/^migrated=/d' "$snap/meta"
+run_driver "${UMAMI_MAJOR//caddy:2.9/caddy:2.12}"
+check "  past the window without migrated=yes -> .aside kept" "0 yes 1" "$rc $(pgdir umami-postgres/18_docker.aside) $(grep -c 'never finished its restore' "$case_dir/out")"
+echo migrated=yes >> "$snap/meta"
+echo "commit=old gate=datastore-probe" > "$case_dir/.compose-rollback-failed"
+run_driver "${UMAMI_MAJOR//caddy:2.9/caddy:2.13}"
+check "  past the window with a rollback_failed flag -> .aside kept" "yes 1" "$(pgdir umami-postgres/18_docker.aside) $(grep -c 'ended rollback_failed' "$case_dir/out")"
 run_driver "${UMAMI_MAJOR//caddy:2.9/caddy:2.11}"
 check "  next sync past the window -> old directory removed, new one kept" "0 no yes" "$rc $(pgdir umami-postgres/18_docker.aside) $(pgdir umami-postgres/19_docker)"
 check "  removed once" 1 "$(calls 'rm -rf /var/lib/postgresql/18/docker.aside')"
+
+# The cutover fails before the old directory moves: store and consumers come back.
+new_case major_dump_fails
+: > "$case_dir/fake/pg_dump_fails"
+run_driver "$UMAMI_MAJOR"
+check "umami-postgres major, pg_dump fails at the cutover -> exit 3, gate datastore-major" "3 datastore-major" "$rc $(report gate)"
+check "  consumer started again before the rollback sweep" yes "$( (( $(order_of 'stop umami$') < $(order_of 'compose-up --no-pull --force-recreate umami$') && $(order_of 'compose-up --no-pull --force-recreate umami$') < $(order_of ^sweep) )) && echo yes || echo no)"
+check "  store untouched: old image, not recreated, nothing moved" "postgres:18.6-alpine 0 no 91" "$(running umami-postgres) $(calls 'up -d --no-deps --force-recreate umami-postgres') $(pgdir umami-postgres/18_docker.aside) $(count umami-postgres/umami/public.website_event)"
 
 # A red gate inside the window puts the old directory back.
 new_case major_red

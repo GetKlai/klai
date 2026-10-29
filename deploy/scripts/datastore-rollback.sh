@@ -1015,7 +1015,18 @@ ds_major_cutover() {
     ds_restore_dbs "$dir" "$store" && ds_compare "$dir" "$store"
   )
   rc=$?
-  (( rc != 0 )) || ds_ledger "$name" "$dir" "$(ds_meta "$dir" new_image)" migrated
+  if (( rc == 0 )); then
+    ds_set_meta "$dir" migrated yes
+    ds_ledger "$name" "$dir" "$(ds_meta "$dir" new_image)" migrated
+  elif [[ -z "$(ds_meta "$dir" moved_aside)" ]]; then
+    # The old directory never moved, so the restore finds the old image still
+    # in place and restores nothing; the store and its consumers have to come
+    # back here. After the lock: compose-up.sh takes the same one.
+    echo "cutover: $store failed before its data directory moved; starting it and its consumers again"
+    ds_compose start "$store" || true
+    # shellcheck disable=SC2086 # one word per service
+    "$RB_DIR/scripts/compose-up.sh" --no-pull --force-recreate $consumers || true
+  fi
   return "$rc"
 }
 
@@ -1149,7 +1160,8 @@ ds_restore_snapshot() {
       ds_compose stop -t 120 "$store" && ds_pg_rm "$store" "$newd" \
         && ds_pg_mv "$store" "$(ds_meta "$dir" old_pgdata).aside" "$(ds_meta "$dir" old_pgdata)" \
         && ds_compose up -d --no-deps --force-recreate "$store" \
-        && ds_pg_wait "$store" "$su" && ds_compare "$dir" "$store"
+        && ds_pg_wait "$store" "$su" && ds_compare "$dir" "$store" \
+        && ds_set_meta "$dir" settled put-back
       exit
     fi
     if [[ "$name" == "$store" ]]; then
@@ -1178,8 +1190,11 @@ ds_restore_all() {
 # ds_settle: at the start of every sync, before ds_snapshot_changed, finish
 # what had to wait for a window to close. A store with any snapshot still
 # inside its window is left alone.
-#   Postgres major: remove the old data directory renamed aside at the cutover
-#   (a put-back renamed it back); the dump under backups/pre-* stays.
+#   Postgres major: remove the old data directory renamed aside at the cutover,
+#   only when the new cluster is proven the state to keep: the cutover's
+#   restore and count succeeded (migrated=yes), the store runs the new image,
+#   and no sync is left rollback_failed. Otherwise it says why and keeps it.
+#   The dump under backups/pre-* stays either way.
 #   Mongo: raise featureCompatibilityVersion to the running version.
 # Returns 1 when an FCV bump is refused, so the sync stops before it changes
 # anything; a mongo that does not answer is a warning, retried next sync.
@@ -1199,6 +1214,15 @@ ds_settle() {
   for dir in "${olds[@]}"; do
     store="$(ds_meta "$dir" store)"; old="$(ds_meta "$dir" old_pgdata).aside"
     [[ "$open" != *" $store "* ]] || continue
+    if [[ "$(ds_meta "$dir" migrated)" != yes ]]; then
+      echo "settle: keeping $old of $store: the cutover of $dir never finished its restore"; continue
+    fi
+    if [[ "$(ds_container_images "$store" | head -n1)" != "$(ds_meta "$dir" new_image)" ]]; then
+      echo "settle: keeping $old of $store: it does not run $(ds_meta "$dir" new_image)"; continue
+    fi
+    if [[ -e "$RB_FAILED_FLAG" ]]; then
+      echo "settle: keeping $old of $store: an earlier sync ended rollback_failed ($(cat "$RB_FAILED_FLAG"))"; continue
+    fi
     echo "settle: $store is past the window of $dir; removing $old"
     ds_pg_rm "$store" "$old" || { echo "::warning::could not remove $old from $store; retried next sync"; continue; }
     ds_set_meta "$dir" settled "$(ds_now_epoch)"
