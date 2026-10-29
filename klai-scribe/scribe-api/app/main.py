@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -18,6 +19,27 @@ from app.services.reaper import reap_stranded
 setup_logging()
 logger = structlog.get_logger(__name__)
 
+# The reaper also runs while the service is up, so a row the queue can no
+# longer run (attempts used up, audio gone) is failed within this interval
+# instead of staying `processing` until the next deploy restarts the process.
+_REAP_INTERVAL_S = 300
+
+
+async def _reap_once() -> None:
+    try:
+        async with AsyncSessionLocal() as session:
+            count = await reap_stranded(session, timeout_min=settings.scribe_stranded_timeout_min)
+        if count:
+            logger.warning("scribe_stranded_reaped", count=count)
+    except Exception:
+        logger.warning("scribe_reaper_failed", exc_info=True)
+
+
+async def _reap_periodically() -> None:
+    while True:
+        await asyncio.sleep(_REAP_INTERVAL_S)
+        await _reap_once()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -29,13 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # SQLAlchemy retries on row-lock conflict; the net effect is correct
     # but wastes a tiny amount of work. Scribe runs single-replica today;
     # if that changes, consider an advisory lock or a leader election.
-    try:
-        async with AsyncSessionLocal() as session:
-            count = await reap_stranded(session, timeout_min=settings.scribe_stranded_timeout_min)
-        if count:
-            logger.warning("scribe_startup_reaped", count=count)
-    except Exception:
-        logger.warning("scribe_startup_reaper_failed", exc_info=True)
+    await _reap_once()
 
     # TODO(SPEC-SEC-HYGIENE-001 REQ-36.2 follow-up): wire `janitor.sweep_orphans`
     # as a periodic task (asyncio.create_task with a 1h sleep, or a separate
@@ -43,11 +59,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The function is currently only callable on-demand; this slice intentionally
     # skipped scheduling per the SPEC scope discussion.
 
-    # Background transcription workers (app.services.jobs).
+    # Background transcription workers (app.services.jobs) and the periodic
+    # reaper. A strong reference keeps the reaper task from being collected.
     await jobs.start()
+    reaper_task = asyncio.create_task(_reap_periodically())
     try:
         yield
     finally:
+        reaper_task.cancel()
+        await asyncio.gather(reaper_task, return_exceptions=True)
         await jobs.stop()
 
 
