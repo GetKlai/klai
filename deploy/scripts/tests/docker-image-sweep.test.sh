@@ -29,11 +29,14 @@ sha256:ggg	mongo:8.1.3	$old
 sha256:hhh	ghcr.io/example/knowledge-ingest:freshsha	$young
 sha256:iii	<none>:<none>	$old
 sha256:jjj	redis:8.9.0-alpine	$old
+sha256:kkk	curlimages/curl:8.11.1	$old
+sha256:lll	alpine:3.22	$old
+sha256:mmm	ghcr.io/example/librechat:<none>	$old	sha256:d1d1
 IMG
 cat > "$work/docker" <<'STUB'
 #!/usr/bin/env bash
 case "$1 ${2:-}" in
-  "images --no-trunc") awk -F'\t' '{print $1"\t"$2"\t"$3}' "$STATE/images" ;;
+  "images --no-trunc") awk -F'\t' '{print $1"\t"$2"\t"($4 ? $4 : "<none>")"\t"$3}' "$STATE/images" ;;
   "ps -aq") echo c1 ;;
   "inspect -f") echo sha256:bbb ;;
   "image rm") echo "$3" >> "$STATE/removed"; [[ "$3" == redis:* ]] && exit 1; exit 0 ;;
@@ -57,7 +60,9 @@ check "tags in the current and previous compose file stay" bash -c '! grep -q "^
 check "an image younger than 24h stays" bash -c '! grep -q freshsha <<< "$1"' _ "$removed"
 check "untagged images are left to docker image prune" bash -c '! grep -q none <<< "$1"' _ "$removed"
 check "a failed removal is reported and counted" grep -q 'could not remove redis:8.9.0-alpine' <<< "$out"
-check "summary line" grep -q 'image sweep: removed 1, kept 7, failed 1' <<< "$out"
+check "the helpers' tool images stay (curl, alpine)" bash -c '! grep -qE "curlimages|^alpine" <<< "$1"' _ "$removed"
+check "a digest-only image is removed by repo@digest" grep -qx 'ghcr.io/example/librechat@sha256:d1d1' <<< "$removed"
+check "summary line" grep -q 'image sweep: removed 2, kept 9, failed 1' <<< "$out"
 
 if (( failures > 0 )); then echo "docker-image-sweep: $failures check(s) failed"; exit 1; fi
 echo "docker-image-sweep: all checks passed"
