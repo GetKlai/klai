@@ -17,6 +17,11 @@
 #   - every klai/* tag: `:previous` is what deploy-with-rollback.sh rolls
 #     back to, the rest are local builds and the rollback canary;
 #   - ghcr.io/getklai/crawl4ai: built on this host, not pullable;
+#   - the tool images the helpers run on the fly (curlimages/curl for the
+#     VictoriaLogs and store probes, alpine for tar and cp, busybox): no
+#     container holds them between runs, and the first night (2026-10-30
+#     03:00 UTC) swept curl 8.11.1 and alpine 3.22 away, so a rollback would
+#     have started with a registry pull;
 #   - every tag named in the current or the previous compose file
 #     (/opt/klai/docker-compose.yml and .yml.prev): a compose rollback
 #     restarts the previous tag of a data store;
@@ -47,12 +52,13 @@ compose_tags="$(grep -hoE '^[[:space:]]*image:[[:space:]]*[^[:space:]#]+' "$COMP
 now="$(date -u +%s)"
 removed=0 kept=0 failed=0
 
-while IFS=$'\t' read -r id ref created; do
+while IFS=$'\t' read -r id ref digest created; do
     [[ -n "$id" ]] || continue
     reason=""
     if grep -qxF "$id" <<< "$used"; then reason="in use"
     elif [[ "$ref" == klai/* ]]; then reason="klai tag"
     elif [[ "$ref" == ghcr.io/getklai/crawl4ai:* ]]; then reason="local build"
+    elif [[ "$ref" == curlimages/curl:* || "$ref" == alpine:* || "$ref" == busybox:* ]]; then reason="tool image"
     elif grep -qxF "$ref" <<< "$compose_tags"; then reason="in a compose file"
     else
         epoch="$(to_epoch "$created")"
@@ -62,6 +68,9 @@ while IFS=$'\t' read -r id ref created; do
         kept=$(( kept + 1 ))
         continue
     fi
+    # An image pulled by digest (LibreChat, presidio) lists as repo:<none>,
+    # which no docker command accepts; its repo@digest form is removable.
+    [[ "$ref" != *:'<none>' ]] || ref="${ref%:<none>}@$digest"
     if "$DOCKER" image rm "$ref" > /dev/null 2>&1; then
         echo "removed $ref"
         removed=$(( removed + 1 ))
@@ -69,7 +78,7 @@ while IFS=$'\t' read -r id ref created; do
         echo "could not remove $ref" >&2
         failed=$(( failed + 1 ))
     fi
-done < <("$DOCKER" images --no-trunc --format '{{.ID}}\t{{.Repository}}:{{.Tag}}\t{{.CreatedAt}}' \
+done < <("$DOCKER" images --no-trunc --digests --format '{{.ID}}\t{{.Repository}}:{{.Tag}}\t{{.Digest}}\t{{.CreatedAt}}' \
     | awk -F'\t' '$2 != "<none>:<none>"')
 
 echo "image sweep: removed $removed, kept $kept, failed $failed"
