@@ -134,9 +134,10 @@ ghcr_latest() { # newest plain X.Y.Z tag of a public GHCR image
     | python3 -c 'import json,re,sys;v=[x for x in json.load(sys.stdin).get("tags",[]) if re.fullmatch(r"\d+\.\d+\.\d+",x)];print(max(v,key=lambda s:tuple(map(int,s.split(".")))) if v else "")'
 }
 
-# Presidio is pinned by digest (analyzer base in its Dockerfile, anonymizer in
-# compose), which Renovate cannot map to a version.
-ours=$(sed -n "s/^  BASE_PRESIDIO_VERSION: '\(.*\)'/\1/p" .github/workflows/presidio-analyzer-image-build.yml)
+# Presidio is pinned as tag@digest (analyzer base in its Dockerfile, anonymizer
+# in compose); Renovate moves tag and digest together, so the Dockerfile tag is
+# the version we build on.
+ours=$(sed -n 's#^FROM ghcr.io/data-privacy-stack/presidio-analyzer:\([0-9][0-9.]*\)@sha256:.*#\1#p' deploy/presidio/analyzer/Dockerfile)
 theirs=$(ghcr_latest data-privacy-stack/presidio-analyzer)
 if [ -z "$theirs" ]; then fail "presidio: could not read the upstream tags"
 elif newer "$ours" "$theirs"; then fail "presidio: we build on $ours, upstream published $theirs (deploy/presidio/analyzer/Dockerfile and the anonymizer digest in compose)"
