@@ -133,7 +133,7 @@ jobs:
 
             // SPEC-INFRA-AUTO-ROLLBACK-001 S4: a deploy that rolled itself back
             // uploads its report as the `rollback-report` artifact. It is read
-            // here as untrusted text: only two outcomes are accepted, and every
+            // here as untrusted text: only the outcomes in ROLLBACK_LABELS are accepted, and every
             // value is flattened to one short code-span-safe line before it is
             // put in an issue. A missing or unreadable artifact leaves the issue
             // exactly as it was before; the failure is still reported.
@@ -141,6 +141,7 @@ jobs:
               rolled_back: { name: 'auto-rollback', color: 'fbca04', description: 'Deploy failed and the previous version was put back automatically' },
               rollback_failed: { name: 'rollback-failed', color: 'b60205', description: 'Deploy failed and the automatic rollback failed too: a human is needed now' },
               not_started: { name: 'deploy-not-started', color: 'c5def5', description: 'The sync refused before any file changed (disk headroom or a snapshot that failed); nothing to roll back' },
+              shadow_failed: { name: 'shadow-failed', color: 'd4c5f9', description: 'A data store image failed on a copy of its data before anything changed; a revert PR follows' },
             };
             const flat = (v) => String(v ?? '').replace(/[\r\n`]/g, ' ').slice(0, 200);
             let report = null;
@@ -188,7 +189,9 @@ jobs:
                   ? '**Automatic rollback failed. Production may be broken: a human is needed now.**'
                   : report.outcome === 'not_started'
                     ? '**Not started.** The sync refused before it replaced a single file; the host runs what it ran and the next sync tries again.'
-                    : '**Rolled back automatically.** The previous version is serving again; the failing version is still on `main`.',
+                    : report.outcome === 'shadow_failed'
+                      ? '**Shadow failed.** The new data store image failed on a copy of its data, so the sync stopped before it changed anything; the live store is untouched and a revert PR excludes the version.'
+                      : '**Rolled back automatically.** The previous version is serving again; the failing version is still on `main`.',
                 '',
                 `- Service: \`${flat(report.service)}\` (\`${flat(report.kind)}\`)`,
                 `- Outcome: \`${flat(report.outcome)}\``,

@@ -3,7 +3,7 @@ id: SPEC-INFRA-AUTO-ROLLBACK-001
 version: "0.1.0"
 status: draft
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-10-29
 author: Claude (Opus), commissioned by Mark Vletter
 priority: high
 related:
@@ -19,6 +19,7 @@ related:
 | Version | Date       | Author | Change |
 |---------|------------|--------|--------|
 | 0.1.0   | 2026-10-28 | Claude (Opus), commissioned by Mark Vletter | First draft, built on the current deploy workflows and two field-practice research passes. |
+| 0.1.1   | 2026-10-29 | Claude (Opus), commissioned by Mark Vletter | 4.c: a data store's new image is proven on a copy (shadow) before a cutover with a fresh snapshot; outcome `shadow_failed`; dry flag forces the shadow red. |
 
 ---
 
@@ -196,9 +197,41 @@ is the inventory and already names a backup kind per data volume (`sql`,
   image, run the probe again. Only inside the 30-minute window of R4.
 - **Cannot be rolled back:** writes after the snapshot; a Mongo FCV bump, which
   is therefore only raised after the window (below).
+- **Shadow, then cutover (as built, 2026-10-29):** proven in advance, then
+  switched. After the snapshot and its old-image baseline, the snapshot is
+  started in a second throwaway on the NEW image (same mechanics, never a live
+  volume, no host lock) and migrated there: Meilisearch with the compose
+  file's `MEILI_UPGRADE_DB`, Mongo on the old FCV, Qdrant and Garage their
+  storage, Postgres by restoring the dumps into the new image (a major after
+  the extension check). Its facts must equal the baseline exactly, Mongo's
+  fcv line included. Red ends the sync before any file changed with outcome
+  `shadow_failed` (exit 4, a warning event, gate `datastore-shadow`), and the
+  revert PR follows as after `rolled_back`, because the version is bad for our
+  data. Green, a cutover gate runs right after the compose file is replaced:
+  a fresh snapshot is taken (the first is stale by the shadow's duration; a
+  Postgres store is dumped with its consumers running, the cold-copied
+  engines with them stopped), the consumers stop, the store starts on the new
+  image and is probed at once (facts at least the fresh snapshot's), and the
+  consumers are recreated with `--no-deps`, so a consumer of two stores never
+  starts the second one before its own shadow and cutover. A
+  red cutover restores the fresh snapshot. The ledger has `snapshot`,
+  `shadow_green`, `cutover`, then `deployed` or `restored` per store.
+  Self-migrating apps (Twenty, GlitchTip, Zitadel, Umami) have no shadow.
+- **Write-loss ceiling:** a red shadow loses nothing and never touches the
+  live store. A red cutover loses the writes between the fresh snapshot and
+  the restore: 14 s in the local proof (Mongo 8.3 to 9.0), against 580 s on
+  2026-10-29 before the shadow (mongodb snapshot 16:57:39 UTC, restore
+  17:07:19). A red later gate (E2E) inside the 30-minute window loses the
+  writes since the fresh snapshot. A Postgres store's fresh dump runs with
+  its consumers up, so its outage is only the switch, but pg_dump holds the
+  state of its start: the writes at risk are those of the dump's duration
+  plus the switch. A major keeps its dump-and-restore cutover (consumers down
+  for the dump); its shadow adds a dump and a restore to the sync, without
+  an outage.
 - **Postgres majors (as built, 2026-10-29; D1 withdrawn):** a new major cannot
-  open the old data directory, so the deploy migrates it. A gate just before
-  the env-drift sweep stops the consumers, dumps every database and the roles,
+  open the old data directory, so the deploy migrates it. After a green
+  shadow, a gate right after the compose file is replaced stops the
+  consumers, dumps every database and the roles,
   renames the old directory to `<PGDATA>.aside` inside the volume (the 19
   entrypoint refuses to initialise while another `*/docker` holds a
   `PG_VERSION`), starts the new major on an empty directory whose entrypoint
@@ -228,8 +261,22 @@ is the inventory and already names a backup kind per data volume (`sql`,
   on the 31st of a long month. As built (S8b): Garage is copied cold as well,
   because `garage meta snapshot` holds only `db.lmdb` and a restore also needs
   the node key and layout; a Mongo whose FCV changed since its snapshot is
-  refused (`mongo-fcv`), and dry mode is refused for the cold-copied engines,
-  whose previous image cannot open a volume the new one already opened.
+  refused (`mongo-fcv`). The shadow and cutover were proven locally with real
+  Docker and synthetic data on 2026-10-29: Meilisearch 1.55 to 1.56 green
+  (shadow 1 s, cutover to deployed 11 s), and red without `MEILI_UPGRADE_DB`
+  (1.56 exits 1 on the 1.55 database; `shadow_failed` after 1 s, live store
+  untouched); Mongo 8.3 to 9.0 with auth green (shadow 4 s) and, with a
+  sabotaged new image, a red cutover that put the fresh snapshot back,
+  including the 7 writes made after the first snapshot (cutover to restored
+  14 s); a Postgres 18 to 19rc1 major red in its shadow on a missing pgvector
+  before any directory moved, and green with it. On production the dry flag
+  (`/opt/klai/.datastore-dry` holding a store name) forces that store's
+  shadow red after it ran, for any engine: the next patch bump of that store
+  ends `shadow_failed` under its own gate `datastore-shadow-dry`, with the
+  live store untouched and an issue; the revert job skips that gate, because
+  the version proved fine. The rehearsal can run the shadow of a newer image on the latest
+  snapshot (`KLAI_DS_SHADOW` / the workflow input `shadow`), so a next major
+  is proven on a copy before Renovate offers it.
 
 ### 4.d public-01
 

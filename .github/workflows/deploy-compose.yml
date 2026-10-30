@@ -150,8 +150,8 @@ jobs:
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           # The action's default is 10m, and a cut ssh session kills the script
           # wherever it is, a data restore included. A FalkorDB change alone
-          # loads its 1.1 GB dump three times (baseline, new image, restore) at
-          # 104 s each (core-01, 2026-10-23).
+          # loads its 1.1 GB dump four times (baseline, shadow, new image,
+          # restore) at 104 s each (core-01, 2026-10-23).
           command_timeout: 45m
           script: |
             set -e
@@ -198,8 +198,10 @@ jobs:
             ds_settle
             # S8a: a Postgres image change, or one of an app that migrates its
             # own database (Twenty, GlitchTip, Zitadel), is dumped first, while
-            # nothing has changed yet. Short on disk (twice the volume size) or a
-            # failed dump ends the run here, exit 4, with every file untouched.
+            # nothing has changed yet, and a store's new image is proven on a
+            # copy of that snapshot (the shadow). Short on disk (twice the
+            # volume size), a failed dump or a red shadow ends the run here,
+            # exit 4, with every file and the live store untouched.
             ds_snapshot_changed /opt/klai/docker-compose.yml deploy/docker-compose.yml
             # Visible in the run log even when nothing changed, so a missed data-store
             # change (the 2026-10-28 umami proof found none without a trace) is
@@ -218,6 +220,14 @@ jobs:
               cp "deploy/$f" "/opt/klai/$f.tmp"
               mv -f "/opt/klai/$f.tmp" "/opt/klai/$f"
             done
+            # Each changed data store onto its new image, before anything below
+            # recreates a service (librechat-getklai's recreate would start a
+            # changed mongodb or redis it depends on): a fresh snapshot (a
+            # Postgres dump with the consumers still up), consumers stop, the new
+            # image, an immediate probe, consumers recreated with --no-deps.
+            # A Postgres major is the dump-and-restore cutover. Red restores the
+            # fresh snapshot, so only the seconds since it are at risk.
+            ds_cutover
 
             # Sync public-safe deploy scripts to /opt/klai/scripts/ for
             # service-deploy workflows and systemd timers. Operator health
@@ -479,14 +489,10 @@ jobs:
             # re-apply (also on failure). The incidents behind each part are in
             # the script; it was installed by the deploy/scripts loop above, so
             # it is the version from this commit.
-            # A Postgres major: consumers stop, the final dump, the new major on
-            # its own empty data directory, roles and databases restored and
-            # counted. Red puts the previous image back on the old directory.
-            ds_cutover
             rb_gate compose compose-up-verification /opt/klai/scripts/compose-env-drift-recreate.sh
-            # S8a: per snapshot of this run, recreate a changed store's consumers
-            # (they hold pools to the old container) and probe its tables. Red
-            # restores the snapshot within 30 minutes of it.
+            # S8a: per self-migrating app of this run (the sweep started its new
+            # image), recreate its database's consumers and probe its tables.
+            # Red restores the snapshot within 30 minutes of it.
             ds_gates
 
             # SPEC-SEC-024 M4.3 — non-blocking post-deploy smoke-test. Prints
@@ -557,7 +563,9 @@ jobs:
 
   # SPEC-INFRA-AUTO-ROLLBACK-001 S5: after a rollback the host runs the previous
   # compose file but main still names the bad version, so the next compose change
-  # would deploy it again. When the rolled-back range holds Renovate image bumps,
+  # would deploy it again; the same holds after shadow_failed, when a data
+  # store's new image failed on a copy of its data and nothing was switched.
+  # When the rolled-back range holds Renovate image bumps,
   # this opens one PR (with the Klai Renovate app token, so CI runs on it) that
   # puts those image lines back and excludes each exact version in renovate.json5,
   # and arms auto-merge. Our own commits are never reverted (decision D3); a

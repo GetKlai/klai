@@ -29,6 +29,10 @@ on:
         description: 'Space-separated store names (empty: every store in the inventory)'
         required: false
         default: ''
+      shadow:
+        description: 'Space-separated <store>=<image> pairs: also prove that image on the store''s latest snapshot (reported, never failing the run)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -49,12 +53,13 @@ jobs:
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
         env:
           STORES: ${{ inputs.stores }}
+          KLAI_DS_SHADOW: ${{ inputs.shadow }}
         with:
           host: ${{ secrets.CORE01_HOST }}
           username: klai
           key: ${{ secrets.CORE01_DEPLOY_KEY }}
           command_timeout: 110m
-          envs: STORES
+          envs: STORES,KLAI_DS_SHADOW
           script: |
             set -e
             test -x /opt/klai/scripts/datastore-restore-rehearsal.sh

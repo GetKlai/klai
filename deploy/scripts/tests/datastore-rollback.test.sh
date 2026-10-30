@@ -6,7 +6,8 @@
 # No Docker needed. The fakes in datastore-fakes.sh keep each store as files and
 # record every call. compose-up.sh, the env-drift sweep and the Twenty check are
 # stubs in each case's scripts/ directory. The driver replays the sync in
-# deploy-compose.yml: snapshot, keep, overwrite, sweep, datastore gates.
+# deploy-compose.yml: snapshot and shadow, keep, overwrite, cutover, sweep,
+# datastore gates.
 #
 # Run: bash deploy/scripts/tests/datastore-rollback.test.sh
 
@@ -119,12 +120,18 @@ fi
 rm -f "$FAKE/new_writes"
 exit 0
 STUB
+  # Without --no-deps, compose also starts what a service depends on
+  # (fake/deps_<service>), on the image the compose file names.
   cat > "$case_dir/scripts/compose-up.sh" <<'STUB'
 #!/usr/bin/env bash
 echo "compose-up $*" >> "$FAKE/calls"
+img() { awk -v s="$1" '/^  [a-z]/ { svc = $1; sub(/:$/, "", svc) } /^    image:/ && svc == s { print $2 }' "$KLAI_COMPOSE_DIR/docker-compose.yml"; }
 for svc in "$@"; do
   [[ "$svc" == --* ]] && continue
-  awk -v s="$svc" '/^  [a-z]/ { svc = $1; sub(/:$/, "", svc) } /^    image:/ && svc == s { print $2 }' "$KLAI_COMPOSE_DIR/docker-compose.yml" > "$FAKE/running/$svc"
+  img "$svc" > "$FAKE/running/$svc"
+  if [[ " $* " != *" --no-deps "* && -e "$FAKE/deps_$svc" ]]; then
+    for dep in $(cat "$FAKE/deps_$svc"); do img "$dep" > "$FAKE/running/$dep"; echo "dep-started $dep" >> "$FAKE/calls"; done
+  fi
 done
 STUB
   cat > "$case_dir/scripts/check-twenty-upgrade.sh" <<'STUB'
@@ -137,7 +144,7 @@ STUB
   chmod +x "$case_dir"/scripts/*.sh
 }
 
-# run_driver <new compose> [after-snapshot] [before-sweep] [after-gates]
+# run_driver <new compose> [after-snapshot] [after-cutover] [after-gates]
 run_driver() {
   printf '%s' "$1" > "$case_dir/new-compose.yml"
   cat > "$case_dir/driver.sh" <<DRIVER
@@ -150,8 +157,8 @@ ${2:-}
 rb_keep "\$KLAI_COMPOSE_DIR/docker-compose.yml"
 cp "\$KLAI_COMPOSE_DIR/new-compose.yml" "\$KLAI_COMPOSE_DIR/docker-compose.yml"
 red() { echo "red: \$*"; return 1; }
-${3:-}
 ds_cutover
+${3:-}
 rb_gate compose compose-up-verification "\$KLAI_COMPOSE_DIR/scripts/compose-env-drift-recreate.sh"
 ds_gates
 ${4:-}
@@ -180,6 +187,10 @@ count() { cat "$case_dir/fake/db/$1"; }
 running() { cat "$case_dir/fake/running/$1"; }
 umami_pg_image() { grep -A1 '^  umami-postgres:' "$case_dir/docker-compose.yml" | awk '/image:/ { print $2 }'; }
 order_of() { grep -n -- "$1" "$case_dir/fake/calls" | head -n1 | cut -d: -f1; }
+last_of() { grep -n -- "$1" "$case_dir/fake/calls" | tail -n1 | cut -d: -f1; }
+# The seconds between a store's cutover line and its deployed or restored line.
+window_of() { awk -F'\t' -v s="$1" '$2 == "data" && $3 == s && $7 == "cutover" { c = $1 } $2 == "data" && $3 == s && ($7 == "deployed" || $7 == "restored") { e = $1 } END { print (c != "" && e >= c) ? "measured" : "missing" }' "$case_dir/deploy-ledger.log"; }
+untouched() { [[ ! -e "$case_dir/docker-compose.yml.prev" && ! -e "$case_dir/.compose-rollback-failed" ]] && echo yes || echo no; }
 
 echo "datastore-rollback.sh"
 
@@ -269,33 +280,36 @@ check "caddy-only change -> exit 0" 0 "$rc"
 check "  no pg_dump" 0 "$(calls pg_dump)"
 check "  no snapshot directory" 0 "$(find "$case_dir" -maxdepth 2 -name 'pre-*' | wc -l | tr -d ' ')"
 
-# --- green store bump: snapshot, consumers recreated after the sweep ----------
+# --- green store bump: snapshot, shadow on the new minor, cutover -------------
 new_case green_store
 run_driver "$UMAMI_BUMP"
-check "umami-postgres 18.6 -> 18.7, probe green -> exit 0" 0 "$rc"
+check "umami-postgres 18.6 -> 18.7, shadow and probe green -> exit 0" 0 "$rc"
 snap="$(snapdir umami-postgres)"
 check "  snapshot dir pre-umami-postgres-<ts> with one dump per database" yes "$([[ -s "$snap/umami.dump" && ! -e "$snap/postgres.dump" ]] && echo yes || echo no)"
 check "  snapshot dir readable for the owner only" 700 "$(stat -c %a "$snap" 2>/dev/null || stat -f %Lp "$snap")"
 check "  baseline counts read from the dump" "umami public.website_event 91,umami public.session 52" "$(paste -sd, "$snap/baseline.counts")"
-check "  ledger: data snapshot line" "umami-postgres snapshot" "$(data_ledger)"
-check "  dump taken before the sweep recreated anything" yes "$( (( $(order_of pg_dump) < $(order_of ^sweep) )) && echo yes || echo no)"
-check "  consumer umami force-recreated after the sweep" 1 "$(calls 'compose-up --no-pull --force-recreate umami$')"
+check "  shadow: the dumps restored into a throwaway of 18.7 and counted" "1 91" "$(calls 'run -d --rm --name klai-datastore-shadow-umami-postgres .*postgres:18.7-alpine') $(count klai-datastore-shadow-umami-postgres/umami/public.website_event)"
+check "  ledger: snapshot, shadow_green, cutover, deployed" "umami-postgres snapshot,umami-postgres shadow_green,umami-postgres cutover,umami-postgres deployed" "$(data_ledger)"
+check "  cutover: fresh dump with the consumer still running, then consumer stopped, new image, consumer recreated, then the sweep" yes "$( (( $(last_of 'pg_dump -U umami') < $(order_of 'stop umami$') && $(order_of 'stop umami$') < $(order_of 'up -d --no-deps --force-recreate umami-postgres') && $(order_of 'up -d --no-deps --force-recreate umami-postgres') < $(order_of 'compose-up --no-pull --no-deps --force-recreate umami$') && $(order_of 'compose-up --no-pull --no-deps --force-recreate umami$') < $(order_of ^sweep) )) && echo yes || echo no)"
+check "  two dumps: the shadow's and the fresh one" 2 "$(calls 'pg_dump -U umami -Fc -d umami')"
+check "  store on 18.7, consumer recreated once" "postgres:18.7-alpine 1" "$(running umami-postgres) $(calls 'compose-up --no-pull --no-deps --force-recreate umami$')"
 
-# --- AT-c1: store bump, probe red within the window -> data and image back ----
+# --- AT-c1: store bump, cutover probe red -> the fresh dump and image back ----
 new_case at_c1_store
-: > "$case_dir/fake/new_writes"
 : > "$case_dir/fake/probe_red"
-run_driver "$UMAMI_BUMP"
-check "umami-postgres bump, probe red -> exit 3 (rolled_back)" 3 "$rc"
-check "  report gate" datastore-probe "$(report gate)"
+# Written after the first snapshot: only the fresh dump holds it.
+run_driver "$UMAMI_BUMP" 'echo 93 > "$FAKE/db/umami-postgres/umami/public.website_event"'
+check "umami-postgres bump, cutover probe red -> exit 3 (rolled_back)" 3 "$rc"
+check "  report gate" datastore-cutover "$(report gate)"
 check "  report names the store" umami-postgres "$(report service)"
 check "  compose file restored" postgres:18.6-alpine "$(umami_pg_image)"
 check "  store runs its previous image" postgres:18.6-alpine "$(running umami-postgres)"
-check "  consumer stopped before the restore" yes "$( (( $(order_of 'compose --project-directory .* stop umami') < $(order_of 'DROP DATABASE') )) && echo yes || echo no)"
-check "  store recreated on its previous image before the restore" yes "$( (( $(order_of 'up -d --no-deps --force-recreate umami-postgres') < $(order_of 'DROP DATABASE') )) && echo yes || echo no)"
-check "  writes of the new version gone: counts as in the snapshot" "91 52" "$(count umami-postgres/umami/public.website_event) $(count umami-postgres/umami/public.session)"
-check "  consumer force-recreated after the restore" yes "$( (( $(order_of 'DROP DATABASE') < $(grep -n 'compose-up --no-pull --force-recreate umami$' "$case_dir/fake/calls" | tail -n1 | cut -d: -f1) )) && echo yes || echo no)"
-check "  ledger: snapshot, then restored" "umami-postgres snapshot,umami-postgres restored" "$(data_ledger)"
+check "  consumer stopped before the restore" yes "$( (( $(order_of 'compose --project-directory .* stop umami') < $(order_of 'exec -T umami-postgres psql .*DROP DATABASE') )) && echo yes || echo no)"
+check "  store recreated on its previous image before the restore" yes "$( (( $(last_of 'up -d --no-deps --force-recreate umami-postgres') < $(order_of 'exec -T umami-postgres psql .*DROP DATABASE') )) && echo yes || echo no)"
+check "  counts as in the fresh dump, the write after the first snapshot kept" "93 52" "$(count umami-postgres/umami/public.website_event) $(count umami-postgres/umami/public.session)"
+check "  consumer force-recreated after the restore" yes "$( (( $(order_of 'exec -T umami-postgres psql .*DROP DATABASE') < $(last_of 'compose-up --no-pull --no-deps --force-recreate umami$') )) && echo yes || echo no)"
+check "  ledger: snapshot, shadow_green, cutover, restored" "umami-postgres snapshot,umami-postgres shadow_green,umami-postgres cutover,umami-postgres restored" "$(data_ledger)"
+check "  the window from the fresh dump to the restore is in the ledger" measured "$(window_of umami-postgres)"
 check "  compose ledger line" rolled_back "$(tail -n1 "$case_dir/deploy-ledger.log" | cut -f7)"
 
 # --- AT-c1 for a self-migrating app: Twenty bump, upgrade check red -----------
@@ -327,11 +341,10 @@ check "  no failure flag: the host is still in its verified state" no "$([[ -e "
 # --- AT-c3: red 31 minutes after the snapshot -> nothing restored -------------
 new_case at_c3
 : > "$case_dir/fake/new_writes"
-: > "$case_dir/fake/probe_red"
-run_driver "$UMAMI_BUMP" 'sed -i.bak "s/^epoch=.*/epoch=$(( $(date -u +%s) - 1860 ))/" "${DS_SNAPSHOTS[0]}/meta"'
-check "red gate at +31 min -> exit 4" 4 "$rc"
+run_driver "$UMAMI_BUMP" "" 'sed -i.bak "s/^epoch=.*/epoch=$(( $(date -u +%s) - 1860 ))/" "${DS_SNAPSHOTS[0]}/meta"' 'rb_gate umami-postgres forced red'
+check "red gate at +31 min after the fresh dump -> exit 4" 4 "$rc"
 check "  report gate" restore-window "$(report gate)"
-check "  nothing dropped or stopped" "0 0" "$(calls 'DROP DATABASE') $(calls 'compose .* stop ')"
+check "  nothing dropped, only the cutover stopped the consumer" "0 1" "$(calls 'exec -T umami-postgres psql .*DROP DATABASE') $(calls 'compose .* stop ')"
 check "  new compose file left in place" postgres:18.7-alpine "$(umami_pg_image)"
 check "  the new version's writes kept" 96 "$(count umami-postgres/umami/public.website_event)"
 
@@ -341,33 +354,26 @@ new_case mismatch
 : > "$case_dir/fake/restore_short"
 run_driver "$UMAMI_BUMP"
 check "restored counts differ from the snapshot -> exit 4" 4 "$rc"
-check "  report gate is the red gate" datastore-probe "$(report gate)"
-check "  one restore attempt" 1 "$(calls 'DROP DATABASE')"
-check "  consumer not started on unverified data" 0 "$(sed -n "$(order_of 'DROP DATABASE'),\$p" "$case_dir/fake/calls" | grep -c 'compose-up --no-pull --force-recreate umami$' || true)"
-check "  ledger: restore_failed" "umami-postgres snapshot,umami-postgres restore_failed" "$(data_ledger)"
+check "  report gate is the red gate" datastore-cutover "$(report gate)"
+check "  one restore attempt" 1 "$(calls 'exec -T umami-postgres psql .*DROP DATABASE')"
+check "  consumer not started on unverified data" 0 "$(sed -n "$(order_of 'exec -T umami-postgres psql .*DROP DATABASE'),\$p" "$case_dir/fake/calls" | grep -c 'compose-up --no-pull --no-deps --force-recreate umami$' || true)"
+check "  ledger: restore_failed" "umami-postgres snapshot,umami-postgres shadow_green,umami-postgres cutover,umami-postgres restore_failed" "$(data_ledger)"
 check "  failure flag written" yes "$([[ -e "$case_dir/.compose-rollback-failed" ]] && echo yes || echo no)"
 
-# --- red before the new image started: files back, data untouched -------------
-new_case red_before_sweep
-run_driver "$UMAMI_BUMP" "" 'rb_gate caddy sync-recreate red caddy'
-check "red gate before the sweep -> exit 3" 3 "$rc"
-check "  no data restore: the new version never ran" 0 "$(calls 'DROP DATABASE')"
-check "  ledger: snapshot, not_needed" "umami-postgres snapshot,umami-postgres not_needed" "$(data_ledger)"
+# --- red before the cutover started the new image: files back, data untouched -
+new_case red_before_cutover
+run_driver "$UMAMI_BUMP" 'rb_gate caddy sync-recreate false'
+check "red gate before the cutover -> exit 3" 3 "$rc"
+check "  no data restore: the new version never ran" 0 "$(calls 'exec -T umami-postgres psql .*DROP DATABASE')"
+check "  ledger: snapshot, shadow_green, not_needed" "umami-postgres snapshot,umami-postgres shadow_green,umami-postgres not_needed" "$(data_ledger)"
 
-# --- dry mode: real snapshot, forced red, restore into a throwaway -------------
-new_case dry
-echo umami-postgres > "$case_dir/.datastore-dry"
-: > "$case_dir/fake/new_writes"
+# --- the shadow is red: the run ends before any file, store or consumer moves -
+new_case shadow_red_pg
+echo postgres:18.7-alpine > "$case_dir/fake/bad_image"
 run_driver "$UMAMI_BUMP"
-check "dry mode -> forced red, exit 3" 3 "$rc"
-check "  flag file used once" no "$([[ -e "$case_dir/.datastore-dry" ]] && echo yes || echo no)"
-check "  restore went to the throwaway container" 1 "$(calls 'exec -i klai-datastore-dry-umami-postgres pg_restore')"
-check "  throwaway raises the open-file limit (2107 tenant collections on 2026-10-29)" 1 "$(calls 'run .*--name klai-datastore-dry-umami-postgres .*--ulimit nofile=64000:64000')"
-check "  live store never dropped or stopped" "0 0" "$(calls 'exec -T umami-postgres psql .*DROP') $(calls 'compose .* stop ')"
-check "  live data keeps the new version's writes" 96 "$(count umami-postgres/umami/public.website_event)"
-check "  throwaway holds the snapshot counts" 91 "$(count klai-datastore-dry-umami-postgres/umami/public.website_event)"
-check "  live store back on its previous image" postgres:18.6-alpine "$(running umami-postgres)"
-check "  ledger: dry_restored" "umami-postgres snapshot,umami-postgres dry_restored" "$(data_ledger)"
+check "umami-postgres 18.7 fails its shadow -> exit 4, gate datastore-shadow, shadow_failed" "4 datastore-shadow shadow_failed" "$rc $(report gate) $(report outcome)"
+check "  live untouched: no stop, no recreate, previous image, compose file as it was" "0 0 postgres:18.6-alpine postgres:18.6-alpine" "$(calls 'compose .* stop ') $(calls 'up -d --no-deps') $(running umami-postgres) $(umami_pg_image)"
+check "  no .prev, no failure flag" yes "$(untouched)"
 
 # --- LiteLLM: migrated by its own workflow, never snapshotted here ------------
 new_case litellm
@@ -472,18 +478,19 @@ check "  18.6 -> 18.7 is no major: no cutover, no roles dumped" "0 no" "$(grep -
 
 new_case major_green
 : > "$case_dir/fake/new_writes"
-# A write after the snapshot step reaches the new major: the dump waits for the cutover.
+# A write after the snapshot step reaches the new major: the cutover dumps again.
 run_driver "$UMAMI_MAJOR" 'echo 95 > "$FAKE/db/umami-postgres/umami/public.website_event"'
 snap="$(snapdir umami-postgres)"
-check "umami-postgres 18.6 -> 19.1, probe green -> exit 0" 0 "$rc"
+check "umami-postgres 18.6 -> 19.1, shadow and probe green -> exit 0" 0 "$rc"
 check "  major read from the running container and the pulled image" "pg_major=18 19,new_pgdata=/var/lib/postgresql/19/docker" "$(grep -E '^(pg_major|new_pgdata)=' "$snap/meta" | paste -sd, -)"
-check "  consumer stopped, then dumped, store recreated, then the sweep" yes "$( (( $(order_of 'stop umami$') < $(order_of pg_dump) && $(order_of pg_dump) < $(order_of 'up -d --no-deps --force-recreate umami-postgres') && $(order_of 'up -d --no-deps --force-recreate umami-postgres') < $(order_of ^sweep) )) && echo yes || echo no)"
+check "  shadow: the first dump restored into a throwaway of 19.1, before any consumer stopped" yes "$( (( $(order_of 'run -d --rm --name klai-datastore-shadow-umami-postgres .*postgres:19.1-alpine') < $(order_of 'stop umami$') )) && echo yes || echo no)"
+check "  consumer stopped, then dumped, store recreated, then the sweep" yes "$( (( $(order_of 'stop umami$') < $(last_of pg_dump) && $(last_of pg_dump) < $(order_of 'up -d --no-deps --force-recreate umami-postgres') && $(order_of 'up -d --no-deps --force-recreate umami-postgres') < $(order_of ^sweep) )) && echo yes || echo no)"
 check "  baseline is the final state, write after the snapshot step included" "umami public.website_event 95,umami public.session 52" "$(paste -sd, "$snap/baseline.counts")"
 check "  roles restored, CREATE ROLE tolerating the ones init made" yes "$(grep -q 'DO \$\$ BEGIN CREATE ROLE grafana_reader; EXCEPTION WHEN duplicate_object' "$case_dir/fake/globals_applied_umami-postgres" && echo yes || echo no)"
 check "  new major restored from the dump, the new version writes on" "100 52" "$(count umami-postgres/umami/public.website_event) $(count umami-postgres/umami/public.session)"
 check "  old directory moved aside as the cutover found it" 95 "$(cat "$case_dir/fake/pgdir/umami-postgres/18_docker.aside/umami/public.website_event")"
-check "  store on the new major, consumer recreated after the sweep" "postgres:19.1-alpine 1" "$(running umami-postgres) $(calls 'compose-up --no-pull --force-recreate umami$')"
-check "  ledger: snapshot, migrated" "umami-postgres snapshot,umami-postgres migrated" "$(data_ledger)"
+check "  store on the new major, consumer recreated before the sweep" "postgres:19.1-alpine 1 yes" "$(running umami-postgres) $(calls 'compose-up --no-pull --no-deps --force-recreate umami$') $( (( $(order_of 'compose-up --no-pull --no-deps --force-recreate umami$') < $(order_of ^sweep) )) && echo yes || echo no)"
+check "  ledger: snapshot, shadow_green, cutover, migrated" "umami-postgres snapshot,umami-postgres shadow_green,umami-postgres cutover,umami-postgres migrated" "$(data_ledger)"
 
 # The next syncs: inside the window the old directory stays, past it it goes.
 run_driver "${UMAMI_MAJOR//caddy:2.9/caddy:2.10}"
@@ -503,10 +510,9 @@ check "  removed once" 1 "$(calls 'rm -rf /var/lib/postgresql/18/docker.aside')"
 
 # The cutover fails before the old directory moves: store and consumers come back.
 new_case major_dump_fails
-: > "$case_dir/fake/pg_dump_fails"
-run_driver "$UMAMI_MAJOR"
+run_driver "$UMAMI_MAJOR" ': > "$FAKE/pg_dump_fails"'
 check "umami-postgres major, pg_dump fails at the cutover -> exit 3, gate datastore-major" "3 datastore-major" "$rc $(report gate)"
-check "  consumer started again before the rollback sweep" yes "$( (( $(order_of 'stop umami$') < $(order_of 'compose-up --no-pull --force-recreate umami$') && $(order_of 'compose-up --no-pull --force-recreate umami$') < $(order_of ^sweep) )) && echo yes || echo no)"
+check "  consumer started again before the rollback sweep" yes "$( (( $(order_of 'stop umami$') < $(order_of 'compose-up --no-pull --no-deps --force-recreate umami$') && $(order_of 'compose-up --no-pull --no-deps --force-recreate umami$') < $(order_of ^sweep) )) && echo yes || echo no)"
 check "  store untouched: old image, not recreated, nothing moved" "postgres:18.6-alpine 0 no 91" "$(running umami-postgres) $(calls 'up -d --no-deps --force-recreate umami-postgres') $(pgdir umami-postgres/18_docker.aside) $(count umami-postgres/umami/public.website_event)"
 
 # A red gate inside the window puts the old directory back.
@@ -517,28 +523,22 @@ check "umami-postgres major, red gate after the probe -> exit 3" 3 "$rc"
 check "  compose file and previous image back" "postgres:18.6-alpine postgres:18.6-alpine" "$(umami_pg_image) $(running umami-postgres)"
 check "  old directory opened again, the new major's writes gone" "91 52" "$(count umami-postgres/umami/public.website_event) $(count umami-postgres/umami/public.session)"
 check "  new major's directory removed, the old one renamed back" "no yes no" "$(pgdir umami-postgres/19_docker) $(pgdir umami-postgres/18_docker) $(pgdir umami-postgres/18_docker.aside)"
-check "  no pg_restore for the put-back" 1 "$(calls 'pg_restore -U umami --create')"
-check "  consumer recreated after the put-back" yes "$( (( $(grep -n 'rm -rf /var/lib/postgresql/19/docker' "$case_dir/fake/calls" | tail -n1 | cut -d: -f1) < $(grep -n 'compose-up --no-pull --force-recreate umami$' "$case_dir/fake/calls" | tail -n1 | cut -d: -f1) )) && echo yes || echo no)"
-check "  ledger: snapshot, migrated, restored" "umami-postgres snapshot,umami-postgres migrated,umami-postgres restored" "$(data_ledger)"
+check "  no pg_restore on the live store for the put-back" 1 "$(calls 'exec -T umami-postgres pg_restore -U umami --create')"
+check "  consumer recreated after the put-back" yes "$( (( $(grep -n 'rm -rf /var/lib/postgresql/19/docker' "$case_dir/fake/calls" | tail -n1 | cut -d: -f1) < $(grep -n 'compose-up --no-pull --no-deps --force-recreate umami$' "$case_dir/fake/calls" | tail -n1 | cut -d: -f1) )) && echo yes || echo no)"
+check "  ledger: snapshot, shadow_green, cutover, migrated, restored" "umami-postgres snapshot,umami-postgres shadow_green,umami-postgres cutover,umami-postgres migrated,umami-postgres restored" "$(data_ledger)"
 
-# Dry mode on a major: the probe is forced red and the put-back is the real one.
-new_case major_dry
-echo umami-postgres > "$case_dir/.datastore-dry"
-run_driver "$UMAMI_MAJOR"
-check "dry mode on a major -> forced red, exit 3" 3 "$rc"
-check "  put back on the old directory, no throwaway" "postgres:18.6-alpine 0 no" "$(running umami-postgres) $(calls klai-datastore-dry) $(pgdir umami-postgres/19_docker)"
-check "  ledger: snapshot, migrated, restored" "umami-postgres snapshot,umami-postgres migrated,umami-postgres restored" "$(data_ledger)"
-
-# The new image lacks an extension the old cluster uses: red before any restore.
+# The new image lacks an extension the old cluster uses: the shadow is red, so
+# nothing moves on the live store.
 new_case major_ext_missing
 echo vector > "$case_dir/fake/db/postgres/glitchtip/.ext"
 echo vector > "$case_dir/fake/missing_ext"
 run_driver "$PG_MAIN_MAJOR"
-check "postgres pg18 -> pg19 without vector -> exit 3, gate datastore-major" "3 datastore-major" "$rc $(report gate)"
+check "postgres pg18 -> pg19 without vector -> exit 4, gate datastore-shadow, shadow_failed" "4 datastore-shadow shadow_failed" "$rc $(report gate) $(report outcome)"
 check "  named in the log" 1 "$(grep -c 'extension vector of the old cluster is not in pgvector/pgvector:0.8.7-pg19' "$case_dir/out")"
-check "  nothing restored into the new major, no sweep before the rollback" "0 1" "$(calls 'pg_restore -U klai --create') $(calls '^sweep')"
-check "  previous image on the old directory, counts as before" "pgvector/pgvector:0.8.7-pg18 1 no" "$(running postgres) $(count postgres/glitchtip/public.users_user) $(pgdir postgres/19_docker)"
-check "  ledger: snapshot, restored" "postgres snapshot,postgres restored" "$(data_ledger)"
+check "  checked in the shadow, before any restore anywhere" "1 0" "$(calls "exec -i klai-datastore-shadow-postgres psql .*pg_available_extensions where name = 'vector'") $(calls 'pg_restore -U klai --create')"
+check "  live untouched: no consumer stopped, no directory moved, no sweep" "0 no no 0" "$(calls 'compose .* stop ') $(pgdir postgres/19_docker) $(pgdir postgres/18_docker.aside) $(calls '^sweep')"
+check "  previous image, counts as before, compose file as it was" "pgvector/pgvector:0.8.7-pg18 1 yes" "$(running postgres) $(count postgres/glitchtip/public.users_user) $(untouched)"
+check "  ledger: snapshot, shadow_failed" "postgres snapshot,postgres shadow_failed" "$(data_ledger)"
 
 # --- S8b: the other engines --------------------------------------------------
 eng() { sed -n "s/^$2=//p" "$case_dir/fake/eng/$1"; }
@@ -551,62 +551,102 @@ throwaways_ok() {
   echo "$runs runs, $bad unconfined, $(grep -c 'docker rm -f klai-datastore-' "$case_dir/fake/calls" || true) removed"
 }
 
-# AT-c1, volume kind: Qdrant cold copy, red probe, data and image back.
-new_case at_c1_volume
-: > "$case_dir/fake/new_writes"
-: > "$case_dir/fake/probe_red"
+# Shadow green, cutover green: Qdrant onto its new image with a fresh copy.
+new_case shadow_green_cutover
 run_driver "$QDRANT_BUMP"
-check "qdrant v1.19.2 -> v1.20.0, probe red -> exit 3" 3 "$rc"
 snap="$(snapdir qdrant)"
-check "  report gate" datastore-probe "$(report gate)"
-check "  cold copy: stopped, copied, started, before the sweep" yes "$( (( $(order_of 'stop -t 120 qdrant') < $(order_of 'tar -cf') && $(order_of 'tar -cf') < $(order_of 'compose .* start qdrant') && $(order_of 'compose .* start qdrant') < $(order_of ^sweep) )) && echo yes || echo no)"
+check "qdrant v1.19.2 -> v1.20.0, shadow and cutover green -> exit 0" 0 "$rc"
+check "  cold copy: stopped, copied, started, before the cutover" yes "$( (( $(order_of 'stop -t 120 qdrant') < $(order_of 'tar -cf') && $(order_of 'tar -cf') < $(order_of 'compose .* start qdrant') && $(order_of 'compose .* start qdrant') < $(order_of 'stop knowledge-ingest retrieval-api portal-api') )) && echo yes || echo no)"
 check "  baseline read back from a throwaway of the old image" "collection klai_knowledge,count klai_knowledge 120" "$(paste -sd, "$snap/baseline.facts")"
-check "  throwaway confined and removed" "1 runs, 0 unconfined, 1 removed" "$(throwaways_ok)"
+check "  shadow: the snapshot in a throwaway of v1.20.0, before any consumer stopped" yes "$( (( $(order_of 'run -d --name klai-datastore-shadow-qdrant .*qdrant/qdrant:v1.20.0') < $(order_of 'stop knowledge-ingest retrieval-api portal-api') )) && echo yes || echo no)"
+check "  throwaways (baseline, shadow) confined and removed" "2 runs, 0 unconfined, 2 removed" "$(throwaways_ok)"
 check "  the API key travels in the environment, not in argv" "0 yes" "$(calls fake-qdrant-key) $( (( $(calls 'run --rm --network container:cid-qdrant -e T -e H') > 0 )) && echo yes || echo no)"
-check "  consumers stopped before the volume is put back" yes "$( (( $(order_of 'stop knowledge-ingest retrieval-api portal-api') < $(order_of 'volumes-from cid-qdrant -v') )) && echo yes || echo no)"
-check "  points as in the snapshot, the new version's gone" 120 "$(eng qdrant points)"
-check "  store on its previous image" qdrant/qdrant:v1.19.2 "$(running qdrant)"
-check "  consumers recreated after the restore" yes "$( (( $(order_of 'volumes-from cid-qdrant -v') < $(grep -n 'compose-up --no-pull --force-recreate knowledge-ingest retrieval-api portal-api' "$case_dir/fake/calls" | tail -n1 | cut -d: -f1) )) && echo yes || echo no)"
-check "  ledger: snapshot, restored" "qdrant snapshot,qdrant restored" "$(data_ledger)"
+check "  cutover: consumers stopped, fresh copy, store started on v1.20.0 without the old image in between, consumers recreated, then the sweep" yes "$( (( $(order_of 'stop knowledge-ingest retrieval-api portal-api') < $(last_of 'tar -cf') && $(last_of 'tar -cf') < $(order_of 'up -d --no-deps --force-recreate qdrant') && $(calls 'compose .* start qdrant') == 1 && $(order_of 'up -d --no-deps --force-recreate qdrant') < $(order_of 'compose-up --no-pull --no-deps --force-recreate knowledge-ingest retrieval-api portal-api') && $(order_of 'compose-up --no-pull --no-deps --force-recreate knowledge-ingest retrieval-api portal-api') < $(order_of ^sweep) )) && echo yes || echo no)"
+check "  probe reference: the facts read just before the fresh copy" "collection klai_knowledge,count klai_knowledge 120" "$(paste -sd, "$snap/cutover.facts")"
+check "  store on v1.20.0, nothing put back" "qdrant/qdrant:v1.20.0 0" "$(running qdrant) $(calls 'volumes-from cid-qdrant -v')"
+check "  ledger: snapshot, shadow_green, cutover, deployed" "qdrant snapshot,qdrant shadow_green,qdrant cutover,qdrant deployed" "$(data_ledger)"
+check "  the window from the fresh copy to the verdict is in the ledger" measured "$(window_of qdrant)"
 
-# AT-c1, rdb kind: Redis BGSAVE, red probe, keys back.
+# Two stores in one sync: recreating the first one's consumers must not start
+# the second store, which they also depend on, before its own cutover.
+new_case two_stores
+echo "mongodb redis" > "$case_dir/fake/deps_librechat-getklai"
+run_driver "${MONGO_BUMP//redis:8.10.2-alpine/redis:8.10.3-alpine}"
+check "mongodb and redis in one sync, a consumer depends on both -> exit 0" 0 "$rc"
+check "  no dependency started by a consumer recreate" 0 "$(calls '^dep-started')"
+check "  each store switched by its own cutover, mongodb first" yes "$( (( $(order_of 'up -d --no-deps --force-recreate mongodb') < $(order_of 'up -d --no-deps --force-recreate redis') )) && echo yes || echo no)"
+check "  ledger: both deployed" "mongodb snapshot,redis snapshot,mongodb shadow_green,redis shadow_green,mongodb cutover,mongodb deployed,redis cutover,redis deployed" "$(data_ledger)"
+
+# Shadow red: Mongo's new image does not hold the copy's data.
+new_case shadow_red
+echo mongo:8.0.35 > "$case_dir/fake/bad_image"
+run_driver "$MONGO_BUMP"
+check "mongo 8.0.35 fails its shadow -> exit 4, gate datastore-shadow, shadow_failed" "4 datastore-shadow shadow_failed" "$rc $(report gate) $(report outcome)"
+check "  report names the store" mongodb "$(report service)"
+check "  event at warning level, the version named for the revert" 1 "$(grep -c '"level":"warning","event":"auto_rollback","outcome":"shadow_failed","deploy_service":"mongodb","gate":"datastore-shadow"' "$case_dir/logs/auto-rollback.log")"
+check "  live untouched: consumers never stopped, store never recreated, previous image" "0 0 mongo:8.0.34" "$(calls 'stop librechat-getklai portal-api') $(calls 'up -d --no-deps') $(running mongodb)"
+check "  files untouched: compose file as it was, no .prev, no failure flag, no sweep" "mongo:8.0.34 yes 0" "$(image_of_case mongodb) $(untouched) $(calls '^sweep')"
+check "  ledger: snapshot, shadow_failed, then the compose line" "mongodb snapshot,mongodb shadow_failed shadow_failed" "$(data_ledger) $(tail -n1 "$case_dir/deploy-ledger.log" | cut -f7)"
+
+# A new image whose throwaway exits at once is red at once, not after the
+# 10-minute readiness wait (Meilisearch 1.56 without MEILI_UPGRADE_DB exits 1).
+new_case shadow_exits
+echo qdrant/qdrant:v1.20.0 > "$case_dir/fake/exits_image"
+started=$(date +%s)
+run_driver "$QDRANT_BUMP"
+check "qdrant v1.20.0 exits in its shadow -> exit 4, shadow_failed, within 30 s" "4 shadow_failed yes" "$rc $(report outcome) $( (( $(date +%s) - started < 30 )) && echo yes || echo no)"
+check "  its last log lines printed" 1 "$(calls 'docker logs --tail 20 klai-datastore-shadow-qdrant')"
+
+# AT-c1, volume kind: Qdrant cutover probe red, the fresh copy and image back.
+new_case at_c1_volume
+echo qdrant/qdrant:v1.20.0 > "$case_dir/fake/bad_live_image"
+# Written after the first snapshot: only the fresh copy holds it.
+run_driver "$QDRANT_BUMP" 'sed -i.bak "s/^points=.*/points=130/" "$FAKE/eng/qdrant"'
+check "qdrant v1.19.2 -> v1.20.0, cutover probe red -> exit 3" 3 "$rc"
+check "  report gate" datastore-cutover "$(report gate)"
+check "  consumers stopped before the volume is put back" yes "$( (( $(order_of 'stop knowledge-ingest retrieval-api portal-api') < $(order_of 'volumes-from cid-qdrant -v') )) && echo yes || echo no)"
+check "  points as in the fresh copy, the write after the first snapshot kept" 130 "$(eng qdrant points)"
+check "  store on its previous image" qdrant/qdrant:v1.19.2 "$(running qdrant)"
+check "  consumers recreated after the restore" yes "$( (( $(order_of 'volumes-from cid-qdrant -v') < $(last_of 'compose-up --no-pull --no-deps --force-recreate knowledge-ingest retrieval-api portal-api') )) && echo yes || echo no)"
+check "  ledger: snapshot, shadow_green, cutover, restored" "qdrant snapshot,qdrant shadow_green,qdrant cutover,qdrant restored" "$(data_ledger)"
+check "  the window from the fresh copy to the restore is in the ledger" measured "$(window_of qdrant)"
+
+# AT-c1, rdb kind: Redis BGSAVE, cutover probe red, keys back.
 new_case at_c1_rdb
-: > "$case_dir/fake/new_writes"
-: > "$case_dir/fake/probe_red"
+echo redis:8.10.3-alpine > "$case_dir/fake/bad_live_image"
 run_driver "$REDIS_BUMP"
-check "redis 8.10.2 -> 8.10.3, probe red -> exit 3" 3 "$rc"
-check "  BGSAVE waited for, dump copied out" "1 1" "$(calls 'redis-cli BGSAVE') $(calls 'docker cp cid-redis:/data/dump.rdb')"
+check "redis 8.10.2 -> 8.10.3, cutover probe red -> exit 3" 3 "$rc"
+check "  BGSAVE waited for and the dump copied out twice: snapshot, fresh" "2 2" "$(calls 'redis-cli BGSAVE') $(calls 'docker cp cid-redis:/data/dump.rdb')"
 check "  baseline counts keys without a TTL" "count keys 57" "$(cat "$(snapdir redis)/baseline.facts")"
 check "  the password travels in the environment, not in argv" "0" "$(calls fake-redis-pw)"
 check "  dump put back through the AOF-aware path" 1 "$(calls 'volumes-from cid-redis -v .*sh -c')"
 check "  keys as in the snapshot" 57 "$(eng redis keys)"
 check "  store on its previous image" redis:8.10.2-alpine "$(running redis)"
-check "  ledger: snapshot, restored" "redis snapshot,redis restored" "$(data_ledger)"
+check "  ledger: snapshot, shadow_green, cutover, restored" "redis snapshot,redis shadow_green,redis cutover,redis restored" "$(data_ledger)"
 
 # AT-c1, definitions kind: RabbitMQ, the new node starts empty, red gate.
 new_case at_c1_definitions
 : > "$case_dir/fake/new_writes"
 run_driver "$RABBIT_BUMP" "" "" 'rb_gate firecrawl-rabbitmq forced red'
 check "rabbitmq 4.4.0 -> 4.4.1, red gate -> exit 3" 3 "$rc"
-check "  definitions exported as the rabbitmq user" 1 "$(calls 'exec -u rabbitmq cid-firecrawl-rabbitmq rabbitmqctl -q export_definitions')"
+check "  definitions exported as the rabbitmq user: snapshot, fresh" 2 "$(calls 'exec -u rabbitmq cid-firecrawl-rabbitmq rabbitmqctl -q export_definitions')"
 check "  queues imported into the previous image" "nuq_scrape nuq_crawl" "$(eng firecrawl-rabbitmq queues)"
 check "  store on its previous image" rabbitmq:4.4.0-alpine "$(running firecrawl-rabbitmq)"
-check "  ledger: snapshot, restored" "firecrawl-rabbitmq snapshot,firecrawl-rabbitmq restored" "$(data_ledger)"
+check "  ledger: snapshot, shadow_green, cutover, deployed, restored" "firecrawl-rabbitmq snapshot,firecrawl-rabbitmq shadow_green,firecrawl-rabbitmq cutover,firecrawl-rabbitmq deployed,firecrawl-rabbitmq restored" "$(data_ledger)"
 
-# AT-c3 for an engine: red 31 minutes after the snapshot -> nothing restored.
+# AT-c3 for an engine: red 31 minutes after the fresh snapshot -> nothing restored.
 new_case at_c3_engine
 : > "$case_dir/fake/new_writes"
-: > "$case_dir/fake/probe_red"
-run_driver "$REDIS_BUMP" 'sed -i.bak "s/^epoch=.*/epoch=$(( $(date -u +%s) - 1860 ))/" "${DS_SNAPSHOTS[0]}/meta"'
+run_driver "$REDIS_BUMP" "" 'sed -i.bak "s/^epoch=.*/epoch=$(( $(date -u +%s) - 1860 ))/" "${DS_SNAPSHOTS[0]}/meta"' 'rb_gate redis forced red'
 check "redis red at +31 min -> exit 4" 4 "$rc"
 check "  report gate" restore-window "$(report gate)"
-check "  nothing put back, nothing stopped" "0 0" "$(calls 'volumes-from cid-redis -v') $(calls 'compose .* stop ')"
+check "  nothing put back" "0 0" "$(calls 'volumes-from cid-redis -v') $(calls 'stop -t 120 redis')"
 check "  the new version's keys kept, new image in place" "62 redis:8.10.3-alpine" "$(eng redis keys) $(image_of_case redis)"
 
 # Mongo: an FCV changed after the upgrade is never restored over.
 new_case mongo_fcv
 : > "$case_dir/fake/new_writes"
-run_driver "$MONGO_BUMP" "" 'sed -i.bak "s/^fcv=.*/fcv=8.2/" "$FAKE/eng/mongodb"'
+run_driver "$MONGO_BUMP" "" 'sed -i.bak "s/^fcv=.*/fcv=8.2/" "$FAKE/eng/mongodb"' 'rb_gate mongodb forced red'
 check "mongo 8.0.34 -> 8.0.35, FCV raised to 8.2 -> exit 4" 4 "$rc"
 check "  report gate" mongo-fcv "$(report gate)"
 check "  report outcome" rollback_failed "$(report outcome)"
@@ -647,32 +687,24 @@ check "qdrant snapshot does not read back -> exit 4" 4 "$rc"
 check "  report gate" snapshot "$(report gate)"
 check "  compose file untouched, no sweep" "qdrant/qdrant:v1.19.2 0" "$(image_of_case qdrant) $(calls '^sweep')"
 
-# Dry mode on Redis: forced red, restore into a throwaway, live data kept.
-new_case dry_redis
-echo redis > "$case_dir/.datastore-dry"
-: > "$case_dir/fake/new_writes"
-run_driver "$REDIS_BUMP"
-check "dry mode on redis -> forced red, exit 3" 3 "$rc"
-check "  restore went to a throwaway" 1 "$(calls 'docker run -d --name klai-datastore-dry-redis')"
-check "  live store never put back or stopped" "0 0" "$(calls 'volumes-from cid-redis -v') $(calls 'compose .* stop ')"
-check "  live keeps the new version's keys" 62 "$(eng redis keys)"
-check "  live store back on its previous image" redis:8.10.2-alpine "$(running redis)"
-check "  throwaways confined and removed" "2 runs, 0 unconfined, 2 removed" "$(throwaways_ok)"
-check "  ledger: dry_restored" "redis snapshot,redis dry_restored" "$(data_ledger)"
-
-# Dry mode is refused for a volume engine.
-new_case dry_qdrant_refused
+# Dry mode on a cold-copied engine: the real shadow, forced red, live untouched.
+new_case dry_qdrant
 echo qdrant > "$case_dir/.datastore-dry"
 run_driver "$QDRANT_BUMP"
-check "dry flag on qdrant -> refused, normal green run" 0 "$rc"
-check "  refusal printed, flag removed" "1 no" "$(grep -c 'dry mode is refused for qdrant' "$case_dir/out") $([[ -e "$case_dir/.datastore-dry" ]] && echo yes || echo no)"
+check "dry flag on qdrant -> shadow forced red, exit 4, shadow_failed, its own gate" "4 datastore-shadow-dry shadow_failed" "$rc $(report gate) $(report outcome)"
+check "  the shadow itself ran on v1.20.0, then was forced red" "1 1" "$(calls 'run -d --name klai-datastore-shadow-qdrant .*qdrant/qdrant:v1.20.0') $(grep -c 'shadow: dry mode, forced red' "$case_dir/out")"
+check "  flag file used once" no "$([[ -e "$case_dir/.datastore-dry" ]] && echo yes || echo no)"
+check "  live untouched: one stop for the snapshot copy, no consumer stopped, no recreate, previous image" "1 0 0 qdrant/qdrant:v1.19.2" "$(calls 'stop -t 120 qdrant') $(calls 'stop knowledge-ingest') $(calls 'up -d --no-deps') $(running qdrant)"
+check "  files untouched, no failure flag" "qdrant/qdrant:v1.19.2 yes" "$(image_of_case qdrant) $(untouched)"
+check "  ledger: snapshot, shadow_failed" "qdrant snapshot,qdrant shadow_failed" "$(data_ledger)"
 
-# crm-redis keeps no state: probed and its consumers recreated, nothing saved.
+# crm-redis keeps no state: switched and probed, its consumers recreated, nothing saved.
 new_case ephemeral
 run_driver "$CRM_REDIS_BUMP"
 check "crm-redis bump, green -> exit 0" 0 "$rc"
 check "  no BGSAVE, no throwaway" "0 0" "$(calls BGSAVE) $(calls 'docker run -d')"
-check "  consumers crm crm-worker recreated" 1 "$(calls 'compose-up --no-pull --force-recreate crm crm-worker$')"
+check "  consumers crm crm-worker recreated" 1 "$(calls 'compose-up --no-pull --no-deps --force-recreate crm crm-worker$')"
+check "  ledger: snapshot, shadow_green, cutover, deployed" "crm-redis snapshot,crm-redis shadow_green,crm-redis cutover,crm-redis deployed" "$(data_ledger)"
 
 echo
 if [[ "$failures" -eq 0 ]]; then
