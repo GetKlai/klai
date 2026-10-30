@@ -47,7 +47,7 @@ class TestComposeImagePinning:
         text = _COMPOSE_FILE.read_text()
         block = _service_block(text, "presidio-anonymizer")
         image_line = next(line for line in block.splitlines() if "image:" in line)
-        assert "ghcr.io/data-privacy-stack/presidio-anonymizer@sha256:" in image_line
+        assert re.search(r"ghcr\.io/data-privacy-stack/presidio-anonymizer:\d+\.\d+\.\d+@sha256:", image_line), image_line
         assert _DIGEST_RE.search(image_line), image_line
 
     def test_neither_service_references_frozen_microsoft_registry(self):
@@ -81,7 +81,9 @@ class TestDockerfileBase:
     def test_from_is_pinned_stock_data_privacy_stack_image(self):
         text = _DOCKERFILE.read_text()
         from_line = next(line for line in text.splitlines() if line.startswith("FROM "))
-        assert "ghcr.io/data-privacy-stack/presidio-analyzer@sha256:" in from_line
+        # tag@digest: the tag is the version the build and the drift check
+        # read, the digest is what the image resolves to; Renovate moves both.
+        assert re.search(r"ghcr\.io/data-privacy-stack/presidio-analyzer:\d+\.\d+\.\d+@sha256:", from_line), from_line
         assert _DIGEST_RE.search(from_line), from_line
         # A comment may explain the rule by naming the forbidden registry;
         # only the actual FROM line matters (mirrors
