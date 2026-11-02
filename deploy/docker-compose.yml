@@ -1022,7 +1022,7 @@ services:
   # validator-env-parity).
   vaultwarden:
     logging: *log-rotation
-    image: vaultwarden/server:1.37.4
+    image: vaultwarden/server:1.37.5
     restart: unless-stopped
     environment:
       DOMAIN: "https://vault.getklai.com"
@@ -1683,7 +1683,7 @@ services:
 
   gitea:
     logging: *log-rotation
-    image: gitea/gitea:28.2.0
+    image: gitea/gitea:28.3.0
     restart: unless-stopped
     environment:
       USER_UID: 1000
