@@ -3410,10 +3410,11 @@ xlsx = [
 
 [[package]]
 name = "unstructured-client"
-version = "0.46.4"
+version = "0.47.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
+    { name = "certifi" },
     { name = "httpcore" },
     { name = "httpx" },
     { name = "pydantic" },
@@ -3421,9 +3422,9 @@ dependencies = [
     { name = "pypdfium2" },
     { name = "requests-toolbelt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d9/a0/26d7c0a37f1ff6134b999454dc78f263ad9cb7c54be8d085391efa6da94e/unstructured_client-0.46.4.tar.gz", hash = "sha256:5fac534f60cb64f212890f33cc9a80940582e7343ed940d4571a9a7770fd6f62", size = 103182, upload-time = "2026-10-19T15:21:29.801Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/47/71cac9171a8adcca3a0591ad780a1da0e3fd3395fee2c6c00c93a3822b38/unstructured_client-0.47.0.tar.gz", hash = "sha256:10f2293fc6ad8d196bc72f46ef9b91a1acdc46d0318f5e302859cd5692cbdec3", size = 106617, upload-time = "2026-11-05T18:06:58.362Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/59/5986702ea5bea04e55f6294a72dc749f6ec13ed107cb384f770416656605/unstructured_client-0.46.4-py3-none-any.whl", hash = "sha256:f5844433d57d44ad995073d51e6adb8bccba3ac8e8b740641d301c3e8a038537", size = 169205, upload-time = "2026-10-19T15:21:28.161Z" },
+    { url = "https://files.pythonhosted.org/packages/79/e6/c5d9a3b1d085e0553064ac5ac374d6fc1484c873501a37ef2fe36bd65324/unstructured_client-0.47.0-py3-none-any.whl", hash = "sha256:d48d5222d7a99ab8a5cc24d9be494451fc46cb47311116da2c1a7db6ae911973", size = 173660, upload-time = "2026-11-05T18:06:56.697Z" },
 ]
 
 [[package]]
