@@ -23,7 +23,13 @@ cat > "$work/docker" <<'STUB'
 #!/usr/bin/env bash
 fx="$FIXTURES"
 case "$1" in
-  image) echo "sha256:goodimage"; exit 0 ;;
+  image) # image inspect --format <fmt> <ref>: the layer list is what the script compares
+    [[ "$*" != *"{{.Id}}"* ]] || { echo "sha256:goodimage"; exit 0; }
+    case "${@: -1}" in
+      busybox:1.37.0|sha256:goodimage|sha256:goodimage-reindexed) echo '["sha256:layer-busybox"]' ;;
+      *) echo '["sha256:layer-other"]' ;;
+    esac
+    exit 0 ;;
   compose) [[ "$2" == "ps" ]] || exit 90; echo "canarycid"; exit 0 ;;
   inspect) cat "$fx/running_image"; exit 0 ;;
   run) c=$(cat "$fx/probe_code"); printf '%s' "$c"; [[ "$c" =~ ^2 ]] || exit 22; exit 0 ;;
@@ -77,6 +83,13 @@ check "one event line" test "$(wc -l < "$event" | tr -d ' ')" = 1
 check "good image deployed first, bad second" bash -c "sed -n 1p '$fx/deploy_argv' | grep -q '^rollback-canary busybox:1.37.0 ' && sed -n 2p '$fx/deploy_argv' | grep -q '^rollback-canary debian:12.15-slim '"
 check "same compose tag, probe and probe network on both deploys" test "$(grep -c -- '--compose-tag klai/rollback-canary:1.0-local-261028-0000 --probe http://rollback-canary:8080/ --probe-network klai-rehearsal' "$fx/deploy_argv")" = 2
 check "compose profile is on for the deploy script" test "$(grep -c 'COMPOSE_PROFILES=rollback-rehearsal$' "$fx/deploy_argv")" = 2
+
+echo "# good tag re-pushed upstream: same layers under a new image ID (runs of 2 and 9 Nov 2026)"
+new_case reindexed "sha256:goodimage-reindexed" 200
+printf '%s\n' "0 -" "3 rolled_back" > "$fx/deploy_calls"
+run_script
+check "exit 0" test "$rc" = 0
+check "event line appended" grep -q '"event":"rollback_rehearsal","outcome":"ok"' "$event"
 
 echo "# bad image deploys as healthy: the rollback path did not roll back"
 new_case badok "sha256:badimage" 200
