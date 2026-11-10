@@ -82,20 +82,30 @@ grep '^ROLLBACK_REPORT ' "$WORK/bad.out" | grep -q '"outcome":"rolled_back"' \
     || fail "exit 3 but no ROLLBACK_REPORT line with outcome rolled_back"
 
 echo "==> 3/3 the canary must run $GOOD again and answer within ${WAIT}s"
-good_id="$("$DOCKER" image inspect --format '{{.Id}}' "$GOOD" 2>/dev/null)" \
+# The canary has to run the good image's filesystem, not the same image ID.
+# A registry tag can be re-pushed with a new index digest (a new attestation
+# entry, say) over the same platform manifest and layers: docker then hands the
+# tag a new .Id, while compose keys on the platform manifest and rightly leaves
+# a container on the old .Id alone. Comparing .Id turned that into a false red
+# (runs of 2 and 9 November 2026: busybox:1.37.0 changed from bdf57e528e45 to
+# a7dbc319b143, same layers). The rootfs layer list tells good from bad (debian).
+layers_of() { "$DOCKER" image inspect --format '{{json .RootFS.Layers}}' "$1" 2>/dev/null; }
+good_layers="$(layers_of "$GOOD")" && [[ -n "$good_layers" ]] \
     || fail "cannot inspect the good image $GOOD"
 deadline=$(( SECONDS + WAIT ))
 while :; do
     cid="$("$DOCKER" compose ps -q "$SERVICE" 2>/dev/null | head -n1)"
     running_id=""
     [[ -z "$cid" ]] || running_id="$("$DOCKER" inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
-    if [[ -n "$running_id" && "$running_id" == "$good_id" ]]; then
+    running_layers=""
+    [[ -z "$running_id" ]] || running_layers="$(layers_of "$running_id" || true)"
+    if [[ -n "$running_layers" && "$running_layers" == "$good_layers" ]]; then
         code="$("$DOCKER" run --rm --network "$PROBE_NETWORK" "$CURL_IMAGE" \
             -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROBE_URL" 2>/dev/null)" || code="000"
         echo "canary runs the good image; probe $PROBE_URL -> HTTP $code"
         [[ "$code" =~ ^2[0-9][0-9]$ ]] && break
     else
-        echo "canary container ${cid:-none} runs ${running_id:-nothing}, wanted $good_id"
+        echo "canary container ${cid:-none} runs ${running_id:-nothing} (layers ${running_layers:-unknown}), wanted layers $good_layers of $GOOD"
     fi
     (( SECONDS + INTERVAL < deadline )) \
         || fail "after ${WAIT}s the canary does not run the good image and answer its probe"
