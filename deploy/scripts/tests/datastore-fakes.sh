@@ -11,6 +11,9 @@
 # PGDATA follow the image tag as the official images set them (18.6 and 19rc1
 # checked on 2026-10-29). fake/db/<store>/<db>/.ext
 # lists extensions besides plpgsql, fake/missing_ext the ones a new image lacks.
+# Roles: fake/roles_<target> lists the roles of a cluster (a throwaway starts
+# with its POSTGRES_USER); without it every role exists. fake/db/<store>/<db>/.roles
+# lists the roles a dump names (owner, policies), which a restore needs.
 #
 # Other engines: fake/eng/<container> is the store's data as key=value lines
 # (points= for Qdrant, keys= and graphs= for Redis and FalkorDB, queues= for
@@ -63,11 +66,15 @@ in_store() {
     pg_isready) [[ ! -e "$F/pg_down" ]] ;;
     pg_dumpall)
       [[ "$1" == -U ]] && echo "CREATE ROLE $2;" && echo "ALTER ROLE $2 WITH SUPERUSER LOGIN;"
-      echo "CREATE ROLE grafana_reader;" ;;
+      echo "CREATE ROLE grafana_reader;"
+      for a in $(cat "$F/roles_$t" 2>/dev/null); do
+        [[ "$a" == "$2" ]] || printf 'CREATE ROLE %s;\nALTER ROLE %s WITH LOGIN PASSWORD '"'"'SCRAM-SHA-256$4096:fake'"'"';\n' "$a" "$a"
+      done ;;
     pg_dump)
       [[ -e "$F/pg_dump_fails" ]] && exit 1
       while (( $# )); do [[ "$1" == -d ]] && db="$2"; shift; done
       echo "FAKEDUMP $db"
+      for a in $(cat "$F/db/$t/$db/.roles" 2>/dev/null); do echo "R $a"; done
       for a in "$F/db/$t/$db"/*; do [[ -e "$a" ]] && echo "T $(basename "$a") $(cat "$a")"; done ;;
     pg_restore)
       local data=0 create=0
@@ -83,6 +90,13 @@ in_store() {
         local first=1 k name cnt
         while read -r k name cnt; do
           if [[ "$k" == FAKEDUMP ]]; then db="$name"; mkdir -p "$F/db/$t/$db"; continue; fi
+          # A role the dump names in a policy or grant, which --no-owner and
+          # --no-acl do not strip (CREATE POLICY ... TO <role>).
+          if [[ "$k" == R ]]; then
+            [[ ! -e "$F/roles_$t" ]] || grep -qx "$name" "$F/roles_$t" \
+              || { echo "pg_restore: error: could not execute query: ERROR:  role \"$name\" does not exist" >&2; exit 1; }
+            continue
+          fi
           if [[ -e "$F/restore_short" && "$first" == 1 ]] && live "$t"; then cnt=$((cnt - 1)); fi
           first=0
           echo "$cnt" > "$F/db/$t/$db/$name"
@@ -92,7 +106,22 @@ in_store() {
     psql)
       while (( $# )); do case "$1" in -d) db="$2" ;; -c|-Atc) sql="$2" ;; esac; shift; done
       case "$sql" in
-        "") cat > "$F/globals_applied_$t" ;;
+        "")
+          cat > "$F/globals_applied_$t"
+          # A cluster with known roles (fake/roles_<target>): a bare CREATE ROLE
+          # of one that exists fails as psql does with ON_ERROR_STOP, the DO
+          # block tolerates it, ALTER ROLE needs it.
+          [[ -e "$F/roles_$t" ]] || exit 0
+          while read -r a; do
+            case "$a" in
+              "DO \$\$ BEGIN CREATE ROLE "*) a="${a#DO \$\$ BEGIN CREATE ROLE }"; a="${a%%;*}"; grep -qx "$a" "$F/roles_$t" || echo "$a" >> "$F/roles_$t" ;;
+              "CREATE ROLE "*) a="${a#CREATE ROLE }"; a="${a%;}"
+                ! grep -qx "$a" "$F/roles_$t" || { echo "ERROR:  role \"$a\" already exists" >&2; exit 3; }
+                echo "$a" >> "$F/roles_$t" ;;
+              "ALTER ROLE "*) a="${a#ALTER ROLE }"; a="${a%% *}"
+                grep -qx "$a" "$F/roles_$t" || { echo "ERROR:  role \"$a\" does not exist" >&2; exit 3; } ;;
+            esac
+          done < "$F/globals_applied_$t" ;;
         "select extname"*) echo plpgsql; cat "$F/db/$t/$db/.ext" 2>/dev/null; true ;;
         "select 1 from pg_available_extensions"*)
           a="${sql##*name = \'}"; grep -qx "${a%\'}" "$F/missing_ext" 2>/dev/null || echo 1 ;;
@@ -160,14 +189,15 @@ in_store() {
 
 # docker run: options, then the image, then its command.
 run() {
-  local name="" vf="" net="" detach=0 vols=() img="" a
+  local name="" vf="" net="" detach=0 vols=() img="" a pguser=""
   while (( $# )); do
     case "$1" in
       --name) name="$2"; shift 2 ;;
       --volumes-from) vf="$(name_of "$2")"; shift 2 ;;
       --network) net="$2"; shift 2 ;;
       -v) vols+=("$2"); shift 2 ;;
-      -e|--label|--memory|--cpus|--ulimit|--entrypoint|-u) shift 2 ;;
+      -e) [[ "$2" != POSTGRES_USER=* ]] || pguser="${2#*=}"; shift 2 ;;
+      --label|--memory|--cpus|--ulimit|--entrypoint|-u) shift 2 ;;
       -d) detach=1; shift ;;
       --rm|-i) shift ;;
       *) img="$1"; shift; break ;;
@@ -219,6 +249,8 @@ run() {
     [[ -n "$name" ]] || return 1
     # A Postgres throwaway keeps its databases under db/, any other under eng/.
     mkdir -p "$F/db/$name"
+    # A fresh Postgres cluster knows only the superuser it was initialised with.
+    [[ -z "$pguser" ]] || echo "$pguser" > "$F/roles_$name"
     if [[ -n "$vol" && -e "$F/vol/$vol" ]]; then cp "$F/vol/$vol" "$F/eng/$name"; else : > "$F/eng/$name"; fi
     echo "$img" > "$F/running/$name"
     echo ctr-id

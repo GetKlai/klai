@@ -144,7 +144,10 @@
 # a forward migration created stays behind, and the next upgrade of an app like
 # Twenty then fails on "relation already exists". Dropping the database brings
 # back exactly the dumped state. Roles live outside a per-database dump; they
-# are cluster-wide and survive the drop.
+# are cluster-wide and survive the drop. Every dump step also writes globals.sql
+# (pg_dumpall --globals-only, the roles with their password hashes), because a
+# throwaway or a new major starts with the superuser alone: ds_restore_into and
+# ds_major_cutover replay it before the first pg_restore.
 #
 # Baseline counts are read from the dump itself (the COPY rows of each probe
 # table), not from a live count taken after it: the database keeps taking
@@ -847,11 +850,14 @@ ds_fcv_unchanged() {
   done
 }
 
-# ds_dump_dbs <dir> <store> <superuser> <databases>: one pg_dump -Fc per
-# database, and its probe counts read back from the dump into baseline.counts.
+# ds_dump_dbs <dir> <store> <superuser> <databases>: the roles into
+# globals.sql, one pg_dump -Fc per database, and its probe counts read back
+# from the dump into baseline.counts.
 ds_dump_dbs() {
   local dir="$1" store="$2" su="$3" db n
   : > "$dir/baseline.counts"
+  ds_x "$store" pg_dumpall -U "$su" --globals-only < /dev/null > "$dir/globals.sql" \
+    || { echo "::error::pg_dumpall --globals-only of $store failed"; return 1; }
   for db in $4; do
     echo "snapshot: pg_dump -Fc $store/$db -> $dir/$db.dump"
     ds_x "$store" pg_dump -U "$su" -Fc -d "$db" > "$dir/$db.dump" \
@@ -1178,6 +1184,16 @@ ds_pg_has_extensions() {
   done
 }
 
+# ds_pg_roles <dir> <target> <superuser>: replay globals.sql. Roles are
+# cluster-wide, outside every per-database dump. Every CREATE ROLE tolerates a
+# role that exists, which the bootstrap superuser always does; its ALTER ROLE
+# sets the dumped password hash, which a throwaway's trust auth ignores.
+ds_pg_roles() {
+  sed -E 's/^CREATE ROLE (.+);$/DO $$ BEGIN CREATE ROLE \1; EXCEPTION WHEN duplicate_object THEN NULL; END $$;/' "$1/globals.sql" \
+    | ds_x "$2" psql -U "$3" -d postgres -v ON_ERROR_STOP=1 -q > /dev/null \
+    || { echo "::error::the roles of $1/globals.sql did not restore into $2"; return 1; }
+}
+
 # ds_major_cutover <dir>: see "Postgres majors" at the top. Holds the host
 # container lock, as a restore does, so no deploy starts a consumer meanwhile.
 ds_major_cutover() {
@@ -1193,8 +1209,6 @@ ds_major_cutover() {
     [[ "$(ds_container_images "$store")" == "$(ds_meta "$dir" store_image)" ]] \
       || { echo "::error::$store no longer runs $(ds_meta "$dir" store_image): something recreated it before the cutover; nothing dumped"; exit 1; }
     ds_dump_dbs "$dir" "$store" "$su" "$(ds_meta "$dir" databases)" || exit 1
-    ds_x "$store" pg_dumpall -U "$su" --globals-only < /dev/null > "$dir/globals.sql" \
-      || { echo "::error::pg_dumpall --globals-only of $store failed"; exit 1; }
     ds_pg_extensions "$dir" "$store" "$su" || exit 1
     # The window starts here, at the end of the dump.
     ds_set_meta "$dir" epoch "$(ds_now_epoch)"
@@ -1209,12 +1223,9 @@ ds_major_cutover() {
     ds_compose up -d --no-deps --force-recreate "$store" || exit 1
     ds_pg_wait "$store" "$su" || exit 1
     ds_pg_has_extensions "$store" "$su" "$(ds_meta "$dir" new_image)" "$(ds_meta "$dir" extensions)" || exit 1
-    # Roles are cluster-wide, outside every per-database dump. The init
-    # scripts (deploy/postgres/init.sql) already created some, with placeholder
-    # passwords; the dumped ALTER ROLE then sets the real hash.
-    sed -E 's/^CREATE ROLE (.+);$/DO $$ BEGIN CREATE ROLE \1; EXCEPTION WHEN duplicate_object THEN NULL; END $$;/' "$dir/globals.sql" \
-      | ds_x "$store" psql -U "$su" -d postgres -v ON_ERROR_STOP=1 -q > /dev/null \
-      || { echo "::error::the roles of $store did not restore"; exit 1; }
+    # The init scripts (deploy/postgres/init.sql) already created some roles,
+    # with placeholder passwords; the dumped ALTER ROLE then sets the real hash.
+    ds_pg_roles "$dir" "$store" "$su" || exit 1
     ds_restore_dbs "$dir" "$store" && ds_compare "$dir" "$store"
   )
   rc=$?
@@ -1306,7 +1317,7 @@ ds_restore_dbs() {
 }
 
 ds_restore_into() {
-  local dir="$1" ctr="$2" image="${3:-$(ds_meta "$1" store_image)}" su i rc=0 facts mode=exact
+  local dir="$1" ctr="$2" image="${3:-$(ds_meta "$1" store_image)}" su i rc=0 facts mode=exact err opts=()
   if [[ "$(ds_dir_engine "$dir")" != postgres ]]; then
     [[ "$(ds_kind "$(ds_dir_engine "$dir")")" != none ]] || { echo "restore: $(ds_meta "$dir" store) keeps no state"; return 0; }
     # After a cutover the data is its fresh copy, whose reference are the facts
@@ -1330,8 +1341,23 @@ ds_restore_into() {
   # A new major has to carry every extension the databases use (pgvector)
   # before anything is restored; the list is in meta for a major only.
   ds_pg_has_extensions "ctr:$ctr" "$su" "$image" "$(ds_meta "$dir" extensions)" || rc=1
-  # The roles of the live cluster do not exist here.
-  (( rc )) || { ds_restore_dbs "$dir" "ctr:$ctr" --no-owner --no-acl && ds_compare "$dir" "ctr:$ctr"; } || rc=1
+  # The throwaway starts with the superuser only, and a dump names other roles
+  # in its policies (CREATE POLICY ... TO portal_api), which --no-owner and
+  # --no-acl do not strip. With the roles replayed the restore is the one a
+  # major cutover runs, owners and grants included. A snapshot from before
+  # globals.sql was taken (2026-11-10) restores as it did then.
+  if [[ -s "$dir/globals.sql" ]]; then
+    (( rc )) || ds_pg_roles "$dir" "ctr:$ctr" "$su" || rc=1
+  else
+    opts=(--no-owner --no-acl)
+  fi
+  err="$(mktemp)"
+  (( rc )) || { ds_restore_dbs "$dir" "ctr:$ctr" "${opts[@]}" 2> "$err" && ds_compare "$dir" "ctr:$ctr"; } || rc=1
+  cat "$err" >&2
+  if (( rc )) && (( ${#opts[@]} )) && grep -q '^pg_restore: error: .*role ".*" does not exist' "$err"; then
+    echo "::error::$dir has no globals.sql (snapshots before 2026-11-10 do not carry the roles), and its dumps name a role the throwaway lacks; the next snapshot of $(ds_meta "$dir" store) carries them"
+  fi
+  rm -f "$err"
   docker stop "$ctr" > /dev/null || true
   return "$rc"
 }
