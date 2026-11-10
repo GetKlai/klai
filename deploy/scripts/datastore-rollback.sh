@@ -1188,8 +1188,13 @@ ds_pg_has_extensions() {
 # cluster-wide, outside every per-database dump. Every CREATE ROLE tolerates a
 # role that exists, which the bootstrap superuser always does; its ALTER ROLE
 # sets the dumped password hash, which a throwaway's trust auth ignores.
+# Roles and memberships only: pg_dumpall --globals-only also writes
+# tablespaces, whose host paths do not exist in a throwaway (none of our
+# clusters defines one, checked on core-01 on 2026-11-10, but a future one
+# must not break the restore).
 ds_pg_roles() {
-  sed -E 's/^CREATE ROLE (.+);$/DO $$ BEGIN CREATE ROLE \1; EXCEPTION WHEN duplicate_object THEN NULL; END $$;/' "$1/globals.sql" \
+  grep -vE '^(CREATE|ALTER|COMMENT ON) TABLESPACE ' "$1/globals.sql" \
+    | sed -E 's/^CREATE ROLE (.+);$/DO $$ BEGIN CREATE ROLE \1; EXCEPTION WHEN duplicate_object THEN NULL; END $$;/' \
     | ds_x "$2" psql -U "$3" -d postgres -v ON_ERROR_STOP=1 -q > /dev/null \
     || { echo "::error::the roles of $1/globals.sql did not restore into $2"; return 1; }
 }
