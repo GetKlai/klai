@@ -20,7 +20,8 @@ FROM caddy:2.11.8-builder-alpine AS builder
 # The three --replace lines pin transitive dependencies, not plugins. Caddy
 # 2.11.4's own graph selects versions that Trivy flags with a fix available:
 #
-#   golang.org/x/net        CVE-2026-46600, CVE-2026-78669     fixed in 0.60.0
+#   golang.org/x/net        CVE-2026-46600, CVE-2026-78669,    fixed in 0.62.0
+#                           CVE-2026-78661
 #   google.golang.org/grpc  CVE-2026-84304, CVE-2026-84445     fixed in 1.83.2
 #   go-jose/go-jose/v4      CVE-2026-116587                    fixed in 4.1.6
 #
@@ -40,7 +41,7 @@ FROM caddy:2.11.8-builder-alpine AS builder
 RUN xcaddy build \
     --with github.com/caddy-dns/hetzner/v2 \
     --with github.com/mholt/caddy-ratelimit \
-    --replace golang.org/x/net=golang.org/x/net@v0.60.0 \
+    --replace golang.org/x/net=golang.org/x/net@v0.62.0 \
     --replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2 \
     --replace github.com/go-jose/go-jose/v4=github.com/go-jose/go-jose/v4@v4.1.6
 
