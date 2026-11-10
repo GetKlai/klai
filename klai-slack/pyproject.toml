@@ -5,7 +5,7 @@ description = "Klai in Slack: Bolt for Python service that answers from the Part
 requires-python = ">=3.12"
 dependencies = [
     "slack-bolt==1.30.0",
-    "slack-sdk==3.45.0",
+    "slack-sdk==3.46.0",
     # slack_sdk's async web client and Bolt's async adapters run on aiohttp.
     "aiohttp>=3.11",
     "fastapi>=0.136",
