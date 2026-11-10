@@ -33,7 +33,7 @@
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
     "@icons-pack/react-simple-icons": "^13.13.0",
-    "@inlang/paraglide-js": "^2.20.2",
+    "@inlang/paraglide-js": "^3.0.0",
     "@mantine/core": "^9.4.1",
     "@mantine/hooks": "^9.4.1",
     "@mantine/notifications": "^9.4.1",
