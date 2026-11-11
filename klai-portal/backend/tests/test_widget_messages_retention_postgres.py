@@ -688,3 +688,34 @@ async def test_each_removal_deletes_its_rows_including_those_a_running_sweep_com
 
     assert removed == 2
     assert [(k["org_id"], k["message_id"]) for k in await _kept(admin_engine)] == [(2, 2)]
+
+
+async def test_a_preview_conversation_is_never_kept(admin_engine: AsyncEngine) -> None:
+    from app.services.widget_messages_retention import _retention_run_once
+
+    async with admin_engine.begin() as conn:
+        await conn.execute(text("UPDATE portal_orgs SET telemetry_level = 'full' WHERE id = 1"))
+        await _seed_gap_conversation(conn, 30, 1)
+        await conn.execute(text("UPDATE widget_conversations SET is_preview = true WHERE id = 30"))
+
+    await _retention_run_once()
+
+    assert await _kept(admin_engine) == []
+
+
+@pytest.mark.parametrize("removal", [{"cluster_key": "tkey"}, {"conversation_id": 30}], ids=["decision", "test-mark"])
+async def test_a_removal_leaves_the_orgs_other_groups_and_conversations(
+    admin_engine: AsyncEngine, removal: dict
+) -> None:
+    from app.core.database import tenant_scoped_session
+    from app.services.knowledge_gap_report import conversation_ref, drop_kept_questions
+
+    async with admin_engine.begin() as conn:
+        await _insert_kept(conn, 1, ref=conversation_ref(1, 30) or "")
+        await _insert_kept(conn, 2, ref=conversation_ref(1, 40) or "", key="tother")
+
+    async with tenant_scoped_session(1) as db:
+        await drop_kept_questions(db, 1, **removal)
+        await db.commit()
+
+    assert [k["message_id"] for k in await _kept(admin_engine)] == [2]
