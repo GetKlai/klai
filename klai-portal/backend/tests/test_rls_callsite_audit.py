@@ -67,6 +67,9 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         # Support-store helpers only run inside upsert_support_case's tenant
         # session; _finding_gap constructs an unpersisted row with explicit org_id.
         "_load_case_for_update",
+        # Only called by knowledge_gap_clusters on the caller's tenant-scoped session
+        # (get_caller dependency); its SELECT also bounds by an explicit org_id.
+        "load_filed_gaps",
         "_prepare_evidence",
         "_delete_case_findings",
         "_case_findings_count",

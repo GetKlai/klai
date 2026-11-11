@@ -22,6 +22,7 @@ import * as m from '@/paraglide/messages'
 import { GapProposal } from './_components/GapProposal'
 import { GapsAccessGate } from './_components/GapsAccessGate'
 import {
+  alsoReportedLabel,
   clusterKindLabel,
   clustersPath,
   articleLabel,
@@ -108,6 +109,8 @@ export function GapDetailPage() {
         <StatCard label={m.gaps_clusters_column_kind()} value={<Badge variant="info">{clusterKindLabel(cluster.kind)}</Badge>} />
         <StatCard label={m.gaps_clusters_column_last_seen()} value={formatRelativeTime(cluster.last_seen)} />
       </div>
+
+      {alsoReportedLabel(cluster) && <p className="text-sm text-gray-600">{alsoReportedLabel(cluster)}</p>}
 
       <div>
         <Badge variant={cluster.decision === 'none' ? 'outline' : 'secondary'}>

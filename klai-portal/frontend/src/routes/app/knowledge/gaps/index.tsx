@@ -34,6 +34,7 @@ import { GapsAccessGate } from './_components/GapsAccessGate'
 import { TranscriptImportDialog } from './_components/TranscriptImportDialog'
 import { formatRelativeTime, type KBsResponse } from './-gap-types'
 import {
+  alsoReportedLabel,
   articleLabel,
   clusterKindLabel,
   clustersPath,
@@ -218,6 +219,7 @@ function ClusterTableRow({ cluster, onOpen }: { cluster: ClusterRow; onOpen: () 
       </DataTableCell>
       <DataTableCell>
         <Badge variant="info">{clusterKindLabel(cluster.kind)}</Badge>
+        {alsoReportedLabel(cluster) && <p className="mt-1 text-xs text-gray-500">{alsoReportedLabel(cluster)}</p>}
       </DataTableCell>
       <DataTableCell align="right" className="font-medium tabular-nums">
         {cluster.count}

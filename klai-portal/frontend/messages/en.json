@@ -3185,5 +3185,10 @@
   "gaps_error_proposal_upstream_failed": "The proposal could not be created this time. Try again once; if it fails again, write the article from the questions on this page.",
   "gaps_error_proposal_generating": "A proposal for this group is already being created. Wait a moment and reload the page.",
   "gaps_error_already_decided": "Someone already decided on this group. Reload the page to see the decision.",
-  "gaps_error_not_decidable": "This group has no clear topic, so it can get no proposal and no decision."
+  "gaps_error_not_decidable": "This group has no clear topic, so it can get no proposal and no decision.",
+  "gaps_cluster_kind_reported_review": "Reported by a reviewer",
+  "gaps_cluster_kind_reported_judge": "Reported by the quality check",
+  "gaps_reported_by_review": "a reviewer",
+  "gaps_reported_by_judge": "the quality check",
+  "gaps_clusters_also_reported": "Also reported by {who}"
 }

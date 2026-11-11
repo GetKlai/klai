@@ -5,7 +5,14 @@
 import { ApiError } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 
-export type ClusterKind = 'no_article' | 'article_misses_part' | 'variant_unclear' | 'contact_wish' | 'weak_match'
+export type ClusterKind =
+  | 'no_article'
+  | 'article_misses_part'
+  | 'variant_unclear'
+  | 'contact_wish'
+  | 'weak_match'
+  | 'reported_review'
+  | 'reported_judge'
 export type ClusterDecision = 'rejected' | 'out_of_scope'
 // Which kinds the list shows: the article gaps by default, the visitors who asked for a person, or both.
 export type GapView = 'article_gaps' | 'contact_requests' | 'all'
@@ -25,6 +32,8 @@ export interface ClusterRow {
   internal_count: number
   kind: ClusterKind
   kinds: Record<string, number>
+  // Who reported the group through a filed gap row, next to (or instead of) chat turns.
+  reported_by: Array<'review' | 'judge'>
   // null for a cluster that only has internal-chat signals (no stored text).
   question: string | null
   questions: string[]
@@ -83,7 +92,18 @@ export function clusterKindLabel(kind: ClusterKind): string {
       return m.gaps_cluster_kind_contact_wish()
     case 'weak_match':
       return m.gaps_cluster_kind_weak_match()
+    case 'reported_review':
+      return m.gaps_cluster_kind_reported_review()
+    case 'reported_judge':
+      return m.gaps_cluster_kind_reported_judge()
   }
+}
+
+// A group that keeps its chat kind says so when a reviewer or the quality check also reported it.
+export function alsoReportedLabel(cluster: Pick<ClusterRow, 'kind' | 'reported_by'>): string | null {
+  if (cluster.kind === 'reported_review' || cluster.kind === 'reported_judge' || cluster.reported_by.length === 0) return null
+  const who = cluster.reported_by.map((by) => (by === 'review' ? m.gaps_reported_by_review() : m.gaps_reported_by_judge()))
+  return m.gaps_clusters_also_reported({ who: who.join(', ') })
 }
 
 export function clusterTitle(cluster: Pick<ClusterRow, 'product' | 'topic'>): string {

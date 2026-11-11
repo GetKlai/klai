@@ -3185,5 +3185,10 @@
   "gaps_error_proposal_upstream_failed": "Het voorstel kon nu niet worden gemaakt. Probeer het nog een keer; lukt het dan weer niet, schrijf het artikel dan uit de vragen op deze pagina.",
   "gaps_error_proposal_generating": "Er wordt al een voorstel voor deze groep gemaakt. Wacht even en laad de pagina opnieuw.",
   "gaps_error_already_decided": "Iemand heeft al over deze groep beslist. Laad de pagina opnieuw om de beslissing te zien.",
-  "gaps_error_not_decidable": "Deze groep heeft geen duidelijk onderwerp, dus er kan geen voorstel en geen beslissing voor komen."
+  "gaps_error_not_decidable": "Deze groep heeft geen duidelijk onderwerp, dus er kan geen voorstel en geen beslissing voor komen.",
+  "gaps_cluster_kind_reported_review": "Gemeld door een beoordelaar",
+  "gaps_cluster_kind_reported_judge": "Gemeld door de kwaliteitscontrole",
+  "gaps_reported_by_review": "een beoordelaar",
+  "gaps_reported_by_judge": "de kwaliteitscontrole",
+  "gaps_clusters_also_reported": "Ook gemeld door {who}"
 }

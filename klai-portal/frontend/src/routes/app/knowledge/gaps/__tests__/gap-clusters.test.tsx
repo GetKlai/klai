@@ -79,6 +79,7 @@ function cluster(overrides: Record<string, unknown> = {}) {
     internal_count: 1,
     kind: 'article_misses_part',
     kinds: { article_misses_part: 5 },
+    reported_by: [],
     question: 'Hoe exporteer ik al mijn facturen in een keer?',
     questions: ['Hoe exporteer ik al mijn facturen in een keer?', 'Kan ik facturen als csv downloaden?'],
     article: { title: 'Facturen bekijken', url: 'https://docs.example.com/facturen', score: 0.62 },
@@ -242,6 +243,22 @@ describe('GapsPage', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: /toon besliste groepen|show decided groups/i }))
     await waitFor(() => expect(listUrls()).toContain('/api/app/gaps/clusters?days=14&include_decided=true&show=contact_requests'))
+  })
+
+  it('names a group that only a reviewer or the quality check reported, and notes when a chat group was also reported', async () => {
+    mockApi({
+      clusters: [
+        cluster({ cluster_key: 'a', topic: 'Alleen gemeld', kind: 'reported_judge', reported_by: ['judge'] }),
+        cluster({ cluster_key: 'b', topic: 'Ook gemeld', kind: 'no_article', reported_by: ['review'] }),
+      ],
+    })
+
+    render(<Wrapper><GapsPage /></Wrapper>)
+
+    await screen.findByText(/Alleen gemeld/)
+    const rows = screen.getAllByRole('row').slice(1)
+    expect(within(rows[0]).getByText(/reported by the quality check|gemeld door de kwaliteitscontrole/i)).toBeTruthy()
+    expect(within(rows[1]).getByText(/also reported by a reviewer|ook gemeld door een beoordelaar/i)).toBeTruthy()
   })
 
   it('offers the support cases and the transcript import in its header', async () => {

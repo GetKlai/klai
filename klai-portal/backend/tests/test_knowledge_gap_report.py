@@ -245,8 +245,11 @@ def _row(
 class _Db:
     """Answers the widget query with ``widget_rows``, the org's level with ``level``, the rest with nothing."""
 
-    def __init__(self, widget_rows: list[SimpleNamespace], level: str = "full") -> None:
+    def __init__(
+        self, widget_rows: list[SimpleNamespace], level: str = "full", filed_rows: list[SimpleNamespace] | None = None
+    ) -> None:
         self.widget_rows = widget_rows
+        self.filed_rows = filed_rows or []
         self.level = level
         self.compiled: list[Any] = []
 
@@ -256,7 +259,12 @@ class _Db:
         sql = str(compiled)
         result = MagicMock()
         result.scalar_one.return_value = self.level
-        result.all.return_value = self.widget_rows if "FROM widget_messages" in sql else []
+        if "FROM widget_messages" in sql:
+            result.all.return_value = self.widget_rows
+        elif "FROM portal_retrieval_gaps" in sql:
+            result.all.return_value = self.filed_rows
+        else:
+            result.all.return_value = []
         return result
 
 
@@ -539,3 +547,58 @@ def test_the_tile_counts_the_decidable_article_gap_groups_the_list_shows() -> No
     ]
 
     assert article_gap_group_count(build_clusters(turns, {})) == 2
+
+
+def _filed(text: str, by: str = "quality-judge", conversation_id: int | None = 5) -> SimpleNamespace:
+    return SimpleNamespace(
+        query_text=text, caller_client_id=by, conversation_id=conversation_id, occurred_at=_T0, language="nl"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_judge_filed_row_with_no_chat_gap_decision_comes_back_as_a_group() -> None:
+    db = _Db([], filed_rows=[_filed("hoe zet ik wachtmuziek aan voor de nachtstand")])
+
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
+
+    assert (cluster["kind"], cluster["reported_by"], cluster["count"]) == ("reported_judge", ["judge"], 1)
+    assert cluster["decidable"] is True
+    assert cluster["questions"] == ["hoe zet ik wachtmuziek aan voor de nachtstand"]
+    filed_sql = next(str(c) for c in db.compiled if "FROM portal_retrieval_gaps" in str(c))
+    assert "portal_retrieval_gaps.org_id = " in filed_sql
+    assert "portal_retrieval_gaps.resolved_at IS NULL" in filed_sql
+    assert "portal_retrieval_gaps.support_case_id IS NULL" in filed_sql
+    assert "widget_conversations.is_test IS false" in filed_sql
+    assert "widget_conversations.is_preview IS false" in filed_sql
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_in_a_group_through_its_chat_turn_is_not_counted_again_by_its_reported_row() -> None:
+    chat = _row(_signals(decision="refusal", problem="wachtmuziek nachtstand", found=[]), visitor="wachtmuziek?")
+    chat.conversation_id = 5
+    db = _Db(
+        [chat],
+        filed_rows=[
+            _filed("wachtmuziek nachtstand", by="human-review", conversation_id=5),
+            _filed("wachtmuziek nachtstand", conversation_id=6),
+        ],
+    )
+
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
+
+    # Conversations 5 (chat turn and review row) and 6 (judge row): two, not three.
+    assert cluster["count"] == 2
+    # The chat kind stays; the group shows it was also reported.
+    assert cluster["kind"] == "no_article"
+    assert cluster["reported_by"] == ["judge", "review"]
+
+
+@pytest.mark.asyncio
+async def test_a_reported_row_with_redacted_text_is_not_decidable_and_text_is_masked() -> None:
+    db = _Db([], filed_rows=[_filed("[REDACTED:shadow]", by="human-review")])
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
+    assert (cluster["kind"], cluster["decidable"], cluster["questions"]) == ("reported_review", False, [])
+
+    db = _Db([], filed_rows=[_filed("factuur 12345678 naar anna@example.com")])
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
+    assert "12345678" not in cluster["question"] and "anna@example.com" not in cluster["question"]

@@ -85,7 +85,17 @@ class GapClusterOut(BaseModel):
     count: int
     widget_count: int
     internal_count: int
-    kind: Literal["no_article", "article_misses_part", "variant_unclear", "contact_wish", "weak_match"]
+    kind: Literal[
+        "no_article",
+        "article_misses_part",
+        "variant_unclear",
+        "contact_wish",
+        "weak_match",
+        "reported_review",
+        "reported_judge",
+    ]
+    # Who also (or only) reported this group through a row in portal_retrieval_gaps.
+    reported_by: list[Literal["review", "judge"]]
     kinds: dict[str, int]
     question: str | None
     questions: list[str]

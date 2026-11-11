@@ -57,11 +57,23 @@ from sqlalchemy.orm import aliased
 
 from app.models.gap_proposals import PortalGapProposal
 from app.models.portal import PortalOrg, PortalUser
+from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.widgets import WidgetConversation, WidgetMessage
 from app.services.citations import source_url_key
+from app.services.gap_events import JUDGE_CALLER_CLIENT_ID, REVIEW_CALLER_CLIENT_ID
 
 GAP_DECISIONS = ("refusal", "clarifying_question", "human_request", "partial_answer")
-GapKind = Literal["no_article", "article_misses_part", "variant_unclear", "contact_wish", "weak_match"]
+GapKind = Literal[
+    "no_article",
+    "article_misses_part",
+    "variant_unclear",
+    "contact_wish",
+    "weak_match",
+    "reported_review",
+    "reported_judge",
+]
+# A row a reviewer or the conversation judge filed in portal_retrieval_gaps, by the kind it shows as.
+_REPORTED_KINDS: dict[str, GapKind] = {"review": "reported_review", "judge": "reported_judge"}
 # Ties in a cluster's main kind fall to the one an owner can act on first.
 _KIND_ORDER: tuple[GapKind, ...] = (
     "no_article",
@@ -69,6 +81,8 @@ _KIND_ORDER: tuple[GapKind, ...] = (
     "variant_unclear",
     "weak_match",
     "contact_wish",
+    "reported_review",
+    "reported_judge",
 )
 
 # The widget monitoring probe (scripts/widget-probe.py, docs/runbooks/widget-probe.md)
@@ -93,7 +107,9 @@ _WORD = re.compile(r"[^\W_]+")
 # seven digits (customer, order, phone and account numbers) never reaches the page.
 _MASKED = re.compile(r"\S+@\S+|\d{7,}")
 # Every kind except the visitor asking for a person; that one is a filter value.
-ARTICLE_GAP_KINDS = frozenset({"no_article", "article_misses_part", "variant_unclear", "weak_match"})
+ARTICLE_GAP_KINDS = frozenset(
+    {"no_article", "article_misses_part", "variant_unclear", "weak_match", "reported_review", "reported_judge"}
+)
 # Chat filler says nothing about the subject: pronouns, auxiliaries, the words a
 # visitor uses to ask ("graag", "hoe", "lukt") and the generic verbs and
 # nouns around a request ("instellen", "aanvragen", "klant").
@@ -134,6 +150,8 @@ def is_gap(signals: Mapping[str, Any]) -> bool:
 
 def gap_kind(signals: Mapping[str, Any]) -> GapKind:
     """What the owner has to do for one counted turn, from the stored decision, search and selection."""
+    if signals.get("filed_by") in _REPORTED_KINDS:
+        return _REPORTED_KINDS[signals["filed_by"]]
     decision = signals.get("decision")
     if decision == "clarifying_question":
         return "variant_unclear"
@@ -238,6 +256,10 @@ def _distinct(values: Iterable[str], limit: int) -> list[str]:
     return list(dict.fromkeys(v for v in values if v))[:limit]
 
 
+def _filed(turn: GapTurn) -> bool:
+    return "filed_by" in turn.signals
+
+
 def _mask(text: str) -> str:
     return _MASKED.sub("…", text)
 
@@ -275,9 +297,24 @@ def build_clusters(
     every visitor text out.
     """
     groups: dict[str, list[GapTurn]] = {}
+    reported: list[GapTurn] = []
     for turn in turns:
-        if is_gap(turn.signals):
+        if not is_gap(turn.signals):
+            continue
+        if _filed(turn):
+            reported.append(turn)
+        else:
             groups.setdefault(cluster_key(turn), []).append(turn)
+    # A reported row has no product, so it joins the chat group on the same topic
+    # words (the biggest one when several products share them), else its own group.
+    by_words: dict[tuple[str, ...], str] = {}
+    for key, members in sorted(groups.items(), key=lambda kv: len(kv[1])):
+        words = tuple(stem for stem, _ in _topic(members[0])[1])
+        if words and not _anchor(members[0].signals):
+            by_words[words] = key
+    for turn in reported:
+        words = tuple(stem for stem, _ in _topic(turn)[1])
+        groups.setdefault(cluster_key(turn) if not words else by_words.get(words, cluster_key(turn)), []).append(turn)
 
     clusters = []
     for key, members in groups.items():
@@ -286,8 +323,11 @@ def build_clusters(
             continue
         members.sort(key=lambda t: t.created_at, reverse=True)
         kinds = Counter(gap_kind(t.signals) for t in members)
+        chat_kinds = {k: n for k, n in kinds.items() if k not in _REPORTED_KINDS.values()}
         widget = [t for t in members if t.surface == "widget"]
-        product, terms = _topic(widget[0]) if widget else ("", [])
+        # A chat turn names the product; a reported row only has its question text.
+        lead = next((t for t in widget if not _filed(t)), widget[0]) if widget else None
+        product, terms = _topic(lead) if lead else ("", [])
         words = [word for _, word in terms]
         anchored = [a for a in (_anchor(t.signals) for t in widget) if a]
         # Best score first; a kept passage has no score and goes last.
@@ -321,7 +361,9 @@ def build_clusters(
                 "count": len({t.conversation_id if t.conversation_id is not None else id(t) for t in members}),
                 "widget_count": len(widget),
                 "internal_count": len(members) - len(widget),
-                "kind": max(kinds, key=lambda k: (kinds[k], -_KIND_ORDER.index(k))),
+                # A group with chat turns keeps their kind; "reported" only names a group that exists through filed rows.
+                "kind": max(chat_kinds or kinds, key=lambda k: (kinds[k], -_KIND_ORDER.index(k))),
+                "reported_by": sorted({t.signals["filed_by"] for t in members if _filed(t)}),
                 "kinds": dict(kinds),
                 "question": questions[0] if questions and literal else None,
                 "questions": questions if literal else [],
@@ -416,6 +458,54 @@ async def load_gap_turns(db: AsyncSession, *, org_id: int, since: datetime) -> l
     ] + [GapTurn("internal", row.answer_signals, row.created_at) for row in internal_rows]
 
 
+async def load_filed_gaps(db: AsyncSession, *, org_id: int, since: datetime) -> list[GapTurn]:
+    """Open rows a reviewer or the conversation judge filed, as turns: they join a group by the same key as chat turns.
+
+    Support-case findings stay out (their own screens), as do rows of a test or
+    preview conversation (a purged conversation has no row to join and stays).
+    A row whose text the telemetry level redacted has no question text, so it
+    forms a group that cannot be decided.
+    """
+    rows = (
+        await db.execute(
+            select(
+                PortalRetrievalGap.query_text,
+                PortalRetrievalGap.caller_client_id,
+                PortalRetrievalGap.conversation_id,
+                PortalRetrievalGap.occurred_at,
+                PortalRetrievalGap.language,
+            )
+            .outerjoin(
+                WidgetConversation,
+                (WidgetConversation.id == PortalRetrievalGap.conversation_id) & (WidgetConversation.org_id == org_id),
+            )
+            .where(
+                PortalRetrievalGap.org_id == org_id,
+                PortalRetrievalGap.occurred_at >= since,
+                PortalRetrievalGap.resolved_at.is_(None),
+                PortalRetrievalGap.support_case_id.is_(None),
+                PortalRetrievalGap.caller_client_id.in_((REVIEW_CALLER_CLIENT_ID, JUDGE_CALLER_CLIENT_ID)),
+                or_(
+                    WidgetConversation.id.is_(None),
+                    (WidgetConversation.is_test.is_(False)) & (WidgetConversation.is_preview.is_(False)),
+                ),
+            )
+        )
+    ).all()
+    turns = []
+    for row in rows:
+        text = "" if row.query_text.startswith("[REDACTED:") else row.query_text
+        signals = {
+            "decision": "refusal",
+            "filed_by": "review" if row.caller_client_id == REVIEW_CALLER_CLIENT_ID else "judge",
+            "language": row.language,
+            "case": {"problem": text, "product": ""},
+            "search": {"query": text, "found": []},
+        }
+        turns.append(GapTurn("widget", signals, row.occurred_at, text, row.conversation_id))
+    return turns
+
+
 async def load_cluster_decisions(db: AsyncSession, *, org_id: int) -> dict[str, dict[str, Any]]:
     rows = (
         await db.execute(
@@ -447,7 +537,7 @@ async def knowledge_gap_clusters(
     # The level is the org's own, re-read here as record_gap_event does: never a caller's.
     level = (await db.execute(select(PortalOrg.telemetry_level).where(PortalOrg.id == org_id))).scalar_one()
     since = (now or datetime.now(tz=UTC)) - timedelta(days=days)
-    turns = await load_gap_turns(db, org_id=org_id, since=since)
+    turns = await load_gap_turns(db, org_id=org_id, since=since) + await load_filed_gaps(db, org_id=org_id, since=since)
     return build_clusters(
         turns,
         await load_cluster_decisions(db, org_id=org_id),

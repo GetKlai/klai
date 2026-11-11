@@ -609,13 +609,19 @@ async def test_rescore_never_closes_a_row_a_reviewer_or_the_judge_filed() -> Non
 
     from app.services.gap_rescorer import _open_gap_queries_stmt, rescore_open_gaps
 
-    def sql(stmt) -> tuple[str, str]:
-        compiled = stmt.compile(dialect=postgresql.dialect())
-        return str(compiled), str(compiled.params)
+    def where(stmt) -> str:
+        """The whole WHERE clause with its values inlined, so a predicate is compared as a whole."""
+        clause = stmt.whereclause.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+        return " ".join(str(clause).split())
 
-    select_sql, select_params = sql(_open_gap_queries_stmt(1, None, datetime.now(tz=UTC) - timedelta(days=30)))
-    assert "caller_client_id IS NULL" in select_sql
-    assert "human-review" in select_params and "quality-judge" in select_params
+    # NULL must stay closable (internal chat) and NOT IN alone is NULL for it: the OR is the point.
+    guard = (
+        "(portal_retrieval_gaps.caller_client_id IS NULL OR "
+        "(portal_retrieval_gaps.caller_client_id NOT IN ('human-review', 'quality-judge')))"
+    )
+    select_where = where(_open_gap_queries_stmt(1, None, datetime.now(tz=UTC) - timedelta(days=30)))
+    assert select_where.endswith(f"AND {guard}")
+    assert select_where.count("caller_client_id") == 2
 
     row = MagicMock(query_text="what is klai?", gap_type="soft", language=None, telemetry_level="full")
     found = MagicMock()
@@ -639,6 +645,6 @@ async def test_rescore_never_closes_a_row_a_reviewer_or_the_judge_filed() -> Non
         client.post = AsyncMock(return_value=response)
         await rescore_open_gaps(org_id=1, zitadel_org_id="z1", kb_slug=None, db=mock_db)
 
-    update_sql, update_params = sql(mock_db.execute.call_args_list[2].args[0])
-    assert "caller_client_id IS NULL" in update_sql
-    assert "human-review" in update_params and "quality-judge" in update_params
+    update_where = where(mock_db.execute.call_args_list[2].args[0])
+    assert update_where.endswith(f"AND {guard}")
+    assert update_where.count("caller_client_id") == 2
