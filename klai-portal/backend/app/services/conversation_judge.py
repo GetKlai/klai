@@ -54,7 +54,7 @@ from app.models.retrieval_gaps import PortalRetrievalGap
 from app.services.gap_events import JUDGE_CALLER_CLIENT_ID, record_gap_event, shows_unmet_need
 from app.services.litellm_delegation import with_feature_tag
 from app.services.llm_capacity import is_llm_capacity_error
-from app.services.widget_outcome import _SUPPORT_REFERRAL_TEXTS
+from app.services.widget_outcome import is_support_referral
 from app.trace import get_trace_headers
 
 logger = structlog.get_logger()
@@ -215,18 +215,17 @@ def _derive_signals(turns: list[JudgeTurn], *, had_handoff: bool) -> dict:
 
     ``explicit_rating``: rating of the LAST assistant turn (a rating moved to
     a later answer does not retroactively rate the earlier one).
-    ``had_citation_refusal``: any assistant turn is verbatim the fixed
-    no-citable-sources refusal — the same ``_SUPPORT_REFERRAL_TEXTS`` set
-    ``widget_outcome.derive_outcome`` matches against, not a re-invention.
+    ``had_citation_refusal``: any assistant turn is the widget's fixed
+    "not found" or "not further", by the same prefix rule
+    ``widget_outcome.derive_outcome`` uses (``is_support_referral``): the
+    route's channels follow the refusal, so equality missed it.
     ``had_handoff``: passed in by the caller from widget_handoff_sessions,
     same existence check as widget_outcome.
     """
     last_assistant = next((t for t in reversed(turns) if t.role == "assistant"), None)
     return {
         "explicit_rating": last_assistant.rating if last_assistant is not None else None,
-        "had_citation_refusal": any(
-            t.role == "assistant" and t.content.strip() in _SUPPORT_REFERRAL_TEXTS for t in turns
-        ),
+        "had_citation_refusal": any(t.role == "assistant" and is_support_referral(t.content) for t in turns),
         "had_handoff": had_handoff,
     }
 

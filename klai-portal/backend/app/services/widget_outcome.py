@@ -56,7 +56,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import structlog
-from klai_chat_prompts import is_broad_knowledge_answer, no_citable_sources_message, not_further_message
+from klai_chat_prompts import fixed_text, is_broad_knowledge_answer
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -73,23 +73,20 @@ OUTCOME_INTERVAL_SECONDS = 15 * 60
 # the next pass picks up where this one stopped.
 _BATCH_SIZE = 500
 
-# The two canned helpdesk refusal strings the widget chat stores verbatim as
-# the assistant answer when it could not ground a reply (see
-# app/services/partner_chat.py::_compose_answer_with_sources helpdesk branch).
-# Generated from the single source of truth instead of duplicated here; both
-# rendered languages are enumerated explicitly — the helper now takes the
-# language CODE ("nl"/"en"), not a query to guess from.
-# The Dutch refusal carried a dash until 2026-09-22; conversations stored
-# before that are still labelled and judged, so its old form stays recognised.
+# The opening sentences of the widget's fixed "not found" and "not further"
+# replies, in both rendered languages, from the single source of truth. What
+# follows them depends on the contact route the turn named (its offer, its
+# channels, the other routes, the questions not searched), so a stored reply is
+# recognised by how it starts. The Dutch refusal carried a dash in its second
+# sentence until 2026-09-22; its first sentence was the same.
 _SUPPORT_REFERRAL_TEXTS: frozenset[str] = frozenset(
-    {
-        no_citable_sources_message("en", helpdesk=True).strip(),
-        no_citable_sources_message("nl", helpdesk=True).strip(),
-        no_citable_sources_message("nl", helpdesk=True).strip().replace(". Die helpt", " \u2014 die helpt"),
-        not_further_message("en").strip(),
-        not_further_message("nl").strip(),
-    }
+    fixed_text(name, language) for name in ("helpdesk_not_found", "helpdesk_not_further") for language in ("nl", "en")
 )
+
+
+def is_support_referral(content: str) -> bool:
+    """True when a stored assistant message is the widget's fixed "not found" or "not further"."""
+    return content.strip().startswith(tuple(_SUPPORT_REFERRAL_TEXTS))
 
 
 @dataclass(frozen=True)
@@ -129,9 +126,7 @@ def derive_outcome(
     # handoff, or the assistant referring them to support.
     if has_handoff:
         return "escalated"
-    # startswith: the application may append its own notice to the referral
-    # (the questions it did not search, knowledge_prompts.py).
-    if last_assistant is not None and last_assistant.content.strip().startswith(tuple(_SUPPORT_REFERRAL_TEXTS)):
+    if last_assistant is not None and is_support_referral(last_assistant.content):
         return "escalated"
 
     # 2. Abandoned: ends on an unanswered visitor message — but only once the
