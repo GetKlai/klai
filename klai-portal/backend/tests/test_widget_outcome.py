@@ -456,3 +456,32 @@ def test_the_not_further_reply_with_the_widget_s_channels_is_still_the_support_r
     turns = [_turn("user", "het werkt niet"), _turn("assistant", reply)]
 
     assert derive_outcome(turns, has_handoff=False) == "escalated"
+
+
+def test_a_conversation_that_ends_on_a_closing_reply_is_not_labelled_escalated():
+    from klai_chat_prompts import closing_reply
+
+    for language in ("nl", "en"):
+        turns = [
+            _turn("user", "het werkt niet"),
+            _turn("assistant", "Probeer opnieuw."),
+            _turn("user", "top"),
+            _turn("assistant", closing_reply(language)),
+        ]
+
+        assert derive_outcome(turns, has_handoff=False) == "unknown"
+
+
+def test_a_request_reply_is_labelled_like_the_plain_contact_reply():
+    """Neither is a "not found": a conversation ending on a reply that shows contact channels stays unlabelled,
+    and the judge's citation-refusal flag does not fire on it."""
+    from klai_chat_prompts import RouteChannels, contact_reply, request_reply
+
+    from app.services.widget_outcome import is_support_referral
+
+    route = RouteChannels(name="Support", email="hallo@example.com")
+    for reply in (contact_reply("nl", route), request_reply("nl", route), request_reply("en", route)):
+        turns = [_turn("user", "kunnen jullie dit wijzigen"), _turn("assistant", reply)]
+
+        assert derive_outcome(turns, has_handoff=False) == "unknown"
+        assert not is_support_referral(reply)

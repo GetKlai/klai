@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
 import structlog
@@ -306,23 +306,115 @@ async def pick_route(
     """
     if len(routes) == 1:
         return routes[0], "single"
-    listed = "\n".join(f"- {route.id}: {route.name}: {route.description}" for route in routes)
     result = await structured_judge_call(
         name="contact_route_pick",
         system_prompt=PICK_SYSTEM_PROMPT,
-        user_content=(
-            f"Visitor: {latest[:800]}\nProblem: {problem or '(unknown)'}\nProduct: {product or '(unknown)'}"
-            f"\n\nRoutes:\n{listed}"
-        ),
+        user_content=f"Visitor: {latest[:800]}\nProblem: {problem or '(unknown)'}\nProduct: {product or '(unknown)'}"
+        f"\n\nRoutes:\n{_listed(routes)}",
         schema=route_choice(_Pick, [route.id for route in routes]),
         timeout_seconds=_PICK_TIMEOUT_SECONDS,
         delegated_org_id=delegated_org_id,
         settings=settings,
     )
-    chosen = getattr(result, "route", None)
+    return _chosen(routes, getattr(result, "route", None))
+
+
+def _listed(routes: tuple[ContactRoute, ...]) -> str:
+    return "\n".join(f"- {route.id}: {route.name}: {route.description}" for route in routes)
+
+
+def _chosen(routes: tuple[ContactRoute, ...], chosen: object) -> tuple[ContactRoute, str]:
+    """The route with id ``chosen`` ("model"), else the default ("failed")."""
     picked = next((route for route in routes if route.id == chosen), None)
     if picked is not None:
         return picked, "model"
     fallback = default_route(routes)
     assert fallback is not None, "a route list with more than one route has a default (checked_routes)"
     return fallback, "failed"
+
+
+EXIT_KINDS = ("question", "request", "closing")
+
+EXIT_SYSTEM_PROMPT = (
+    "A visitor of a company's help chat sent a message that the help articles do not answer. Decide what kind of "
+    "message it is.\n"
+    "- question: the visitor asks for information or help that the articles could have covered. Example: how to "
+    "reset a password; whether a plan includes a feature; why a screen stays empty.\n"
+    "- request: the visitor asks the company to do, change, process, order or arrange something for them, which "
+    "needs a person. Example: please change the name on the contract; we need three more units, how do we get them; "
+    "can you cancel my order.\n"
+    "- closing: nothing is asked. An acknowledgement, thanks, a greeting, or a remark that they will try again later "
+    "or that it worked. Example: great, thanks; I will try again tomorrow; good morning.\n"
+    "When unsure between question and another kind, answer question: a closing wrongly given to a real question "
+    "ends the help early."
+)
+_ROUTE_PROMPT = (
+    " Also choose the contact route whose description fits what the visitor needs now; when none fits better than "
+    "another, choose the first route."
+)
+
+
+class Exit(NamedTuple):
+    """How a turn that ends in a fixed "not found" is read: its ``kind``, by whom (``model``, ``failed`` or ``rule``), and its route."""
+
+    kind: str
+    how: str
+    route: tuple[ContactRoute, str] | None
+
+
+class _ExitKind(_Pick):
+    kind: str = Field(json_schema_extra={"enum": list(EXIT_KINDS)})
+
+
+async def pick_exit(
+    routes: tuple[ContactRoute, ...],
+    latest: str,
+    previous_reply: str,
+    *,
+    first_turn: bool,
+    frustrated: bool = False,
+    problem: str,
+    product: str,
+    settings: Settings,
+    delegated_org_id: str | None = None,
+) -> Exit:
+    """What the visitor's message is (``question``, ``request`` or ``closing``) and, with several routes, the route.
+
+    One call for both. A failure, a timeout or an unknown value is a
+    ``question``, which is the reply the exit always gave. ``closing`` is
+    refused in code on a first message, on a frustrated turn (the not-found reply
+    carries the appointment) and on a message with a question mark, because a real question called a closing ends the help early.
+    """
+    prompt, content, schema = (
+        EXIT_SYSTEM_PROMPT,
+        f"Visitor: {latest[:800]}\nPrevious reply: {previous_reply[:400]}",
+        _ExitKind,
+    )
+    if len(routes) > 1:
+        prompt += _ROUTE_PROMPT
+        content += (
+            f"\nProblem: {problem or '(unknown)'}\nProduct: {product or '(unknown)'}\n\nRoutes:\n{_listed(routes)}"
+        )
+        schema = route_choice(_ExitKind, [route.id for route in routes])
+    result = await structured_judge_call(
+        name="exit_kind",
+        system_prompt=prompt,
+        user_content=content,
+        schema=schema,
+        timeout_seconds=_PICK_TIMEOUT_SECONDS,
+        delegated_org_id=delegated_org_id,
+        settings=settings,
+    )
+    kind, how = getattr(result, "kind", None), "model"
+    if kind not in EXIT_KINDS:
+        kind, how = "question", "failed"
+    elif kind == "closing" and (first_turn or frustrated or "?" in latest or "\uff1f" in latest):
+        kind, how = "question", "rule"
+    if len(routes) > 1:
+        route = _chosen(routes, getattr(result, "route", None))
+        if route[1] == "failed":
+            # An id outside the list is an invalid answer as a whole, not only a failed route pick.
+            kind, how = "question", "failed"
+    else:
+        route = (routes[0], "single") if routes else None
+    return Exit(kind, how, route)

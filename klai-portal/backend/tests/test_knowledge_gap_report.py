@@ -75,6 +75,7 @@ def test_counts_the_four_gap_decisions_and_leaves_plain_answers_out() -> None:
             ("partial_answer", "voicemail"),
             ("answer", "doorschakelen"),
             ("off_topic", "weerbericht"),
+            ("closing", "bedankje"),
         )
     ]
 

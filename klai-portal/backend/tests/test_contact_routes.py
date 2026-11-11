@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from app.api.admin_widgets import SavedWidgetConfig, UpdateWidgetRequest, WidgetConfig
 from app.services import contact_routes
-from app.services.contact_routes import ContactRoute, pick_route
+from app.services.contact_routes import ContactRoute, pick_exit, pick_route
 
 LITELLM = "http://litellm.test"
 
@@ -297,3 +297,88 @@ def test_a_reply_that_names_a_route_records_and_logs_its_id_and_how_it_was_picke
     }
     # The route has no booking URL, so the reply carries no button.
     assert (reply.appointment, reply.booking_url, signals["appointment"]) == (False, None, False)
+
+
+# ─── The exit call: what kind of message a "not found" turn is ───────────
+
+
+async def _exit(reply: httpx.Response | Exception, settings, routes=None, latest="top, ik probeer het morgen", **kw):
+    sent: list[dict] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    with respx.mock() as router:
+        router.post(f"{LITELLM}/v1/chat/completions").mock(side_effect=answer)
+        result = await pick_exit(
+            _routes() if routes is None else routes,
+            latest,
+            "Dit vind ik niet terug in onze helpartikelen.",
+            first_turn=kw.pop("first_turn", False),
+            problem="",
+            product="",
+            settings=settings,
+            delegated_org_id="zorg-acme",
+        )
+    return result, sent
+
+
+async def test_one_call_reads_the_kind_and_picks_the_route_from_closed_lists(settings):
+    result, sent = await _exit(_content({"kind": "request", "route": "billing"}), settings)
+
+    assert (result.kind, result.how, result.route[0].id, result.route[1]) == ("request", "model", "billing", "model")
+    (body,) = sent
+    properties = body["response_format"]["json_schema"]["schema"]["properties"]
+    assert properties["kind"]["enum"] == ["question", "request", "closing"]
+    assert properties["route"]["enum"] == ["support", "billing"]
+    assert body["metadata"]["_klai_delegated_org_id"] == "zorg-acme"
+
+
+async def test_one_route_or_none_is_a_call_for_the_kind_alone(settings):
+    only, *_ = _routes()
+    for routes, expected in (((only,), (only, "single")), ((), None)):
+        result, sent = await _exit(_content({"kind": "request"}), settings, routes=routes)
+
+        assert (result.kind, result.route) == ("request", expected)
+        assert "route" not in sent[0]["response_format"]["json_schema"]["schema"]["properties"]
+
+
+async def test_a_closing_stands_on_a_follow_up_without_a_question_mark(settings):
+    result, _ = await _exit(_content({"kind": "closing", "route": "billing"}), settings)
+
+    assert (result.kind, result.how) == ("closing", "model")
+
+
+@pytest.mark.parametrize(
+    ("latest", "first_turn"),
+    [("Goedemiddag,", True), ("Top, werkt dat ook zo op mobiel?", False), ("Top, werkt dat ook zo\uff1f", False)],
+    ids=["first_message", "question_mark", "fullwidth_question_mark"],
+)
+async def test_a_closing_is_refused_in_code_on_a_first_message_and_on_a_question_mark(settings, latest, first_turn):
+    result, _ = await _exit(
+        _content({"kind": "closing", "route": "billing"}), settings, latest=latest, first_turn=first_turn
+    )
+
+    assert (result.kind, result.how) == ("question", "rule")
+    # The route the same call picked is still used for the not-found reply.
+    assert result.route[0].id == "billing"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        _content({"kind": "refund", "route": "sales"}),
+        _content({"kind": "request", "route": "sales"}),
+        _content({"kind": "closing", "route": "sales"}),
+        httpx.Response(500),
+        httpx.ConnectError("down"),
+    ],
+    ids=["unknown_kind", "request_with_unknown_route", "closing_with_unknown_route", "server_error", "unreachable"],
+)
+async def test_an_exit_call_that_fails_is_a_question_for_the_default_route(settings, reply):
+    result, _ = await _exit(reply, settings)
+
+    assert (result.kind, result.how, result.route[0].id, result.route[1]) == ("question", "failed", "support", "failed")

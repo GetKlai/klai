@@ -153,6 +153,7 @@ __all__ = [
     "check_unavailable_message",
     "check_unavailable_reply",
     "clarify_question_addendum",
+    "closing_reply",
     "contact_reply",
     "contact_reply_again",
     "final_response_language_reminder",
@@ -171,6 +172,7 @@ __all__ = [
     "parse_grounding_check",
     "referral_reply",
     "render_grounding_articles",
+    "request_reply",
     "should_clarify",
     "strip_appointment_offer_marker",
 ]
@@ -351,6 +353,17 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
     "referral_generic": {
         "nl": "Hierover kijkt een collega graag persoonlijk met je mee.",
         "en": "A colleague will gladly look at this with you in person.",
+    },
+    # The exit's other two readings of a turn the articles do not answer
+    # (portal contact_routes.pick_exit): a request the chat cannot carry out,
+    # and a closing remark that asks nothing.
+    "request_reply": {
+        "nl": "Dit kan ik niet zelf in deze chat regelen. Neem hiervoor contact op via de mogelijkheden hieronder.",
+        "en": "I can't arrange this myself in this chat. Please get in touch through the options below.",
+    },
+    "closing_reply": {
+        "nl": "Helder. Heb je nog een vraag, stel hem gerust.",
+        "en": "All right. If you have another question, just ask.",
     },
     "referral_booking": {
         "nl": "Plan hieronder een afspraak, dan helpen we je verder.",
@@ -679,6 +692,17 @@ def referral_reply(
         else fixed_text("referral_generic", language)
     )
     return _route_reply([status], booking, language, route, others)
+
+
+def request_reply(language: object, route: RouteChannels | None = None, others: Sequence[RouteChannels] = ()) -> str:
+    """The reply to a visitor who asks the company to do something: the chat cannot, a colleague will, via ``route``."""
+    booking = [fixed_text("referral_booking", language)] if _books(route) else []
+    return _route_reply([fixed_text("request_reply", language)], booking, language, route, others)
+
+
+def closing_reply(language: object) -> str:
+    """The reply to a closing remark (thanks, a greeting, "I'll try later"): no route, no button, no claim."""
+    return fixed_text("closing_reply", language)
 
 
 def appointment_offer_sentence(language: object) -> str:
