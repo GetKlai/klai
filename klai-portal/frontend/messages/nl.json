@@ -3234,5 +3234,6 @@
   "admin_widgets_routes_error_link_pair": "Vul de link en de linktekst allebei in, of laat ze allebei leeg.",
   "admin_widgets_routes_referral_label": "Verwijstekst",
   "admin_widgets_routes_referral_help": "Wat de chat zegt als hij een van de onderwerpen bij \"Niet beantwoorden\" aan jou doorverwijst. Alleen voor die onderwerpen. Laat leeg voor de standaardtekst.",
-  "admin_widgets_routes_referral_placeholder": "Hier helpen we je graag persoonlijk mee. Neem gerust contact op."
+  "admin_widgets_routes_referral_placeholder": "Hier helpen we je graag persoonlijk mee. Neem gerust contact op.",
+  "admin_widgets_routes_error_unreachable": "Voeg minstens één manier toe om deze route te bereiken (telefoon, e-mail, afspraakpagina of link), of een verwijstekst."
 }
