@@ -1421,42 +1421,46 @@
   margin: -8px 0 0;
 }
 
+/* Visible question so the thumbs read as a rating control; 72% of the text
+   colour keeps the 12px label above 4.5:1 on the widget background. */
+.klai-feedback-label {
+  margin-right: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
+}
+
 .klai-feedback-btn {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--klai-text-muted);
+  color: color-mix(in srgb, var(--klai-text-color) 72%, transparent);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.75;
-  transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease;
+  transition: color 150ms ease, background-color 150ms ease;
 }
 
 .klai-feedback-btn:hover {
-  opacity: 1;
   color: var(--klai-text-color);
   background: color-mix(in srgb, var(--klai-primary-text-color) 12%, transparent);
 }
 
 .klai-feedback-btn:focus-visible {
-  opacity: 1;
   outline: 2px solid var(--klai-primary-text-color);
   outline-offset: 2px;
 }
 
 .klai-feedback-btn--active {
-  opacity: 1;
   color: var(--klai-primary-color);
   background: color-mix(in srgb, var(--klai-primary-color) 14%, transparent);
 }
 
 .klai-feedback-btn svg {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
