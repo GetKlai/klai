@@ -24,6 +24,7 @@ from klai_chat_prompts import (
     contact_reply,
     contact_reply_again,
     no_citable_sources_message,
+    not_further_message,
 )
 from structlog.testing import capture_logs
 
@@ -1702,6 +1703,31 @@ async def test_a_closing_remark_after_an_answer_gets_a_short_reply_never_the_not
 
     assert text == reply
     assert len(litellm.answer_requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("previous_decision", "expected"),
+    [
+        ("answer", not_further_message("nl")),
+        ("partial_answer", not_further_message("nl")),
+        ("refusal", REFUSAL_NL),
+        (None, REFUSAL_NL),
+    ],
+)
+async def test_a_follow_up_the_articles_cannot_answer_says_they_get_no_further_only_straight_after_an_answer(
+    monkeypatch, previous_decision, expected
+):
+    """ "het werkt niet" after an answer got "Dit vind ik niet terug", which reads as a new question."""
+    messages = [*_FOLLOW_UP[:2], {"role": "user", "content": "het werkt niet"}]
+    stored = case_file.StoredTurn(_case(), _FOLLOW_UP[1]["content"], [], previous_decision)
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case(), selection=_selection("not_in_passages"))
+    litellm, text, extras = await _route_turn(
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages, stored=stored
+    )
+
+    assert text == expected
+    assert litellm.answer_requests == []
+    assert extras["escalation"] == [{"appointment": True}]
 
 
 # ─── The case quotes its routes, remembers chosen passages, keeps one language ───

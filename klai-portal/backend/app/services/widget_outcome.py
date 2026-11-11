@@ -56,7 +56,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import structlog
-from klai_chat_prompts import is_broad_knowledge_answer, no_citable_sources_message
+from klai_chat_prompts import is_broad_knowledge_answer, no_citable_sources_message, not_further_message
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -86,6 +86,8 @@ _SUPPORT_REFERRAL_TEXTS: frozenset[str] = frozenset(
         no_citable_sources_message("en", helpdesk=True).strip(),
         no_citable_sources_message("nl", helpdesk=True).strip(),
         no_citable_sources_message("nl", helpdesk=True).strip().replace(". Die helpt", " \u2014 die helpt"),
+        not_further_message("en").strip(),
+        not_further_message("nl").strip(),
     }
 )
 
