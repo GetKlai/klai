@@ -24,6 +24,7 @@ from klai_chat_prompts import (
     contact_reply,
     contact_reply_again,
     no_citable_sources_message,
+    not_further_message,
 )
 from structlog.testing import capture_logs
 
@@ -1681,6 +1682,31 @@ async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(m
     assert litellm.retrieve_requests == []
 
 
+@pytest.mark.parametrize(
+    ("previous_decision", "expected"),
+    [
+        ("answer", not_further_message("nl")),
+        ("partial_answer", not_further_message("nl")),
+        ("refusal", REFUSAL_NL),
+        (None, REFUSAL_NL),
+    ],
+)
+async def test_a_follow_up_the_articles_cannot_answer_says_they_get_no_further_only_straight_after_an_answer(
+    monkeypatch, previous_decision, expected
+):
+    """ "het werkt niet" after an answer got "Dit vind ik niet terug", which reads as a new question."""
+    messages = [*_FOLLOW_UP[:2], {"role": "user", "content": "het werkt niet"}]
+    stored = case_file.StoredTurn(_case(), _FOLLOW_UP[1]["content"], [], previous_decision)
+    litellm = _LiteLLM(model_text=ANSWER_900, case=_case(), selection=_selection("not_in_passages"))
+    litellm, text, extras = await _route_turn(
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages, stored=stored
+    )
+
+    assert text == expected
+    assert litellm.answer_requests == []
+    assert extras["escalation"] == [{"appointment": True}]
+
+
 # ─── The case quotes its routes, remembers chosen passages, keeps one language ───
 
 
@@ -1743,6 +1769,43 @@ async def test_a_quote_of_one_or_two_words_holds_its_route_when_it_stands_as_a_p
 
     assert case is not None
     assert getattr(case, field) == answer[field]
+
+
+@pytest.mark.parametrize(
+    ("earlier", "message", "quote", "contact"),
+    [
+        # The gateway masks the model's input, so the quote carries a placeholder where the message has the address.
+        ("", "mail mij op jan@example.com", "mail mij op <EMAIL_ADDRESS_1>", True),
+        ("", "jan@example.com", "<EMAIL_ADDRESS_1>", True),
+        # The model mended a typo while copying.
+        ("", "kan ik een emdewerker spreken", "kan ik een medewerker spreken", True),
+        # The quote mixed in a number given in an earlier message.
+        (
+            "Mijn nummer is 0612345678 en het lukt niet.",
+            "ik wil graag teruggebeld worden",
+            "0612345678 ik wil graag teruggebeld worden",
+            True,
+        ),
+        # Words that only an earlier visitor message carries are still no proof for the latest one.
+        ("Ik wil een medewerker spreken.", "hoe stel ik de wachtrij in", "ik wil een medewerker spreken", False),
+        ("", "hoe stel ik de wachtrij in", "kan ik iemand spreken", False),
+    ],
+)
+async def test_a_contact_wish_survives_what_the_model_could_not_copy_but_not_words_from_elsewhere(
+    earlier, message, quote, contact
+):
+    conversation = [
+        *([{"role": "user", "content": earlier}, {"role": "assistant", "content": "Prima."}] if earlier else []),
+        {"role": "user", "content": message},
+    ]
+    answer = _case("contact", wants_quote=quote)
+    with patch.object(
+        case_file, "structured_judge_call", AsyncMock(return_value=case_file.Case.model_validate(answer))
+    ):
+        case = await case_file.update_case(conversation, None, _settings())
+
+    assert case is not None
+    assert case.wants == ("contact" if contact else "knowledge")
 
 
 _KEPT = {

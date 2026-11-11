@@ -162,6 +162,7 @@ __all__ = [
     "is_broad_knowledge_answer",
     "may_show_model_text_without_sources",
     "no_citable_sources_message",
+    "not_further_message",
     "parse_answer_claims",
     "parse_grounding_check",
     "render_grounding_articles",
@@ -299,6 +300,16 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
     "helpdesk_not_found": {
         "nl": "Dit vind ik niet terug in onze helpartikelen.",
         "en": "I can't find this in our help articles.",
+    },
+    "helpdesk_not_further": {
+        "nl": (
+            "De helpartikelen komen hier niet verder mee. "
+            "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder."
+        ),
+        "en": (
+            "The help articles do not get any further on this. "
+            "If you want to be sure, schedule an appointment with someone who can help you personally."
+        ),
     },
     "contact_reply": {
         "nl": (
@@ -473,6 +484,18 @@ def _with_channels(name: str, language: object, email: str | None, phone: str | 
     if phone:
         parts.append(fixed_text("contact_phone", language).format(phone=phone))
     return " ".join(parts)
+
+
+def not_further_message(language: object, *, email: str | None = None, phone: str | None = None) -> str:
+    """The widget's "not found" for a follow-up that comes straight after an answer.
+
+    "Dit vind ik niet terug in onze helpartikelen" reads as if the visitor asked
+    something new, while a follow-up of this kind reports that a step did not
+    work ("it doesn't work", a bare "no"). It says the articles do not get
+    further and offers contact: the appointment sentence, then the widget's own
+    e-mail address and phone number when it has them.
+    """
+    return _with_channels("helpdesk_not_further", language, email, phone)
 
 
 def appointment_offer_sentence(language: object) -> str:

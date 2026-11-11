@@ -25,6 +25,7 @@ from klai_chat_prompts import (
     contact_reply,
     contact_reply_again,
     no_citable_sources_message,
+    not_further_message,
 )
 from klai_chat_prompts.language import TARGET_LANGUAGES, resolve_conversation_language
 
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 _NOT_A_KNOWLEDGE_QUESTION = frozenset({"chat", *case_file.CONTACT_WANTS})
+_ANSWER_DECISIONS = frozenset({"answer", "partial_answer"})
 
 # Hold references to fire-and-forget tasks to prevent GC (same pattern as partner_dependencies)
 _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
@@ -407,11 +409,15 @@ def _not_in_passages_reply(
     # Without a verdict the articles were never checked, so "not found" would
     # be false: on 2026-10-23 all five of the widget's not-found replies came
     # from a selection that failed on klai-medium's budget (429).
-    text = (
-        check_unavailable_message(language, helpdesk=True)
-        if turn.selection_failed
-        else no_citable_sources_message(language, helpdesk=True)
-    )
+    if turn.selection_failed:
+        text = check_unavailable_message(language, helpdesk=True)
+    elif inputs.previous_decision in _ANSWER_DECISIONS:
+        # A follow-up straight after an answer ("it doesn't work", a bare "no")
+        # reports that a step failed; "I can't find this" reads as if it asked
+        # something new.
+        text = not_further_message(language, email=inputs.contact_email, phone=inputs.contact_phone)
+    else:
+        text = no_citable_sources_message(language, helpdesk=True)
     return fixed_reply(inputs, turn, text, language, decision="refusal", refused=True)
 
 
