@@ -12,12 +12,23 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
 import structlog
 from klai_chat_prompts import RouteChannels
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, JsonValue, create_model, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    JsonValue,
+    ValidationError,
+    create_model,
+    field_validator,
+    model_validator,
+)
 
 from app.core.config import Settings
 from app.services.turn_judge import structured_judge_call
@@ -70,6 +81,11 @@ class ContactRoute(BaseModel):
     link_url: str | None = Field(default=None, max_length=2000)
     link_label: str | None = Field(default=None, max_length=40)
     note: str | None = Field(default=None, max_length=200)
+    # The tenant's own referral for this route's do_not_answer subjects, sent
+    # verbatim when the referral call cannot name the subject. Free text like
+    # the off_topic_reply it replaces (same limit, rendered the same way); used
+    # for the referral only.
+    referral_text: str | None = Field(default=None, max_length=500)
     is_default: bool = False
 
     @field_validator("id", mode="before")
@@ -87,7 +103,7 @@ class ContactRoute(BaseModel):
             raise ValueError("id must be 1 to 64 letters, digits, - or _")
         return value
 
-    @field_validator("phone", "email", "booking_url", "link_url", "link_label", "note", mode="before")
+    @field_validator("phone", "email", "booking_url", "link_url", "link_label", "note", "referral_text", mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
@@ -132,8 +148,71 @@ def checked_routes(routes: list[ContactRoute]) -> list[ContactRoute]:
     return routes
 
 
-def routes_from_config(config: dict[str, Any]) -> tuple[ContactRoute, ...]:
-    return tuple(ContactRoute.model_validate(route) for route in config.get("contact_routes") or [])
+def routes_from_config(
+    config: dict[str, Any], *, org_id: int | None = None, widget_id: str | None = None
+) -> tuple[ContactRoute, ...]:
+    """The stored routes, read tolerantly: one bad value never takes the widget or the admin list down.
+
+    The admin API writes routes strictly, but a row can also hold what the
+    migration copied from settings the old code never validated, or what SQL
+    wrote. So, like ``conversation_starters``, reading repairs instead of
+    raising: an invalid optional value is dropped, a route without a usable
+    name or that is not an object is skipped, a repeated id gets a new one,
+    routes beyond the limit are left out and the "exactly one default" rule is
+    restored. Each repair logs ``contact_route_repaired`` with the field name,
+    never the value.
+    """
+
+    def repaired(field: str) -> None:
+        logger.warning("contact_route_repaired", org_id=org_id, widget_id=widget_id, field=field)
+
+    stored = config.get("contact_routes") or []
+    if not isinstance(stored, list):
+        repaired("contact_routes")
+        stored = []
+    routes: list[ContactRoute] = []
+    for raw in stored:
+        route = _salvaged(raw, repaired)
+        if route is None:
+            continue
+        if any(other.id == route.id for other in routes):
+            repaired("id")
+            route = route.model_copy(update={"id": _new_id()})
+        routes.append(route)
+    if len(routes) > MAX_ROUTES:
+        repaired("contact_routes")
+        routes = routes[:MAX_ROUTES]
+    defaults = [route for route in routes if route.is_default]
+    if routes and len(defaults) != 1:
+        repaired("is_default")
+        keep = defaults[0] if defaults else routes[0]
+        routes = [route.model_copy(update={"is_default": route is keep}) for route in routes]
+    return tuple(routes)
+
+
+_LINK_FIELDS = ("link_url", "link_label")
+
+
+def _salvaged(raw: object, repaired: Callable[[str], None]) -> ContactRoute | None:
+    """``raw`` as a route, without the values that fail validation; ``None`` when no route is left."""
+    if not isinstance(raw, dict):
+        repaired("route")
+        return None
+    values: dict[str, Any] = dict(raw)
+    for _ in ContactRoute.model_fields:
+        try:
+            return ContactRoute.model_validate(values)
+        except ValidationError as error:
+            # A model-level error has no field: it is the link without its label.
+            fields = {str(problem["loc"][0]) for problem in error.errors() if problem["loc"]} or set(_LINK_FIELDS)
+        if "name" in fields:
+            repaired("name")
+            return None
+        for field in sorted(fields):
+            repaired(field)
+            for dropped in _LINK_FIELDS if field in _LINK_FIELDS else (field,):
+                values.pop(dropped, None)
+    return None
 
 
 def default_route(routes: tuple[ContactRoute, ...]) -> ContactRoute | None:
@@ -154,6 +233,7 @@ def channels(route: ContactRoute) -> RouteChannels:
         link_url=route.link_url,
         link_label=route.link_label,
         note=route.note,
+        referral_text=route.referral_text,
     )
 
 

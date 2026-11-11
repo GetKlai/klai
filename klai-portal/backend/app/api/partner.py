@@ -309,7 +309,7 @@ async def _widget_settings(auth: PartnerAuthContext, db: AsyncSession) -> Widget
     return WidgetSettings(
         system_prompt="\n\n".join(parts) if parts else None,
         page_context_enabled=bool(config.get("page_context_enabled")),
-        contact_routes=routes_from_config(config),
+        contact_routes=routes_from_config(config, org_id=auth.org_id, widget_id=auth.key_id),
         tone_register="expressive" if config.get("tone_register") == "expressive" else "restrained",
     )
 

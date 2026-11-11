@@ -12,7 +12,7 @@ a claim, a price or a link of its own: the fixed reply exists so that no price
 reaches the visitor, and a blocklist on free text did not hold (review of
 2026-09-22: "is gratis", spelled-out amounts, protocol-relative links). When
 the call fails, the subject does not pass, or the language has no template, the
-route's own note stands (klai_chat_prompts.referral_reply).
+route's own referral_text stands (klai_chat_prompts.referral_reply).
 
 The referral goes to the contact route whose ``do_not_answer`` the subject
 falls under: the only such route, or, with several, the one this same call
@@ -77,7 +77,7 @@ async def off_topic_referral(
     *,
     delegated_org_id: str | None = None,
 ) -> tuple[str | None, ContactRoute, str]:
-    """The visitor's subject (``None``: the route's note stands), the route the referral goes to, and how it was picked.
+    """The visitor's subject (``None``: the route's referral_text stands), the route the referral goes to, and how it was picked.
 
     ``routes`` holds at least one route with ``do_not_answer``: the case only
     calls a subject out of scope when the widget names subjects.

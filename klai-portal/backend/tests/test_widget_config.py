@@ -238,11 +238,11 @@ async def test_the_appointments_toggle_embeds_the_default_routes_booking(public)
 def test_an_enabled_panel_without_a_default_booking_is_no_panel():
     from app.api.partner_widget_config import _widget_appointments_integration
 
-    config = {"contact_routes": [{"id": "s", "name": "Support", "is_default": True}]}
-    config["integrations"] = {"appointments": {"enabled": True}}
-    assert _widget_appointments_integration(config) == {"enabled": False, "booking_url": ""}
+    config = {"integrations": {"appointments": {"enabled": True}}}
+    assert _widget_appointments_integration(config, "") == {"enabled": False, "booking_url": ""}
     for junk in (None, "junk", {"appointments": "junk"}):
-        assert _widget_appointments_integration({"integrations": junk}) == {"enabled": False, "booking_url": ""}
+        delivered = _widget_appointments_integration({"integrations": junk}, "https://book.example.com/s")
+        assert delivered == {"enabled": False, "booking_url": ""}
 
 
 def test_the_url_gate_delivers_only_absolute_http_urls():
