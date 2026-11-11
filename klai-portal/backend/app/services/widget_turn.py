@@ -256,17 +256,7 @@ async def _route(inputs: TurnInputs, turn: KnowledgeTurn, found: Found, case: ca
     # composer answers from them either way, and the answer judge still checks
     # what an uncited reply claims. The class also reaches the generation, or
     # the profile would tell the model to refuse "do you speak English".
-    # A closer or thanks after an answer ("ok, will do") is a part without
-    # evidence for the selection too, and that must not become "not found":
-    # the case read the visitor's wish, and a chat turn is answered briefly.
-    # Only on a follow-up, because a first message has no answer to close: a
-    # first-turn "chat" that the selection finds nothing for stays "not found".
-    chat_without_evidence = (
-        turn_judge.is_conversational(scope) and turn.not_in_passages and case_file.is_follow_up(inputs.request.messages)
-    )
-    if chat_without_evidence:
-        turn.not_in_passages = False
-    conversational = (found.gap is not None or chat_without_evidence) and turn_judge.is_conversational(scope)
+    conversational = found.gap is not None and turn_judge.is_conversational(scope)
     # Every turn logs its reading, a failure as its own word: a share you
     # cannot see is a boundary that drifts unnoticed.
     if case is None:
@@ -395,11 +385,11 @@ def _not_in_passages_reply(
     # frustrated visitor gets this reply too: it carries the appointment, and
     # sending that turn to the writer with every passage produced an invented
     # cause. Not when the visitor asked for a person: that turn is about the
-    # appointment itself. The case's "chat" exempts a follow-up in
-    # ``_route`` (a closer after an answer is no question for the articles),
-    # but not a first message: the smaller judge labelled "how do I put this
-    # on my laptop" conversational and it went to the writer with passages
-    # that did not answer it.
+    # appointment itself. The case's "chat" does not exempt a turn: the
+    # selection step read the same conversation and calls a thank-you or a
+    # remark an answer that needs no passage, and the smaller judge labelled
+    # "how do I put this on my laptop" conversational, which sent it to the
+    # writer with passages that did not answer it.
     if not turn.not_in_passages:
         return None
     language = fixed_language(inputs.request.messages, case)
