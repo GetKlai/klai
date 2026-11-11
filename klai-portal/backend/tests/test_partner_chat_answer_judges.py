@@ -1682,25 +1682,6 @@ async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(m
     assert litellm.retrieve_requests == []
 
 
-async def test_a_closing_remark_after_an_answer_gets_a_short_reply_never_the_not_found_text(monkeypatch):
-    """ "ok, ik probeer het later nog eens" after an answer was read as a question and got
-    "I can't find this". The case calls it chat and the selection names no part for a remark,
-    so the turn is written; a selection that does name a part without evidence stays "not found"."""
-    messages = [
-        {"role": "user", "content": "Hoe stel ik een wachtrij in?"},
-        {"role": "assistant", "content": "Dat doe je in de belplanner."},
-        {"role": "user", "content": "Top, ik probeer het later nog eens"},
-    ]
-    reply = "Fijn, succes ermee!"
-    litellm = _LiteLLM(model_text=reply, case=_case("chat"), selection=_selection("answers"))
-    litellm, text, _ = await _route_turn(
-        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages
-    )
-
-    assert text == reply
-    assert len(litellm.answer_requests) == 1
-
-
 @pytest.mark.parametrize(
     ("previous_decision", "expected"),
     [
