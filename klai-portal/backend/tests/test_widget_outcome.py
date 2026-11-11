@@ -450,9 +450,9 @@ async def test_loop_continues_after_org_failure():
 
 
 def test_the_not_further_reply_with_the_widget_s_channels_is_still_the_support_referral():
-    from klai_chat_prompts import not_further_message
+    from klai_chat_prompts import RouteChannels, not_further_message
 
-    reply = not_further_message("nl", email="hallo@example.com", phone="000-0000000")
+    reply = not_further_message("nl", RouteChannels(name="Support", email="hallo@example.com", phone="000-0000000"))
     turns = [_turn("user", "het werkt niet"), _turn("assistant", reply)]
 
     assert derive_outcome(turns, has_handoff=False) == "escalated"

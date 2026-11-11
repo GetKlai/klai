@@ -175,298 +175,84 @@ async def test_widget_config_returns_page_context_enabled():
     assert json.loads(response.body.decode())["page_context_enabled"] is True
 
 
-@pytest.mark.asyncio
-async def test_widget_config_delivers_https_booking_url():
-    """Interim booking redirect: an https URL is delivered as configured."""
-    widget = FakeWidget()
-    widget.widget_config["booking_url"] = "https://booking.example.com/voys"
-    org = FakeOrg()
-    db = _make_db_chain(widget, org, [1])
-    request = _make_request("https://example.com")
-
-    with (
-        patch("app.api.partner_widget_config.settings") as mock_settings,
-        patch("app.api.partner_widget_config.get_redis_pool"),
-        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
-        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
-    ):
-        mock_settings.widget_jwt_secret = "shared-secret"
-
-        response = await widget_config(id=widget.widget_id, request=request, db=db)
-
-    assert json.loads(response.body.decode())["booking_url"] == "https://booking.example.com/voys"
+_DEFAULT_BOOKING = "https://book.example.com/support?t=abc"
 
 
-@pytest.mark.asyncio
-async def test_widget_config_stores_no_booking_url_key_and_delivers_empty():
-    """Unset booking_url → empty string; the widget then shows no button."""
-    widget = FakeWidget()  # no booking_url key set
-    org = FakeOrg()
-    db = _make_db_chain(widget, org, [1])
-    request = _make_request("https://example.com")
-
-    with (
-        patch("app.api.partner_widget_config.settings") as mock_settings,
-        patch("app.api.partner_widget_config.get_redis_pool"),
-        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
-        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
-    ):
-        mock_settings.widget_jwt_secret = "shared-secret"
-
-        response = await widget_config(id=widget.widget_id, request=request, db=db)
-
-    assert json.loads(response.body.decode())["booking_url"] == ""
+def _routes_config(*, enabled: bool | None = None) -> dict:
+    """Two contact routes, the default one with a booking URL, and optionally the embedded-panel toggle."""
+    config: dict = {
+        "contact_routes": [
+            {"id": "sales", "name": "Verkoop", "booking_url": "https://book.example.com/sales"},
+            {"id": "support", "name": "Support", "booking_url": _DEFAULT_BOOKING, "is_default": True},
+        ]
+    }
+    if enabled is not None:
+        config["integrations"] = {"appointments": {"enabled": enabled}}
+    return config
 
 
-def test_widget_booking_url_scheme_policy():
-    """Only absolute http(s) survives; the value lands in a visitor-facing href."""
-    from app.api.partner_widget_config import _widget_booking_url
-
-    def deliver(value: object) -> str:
-        return _widget_booking_url({"booking_url": value})
-
-    assert deliver("https://booking.example.com/a?b=1") == "https://booking.example.com/a?b=1"
-    assert deliver("http://booking.example.com") == "http://booking.example.com"
-    assert deliver("  https://booking.example.com  ") == "https://booking.example.com"
-    assert deliver("javascript:alert(1)") == ""
-    assert deliver("JaVaScRiPt:alert(1)") == ""
-    assert deliver("data:text/html;base64,PHNjcmlwdD4=") == ""
-    assert deliver("vbscript:msgbox") == ""
-    assert deliver("//booking.example.com") == ""
-    assert deliver("booking.example.com") == ""
-    assert deliver("/relative/booking") == ""
-    assert deliver("") == ""
-    assert deliver("   ") == ""
-    assert deliver("http://") == ""
-    assert deliver(None) == ""
-    assert deliver(42) == ""
-    assert _widget_booking_url({}) == ""
-
-
-@pytest.mark.asyncio
-async def test_public_bot_config_strips_non_http_booking_url():
-    """The share-link endpoint runs the same scheme validation."""
+async def _delivered(widget_config_data: dict, *, public: bool = False) -> dict:
     from app.api.partner_widget_config import public_bot_config
 
-    org = FakeOrg()
-    widget = FakeWidget(
-        public_share_enabled=True,
-        widget_config={
-            "allowed_origins": [],
-            "title": "Public",
-            "welcome_message": "",
-            "system_prompt": "",
-            "css_variables": {},
-            "booking_url": "javascript:alert(1)",
-        },
-    )
-    db = _make_db_chain(widget, org, [10])
-
+    widget = FakeWidget(public_share_enabled=public)
+    widget.widget_config.update(widget_config_data)
+    db = _make_db_chain(widget, FakeOrg(), [1])
     with (
         patch("app.api.partner_widget_config.settings") as mock_settings,
         patch("app.api.partner_widget_config.get_redis_pool"),
         patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
         patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
-        patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
+        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
-
-    assert json.loads(response.body.decode())["booking_url"] == ""
-
-
-def _appointments_config(appointments: object) -> dict:
-    """Widget config with a stored appointments integration block."""
-    return {"integrations": {"appointments": appointments}}
+        endpoint = public_bot_config if public else widget_config
+        response = await endpoint(id=widget.widget_id, request=_make_request("https://example.com"), db=db)
+    return json.loads(response.body.decode())
 
 
-def test_widget_appointments_integration_scheme_policy():
-    """The appointments booking_url becomes an iframe src: only absolute http(s) survives."""
+@pytest.mark.asyncio
+@pytest.mark.parametrize("public", [False, True], ids=["widget", "share_link"])
+async def test_the_widget_config_keeps_booking_url_as_the_default_routes(public):
+    """A browser still holding the bundle from before routes reads this field."""
+    body = await _delivered(_routes_config(), public=public)
+
+    assert body["booking_url"] == _DEFAULT_BOOKING
+    assert body["appointments"] == {"enabled": False, "booking_url": ""}
+
+
+@pytest.mark.asyncio
+async def test_a_widget_without_routes_delivers_no_booking():
+    body = await _delivered({})
+
+    assert (body["booking_url"], body["appointments"]) == ("", {"enabled": False, "booking_url": ""})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("public", [False, True], ids=["widget", "share_link"])
+async def test_the_appointments_toggle_embeds_the_default_routes_booking(public):
+    body = await _delivered(_routes_config(enabled=True), public=public)
+
+    assert body["appointments"] == {"enabled": True, "booking_url": _DEFAULT_BOOKING}
+
+
+def test_an_enabled_panel_without_a_default_booking_is_no_panel():
     from app.api.partner_widget_config import _widget_appointments_integration
 
-    delivered = _widget_appointments_integration(
-        _appointments_config({"enabled": True, "booking_url": "https://support.example.com/book/x?t=1"})
-    )
-    assert delivered == {"enabled": True, "booking_url": "https://support.example.com/book/x?t=1"}
-
-    for bad in (
-        "javascript:alert(1)",
-        "JaVaScRiPt:alert(1)",
-        "data:text/html;base64,PHNjcmlwdD4=",
-        "//support.example.com/book",
-        "/relative/booking",
-        "support.example.com/book",
-        "",
-        None,
-        42,
-    ):
-        result = _widget_appointments_integration(_appointments_config({"enabled": True, "booking_url": bad}))
-        assert result["booking_url"] == "", bad
-        # A panel without a loadable URL is no panel — not delivered as enabled.
-        assert result["enabled"] is False, bad
-
-    # Toggle off → disabled, and the URL is not handed to the visitor either.
-    assert _widget_appointments_integration(
-        _appointments_config({"enabled": False, "booking_url": "https://x.example.com"})
-    ) == {
-        "enabled": False,
-        "booking_url": "",
-    }
-    # Absent or malformed integration blocks read as disabled, never raise.
-    assert _widget_appointments_integration({}) == {"enabled": False, "booking_url": ""}
-    assert _widget_appointments_integration({"integrations": None}) == {"enabled": False, "booking_url": ""}
-    assert _widget_appointments_integration({"integrations": {"appointments": "junk"}}) == {
-        "enabled": False,
-        "booking_url": "",
-    }
+    config = {"integrations": {"appointments": {"enabled": True}}}
+    assert _widget_appointments_integration(config, "") == {"enabled": False, "booking_url": ""}
+    for junk in (None, "junk", {"appointments": "junk"}):
+        delivered = _widget_appointments_integration({"integrations": junk}, "https://book.example.com/s")
+        assert delivered == {"enabled": False, "booking_url": ""}
 
 
-@pytest.mark.asyncio
-async def test_widget_config_delivers_enabled_appointments_integration():
-    widget = FakeWidget()
-    widget.widget_config.update(
-        _appointments_config({"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"})
-    )
-    org = FakeOrg()
-    db = _make_db_chain(widget, org, [1])
-    request = _make_request("https://example.com")
+def test_the_url_gate_delivers_only_absolute_http_urls():
+    """Defense in depth beside the admin validation: the value lands in an href or an iframe src."""
+    from app.api.partner_widget_config import _validated_http_url
 
-    with (
-        patch("app.api.partner_widget_config.settings") as mock_settings,
-        patch("app.api.partner_widget_config.get_redis_pool"),
-        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
-        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
-    ):
-        mock_settings.widget_jwt_secret = "shared-secret"
-
-        response = await widget_config(id=widget.widget_id, request=request, db=db)
-
-    body = json.loads(response.body.decode())
-    assert body["appointments"] == {"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"}
-
-
-@pytest.mark.asyncio
-async def test_widget_config_strips_javascript_appointments_booking_url():
-    """A javascript: URL in the appointments integration never reaches the visitor."""
-    widget = FakeWidget()
-    widget.widget_config.update(_appointments_config({"enabled": True, "booking_url": "javascript:alert(1)"}))
-    org = FakeOrg()
-    db = _make_db_chain(widget, org, [1])
-    request = _make_request("https://example.com")
-
-    with (
-        patch("app.api.partner_widget_config.settings") as mock_settings,
-        patch("app.api.partner_widget_config.get_redis_pool"),
-        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
-        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
-    ):
-        mock_settings.widget_jwt_secret = "shared-secret"
-
-        response = await widget_config(id=widget.widget_id, request=request, db=db)
-
-    body = json.loads(response.body.decode())
-    assert body["appointments"] == {"enabled": False, "booking_url": ""}
-
-
-@pytest.mark.asyncio
-async def test_widget_config_without_appointments_integration_unchanged_for_widget():
-    """No appointments integration → the payload keeps the interim booking_url contract:
-    the legacy button URL is still delivered and the panel reads as disabled,
-    so widgets without the integration render exactly as before."""
-    widget = FakeWidget()
-    widget.widget_config["booking_url"] = "https://booking.example.com/voys"
-    org = FakeOrg()
-    db = _make_db_chain(widget, org, [1])
-    request = _make_request("https://example.com")
-
-    with (
-        patch("app.api.partner_widget_config.settings") as mock_settings,
-        patch("app.api.partner_widget_config.get_redis_pool"),
-        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
-        patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
-    ):
-        mock_settings.widget_jwt_secret = "shared-secret"
-
-        response = await widget_config(id=widget.widget_id, request=request, db=db)
-
-    body = json.loads(response.body.decode())
-    assert body["booking_url"] == "https://booking.example.com/voys"
-    assert body["appointments"] == {"enabled": False, "booking_url": ""}
-
-
-@pytest.mark.asyncio
-async def test_public_bot_config_strips_non_http_appointments_booking_url():
-    """The share-link endpoint runs the same appointments scheme validation."""
-    from app.api.partner_widget_config import public_bot_config
-
-    org = FakeOrg()
-    widget = FakeWidget(
-        public_share_enabled=True,
-        widget_config={
-            "allowed_origins": [],
-            "title": "Public",
-            "welcome_message": "",
-            "system_prompt": "",
-            "css_variables": {},
-            **_appointments_config({"enabled": True, "booking_url": "javascript:alert(1)"}),
-        },
-    )
-    db = _make_db_chain(widget, org, [10])
-
-    with (
-        patch("app.api.partner_widget_config.settings") as mock_settings,
-        patch("app.api.partner_widget_config.get_redis_pool"),
-        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
-        patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
-    ):
-        mock_settings.widget_jwt_secret = "shared-secret"
-        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
-
-    body = json.loads(response.body.decode())
-    assert body["appointments"] == {"enabled": False, "booking_url": ""}
-
-
-@pytest.mark.asyncio
-async def test_public_bot_config_delivers_enabled_appointments_integration():
-    from app.api.partner_widget_config import public_bot_config
-
-    org = FakeOrg()
-    widget = FakeWidget(
-        public_share_enabled=True,
-        widget_config={
-            "allowed_origins": [],
-            "title": "Public",
-            "welcome_message": "",
-            "system_prompt": "",
-            "css_variables": {},
-            "ai_disclosure_override": "",
-            "footer_text": "",
-            **_appointments_config({"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"}),
-        },
-    )
-    db = _make_db_chain(widget, org, [10])
-
-    with (
-        patch("app.api.partner_widget_config.settings") as mock_settings,
-        patch("app.api.partner_widget_config.get_redis_pool"),
-        patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
-        patch("app.api.partner_widget_config.set_tenant", new=AsyncMock()),
-        patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
-    ):
-        mock_settings.widget_jwt_secret = "shared-secret"
-        response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
-
-    body = json.loads(response.body.decode())
-    assert body["appointments"] == {"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"}
-    assert body["ai_disclosure_override"] == ""
-    assert body["footer_text"] == ""
-    assert body["footer_links_in_widget"] is False
+    assert _validated_http_url("https://booking.example.com/a?b=1") == "https://booking.example.com/a?b=1"
+    assert _validated_http_url("  https://booking.example.com  ") == "https://booking.example.com"
+    for bad in ("javascript:alert(1)", "data:text/html;base64,x", "//booking.example.com", "/relative", "", None, 42):
+        assert _validated_http_url(bad) == "", bad
 
 
 @pytest.mark.asyncio

@@ -142,24 +142,24 @@ def test_widget_config_footer_links_in_widget_roundtrip():
     assert _widget_to_response(widget, kb_access_count=0).widget_config.footer_links_in_widget is False
 
 
-def test_widget_config_appointments_integration_defaults_and_roundtrip():
-    """The appointments booking integration exists, defaults to disabled, and
-    survives the response mapping — so a PATCH with it stored reads back
-    with the toggle and booking URL intact."""
+def test_widget_config_appointments_integration_and_contact_routes_roundtrip():
+    """The embedded-booking toggle and the contact routes survive the response
+    mapping, so a PATCH with them stored reads back intact; the booking URL
+    lives on the route."""
     from app.api.admin_widgets import WidgetConfig, _widget_to_response
 
     config = WidgetConfig()
     assert config.integrations.appointments.enabled is False
-    assert config.integrations.appointments.booking_url is None
+    assert config.contact_routes == []
 
     saved = WidgetConfig(
-        integrations={
-            "hubspot": {"status": "not_connected"},
-            "appointments": {"enabled": True, "booking_url": "https://support.example.com/book/voys?t=abc"},
-        }
+        integrations={"hubspot": {"status": "not_connected"}, "appointments": {"enabled": True}},
+        contact_routes=[
+            {"name": "Support", "booking_url": "https://book.example.com/s", "is_default": True},
+            {"id": "sales", "name": "Verkoop", "email": "verkoop@example.com", "do_not_answer": "prijzen"},
+        ],
     )
     assert saved.integrations.appointments.enabled is True
-    assert saved.integrations.appointments.booking_url == "https://support.example.com/book/voys?t=abc"
 
     widget = MagicMock()
     widget.id = "uuid-1"
@@ -174,7 +174,9 @@ def test_widget_config_appointments_integration_defaults_and_roundtrip():
     widget.created_by = "user-1"
     response = _widget_to_response(widget, kb_access_count=0)
     assert response.widget_config.integrations.appointments.enabled is True
-    assert response.widget_config.integrations.appointments.booking_url == "https://support.example.com/book/voys?t=abc"
+    assert response.widget_config.contact_routes == saved.contact_routes
+    # A route saved without an id got one, and keeps it on every later read.
+    assert saved.contact_routes[0].id and saved.contact_routes[1].id == "sales"
 
     # Widgets stored before the integration existed keep the disabled default.
     legacy = MagicMock()
@@ -249,66 +251,6 @@ def test_widget_config_conversation_starters_max_three():
     assert WidgetConfig(conversation_starters=["a", "b", "c"]).conversation_starters == ["a", "b", "c"]
     with pytest.raises(ValueError):
         WidgetConfig(conversation_starters=["a", "b", "c", "d"])
-
-
-def test_widget_to_response_keeps_the_subjects_the_widget_does_not_answer():
-    """A full config save round-trips through this response, so a dropped field
-    does not just hide the setting: the next save writes it back empty."""
-    from app.api.admin_widgets import _widget_to_response
-
-    widget = MagicMock()
-    widget.id = "uuid-off-topic"
-    widget.name = "Help Bot"
-    widget.description = None
-    widget.widget_id = "wgt_off_topic"
-    widget.widget_config = {
-        "off_topic_subjects": "prijzen, offertes",
-        "off_topic_reply": "Daarvoor kun je contact opnemen met Voys.",
-    }
-    widget.public_share_enabled = False
-    widget.rate_limit_rpm = 60
-    widget.last_used_at = None
-    widget.created_at = "2026-01-01"
-    widget.created_by = "user-1"
-
-    result = _widget_to_response(widget, kb_access_count=0)
-
-    assert result.widget_config.off_topic_subjects == "prijzen, offertes"
-    assert result.widget_config.off_topic_reply == "Daarvoor kun je contact opnemen met Voys."
-
-
-def test_widget_config_contact_channels_are_optional_and_validated():
-    import pytest
-
-    from app.api.admin_widgets import WidgetConfig, _widget_to_response
-
-    assert WidgetConfig().contact_email is None
-    assert WidgetConfig().contact_phone is None
-    config = WidgetConfig(contact_email="hallo@example.com", contact_phone="000-0000000")
-    assert config.model_dump()["contact_email"] == "hallo@example.com"
-    with pytest.raises(ValueError):
-        WidgetConfig(contact_email="not an address")
-    with pytest.raises(ValueError):
-        WidgetConfig(contact_phone="0" * 33)
-    for bad in ("[Bel](https://evil.test)", "12345", "call me 0000000"):
-        with pytest.raises(ValueError, match="contact_phone"):
-            WidgetConfig(contact_phone=bad)
-    assert WidgetConfig(contact_phone="+31 (0)20 000 0000").contact_phone == "+31 (0)20 000 0000"
-
-    widget = MagicMock()
-    widget.id = "uuid-contact"
-    widget.name = "Help Bot"
-    widget.description = None
-    widget.widget_id = "wgt_contact"
-    widget.widget_config = config.model_dump()
-    widget.public_share_enabled = False
-    widget.rate_limit_rpm = 60
-    widget.last_used_at = None
-    widget.created_at = "2026-01-01"
-    widget.created_by = "user-1"
-    result = _widget_to_response(widget, kb_access_count=0)
-    assert result.widget_config.contact_email == "hallo@example.com"
-    assert result.widget_config.contact_phone == "000-0000000"
 
 
 def test_widget_to_response_truncates_legacy_conversation_starters():

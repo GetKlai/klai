@@ -14,6 +14,7 @@ import pytest
 
 from klai_chat_prompts import (
     FIXED_TEXTS,
+    RouteChannels,
     check_unavailable_message,
     contact_reply_again,
     fixed_text,
@@ -191,8 +192,10 @@ def test_helpdesk_default_leaves_existing_callers_untouched() -> None:
     ],
 )
 def test_contact_reply_again_names_only_the_channels_it_is_given(code: str, expected: str) -> None:
-    email, phone = ("help@example.com", "010 123 4567") if code == "de" else (None, None)
-    assert contact_reply_again(code, email=email, phone=phone) == expected
+    route = RouteChannels(
+        name="Support", booking_url="https://book.example.com/s", email="help@example.com", phone="010 123 4567"
+    )
+    assert contact_reply_again(code, route if code == "de" else None) == expected
 
 
 @pytest.mark.parametrize("language", [None, "und", "", "  ", 42])

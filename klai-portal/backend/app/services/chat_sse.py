@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 
 def _sse_content_delta(text: str) -> bytes:
@@ -36,7 +37,7 @@ def _sse_language_delta(language: str) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
-def _sse_escalation_delta(escalation: dict[str, bool]) -> bytes:
+def _sse_escalation_delta(escalation: dict[str, Any]) -> bytes:
     payload = {"choices": [{"delta": {"escalation": escalation}}]}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 

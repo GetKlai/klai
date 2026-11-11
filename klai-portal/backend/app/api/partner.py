@@ -66,6 +66,7 @@ from app.services.chat_safety import (
     widget_input_safety_violation,
 )
 from app.services.chat_sse import _sse_content_delta
+from app.services.contact_routes import ContactRoute, routes_from_config
 from app.services.internal_turn import InternalInputs, internal_turn
 from app.services.pasted_correspondence import detect_pasted_correspondence
 from app.services.prompt_templates import internal_turn_settings
@@ -258,10 +259,7 @@ class WidgetSettings:
 
     system_prompt: str | None = None
     page_context_enabled: bool = False
-    off_topic_subjects: str = ""
-    off_topic_reply: str = ""
-    contact_email: str | None = None
-    contact_phone: str | None = None
+    contact_routes: tuple[ContactRoute, ...] = ()
     tone_register: str = "restrained"
 
 
@@ -311,10 +309,7 @@ async def _widget_settings(auth: PartnerAuthContext, db: AsyncSession) -> Widget
     return WidgetSettings(
         system_prompt="\n\n".join(parts) if parts else None,
         page_context_enabled=bool(config.get("page_context_enabled")),
-        off_topic_subjects=_stripped(config.get("off_topic_subjects")),
-        off_topic_reply=_stripped(config.get("off_topic_reply")),
-        contact_email=_stripped(config.get("contact_email")) or None,
-        contact_phone=_stripped(config.get("contact_phone")) or None,
+        contact_routes=routes_from_config(config, org_id=auth.org_id, widget_id=auth.key_id),
         tone_register="expressive" if config.get("tone_register") == "expressive" else "restrained",
     )
 
@@ -1044,10 +1039,7 @@ async def _widget_or_partner_turn(
         widget_system_prompt=widget.system_prompt,
         page_context=page_context,
         tone_register=widget.tone_register,
-        off_topic_subjects=widget.off_topic_subjects,
-        off_topic_reply=widget.off_topic_reply,
-        contact_email=widget.contact_email,
-        contact_phone=widget.contact_phone,
+        contact_routes=widget.contact_routes,
         previous_case=previous.case if previous else None,
         kept_passages=previous.kept_passages if previous else [],
         previous_decision=previous.decision if previous else None,

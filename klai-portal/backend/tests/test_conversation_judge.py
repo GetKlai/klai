@@ -83,6 +83,22 @@ def test_signals_rating_of_last_assistant_and_refusal_detection():
     }
 
 
+def test_a_refusal_followed_by_a_routes_channels_counts_as_a_refusal_for_the_judge_and_the_outcome():
+    """The two readers used to differ: the outcome matched by prefix, the judge by equality."""
+    from klai_chat_prompts import RouteChannels, not_found_reply, not_further_message
+
+    from app.services.conversation_judge import _derive_signals
+    from app.services.widget_outcome import ConversationTurn, derive_outcome
+
+    route = RouteChannels(name="Support", email="hulp@example.com", phone="010 000 0000")
+    for refusal in (not_found_reply("nl", route), not_further_message("en", route, (RouteChannels(name="Sales"),))):
+        assert _derive_signals([_turn("user", "x"), _turn("assistant", refusal)], had_handoff=False)[
+            "had_citation_refusal"
+        ]
+        stored = [ConversationTurn("user", "x", None), ConversationTurn("assistant", refusal, None)]
+        assert derive_outcome(stored, has_handoff=False) == "escalated"
+
+
 def test_user_prompt_carries_transcript_and_signals_json():
     """User content is JSON-encoded (ensure_ascii=False) with role/content/
     sources per turn plus the three signals, like _build_triage_prompt."""

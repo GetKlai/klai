@@ -14,6 +14,7 @@ import json
 import sys
 import types
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -1572,3 +1573,49 @@ async def test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance(monkeyp
     assert all((body.get("metadata") or {}).get("_klai_delegated_org_id") for body in llm.calls)
     # The paraphrases run on first widget questions only, so the turn above may not have made that call.
     assert replay.settings.retrieval_paraphrase_model in _VIBE_ALLOWANCE
+    if widget:
+        await _a_widget_contact_request_picks_its_route_on_the_vibe_allowance(monkeypatch, _turn, _LiteLLM)
+
+
+async def _a_widget_contact_request_picks_its_route_on_the_vibe_allowance(monkeypatch, turn_of, litellm_of):
+    """A widget with several contact routes picks one on a turn that ends at a human: a call of its own."""
+    from app.api import partner
+    from app.services.contact_routes import ContactRoute
+
+    routes = (
+        ContactRoute(id="support", name="Support", is_default=True),
+        ContactRoute(id="billing", name="Facturen", email="facturen@example.com"),
+    )
+    monkeypatch.setattr(
+        partner, "_widget_settings", AsyncMock(return_value=partner.WidgetSettings(contact_routes=routes))
+    )
+    question = "Ik wil iemand spreken over mijn factuur"
+    case = {
+        "problem": "",
+        "product": "",
+        "variant": "",
+        "tried": [],
+        "wants_quote": question,
+        "wants": "human",
+        "out_of_scope_quote": "",
+        "out_of_scope": False,
+        "sentiment": "neutral",
+        "language": "nl",
+        "queries": [],
+    }
+    llm = litellm_of(case=case)
+
+    await turn_of(
+        monkeypatch,
+        llm,
+        profile=ChatProfile(surface="widget"),
+        question=question,
+        retrieval={"evidence_pack": {"items": [], "sources": []}},
+        key_id="wgt_acme",
+        request_body=meetlat._widget_body,
+        models_from_settings=True,
+    )
+
+    assert llm.of("contact_route_pick")
+    assert {body["model"] for body in llm.calls} <= _VIBE_ALLOWANCE
+    assert all((body.get("metadata") or {}).get("_klai_delegated_org_id") for body in llm.calls)

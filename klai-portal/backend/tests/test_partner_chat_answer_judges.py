@@ -19,6 +19,7 @@ import pytest
 import respx
 from helpers import FakeKB, FakeResult, make_partner_auth, selection_quoting_first_passage
 from klai_chat_prompts import (
+    RouteChannels,
     appointment_offer_sentence,
     check_unavailable_message,
     contact_reply,
@@ -30,6 +31,7 @@ from structlog.testing import capture_logs
 
 from app.services import case_file, chat_safety, query_paraphrase, turn_judge, widget_write
 from app.services.answer_judge import decide_answer
+from app.services.contact_routes import ContactRoute
 from app.services.passage_selection import Evidence, Part, PassageSelection
 from app.services.retrieval_context import KnowledgeTurn, kept_passages_of
 from app.services.widget_reply import Reply, reply_body, reply_frames
@@ -40,6 +42,8 @@ RETRIEVAL = "http://retrieval-api:8040"
 CLARIFYING_QUESTION = "Gaat het om je factuur of om je abonnement?"
 REFUSAL_NL = no_citable_sources_message("nl", helpdesk=True)
 OFFER_NL = appointment_offer_sentence("nl")
+# A widget without contact routes keeps its button, and has nowhere to book.
+_NO_ROUTE_BOOKING = {"appointment": True, "booking_url": None}
 VISITOR = [{"role": "user", "content": "Ik heb een vraag over mijn rekening, hoe zit dat?"}]
 
 # Conversation #900, turn 1: the article shares "factuur" and "incasso" with the
@@ -156,11 +160,15 @@ class _LiteLLM:
         question: str = "",
         selection: Any = None,
         case: Any = None,
+        route: str = "",
     ):
         self.model_text = model_text
         # The case step (case_file.py): by default a knowledge question with no
         # search queries, which changes nothing about the turn.
         self.case = case or _case()
+        # The route id the pick and a referral with several routes answer; "" is no answer.
+        self.route = route
+        self.pick_requests: list[dict] = []
         self.case_requests: list[dict] = []
         self.retrieve_requests: list[dict] = []
         # The selection step (passage_selection.py). By default it quotes
@@ -202,7 +210,11 @@ class _LiteLLM:
         if schema == "clarify_question":
             return _json_reply({"question": self.question})
         if schema == "off_topic_referral":
-            return _json_reply({"subject": self.referral})
+            self.pick_requests.append(body)
+            return _json_reply({"subject": self.referral, **({"route": self.route} if self.route else {})})
+        if schema == "contact_route_pick":
+            self.pick_requests.append(body)
+            return _json_reply({"route": self.route}) if self.route else httpx.Response(500)
         if schema == "case_update":
             self.case_requests.append(body)
             if isinstance(self.case, Exception):
@@ -314,7 +326,7 @@ async def test_an_open_part_adds_the_button_and_never_removes_the_sources(stream
 
     assert text == ANSWER_900
     assert [s["url"] for s in extras["sources"]] == ["https://help.example.com/factuur"]
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
     assert signals["decision"] == "partial_answer"
     assert signals["refused"] is False
 
@@ -496,7 +508,7 @@ async def test_an_uncited_dead_end_carries_the_appointment_button():
         "Dat staat niet in onze helpartikelen. Laat het gerust weten als je vastloopt. "
         "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder."
     )
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
 
 
 async def test_a_dead_end_that_names_the_appointment_is_left_as_written():
@@ -588,7 +600,7 @@ async def test_escalation_keeps_its_reply_and_button_whatever_the_selection_left
     text, signals, extras = await _answer(litellm, stream=True, force_escalation=True)
 
     assert text == reply
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
     assert signals["decision"] == "answer"
 
 
@@ -842,7 +854,27 @@ async def test_an_uncited_reply_from_chosen_passages_keeps_the_check_on_the_path
 # ─── Subjects this widget does not answer ───────────────────────────────
 
 
-OFF_TOPIC_REPLY = "Deze assistent helpt bij het gebruik van Voys, niet bij prijzen of offertes."
+# Longer than a note may be and with a link, as the one old off_topic_reply in use is.
+OFF_TOPIC_REPLY = (
+    "Deze assistent helpt bij het gebruik van de dienst, niet bij prijzen of offertes. Voor een offerte, een "
+    "prijsafspraak of een vraag over je contract plan je een gesprek met een collega via "
+    "[onze afsprakenpagina](https://book.example.com/support), of mail naar offerte@example.com, dan nemen we "
+    "binnen een werkdag contact met je op."
+)
+BOOKING_URL = "https://book.example.com/support"
+_BOOKING = {"appointment": True, "booking_url": BOOKING_URL}
+
+
+def _routes(*routes: dict) -> tuple[ContactRoute, ...]:
+    return tuple(ContactRoute.model_validate({"is_default": n == 0, **r}) for n, r in enumerate(routes))
+
+
+def _with_routes(monkeypatch, *routes: dict) -> None:
+    from app.api import partner
+
+    monkeypatch.setattr(
+        partner, "_widget_settings", AsyncMock(return_value=partner.WidgetSettings(contact_routes=_routes(*routes)))
+    )
 
 
 async def _off_topic_turn(
@@ -850,21 +882,22 @@ async def _off_topic_turn(
     *,
     topic: str,
     reply: str = OFF_TOPIC_REPLY,
+    subjects: str = "prijzen, tarieven, offertes, uitstel van betaling",
     stream: bool = False,
     wants_human: bool = False,
     question: str = "Wat kost een 0800-nummer?",
     referral: str = "",
 ):
-    from app.api import partner
-
-    monkeypatch.setattr(
-        partner,
-        "_widget_settings",
-        AsyncMock(
-            return_value=partner.WidgetSettings(
-                off_topic_subjects="prijzen, tarieven, offertes, uitstel van betaling", off_topic_reply=reply
-            )
-        ),
+    # The live widget's settings as the migration turns them into one route.
+    _with_routes(
+        monkeypatch,
+        {
+            "id": "support",
+            "name": "Support",
+            "booking_url": BOOKING_URL,
+            "do_not_answer": subjects,
+            "referral_text": reply,
+        },
     )
     return await _route_turn(
         monkeypatch,
@@ -891,8 +924,8 @@ async def test_a_subject_the_widget_does_not_answer_gets_the_tenants_own_sentenc
     assert text == OFF_TOPIC_REPLY
     # The answer model was never asked, so it cannot quote a price.
     assert litellm.answer_requests == []
-    # Both shapes carry the appointment button and no sources.
-    assert extras["escalation"] == [{"appointment": True}]
+    # Both shapes carry the route's booking and no sources.
+    assert extras["escalation"] == [_BOOKING]
     assert extras["sources"] == []
 
 
@@ -911,7 +944,7 @@ async def test_the_referral_names_what_the_visitor_asked_about(monkeypatch, stre
 
     assert text == _referral("je factuur")
     assert litellm.answer_requests == []
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_BOOKING]
 
 
 async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_contact_reply_not_an_answer(monkeypatch):
@@ -927,9 +960,10 @@ async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_contact_re
         question="Kunnen we een call inplannen met jullie techniek over een CRM-koppeling?",
     )
 
+    # The tenant's referral text is for the referral only; the contact reply reads as before.
     assert text == contact_reply("nl")
     assert litellm.answer_requests == []
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_BOOKING]
 
 
 async def test_a_subject_with_a_word_the_visitor_did_not_use_falls_back_to_the_tenants_sentence(monkeypatch):
@@ -975,8 +1009,8 @@ async def test_a_handled_subject_is_answered_as_usual(monkeypatch):
     assert litellm.answer_requests
 
 
-async def test_without_a_configured_reply_nothing_changes(monkeypatch):
-    litellm, text, _ = await _off_topic_turn(monkeypatch, topic="not_handled", reply="")
+async def test_without_subjects_on_any_route_nothing_changes(monkeypatch):
+    litellm, text, _ = await _off_topic_turn(monkeypatch, topic="not_handled", subjects="")
 
     assert text != OFF_TOPIC_REPLY
     assert litellm.answer_requests
@@ -1129,7 +1163,7 @@ async def test_passages_on_the_subject_that_do_not_answer_get_the_refusal_and_no
     litellm, text, extras = await _selected_turn(monkeypatch, _selection("not_in_passages"), stream=stream)
 
     assert text == REFUSAL_NL
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
     assert litellm.answer_requests == []
 
 
@@ -1179,7 +1213,7 @@ async def test_the_button_follows_the_selections_open_part(monkeypatch, post_ans
 
     assert _STORNO in text
     assert extras["sources"], "the reply keeps its source either way"
-    assert extras["escalation"] == ([] if post_answered else [{"appointment": True}])
+    assert extras["escalation"] == ([] if post_answered else [_NO_ROUTE_BOOKING])
     assert {_call_kind(body) for body in litellm.requests} == {
         "passage_selection",
         "case_update",
@@ -1263,7 +1297,7 @@ async def test_a_visitor_who_asks_for_a_person_is_not_told_the_articles_lack_an_
     )
 
     assert text == contact_reply("nl")
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
     assert litellm.answer_requests == []
 
 
@@ -1279,7 +1313,7 @@ async def test_a_selection_that_fails_twice_says_it_cannot_check_not_that_the_ar
     assert text == check_unavailable_message("nl", helpdesk=True)
     assert text != REFUSAL_NL
     assert [e["selection_failed"] for e in captured if e["event"] == "partner_chat_not_in_passages"] == [True]
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
     assert litellm.answer_requests == []
     selection_calls = [
         body
@@ -1306,26 +1340,91 @@ async def test_a_request_for_a_person_after_two_failed_selections_gets_the_conta
     )
 
     assert text == contact_reply("nl")
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
     assert litellm.answer_requests == []
 
 
-async def test_the_contact_reply_names_the_channels_the_widget_has(monkeypatch):
-    """Four visitors asked for an e-mail address or did not want to call and got the appointment reply each time."""
-    from app.api import partner
+_SUPPORT = {"id": "support", "name": "Support", "booking_url": BOOKING_URL, "description": "Storingen"}
+_BILLING = {"id": "billing", "name": "Facturen", "email": "facturen@example.com", "description": "Facturen"}
 
-    monkeypatch.setattr(
-        partner,
-        "_widget_settings",
-        AsyncMock(return_value=partner.WidgetSettings(contact_email="hallo@example.com", contact_phone="000-0000000")),
-    )
+
+async def test_the_contact_reply_names_the_single_routes_channels_without_a_pick(monkeypatch):
+    """Four visitors asked for an e-mail address or did not want to call and got the appointment reply each time."""
+    _with_routes(monkeypatch, {**_SUPPORT, "email": "hallo@example.com", "phone": "000-0000000"})
     litellm, text, extras = await _selected_turn(
         monkeypatch, _selection("not_in_passages"), case=_case("human", wants_quote="hoe kan ik die incasso storneren")
     )
 
     assert text == f"{contact_reply('nl')} Mailen kan ook: hallo@example.com. Bellen kan ook: 000-0000000."
-    assert extras["escalation"] == [{"appointment": True}]
-    assert litellm.answer_requests == []
+    assert extras["escalation"] == [_BOOKING]
+    assert litellm.answer_requests == [] and litellm.pick_requests == []
+
+
+@pytest.mark.parametrize(("language", "stream"), [("nl", False), ("en", True)])
+async def test_with_several_routes_the_reply_names_the_picked_one_and_lists_the_others(monkeypatch, language, stream):
+    _with_routes(monkeypatch, _SUPPORT, _BILLING)
+    litellm = _LiteLLM(
+        model_text=ANSWER_900,
+        selection=_selection("not_in_passages"),
+        case=_case("contact", wants_quote="mijn factuur klopt niet", language=language),
+        route="billing",
+    )
+
+    _, text, extras = await _route_turn(
+        monkeypatch,
+        question="mijn factuur klopt niet",
+        band="high",
+        items=_two_articles(),
+        litellm=litellm,
+        stream=stream,
+    )
+
+    billing, support = (
+        RouteChannels(name=r["name"], **{k: v for k, v in r.items() if k in ("email", "booking_url")})
+        for r in (_BILLING, _SUPPORT)
+    )
+    assert text == contact_reply(language, billing, (support,))
+    # The picked route has no booking URL, so no button goes under the reply.
+    assert extras["escalation"] == []
+    (pick,) = litellm.pick_requests
+    assert pick["metadata"]["_klai_delegated_org_id"]
+
+
+async def test_a_pick_that_fails_names_the_default_route(monkeypatch):
+    _with_routes(monkeypatch, _SUPPORT, _BILLING)
+    litellm = _LiteLLM(model_text=ANSWER_900, selection=_selection("not_in_passages"))
+
+    _, text, extras = await _route_turn(monkeypatch, band="high", items=_two_articles(), litellm=litellm)
+
+    assert text.startswith("Dit vind ik niet terug in onze helpartikelen. Dit is een vraag voor Support.")
+    assert "Facturen: facturen@example.com" in text
+    assert extras["escalation"] == [_BOOKING]
+
+
+async def test_a_referral_with_two_referring_routes_goes_to_the_one_the_referral_call_chose(monkeypatch):
+    _with_routes(
+        monkeypatch,
+        {**_SUPPORT, "do_not_answer": "storingen op locatie"},
+        {**_BILLING, "do_not_answer": "prijzen, offertes"},
+    )
+    question = "Wat kost een extra nummer?"
+    litellm = _LiteLLM(
+        model_text=ANSWER_900,
+        case=_case(out_of_scope=True, out_of_scope_quote=question),
+        referral="een extra nummer",
+        route="billing",
+    )
+
+    _, text, extras = await _route_turn(monkeypatch, question=question, litellm=litellm)
+
+    (referral_request,) = litellm.pick_requests
+    schema = referral_request["response_format"]["json_schema"]["schema"]
+    assert schema["properties"]["route"]["enum"] == ["support", "billing"]
+    assert text.startswith(
+        "Over een extra nummer kijkt een collega graag persoonlijk met je mee. Dit is een vraag voor Facturen. "
+        "Mail naar facturen@example.com."
+    )
+    assert extras["escalation"] == []
 
 
 async def test_a_two_part_message_that_depends_on_a_variant_is_written_with_the_question_in_it(monkeypatch):
@@ -1371,7 +1470,7 @@ async def test_a_knowledge_question_whose_selection_points_at_no_sentence_gets_t
     litellm, text, extras = await _selected_turn(monkeypatch, _selection("answers"))
 
     assert text == REFUSAL_NL
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
     assert litellm.answer_requests == []
 
 
@@ -1384,7 +1483,7 @@ async def test_a_frustrated_visitor_whose_passages_do_not_answer_gets_the_refusa
     )
 
     assert text == REFUSAL_NL
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
     assert litellm.answer_requests == []
 
 
@@ -1637,7 +1736,7 @@ async def test_a_visitor_who_wants_contact_is_not_told_the_articles_lack_an_answ
     )
 
     assert text == contact_reply("nl")
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
     assert litellm.answer_requests == []
 
 
@@ -1704,7 +1803,7 @@ async def test_a_follow_up_the_articles_cannot_answer_says_they_get_no_further_o
 
     assert text == expected
     assert litellm.answer_requests == []
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
 
 
 # ─── The case quotes its routes, remembers chosen passages, keeps one language ───
@@ -1902,7 +2001,7 @@ async def test_a_second_contact_request_in_a_row_gets_the_again_text(monkeypatch
 
     assert first_text == contact_reply("nl")
     assert second_text == contact_reply_again("nl")
-    assert extras["escalation"] == [{"appointment": True}]
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
 
 
 # ─── The provenance gate: addresses and numbers only from the passages ───

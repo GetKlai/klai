@@ -61,10 +61,10 @@ function renderSurface(props: Partial<ComponentProps<typeof WidgetChatSurface>> 
 }
 
 /** SSE stream: a content delta, optionally an escalation delta, then [DONE]. */
-function stubAssistantReply(content: string, appointment?: boolean) {
+function stubAssistantReply(content: string, appointment?: boolean, bookingUrl?: string) {
   const events: unknown[] = [{ choices: [{ delta: { content } }] }]
   if (appointment !== undefined) {
-    events.push({ choices: [{ delta: { escalation: { appointment } } }] })
+    events.push({ choices: [{ delta: { escalation: { appointment, ...(bookingUrl ? { booking_url: bookingUrl } : {}) } } }] })
   }
   const lines = [...events.map((event) => `data: ${JSON.stringify(event)}\n\n`), 'data: [DONE]\n\n']
   const encoder = new TextEncoder()
@@ -144,5 +144,25 @@ describe('WidgetChatSurface appointment escalation', () => {
 
     const button = await screen.findByRole('link', { name: 'widget_chat_book_appointment' })
     expect(button.getAttribute('href')).toBe(`${BOOKING_URL_BARE}?embed=1&lng=nl`)
+  })
+
+  it("opens the route's own booking link from the reply instead of the config link", async () => {
+    stubAssistantReply('Dat kan ik helaas niet volledig beantwoorden.', true, 'https://support.example.com/book/sales')
+    renderSurface({ appointmentsEnabled: true, appointmentsBookingUrl: BOOKING_URL_WITH_QUERY })
+
+    sendUserMessage('Kun je warm doorverbinden?')
+
+    const button = await screen.findByRole('link', { name: 'widget_chat_book_appointment' })
+    expect(button.getAttribute('href')).toBe('https://support.example.com/book/sales?embed=1&lng=nl')
+  })
+
+  it('shows the reply link as a plain link when the booking panel is off, and no button without any link', async () => {
+    stubAssistantReply('Dat kan ik helaas niet volledig beantwoorden.', true, 'https://support.example.com/book/sales')
+    renderSurface({ appointmentsEnabled: false, appointmentsBookingUrl: '' })
+
+    sendUserMessage('Kun je warm doorverbinden?')
+
+    const button = await screen.findByRole('link', { name: 'widget_chat_book_appointment' })
+    expect(button.getAttribute('href')).toBe('https://support.example.com/book/sales')
   })
 })

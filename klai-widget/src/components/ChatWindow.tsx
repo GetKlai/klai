@@ -29,7 +29,7 @@ import {
   startNewConversation,
   switchConversation,
 } from "../store/chat";
-import { collectPageContext, streamChat } from "../api/chat-stream";
+import { collectPageContext, resolveBookingUrl, streamChat } from "../api/chat-stream";
 import { fetchWidgetConfig } from "../api/widget-config";
 import {
   sendHubSpotHandoffMessage,
@@ -122,7 +122,7 @@ export function ChatWindow(props: ChatWindowProps) {
     // The appointment sentence only holds where a booking route is
     // actually configured. Appending it everywhere would promise every other
     // tenant's visitors a person they have no way to reach.
-    const booking = props.bookingUrl ? t().aiDisclosureBooking : "";
+    const booking = configBookingUrl() ? t().aiDisclosureBooking : "";
     setAiDisclosureText(notice + booking);
   }, 150);
   onCleanup(() => window.clearTimeout(disclosureTimer));
@@ -165,7 +165,19 @@ export function ChatWindow(props: ChatWindowProps) {
   // panel head carries a new-tab link at all times.
   const PANEL_FRAME_LOAD_TIMEOUT_MS = 12000;
 
-  const appointmentsActive = () => Boolean(props.appointmentsEnabled && props.appointmentsBookingUrl?.trim());
+  // The config's booking link: the default route's, with the old
+  // appointments-block field as a fallback for a server that still sends it.
+  const configBookingUrl = () => resolveBookingUrl(undefined, props.bookingUrl) ?? resolveBookingUrl(undefined, props.appointmentsBookingUrl);
+  // The toggle decides how a booking is presented (embedded panel or plain
+  // link); which URL it opens is resolved per reply by resolveBookingUrl.
+  const appointmentsActive = () => Boolean(props.appointmentsEnabled && configBookingUrl());
+  const openBooking = (url: string) => {
+    if (props.appointmentsEnabled) {
+      openPanel(appointmentsEmbedUrl(url), t().appointmentsPanelTitle, APPOINTMENTS_FRAME_ALLOW);
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
   // The booking module needs these to complete an appointment; they stay
   // scoped to that one known destination.
   const APPOINTMENTS_FRAME_ALLOW = "clipboard-write; payment; geolocation";
@@ -176,8 +188,7 @@ export function ChatWindow(props: ChatWindowProps) {
   // answers that with a 404 page inside our panel. The configured Voys URL
   // has no query string, so hardcoding "&" broke exactly the case we ship.
   // Same rule their own embed.js applies before appending lng.
-  const appointmentsEmbedUrl = () => {
-    const base = props.appointmentsBookingUrl!.trim();
+  const appointmentsEmbedUrl = (base: string) => {
     const sep = base.includes("?") ? "&" : "?";
     return `${base}${sep}embed=1&lng=${currentLocale()}`;
   };
@@ -820,7 +831,8 @@ export function ChatWindow(props: ChatWindowProps) {
           isStreaming={chatState.isStreaming}
           error={chatState.error}
           onBroadConsent={(offerIndex) => void handleBroadConsentClick(offerIndex)}
-          onAppointment={appointmentsActive() ? () => openPanel(appointmentsEmbedUrl(), t().appointmentsPanelTitle, APPOINTMENTS_FRAME_ALLOW) : undefined}
+          onAppointment={openBooking}
+          bookingUrl={configBookingUrl()}
         />
       </Show>
 
@@ -902,11 +914,11 @@ export function ChatWindow(props: ChatWindowProps) {
           that offered it, and a second permanent route to the same booking
           module would only compete with it. Widgets without the appointments
           integration keep this bar exactly as it was. */}
-      <Show when={props.bookingUrl?.trim() && !appointmentsActive()}>
+      <Show when={configBookingUrl() && !appointmentsActive()}>
         <div class="klai-booking-bar">
           <a
             class="klai-booking-btn"
-            href={props.bookingUrl!.trim()}
+            href={configBookingUrl()}
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -985,7 +997,7 @@ export function ChatWindow(props: ChatWindowProps) {
             <button
               type="button"
               class="klai-disclaimer-link"
-              onClick={() => openPanel(appointmentsEmbedUrl(), t().appointmentsPanelTitle, APPOINTMENTS_FRAME_ALLOW)}
+              onClick={() => openBooking(configBookingUrl()!)}
             >
               {t().appointmentsDisclosureLink}
             </button>

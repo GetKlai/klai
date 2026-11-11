@@ -115,7 +115,8 @@ customer-support surface where extra confirmation friction pays off.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Final, Literal
 
 from klai_citations import extract_salient_query_tokens
@@ -143,12 +144,14 @@ __all__ = [
     "AnswerClaims",
     "GroundedStatement",
     "GroundingCheck",
+    "RouteChannels",
     "answer_claims_response_format",
     "appointment_offer_marker",
     "appointment_offer_sentence",
     "broad_mode_answer_marker",
     "chat_contract_article",
     "check_unavailable_message",
+    "check_unavailable_reply",
     "clarify_question_addendum",
     "contact_reply",
     "contact_reply_again",
@@ -162,9 +165,11 @@ __all__ = [
     "is_broad_knowledge_answer",
     "may_show_model_text_without_sources",
     "no_citable_sources_message",
+    "not_found_reply",
     "not_further_message",
     "parse_answer_claims",
     "parse_grounding_check",
+    "referral_reply",
     "render_grounding_articles",
     "should_clarify",
     "strip_appointment_offer_marker",
@@ -235,13 +240,17 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
     "helpdesk_check_unavailable": {
         "nl": (
             "Ik kan onze helpartikelen op dit moment niet nakijken, dus ik kan je vraag nu niet betrouwbaar "
-            "beantwoorden. Probeer het straks nog eens, of plan een afspraak met een medewerker. Die helpt je "
-            "persoonlijk verder."
+            "beantwoorden."
         ),
-        "en": (
-            "I can't check our help articles right now, so I can't answer your question reliably at the moment. "
-            "Please try again shortly, or schedule an appointment with someone who can help you personally."
-        ),
+        "en": "I can't check our help articles right now, so I can't answer your question reliably at the moment.",
+    },
+    "helpdesk_check_unavailable_offer": {
+        "nl": "Probeer het straks nog eens, of plan een afspraak met een medewerker. Die helpt je persoonlijk verder.",
+        "en": "Please try again shortly, or schedule an appointment with someone who can help you personally.",
+    },
+    "helpdesk_check_unavailable_offer_direct": {
+        "nl": "Probeer het straks nog eens, of neem contact op met een medewerker.",
+        "en": "Please try again shortly, or contact someone who can help you personally.",
     },
     "strict_check_unavailable": {
         "nl": (
@@ -301,15 +310,15 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
         "nl": "Dit vind ik niet terug in onze helpartikelen.",
         "en": "I can't find this in our help articles.",
     },
+    # The offer for a contact route without a booking URL: the route's own
+    # channels follow it, and no button does.
+    "helpdesk_offer_direct": {
+        "nl": "Wil je het zeker weten, dan helpt een medewerker je persoonlijk verder.",
+        "en": "If you want to be sure, someone can help you personally.",
+    },
     "helpdesk_not_further": {
-        "nl": (
-            "De helpartikelen komen hier niet verder mee. "
-            "Wil je het zeker weten, plan dan een afspraak met een medewerker. Die helpt je persoonlijk verder."
-        ),
-        "en": (
-            "The help articles do not get any further on this. "
-            "If you want to be sure, schedule an appointment with someone who can help you personally."
-        ),
+        "nl": "De helpartikelen komen hier niet verder mee.",
+        "en": "The help articles do not get any further on this.",
     },
     "contact_reply": {
         "nl": (
@@ -321,9 +330,31 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
             "Use the button under this message."
         ),
     },
+    "contact_reply_direct": {
+        "nl": "Een medewerker helpt je graag persoonlijk verder.",
+        "en": "Someone will gladly help you personally.",
+    },
     "contact_reply_again": {
         "nl": "Via dit chatvenster kan ik alleen een afspraak voor je inplannen; iets anders kan ik hier niet regelen.",
         "en": "In this chat window I can only schedule an appointment for you; I can't arrange anything else here.",
+    },
+    "contact_reply_again_direct": {
+        "nl": "Via dit chatvenster kan ik niets voor je regelen; een medewerker helpt je persoonlijk verder.",
+        "en": "I can't arrange anything in this chat window; someone will help you personally.",
+    },
+    # A subject the widget does not answer: the referral names the visitor's
+    # own subject (portal off_topic_referral.py), or says it without one.
+    "referral_subject": {
+        "nl": "Over {subject} kijkt een collega graag persoonlijk met je mee.",
+        "en": "A colleague will gladly look at {subject} with you in person.",
+    },
+    "referral_generic": {
+        "nl": "Hierover kijkt een collega graag persoonlijk met je mee.",
+        "en": "A colleague will gladly look at this with you in person.",
+    },
+    "referral_booking": {
+        "nl": "Plan hieronder een afspraak, dan helpen we je verder.",
+        "en": "Plan an appointment below and we will help you further.",
     },
     "contact_email": {
         "nl": "Mailen kan ook: {email}.",
@@ -332,6 +363,28 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
     "contact_phone": {
         "nl": "Bellen kan ook: {phone}.",
         "en": "You can also call us: {phone}.",
+    },
+    "contact_link": {
+        "nl": "Zie ook: [{label}]({url}).",
+        "en": "See also: [{label}]({url}).",
+    },
+    # A route without a booking URL: its first channel is the way to reach
+    # the team, so it reads as an instruction, not as "also".
+    "contact_direct_phone": {"nl": "bel {phone}", "en": "call {phone}"},
+    "contact_direct_email": {"nl": "mail naar {email}", "en": "email {email}"},
+    "contact_direct_or": {"nl": "of", "en": "or"},
+    "contact_direct_link": {"nl": "Gebruik [{label}]({url}).", "en": "Use [{label}]({url})."},
+    "contact_direct_link_or": {"nl": "Of gebruik [{label}]({url}).", "en": "Or use [{label}]({url})."},
+    # On a widget with several routes, the reply says which one it names.
+    "contact_route_name": {"nl": "Dit is een vraag voor {name}.", "en": "This is a question for {name}."},
+    # The recovery from a wrong pick: the widget's other routes, by name.
+    "contact_others": {
+        "nl": "Gaat het over iets anders? {routes}.",
+        "en": "Is it about something else? {routes}.",
+    },
+    "contact_booking_label": {
+        "nl": "afspraak maken",
+        "en": "book an appointment",
     },
     "broad_marker": {
         "nl": "Algemene kennis, niet afkomstig uit onze helpartikelen.",
@@ -458,44 +511,174 @@ def is_broad_knowledge_answer(content: object) -> bool:
     return any(stripped.startswith(marker) for marker in BROAD_MODE_ANSWER_MARKERS)
 
 
-def contact_reply(language: object, *, email: str | None = None, phone: str | None = None) -> str:
+@dataclass(frozen=True)
+class RouteChannels:
+    """What a reply names of one of the widget's contact routes.
+
+    The portal validates every value at its admin boundary (absolute http(s)
+    URLs, a phone shape, and no Markdown or link in the name, the note and the
+    link label), so they are rendered here as they are.
+    """
+
+    name: str
+    booking_url: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    link_url: str | None = None
+    link_label: str | None = None
+    note: str | None = None
+    # The tenant's own referral, used verbatim when the subject cannot be named.
+    referral_text: str | None = None
+
+
+def _route_reply(
+    status: list[str],
+    offer: list[str],
+    language: object,
+    route: RouteChannels | None,
+    others: Sequence[RouteChannels],
+) -> str:
+    """What happened, the route's name, the offer, the channels and note, then the other routes by name.
+
+    ``route`` None is a widget without contact routes: status and offer alone,
+    as such a widget's reply was before routes existed. The name is said only
+    when there are other routes to tell it apart from, so a widget with one
+    route reads as before.
+    """
+    parts = [*status]
+    if route is not None and others:
+        parts.append(fixed_text("contact_route_name", language).format(name=route.name))
+    parts.extend(offer)
+    if route is not None:
+        parts.extend(_channel_sentences(route, language))
+        if route.note:
+            parts.append(route.note)
+    if listed := [f"{other.name}: {channel}" for other in others if (channel := _first_channel(other, language))]:
+        parts.append(fixed_text("contact_others", language).format(routes="; ".join(listed)))
+    return " ".join(parts)
+
+
+def _channel_sentences(route: RouteChannels, language: object) -> list[str]:
+    """The route's channels: "also" after the appointment sentence, else the first one is the way in.
+
+    Without a booking URL "Bellen kan ook" has nothing to be "also" next to, so
+    phone and e-mail read as one instruction ("Bel … of mail naar …") and the
+    link follows as its own sentence.
+    """
+    link = route.link_url and route.link_label
+    sentences: list[str] = []
+    if route.booking_url:
+        if route.email:
+            sentences.append(fixed_text("contact_email", language).format(email=route.email))
+        if route.phone:
+            sentences.append(fixed_text("contact_phone", language).format(phone=route.phone))
+        if link:
+            sentences.append(fixed_text("contact_link", language).format(label=route.link_label, url=route.link_url))
+        return sentences
+    ways: list[str] = []
+    if route.phone:
+        ways.append(fixed_text("contact_direct_phone", language).format(phone=route.phone))
+    if route.email:
+        ways.append(fixed_text("contact_direct_email", language).format(email=route.email))
+    if ways:
+        sentence = f" {fixed_text('contact_direct_or', language)} ".join(ways)
+        sentences.append(f"{sentence[0].upper()}{sentence[1:]}.")
+    if link:
+        name = "contact_direct_link_or" if ways else "contact_direct_link"
+        sentences.append(fixed_text(name, language).format(label=route.link_label, url=route.link_url))
+    return sentences
+
+
+def _first_channel(route: RouteChannels, language: object) -> str:
+    if route.email or route.phone:
+        return route.email or route.phone or ""
+    if route.link_url and route.link_label:
+        return f"[{route.link_label}]({route.link_url})"
+    if route.booking_url:
+        return f"[{fixed_text('contact_booking_label', language)}]({route.booking_url})"
+    return ""
+
+
+def _books(route: RouteChannels | None) -> bool:
+    # A widget without routes keeps the appointment wording it always had.
+    return route is None or bool(route.booking_url)
+
+
+def _offer(name: str, language: object, route: RouteChannels | None) -> list[str]:
+    """The fixed offer ``name``, or its ``_direct`` form for a route that books nothing."""
+    return [fixed_text(name if _books(route) else f"{name}_direct", language)]
+
+
+def contact_reply(language: object, route: RouteChannels | None = None, others: Sequence[RouteChannels] = ()) -> str:
     """The whole reply to a visitor who asks for a person, for contact or for an appointment.
 
     Written by the model, this reply came out as "Laat het gerust weten als je
     vastloopt" or as a ticket button of another product (first week of real
-    traffic after the selection step); the model has nothing to add here.
-
-    ``email`` and ``phone`` are the widget's own contact channels; each adds
-    one sentence after the appointment sentence, and without them the text is
-    the constant above.
+    traffic after the selection step); the model has nothing to add here. The
+    appointment sentence stands only when the route has a booking URL.
     """
-    return _with_channels("contact_reply", language, email, phone)
+    return _route_reply([], _offer("contact_reply", language, route), language, route, others)
 
 
-def contact_reply_again(language: object, *, email: str | None = None, phone: str | None = None) -> str:
+def contact_reply_again(
+    language: object, route: RouteChannels | None = None, others: Sequence[RouteChannels] = ()
+) -> str:
     """The reply to a contact request after the contact reply: same language rule, same channel sentences."""
-    return _with_channels("contact_reply_again", language, email, phone)
+    return _route_reply([], _offer("contact_reply_again", language, route), language, route, others)
 
 
-def _with_channels(name: str, language: object, email: str | None, phone: str | None) -> str:
-    parts = [fixed_text(name, language)]
-    if email:
-        parts.append(fixed_text("contact_email", language).format(email=email))
-    if phone:
-        parts.append(fixed_text("contact_phone", language).format(phone=phone))
-    return " ".join(parts)
+def not_found_reply(language: object, route: RouteChannels | None = None, others: Sequence[RouteChannels] = ()) -> str:
+    """The widget's "not found" decided in code, naming the route the visitor can turn to."""
+    status = [fixed_text("helpdesk_not_found", language)]
+    return _route_reply(status, _offer("helpdesk_offer", language, route), language, route, others)
 
 
-def not_further_message(language: object, *, email: str | None = None, phone: str | None = None) -> str:
+def not_further_message(
+    language: object, route: RouteChannels | None = None, others: Sequence[RouteChannels] = ()
+) -> str:
     """The widget's "not found" for a follow-up that comes straight after an answer.
 
     "Dit vind ik niet terug in onze helpartikelen" reads as if the visitor asked
     something new, while a follow-up of this kind reports that a step did not
     work ("it doesn't work", a bare "no"). It says the articles do not get
-    further and offers contact: the appointment sentence, then the widget's own
-    e-mail address and phone number when it has them.
+    further and offers contact through the route.
     """
-    return _with_channels("helpdesk_not_further", language, email, phone)
+    status = [fixed_text("helpdesk_not_further", language)]
+    return _route_reply(status, _offer("helpdesk_offer", language, route), language, route, others)
+
+
+def check_unavailable_reply(
+    language: object, route: RouteChannels | None = None, others: Sequence[RouteChannels] = ()
+) -> str:
+    """The widget's reply when the check that decides whether the articles answer could not run.
+
+    Not the not-found text: the articles were never checked. The offer follows
+    the route like every other reply at a human: an appointment only when the
+    route books.
+    """
+    status = [fixed_text("helpdesk_check_unavailable", language)]
+    return _route_reply(status, _offer("helpdesk_check_unavailable_offer", language, route), language, route, others)
+
+
+def referral_reply(
+    language: object, subject: str | None, route: RouteChannels, others: Sequence[RouteChannels] = ()
+) -> str:
+    """The reply to a subject the widget does not answer, sent to ``route``.
+
+    With a subject it names what the visitor asked about. Without one the
+    route's ``referral_text`` is the whole reply, exactly as the tenant's
+    ``off_topic_reply`` was before routes existed; a route without one gets a
+    sentence that names no subject, with the route's channels.
+    """
+    if not subject and route.referral_text:
+        return route.referral_text
+    booking = [fixed_text("referral_booking", language)] if route.booking_url else []
+    status = (
+        fixed_text("referral_subject", language).format(subject=subject)
+        if subject
+        else fixed_text("referral_generic", language)
+    )
+    return _route_reply([status], booking, language, route, others)
 
 
 def appointment_offer_sentence(language: object) -> str:
@@ -549,7 +732,7 @@ def check_unavailable_message(language: object, *, helpdesk: bool) -> str:
     selection and can still answer.
     """
     if helpdesk:
-        return fixed_text("helpdesk_check_unavailable", language)
+        return check_unavailable_reply(language)
     return fixed_text("strict_check_unavailable", language) + fixed_text("open_mode_hint", language)
 
 

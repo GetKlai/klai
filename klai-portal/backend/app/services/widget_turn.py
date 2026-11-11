@@ -21,22 +21,25 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import structlog
 from klai_chat_prompts import (
-    check_unavailable_message,
+    RouteChannels,
+    check_unavailable_reply,
     contact_reply,
     contact_reply_again,
-    no_citable_sources_message,
+    not_found_reply,
     not_further_message,
+    referral_reply,
 )
 from klai_chat_prompts.language import TARGET_LANGUAGES, resolve_conversation_language
 
 from app.core.config import Settings
-from app.services import case_file, knowledge_ingest_client, turn_judge
+from app.services import case_file, contact_routes, knowledge_ingest_client, turn_judge
 from app.services import escalation_intent as escalation_service
 from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import _response_language
 from app.services.chat_safety import _last_user_message, output_safety_violation
 from app.services.chat_sources import PageContext
 from app.services.clarify_gate import already_asked
+from app.services.contact_routes import ContactRoute, pick_route
 from app.services.gap_classification import classify_gap
 from app.services.knowledge_prompts import unchecked_questions_notice
 from app.services.off_topic_referral import off_topic_referral
@@ -88,10 +91,9 @@ class TurnInputs:
     widget_system_prompt: str | None
     page_context: PageContext | None
     tone_register: str
-    off_topic_subjects: str
-    off_topic_reply: str
-    contact_email: str | None
-    contact_phone: str | None
+    # Where a turn at a human sends the visitor (contact_routes.py); empty for
+    # a partner key and for a widget without routes.
+    contact_routes: tuple[ContactRoute, ...]
     previous_case: dict | None
     # The passages the previous turn's selection chose (or kept), and how that
     # turn was decided; both stored with its signals, empty on a first turn.
@@ -147,7 +149,7 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
             # articles, so that route is decided before the search (plan §5,
             # step 2); a first turn takes it after the search, in step 5.
             if case is not None and case.wants in case_file.CONTACT_WANTS:
-                return _contact_request_reply(inputs, turn, case)
+                return await _contact_request_reply(inputs, turn, case)
             # 3-4. Search, and select inside retrieve_context (passage_selection.py).
             variants = case.search_variants(latest) if case else []
             found, retrieval_ms = await timed(_search(inputs, turn, variants, product))
@@ -187,7 +189,7 @@ def _read_case(inputs: TurnInputs) -> Awaitable[case_file.Case | None]:
         inputs.request.messages,
         inputs.previous_case,
         inputs.settings,
-        off_topic_subjects=inputs.off_topic_subjects,
+        off_topic_subjects=contact_routes.subjects(inputs.contact_routes),
         delegated_org_id=inputs.auth.zitadel_org_id,
     )
 
@@ -274,9 +276,9 @@ async def _route(inputs: TurnInputs, turn: KnowledgeTurn, found: Found, case: ca
     if referral := await _off_topic_reply(inputs, turn, case, wants_contact):
         return referral
     if wants_contact and case is not None:
-        return _contact_request_reply(inputs, turn, case)
+        return await _contact_request_reply(inputs, turn, case)
     mark_knowledge_turn_without_evidence(turn, case)
-    if not_found := _not_in_passages_reply(inputs, turn, found, escalation, case):
+    if not_found := await _not_in_passages_reply(inputs, turn, found, escalation, case):
         return not_found
     if question := question_reply(inputs, turn, found, escalation, scope):
         return question
@@ -308,19 +310,15 @@ async def _off_topic_reply(
     inputs: TurnInputs, turn: KnowledgeTurn, case: case_file.Case | None, wants_contact: bool
 ) -> Reply | None:
     # A subject this widget does not answer (prices, quotes, payment terms):
-    # the visitor gets a referral with the appointment button and no answer
-    # model sees the articles, so a price cannot slip in from one. The referral
-    # names the visitor's subject in a sentence of ours, or falls back to the
-    # tenant's own (off_topic_referral.py); that call waits up to 2.5 s, on these
-    # turns only. A request for a person wins from it: "kan ik jullie ook
-    # gewoon bellen" read as such a subject on the meetlat, and the visitor
-    # asked how to reach a person, not about it.
+    # the visitor gets a referral to the contact route those subjects belong
+    # to and no answer model sees the articles, so a price cannot slip in from
+    # one. The referral names the visitor's subject in a sentence of ours, or
+    # falls back to the route's own referral_text (off_topic_referral.py); that call
+    # waits up to 2.5 s, on these turns only. A request for a person wins from
+    # it: "kan ik jullie ook gewoon bellen" read as such a subject on the
+    # meetlat, and the visitor asked how to reach a person, not about it.
     if not (
-        inputs.off_topic_subjects
-        and inputs.off_topic_reply
-        and case is not None
-        and case.out_of_scope
-        and not wants_contact
+        contact_routes.subjects(inputs.contact_routes) and case is not None and case.out_of_scope and not wants_contact
     ):
         # A failed case falls through to the normal answer on purpose: that is
         # what the visitor got before this setting existed, and refusing every
@@ -329,25 +327,84 @@ async def _off_topic_reply(
         return None
     messages = inputs.request.messages
     language = fixed_language(messages, case)
-    referral = await off_topic_referral(
-        _last_user_message(messages) or "", language, inputs.settings, delegated_org_id=inputs.auth.zitadel_org_id
+    subject, route, picked = await off_topic_referral(
+        _last_user_message(messages) or "",
+        language,
+        inputs.settings,
+        inputs.contact_routes,
+        delegated_org_id=inputs.auth.zitadel_org_id,
     )
     logger.info(
         "partner_chat_off_topic",
         org_id=inputs.auth.org_id,
         wgt_id=inputs.auth.key_id,
-        referral=referral is not None,
+        referral=subject is not None,
     )
-    return fixed_reply(inputs, turn, referral or inputs.off_topic_reply, language, decision="off_topic", refused=False)
+    text = referral_reply(language, subject, contact_routes.channels(route), _others(inputs, route))
+    return _route_reply(inputs, turn, text, language, (route, picked), decision="off_topic", refused=False)
 
 
-def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_file.Case) -> Reply:
+async def _pick(inputs: TurnInputs, case: case_file.Case | None) -> tuple[ContactRoute, str] | None:
+    """The route this turn at a human names, or ``None`` on a widget without routes."""
+    if not inputs.contact_routes:
+        return None
+    return await pick_route(
+        inputs.contact_routes,
+        _last_user_message(inputs.request.messages) or "",
+        problem=case.problem if case else "",
+        product=case.product if case else "",
+        settings=inputs.settings,
+        delegated_org_id=inputs.auth.zitadel_org_id,
+    )
+
+
+def _channels(picked: tuple[ContactRoute, str] | None) -> RouteChannels | None:
+    return contact_routes.channels(picked[0]) if picked else None
+
+
+def _others(inputs: TurnInputs, route: ContactRoute | None) -> tuple[RouteChannels, ...]:
+    return contact_routes.other_channels(inputs.contact_routes, route) if route else ()
+
+
+def _route_reply(
+    inputs: TurnInputs,
+    turn: KnowledgeTurn,
+    text: str,
+    language: str | None,
+    picked: tuple[ContactRoute, str] | None,
+    *,
+    decision: str,
+    refused: bool,
+) -> Reply:
+    """A fixed reply that names a route: recorded and logged, with the button only when the route books."""
+    if picked is not None:
+        route, how = picked
+        inputs.answer_signals["route"] = {"id": route.id, "picked": how}
+        logger.info(
+            "partner_chat_contact_route",
+            org_id=inputs.auth.org_id,
+            wgt_id=inputs.auth.key_id,
+            route_id=route.id,
+            picked=how,
+        )
+    booking = _booking(picked[0] if picked else None)
+    return fixed_reply(inputs, turn, text, language, decision=decision, refused=refused, **booking)
+
+
+def _booking(route: ContactRoute | None) -> dict[str, Any]:
+    """The escalation a reply carries for ``route``; a widget without routes keeps the one it always had."""
+    return {} if route is None else {"appointment": route.booking_url is not None, "booking_url": route.booking_url}
+
+
+async def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_file.Case | None) -> Reply:
     language = fixed_language(inputs.request.messages, case)
+    picked = await _pick(inputs, case)
+    route, others = _channels(picked), _others(inputs, picked[0] if picked else None)
     # Never the same fixed reply twice in a row: a visitor who had said they
     # did not want to call got the contact reply four times, word for word
     # (week of 14 to 21 October). The second time says what this chat can
-    # arrange; the appointment button stays.
-    again = contact_reply_again(language, email=inputs.contact_email, phone=inputs.contact_phone)
+    # arrange; the route's channels stay.
+    again = contact_reply_again(language, route, others)
     repeated = inputs.previous_decision == "human_request" and (
         case_file.last_assistant_message(inputs.request.messages) != again
     )
@@ -355,11 +412,11 @@ def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: case_f
         "partner_chat_contact_request",
         org_id=inputs.auth.org_id,
         wgt_id=inputs.auth.key_id,
-        wants=case.wants,
+        wants=case.wants if case else None,
         again=repeated,
     )
-    text = again if repeated else contact_reply(language, email=inputs.contact_email, phone=inputs.contact_phone)
-    return fixed_reply(inputs, turn, text, language, decision="human_request", refused=False)
+    text = again if repeated else contact_reply(language, route, others)
+    return _route_reply(inputs, turn, text, language, picked, decision="human_request", refused=False)
 
 
 def mark_knowledge_turn_without_evidence(turn: KnowledgeTurn, case: case_file.Case | None) -> None:
@@ -375,7 +432,7 @@ def mark_knowledge_turn_without_evidence(turn: KnowledgeTurn, case: case_file.Ca
         turn.not_in_passages = True
 
 
-def _not_in_passages_reply(
+async def _not_in_passages_reply(
     inputs: TurnInputs, turn: KnowledgeTurn, found: Found, escalation: str | None, case: case_file.Case | None
 ) -> Reply | None:
     # Retrieval found passages, and none of them answers this question
@@ -398,7 +455,7 @@ def _not_in_passages_reply(
             return None
         # No selection to write from: the request for a person is the reply,
         # not a writer handed every passage.
-        return fixed_reply(inputs, turn, contact_reply(language), language, decision="human_request", refused=False)
+        return await _contact_request_reply(inputs, turn, case)
     logger.info(
         "partner_chat_not_in_passages",
         org_id=inputs.auth.org_id,
@@ -408,17 +465,23 @@ def _not_in_passages_reply(
     )
     # Without a verdict the articles were never checked, so "not found" would
     # be false: on 2026-10-23 all five of the widget's not-found replies came
-    # from a selection that failed on klai-medium's budget (429).
+    # from a selection that failed on klai-medium's budget (429). No pick runs
+    # there: the reply names the default route.
     if turn.selection_failed:
-        text = check_unavailable_message(language, helpdesk=True)
-    elif inputs.previous_decision in _ANSWER_DECISIONS:
+        default = contact_routes.default_route(inputs.contact_routes)
+        picked = (default, "default" if len(inputs.contact_routes) > 1 else "single") if default else None
+        text = check_unavailable_reply(language, _channels(picked), _others(inputs, default))
+        return _route_reply(inputs, turn, text, language, picked, decision="refusal", refused=True)
+    picked = await _pick(inputs, case)
+    route, others = _channels(picked), _others(inputs, picked[0] if picked else None)
+    if inputs.previous_decision in _ANSWER_DECISIONS:
         # A follow-up straight after an answer ("it doesn't work", a bare "no")
         # reports that a step failed; "I can't find this" reads as if it asked
         # something new.
-        text = not_further_message(language, email=inputs.contact_email, phone=inputs.contact_phone)
+        text = not_further_message(language, route, others)
     else:
-        text = no_citable_sources_message(language, helpdesk=True)
-    return fixed_reply(inputs, turn, text, language, decision="refusal", refused=True)
+        text = not_found_reply(language, route, others)
+    return _route_reply(inputs, turn, text, language, picked, decision="refusal", refused=True)
 
 
 def question_reply(
@@ -484,6 +547,7 @@ def fixed_reply(
     decision: str,
     refused: bool,
     appointment: bool = True,
+    booking_url: str | None = None,
 ) -> Reply:
     """A reply decided in code: recorded like any other, with the appointment button unless told otherwise.
 
@@ -510,6 +574,7 @@ def fixed_reply(
         language=language,
         turn=turn,
         appointment=appointment,
+        booking_url=booking_url,
     )
 
 
@@ -529,7 +594,7 @@ async def _write(
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[writing.escalation]
     if writing.conversational:
         system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
-    return await write_reply(
+    reply = await write_reply(
         messages=request.messages,
         model=request.model,
         temperature=request.temperature,
@@ -552,6 +617,10 @@ async def _write(
         knowledge_turn=turn,
         pasted_correspondence=inputs.pasted_correspondence,
     )
+    # A written reply names no route; its button books with the default one.
+    default = contact_routes.default_route(inputs.contact_routes)
+    reply.booking_url = default.booking_url if default else None
+    return reply
 
 
 def log_retrieval(org_id: int, user_id: str, chunks: list[dict]) -> None:

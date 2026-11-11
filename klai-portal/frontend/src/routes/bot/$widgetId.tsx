@@ -32,8 +32,9 @@ interface PublicConfig {
   show_meta?: boolean
   collect_user_info?: boolean
   page_context_enabled?: boolean
-  // Partner booking panel (Voys-specific): server-validated {enabled,
-  // booking_url} pair, see partner.py _widget_appointments_integration.
+  // The default contact route's booking link, and the toggle that decides
+  // whether a booking opens in a panel or as a link.
+  booking_url?: string
   appointments?: { enabled?: boolean; booking_url?: string }
   name?: string
   description?: string
@@ -100,7 +101,7 @@ function PublicBotPage() {
       collectUserInfo={cfg.collect_user_info}
       pageContextEnabled={cfg.page_context_enabled}
       appointmentsEnabled={cfg.appointments?.enabled}
-      appointmentsBookingUrl={cfg.appointments?.booking_url}
+      appointmentsBookingUrl={cfg.booking_url ?? cfg.appointments?.booking_url}
       shareUrl={window.location.href}
     />
   )
