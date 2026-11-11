@@ -372,6 +372,7 @@ async def pick_exit(
     previous_reply: str,
     *,
     first_turn: bool,
+    frustrated: bool = False,
     problem: str,
     product: str,
     settings: Settings,
@@ -381,8 +382,8 @@ async def pick_exit(
 
     One call for both. A failure, a timeout or an unknown value is a
     ``question``, which is the reply the exit always gave. ``closing`` is
-    refused in code on a first message and on a message with a question mark,
-    because a real question called a closing ends the help early.
+    refused in code on a first message, on a frustrated turn (the not-found reply
+    carries the appointment) and on a message with a question mark, because a real question called a closing ends the help early.
     """
     prompt, content, schema = (
         EXIT_SYSTEM_PROMPT,
@@ -407,7 +408,7 @@ async def pick_exit(
     kind, how = getattr(result, "kind", None), "model"
     if kind not in EXIT_KINDS:
         kind, how = "question", "failed"
-    elif kind == "closing" and (first_turn or "?" in latest or "\uff1f" in latest):
+    elif kind == "closing" and (first_turn or frustrated or "?" in latest or "\uff1f" in latest):
         kind, how = "question", "rule"
     if len(routes) > 1:
         route = _chosen(routes, getattr(result, "route", None))

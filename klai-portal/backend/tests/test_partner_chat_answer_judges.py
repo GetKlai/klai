@@ -1420,8 +1420,12 @@ _REMARK = [
 ]
 
 
-async def _exit_turn(monkeypatch, exit_kind: str, *, route: str = "", messages: list[dict] | None = None):
-    litellm = _LiteLLM(model_text=ANSWER_900, selection=_selection("not_in_passages"), route=route, exit_kind=exit_kind)
+async def _exit_turn(
+    monkeypatch, exit_kind: str, *, route: str = "", messages: list[dict] | None = None, case: dict | None = None
+):
+    litellm = _LiteLLM(
+        model_text=ANSWER_900, selection=_selection("not_in_passages"), route=route, exit_kind=exit_kind, case=case
+    )
     with capture_logs() as logs:
         _, text, extras = await _route_turn(
             monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages
@@ -1539,6 +1543,99 @@ async def test_the_exit_is_recorded_and_a_closing_is_decided_as_closing_and_not_
     assert signals["exit"] == {"kind": "closing", "picked": "model"}
     assert (signals["decision"], signals["refused"], signals["appointment"]) == ("closing", False, False)
     assert reply.appointment is False
+
+
+def _exit_calls(litellm: _LiteLLM) -> list[dict]:
+    return [
+        body
+        for body in litellm.requests
+        if (body.get("response_format") or {}).get("json_schema", {}).get("name") == "exit_kind"
+    ]
+
+
+async def test_a_frustrated_visitor_never_gets_a_closing_and_keeps_the_appointment(monkeypatch):
+    """The not-found reply carries the appointment, which is why a frustrated visitor gets it."""
+    _with_routes(monkeypatch, _SUPPORT)
+    messages = [*_REMARK[:2], {"role": "user", "content": "Dit is nutteloos, bedankt in elk geval"}]
+    _, text, extras, events = await _exit_turn(
+        monkeypatch, "closing", messages=messages, case={**_case(), "sentiment": "negative"}
+    )
+
+    assert text.startswith("Dit vind ik niet terug in onze helpartikelen.")
+    assert extras["escalation"] == [_BOOKING]
+    assert [(e["kind"], e["picked"]) for e in events] == [("question", "rule")]
+
+
+async def test_a_request_reply_is_not_followed_by_the_contact_again_text(monkeypatch):
+    """A request reply is stored as human_request; "can someone call me" next is a contact request, answered
+    with the contact reply and its channels."""
+    _with_routes(monkeypatch, {**_SUPPORT, "phone": "000-0000000"})
+    first = [{"role": "user", "content": "Kun je het factuuradres voor ons wijzigen?"}]
+    _, request_text, _, _ = await _exit_turn(monkeypatch, "request", messages=first)
+    contact = _case("human", wants_quote="kan iemand mij bellen")
+    second = [
+        *first,
+        {"role": "assistant", "content": request_text},
+        {"role": "user", "content": "Kan iemand mij bellen"},
+    ]
+    stored = case_file.StoredTurn(contact, request_text, [], "human_request")
+    _, text, _ = await _route_turn(
+        monkeypatch, litellm=_LiteLLM(model_text=ANSWER_900, case=contact), messages=second, stored=stored
+    )
+
+    assert text != contact_reply_again("nl")
+    assert "000-0000000" in text
+
+
+async def test_a_second_request_in_a_row_gets_the_again_text_not_the_same_reply(monkeypatch):
+    _with_routes(monkeypatch, {**_SUPPORT, "phone": "000-0000000"})
+    first = [{"role": "user", "content": "Kun je het factuuradres voor ons wijzigen?"}]
+    _, request_text, _, _ = await _exit_turn(monkeypatch, "request", messages=first)
+    second = [
+        *first,
+        {"role": "assistant", "content": request_text},
+        {"role": "user", "content": "Kun je ook het telefoonnummer voor ons wijzigen"},
+    ]
+    stored = case_file.StoredTurn(_case(), request_text, [], "human_request")
+    litellm = _LiteLLM(model_text=ANSWER_900, selection=_selection("not_in_passages"), exit_kind="request")
+    _, text, _ = await _route_turn(
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=second, stored=stored
+    )
+
+    support = RouteChannels(name="Support", booking_url=BOOKING_URL, phone="000-0000000")
+    assert text == contact_reply_again("nl", support)
+    assert text != request_text
+
+
+async def test_the_exit_call_is_not_made_on_a_failed_selection(monkeypatch):
+    litellm, text, _ = await _selected_turn(monkeypatch, httpx.ConnectError("boom"))
+
+    assert text == check_unavailable_message("nl", helpdesk=True)
+    assert _exit_calls(litellm) == []
+
+
+async def test_the_exit_call_is_not_made_on_a_contact_request(monkeypatch):
+    litellm, text, _ = await _selected_turn(
+        monkeypatch, _selection("not_in_passages"), case=_case("human", wants_quote="hoe kan ik die incasso storneren")
+    )
+
+    assert text == contact_reply("nl")
+    assert _exit_calls(litellm) == []
+
+
+async def test_the_exit_call_is_not_made_on_an_off_topic_referral(monkeypatch):
+    litellm, _, _ = await _off_topic_turn(monkeypatch, topic="not_handled", referral="prijzen")
+
+    assert _exit_calls(litellm) == []
+
+
+async def test_the_exit_call_is_not_made_on_a_turn_that_gets_a_written_answer(monkeypatch):
+    litellm, text, _ = await _selected_turn(
+        monkeypatch, _selection("answers", (1, CHUNK_900["text"].split(".")[0] + "."))
+    )
+
+    assert text and litellm.answer_requests
+    assert _exit_calls(litellm) == []
 
 
 async def test_a_request_is_decided_as_a_human_request_and_not_refused(monkeypatch):

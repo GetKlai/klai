@@ -26,6 +26,7 @@ from klai_chat_prompts import (
     closing_reply,
     contact_reply,
     contact_reply_again,
+    fixed_text,
     not_found_reply,
     not_further_message,
     referral_reply,
@@ -407,9 +408,10 @@ async def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: 
     # (week of 14 to 21 October). The second time says what this chat can
     # arrange; the route's channels stay.
     again = contact_reply_again(language, route, others)
-    repeated = inputs.previous_decision == "human_request" and (
-        case_file.last_assistant_message(inputs.request.messages) != again
-    )
+    # A request reply is stored as a human_request too, but it is not the
+    # contact reply: the "again" text follows a real contact reply only.
+    last = case_file.last_assistant_message(inputs.request.messages)
+    repeated = inputs.previous_decision == "human_request" and last != again and not _is_request_reply(last)
     logger.info(
         "partner_chat_contact_request",
         org_id=inputs.auth.org_id,
@@ -419,6 +421,10 @@ async def _contact_request_reply(inputs: TurnInputs, turn: KnowledgeTurn, case: 
     )
     text = again if repeated else contact_reply(language, route, others)
     return _route_reply(inputs, turn, text, language, picked, decision="human_request", refused=False)
+
+
+def _is_request_reply(text: str) -> bool:
+    return text.startswith(tuple(fixed_text("request_reply", language) for language in ("nl", "en")))
 
 
 def mark_knowledge_turn_without_evidence(turn: KnowledgeTurn, case: case_file.Case | None) -> None:
@@ -482,6 +488,7 @@ async def _not_in_passages_reply(
         _last_user_message(messages) or "",
         case_file.last_assistant_message(messages),
         first_turn=not case_file.is_follow_up(messages),
+        frustrated=escalation is not None,
         problem=case.problem if case else "",
         product=case.product if case else "",
         settings=inputs.settings,
@@ -502,7 +509,12 @@ async def _not_in_passages_reply(
     picked = exit_.route
     route, others = _channels(picked), _others(inputs, picked[0] if picked else None)
     if exit_.kind == "request":
-        text = request_reply(language, route, others)
+        # Never the same fixed reply twice in a row: after a contact or request
+        # reply (both stored as human_request) the second request gets the
+        # "again" text, like a second contact request does.
+        again = contact_reply_again(language, route, others)
+        repeated = inputs.previous_decision == "human_request" and case_file.last_assistant_message(messages) != again
+        text = again if repeated else request_reply(language, route, others)
         return _route_reply(inputs, turn, text, language, picked, decision="human_request", refused=False)
     if inputs.previous_decision in _ANSWER_DECISIONS:
         # A follow-up straight after an answer ("it doesn't work", a bare "no")
