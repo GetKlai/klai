@@ -62,6 +62,14 @@ _EMBEDDING_TIMEOUT_S = 30.0
 _EMBEDDING_BATCH = 128
 
 
+def filed_by_chat_path() -> ColumnElement[bool]:
+    """Rows the chat path filed on its own: not a review or judge verdict (a NULL caller is the internal chat)."""
+    return or_(
+        PortalRetrievalGap.caller_client_id.is_(None),
+        PortalRetrievalGap.caller_client_id.not_in((REVIEW_CALLER_CLIENT_ID, JUDGE_CALLER_CLIENT_ID)),
+    )
+
+
 def shows_unmet_need() -> ColumnElement[bool]:
     """Rows that show a visitor went unhelped, which is what the inbox lists.
 

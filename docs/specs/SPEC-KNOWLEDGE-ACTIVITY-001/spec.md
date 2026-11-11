@@ -30,6 +30,8 @@ related:
 | 0.2.0 | 2026-09-15 | Mark gaf GO voor het hele project, met drie regels: parallelle Qwen-bouwers per fase, verificatie door Opus en een Sol-codecheck per fase, en beschikbaarheid eerst alleen voor Voys en Klai (tenant-unlock `knowledge_activity`, §4.4). Fase 0 gebouwd: `answer_signals` op `widget_messages`, gevuld op beide widget-paden. Reviewfixes na Opus en Sol: band alleen uit reranker-scores (retrieval-api-contract), broad-mode-beurten gescoord op de echte retrieval in plaats van de lege citatielijst, taal uit de bezoekersvraag. Appendix A (API-contract fase 1) en B (gaten fase 2, migratieketen) toegevoegd. |
 | 0.1.0 | 2026-09-15 | Eerste plan na onderzoek in de bron en één feedbackronde met Mark. Drie besluiten uit die ronde verwerkt: de bezoeker houdt alleen thumbs (geen druk bij de gebruiker, de interne collega krijgt de beoordelingsroute), de admin-kant blijft bestaan met een expliciete verdeling admin/kennis (§3), en het plan begint bij de externe chat maar is zo ontworpen dat het interne kanaal en meertaligheid er later zonder herbouw bij kunnen (§4.8, §4.9). Niets gebouwd. |
 
+Versie 0.4.0 (11 november 2026): de inbox van fase 2 is vervangen door de gegroepeerde lijst van knowledge-gap-to-article.md §3.3 als enig scherm Kennisgaten. De endpoints `GET /api/app/gaps` en `POST /api/app/gaps/resolve` zijn weg, de rescorer sluit alleen nog rijen die het chatpad zelf schreef, en `/app/gaps` en `/app/knowledge/gaps/clusters` sturen door.
+
 # 0. Aanleiding
 
 De externe chat (webchat-widget op onder meer help.voys.nl) wordt echt
@@ -227,7 +229,9 @@ elkaar gemeten kunnen worden (§4.6):
 - Menu: "Kennis" krijgt drie `children` in de sidebar: **Kennisbanken**
   (`/app/knowledge`, huidige lijst), **Gesprekken**
   (`/app/knowledge/activity`), **Kennisgaten** (`/app/knowledge/gaps`,
-  verhuisd; `/app/gaps` blijft als redirect). Geen nieuwe navigatie-
+  verhuisd; `/app/gaps` en `/app/knowledge/gaps/clusters` blijven als redirect).
+  Sinds 11 november 2026 is dit de gegroepeerde lijst uit
+  knowledge-gap-to-article.md §3.3 en niet meer de inbox van §4.5. Geen nieuwe navigatie-
   primitief: `Sidebar.tsx` toont kinderen al zodra het pad met het
   ouder-item begint.
 - Backend: nieuwe router `app/api/app_activity.py`, prefix `/api/app/activity`,
@@ -259,12 +263,19 @@ elkaar gemeten kunnen worden (§4.6):
 - `portal_retrieval_gaps` krijgt twee nullable kolommen: `conversation_id`
   (FK, SET NULL) zodat je van gat naar gesprek kunt, en `language` (§4.9).
   Het widget-pad vult beide voortaan ook bij automatische gaten.
-- Het gatenoverzicht krijgt één mutatie erbij: **handmatig sluiten**
-  (`PATCH /api/app/gaps/{id}` → `resolved_at`), plus een kolom "bron"
-  (automatisch / beoordeling) en een link naar het gesprek als dat er nog
-  is. De rescorer blijft de automatische sluiter: zodra de KB is aangepast
-  en de vraag weer een antwoord vindt, sluit het gat vanzelf. Dat is de
-  gesloten lus.
+- Het gatenoverzicht kreeg eerst één mutatie erbij, handmatig sluiten, plus
+  een kolom "bron" en een link naar het gesprek. Die inbox is op 11 november
+  2026 vervangen door de gegroepeerde lijst van knowledge-gap-to-article.md
+  §3.3: groepen uit de opgeslagen chatsignalen, gerangschikt op het aantal
+  verschillende gesprekken, met een voorstel en een definitief besluit
+  (afwijzen, buiten scope) in plaats van handmatig sluiten. Rijen uit een
+  beoordeling, van de beoordelaar en uit supportcases blijven in
+  `portal_retrieval_gaps` en voeden hun eigen schermen.
+- De rescorer blijft de automatische sluiter: zodra de KB is aangepast en
+  de vraag weer een antwoord vindt, sluit het gat vanzelf. Dat is de
+  gesloten lus. Hij sluit alleen rijen die het chatpad zelf schreef; een rij
+  uit een beoordeling (`human-review`), van de beoordelaar (`quality-judge`)
+  of uit een supportcase sluit een retrievalscore nooit.
 - Geen tweede gatenlijst, geen aparte "review-gaten".
 
 ## 4.6 Kalibratie: hoe zeker was hij, en klopte dat
@@ -355,7 +366,13 @@ menselijke beoordeling, geen kb_manager-toegang, geen kalibratie.
 - **Geen band aan de bezoeker tonen** voordat §4.6 laat zien dat `high`
   betrouwbaar is; anders leg je een onbewezen cijfer bij de klant.
 - **Geen reden-veld of vrije tekst voor de bezoeker** (besluit Mark, §2).
-- **Geen tweede gatenlijst** naast `portal_retrieval_gaps`.
+- **Geen tweede gatenlijst**: het gegroepeerde scherm Kennisgaten is de enige
+  lijst (11 november 2026). De inbox over `portal_retrieval_gaps`
+  (`GET /api/app/gaps`, `POST /api/app/gaps/resolve`) is vervallen, zodat
+  dezelfde chatbeurt niet meer in twee lijsten staat en op twee manieren
+  wordt gesloten.
+- **Geen sluiting door een retrievalscore** van een rij die een mens of de
+  beoordelaar schreef.
 - **Geen transcripten van de interne chat op de kenniskant** zonder apart
   besluit (§4.8).
 - **Geen fine-tuning**: de hefboom is kenniscuratie, zoals
@@ -514,6 +531,11 @@ en `language VARCHAR(8)`. Geen `source`-kolom: de bron wordt afgeleid uit
 
 Het widget-pad vult voortaan beide kolommen bij automatische gaten;
 `record_gap_event()` krijgt daarvoor twee optionele parameters.
+
+> Vervallen op 11 november 2026: de inbox, `GET /api/app/gaps` en
+> `POST /api/app/gaps/resolve` hieronder bestaan niet meer; zie §4.5 en §6.
+> De kolommen, de taalgroepering en de koppeling beoordeling → gat blijven
+> gelden voor de rijen zelf.
 
 ## GET /api/app/gaps
 

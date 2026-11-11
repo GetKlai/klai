@@ -189,6 +189,13 @@ _ORG_A = make_perms(org_id=101)
 _ORG_B = make_perms(org_id=202)
 
 
+async def _code(call: Any) -> str:
+    """The stable machine-readable error_code the frontend maps to its own message."""
+    with pytest.raises(HTTPException) as exc:
+        await call
+    return exc.value.detail["error_code"]
+
+
 async def _status(call: Any) -> int:
     with pytest.raises(HTTPException) as exc:
         await call
@@ -256,7 +263,7 @@ async def test_below_full_telemetry_no_proposal_and_no_model_call(monkeypatch, c
         await api.create_gap_proposal(_KEY, perms=_ORG_A, db=_Store(telemetry_level="shadow"))  # type: ignore[arg-type]
 
     assert exc.value.status_code == 409
-    assert "full" in exc.value.detail
+    assert exc.value.detail["error_code"] == "telemetry_below_full"
     assert llm.bodies == []
 
 
@@ -276,7 +283,7 @@ async def test_the_twenty_first_call_in_seven_days_is_refused_with_the_count(mon
         await api.create_gap_proposal(_KEY, perms=_ORG_A, db=db)  # type: ignore[arg-type]
 
     assert exc.value.status_code == 429
-    assert "(20 in the last 7 days)" in exc.value.detail
+    assert exc.value.detail["error_code"] == "proposal_cap_reached"
     assert llm.bodies == []
 
 
@@ -307,6 +314,7 @@ async def test_a_failed_model_output_counts_toward_the_cap_and_may_be_retried_on
     third = await _status(api.create_gap_proposal(_KEY, perms=_ORG_A, db=db))  # type: ignore[arg-type]
 
     assert (first, second, third) == (502, 502, 409)
+    assert await _code(api.create_gap_proposal(_KEY, perms=_ORG_A, db=db)) == "proposal_failed_twice"  # type: ignore[arg-type]
     assert len(llm.bodies) == 2
     assert [(r.status, r.attempts) for r in db.rows] == [("failed", 2)]
     assert await _status(api.get_gap_proposal(_KEY, perms=_ORG_A, db=db)) == 404  # type: ignore[arg-type]
@@ -317,7 +325,7 @@ async def test_an_article_the_cluster_never_found_is_rejected(monkeypatch, clust
     _llm(monkeypatch, _draft(where_title="Belplan voor het weekend"))
     db = _Store()
 
-    assert await _status(api.create_gap_proposal(_KEY, perms=_ORG_A, db=db)) == 502  # type: ignore[arg-type]
+    assert await _code(api.create_gap_proposal(_KEY, perms=_ORG_A, db=db)) == "proposal_upstream_failed"  # type: ignore[arg-type]
     assert [r.status for r in db.rows] == ["failed"]
 
 

@@ -21,7 +21,7 @@ from app.core.profiles import Capability
 from app.models.gap_proposals import PortalGapProposal
 from app.models.portal import PortalOrg, PortalUser
 from app.services.gap_proposals import MAX_EXAMPLE_CHARS, PROPOSAL_MODEL, ProposalDraft, draft_proposal
-from app.services.knowledge_gap_report import knowledge_gap_clusters
+from app.services.knowledge_gap_report import GapView, filter_clusters, knowledge_gap_clusters, mask
 
 router = APIRouter(
     prefix="/api/app",
@@ -46,12 +46,30 @@ PROPOSAL_CAP = 20
 MAX_ATTEMPTS = 2
 # A reservation older than this is a call that died with its process; it may be retried.
 _STALE_GENERATING = timedelta(minutes=10)
-_ALREADY_DECIDED = "This gap cluster is already decided."
-_GENERATING = "A proposal for this gap cluster is already being generated."
-_NOT_DECIDABLE = (
-    "This cluster collects turns without a topic (or internal turns without text), so it cannot be decided "
-    "or get a proposal."
-)
+
+
+def _error(status_code: int, error_code: str, message: str) -> HTTPException:
+    """An HTTP error with a stable ``error_code`` the portal maps to its own message; ``message`` is for logs and API users."""
+    return HTTPException(status_code=status_code, detail={"error_code": error_code, "message": message})
+
+
+def _already_decided() -> HTTPException:
+    return _error(status.HTTP_409_CONFLICT, "already_decided", "This gap cluster is already decided.")
+
+
+def _generating() -> HTTPException:
+    return _error(
+        status.HTTP_409_CONFLICT, "proposal_generating", "A proposal for this gap cluster is already being generated."
+    )
+
+
+def _not_decidable() -> HTTPException:
+    return _error(
+        status.HTTP_409_CONFLICT,
+        "not_decidable",
+        "This cluster collects turns without a topic (or internal turns without text), so it cannot be decided "
+        "or get a proposal.",
+    )
 
 
 class GapArticleOut(BaseModel):
@@ -67,7 +85,17 @@ class GapClusterOut(BaseModel):
     count: int
     widget_count: int
     internal_count: int
-    kind: Literal["no_article", "article_misses_part", "variant_unclear", "contact_wish", "weak_match"]
+    kind: Literal[
+        "no_article",
+        "article_misses_part",
+        "variant_unclear",
+        "contact_wish",
+        "weak_match",
+        "reported_review",
+        "reported_judge",
+    ]
+    # Who also (or only) reported this group through a row in portal_retrieval_gaps.
+    reported_by: list[Literal["review", "judge"]]
     kinds: dict[str, int]
     question: str | None
     questions: list[str]
@@ -121,11 +149,16 @@ class GapDecisionOut(BaseModel):
 async def list_gap_clusters(
     days: int = Query(default=7, ge=1, le=CLUSTER_WINDOW_DAYS),
     include_decided: bool = Query(default=False),
+    show: GapView = Query(default="article_gaps"),
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> GapClustersResponse:
-    """The org's knowledge-gap clusters over ``days``; decided clusters only with ``include_decided``."""
+    """The org's knowledge-gap clusters over ``days``; decided clusters only with ``include_decided``.
+
+    ``show`` picks the view: article gaps by default, or the visitors who asked for a person, or all.
+    """
     clusters = await knowledge_gap_clusters(db, org_id=perms.org_id, days=days, include_decided=include_decided)
+    clusters = filter_clusters(clusters, show)
     return GapClustersResponse(days=days, clusters=[GapClusterOut.model_validate(c) for c in clusters])
 
 
@@ -135,9 +168,9 @@ async def _decidable_cluster_or_error(db: AsyncSession, org_id: int, cluster_key
     clusters = await knowledge_gap_clusters(db, org_id=org_id, days=CLUSTER_WINDOW_DAYS, include_decided=True)
     cluster = next((c for c in clusters if c["cluster_key"] == cluster_key), None)
     if cluster is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gap cluster not found")
+        raise _error(status.HTTP_404_NOT_FOUND, "cluster_not_found", "Gap cluster not found")
     if not cluster["decidable"]:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_NOT_DECIDABLE)
+        raise _not_decidable()
     return cluster
 
 
@@ -157,13 +190,13 @@ def _proposal_out(proposal: PortalGapProposal, decided_by: str | None) -> GapPro
         {
             "id": proposal.id,
             "cluster_key": proposal.cluster_key,
-            "missing": proposal.missing,
+            "missing": mask(proposal.missing or ""),
             "where_kind": proposal.where_kind,
             "where_title": proposal.where_title,
             "where_url": proposal.where_url,
-            "where_section": proposal.where_section,
-            "example_text": proposal.example_text,
-            "open_facts": proposal.open_facts,
+            "where_section": mask(proposal.where_section) if proposal.where_section else None,
+            "example_text": mask(proposal.example_text or ""),
+            "open_facts": [mask(fact) for fact in proposal.open_facts or []],
             "language": proposal.language,
             "model": proposal.model,
             "generated_at": proposal.generated_at,
@@ -183,7 +216,7 @@ async def get_gap_proposal(
     """The stored proposal of one cluster; 404 when none is ready (a decision alone is no proposal)."""
     proposal, decided_by = await _proposal_row(db, perms.org_id, cluster_key)
     if proposal is None or proposal.status != "ready":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No proposal for this gap cluster")
+        raise _error(status.HTTP_404_NOT_FOUND, "proposal_not_found", "No proposal for this gap cluster")
     return _proposal_out(proposal, decided_by)
 
 
@@ -224,7 +257,7 @@ async def _reserve(db: AsyncSession, org_id: int, cluster_key: str, proposal: Po
             await db.flush()
         except IntegrityError:
             await db.rollback()
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_GENERATING) from None
+            raise _generating() from None
         await db.commit()
         return row.id
     result = await db.execute(
@@ -241,7 +274,7 @@ async def _reserve(db: AsyncSession, org_id: int, cluster_key: str, proposal: Po
         .values(status="generating", attempts=PortalGapProposal.attempts + 1, attempted_at=now, failure_reason=None)
     )
     if not result.rowcount:  # type: ignore[attr-defined]
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_GENERATING)
+        raise _generating()
     await db.commit()
     return proposal.id
 
@@ -264,11 +297,12 @@ async def create_gap_proposal(
     if proposal is not None and proposal.status == "ready":
         return _proposal_out(proposal, decided_by)
     if proposal is not None and proposal.decision != "none":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ALREADY_DECIDED)
+        raise _already_decided()
     if proposal is not None and proposal.attempts >= MAX_ATTEMPTS:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Generating a proposal for this gap cluster failed {MAX_ATTEMPTS} times.",
+        raise _error(
+            status.HTTP_409_CONFLICT,
+            "proposal_failed_twice",
+            f"Generating a proposal for this gap cluster failed {MAX_ATTEMPTS} times.",
         )
     org = (
         await db.execute(
@@ -276,14 +310,15 @@ async def create_gap_proposal(
         )
     ).one()
     if org.telemetry_level != "full":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Proposals need telemetry level 'full': below it the customers' questions may not be used.",
+        raise _error(
+            status.HTTP_409_CONFLICT,
+            "telemetry_below_full",
+            "Proposals need telemetry level 'full': below it the customers' questions may not be used.",
         )
     cluster = await _decidable_cluster_or_error(db, perms.org_id, cluster_key)
     if not cluster["questions"] and not cluster["open_parts"]:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="This gap cluster has no questions to write a proposal from."
+        raise _error(
+            status.HTTP_409_CONFLICT, "no_questions", "This gap cluster has no questions to write a proposal from."
         )
     calls = (
         await db.execute(
@@ -294,9 +329,10 @@ async def create_gap_proposal(
         )
     ).scalar_one()
     if calls >= PROPOSAL_CAP:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"The limit of {PROPOSAL_CAP} proposals per 7 days is reached ({calls} in the last 7 days).",
+        raise _error(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "proposal_cap_reached",
+            f"The limit of {PROPOSAL_CAP} proposals per 7 days is reached ({calls} in the last 7 days).",
         )
     row_id = await _reserve(db, perms.org_id, cluster_key, proposal)
 
@@ -315,7 +351,7 @@ async def create_gap_proposal(
             .values(status="failed", failure_reason=reason)
         )
         await db.commit()
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"{reason} Try again once.")
+        raise _error(status.HTTP_502_BAD_GATEWAY, "proposal_upstream_failed", f"{reason} Try again once.")
 
     generated_at = datetime.now(tz=UTC)
     await db.execute(
@@ -338,7 +374,7 @@ async def create_gap_proposal(
     await db.commit()
     stored, decided_by = await _proposal_row(db, perms.org_id, cluster_key)
     if stored is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gap cluster not found")
+        raise _error(status.HTTP_404_NOT_FOUND, "cluster_not_found", "Gap cluster not found")
     return _proposal_out(stored, decided_by)
 
 
@@ -371,7 +407,7 @@ async def decide_gap_cluster(
             await db.flush()
         except IntegrityError:
             await db.rollback()
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ALREADY_DECIDED) from None
+            raise _already_decided() from None
     else:
         # Conditional, so of two concurrent decisions exactly one lands.
         result = await db.execute(
@@ -380,7 +416,7 @@ async def decide_gap_cluster(
             .values(**values)
         )
         if not result.rowcount:  # type: ignore[attr-defined]
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ALREADY_DECIDED)
+            raise _already_decided()
     await db.commit()
     return GapDecisionOut(
         cluster_key=cluster_key,

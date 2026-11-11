@@ -31,7 +31,6 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
-from app.api.app_gaps import _list_support_gaps
 from app.core import database as db_module
 from app.core.database import TenantContextSession, set_tenant
 from app.schemas_support_cases import SupportCaseMessage, SupportCasePayload
@@ -86,7 +85,7 @@ _SETUP = [
         occurred_at timestamptz NOT NULL DEFAULT now(), resolved_at timestamptz, resolved_by varchar(16),
         resolved_by_user_id integer, support_case_id bigint, diagnosis varchar(24), question_key text,
         audience varchar(16), evidence jsonb)""",
-    # Only the id is read: list_gaps joins it to link a group to its conversation.
+    # Only the id is read (the judge and review paths look a conversation up by it).
     f"CREATE TABLE {_SCHEMA}.widget_conversations (id bigserial PRIMARY KEY, org_id integer NOT NULL, "
     f"is_test boolean NOT NULL DEFAULT false, is_preview boolean NOT NULL DEFAULT false)",
     f"""CREATE TABLE {_SCHEMA}.portal_support_cases (
@@ -235,160 +234,6 @@ async def _analysis(admin: AsyncEngine, org_id: int = 901) -> tuple[str, list]:
 
 
 # --------------------------------------------------------------------------- #
-
-
-async def _gap_topics(factory, org_id: int = 901) -> list:
-    async with factory() as db:
-        await set_tenant(db, org_id)
-        return await _list_support_gaps(
-            perms=types.SimpleNamespace(org_id=org_id),
-            db=db,
-            cutoff=datetime.now(tz=UTC) - timedelta(days=30),
-            gap_type=None,
-            language=None,
-            include_resolved=False,
-            limit=50,
-        )
-
-
-async def test_support_gap_provenance_counts_cases_once_and_orders_ties(pg) -> None:
-    admin, factory, _cid, _analyzer = pg
-    # Relative to now so the rows stay inside _gap_topics' 30-day cutoff.
-    today = datetime.now(tz=UTC).replace(hour=10, minute=0, second=0, microsecond=0)
-    async with admin.begin() as conn:
-        case_ids = list(
-            (
-                await conn.execute(
-                    text(
-                        "INSERT INTO portal_support_cases "
-                        "(org_id,kb_slug,source,account_id,external_id,created_by,payload,content_hash,status) "
-                        "VALUES (901,'kb-a','audio','a','call','u','{}'::jsonb,:h,'analyzed'),"
-                        "(901,'kb-a','hubspot','a','ticket','u','{}'::jsonb,:h,'analyzed') RETURNING id"
-                    ),
-                    {"h": "s" * 64},
-                )
-            ).scalars()
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO portal_retrieval_gaps "
-                "(org_id,user_id,query_text,gap_type,support_case_id,diagnosis,question_key,occurred_at) VALUES "
-                "(901,'u','Mixed','content',:a,'missing','mixed',:d3),"
-                "(901,'u','Mixed again','content',:a,'missing','mixed',CAST(:d3 AS timestamptz) + interval '1 hour'),"
-                "(901,'u','Mixed ticket','content',:h,'missing','mixed',CAST(:d3 AS timestamptz) + interval '2 hours'),"
-                "(901,'u','Older','content',:a,'missing','z-old',:d4),"
-                "(901,'u','New B','content',:a,'missing','b-new',:d2),"
-                "(901,'u','New A','content',:a,'missing','a-new',:d2)"
-            ),
-            {
-                "a": case_ids[0],
-                "h": case_ids[1],
-                "d2": today - timedelta(days=2),
-                "d3": today - timedelta(days=3),
-                "d4": today - timedelta(days=4),
-            },
-        )
-
-    gaps = await _gap_topics(factory)
-    mixed = gaps[0]
-    assert (mixed.group_key, mixed.occurrence_count) == ("mixed", 2)
-    assert mixed.support_case_ids == sorted(case_ids)
-    assert mixed.support_sources == ["audio", "hubspot"]
-    assert [gap.group_key for gap in gaps[1:]] == ["a-new", "b-new", "z-old"]
-
-
-async def test_support_gap_classified_topic_surfaces_in_gaps(pg) -> None:
-    admin, factory, cid, _analyzer = pg
-    async with admin.begin() as conn:
-        node_a = (
-            await conn.execute(
-                text(
-                    "SELECT n.id FROM portal_taxonomy_nodes n JOIN portal_knowledge_bases kb ON kb.id=n.kb_id "
-                    "WHERE kb.org_id=901 AND kb.slug='kb-a' AND n.name='Billing'"
-                )
-            )
-        ).scalar_one()
-        primary_id = (
-            await conn.execute(
-                text(
-                    "INSERT INTO portal_taxonomy_nodes (kb_id, name) "
-                    "SELECT id, 'Number porting' FROM portal_knowledge_bases "
-                    "WHERE org_id=901 AND slug='kb-a' RETURNING id"
-                )
-            )
-        ).scalar_one()
-
-    with patch(
-        "app.services.knowledge_ingest_client.classify_gap_taxonomy",
-        AsyncMock(return_value=[primary_id, node_a]),
-    ):
-        await _upsert(factory, cid, _payload())
-
-    async with admin.connect() as conn:
-        stored = (
-            await conn.execute(
-                text(
-                    "SELECT taxonomy_node_ids FROM portal_retrieval_gaps "
-                    "WHERE org_id=901 AND support_case_id IS NOT NULL"
-                )
-            )
-        ).scalar_one()
-    assert stored == [primary_id, node_a]
-
-    gaps = await _gap_topics(factory)
-    assert len(gaps) == 1
-    assert gaps[0].topic is not None
-    assert (gaps[0].topic.id, gaps[0].topic.name) == (primary_id, "Number porting")
-
-
-async def test_support_topic_excludes_foreign_unknown_and_legacy_null(pg) -> None:
-    admin, factory, _cid, _analyzer = pg
-    async with admin.begin() as conn:
-        await conn.execute(
-            text("INSERT INTO portal_knowledge_bases (org_id, slug) VALUES (901, 'kb-other'), (902, 'kb-a')")
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO portal_taxonomy_nodes (kb_id, name) SELECT id, 'Foreign' FROM portal_knowledge_bases WHERE (org_id=901 AND slug='kb-other') OR (org_id=902 AND slug='kb-a')"
-            )
-        )
-        node_b = (
-            (
-                await conn.execute(
-                    text(
-                        "SELECT n.id FROM portal_taxonomy_nodes n JOIN portal_knowledge_bases kb ON kb.id=n.kb_id "
-                        "WHERE n.name='Foreign'"
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        case_id = (
-            await conn.execute(
-                text(
-                    "INSERT INTO portal_support_cases "
-                    "(org_id, kb_slug, source, account_id, external_id, created_by, payload, content_hash, status) "
-                    "VALUES (901,'kb-a','hubspot','a','ext-x','u','{}'::jsonb, :h, 'analyzed') RETURNING id"
-                ),
-                {"h": "b" * 64},
-            )
-        ).scalar_one()
-        await conn.execute(
-            text(
-                "INSERT INTO portal_retrieval_gaps "
-                "(org_id, user_id, query_text, gap_type, nearest_kb_slug, support_case_id, diagnosis, "
-                "question_key, taxonomy_node_ids) VALUES "
-                "(901,'u','foreign','content','kb-a',:c,'missing','k-foreign', CAST(:nb AS integer[])),"
-                "(901,'u','unknown','content','kb-a',:c,'missing','k-unknown', ARRAY[999999]),"
-                "(901,'u','legacy','content','kb-a',:c,'missing','k-legacy', NULL)"
-            ),
-            {"c": case_id, "nb": node_b},
-        )
-
-    gaps = await _gap_topics(factory)
-    assert {g.group_key for g in gaps} == {"k-foreign", "k-unknown", "k-legacy"}
-    assert all(g.topic is None for g in gaps)
 
 
 async def test_repeat_identical_import_is_one_case_one_finding_no_reanalysis(pg) -> None:
@@ -692,87 +537,6 @@ async def test_purge_removes_all_support_evidence(pg) -> None:
         removed = await svc.purge_support_cases_for_org(db, 901)
     assert removed == 1
     assert await _counts(admin) == (0, 0)
-
-
-async def test_manual_close_closes_every_diagnosis_in_the_group_but_only_that_kb(pg) -> None:
-    """#A: a support group is closed by its persisted question_key, so two
-    differently cased/spaced cases AND a second diagnosis about the same
-    question all close together — a diagnosis says how a gap was detected, not
-    what the customer needs (SPEC-RAG-GAP-GROUPING). Another KB is untouched,
-    and the KB selector is required."""
-    from app.api.app_gaps import GapResolveRequest, resolve_gap
-    from app.services.support_cases import _question_key
-    from tests.conftest import make_perms
-
-    admin, factory, cid, _ = pg
-    r = await _upsert(factory, cid, _payload())  # one real case to reference
-    case_id = r.case_id
-    k_target = _question_key(question="How export?", language="en", kb_slug="kb-a", audience=None)
-    k_other_kb = _question_key(question="How export?", language="en", kb_slug="kb-b", audience=None)
-
-    async with admin.begin() as conn:
-        # Two spellings and two diagnoses, one persisted key (the store
-        # normalized them all the same); a fourth row on another KB.
-        await conn.execute(
-            text(
-                "INSERT INTO portal_retrieval_gaps "
-                "(org_id,user_id,query_text,gap_type,nearest_kb_slug,language,diagnosis,question_key,support_case_id) "
-                "VALUES "
-                "(901,'u','How export?','content','kb-a','en','missing',:k,:c),"
-                "(901,'u','how  export?','content','kb-a','en','missing',:k,:c),"
-                "(901,'u','How export?','content','kb-a','en','incomplete',:k,:c),"
-                "(901,'u','How export?','content','kb-b','en','missing',:kk,:c)"
-            ),
-            {"k": k_target, "kk": k_other_kb, "c": case_id},
-        )
-
-    async with factory() as db:
-        await set_tenant(db, 901)
-        out = await resolve_gap(
-            GapResolveRequest(
-                query_text="  HOW   Export? ",  # different casing/spacing than any stored row
-                gap_type="content",
-                language="en",
-                diagnosis="missing",
-                nearest_kb_slug="kb-a",
-            ),
-            perms=make_perms(org_id=901),
-            db=db,
-        )
-    assert out.resolved == 3  # both spellings and the second diagnosis
-    async with admin.connect() as conn:
-        rows = list(
-            await conn.execute(
-                text(
-                    "SELECT diagnosis, nearest_kb_slug, resolved_at IS NOT NULL AS closed "
-                    "FROM portal_retrieval_gaps WHERE org_id=901 AND support_case_id IS NOT NULL "
-                    "AND question_key IN (:k,:kk) ORDER BY diagnosis, nearest_kb_slug"
-                ),
-                {"k": k_target, "kk": k_other_kb},
-            )
-        )
-    by = {(r[0], r[1]): r[2] for r in rows}
-    assert by[("missing", "kb-a")] is True
-    assert by[("incomplete", "kb-a")] is True  # same need, closed with the group
-    assert by[("missing", "kb-b")] is False  # another KB is its own group
-
-
-async def test_manual_close_of_support_group_requires_kb_selector(pg) -> None:
-    from fastapi import HTTPException
-
-    from app.api.app_gaps import GapResolveRequest, resolve_gap
-    from tests.conftest import make_perms
-
-    _, factory, _, _ = pg
-    async with factory() as db:
-        await set_tenant(db, 901)
-        with pytest.raises(HTTPException) as exc:
-            await resolve_gap(
-                GapResolveRequest(query_text="x", gap_type="content", language="en", diagnosis="missing"),
-                perms=make_perms(org_id=901),
-                db=db,
-            )
-    assert exc.value.status_code == 422
 
 
 async def test_reconcile_deletes_out_of_scope_only(pg) -> None:
@@ -1308,46 +1072,6 @@ async def test_grouping_folds_finding_into_group_and_preserves_original_question
     assert rows_b[0].query_text == "Exporting my account data?"  # the case's own question is preserved
 
 
-async def test_grouping_distinct_case_count_and_resolve_by_group_key(pg) -> None:
-    admin, factory, cid, analyzer = pg
-    questions = iter(["How do I export data?", "Exporting my account data?"])
-
-    async def _analyze(**_: object) -> list[dict]:
-        return [{"question": next(questions), "diagnosis": "missing", "gap_type": "hard", "language": "en"}]
-
-    analyzer.analyze_support_case = AsyncMock(side_effect=_analyze)
-    ra = await _upsert(factory, cid, _payload(external_id="A"))
-    key_a = (await _gap_rows(admin, ra.case_id))[0].question_key
-
-    with _fake_grouping(key_a):
-        await _upsert(factory, cid, _payload(external_id="B"))
-
-    async with admin.connect() as conn:
-        distinct = (
-            await conn.execute(
-                text(
-                    "SELECT count(DISTINCT support_case_id) FROM portal_retrieval_gaps "
-                    "WHERE org_id=901 AND question_key=:k"
-                ),
-                {"k": key_a},
-            )
-        ).scalar_one()
-    assert distinct == 2  # two cases fold into one group; the unique-case count is 2
-
-    # Closing by the persisted group key closes both, though their wording differs.
-    from app.api.app_gaps import GapResolveRequest, resolve_gap
-    from tests.conftest import make_perms
-
-    async with factory() as db:
-        await set_tenant(db, 901)
-        out = await resolve_gap(
-            GapResolveRequest(query_text="ignored", gap_type="content", group_key=key_a),
-            perms=make_perms(org_id=901),
-            db=db,
-        )
-    assert out.resolved == 2
-
-
 async def test_force_reanalysis_close_survives_a_regrouping(pg) -> None:
     """Regression: a reanalysis that folds a still-missing finding under a DIFFERENT
     group key must still preserve its manual close. Closures are matched on the
@@ -1624,46 +1348,6 @@ async def test_seven_day_purge_keeps_findings_and_verdicts_and_still_expires_que
             "question the judge filed",
         ]
     )
-
-
-async def test_inbox_lists_only_rows_that_show_the_visitor_was_not_helped(pg) -> None:
-    """A low retrieval score on its own does not show that a visitor went
-    unhelped, and a redacted row carries no question anyone could act on; on
-    the first tenant measured those two made up most open rows, including the
-    largest groups. The inbox keeps what does show it: a quality-judge or human-review
-    verdict, or a search that found nothing at all."""
-    from app.api.app_gaps import list_gaps
-    from tests.conftest import make_perms
-
-    admin, factory, _cid, _analyzer = pg
-    async with admin.begin() as conn:
-        await conn.execute(
-            text(
-                "INSERT INTO portal_retrieval_gaps (org_id,user_id,query_text,gap_type,caller_client_id,language) "
-                "VALUES "
-                "(901,'u','Hoe laat open?','soft','widget-chat','nl'),"
-                "(901,'u','[REDACTED:legacy]','soft','widget-chat','nl'),"
-                "(901,'u','[REDACTED:legacy]','hard','human-review','nl'),"
-                "(901,'u','Kan niet bellen','soft','quality-judge','nl'),"
-                "(901,'u','Nummer instellen','soft','human-review','nl'),"
-                "(901,'u','Faxen','hard','widget-chat','nl')"
-            )
-        )
-
-    async with factory() as db:
-        await set_tenant(db, 901)
-        out = await list_gaps(
-            days=30,
-            gap_type=None,
-            language=None,
-            taxonomy_node_id=None,
-            limit=50,
-            include_resolved=False,
-            perms=make_perms(org_id=901),
-            db=db,
-        )
-
-    assert sorted(g.query_text for g in out.gaps) == ["Faxen", "Kan niet bellen", "Nummer instellen"]
 
 
 async def test_folding_a_group_moves_every_row_that_shares_its_key(pg) -> None:

@@ -295,15 +295,13 @@ export function useActivityConversation(conversationId: string | number) {
 /**
  * Writing a review changes what the detail shows, what the list shows as
  * reviewed, how many conversations are still in the queue, the calibration
- * summary (useActivitySummary), and — when the review closes a knowledge
- * gap — the gaps list (['app-gaps'], read by /app/knowledge/gaps).
+ * summary (useActivitySummary).
  */
 function invalidateActivityViews(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: ['activity', 'conversation'] })
   void queryClient.invalidateQueries({ queryKey: ['activity', 'conversations'] })
   void queryClient.invalidateQueries({ queryKey: ['activity', 'queue-count'] })
   void queryClient.invalidateQueries({ queryKey: ['activity', 'summary'] })
-  void queryClient.invalidateQueries({ queryKey: ['app-gaps'] })
 }
 
 /** One row of `GET /api/app/activity/summary` (§4.6/§4.7, Appendix A). */
