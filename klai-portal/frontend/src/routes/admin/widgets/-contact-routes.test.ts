@@ -14,7 +14,7 @@ import {
 
 function filled(overrides: Partial<RouteDraft> = {}): RouteDraft {
   const [draft] = addRoute([])
-  return { ...draft, name: 'Support', description: 'Product problems', ...overrides }
+  return { ...draft, name: 'Support', description: 'Product problems', email: 'team@example.com', ...overrides }
 }
 
 describe('contact routes: the default', () => {
@@ -99,7 +99,24 @@ describe('contact routes: ids and the payload', () => {
   })
 })
 
+describe('contact routes: a route nobody can reach', () => {
+  it('needs a channel or a referral text', () => {
+    expect(validateRoute(filled({ email: '' })).route).toEqual({ code: 'unreachable' })
+    expect(validateRoute(filled()).route).toBeUndefined()
+    expect(validateRoute(filled({ email: '', referral_text: 'Please get in touch.' })).route).toBeUndefined()
+  })
+})
+
 describe('contact routes: the API 422', () => {
+  it('shows an error that stops at the route index on that route, not as a general message', () => {
+    const drafts = [filled(), filled({ is_default: false })]
+    const { byRoute, general } = issuesToErrors(drafts, [
+      { loc: ['body', 'widget_config', 'contact_routes', 1], msg: 'route unreachable', type: 'value_error' },
+    ])
+    expect(byRoute[drafts[1].key].route).toEqual({ code: 'server', message: 'route unreachable' })
+    expect(general).toEqual([])
+  })
+
   it('shows a server message at the field it names and keeps the rest general', () => {
     const drafts = [filled(), filled({ is_default: false })]
     const { byRoute, general } = issuesToErrors(drafts, [

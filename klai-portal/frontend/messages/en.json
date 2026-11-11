@@ -3234,5 +3234,6 @@
   "admin_widgets_routes_error_link_pair": "Fill in both the link and the link text, or leave both empty.",
   "admin_widgets_routes_referral_label": "Referral text",
   "admin_widgets_routes_referral_help": "What the chat says when it refers one of the \"do not answer\" subjects to you. Only used for those subjects. Leave empty for the standard text.",
-  "admin_widgets_routes_referral_placeholder": "For this we would like to help you in person. Please get in touch."
+  "admin_widgets_routes_referral_placeholder": "For this we would like to help you in person. Please get in touch.",
+  "admin_widgets_routes_error_unreachable": "Add at least one way to reach this route (phone, e-mail, booking page or link), or a referral text."
 }

@@ -49,6 +49,7 @@ function errorText(error: RouteError | undefined): string | undefined {
     case 'email': return m.admin_widgets_routes_error_email()
     case 'url': return m.admin_widgets_routes_error_url()
     case 'link_pair': return m.admin_widgets_routes_error_link_pair()
+    case 'unreachable': return m.admin_widgets_routes_error_unreachable()
     case 'server': return error.message
   }
 }
@@ -178,6 +179,9 @@ export function ContactRoutesTab({ widget }: Props) {
 
               {text('referral_text', m.admin_widgets_routes_referral_label(), { hint: m.admin_widgets_routes_referral_help(), placeholder: m.admin_widgets_routes_referral_placeholder(), textarea: 2 })}
 
+              {errors.route && (
+                <p role="alert" className="text-sm text-[var(--color-destructive-text)]">{errorText(errors.route)}</p>
+              )}
               <p className="text-xs text-gray-600">{m.admin_widgets_routes_channels_help()}</p>
               <div className="grid gap-4 sm:grid-cols-2">
                 {text('phone', m.admin_widgets_routes_phone_label(), { type: 'tel', placeholder: m.admin_widgets_routes_phone_placeholder() })}

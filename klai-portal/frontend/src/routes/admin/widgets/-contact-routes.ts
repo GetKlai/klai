@@ -37,10 +37,11 @@ export interface RouteDraft {
 export type RouteField = Exclude<keyof RouteDraft, 'key' | 'id' | 'is_default'>
 // Error codes map onto messages in the editor; `server` carries the API's own text.
 export type RouteError =
-  | { code: 'required' | 'phone' | 'email' | 'url' | 'link_pair' }
+  | { code: 'required' | 'phone' | 'email' | 'url' | 'link_pair' | 'unreachable' }
   | { code: 'too_long'; max: number }
   | { code: 'server'; message: string }
-export type RouteErrors = Partial<Record<RouteField, RouteError>>
+// `route` is an error about the route as a whole (no single field).
+export type RouteErrors = Partial<Record<RouteField | 'route', RouteError>>
 
 let keyCounter = 0
 const nextKey = () => `route-${++keyCounter}`
@@ -149,6 +150,8 @@ export function validateRoute(d: RouteDraft): RouteErrors {
   if (linkUrl && !isAbsoluteHttpUrl(linkUrl)) errors.link_url = { code: 'url' }
   if (linkLabel.length > LIMITS.linkLabel) errors.link_label = { code: 'too_long', max: LIMITS.linkLabel }
   else if (!linkUrl !== !linkLabel) errors[linkUrl ? 'link_label' : 'link_url'] = { code: 'link_pair' }
+  // A route nobody can reach is useless: it needs a channel, or a referral text.
+  if (!phone && !email && !d.booking_url.trim() && !linkUrl && !d.referral_text.trim()) errors.route = { code: 'unreachable' }
   return errors
 }
 
@@ -170,7 +173,8 @@ export function validateRoutes(drafts: RouteDraft[]): { errors: Record<string, R
 
 // The API reports a bad field as loc [..., 'contact_routes', <index>, <field>].
 // Issues that name a known field of a known route come back as per-field
-// errors; the rest is returned as one general message.
+// errors, an issue that stops at the index as an error on the route itself;
+// the rest is returned as one general message.
 export function issuesToErrors(
   drafts: RouteDraft[],
   issues: ValidationIssue[] | undefined,
@@ -183,7 +187,9 @@ export function issuesToErrors(
     const index = at >= 0 ? issue.loc[at + 1] : undefined
     const field = at >= 0 ? issue.loc[at + 2] : undefined
     const draft = typeof index === 'number' ? drafts[index] : undefined
-    if (draft && typeof field === 'string' && fields.has(field)) {
+    if (draft && field === undefined) {
+      byRoute[draft.key] = { ...byRoute[draft.key], route: { code: 'server', message: issue.msg } }
+    } else if (draft && typeof field === 'string' && fields.has(field)) {
       byRoute[draft.key] = { ...byRoute[draft.key], [field]: { code: 'server', message: issue.msg } }
     } else {
       general.push(issue.msg)
