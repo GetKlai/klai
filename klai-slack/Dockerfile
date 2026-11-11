@@ -3,7 +3,7 @@
 # workspace. uv (not pip) because pip ignores [tool.uv.sources] and would look
 # the shared lib up on PyPI. Same shape as klai-mailer/Dockerfile.
 
-FROM python:3.12-slim AS deps
+FROM python:3.13-slim AS deps
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
@@ -21,7 +21,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 RUN uv sync --frozen --no-dev --no-install-project
 
 
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 WORKDIR /repo/klai-slack
 
