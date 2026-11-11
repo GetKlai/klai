@@ -358,8 +358,8 @@ FIXED_TEXTS: Final[dict[str, dict[str, str]]] = {
     # (portal contact_routes.pick_exit): a request the chat cannot carry out,
     # and a closing remark that asks nothing.
     "request_reply": {
-        "nl": "Dit kan ik niet zelf in deze chat regelen; een collega pakt het voor je op.",
-        "en": "I can't arrange this myself in this chat; a colleague will take care of it.",
+        "nl": "Dit kan ik niet zelf in deze chat regelen. Neem hiervoor contact op via de mogelijkheden hieronder.",
+        "en": "I can't arrange this myself in this chat. Please get in touch through the options below.",
     },
     "closing_reply": {
         "nl": "Helder. Heb je nog een vraag, stel hem gerust.",

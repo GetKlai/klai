@@ -412,6 +412,9 @@ async def pick_exit(
         kind, how = "question", "rule"
     if len(routes) > 1:
         route = _chosen(routes, getattr(result, "route", None))
+        if route[1] == "failed":
+            # An id outside the list is an invalid answer as a whole, not only a failed route pick.
+            kind, how = "question", "failed"
     else:
         route = (routes[0], "single") if routes else None
     return Exit(kind, how, route)

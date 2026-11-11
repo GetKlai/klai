@@ -386,8 +386,14 @@ async def test_a_closing_is_refused_in_code_on_a_first_message_and_on_a_question
 
 @pytest.mark.parametrize(
     "reply",
-    [_content({"kind": "refund", "route": "sales"}), httpx.Response(500), httpx.ConnectError("down")],
-    ids=["unknown_kind", "server_error", "unreachable"],
+    [
+        _content({"kind": "refund", "route": "sales"}),
+        _content({"kind": "request", "route": "sales"}),
+        _content({"kind": "closing", "route": "sales"}),
+        httpx.Response(500),
+        httpx.ConnectError("down"),
+    ],
+    ids=["unknown_kind", "request_with_unknown_route", "closing_with_unknown_route", "server_error", "unreachable"],
 )
 async def test_an_exit_call_that_fails_is_a_question_for_the_default_route(settings, reply):
     result, _ = await _exit(reply, settings)

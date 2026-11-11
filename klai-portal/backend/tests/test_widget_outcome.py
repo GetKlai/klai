@@ -470,3 +470,18 @@ def test_a_conversation_that_ends_on_a_closing_reply_is_not_labelled_escalated()
         ]
 
         assert derive_outcome(turns, has_handoff=False) == "unknown"
+
+
+def test_a_request_reply_is_labelled_like_the_plain_contact_reply():
+    """Neither is a "not found": a conversation ending on a reply that shows contact channels stays unlabelled,
+    and the judge's citation-refusal flag does not fire on it."""
+    from klai_chat_prompts import RouteChannels, contact_reply, request_reply
+
+    from app.services.widget_outcome import is_support_referral
+
+    route = RouteChannels(name="Support", email="hallo@example.com")
+    for reply in (contact_reply("nl", route), request_reply("nl", route), request_reply("en", route)):
+        turns = [_turn("user", "kunnen jullie dit wijzigen"), _turn("assistant", reply)]
+
+        assert derive_outcome(turns, has_handoff=False) == "unknown"
+        assert not is_support_referral(reply)

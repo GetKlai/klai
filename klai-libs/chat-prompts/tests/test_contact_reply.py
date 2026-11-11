@@ -158,12 +158,12 @@ def test_several_routes_end_on_the_others_by_name_with_their_first_channel(langu
 
 def test_a_request_says_the_chat_cannot_arrange_it_and_names_the_route():
     assert request_reply("nl", BOOKING, (SALES,)) == (
-        "Dit kan ik niet zelf in deze chat regelen; een collega pakt het voor je op. "
+        "Dit kan ik niet zelf in deze chat regelen. Neem hiervoor contact op via de mogelijkheden hieronder. "
         "Dit is een vraag voor Support. Plan hieronder een afspraak, dan helpen we je verder. "
         "Gaat het over iets anders? Verkoop: verkoop@example.com."
     )
     assert request_reply("en", SALES, (BOOKING,)) == (
-        "I can't arrange this myself in this chat; a colleague will take care of it. "
+        "I can't arrange this myself in this chat. Please get in touch through the options below. "
         "This is a question for Verkoop. Call 010 000 0000 or email verkoop@example.com. "
         "Is it about something else? Support: [book an appointment](https://book.example.com/s)."
     )
@@ -176,14 +176,14 @@ def test_a_request_to_a_route_with_phone_and_link_and_no_booking_offers_no_appoi
 
     assert "afspraak" not in text
     assert text.startswith(
-        "Dit kan ik niet zelf in deze chat regelen; een collega pakt het voor je op. Bel 010 000 0000"
+        "Dit kan ik niet zelf in deze chat regelen. Neem hiervoor contact op via de mogelijkheden hieronder. Bel 010 000 0000"
     )
     assert "[Stel je vraag online](https://help.example.com/facturen)" in text
 
 
 def test_a_request_on_a_widget_without_routes_points_at_the_button_it_always_had():
     assert request_reply("nl") == (
-        "Dit kan ik niet zelf in deze chat regelen; een collega pakt het voor je op. "
+        "Dit kan ik niet zelf in deze chat regelen. Neem hiervoor contact op via de mogelijkheden hieronder. "
         "Plan hieronder een afspraak, dan helpen we je verder."
     )
 
