@@ -282,7 +282,14 @@ export function MessageList(props: MessageListProps) {
                 </div>
               </Show>
               <Show when={message.role === "assistant" && message.turnId}>
-                <div class="klai-feedback" role="group" aria-label={t().feedbackGroupLabel}>
+                <div
+                  class="klai-feedback"
+                  role="group"
+                  aria-labelledby={`klai-feedback-label-${message.turnId}`}
+                >
+                  <span class="klai-feedback-label" id={`klai-feedback-label-${message.turnId}`}>
+                    {t().feedbackGroupLabel}
+                  </span>
                   <button
                     type="button"
                     class={

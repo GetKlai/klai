@@ -179,6 +179,63 @@ async def test_feedback_withdraw_clears_rating():
     assert params["rating"] is None
 
 
+@pytest.mark.asyncio
+async def test_stored_and_withdrawn_rating_emit_one_countable_event():
+    """The only way to tell "nobody clicks" from "the call fails" is a log
+    event per outcome; it carries tenant, widget and rating, no visitor text."""
+    from structlog.testing import capture_logs
+
+    from app.api.partner_feedback import WidgetFeedbackRequest, submit_widget_feedback
+
+    auth = _make_widget_auth()
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=MagicMock(rowcount=1))
+    db.commit = AsyncMock()
+
+    with (
+        patch("app.api.partner_feedback.get_redis_pool", new=AsyncMock(return_value=None)),
+        capture_logs() as captured,
+    ):
+        for rating in ("thumbsDown", None):
+            await submit_widget_feedback(
+                request=WidgetFeedbackRequest(turn_id=TURN_ID, rating=rating),
+                auth=auth,
+                db=db,
+            )
+
+    events = [e for e in captured if e["event"] == "widget_feedback_stored"]
+    assert [(e["org_id"], e["wgt_id"], e["rating"]) for e in events] == [
+        (auth.org_id, WGT_ID, "thumbsDown"),
+        (auth.org_id, WGT_ID, None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unmatched_turn_id_emits_not_found_event():
+    from structlog.testing import capture_logs
+
+    from app.api.partner_feedback import WidgetFeedbackRequest, submit_widget_feedback
+
+    auth = _make_widget_auth()
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=MagicMock(rowcount=0))
+
+    with (
+        patch("app.api.partner_feedback.get_redis_pool", new=AsyncMock(return_value=None)),
+        capture_logs() as captured,
+        pytest.raises(HTTPException),
+    ):
+        await submit_widget_feedback(
+            request=WidgetFeedbackRequest(turn_id=TURN_ID, rating="thumbsUp"),
+            auth=auth,
+            db=db,
+        )
+
+    events = [e for e in captured if e["event"] == "widget_feedback_turn_not_found"]
+    assert len(events) == 1
+    assert (events[0]["org_id"], events[0]["wgt_id"]) == (auth.org_id, WGT_ID)
+
+
 # ---------------------------------------------------------------------------
 # Rate limiting
 # ---------------------------------------------------------------------------
