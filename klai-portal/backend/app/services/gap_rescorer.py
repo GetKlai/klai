@@ -26,6 +26,7 @@ from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.support_cases import PortalSupportCase
 from app.schemas_support_cases import SupportCasePayload
 from app.services.gap_classification import classify_gap
+from app.services.gap_events import filed_by_chat_path
 from app.services.support_cases import (
     GAP_FEATURE,
     OversizedCaseError,
@@ -69,6 +70,10 @@ def _open_gap_queries_stmt(org_id: int, kb_slug: str | None, cutoff: datetime):
             # not mean the answer was written. Exclude them from selection so
             # they are not even re-queried.
             PortalRetrievalGap.support_case_id.is_(None),
+            # A row a reviewer or the conversation judge filed is a verdict that
+            # the visitor went unhelped; a retrieval score that now finds a
+            # lookalike passage does not overturn it.
+            filed_by_chat_path(),
         )
         .group_by(
             PortalRetrievalGap.query_text,
@@ -202,6 +207,7 @@ async def rescore_open_gaps(
                         # case-backed content finding must never be closed by
                         # the rescorer even if a legacy row shares its text.
                         PortalRetrievalGap.support_case_id.is_(None),
+                        filed_by_chat_path(),
                     )
                     .values(resolved_at=datetime.now(tz=UTC), resolved_by="rescorer")
                 )

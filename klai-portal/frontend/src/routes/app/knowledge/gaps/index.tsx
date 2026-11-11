@@ -1,168 +1,111 @@
+// The Knowledge gaps screen: the questions the chat could not answer well, grouped
+// by topic from the stored chat signals (knowledge-gap-to-article.md). The API's
+// order (distinct conversations, then last seen) is the order shown here; the
+// page sorts nothing itself. One filter picks article gaps (default), visitors
+// who asked for a person, or both.
 import { useState } from 'react'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '@/lib/auth'
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeft, FileText, ListChecks } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, FileText } from 'lucide-react'
+import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Select } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
-import {
-  DataTable,
-  DataTableHeader,
-  DataTableBody,
-  DataTableRow,
-  DataTableHead,
-  DataTableCell,
-} from '@/components/ui/data-table'
-import { ListLoadingState, ListEmptyState } from '@/components/ui/list-state'
-import * as m from '@/paraglide/messages'
-import { apiFetch } from '@/lib/apiFetch'
-import { fetchMe } from '@/lib/api-me'
-import { queryLogger } from '@/lib/logger'
-import { ProductGuard } from '@/components/layout/ProductGuard'
-import { RoleGuard } from '@/components/layout/RoleGuard'
-import { useCurrentUser } from '@/hooks/useCurrentUser'
-import { Tooltip } from '@/components/ui/tooltip'
+import { Select } from '@/components/ui/select'
 import { PageContainer } from '@/components/ui/page-container'
 import { PageHeader } from '@/components/ui/page-header'
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from '@/components/ui/data-table'
+import { ListEmptyState, ListLoadingState } from '@/components/ui/list-state'
 import { QueryErrorState } from '@/components/ui/query-error-state'
-import { appNavGapsIsVisible } from '@/routes/app/-app-tools'
+import { ProductGuard } from '@/components/layout/ProductGuard'
+import { RoleGuard } from '@/components/layout/RoleGuard'
+import { apiFetch } from '@/lib/apiFetch'
+import { queryLogger } from '@/lib/logger'
+import * as m from '@/paraglide/messages'
+import { GapsAccessGate } from './_components/GapsAccessGate'
 import { TranscriptImportDialog } from './_components/TranscriptImportDialog'
-import { audienceLabel, caseSourceLabel, diagnosisLabel } from './-support-helpers'
-import { gapGroupDigest } from './-gap-identity'
-import { closerLabel, formatRelativeTime, type GapRow, type GapsResponse, type KBsResponse } from './-gap-types'
+import { formatRelativeTime, type KBsResponse } from './-gap-types'
+import {
+  alsoReportedLabel,
+  articleLabel,
+  clusterKindLabel,
+  clustersPath,
+  clusterTitle,
+  decisionLabel,
+  isWebUrl,
+  type ClusterRow,
+  type ClustersResponse,
+  type GapView,
+} from './-cluster-types'
 
-type GapSource = GapRow['source']
-type GapsSearch = { days?: number; language?: string; include_resolved?: boolean }
-const VALID_DAYS = new Set([7, 14, 30, 60, 90])
-// BCP-47-ish: 2-3 letter language subtag, optional 2-4 letter script/region
-// subtag, or the "undetermined" code. Matches the values the backend groups
-// gaps by instead of a fixed nl/en allowlist. Not a visible filter any more
-// (SPEC-KNOWLEDGE-ACTIVITY-001 §4.9 three-filter redesign), but a bookmarked
-// ?language= URL still forwards to the fetch.
-const LANGUAGE_CODE_RE = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/
-const isValidLanguageCode = (value: unknown): value is string =>
-  typeof value === 'string' && (value === 'und' || LANGUAGE_CODE_RE.test(value))
+const PERIODS = [7, 14, 30]
+const VIEWS: GapView[] = ['article_gaps', 'contact_requests', 'all']
+const QUESTION_MAX = 90
 
 export const Route = createFileRoute('/app/knowledge/gaps/')({
-  validateSearch: (search: Record<string, unknown>): GapsSearch => ({
-    days: VALID_DAYS.has(Number(search.days)) ? Number(search.days) : undefined,
-    language: isValidLanguageCode(search.language) ? search.language : undefined,
-    include_resolved:
-      search.include_resolved === true || search.include_resolved === 'true' ? true : undefined,
-  }),
   component: () => (
     <ProductGuard product="knowledge">
       <RoleGuard minRole="kb_manager">
-        <GapsPage />
+        <GapsAccessGate width="6xl">
+          <GapsPage />
+        </GapsAccessGate>
       </RoleGuard>
     </ProductGuard>
   ),
 })
 
+const shorten = (text: string) => (text.length > QUESTION_MAX ? `${text.slice(0, QUESTION_MAX).trimEnd()}…` : text)
+
+function viewLabel(view: GapView): string {
+  switch (view) {
+    case 'article_gaps':
+      return m.gaps_view_article_gaps()
+    case 'contact_requests':
+      return m.gaps_view_contact_requests()
+    case 'all':
+      return m.gaps_filter_all()
+  }
+}
+
 export function GapsPage() {
   const auth = useAuth()
-  const { user } = useCurrentUser()
-  // SPEC-PORTAL-UNIFY-KB-001: kb.gaps capability gate.
-  // Admins bypass through hasCapability; users without kb.gaps see a grayed unavailable state.
-  const hasGapsCapability = user?.hasCapability('kb.gaps') === true
-  // The tenant unlocks decide both whether this screen is on at all
-  // (knowledge_gaps, off by default while it is unfinished) and the sidebar.
-  const meQuery = useQuery({
-    queryKey: ['me'],
-    queryFn: ({ signal }) => fetchMe(signal),
-    enabled: hasGapsCapability,
-  })
-  const me = meQuery.data
-  const gapsUnlocked = appNavGapsIsVisible({
-    hasCapability: (cap) => user?.hasCapability(cap) === true,
-    unlockedFeatures: me?.platform_unlocked_features ?? [],
-  })
-  const navigate = useNavigate({ from: '/app/knowledge/gaps/' })
+  const navigate = useNavigate()
+  const [days, setDays] = useState(7)
+  const [view, setView] = useState<GapView>('article_gaps')
+  const [includeDecided, setIncludeDecided] = useState(false)
 
-  const {
-    days: daysParam,
-    language: languageParam,
-    include_resolved: includeResolvedParam,
-  } = Route.useSearch()
-  const days = daysParam ?? 30
-  const language = languageParam ?? ''
-  const includeResolved = includeResolvedParam ?? false
-  // Client-side only: the API does not group by source, so narrowing to one
-  // source never needs a refetch and does not need to survive a bookmark.
-  const [source, setSource] = useState<GapSource | ''>('')
-
-  const { data, isLoading, isError, error, refetch } = useQuery<GapsResponse>({
-    queryKey: ['app-gaps', days, language, includeResolved],
+  const { data, isLoading, isError, error, refetch } = useQuery<ClustersResponse>({
+    queryKey: ['app-gap-clusters', 'list', days, view, includeDecided],
     queryFn: async () => {
-      const params = new URLSearchParams({ days: String(days), limit: '100' })
-      if (language) params.set('language', language)
-      if (includeResolved) params.set('include_resolved', 'true')
       try {
-        return await apiFetch<GapsResponse>(`/api/app/gaps?${params}`)
+        return await apiFetch<ClustersResponse>(clustersPath(days, includeDecided, view))
       } catch (err) {
-        queryLogger.warn('Gaps fetch failed', { error: err })
+        queryLogger.warn('Gap clusters fetch failed', { error: err })
         throw err
       }
     },
-    enabled: auth.isAuthenticated && hasGapsCapability && gapsUnlocked,
+    enabled: auth.isAuthenticated,
     retry: false,
   })
 
+  // For the transcript import: the organisation's own knowledge bases.
   const { data: kbsData } = useQuery<KBsResponse>({
     queryKey: ['app-knowledge-bases-for-gaps'],
     queryFn: async () => apiFetch<KBsResponse>('/api/app/knowledge-bases'),
-    enabled: auth.isAuthenticated && hasGapsCapability && gapsUnlocked,
+    enabled: auth.isAuthenticated,
     retry: false,
   })
-
   const orgKbs = (kbsData?.knowledge_bases ?? []).filter((kb) => kb.owner_type === 'org')
 
-  if (!hasGapsCapability) {
-    return (
-      <div className="p-6 max-w-2xl opacity-50 cursor-default select-none" aria-disabled="true">
-        <div className="flex items-start gap-3 mb-4">
-          <AlertTriangle className="h-7 w-7 text-gray-900" />
-          <h1 className="text-xl/none font-semibold text-gray-900">
-            {m.gaps_page_title()}
-          </h1>
-        </div>
-        <Tooltip label={m.capability_tooltip_knowledge_only()}>
-          <p className="text-sm text-gray-600">
-            {m.capability_tooltip_knowledge_only()}
-          </p>
-        </Tooltip>
-      </div>
-    )
-  }
-
-  // The unlock read decides everything below: show its own loading and
-  // error states instead of an empty gaps list while it is unresolved.
-  if (meQuery.isLoading) {
-    return (
-      <PageContainer width="6xl" gap="6">
-        <ListLoadingState label={m.admin_shared_loading()} />
-      </PageContainer>
-    )
-  }
-  if (meQuery.isError) {
-    return (
-      <PageContainer width="6xl" gap="6">
-        <QueryErrorState error={meQuery.error} onRetry={() => void meQuery.refetch()} />
-      </PageContainer>
-    )
-  }
-  if (me !== undefined && !gapsUnlocked) {
-    return (
-      <PageContainer width="6xl" gap="6">
-        <ListEmptyState icon={AlertTriangle} title={m.gaps_unlock_required()} />
-      </PageContainer>
-    )
-  }
-
-  const gaps = data?.gaps ?? []
-  const rows = source ? gaps.filter((gap) => gap.source === source) : gaps
+  const clusters = data?.clusters ?? []
 
   const headerActions = (
     <div className="flex flex-wrap items-center gap-2">
@@ -171,12 +114,6 @@ export function GapsPage() {
         <Link to="/app/knowledge/gaps/support-cases">
           <FileText className="h-4 w-4 mr-2" />
           {m.support_cases_action_open()}
-        </Link>
-      </Button>
-      <Button variant="outline" size="sm" asChild>
-        <Link to="/app/knowledge/gaps/clusters">
-          <ListChecks className="h-4 w-4 mr-2" />
-          {m.gaps_clusters_title()}
         </Link>
       </Button>
       <Button variant="outline" size="sm" asChild>
@@ -190,23 +127,20 @@ export function GapsPage() {
 
   return (
     <PageContainer width="6xl" gap="6">
-      <PageHeader title={m.gaps_page_title()} description={m.gaps_index_card_body()} actions={headerActions} />
+      <PageHeader title={m.gaps_page_title()} description={m.gaps_clusters_description()} actions={headerActions} />
 
-      {/* Filters: bron, periode, status (SPEC-KNOWLEDGE-ACTIVITY-001 §4.9) */}
       <div className="flex flex-wrap items-end gap-4">
         <div className="space-y-1.5">
-          <Label htmlFor="gaps-filter-source">{m.gaps_filter_source()}</Label>
+          <Label htmlFor="gaps-filter-view">{m.gaps_filter_show()}</Label>
           <Select
-            id="gaps-filter-source"
-            value={source}
-            onChange={(e) => setSource(e.target.value as GapSource | '')}
+            id="gaps-filter-view"
+            value={view}
+            onChange={(e) => setView(e.target.value as GapView)}
             className="w-auto"
           >
-            <option value="">{m.gaps_filter_all()}</option>
-            <option value="automatic">{m.gaps_source_automatic()}</option>
-            <option value="review">{m.gaps_source_review()}</option>
-            <option value="judge">{m.gaps_source_judge()}</option>
-            <option value="support">{m.gaps_source_support()}</option>
+            {VIEWS.map((option) => (
+              <option key={option} value={option}>{viewLabel(option)}</option>
+            ))}
           </Select>
         </div>
         <div className="space-y-1.5">
@@ -214,117 +148,122 @@ export function GapsPage() {
           <Select
             id="gaps-filter-days"
             value={String(days)}
-            onChange={(e) => void navigate({ search: (prev) => ({ ...prev, days: Number(e.target.value) }) })}
+            onChange={(e) => setDays(Number(e.target.value))}
             className="w-auto"
           >
-            <option value="7">7d</option>
-            <option value="14">14d</option>
-            <option value="30">30d</option>
-            <option value="60">60d</option>
-            <option value="90">90d</option>
+            {PERIODS.map((period) => (
+              <option key={period} value={String(period)}>{`${period}d`}</option>
+            ))}
           </Select>
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="gaps-filter-status">{m.gaps_filter_status()}</Label>
-          <Select
-            id="gaps-filter-status"
-            value={includeResolved ? 'all' : 'open'}
-            onChange={(e) =>
-              void navigate({ search: (prev) => ({ ...prev, include_resolved: e.target.value === 'all' || undefined }) })
-            }
-            className="w-auto"
-          >
-            <option value="open">{m.gaps_status_open()}</option>
-            <option value="all">{m.gaps_filter_all()}</option>
-          </Select>
-        </div>
+        <Checkbox
+          label={m.gaps_clusters_include_decided()}
+          checked={includeDecided}
+          onChange={(e) => setIncludeDecided(e.target.checked)}
+        />
       </div>
 
-      {/* Table */}
       {isError ? (
         <QueryErrorState error={error} onRetry={() => void refetch()} />
       ) : isLoading ? (
         <ListLoadingState label={m.admin_shared_loading()} />
-      ) : rows.length === 0 ? (
-        <ListEmptyState icon={AlertTriangle} title={m.gaps_empty_state()} />
+      ) : clusters.length === 0 ? (
+        <ListEmptyState icon={AlertTriangle} title={m.gaps_clusters_empty()} />
       ) : (
         <div className="overflow-x-auto">
-          <DataTable className="table-fixed min-w-4xl">
+          <DataTable className="table-fixed min-w-5xl">
             <DataTableHeader>
               <DataTableRow>
-                <DataTableHead>{m.gaps_column_subject()}</DataTableHead>
-                <DataTableHead align="right" className="w-28">{m.gaps_column_occurrences()}</DataTableHead>
-                <DataTableHead className="w-40">{m.gaps_column_source()}</DataTableHead>
-                <DataTableHead className="w-32">{m.gaps_column_status()}</DataTableHead>
+                <DataTableHead className="w-48">{m.gaps_column_subject()}</DataTableHead>
+                <DataTableHead className="w-44">{m.gaps_clusters_column_kind()}</DataTableHead>
+                <DataTableHead align="right" className="w-32">{m.gaps_column_occurrences()}</DataTableHead>
+                <DataTableHead>{m.gaps_clusters_column_question()}</DataTableHead>
+                <DataTableHead className="w-44">{m.gaps_clusters_column_article()}</DataTableHead>
+                <DataTableHead className="w-32">{m.gaps_clusters_column_last_seen()}</DataTableHead>
+                <DataTableHead className="w-36">{m.gaps_column_status()}</DataTableHead>
               </DataTableRow>
             </DataTableHeader>
             <DataTableBody>
-              {rows.map((gap) => {
-                const groupKey = gapGroupDigest(gap)
-                const isResolved = gap.resolved_at != null
-                return (
-                  <DataTableRow
-                    key={groupKey}
-                    interactive
-                    onClick={() => void navigate({ to: '/app/knowledge/gaps/$groupKey', params: { groupKey } })}
-                  >
-                    <DataTableCell className="truncate" title={gap.query_text}>
-                      <Link
-                        to="/app/knowledge/gaps/$groupKey"
-                        params={{ groupKey }}
-                        className="block truncate font-medium text-rl-dark"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {gap.query_text}
-                      </Link>
-                      {gap.source === 'support' && gap.diagnosis && (
-                        <div className="mt-1 truncate text-xs text-gray-500">
-                          {diagnosisLabel(gap.diagnosis)}
-                          {gap.audience ? ` · ${audienceLabel(gap.audience)}` : ''}
-                        </div>
-                      )}
-                    </DataTableCell>
-                    <DataTableCell align="right" className="font-medium tabular-nums">
-                      {gap.occurrence_count}
-                    </DataTableCell>
-                    <DataTableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {gap.source === 'support' && (gap.support_sources ?? []).length > 0
-                          ? (gap.support_sources ?? []).map((src) => (
-                              <Badge key={src} variant="info">{caseSourceLabel(src)}</Badge>
-                            ))
-                          : (
-                              <Badge variant={gap.source === 'automatic' ? 'secondary' : 'info'}>
-                                {gap.source === 'support'
-                                  ? m.gaps_source_support()
-                                  : gap.source === 'review'
-                                    ? m.gaps_source_review()
-                                    : gap.source === 'judge'
-                                      ? `${m.gaps_source_judge()}${gap.audience ? ` · ${audienceLabel(gap.audience)}` : ''}`
-                                      : m.gaps_source_automatic()}
-                              </Badge>
-                            )}
-                      </div>
-                    </DataTableCell>
-                    <DataTableCell>
-                      <Badge variant={isResolved ? 'secondary' : 'outline'}>
-                        {isResolved ? m.gaps_status_resolved() : m.gaps_status_open()}
-                      </Badge>
-                      {isResolved && (
-                        <div className="mt-1 text-xs text-gray-500">
-                          {closerLabel(gap)
-                            ? m.gaps_resolved_line({ time: formatRelativeTime(gap.resolved_at!), closer: closerLabel(gap) })
-                            : m.gaps_resolved_line_no_actor({ time: formatRelativeTime(gap.resolved_at!) })}
-                        </div>
-                      )}
-                    </DataTableCell>
-                  </DataTableRow>
-                )
-              })}
+              {clusters.map((cluster) => (
+                <ClusterTableRow
+                  key={cluster.cluster_key}
+                  cluster={cluster}
+                  onOpen={() =>
+                    void navigate({
+                      to: '/app/knowledge/gaps/$clusterKey',
+                      params: { clusterKey: cluster.cluster_key },
+                    })
+                  }
+                />
+              ))}
             </DataTableBody>
           </DataTable>
         </div>
       )}
     </PageContainer>
+  )
+}
+
+function ClusterTableRow({ cluster, onOpen }: { cluster: ClusterRow; onOpen: () => void }) {
+  return (
+    <DataTableRow interactive onClick={onOpen}>
+      <DataTableCell className="truncate" title={clusterTitle(cluster)}>
+        <Link
+          to="/app/knowledge/gaps/$clusterKey"
+          params={{ clusterKey: cluster.cluster_key }}
+          className="block truncate font-medium text-rl-dark"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {clusterTitle(cluster)}
+        </Link>
+      </DataTableCell>
+      <DataTableCell>
+        <Badge variant="info">{clusterKindLabel(cluster.kind)}</Badge>
+        {alsoReportedLabel(cluster) && <p className="mt-1 text-xs text-gray-500">{alsoReportedLabel(cluster)}</p>}
+      </DataTableCell>
+      <DataTableCell align="right" className="font-medium tabular-nums">
+        {cluster.count}
+      </DataTableCell>
+      <DataTableCell className="truncate" title={cluster.question ?? undefined}>
+        {cluster.question != null ? (
+          shorten(cluster.question)
+        ) : (
+          // Below telemetry level full a widget cluster has no text either, so only
+          // a cluster without widget signals is an internal-chat one.
+          <span className="text-gray-500">{cluster.widget_count === 0 ? m.gaps_clusters_internal_only() : '—'}</span>
+        )}
+      </DataTableCell>
+      <DataTableCell className="truncate">
+        {cluster.article && isWebUrl(cluster.article.url) ? (
+          <a
+            href={cluster.article.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {articleLabel(cluster.article)}
+          </a>
+        ) : cluster.article && articleLabel(cluster.article) != null ? (
+          articleLabel(cluster.article)
+        ) : (
+          <span className="text-gray-500">{m.gaps_clusters_no_article()}</span>
+        )}
+      </DataTableCell>
+      <DataTableCell className="text-sm text-gray-600">{formatRelativeTime(cluster.last_seen)}</DataTableCell>
+      <DataTableCell>
+        <div className="flex flex-wrap gap-1">
+          {cluster.decision === 'none' ? (
+            <Badge variant="outline">{m.gaps_status_open()}</Badge>
+          ) : (
+            <Badge variant="secondary">{decisionLabel(cluster.decision)}</Badge>
+          )}
+          {cluster.has_proposal && <Badge variant="info">{m.gaps_clusters_has_proposal()}</Badge>}
+        </div>
+        {!cluster.decidable && (
+          <p className="mt-1 text-xs text-gray-500">{m.gaps_clusters_not_decidable_marker()}</p>
+        )}
+      </DataTableCell>
+    </DataTableRow>
   )
 }

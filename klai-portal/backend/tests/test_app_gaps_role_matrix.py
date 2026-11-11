@@ -16,7 +16,6 @@ from fastapi import HTTPException, status
 from app.api.app_gaps import (
     get_gap_summary,
     get_gaps_by_taxonomy,
-    list_gaps,
 )
 from tests.conftest import make_perms
 from tests.role_matrix_helpers import (
@@ -40,57 +39,6 @@ async def _assert_role_reaches_endpoint(endpoint, role: str, **kwargs) -> None:
         ), f"role={role!r} unexpectedly blocked inside endpoint: {exc.detail!r}"
     except Exception:  # noqa: S110 - post-gate explosion is acceptable; gate-pass is the assertion.
         pass
-
-
-# ---------------------------------------------------------------------------
-# list_gaps — GET /api/app/gaps
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_list_gaps_admin_passes_gate() -> None:
-    await assert_admin_passes_gate(
-        list_gaps,
-        _MODULE,
-        days=30,
-        gap_type=None,
-        taxonomy_node_id=None,
-        limit=50,
-        include_resolved=False,
-        credentials=None,
-        db=make_db_mock(),
-    )
-
-
-@pytest.mark.parametrize("role", NON_ADMIN_ROLES)
-@pytest.mark.asyncio
-async def test_list_gaps_non_admin_not_admin_blocked_inside_endpoint(role: str) -> None:
-    await _assert_role_reaches_endpoint(
-        list_gaps,
-        role,
-        days=30,
-        gap_type=None,
-        taxonomy_node_id=None,
-        limit=50,
-        include_resolved=False,
-        credentials=None,
-        db=make_db_mock(),
-    )
-
-
-@pytest.mark.asyncio
-async def test_list_gaps_unauthenticated() -> None:
-    await assert_unauthenticated_blocked(
-        list_gaps,
-        _MODULE,
-        days=30,
-        gap_type=None,
-        taxonomy_node_id=None,
-        limit=50,
-        include_resolved=False,
-        credentials=None,
-        db=make_db_mock(),
-    )
 
 
 # ---------------------------------------------------------------------------

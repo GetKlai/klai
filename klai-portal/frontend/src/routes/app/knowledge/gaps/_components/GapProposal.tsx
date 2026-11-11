@@ -26,15 +26,12 @@ import {
   clusterPath,
   isWebUrl,
   notDecidableReason,
+  proposalErrorMessage,
   type ClusterDecision,
   type ClusterProposal,
   type ClusterRow,
 } from '../-cluster-types'
 import { DecisionLine } from './DecisionLine'
-
-function errorDetail(err: unknown, fallback: string): string {
-  return err instanceof ApiError && err.detail ? err.detail : fallback
-}
 
 function ArticleRef({ title, url }: { title: string; url: string | null }) {
   return isWebUrl(url) ? (
@@ -84,7 +81,7 @@ export function GapProposal({ cluster }: { cluster: ClusterRow }) {
       }),
     onError: (err: unknown) => {
       queryLogger.warn('Cluster decision failed', { error: err })
-      toast.error(errorDetail(err, m.gaps_decision_failed()))
+      toast.error(proposalErrorMessage(err, m.gaps_decision_failed()))
     },
     // A 409 means someone else decided first: refresh either way so the page
     // shows the decision that stands.
@@ -114,7 +111,7 @@ export function GapProposal({ cluster }: { cluster: ClusterRow }) {
 
       {proposalQuery.isError && (
         <p role="alert" className="text-sm text-[var(--color-destructive)]">
-          {errorDetail(proposalQuery.error, m.gaps_proposal_load_failed())}
+          {proposalErrorMessage(proposalQuery.error, m.gaps_proposal_load_failed())}
         </p>
       )}
 
@@ -125,7 +122,7 @@ export function GapProposal({ cluster }: { cluster: ClusterRow }) {
           </Button>
           {createMutation.isError && (
             <p role="alert" className="text-sm text-[var(--color-destructive)]">
-              {errorDetail(createMutation.error, m.gaps_proposal_create_failed())}
+              {proposalErrorMessage(createMutation.error, m.gaps_proposal_create_failed())}
             </p>
           )}
         </div>
@@ -133,6 +130,8 @@ export function GapProposal({ cluster }: { cluster: ClusterRow }) {
 
       {proposal && (
         <div className="space-y-4">
+          <p className="text-sm text-gray-600">{m.gaps_proposal_howto()}</p>
+
           <div>
             <h3 className="mb-1 text-sm font-medium text-gray-900">{m.gaps_proposal_missing_heading()}</h3>
             <p className="text-sm text-gray-900">{proposal.missing}</p>
@@ -198,9 +197,7 @@ export function GapProposal({ cluster }: { cluster: ClusterRow }) {
       {decided ? (
         <DecisionLine decision={decided} />
       ) : !cluster.decidable ? (
-        <p className="text-sm text-gray-600">
-          {m.gaps_clusters_not_decidable({ reason: notDecidableReason(clusterKey) })}
-        </p>
+        <p className="text-sm text-gray-600">{notDecidableReason(clusterKey)}</p>
       ) : (
         proposalQuery.isSuccess && (
           <div className="flex items-center gap-2">

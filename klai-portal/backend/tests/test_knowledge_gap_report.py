@@ -20,8 +20,10 @@ from sqlalchemy.dialects import postgresql
 from app.services import knowledge_gap_report as report
 from app.services.knowledge_gap_report import (
     GapTurn,
+    article_gap_group_count,
     build_clusters,
     cluster_key,
+    filter_clusters,
     knowledge_gap_clusters,
     load_gap_turns,
     topic_words,
@@ -231,15 +233,23 @@ def _row(
     signals: dict, *, origin: str | None = "https://shop.example.com", first: str = "Vraag", visitor: str | None = None
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        answer_signals=signals, created_at=_T0, loaded_origin=origin, first_user_query=first, visitor_text=visitor
+        answer_signals=signals,
+        created_at=_T0,
+        conversation_id=None,
+        loaded_origin=origin,
+        first_user_query=first,
+        visitor_text=visitor,
     )
 
 
 class _Db:
     """Answers the widget query with ``widget_rows``, the org's level with ``level``, the rest with nothing."""
 
-    def __init__(self, widget_rows: list[SimpleNamespace], level: str = "full") -> None:
+    def __init__(
+        self, widget_rows: list[SimpleNamespace], level: str = "full", filed_rows: list[SimpleNamespace] | None = None
+    ) -> None:
         self.widget_rows = widget_rows
+        self.filed_rows = filed_rows or []
         self.level = level
         self.compiled: list[Any] = []
 
@@ -249,7 +259,12 @@ class _Db:
         sql = str(compiled)
         result = MagicMock()
         result.scalar_one.return_value = self.level
-        result.all.return_value = self.widget_rows if "FROM widget_messages" in sql else []
+        if "FROM widget_messages" in sql:
+            result.all.return_value = self.widget_rows
+        elif "FROM portal_retrieval_gaps" in sql:
+            result.all.return_value = self.filed_rows
+        else:
+            result.all.return_value = []
         return result
 
 
@@ -474,3 +489,150 @@ def test_the_order_and_keys_are_the_same_for_shuffled_input() -> None:
     second = [(c["cluster_key"], c["count"], c["topic"]) for c in build_clusters(turns, {})]
 
     assert first == second
+
+
+def _in_conversation(conversation_id: int, minutes: int, **kwargs: Any) -> GapTurn:
+    return GapTurn("widget", _signals(**kwargs), _T0 + timedelta(minutes=minutes), None, conversation_id)
+
+
+def test_groups_are_ranked_by_distinct_conversations_not_by_turns() -> None:
+    """One visitor who rephrases five times is one conversation; two visitors asking once each are two."""
+    rephrased = [_in_conversation(1, m, decision="refusal", problem="faxnummer koppelen", found=[]) for m in range(5)]
+    two_visitors = [
+        _in_conversation(10 + m, 10 + m, decision="refusal", problem="wachtmuziek instellen", found=[])
+        for m in range(2)
+    ]
+
+    clusters = build_clusters([*rephrased, *two_visitors], {})
+
+    assert [(c["topic"], c["count"]) for c in clusters] == [("wachtmuziek", 2), ("faxnummer koppelen", 1)]
+
+
+def test_the_displayed_question_masks_addresses_and_runs_of_seven_digits() -> None:
+    turn = _widget(
+        visitor_text="Mijn klantnummer 12345678 en mail anna.jansen@example.com, factuur 123456 en 06-1234567 graag",
+        decision="refusal",
+        problem="factuur opvragen",
+        found=[],
+    )
+
+    question = _only(build_clusters([turn], {}))["question"]
+
+    assert "anna.jansen@example.com" not in question
+    assert "12345678" not in question and "1234567" not in question
+    # Shorter numbers carry no identity and stay readable.
+    assert "factuur 123456" in question
+
+
+def test_the_default_view_leaves_contact_requests_out_and_they_are_one_filter_away() -> None:
+    turns = [
+        _widget(decision="refusal", problem="faxnummer koppelen", found=[]),
+        _widget(decision="human_request", problem="terugbellen", found=[]),
+    ]
+    clusters = build_clusters(turns, {})
+
+    assert [c["kind"] for c in filter_clusters(clusters, "article_gaps")] == ["no_article"]
+    assert [c["kind"] for c in filter_clusters(clusters, "contact_requests")] == ["contact_wish"]
+    assert len(filter_clusters(clusters, "all")) == 2
+
+
+def test_the_tile_counts_every_group_the_default_view_shows() -> None:
+    turns = [
+        _widget(decision="refusal", problem="faxnummer koppelen", found=[]),
+        _widget(decision="partial_answer", problem="wachtmuziek instellen", found=[], open_parts=["na 18 uur"]),
+        _widget(decision="human_request", problem="terugbellen", found=[]),
+        # Groups that cannot get a proposal are listed by default, so the tile counts them too.
+        _widget(decision="refusal", problem="graag", query="kan dat?", found=[]),
+        GapTurn("internal", {"decision": "refusal", "gap_type": "hard"}, _T0),
+    ]
+    clusters = build_clusters(turns, {})
+
+    assert article_gap_group_count(clusters) == len(filter_clusters(clusters, "article_gaps")) == 4
+
+
+def test_a_group_belongs_to_a_filter_when_it_holds_a_turn_of_that_filters_kinds() -> None:
+    """Two article-gap turns and one contact request: dominant kind is the article gap, yet the group is also in
+    the contact filter; on a tie the group is in both, whichever kind is shown."""
+    mixed = [
+        _widget(minutes=1, decision="refusal", problem="faxnummer koppelen", found=[]),
+        _widget(minutes=2, decision="refusal", problem="faxnummer koppelen", found=[]),
+        _widget(minutes=3, decision="human_request", problem="faxnummer koppelen", found=[]),
+    ]
+    tie = [
+        _widget(minutes=1, decision="human_request", problem="voicemail instellen", found=[]),
+        _widget(minutes=2, decision="refusal", problem="voicemail instellen", found=[]),
+    ]
+    clusters = build_clusters([*mixed, *tie], {})
+
+    assert {c["topic"]: c["kind"] for c in clusters}["faxnummer koppelen"] == "no_article"
+    assert {c["topic"] for c in filter_clusters(clusters, "contact_requests")} == {"voicemail", "faxnummer koppelen"}
+    assert {c["topic"] for c in filter_clusters(clusters, "article_gaps")} == {"voicemail", "faxnummer koppelen"}
+
+
+def test_open_parts_and_the_proposal_shown_back_mask_addresses_and_digit_runs() -> None:
+    turn = _widget(
+        decision="partial_answer",
+        problem="factuur opvragen",
+        found=[],
+        open_parts=["klantnummer 12345678 en mail anna@example.com"],
+    )
+
+    parts = _only(build_clusters([turn], {}))["open_parts"]
+
+    assert parts == ["klantnummer … en mail …"]
+    assert report.mask("bel 06-12345678 of anna@example.com") == "bel 06-… of …"
+
+
+def _filed(text: str, by: str = "quality-judge", conversation_id: int | None = 5) -> SimpleNamespace:
+    return SimpleNamespace(
+        query_text=text, caller_client_id=by, conversation_id=conversation_id, occurred_at=_T0, language="nl"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_judge_filed_row_with_no_chat_gap_decision_comes_back_as_a_group() -> None:
+    db = _Db([], filed_rows=[_filed("hoe zet ik wachtmuziek aan voor de nachtstand")])
+
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
+
+    assert (cluster["kind"], cluster["reported_by"], cluster["count"]) == ("reported_judge", ["judge"], 1)
+    assert cluster["decidable"] is True
+    assert cluster["questions"] == ["hoe zet ik wachtmuziek aan voor de nachtstand"]
+    filed_sql = next(str(c) for c in db.compiled if "FROM portal_retrieval_gaps" in str(c))
+    assert "portal_retrieval_gaps.org_id = " in filed_sql
+    assert "portal_retrieval_gaps.resolved_at IS NULL" in filed_sql
+    assert "portal_retrieval_gaps.support_case_id IS NULL" in filed_sql
+    assert "widget_conversations.is_test IS false" in filed_sql
+    assert "widget_conversations.is_preview IS false" in filed_sql
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_in_a_group_through_its_chat_turn_is_not_counted_again_by_its_reported_row() -> None:
+    chat = _row(_signals(decision="refusal", problem="wachtmuziek nachtstand", found=[]), visitor="wachtmuziek?")
+    chat.conversation_id = 5
+    db = _Db(
+        [chat],
+        filed_rows=[
+            _filed("wachtmuziek nachtstand", by="human-review", conversation_id=5),
+            _filed("wachtmuziek nachtstand", conversation_id=6),
+        ],
+    )
+
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
+
+    # Conversations 5 (chat turn and review row) and 6 (judge row): two, not three.
+    assert cluster["count"] == 2
+    # The chat kind stays; the group shows it was also reported.
+    assert cluster["kind"] == "no_article"
+    assert cluster["reported_by"] == ["judge", "review"]
+
+
+@pytest.mark.asyncio
+async def test_a_reported_row_with_redacted_text_is_not_decidable_and_text_is_masked() -> None:
+    db = _Db([], filed_rows=[_filed("[REDACTED:shadow]", by="human-review")])
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
+    assert (cluster["kind"], cluster["decidable"], cluster["questions"]) == ("reported_review", False, [])
+
+    db = _Db([], filed_rows=[_filed("factuur 12345678 naar anna@example.com")])
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
+    assert "12345678" not in cluster["question"] and "anna@example.com" not in cluster["question"]
