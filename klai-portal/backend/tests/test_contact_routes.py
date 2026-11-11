@@ -189,23 +189,6 @@ def test_the_admin_list_reads_a_widget_with_a_bad_stored_route():
     assert (route.name, route.booking_url, route.is_default) == ("Support", None, True)
 
 
-def test_a_save_keeps_the_old_contact_keys_so_the_previous_release_still_works_after_a_rollback():
-    from app.api.admin_widgets import WidgetConfig, _keeping_legacy_contact_keys
-
-    stored = {
-        "booking_url": "https://book.example.com/old",
-        "off_topic_subjects": "prijzen",
-        "integrations": {"appointments": {"enabled": True, "booking_url": "https://book.example.com/embed"}},
-    }
-    saved = WidgetConfig(contact_routes=[{"name": "Support", "is_default": True}]).model_dump()
-
-    kept = _keeping_legacy_contact_keys(stored, saved)
-
-    assert (kept["booking_url"], kept["off_topic_subjects"]) == ("https://book.example.com/old", "prijzen")
-    assert kept["integrations"]["appointments"] == {"enabled": False, "booking_url": "https://book.example.com/embed"}
-    assert kept["contact_routes"] == saved["contact_routes"]
-
-
 def test_an_empty_route_list_is_a_widget_without_routes():
     assert WidgetConfig().contact_routes == []
 

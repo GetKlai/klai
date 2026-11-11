@@ -540,7 +540,7 @@ def test_the_default_view_leaves_contact_requests_out_and_they_are_one_filter_aw
 def test_the_tile_counts_every_group_the_default_view_shows() -> None:
     turns = [
         _widget(decision="refusal", problem="faxnummer koppelen", found=[]),
-        _widget(decision="partial_answer", problem="wachtmuziek instellen", found=[], open_parts=["na 18 uur"]),
+        _widget(decision="partial_answer", problem="wachtmuziek instellen", open_parts=["na 18 uur"]),
         _widget(decision="human_request", problem="terugbellen", found=[]),
         # Groups that cannot get a proposal are listed by default, so the tile counts them too.
         _widget(decision="refusal", problem="graag", query="kan dat?", found=[]),
@@ -637,3 +637,44 @@ async def test_a_reported_row_with_redacted_text_is_not_decidable_and_text_is_ma
     db = _Db([], filed_rows=[_filed("factuur 12345678 naar anna@example.com")])
     cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=7, now=_T0))  # type: ignore[arg-type]
     assert "12345678" not in cluster["question"] and "anna@example.com" not in cluster["question"]
+
+
+def test_a_group_of_only_weak_matches_is_out_of_the_default_view_and_a_mixed_group_stays_in() -> None:
+    turns = [
+        _widget(decision="answer", gap_type="soft", problem="wachtmuziek"),
+        _widget(minutes=1, decision="answer", gap_type="soft", problem="faxnummer"),
+        _widget(minutes=2, decision="refusal", problem="faxnummer", found=[]),
+        _widget(minutes=3, decision="refusal", problem="voicemail instellen", found=[]),
+    ]
+    clusters = build_clusters(turns, {})
+
+    default = filter_clusters(clusters, "article_gaps")
+    assert {c["topic"] for c in default} == {"faxnummer", "voicemail"}
+    assert {c["topic"] for c in filter_clusters(clusters, "weak_matches")} == {
+        "wachtmuziek",
+        "faxnummer",
+    }
+    assert len(filter_clusters(clusters, "all")) == 3
+    assert article_gap_group_count(clusters) == len(default) == 2
+
+
+def test_with_equal_conversations_the_clearer_gap_comes_first_then_the_newest() -> None:
+    turns = [
+        _widget(minutes=9, decision="answer", gap_type="soft", problem="doorschakelen"),
+        _widget(minutes=1, decision="refusal", problem="faxnummer", found=[]),
+        _widget(minutes=2, decision="partial_answer", problem="wachtmuziek instellen", open_parts=["na 18 uur"]),
+        _widget(minutes=3, decision="clarifying_question", problem="voicemail instellen", found=[]),
+        _widget(minutes=4, decision="refusal", problem="beltegoed opwaarderen", found=[]),
+        _widget(minutes=5, decision="human_request", problem="terugbellen"),
+    ]
+
+    order = [(c["kind"], c["topic"]) for c in build_clusters(turns, {})]
+
+    assert order == [
+        ("no_article", "beltegoed opwaarderen"),
+        ("no_article", "faxnummer"),
+        ("article_misses_part", "Wachtmuziek instellen"),
+        ("variant_unclear", "voicemail"),
+        ("weak_match", "doorschakelen"),
+        ("contact_wish", "terugbellen"),
+    ]

@@ -106,10 +106,13 @@ _WORD = re.compile(r"[^\W_]+")
 # What a list row may show of a visitor's words: an e-mail address or a run of
 # seven digits (customer, order, phone and account numbers) never reaches the page.
 _MASKED = re.compile(r"\S+@\S+|\d{7,}")
-# Every kind except the visitor asking for a person; that one is a filter value.
+# The kinds of the default view: a question the chat could not answer. A weak match was answered and a contact
+# request asks for a person; each has its own filter value.
 ARTICLE_GAP_KINDS = frozenset(
-    {"no_article", "article_misses_part", "variant_unclear", "weak_match", "reported_review", "reported_judge"}
+    {"no_article", "article_misses_part", "variant_unclear", "reported_review", "reported_judge"}
 )
+# How clear a gap is, for the order of groups with equal conversations; lower comes first.
+_SEVERITY = {"no_article": 0, "article_misses_part": 1, "variant_unclear": 2, "reported_review": 3, "reported_judge": 3}
 # Chat filler says nothing about the subject: pronouns, auxiliaries, the words a
 # visitor uses to ask ("graag", "hoe", "lukt") and the generic verbs and
 # nouns around a request ("instellen", "aanvragen", "klant").
@@ -264,7 +267,7 @@ def mask(text: str) -> str:
     return _MASKED.sub("…", text)
 
 
-GapView = Literal["article_gaps", "contact_requests", "all"]
+GapView = Literal["article_gaps", "weak_matches", "contact_requests", "all"]
 
 
 def filter_clusters(clusters: list[dict[str, Any]], show: GapView) -> list[dict[str, Any]]:
@@ -275,7 +278,11 @@ def filter_clusters(clusters: list[dict[str, Any]], show: GapView) -> list[dict[
     """
     if show == "all":
         return clusters
-    wanted = ARTICLE_GAP_KINDS if show == "article_gaps" else {"contact_wish"}
+    wanted = {
+        "article_gaps": ARTICLE_GAP_KINDS,
+        "weak_matches": {"weak_match"},
+        "contact_requests": {"contact_wish"},
+    }[show]
     return [c for c in clusters if wanted & c["kinds"].keys()]
 
 
@@ -386,9 +393,10 @@ def build_clusters(
         )
     # Decidable clusters first (a singleton stays at the bottom of that block),
     # then the widget catch-alls, then the internal per-kind aggregates; within a
-    # block biggest first, then newest, then by key so the order is reproducible.
+    # block biggest first, then the clearer kind (``_SEVERITY``), then newest, then by key so the order is reproducible.
     clusters.sort(key=lambda c: c["cluster_key"])
     clusters.sort(key=lambda c: c["last_seen"], reverse=True)
+    clusters.sort(key=lambda c: _SEVERITY.get(c["kind"], len(_SEVERITY)))
     clusters.sort(key=lambda c: c["count"], reverse=True)
     clusters.sort(key=lambda c: (not c["decidable"]) + (c["widget_count"] == 0))
     return clusters
