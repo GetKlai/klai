@@ -97,6 +97,9 @@ interface AgentActivity {
 
 interface MessageEscalation {
   appointment: boolean
+  // Booking link of the contact route this reply is about; absent on replies
+  // from before per-route links (the config's link is then the fallback).
+  booking_url?: string
 }
 
 interface ChatMessage {
@@ -165,11 +168,24 @@ function normalizeSources(rawSources: unknown): MessageSource[] {
 
 // Streaming delta: {"choices":[{"delta":{"escalation":{"appointment":true}}}]}
 // Non-streaming: message["escalation"] = {"appointment": true}, alongside
-// message["sources"]. Absent = no offer. Shape is exactly {appointment: bool}.
+// message["sources"]. Absent = no offer. Shape: {appointment: bool, booking_url?: string}.
 function normalizeEscalation(raw: unknown): MessageEscalation | undefined {
   if (!raw || typeof raw !== 'object') return undefined
-  const appointment = (raw as { appointment?: unknown }).appointment
-  return typeof appointment === 'boolean' ? { appointment } : undefined
+  const { appointment, booking_url } = raw as { appointment?: unknown; booking_url?: unknown }
+  if (typeof appointment !== 'boolean') return undefined
+  const url = resolveBookingUrl(booking_url, undefined)
+  return url ? { appointment, booking_url: url } : { appointment }
+}
+
+// The one place a booking URL is chosen: the reply's own link wins, the
+// widget config's link is the fallback, and only absolute http(s) passes
+// because the value ends up in an href and an iframe src.
+function resolveBookingUrl(replyUrl: unknown, configUrl: unknown): string | undefined {
+  for (const candidate of [replyUrl, configUrl]) {
+    const url = typeof candidate === 'string' ? candidate.trim() : ''
+    if (/^https?:\/\/\S+$/i.test(url)) return url
+  }
+  return undefined
 }
 
 function normalizeActivity(rawActivity: unknown): AgentActivity[] {
@@ -249,7 +265,8 @@ export function WidgetChatSurface({
   // Choose the separator; do not assume one. The configured Voys URL has no
   // query string, and appending "&embed=1" to a bare path makes their router
   // answer with a 404 page. Verified against the live booking URL.
-  const appointmentsHref = `${appointmentsUrl}${appointmentsUrl.includes('?') ? '&' : '?'}embed=1&lng=${appointmentsLang}`
+  const embedHref = (url: string) => `${url}${url.includes('?') ? '&' : '?'}embed=1&lng=${appointmentsLang}`
+  const appointmentsHref = embedHref(appointmentsUrl)
   const identityFilled = visitorName.trim().length > 1 && visitorEmail.trim().includes('@')
   // Ask before the first message rather than alongside it: the visitor reads
   // why we want the address while nothing else competes for the space, and
@@ -447,9 +464,9 @@ export function WidgetChatSurface({
 
   // Shared by the "onze specialisten" sentence and the appointment offer: the same
   // panel, the same booking arguments.
-  function openAppointmentsPanel(event: React.MouseEvent<HTMLAnchorElement>) {
+  function openAppointmentsPanel(event: React.MouseEvent<HTMLAnchorElement>, href = appointmentsHref) {
     if (!claimPlainLinkClick(event)) return
-    openPanel(appointmentsHref, APPOINTMENTS_DISCLOSURE[appointmentsLang].link, APPOINTMENTS_FRAME_ALLOW)
+    openPanel(href, APPOINTMENTS_DISCLOSURE[appointmentsLang].link, APPOINTMENTS_FRAME_ALLOW)
   }
 
   return (
@@ -629,8 +646,9 @@ export function WidgetChatSurface({
                   isDark={isDark}
                   showSources={showSources}
                   showMeta={showMeta}
-                  appointmentsActive={appointmentsActive}
-                  appointmentsHref={appointmentsHref}
+                  appointmentsEnabled={appointmentsEnabled}
+                  bookingUrl={appointmentsUrl}
+                  embedHref={embedHref}
                   onOpenAppointments={openAppointmentsPanel}
                 />
               ))}
@@ -857,8 +875,9 @@ function MessageBubble({
   isDark,
   showSources,
   showMeta,
-  appointmentsActive,
-  appointmentsHref,
+  appointmentsEnabled,
+  bookingUrl,
+  embedHref,
   onOpenAppointments,
 }: {
   message: ChatMessage
@@ -870,9 +889,10 @@ function MessageBubble({
   isDark: boolean
   showSources: boolean
   showMeta: boolean
-  appointmentsActive: boolean
-  appointmentsHref: string
-  onOpenAppointments: (event: React.MouseEvent<HTMLAnchorElement>) => void
+  appointmentsEnabled: boolean
+  bookingUrl: string
+  embedHref: (url: string) => string
+  onOpenAppointments: (event: React.MouseEvent<HTMLAnchorElement>, href: string) => void
 }) {
   if (message.role === 'user') {
     return (
@@ -893,7 +913,19 @@ function MessageBubble({
     )
   }
 
-  const showEscalation = appointmentsActive && message.escalation?.appointment === true
+  // The toggle only decides how a booking is presented (in-page panel or a
+  // plain new-tab link); which URL it opens is resolved per reply.
+  const offerUrl = message.escalation?.appointment === true
+    ? resolveBookingUrl(message.escalation.booking_url, bookingUrl)
+    : undefined
+  const offerHref = offerUrl && (appointmentsEnabled ? embedHref(offerUrl) : offerUrl)
+  const escalationCta = offerHref ? (
+    <EscalationCta
+      href={offerHref}
+      isDark={isDark}
+      onOpen={(event) => { if (appointmentsEnabled) onOpenAppointments(event, offerHref) }}
+    />
+  ) : null
 
   if (variant === 'admin-preview') {
     return (
@@ -914,7 +946,7 @@ function MessageBubble({
           ) : isStreaming && isLast ? (
             <TypingIndicator isDark={isDark} />
           ) : null}
-          {showEscalation && <EscalationCta href={appointmentsHref} isDark={isDark} onOpen={onOpenAppointments} />}
+          {escalationCta}
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
         </div>
       </div>
@@ -932,7 +964,7 @@ function MessageBubble({
               <Markdown>{message.content}</Markdown>
             </div>
           </div>
-          {showEscalation && <EscalationCta href={appointmentsHref} isDark={isDark} onOpen={onOpenAppointments} />}
+          {escalationCta}
           <SourceDetails message={message} showSources={showSources} showMeta={showMeta} isDark={isDark} />
         </div>
       ) : isStreaming && isLast ? (

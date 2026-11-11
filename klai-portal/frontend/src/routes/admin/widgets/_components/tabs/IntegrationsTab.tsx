@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  CalendarCheck,
   ExternalLink,
   Loader2,
   MessageSquareText,
@@ -45,20 +44,6 @@ import type {
 
 interface Props {
   widget: WidgetDetailResponse
-}
-
-// INTERIM appointment redirect - a fixed booking URL in widget_config
-// until the chat booking API integration replaces it (mirrors the
-// interim marker on the backend field). Absolute http(s) only, matching
-// what partner.py's _widget_booking_url will actually deliver to the
-// widget; anything else would silently never show a button.
-function isAbsoluteHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    return false
-  }
 }
 
 export function IntegrationsTab({ widget }: Props) {
@@ -260,7 +245,6 @@ export function IntegrationsTab({ widget }: Props) {
         )}
 
         <AppointmentsCard widget={widget} />
-        <BookingCard widget={widget} />
         <TicketsCard widget={widget} />
       </div>
     </section>
@@ -287,37 +271,27 @@ const HUBSPOT_NOT_CONNECTED: HubSpotWidgetIntegration = {
 }
 
 // Voys-specific: the partner booking panel. Not a configurable framework —
-// exactly one named integration, rendered as a card beside HubSpot.
+// exactly one named integration, rendered as a card beside HubSpot. It only
+// decides how a booking is shown; the booking addresses live on the contact
+// routes.
 function AppointmentsCard({ widget }: Props) {
   const updateMutation = useUpdateWidget(String(widget.id))
   const config = widget.widget_config
   const appointments = config.integrations?.appointments
   const [enabled, setEnabled] = useState(appointments?.enabled ?? false)
-  const [bookingUrl, setBookingUrl] = useState(appointments?.booking_url ?? '')
 
   useEffect(() => {
     setEnabled(appointments?.enabled ?? false)
-    setBookingUrl(appointments?.booking_url ?? '')
-  }, [appointments?.enabled, appointments?.booking_url])
+  }, [appointments?.enabled])
 
-  const trimmed = bookingUrl.trim()
-  const isEmpty = trimmed.length === 0
-  const isValid = isEmpty || isAbsoluteHttpUrl(trimmed)
-  // partner.py only ever delivers the panel with a usable URL: enabling
-  // without one saves a dead switch, so the form requires it up front.
-  const showUrlError = !isValid || (enabled && isEmpty)
-  const isDirty = enabled !== (appointments?.enabled ?? false) || trimmed !== (appointments?.booking_url ?? '')
+  const isDirty = enabled !== (appointments?.enabled ?? false)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (showUrlError) return
     const integrations: WidgetIntegrations = {
       ...config.integrations,
       hubspot: config.integrations?.hubspot ?? HUBSPOT_NOT_CONNECTED,
-      appointments: {
-        enabled,
-        booking_url: isEmpty ? null : trimmed,
-      },
+      appointments: { enabled },
     }
     const next: WidgetConfig = { ...config, integrations }
     updateMutation.mutate(
@@ -353,28 +327,6 @@ function AppointmentsCard({ widget }: Props) {
             {m.admin_widgets_integrations_appointments_enabled_label()}
           </Label>
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="widget-appointments-url">
-            {m.admin_widgets_integrations_booking_url_label()}
-          </Label>
-          <p className="text-xs text-gray-600">
-            {m.admin_widgets_integrations_appointments_url_help()}
-          </p>
-          <Input
-            id="widget-appointments-url"
-            type="url"
-            value={bookingUrl}
-            onChange={(e) => setBookingUrl(e.target.value)}
-            placeholder={m.admin_widgets_integrations_booking_url_placeholder()}
-            aria-invalid={showUrlError}
-            className="max-w-xl"
-          />
-          {showUrlError && (
-            <p className="text-sm text-[var(--color-destructive)]">
-              {m.admin_widgets_integrations_booking_error_invalid()}
-            </p>
-          )}
-        </div>
         <p className="text-xs text-gray-600">
           {m.admin_widgets_integrations_appointments_hint()}
         </p>
@@ -389,103 +341,7 @@ function AppointmentsCard({ widget }: Props) {
           <Button
             type="submit"
             size="sm"
-            disabled={updateMutation.isPending || !isDirty || showUrlError}
-          >
-            {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {m.admin_shared_save()}
-          </Button>
-        </div>
-      </form>
-    </article>
-  )
-}
-
-function BookingCard({ widget }: Props) {
-  const updateMutation = useUpdateWidget(String(widget.id))
-  const config = widget.widget_config
-  const [bookingUrl, setBookingUrl] = useState(config.booking_url ?? '')
-
-  useEffect(() => {
-    setBookingUrl(config.booking_url ?? '')
-  }, [config.booking_url])
-
-  const trimmed = bookingUrl.trim()
-  const isEmpty = trimmed.length === 0
-  const isValid = isEmpty || isAbsoluteHttpUrl(trimmed)
-  const isDirty = trimmed !== (config.booking_url ?? '')
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!isValid) return
-    const next: WidgetConfig = {
-      ...config,
-      // Empty field = no appointment button for the visitor (same
-      // contract the widget client implements).
-      booking_url: isEmpty ? null : trimmed,
-    }
-    updateMutation.mutate(
-      { widget_config: next },
-      { onSuccess: () => toast.success(m.admin_shared_success_updated()) },
-    )
-  }
-
-  return (
-    <article className="rounded-lg border border-gray-200 bg-white p-5">
-      <header className="flex items-start gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--color-rl-accent)]/10 text-[var(--color-rl-dark)]">
-          <CalendarCheck className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 space-y-1">
-          <h3 className="text-base font-semibold text-gray-900">
-            {m.admin_widgets_integrations_booking_title()}
-          </h3>
-          <p className="text-sm text-gray-500">
-            {m.admin_widgets_integrations_booking_description()}
-          </p>
-        </div>
-      </header>
-
-      <form onSubmit={handleSubmit} noValidate className="mt-4 space-y-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="widget-booking-url">
-            {m.admin_widgets_integrations_booking_url_label()}
-          </Label>
-          <p className="text-xs text-gray-600">
-            {m.admin_widgets_integrations_booking_url_help()}
-          </p>
-          <Input
-            id="widget-booking-url"
-            type="url"
-            value={bookingUrl}
-            onChange={(e) => setBookingUrl(e.target.value)}
-            placeholder={m.admin_widgets_integrations_booking_url_placeholder()}
-            aria-invalid={!isValid}
-            className="max-w-xl"
-          />
-          {!isValid && (
-            <p className="text-sm text-[var(--color-destructive)]">
-              {m.admin_widgets_integrations_booking_error_invalid()}
-            </p>
-          )}
-        </div>
-        <p className="text-xs text-gray-600">
-          {m.admin_widgets_integrations_booking_button_hint()}
-        </p>
-        <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
-          {m.admin_widgets_integrations_booking_interim_note()}
-        </p>
-        {updateMutation.error && (
-          <p className="text-sm text-[var(--color-destructive)]">
-            {updateMutation.error instanceof Error
-              ? updateMutation.error.message
-              : m.admin_shared_error_generic()}
-          </p>
-        )}
-        <div>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={updateMutation.isPending || !isDirty || !isValid}
+            disabled={updateMutation.isPending || !isDirty}
           >
             {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {m.admin_shared_save()}
