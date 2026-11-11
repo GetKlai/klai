@@ -109,8 +109,16 @@ is a threshold classifier writing an exact-string event log to Postgres.
 - **Why it matters:** editors get "this query scored low" instead of "partially
   covered by article X, missing aspect Y". The `missing_aspects` output is the
   labour-saving core of the feature.
-- **Evidence:** `deploy/litellm/klai_retrieval_telemetry.py:84-115`;
-  `klai-portal/backend/app/services/gap_classification.py:13-33`.
+- **Update (11 Nov 2026):** `classify_gap()` is still the pure threshold
+  classifier, but the verdict now comes from elsewhere: the conversation judge
+  files a gap row when it blames the knowledge (`file_judge_gap`), a support
+  case analysis files findings with a diagnosis, and one `klai-judge` call per
+  group, made on request, writes the proposal (what is missing, where, open
+  facts; `draft_proposal`).
+- **Evidence:** `klai-portal/backend/app/services/gap_classification.py`
+  (`classify_gap`); `klai-portal/backend/app/services/conversation_judge.py`
+  (`file_judge_gap`); `klai-portal/backend/app/services/gap_proposals.py`
+  (`draft_proposal`).
 
 ### GAP-LOOP-02 — No semantic gap registry (exact-string dedup)  ·  L  ·  ✓
 - **Intended (§8.2):** a Qdrant `org_{uuid}_gap_registry` where new gaps are
@@ -122,9 +130,15 @@ is a threshold classifier writing an exact-string event log to Postgres.
 - **Why it matters:** a high-demand gap asked 20 different ways looks like 20
   low-frequency gaps and never rises in the inbox. Prioritisation structurally
   undercounts real demand.
-- **Evidence:** `klai-portal/backend/app/models/retrieval_gaps.py:22-54`;
-  `klai-portal/backend/app/api/internal.py:1228`;
-  `klai-portal/backend/app/api/app_gaps.py:74-91`.
+- **Update (11 Nov 2026):** every gap row carries a `question_key` and
+  `fold_into_open_group` merges a paraphrase onto an open group (outside the
+  request path). The Knowledge gaps screen groups the stored chat signals per
+  article or topic words without a model, so a need asked twenty ways is one
+  group, counted in distinct conversations.
+- **Evidence:** `klai-portal/backend/app/services/gap_events.py`
+  (`record_gap_event`, `fold_into_open_group`);
+  `klai-portal/backend/app/services/knowledge_gap_report.py`
+  (`cluster_key`, `build_clusters`).
 
 ### GAP-LOOP-03 — No gap lifecycle / no article back-link  ·  L  ·  ✓
 - **Intended (§8.3):** `open → in_progress → resolved`, a `resolving_article_id`
@@ -135,8 +149,15 @@ is a threshold classifier writing an exact-string event log to Postgres.
 - **Why it matters:** editors cannot see which article fixed which gap, cannot
   mark work-in-progress, and a weak fix spawns disconnected rows instead of
   re-opening the original.
-- **Evidence:** `klai-portal/backend/app/models/retrieval_gaps.py:53`;
-  `klai-portal/backend/app/services/gap_rescorer.py:144-156`.
+- **Update (11 Nov 2026):** a group now leaves the list in two ways: the
+  rescorer closes it when the chat finds an answer again (only rows the chat
+  path filed itself, never one from a review, the judge or a support case), or
+  the owner decides it for good (reject, out of scope;
+  `portal_gap_proposals`). There is still no `in_progress` and no
+  `resolving_article_id`.
+- **Evidence:** `klai-portal/backend/app/services/gap_rescorer.py`
+  (`rescore_open_gaps`); `klai-portal/backend/app/models/gap_proposals.py`;
+  `klai-portal/backend/app/api/app_gap_clusters.py` (`decide_gap_cluster`).
 
 ### GAP-LOOP-04 — Editorial priority is frequency-only  ·  M  ·  ✓
 - **Intended (§8.4):** `priority_score = frequency × urgency_weight ×
@@ -145,7 +166,12 @@ is a threshold classifier writing an exact-string event log to Postgres.
   `COUNT desc`. No urgency, no recency.
 - **Why it matters:** a frequent trivial question outranks a rare but
   production-breaking error-code gap.
-- **Evidence:** `klai-portal/backend/app/api/app_gaps.py:89,197-204`.
+- **Update (11 Nov 2026):** the Knowledge gaps list orders groups by the
+  number of distinct conversations, then by last seen, and shows article gaps
+  by default with contact requests behind a filter. There is still no urgency
+  weight and no recency factor.
+- **Evidence:** `klai-portal/backend/app/services/knowledge_gap_report.py`
+  (`build_clusters`, `filter_clusters`).
 
 ### GAP-LOOP-05 — Only 1 of 3 gap-trigger signals  ·  L  ·  ✓
 - **Intended (§8/§12):** gaps from (1) transcript unanswered-questions, (2)
@@ -155,8 +181,13 @@ is a threshold classifier writing an exact-string event log to Postgres.
 - **Why it matters:** the richest gaps — real support conversations where the
   agent couldn't answer — never surface. The loop only improves topics users
   already tried to look up in chat.
-- **Evidence:** `deploy/litellm/klai_retrieval_telemetry.py:181-244`;
-  `klai-portal/backend/app/api/internal.py:1191-1240`.
+- **Update (11 Nov 2026):** there is no longer a single trigger. Gaps come
+  from low-confidence chat retrieval (`_register_gap`), a colleague's answer
+  review, the conversation judge, and imported support cases (transcript
+  import). The screen itself reads the stored chat signals of each turn.
+- **Evidence:** `klai-portal/backend/app/services/retrieval_context.py`
+  (`_register_gap`); `klai-portal/backend/app/services/gap_events.py`
+  (`record_gap_event`); `klai-portal/backend/app/services/support_cases.py`.
 
 ### GAP-LOOP-06 — No AI-draft affordance in the editorial inbox  ·  L  ·  ·
 - **Intended (§12):** "Human writes **or AI drafts** new/updated article" —
@@ -165,8 +196,13 @@ is a threshold classifier writing an exact-string event log to Postgres.
   gap→draft generator (`grep 'draft'` over `klai-portal/backend/app` = 0).
 - **Why it matters:** AI-assisted drafting is what makes the loop scale; without
   it every prioritised gap still needs full manual authoring.
-- **Evidence:** `klai-portal/frontend/src/components/kb-editor/BlockPageEditor.tsx`;
-  `klai-portal/backend/app/services/docs_client.py`.
+- **Update (11 Nov 2026):** a proposal per group now exists, made on request:
+  what is missing, where it belongs, an example text and the facts the owner
+  must still fill in. The owner copies it into the source by hand; nothing is
+  written to a knowledge base from the portal (destinations are a later phase).
+- **Evidence:** `klai-portal/backend/app/services/gap_proposals.py`;
+  `klai-portal/backend/app/api/app_gap_clusters.py` (`create_gap_proposal`);
+  `klai-portal/frontend/src/routes/app/knowledge/gaps/_components/GapProposal.tsx`.
 
 ## Cluster 2 — Provenance, supersession & dual-store integrity (§3, §5)
 
