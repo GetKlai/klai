@@ -1383,7 +1383,7 @@ async def test_a_pick_that_fails_names_the_default_route(monkeypatch):
 
     _, text, extras = await _route_turn(monkeypatch, band="high", items=_two_articles(), litellm=litellm)
 
-    assert text.startswith(REFUSAL_NL)
+    assert text.startswith("Dit vind ik niet terug in onze helpartikelen. Dit is een vraag voor Support.")
     assert "Facturen: facturen@example.com" in text
     assert extras["escalation"] == [_BOOKING]
 
@@ -1407,7 +1407,10 @@ async def test_a_referral_with_two_referring_routes_goes_to_the_one_the_referral
     (referral_request,) = litellm.pick_requests
     schema = referral_request["response_format"]["json_schema"]["schema"]
     assert schema["properties"]["route"]["enum"] == ["support", "billing"]
-    assert text.startswith("Over een extra nummer kijkt een collega graag persoonlijk met je mee. Mailen kan ook:")
+    assert text.startswith(
+        "Over een extra nummer kijkt een collega graag persoonlijk met je mee. Dit is een vraag voor Facturen. "
+        "Mail naar facturen@example.com."
+    )
     assert extras["escalation"] == []
 
 

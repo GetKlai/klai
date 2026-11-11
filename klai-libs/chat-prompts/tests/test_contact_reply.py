@@ -6,6 +6,8 @@ import pytest
 
 from klai_chat_prompts import (
     RouteChannels,
+    check_unavailable_message,
+    check_unavailable_reply,
     contact_reply,
     contact_reply_again,
     no_citable_sources_message,
@@ -16,12 +18,8 @@ from klai_chat_prompts import (
 
 BOOKING = RouteChannels(name="Support", booking_url="https://book.example.com/s")
 SALES = RouteChannels(name="Verkoop", email="verkoop@example.com", phone="010 000 0000")
-BILLING = RouteChannels(
-    name="Facturen",
-    link_url="https://help.example.com/facturen",
-    link_label="Stel je vraag online",
-    note="Wij reageren binnen twee werkdagen.",
-)
+_LINK = {"link_url": "https://help.example.com/facturen", "link_label": "Stel je vraag online"}
+BILLING = RouteChannels(name="Facturen", note="Wij reageren binnen twee werkdagen.", **_LINK)
 
 
 @pytest.mark.parametrize("route", [None, BOOKING], ids=["no_routes", "booking_only"])
@@ -59,14 +57,41 @@ def test_the_referral_falls_back_to_the_routes_own_note_verbatim() -> None:
     assert referral_reply("nl", "je factuur", route) == referral_reply("nl", "je factuur", BOOKING)
 
 
-def test_a_route_without_a_booking_url_names_its_channels_and_no_appointment() -> None:
+def test_a_route_without_a_booking_url_opens_with_its_first_channel_as_the_way_in() -> None:
+    """ "Bellen kan ook" only reads after the appointment sentence; without one the channel is the instruction."""
     assert contact_reply("nl", SALES) == (
-        "Een medewerker helpt je graag persoonlijk verder. Mailen kan ook: verkoop@example.com. "
-        "Bellen kan ook: 010 000 0000."
+        "Een medewerker helpt je graag persoonlijk verder. Bel 010 000 0000 of mail naar verkoop@example.com."
+    )
+    assert contact_reply("en", RouteChannels(name="Verkoop", phone="010 000 0000", **_LINK)) == (
+        "Someone will gladly help you personally. Call 010 000 0000. "
+        "Or use [Stel je vraag online](https://help.example.com/facturen)."
     )
     assert not_found_reply("en", BILLING) == (
         "I can't find this in our help articles. If you want to be sure, someone can help you personally. "
-        "See also: [Stel je vraag online](https://help.example.com/facturen). Wij reageren binnen twee werkdagen."
+        "Use [Stel je vraag online](https://help.example.com/facturen). Wij reageren binnen twee werkdagen."
+    )
+
+
+def test_with_several_routes_the_reply_says_which_one_it_names_and_with_one_it_does_not() -> None:
+    assert not_found_reply("nl", SALES, (BOOKING,)).startswith(
+        "Dit vind ik niet terug in onze helpartikelen. Dit is een vraag voor Verkoop. Wil je het zeker weten"
+    )
+    assert contact_reply("en", BOOKING, (SALES,)).startswith(
+        "This is a question for Support. You can schedule an appointment"
+    )
+    assert referral_reply("nl", "je factuur", BOOKING, (SALES,)).startswith(
+        "Over je factuur kijkt een collega graag persoonlijk met je mee. Dit is een vraag voor Support. Plan hieronder"
+    )
+    assert "Verkoop" not in contact_reply("nl", SALES)
+
+
+@pytest.mark.parametrize("language", ["nl", "en"])
+def test_the_check_unavailable_text_offers_an_appointment_only_when_the_route_books(language: str) -> None:
+    assert check_unavailable_reply(language, BOOKING) == check_unavailable_message(language, helpdesk=True)
+    without = check_unavailable_reply(language, SALES)
+    assert "afspraak" not in without and "appointment" not in without
+    assert without.endswith(
+        ("Bel 010 000 0000 of mail naar verkoop@example.com.", "Call 010 000 0000 or email verkoop@example.com.")
     )
 
 
