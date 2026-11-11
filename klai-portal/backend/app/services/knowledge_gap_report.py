@@ -260,7 +260,7 @@ def _filed(turn: GapTurn) -> bool:
     return "filed_by" in turn.signals
 
 
-def _mask(text: str) -> str:
+def mask(text: str) -> str:
     return _MASKED.sub("…", text)
 
 
@@ -268,15 +268,20 @@ GapView = Literal["article_gaps", "contact_requests", "all"]
 
 
 def filter_clusters(clusters: list[dict[str, Any]], show: GapView) -> list[dict[str, Any]]:
-    """The clusters of one view; the list defaults to ``article_gaps``, the gaps an owner can write an article for."""
+    """The clusters of one view; the list defaults to ``article_gaps``, the gaps an owner can write an article for.
+
+    A group is in a view when it holds at least one turn of that view's kinds
+    (``kinds`` counts every turn), whichever kind is its dominant, displayed one.
+    """
     if show == "all":
         return clusters
-    return [c for c in clusters if (c["kind"] in ARTICLE_GAP_KINDS) == (show == "article_gaps")]
+    wanted = ARTICLE_GAP_KINDS if show == "article_gaps" else {"contact_wish"}
+    return [c for c in clusters if wanted & c["kinds"].keys()]
 
 
 def article_gap_group_count(clusters: list[dict[str, Any]]) -> int:
-    """What the Insights tile shows: the decidable groups of the default view."""
-    return sum(1 for c in filter_clusters(clusters, "article_gaps") if c["decidable"])
+    """What the Insights tile shows: every group the default view lists."""
+    return len(filter_clusters(clusters, "article_gaps"))
 
 
 def build_clusters(
@@ -342,10 +347,10 @@ def build_clusters(
         # The visitor's own words; the search query only when the message is gone
         # (the case step rewrites the query into the articles' language).
         questions = _distinct(
-            (_mask(" ".join((t.visitor_text or _query(t.signals)).split()))[:_QUESTION_CHARS] for t in widget),
+            (mask(" ".join((t.visitor_text or _query(t.signals)).split()))[:_QUESTION_CHARS] for t in widget),
             _MAX_QUESTIONS,
         )
-        open_parts = _distinct((p for t in widget for p in _open_parts(t.signals)), _MAX_OPEN_PARTS)
+        open_parts = _distinct((mask(p) for t in widget for p in _open_parts(t.signals)), _MAX_OPEN_PARTS)
         languages = Counter(str(t.signals["language"]) for t in members if t.signals.get("language"))
         if anchored:
             # An article title is the owner's own text, not the visitor's, so it shows at every telemetry level.

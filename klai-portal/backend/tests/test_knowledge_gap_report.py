@@ -536,17 +536,51 @@ def test_the_default_view_leaves_contact_requests_out_and_they_are_one_filter_aw
     assert len(filter_clusters(clusters, "all")) == 2
 
 
-def test_the_tile_counts_the_decidable_article_gap_groups_the_list_shows() -> None:
+def test_the_tile_counts_every_group_the_default_view_shows() -> None:
     turns = [
         _widget(decision="refusal", problem="faxnummer koppelen", found=[]),
         _widget(decision="partial_answer", problem="wachtmuziek instellen", found=[], open_parts=["na 18 uur"]),
         _widget(decision="human_request", problem="terugbellen", found=[]),
-        # A catch-all (no topic words) cannot be decided and is not counted.
+        # Groups that cannot get a proposal are listed by default, so the tile counts them too.
         _widget(decision="refusal", problem="graag", query="kan dat?", found=[]),
         GapTurn("internal", {"decision": "refusal", "gap_type": "hard"}, _T0),
     ]
+    clusters = build_clusters(turns, {})
 
-    assert article_gap_group_count(build_clusters(turns, {})) == 2
+    assert article_gap_group_count(clusters) == len(filter_clusters(clusters, "article_gaps")) == 4
+
+
+def test_a_group_belongs_to_a_filter_when_it_holds_a_turn_of_that_filters_kinds() -> None:
+    """Two article-gap turns and one contact request: dominant kind is the article gap, yet the group is also in
+    the contact filter; on a tie the group is in both, whichever kind is shown."""
+    mixed = [
+        _widget(minutes=1, decision="refusal", problem="faxnummer koppelen", found=[]),
+        _widget(minutes=2, decision="refusal", problem="faxnummer koppelen", found=[]),
+        _widget(minutes=3, decision="human_request", problem="faxnummer koppelen", found=[]),
+    ]
+    tie = [
+        _widget(minutes=1, decision="human_request", problem="voicemail instellen", found=[]),
+        _widget(minutes=2, decision="refusal", problem="voicemail instellen", found=[]),
+    ]
+    clusters = build_clusters([*mixed, *tie], {})
+
+    assert {c["topic"]: c["kind"] for c in clusters}["faxnummer koppelen"] == "no_article"
+    assert {c["topic"] for c in filter_clusters(clusters, "contact_requests")} == {"voicemail", "faxnummer koppelen"}
+    assert {c["topic"] for c in filter_clusters(clusters, "article_gaps")} == {"voicemail", "faxnummer koppelen"}
+
+
+def test_open_parts_and_the_proposal_shown_back_mask_addresses_and_digit_runs() -> None:
+    turn = _widget(
+        decision="partial_answer",
+        problem="factuur opvragen",
+        found=[],
+        open_parts=["klantnummer 12345678 en mail anna@example.com"],
+    )
+
+    parts = _only(build_clusters([turn], {}))["open_parts"]
+
+    assert parts == ["klantnummer … en mail …"]
+    assert report.mask("bel 06-12345678 of anna@example.com") == "bel 06-… of …"
 
 
 def _filed(text: str, by: str = "quality-judge", conversation_id: int | None = 5) -> SimpleNamespace:

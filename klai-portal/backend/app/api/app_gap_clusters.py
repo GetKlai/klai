@@ -21,7 +21,7 @@ from app.core.profiles import Capability
 from app.models.gap_proposals import PortalGapProposal
 from app.models.portal import PortalOrg, PortalUser
 from app.services.gap_proposals import MAX_EXAMPLE_CHARS, PROPOSAL_MODEL, ProposalDraft, draft_proposal
-from app.services.knowledge_gap_report import GapView, filter_clusters, knowledge_gap_clusters
+from app.services.knowledge_gap_report import GapView, filter_clusters, knowledge_gap_clusters, mask
 
 router = APIRouter(
     prefix="/api/app",
@@ -190,13 +190,13 @@ def _proposal_out(proposal: PortalGapProposal, decided_by: str | None) -> GapPro
         {
             "id": proposal.id,
             "cluster_key": proposal.cluster_key,
-            "missing": proposal.missing,
+            "missing": mask(proposal.missing or ""),
             "where_kind": proposal.where_kind,
             "where_title": proposal.where_title,
             "where_url": proposal.where_url,
-            "where_section": proposal.where_section,
-            "example_text": proposal.example_text,
-            "open_facts": proposal.open_facts,
+            "where_section": mask(proposal.where_section) if proposal.where_section else None,
+            "example_text": mask(proposal.example_text or ""),
+            "open_facts": [mask(fact) for fact in proposal.open_facts or []],
             "language": proposal.language,
             "model": proposal.model,
             "generated_at": proposal.generated_at,
