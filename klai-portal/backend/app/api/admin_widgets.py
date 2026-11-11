@@ -277,22 +277,6 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
     )
 
 
-# The contact settings contact_routes replaced. This release still carries them
-# on every stored row, so the previous image keeps working after a rollback; the
-# release that drops them from the data removes this as well.
-_LEGACY_CONTACT_KEYS = ("booking_url", "contact_email", "contact_phone", "off_topic_subjects", "off_topic_reply")
-
-
-def _keeping_legacy_contact_keys(stored: dict, saved: dict) -> dict:
-    """``saved`` with the old contact keys the stored row still has, which WidgetConfig no longer knows."""
-    kept = {**saved, **{key: stored[key] for key in _LEGACY_CONTACT_KEYS if key in stored}}
-    old_booking = ((stored.get("integrations") or {}).get("appointments") or {}).get("booking_url")
-    if old_booking is not None:
-        appointments = {**kept["integrations"]["appointments"], "booking_url": old_booking}
-        kept["integrations"] = {**kept["integrations"], "appointments": appointments}
-    return kept
-
-
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -1015,7 +999,7 @@ async def update_widget(
     if body.rate_limit_rpm is not None:
         widget.rate_limit_rpm = body.rate_limit_rpm
     if body.widget_config is not None:
-        widget.widget_config = _keeping_legacy_contact_keys(widget.widget_config or {}, body.widget_config.model_dump())
+        widget.widget_config = body.widget_config.model_dump()
     if body.public_share_enabled is not None:
         widget.public_share_enabled = body.public_share_enabled
     # REQ-2 (Finding B-2): allow toggling the allow_any_origin flag via PATCH.
