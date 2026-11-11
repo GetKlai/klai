@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.portal import PortalOrg
 from app.services.audit import log_event
+from app.services.knowledge_gap_report import drop_kept_questions
 
 logger = structlog.get_logger()
 
@@ -85,7 +86,8 @@ async def set_telemetry_level(
 
     # SPEC-RAG-SUPPORT-GAP: leaving 'full' revokes the right to hold literal
     # support evidence, so purge it (the FK cascade drops derived findings with
-    # the cases). Runs in its own tenant-scoped session so RLS context is
+    # the cases), and the gap questions kept past the widget-message retention
+    # with it. Runs in its own tenant-scoped session so RLS context is
     # correct regardless of the caller's (operator vs tenant-admin) scope.
     # Repeat on retries: the level can already be saved when an earlier purge failed.
     if new_level != "full":
@@ -93,6 +95,8 @@ async def set_telemetry_level(
         from app.services.support_cases import purge_support_cases_for_org
 
         async with tenant_scoped_session(org_id) as purge_db:
+            await drop_kept_questions(purge_db, org_id)
+            await purge_db.commit()
             purged = await purge_support_cases_for_org(purge_db, org_id)
         logger.info("support_evidence_purged_on_downgrade", org_id=org_id, cases_removed=purged)
 

@@ -850,7 +850,7 @@ async def _finalize_postgres_delete(state: _DeprovisionState) -> None:
     #   Tables that DO cascade automatically (no explicit DELETE needed):
     #     portal_connectors (CASCADE), portal_widgets (CASCADE),
     #     portal_feedback_events (CASCADE), portal_retrieval_gaps (CASCADE),
-    #     partner_api_keys (CASCADE).
+    #     partner_api_keys (CASCADE), portal_gap_kept_questions (CASCADE).
     #   Tables that SET NULL on delete (preserved with NULL org_id):
     #     product_events (SET NULL — historical analytics rows survive),
     #     portal_users.deleted_by_org? (SET NULL on portal.py:138 — review-only field).

@@ -178,6 +178,8 @@ class FakeSession:
             return _Rows([])
         if sql.startswith("UPDATE answer_reviews") or sql.startswith("UPDATE portal_retrieval_gaps"):
             return _Rows([])
+        if sql.startswith("DELETE FROM portal_gap_kept_questions") or sql.startswith("SELECT pg_advisory_xact_lock"):
+            return SimpleNamespace(rowcount=0)
         if "JOIN widget_kb_access" in sql:
             return _Rows([SimpleNamespace(slug=self.nearest_kb_slug)] if self.nearest_kb_slug else [])
         if "role = 'user' AND sequence < :sequence" in sql:
@@ -1115,6 +1117,22 @@ async def test_mark_conversation_as_test_resolves_open_gaps_with_the_caller_id()
     ]
     assert db.params_for("UPDATE portal_retrieval_gaps SET resolved_at = NULL") == []
     assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_marking_a_conversation_as_test_drops_its_kept_gap_questions() -> None:
+    from app.services.knowledge_gap_report import conversation_ref
+
+    marked = FakeSession(conversation=_conv(255))
+    await _call(marked, _perms("admin"), "put", "/api/app/activity/conversations/255/test", json={"is_test": True})
+    unmarked = FakeSession(conversation=_conv(255, is_test=True))
+    await _call(unmarked, _perms("admin"), "put", "/api/app/activity/conversations/255/test", json={"is_test": False})
+
+    # A test conversation is never kept, also when it is marked after its messages were purged.
+    assert marked.params_for("DELETE FROM portal_gap_kept_questions") == [
+        {"org_id": 101, "conversation_ref": conversation_ref(101, 255)}
+    ]
+    assert unmarked.params_for("DELETE FROM portal_gap_kept_questions") == []
 
 
 @pytest.mark.asyncio

@@ -50,6 +50,7 @@ class _Store:
         self.rows: list[PortalGapProposal] = []
         self.telemetry_level = telemetry_level
         self.pending: PortalGapProposal | None = None
+        self.kept_deleted: list[tuple[int, str]] = []
 
     @staticmethod
     def _param(compiled: Any, prefix: str) -> Any:
@@ -77,11 +78,14 @@ class _Store:
                 row.attempts += 1
         return int(ok)
 
-    async def execute(self, stmt: Any) -> MagicMock:
+    async def execute(self, stmt: Any, params: dict | None = None) -> MagicMock:
         compiled = stmt.compile(dialect=postgresql.dialect())
         sql = str(compiled)
         result = MagicMock()
-        if sql.startswith("UPDATE portal_gap_proposals"):
+        if sql.startswith("DELETE FROM portal_gap_kept_questions"):
+            assert params is not None
+            self.kept_deleted.append((params["org_id"], params["cluster_key"]))
+        elif sql.startswith("UPDATE portal_gap_proposals"):
             result.rowcount = self._update(compiled, sql)
         elif "FROM portal_gap_proposals LEFT OUTER JOIN portal_users" in sql:
             org, key = self._param(compiled, "org_id"), self._param(compiled, "cluster_key")
@@ -341,6 +345,21 @@ async def test_a_decision_is_final(monkeypatch, clusters) -> None:
     assert (out.decision, out.decided_by) == ("rejected", "Fictief Persoon")
     assert second == 409
     assert [(r.decision, r.decided_by) for r in db.rows] == [("rejected", 7)]
+
+
+@pytest.mark.asyncio
+async def test_a_decided_group_drops_its_kept_questions(monkeypatch, clusters) -> None:
+    db = _Store()
+
+    await api.decide_gap_cluster(_KEY, GapDecisionRequest(decision="out_of_scope"), perms=_ORG_A, db=db)  # type: ignore[arg-type]
+    rejected = await _status(
+        api.decide_gap_cluster(_KEY, GapDecisionRequest(decision="rejected"), perms=_ORG_A, db=db)  # type: ignore[arg-type]
+    )
+
+    # The group is no longer open, so its questions are not kept for it; the
+    # refused second decision deletes nothing.
+    assert rejected == 409
+    assert db.kept_deleted == [(_ORG_A.org_id, _KEY)]
 
 
 @pytest.mark.asyncio

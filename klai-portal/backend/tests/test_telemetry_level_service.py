@@ -185,6 +185,26 @@ def support_purge(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_leaving_full_drops_the_kept_gap_questions_at_once(monkeypatch, support_purge):
+    from app.core import database
+    from app.services.telemetry_level import set_telemetry_level
+
+    db = AsyncMock()
+    db.execute.return_value = _scalar_result(_FakeOrg(level="full"))
+    monkeypatch.setattr("app.services.telemetry_level.log_event", AsyncMock())
+    purge_db = database.tenant_scoped_session.return_value.__aenter__.return_value  # type: ignore[attr-defined]
+
+    await set_telemetry_level(
+        db, org_id=42, new_level="off", operator_kind="tenant_admin", operator_user_id="u", reason="Opt out"
+    )
+
+    calls = [(str(call.args[0]), call.args[1]) for call in purge_db.execute.await_args_list]
+    deletes = [params for sql, params in calls if sql.startswith("DELETE FROM portal_gap_kept_questions")]
+    assert deletes == [{"org_id": 42}]
+    purge_db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_failed_opt_out_cleanup_runs_again_on_retry(monkeypatch, support_purge):
     from app.services.telemetry_level import set_telemetry_level
 

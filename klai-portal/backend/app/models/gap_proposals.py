@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,3 +56,37 @@ class PortalGapProposal(Base):
     # SET NULL) is added by post_deploy_77d01eafb800_gap_proposals_rls.sql.
     decided_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PortalGapKeptQuestion(Base):
+    """A counted widget gap turn kept past the widget-message retention, for orgs at telemetry ``full``.
+
+    The retention sweep (app/services/widget_messages_retention.py) writes the
+    row in the transaction that deletes the turn's messages, so a turn is
+    either live in ``widget_messages`` or here. Only what the gap list needs
+    survives: the visitor's question as the list shows it (masked and cut), the
+    signals the grouping reads (``kept_question`` in
+    app/services/knowledge_gap_report.py), the time, and a keyed hash of the
+    conversation. Removed after ``KEPT_QUESTION_DAYS``, when its group is
+    decided, when its conversation is marked as a test, and when the org leaves
+    ``full``.
+    """
+
+    __tablename__ = "portal_gap_kept_questions"
+    __table_args__ = (
+        UniqueConstraint("org_id", "message_id", name="uq_gap_kept_questions_org_message"),
+        Index("ix_gap_kept_questions_org_turn_at", "org_id", "turn_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    org_id: Mapped[int] = mapped_column(Integer, ForeignKey("portal_orgs.id", ondelete="CASCADE"), nullable=False)
+    # The id of the deleted assistant message. Nothing is left to point at; it
+    # keeps a turn from being kept twice, or read twice next to its live row.
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # conversation_ref() in knowledge_gap_report: an HMAC of org and conversation
+    # id, so the list counts distinct conversations without a link back to one.
+    conversation_ref: Mapped[str] = mapped_column(String(64), nullable=False)
+    cluster_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    question: Mapped[str] = mapped_column(String(200), nullable=False)
+    signals: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    turn_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

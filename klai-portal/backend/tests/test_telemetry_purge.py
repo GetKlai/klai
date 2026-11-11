@@ -20,9 +20,34 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _internal_cases_pruned():
-    """The internal chat's case prune has its own session (widget_audit), proven against Postgres elsewhere."""
-    with patch("app.services.telemetry_purge.prune_internal_cases", AsyncMock(return_value=2)):
+    """The internal chat's case prune and the kept gap questions' purge have their own sessions, proven against
+    Postgres elsewhere (tests/test_widget_messages_retention_postgres.py for the kept questions)."""
+    with (
+        patch("app.services.telemetry_purge.prune_internal_cases", AsyncMock(return_value=2)),
+        patch("app.services.telemetry_purge.purge_kept_gap_questions", AsyncMock(return_value=3)),
+    ):
         yield
+
+
+@pytest.mark.asyncio
+async def test_a_failing_neighbour_purge_never_disables_the_kept_gap_question_purge() -> None:
+    from app.services.telemetry_purge import _purge_once
+
+    # Every other store fails: query_shadow and retrieval_gaps in the shared session, the internal cases on their own.
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=RuntimeError("query_shadow down"))
+
+    @asynccontextmanager
+    async def _session():
+        yield db
+
+    with (
+        patch("app.services.telemetry_purge.cross_org_session", _session),
+        patch("app.services.telemetry_purge.prune_internal_cases", AsyncMock(side_effect=RuntimeError("down"))),
+    ):
+        counts = await _purge_once()
+
+    assert counts["kept_gap_questions"] == 3
 
 
 def _execute_returning(rowcount: int) -> AsyncMock:
@@ -62,7 +87,7 @@ async def test_purge_once_runs_both_deletes_with_cutoff() -> None:
     with patch("app.services.telemetry_purge.cross_org_session", _fake_session):
         counts = await _purge_once()
 
-    assert counts == {"query_shadow": 3, "retrieval_gaps": 1, "internal_chat_cases": 2}
+    assert counts == {"query_shadow": 3, "retrieval_gaps": 1, "internal_chat_cases": 2, "kept_gap_questions": 3}
     assert len(captured_calls) == 3
     # First DELETE targets telemetry.query_shadow
     assert "telemetry.query_shadow" in captured_calls[0]["sql"]
@@ -114,7 +139,7 @@ async def test_purge_once_continues_when_first_delete_fails() -> None:
 
     # query_shadow failed so the count stayed 0; retrieval_gaps still
     # ran and counted 7.
-    assert counts == {"query_shadow": 0, "retrieval_gaps": 7, "internal_chat_cases": 2}
+    assert counts == {"query_shadow": 0, "retrieval_gaps": 7, "internal_chat_cases": 2, "kept_gap_questions": 3}
     db.commit.assert_awaited_once()
 
 
@@ -148,7 +173,7 @@ async def test_purge_once_skips_retrieval_gap_delete_when_no_candidates() -> Non
     with patch("app.services.telemetry_purge.cross_org_session", _fake_session):
         counts = await _purge_once()
 
-    assert counts == {"query_shadow": 0, "retrieval_gaps": 0, "internal_chat_cases": 2}
+    assert counts == {"query_shadow": 0, "retrieval_gaps": 0, "internal_chat_cases": 2, "kept_gap_questions": 3}
     assert any("SELECT id FROM public.portal_retrieval_gaps" in sql for sql in captured_sql)
     db.commit.assert_awaited_once()
 
