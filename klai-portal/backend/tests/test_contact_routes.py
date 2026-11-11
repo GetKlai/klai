@@ -10,7 +10,7 @@ import pytest
 import respx
 from pydantic import ValidationError
 
-from app.api.admin_widgets import WidgetConfig
+from app.api.admin_widgets import SavedWidgetConfig, UpdateWidgetRequest, WidgetConfig
 from app.services import contact_routes
 from app.services.contact_routes import ContactRoute, pick_route
 
@@ -18,7 +18,7 @@ LITELLM = "http://litellm.test"
 
 
 def _route(**values) -> dict:
-    return {"name": "Support", **values}
+    return {"name": "Support", "phone": "010 000 0000", **values}
 
 
 def test_a_route_without_an_id_gets_one_and_blank_channels_are_unset():
@@ -49,11 +49,61 @@ def test_a_route_without_an_id_gets_one_and_blank_channels_are_unset():
         {"name": "x" * 61},
         {"note": "x" * 201},
         {"link_url": "https://example.com/a", "link_label": "x" * 41},
+        {"name": "# Support"},
+        {"name": "Support ~~oud~~"},
+        {"note": "Ma | Di | Wo"},
+        {"note": "- op werkdagen"},
+        {"note": "+ op werkdagen"},
+        {"note": "> op werkdagen"},
+        {"note": "1. op werkdagen"},
+        {"link_url": "https://example.com/a", "link_label": "2) Lees meer"},
+        {"email": "*hulp*@example.com"},
+        {"email": "_hulp@example.com"},
+        {"email": "hulp_@example.com"},
+        {"email": "hulp._team@example.com"},
+        {"email": "hu`lp@example.com"},
+        {"email": "hu~lp@example.com"},
     ],
 )
 def test_a_route_value_that_could_inject_markdown_or_a_link_is_refused(values):
     with pytest.raises(ValidationError):
         ContactRoute.model_validate({**_route(), **values})
+
+
+def test_ordinary_punctuation_times_hyphens_and_underscores_inside_an_address_stay_legal():
+    route = ContactRoute.model_validate(
+        _route(
+            name="Klantenservice-team 2",
+            note="Bereikbaar vanaf 8.30 uur, ook op zaterdag - niet op feestdagen!",
+            email="first_last@example.com",
+            link_url="https://help.example.com/a",
+            link_label="Stel je vraag (online)",
+        )
+    )
+
+    assert route.email == "first_last@example.com"
+
+
+def test_a_route_without_any_way_to_reach_it_is_refused_on_save_with_its_position():
+    """The editor shows the error on the route the loc names."""
+    with pytest.raises(ValidationError) as refused:
+        routes = [_route(is_default=True), {"name": "Verkoop", "note": "Op werkdagen."}]
+        UpdateWidgetRequest.model_validate({"widget_config": {"contact_routes": routes}})
+
+    (error,) = refused.value.errors()
+    # FastAPI answers 422 with "body" in front of this loc.
+    assert error["loc"] == ("widget_config", "contact_routes", 1)
+    assert "needs a way to reach it" in error["msg"]
+    # A route that only refers subjects is reached through its referral text.
+    SavedWidgetConfig(contact_routes=[{"name": "Support", "referral_text": "Bel ons even.", "is_default": True}])
+    # The stored and returned config does not apply the rule, so an older route still reads back.
+    WidgetConfig(contact_routes=[{"name": "Support", "is_default": True}])
+
+
+def test_a_stored_route_without_any_channel_is_still_read():
+    (route,) = contact_routes.routes_from_config({"contact_routes": [{"name": "Support", "is_default": True}]})
+
+    assert route.name == "Support"
 
 
 def test_a_route_with_every_channel_is_accepted():
