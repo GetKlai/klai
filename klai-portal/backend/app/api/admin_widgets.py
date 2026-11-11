@@ -12,14 +12,13 @@ Widgets are a first-class domain separate from partner API keys:
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +29,7 @@ from app.models.conversation_tickets import WidgetTicketSettings
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.models.widgets import Widget, WidgetKbAccess, generate_widget_id
+from app.services.contact_routes import MAX_ROUTES, ContactRoute, checked_routes
 from app.services.events import emit_event
 from app.services.hubspot_custom_channel import (
     HubSpotAPIError,
@@ -70,22 +70,15 @@ class HubSpotWidgetIntegration(BaseModel):
 
 
 class WidgetAppointmentsIntegration(BaseModel):
-    # Voys-specific: the partner booking panel embedded in the widget instead
-    # of the new-tab link. booking_url is the support partner's booking
-    # module address; the widget appends embed + language parameters itself.
-    # Admin input that ends up in a visitor-facing iframe src, so only
-    # absolute http(s) values are delivered (partner.py validates at the
-    # widget-config endpoints).
+    # The booking panel embedded in the widget instead of the new-tab link.
+    # The URL is the default contact route's booking_url; the widget appends
+    # embed + language parameters itself.
     enabled: bool = False
-    booking_url: str | None = None
 
 
 class WidgetIntegrations(BaseModel):
     hubspot: HubSpotWidgetIntegration = Field(default_factory=HubSpotWidgetIntegration)
     appointments: WidgetAppointmentsIntegration = Field(default_factory=WidgetAppointmentsIntegration)
-
-
-_PHONE_SHAPE = re.compile(r"[0-9 +()\-]+")
 
 
 class WidgetConfig(BaseModel):
@@ -101,30 +94,16 @@ class WidgetConfig(BaseModel):
     # already prompts for specifics — fewer, better chips beat more, vaguer
     # ones.
     conversation_starters: list[str] = Field(default_factory=list, max_length=3)
-    # Subjects this widget does not answer, in the tenant's own words (Voys:
-    # prices, quotes, payment terms). The question judge reads them beside
-    # retrieval, and a turn that falls inside them gets ``off_topic_reply``
-    # verbatim plus the appointment button — the answer model never writes.
-    # Putting the same instruction in system_prompt was measured on 2026-09-17
-    # and landed it right 8 times out of 15, once quoting a price from an
-    # article; the profile above it and the articles below it pull harder than
-    # a tenant sentence in between.
-    off_topic_subjects: str = Field(default="", max_length=500)
-    off_topic_reply: str = Field(default="", max_length=500)
-    # Channels the fixed contact reply names beside the appointment button
-    # (a visitor who asked for an e-mail address or did not want to call got
-    # the appointment reply and nothing else). Unset → the reply is unchanged.
-    contact_email: EmailStr | None = None
-    contact_phone: str | None = Field(default=None, max_length=32)
+    # Where a visitor who needs a person is sent (contact_routes.py): each
+    # route's channels, the subjects within it the chat refers instead of
+    # answering (``do_not_answer``, read by the case), and one default. Empty
+    # → no button and replies without channels.
+    contact_routes: list[ContactRoute] = Field(default_factory=list, max_length=MAX_ROUTES)
 
-    @field_validator("contact_phone")
+    @field_validator("contact_routes")
     @classmethod
-    def _contact_phone_is_a_phone(cls, value: str | None) -> str | None:
-        # The number is rendered into the visitor's reply as Markdown, so a
-        # value like "[Bel](https://...)" must not be storable.
-        if value is not None and not (_PHONE_SHAPE.fullmatch(value) and sum(c.isdigit() for c in value) >= 6):
-            raise ValueError("contact_phone must be a phone number: digits, spaces and + - ( ), at least 6 digits")
-        return value
+    def _one_default_and_unique_ids(cls, routes: list[ContactRoute]) -> list[ContactRoute]:
+        return checked_routes(routes)
 
     # When true, the widget hides the AI introduction in the empty state.
     # The footer is configured independently through footer_text.
@@ -164,12 +143,6 @@ class WidgetConfig(BaseModel):
     # (SUPPORT_EXPRESSIVE_CHAT_SYSTEM_PROMPT). Tone only: source rules,
     # no-promises, escalation and refusal behaviour are identical.
     tone_register: Literal["restrained", "expressive"] = "restrained"
-    # INTERIM SOLUTION — replace when the chat booking API integration lands.
-    # Booking-module URL of the support partner, shown by the widget as an
-    # "appointment" redirect. Admin input that ends up in a visitor-facing
-    # href, so only http(s) values are delivered (partner.py validates at
-    # the widget-config endpoints). Unset → the widget shows no button.
-    booking_url: str | None = None
     widget_position: str = "right"  # 'left' | 'right'
     integrations: WidgetIntegrations = Field(default_factory=lambda: WidgetIntegrations())
 
@@ -255,10 +228,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             # up to 6 stored entries. Truncate on read instead of letting the
             # model's max_length=3 raise here and 500 the list/detail response.
             conversation_starters=(config.get("conversation_starters") or [])[:3],
-            off_topic_subjects=config.get("off_topic_subjects", ""),
-            off_topic_reply=config.get("off_topic_reply", ""),
-            contact_email=config.get("contact_email"),
-            contact_phone=config.get("contact_phone"),
+            contact_routes=config.get("contact_routes") or [],
             hide_disclaimer=config.get("hide_disclaimer", False),
             ai_disclosure_override=config.get("ai_disclosure_override"),
             footer_text=config.get("footer_text"),
@@ -276,7 +246,6 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             # value; handing that same value straight to a Literal field would
             # instead 500 the list and detail responses.
             tone_register=("expressive" if config.get("tone_register") == "expressive" else "restrained"),
-            booking_url=config.get("booking_url"),
             widget_position=config.get("widget_position", "right"),
             integrations=config.get("integrations", {}),
         ),

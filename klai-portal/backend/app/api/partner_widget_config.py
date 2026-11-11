@@ -24,6 +24,7 @@ from app.core.database import get_db, set_tenant
 from app.core.permissions import assert_platform_unlocked
 from app.models.portal import PortalOrg
 from app.models.widgets import Widget, WidgetKbAccess
+from app.services.contact_routes import default_route, routes_from_config
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.redis_client import get_redis_pool
 from app.services.request_ip import resolve_caller_ip
@@ -125,16 +126,16 @@ def _validated_http_url(url: object) -> str:
 
 
 def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
-    """INTERIM — remove together with ``booking_url`` when the chat booking
-    API integration replaces the support-partner redirect.
+    """The default contact route's booking URL, or ``""`` to hide the button.
 
-    Return the widget's booking URL for the visitor-facing appointment
-    button, or ``""`` to hide it. The stored value is admin input that
-    lands in an ``href`` in a visitor's browser, so only absolute http(s)
-    URLs are delivered at all (see ``_validated_http_url``). An unset
-    field changes nothing about the payload's behaviour.
+    A chat reply carries the booking URL of the route it names
+    (``escalation.booking_url``); this one is for the empty state and for a
+    browser still holding the bundle that predates routes. It lands in an
+    ``href`` or an iframe ``src``, so it passes the same scheme gate as before
+    (``_validated_http_url``) on top of the admin validation.
     """
-    return _validated_http_url(widget_config_data.get("booking_url"))
+    route = default_route(routes_from_config(widget_config_data))
+    return _validated_http_url(route.booking_url if route else None)
 
 
 def _widget_conversation_starters(widget_config_data: dict[str, Any]) -> list[str]:
@@ -150,24 +151,20 @@ def _widget_conversation_starters(widget_config_data: dict[str, Any]) -> list[st
 
 
 def _widget_appointments_integration(widget_config_data: dict[str, Any]) -> dict[str, Any]:
-    """Partner booking panel (Voys-specific support-partner integration).
+    """The embedded booking panel, as ``{"enabled": bool, "booking_url": str}``.
 
-    Delivered to the visitor-facing widget-config endpoints as
-    ``{"enabled": bool, "booking_url": str}``. The booking URL is admin
-    input that becomes an iframe ``src`` in a visitor's browser, so it runs
-    through the same absolute-http(s) gate as the interim booking redirect:
-    a ``javascript:`` or relative value never reaches the visitor. A panel
-    without a loadable URL is no panel and a switched-off integration has
-    no visitor to serve, so ``enabled`` only survives when the toggle is on
-    AND the URL validates — and an empty ``booking_url`` is delivered
-    whenever the link is off. A widget without this integration gets the
-    same disabled shape as before it existed.
+    The toggle decides how the widget presents a booking (embedded panel or
+    new-tab link); the URL is the default route's (``_widget_booking_url``).
+    A panel without a loadable URL is no panel and a switched-off integration
+    has no visitor to serve, so ``enabled`` only survives when the toggle is
+    on AND the URL validates, and an empty ``booking_url`` is delivered
+    whenever the panel is off.
     """
     integrations = widget_config_data.get("integrations")
     appointments = integrations.get("appointments") if isinstance(integrations, dict) else None
     if not isinstance(appointments, dict) or not appointments.get("enabled"):
         return {"enabled": False, "booking_url": ""}
-    booking_url = _validated_http_url(appointments.get("booking_url"))
+    booking_url = _widget_booking_url(widget_config_data)
     return {"enabled": bool(booking_url), "booking_url": booking_url}
 
 
@@ -408,9 +405,8 @@ async def widget_config(
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
-        # Interim appointment redirect (booking API pending) — see _widget_booking_url.
+        # The default contact route's booking — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
-        # Voys-specific: in-widget partner booking panel — see _widget_appointments_integration.
         "appointments": _widget_appointments_integration(widget_config_data),
         "handoff": {
             "hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(org=org, widget_config_data=widget_config_data)}
@@ -547,9 +543,8 @@ async def public_bot_config(
         "show_sources": widget_config_data.get("show_sources", True),
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
-        # Interim appointment redirect (booking API pending) — see _widget_booking_url.
+        # The default contact route's booking — see _widget_booking_url.
         "booking_url": _widget_booking_url(widget_config_data),
-        # Voys-specific: in-widget partner booking panel — see _widget_appointments_integration.
         "appointments": _widget_appointments_integration(widget_config_data),
         "name": widget_row.name,
         "description": widget_row.description or "",

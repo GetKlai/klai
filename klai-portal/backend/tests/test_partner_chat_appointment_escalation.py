@@ -5,9 +5,9 @@ now the widget could only express that as a permanent booking bar, always on
 screen, unrelated to what the bot had just said. The escalation signal makes
 the offer belong to the answer that made it:
 
-* streaming — ``{"choices":[{"delta":{"escalation":{"appointment":true}}}]}``
-* non-streaming — ``message["escalation"] = {"appointment": true}``
-* absent = no offer; the shape is exactly ``{"appointment": bool}``, never
+* streaming — ``{"choices":[{"delta":{"escalation":{"appointment":true,"booking_url":...}}}]}``
+* non-streaming — ``message["escalation"] = {"appointment": true, "booking_url": ...}``
+* absent = no offer; the shape is exactly ``{"appointment": bool, "booking_url": str | null}``, never
   half.
 
 Two sources feed it. The backend knows about its own canned refusal (the
@@ -359,7 +359,7 @@ async def test_stream_emits_escalation_frame_for_a_model_offer(monkeypatch):
         sentiment="positive",
     )
 
-    assert _delta_values(parsed, "escalation") == [{"appointment": True}]
+    assert _delta_values(parsed, "escalation") == [{"appointment": True, "booking_url": None}]
     content = "".join(_delta_values(parsed, "content"))
     assert MARKER not in content
     assert "APPOINTMENT_OFFER" not in content.upper()
@@ -379,7 +379,7 @@ async def test_stream_emits_escalation_frame_on_the_canned_refusal(monkeypatch):
         citation_chunks=[],
     )
 
-    assert _delta_values(parsed, "escalation") == [{"appointment": True}]
+    assert _delta_values(parsed, "escalation") == [{"appointment": True, "booking_url": None}]
 
 
 @pytest.mark.asyncio
@@ -481,7 +481,7 @@ async def test_non_streaming_marks_the_message_that_offers(monkeypatch):
         citation_chunks=[_good_chunk()],
         sentiment="neutral",
     )
-    assert message["escalation"] == {"appointment": True}
+    assert message["escalation"] == {"appointment": True, "booking_url": None}
     assert MARKER not in message["content"]
     assert message["content"].startswith("Je reset het wachtwoord")
     assert decisions[0]["sentiment"] == "neutral"
@@ -490,7 +490,7 @@ async def test_non_streaming_marks_the_message_that_offers(monkeypatch):
 @pytest.mark.asyncio
 async def test_non_streaming_refusal_marks_the_message(monkeypatch):
     message = await _widget_message(monkeypatch, "Ik ken het antwoord niet.")
-    assert message["escalation"] == {"appointment": True}
+    assert message["escalation"] == {"appointment": True, "booking_url": None}
 
 
 @pytest.mark.asyncio

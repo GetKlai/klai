@@ -32,7 +32,9 @@ REFUSAL = (
 )
 DONE = b"data: [DONE]\n\n"
 LANGUAGE_NL = b'data: {"choices": [{"delta": {"language": "nl"}}]}\n\n'
-APPOINTMENT = b'data: {"choices": [{"delta": {"escalation": {"appointment": true}}}]}\n\n'
+APPOINTMENT = b'data: {"choices": [{"delta": {"escalation": {"appointment": true, "booking_url": null}}}]}\n\n'
+# A reply decided in code carries the booking URL of the contact route it names.
+ROUTE_APPOINTMENT = b'data: {"choices": [{"delta": {"escalation": {"appointment": true, "booking_url": "https://book.example.com/s"}}}]}\n\n'
 RETRIEVED = (
     b'data: {"choices": [{"delta": {"activity": [{"step": "knowledge_retrieved", "label": "Kennisbank geraadpleegd", '
     b'"detail": "1 passages gevonden", "count": 1}]}}]}\n\n'
@@ -76,6 +78,7 @@ def _fixed(**overrides: Any) -> Reply:
         "language": "nl",
         "turn": KnowledgeTurn(),
         "appointment": True,
+        "booking_url": "https://book.example.com/s",
     }
     return Reply(**{**fields, **overrides})
 
@@ -112,7 +115,7 @@ def test_a_reply_asked_without_sources_streams_no_source_frames():
 
 
 def test_a_reply_decided_in_code_streams_language_appointment_text() -> None:
-    assert reply_frames(_fixed()) == [LANGUAGE_NL, APPOINTMENT, _content("Een vaste tekst."), DONE]
+    assert reply_frames(_fixed()) == [LANGUAGE_NL, ROUTE_APPOINTMENT, _content("Een vaste tekst."), DONE]
 
 
 def test_a_question_decided_in_code_streams_no_appointment_and_no_language_when_there_is_none() -> None:
@@ -133,7 +136,7 @@ def test_a_written_reply_renders_the_completion_body_it_came_with():
                     "content": ANSWER,
                     "language": "nl",
                     "sources": [SOURCE],
-                    "escalation": {"appointment": True},
+                    "escalation": {"appointment": True, "booking_url": None},
                 },
                 "finish_reason": "stop",
             }
@@ -151,7 +154,7 @@ def test_a_refusal_body_carries_the_broad_mode_offer_and_no_sources() -> None:
         "language": "nl",
         "sources": [],
         "broad_mode": "offer",
-        "escalation": {"appointment": True},
+        "escalation": {"appointment": True, "booking_url": None},
     }
 
 
@@ -167,7 +170,7 @@ def test_a_reply_decided_in_code_renders_the_body_the_referral_renderer_produced
                     "role": "assistant",
                     "content": "Een vaste tekst.",
                     "sources": [],
-                    "escalation": {"appointment": True},
+                    "escalation": {"appointment": True, "booking_url": "https://book.example.com/s"},
                     "language": "nl",
                 },
                 "finish_reason": "stop",

@@ -12,7 +12,12 @@ a claim, a price or a link of its own: the fixed reply exists so that no price
 reaches the visitor, and a blocklist on free text did not hold (review of
 2026-09-22: "is gratis", spelled-out amounts, protocol-relative links). When
 the call fails, the subject does not pass, or the language has no template, the
-tenant's fixed reply is used as before.
+route's own note stands (klai_chat_prompts.referral_reply).
+
+The referral goes to the contact route whose ``do_not_answer`` the subject
+falls under: the only such route, or, with several, the one this same call
+chooses from a closed list. A failed call sends it to the default route when
+that one refers, else to the first route that does.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ import re
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import Settings
+from app.services.contact_routes import ContactRoute, route_choice
 from app.services.turn_judge import structured_judge_call
 
 SUBJECT_SYSTEM_PROMPT = (
@@ -33,10 +39,8 @@ SUBJECT_SYSTEM_PROMPT = (
     "voor 25 gebruikers', 'de koppeling met jullie CRM', 'your contract'."
 )
 
-_TEMPLATES = {
-    "nl": "Over {subject} kijkt een collega graag persoonlijk met je mee. Plan hieronder een afspraak, dan helpen we je verder.",
-    "en": "A colleague will gladly look at {subject} with you in person. Plan an appointment below and we will help you further.",
-}
+# The languages klai_chat_prompts has the referral sentence in.
+_LANGUAGES = frozenset({"nl", "en"})
 
 _TIMEOUT_SECONDS = 2.5
 _MAX_WORDS = 8
@@ -66,24 +70,46 @@ def _from_question(subject: str, question: str) -> bool:
 
 
 async def off_topic_referral(
-    question: str, language: str | None, settings: Settings, *, delegated_org_id: str | None = None
-) -> str | None:
-    """The referral for ``question``, or ``None`` when the tenant's fixed reply should be used."""
-    template = _TEMPLATES.get(language or "")
-    if template is None:
-        return None
+    question: str,
+    language: str | None,
+    settings: Settings,
+    routes: tuple[ContactRoute, ...],
+    *,
+    delegated_org_id: str | None = None,
+) -> tuple[str | None, ContactRoute, str]:
+    """The visitor's subject (``None``: the route's note stands), the route the referral goes to, and how it was picked.
+
+    ``routes`` holds at least one route with ``do_not_answer``: the case only
+    calls a subject out of scope when the widget names subjects.
+    """
+    referring = tuple(route for route in routes if route.do_not_answer)
+    fallback = next((route for route in referring if route.is_default), referring[0])
+    several = len(referring) > 1
+    if language not in _LANGUAGES:
+        return None, fallback, "default" if several else "single"
     question = question[:800]
+    user_content = f"Language: {language}\n\nVisitor: {question}"
+    if several:
+        listed = "\n".join(f"- {route.id}: {route.do_not_answer}" for route in referring)
+        user_content += f"\n\nRoutes, each with the subjects it handles. route is the id whose subjects fit:\n{listed}"
     result = await structured_judge_call(
         name="off_topic_referral",
         system_prompt=SUBJECT_SYSTEM_PROMPT,
-        user_content=f"Language: {language}\n\nVisitor: {question}",
-        schema=OffTopicSubject,
+        user_content=user_content,
+        schema=route_choice(OffTopicSubject, [route.id for route in referring]) if several else OffTopicSubject,
         timeout_seconds=_TIMEOUT_SECONDS,
         delegated_org_id=delegated_org_id,
         settings=settings,
     )
-    words = result.subject.split() if result is not None else []
-    words = [_SECOND_PERSON.get(word.lower(), word) for word in words]
+    route, picked = fallback, "single"
+    if several:
+        chosen = next((r for r in referring if r.id == getattr(result, "route", None)), None)
+        route, picked = (chosen, "model") if chosen is not None else (fallback, "failed")
+    return _subject(result.subject if result is not None else "", question), route, picked
+
+
+def _subject(phrase: str, question: str) -> str | None:
+    words = [_SECOND_PERSON.get(word.lower(), word) for word in phrase.split()]
     if words and words[0].lower() in _FREE_WORDS:
         words[0] = words[0].lower()
     subject = " ".join(words)
@@ -91,4 +117,4 @@ async def off_topic_referral(
         return None
     if not _from_question(subject, question):
         return None
-    return template.format(subject=subject)
+    return subject
