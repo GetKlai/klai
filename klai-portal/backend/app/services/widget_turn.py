@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 import structlog
 from klai_chat_prompts import (
     RouteChannels,
-    check_unavailable_message,
+    check_unavailable_reply,
     contact_reply,
     contact_reply_again,
     not_found_reply,
@@ -465,12 +465,13 @@ async def _not_in_passages_reply(
     )
     # Without a verdict the articles were never checked, so "not found" would
     # be false: on 2026-10-23 all five of the widget's not-found replies came
-    # from a selection that failed on klai-medium's budget (429). That reply
-    # names no route, so it carries the default route's booking.
+    # from a selection that failed on klai-medium's budget (429). No pick runs
+    # there: the reply names the default route.
     if turn.selection_failed:
-        text = check_unavailable_message(language, helpdesk=True)
-        booking = _booking(contact_routes.default_route(inputs.contact_routes))
-        return fixed_reply(inputs, turn, text, language, decision="refusal", refused=True, **booking)
+        default = contact_routes.default_route(inputs.contact_routes)
+        picked = (default, "default" if len(inputs.contact_routes) > 1 else "single") if default else None
+        text = check_unavailable_reply(language, _channels(picked), _others(inputs, default))
+        return _route_reply(inputs, turn, text, language, picked, decision="refusal", refused=True)
     picked = await _pick(inputs, case)
     route, others = _channels(picked), _others(inputs, picked[0] if picked else None)
     if inputs.previous_decision in _ANSWER_DECISIONS:
