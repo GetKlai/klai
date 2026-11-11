@@ -44,6 +44,7 @@ export interface ContactRoute {
   name: string
   description: string
   do_not_answer?: string | null
+  referral_text?: string | null
   phone?: string | null
   email?: string | null
   booking_url?: string | null

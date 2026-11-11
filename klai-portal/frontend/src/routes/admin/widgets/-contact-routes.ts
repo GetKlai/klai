@@ -9,6 +9,7 @@ export const LIMITS = {
   name: 60,
   description: 300,
   doNotAnswer: 500,
+  referralText: 500,
   phone: 32,
   email: 254,
   linkLabel: 40,
@@ -23,6 +24,7 @@ export interface RouteDraft {
   name: string
   description: string
   do_not_answer: string
+  referral_text: string
   phone: string
   email: string
   booking_url: string
@@ -45,7 +47,7 @@ const nextKey = () => `route-${++keyCounter}`
 
 export function emptyDraft(isDefault: boolean): RouteDraft {
   return {
-    key: nextKey(), name: '', description: '', do_not_answer: '', phone: '', email: '',
+    key: nextKey(), name: '', description: '', do_not_answer: '', referral_text: '', phone: '', email: '',
     booking_url: '', link_url: '', link_label: '', note: '', is_default: isDefault,
   }
 }
@@ -57,6 +59,7 @@ export function toDrafts(routes: ContactRoute[] | undefined): RouteDraft[] {
     name: r.name,
     description: r.description ?? '',
     do_not_answer: r.do_not_answer ?? '',
+    referral_text: r.referral_text ?? '',
     phone: r.phone ?? '',
     email: r.email ?? '',
     booking_url: r.booking_url ?? '',
@@ -76,6 +79,7 @@ export function toRoutes(drafts: RouteDraft[]): ContactRoute[] {
     name: d.name.trim(),
     description: d.description.trim(),
     do_not_answer: opt(d.do_not_answer),
+    referral_text: opt(d.referral_text),
     phone: opt(d.phone),
     email: opt(d.email),
     booking_url: opt(d.booking_url),
@@ -125,6 +129,7 @@ export function validateRoute(d: RouteDraft): RouteErrors {
   else if (name.length > LIMITS.name) errors.name = { code: 'too_long', max: LIMITS.name }
   if (d.description.trim().length > LIMITS.description) errors.description = { code: 'too_long', max: LIMITS.description }
   if (d.do_not_answer.trim().length > LIMITS.doNotAnswer) errors.do_not_answer = { code: 'too_long', max: LIMITS.doNotAnswer }
+  if (d.referral_text.trim().length > LIMITS.referralText) errors.referral_text = { code: 'too_long', max: LIMITS.referralText }
   if (d.note.trim().length > LIMITS.note) errors.note = { code: 'too_long', max: LIMITS.note }
 
   const phone = d.phone.trim()

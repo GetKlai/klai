@@ -176,6 +176,8 @@ export function ContactRoutesTab({ widget }: Props) {
               {text('description', m.admin_widgets_routes_description_label(), { hint: m.admin_widgets_routes_description_help(), placeholder: m.admin_widgets_routes_description_placeholder(), textarea: 3 })}
               {text('do_not_answer', m.admin_widgets_routes_do_not_answer_label(), { hint: m.admin_widgets_routes_do_not_answer_help(), placeholder: m.admin_widgets_routes_do_not_answer_placeholder(), textarea: 2 })}
 
+              {text('referral_text', m.admin_widgets_routes_referral_label(), { hint: m.admin_widgets_routes_referral_help(), placeholder: m.admin_widgets_routes_referral_placeholder(), textarea: 2 })}
+
               <p className="text-xs text-gray-600">{m.admin_widgets_routes_channels_help()}</p>
               <div className="grid gap-4 sm:grid-cols-2">
                 {text('phone', m.admin_widgets_routes_phone_label(), { type: 'tel', placeholder: m.admin_widgets_routes_phone_placeholder() })}
