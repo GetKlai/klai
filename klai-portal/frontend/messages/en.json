@@ -3128,7 +3128,7 @@
   "gaps_decision_line": "{decision} by {who} on {date}",
   "gaps_decision_line_no_actor": "{decision} on {date}",
   "gaps_proposal_meta_no_language": "Created {time}",
-  "gaps_clusters_description": "Questions the chat could not answer well, grouped by topic.",
+  "gaps_clusters_description": "Questions the chat could not answer, grouped by topic. Answers given from a weak match are under their own filter.",
   "gaps_clusters_include_decided": "Show decided groups",
   "gaps_clusters_back": "Back to Knowledge gaps",
   "gaps_clusters_empty": "No groups to show for this filter and period.",
@@ -3216,5 +3216,6 @@
   "admin_widgets_routes_referral_label": "Referral text",
   "admin_widgets_routes_referral_help": "What the chat says when it refers one of the \"do not answer\" subjects to you. Only used for those subjects. Leave empty for the standard text.",
   "admin_widgets_routes_referral_placeholder": "For this we would like to help you in person. Please get in touch.",
-  "admin_widgets_routes_error_unreachable": "Add at least one way to reach this route (phone, e-mail, booking page or link), or a referral text."
+  "admin_widgets_routes_error_unreachable": "Add at least one way to reach this route (phone, e-mail, booking page or link), or a referral text.",
+  "gaps_view_weak_matches": "Answered, but from a weak match"
 }

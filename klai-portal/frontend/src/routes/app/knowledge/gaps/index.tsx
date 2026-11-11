@@ -47,7 +47,7 @@ import {
 } from './-cluster-types'
 
 const PERIODS = [7, 14, 30]
-const VIEWS: GapView[] = ['article_gaps', 'contact_requests', 'all']
+const VIEWS: GapView[] = ['article_gaps', 'weak_matches', 'contact_requests', 'all']
 const QUESTION_MAX = 90
 
 export const Route = createFileRoute('/app/knowledge/gaps/')({
@@ -68,6 +68,8 @@ function viewLabel(view: GapView): string {
   switch (view) {
     case 'article_gaps':
       return m.gaps_view_article_gaps()
+    case 'weak_matches':
+      return m.gaps_view_weak_matches()
     case 'contact_requests':
       return m.gaps_view_contact_requests()
     case 'all':
