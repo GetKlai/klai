@@ -20,8 +20,10 @@ from sqlalchemy.dialects import postgresql
 from app.services import knowledge_gap_report as report
 from app.services.knowledge_gap_report import (
     GapTurn,
+    article_gap_group_count,
     build_clusters,
     cluster_key,
+    filter_clusters,
     knowledge_gap_clusters,
     load_gap_turns,
     topic_words,
@@ -231,7 +233,12 @@ def _row(
     signals: dict, *, origin: str | None = "https://shop.example.com", first: str = "Vraag", visitor: str | None = None
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        answer_signals=signals, created_at=_T0, loaded_origin=origin, first_user_query=first, visitor_text=visitor
+        answer_signals=signals,
+        created_at=_T0,
+        conversation_id=None,
+        loaded_origin=origin,
+        first_user_query=first,
+        visitor_text=visitor,
     )
 
 
@@ -474,3 +481,61 @@ def test_the_order_and_keys_are_the_same_for_shuffled_input() -> None:
     second = [(c["cluster_key"], c["count"], c["topic"]) for c in build_clusters(turns, {})]
 
     assert first == second
+
+
+def _in_conversation(conversation_id: int, minutes: int, **kwargs: Any) -> GapTurn:
+    return GapTurn("widget", _signals(**kwargs), _T0 + timedelta(minutes=minutes), None, conversation_id)
+
+
+def test_groups_are_ranked_by_distinct_conversations_not_by_turns() -> None:
+    """One visitor who rephrases five times is one conversation; two visitors asking once each are two."""
+    rephrased = [_in_conversation(1, m, decision="refusal", problem="faxnummer koppelen", found=[]) for m in range(5)]
+    two_visitors = [
+        _in_conversation(10 + m, 10 + m, decision="refusal", problem="wachtmuziek instellen", found=[])
+        for m in range(2)
+    ]
+
+    clusters = build_clusters([*rephrased, *two_visitors], {})
+
+    assert [(c["topic"], c["count"]) for c in clusters] == [("wachtmuziek", 2), ("faxnummer koppelen", 1)]
+
+
+def test_the_displayed_question_masks_addresses_and_runs_of_seven_digits() -> None:
+    turn = _widget(
+        visitor_text="Mijn klantnummer 12345678 en mail anna.jansen@example.com, factuur 123456 en 06-1234567 graag",
+        decision="refusal",
+        problem="factuur opvragen",
+        found=[],
+    )
+
+    question = _only(build_clusters([turn], {}))["question"]
+
+    assert "anna.jansen@example.com" not in question
+    assert "12345678" not in question and "1234567" not in question
+    # Shorter numbers carry no identity and stay readable.
+    assert "factuur 123456" in question
+
+
+def test_the_default_view_leaves_contact_requests_out_and_they_are_one_filter_away() -> None:
+    turns = [
+        _widget(decision="refusal", problem="faxnummer koppelen", found=[]),
+        _widget(decision="human_request", problem="terugbellen", found=[]),
+    ]
+    clusters = build_clusters(turns, {})
+
+    assert [c["kind"] for c in filter_clusters(clusters, "article_gaps")] == ["no_article"]
+    assert [c["kind"] for c in filter_clusters(clusters, "contact_requests")] == ["contact_wish"]
+    assert len(filter_clusters(clusters, "all")) == 2
+
+
+def test_the_tile_counts_the_decidable_article_gap_groups_the_list_shows() -> None:
+    turns = [
+        _widget(decision="refusal", problem="faxnummer koppelen", found=[]),
+        _widget(decision="partial_answer", problem="wachtmuziek instellen", found=[], open_parts=["na 18 uur"]),
+        _widget(decision="human_request", problem="terugbellen", found=[]),
+        # A catch-all (no topic words) cannot be decided and is not counted.
+        _widget(decision="refusal", problem="graag", query="kan dat?", found=[]),
+        GapTurn("internal", {"decision": "refusal", "gap_type": "hard"}, _T0),
+    ]
+
+    assert article_gap_group_count(build_clusters(turns, {})) == 2

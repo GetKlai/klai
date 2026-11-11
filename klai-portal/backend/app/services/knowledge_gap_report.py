@@ -89,6 +89,11 @@ _MAX_QUESTIONS = 20
 _MAX_ARTICLES = 5
 _MAX_OPEN_PARTS = 10
 _WORD = re.compile(r"[^\W_]+")
+# What a list row may show of a visitor's words: an e-mail address or a run of
+# seven digits (customer, order, phone and account numbers) never reaches the page.
+_MASKED = re.compile(r"\S+@\S+|\d{7,}")
+# Every kind except the visitor asking for a person; that one is a filter value.
+ARTICLE_GAP_KINDS = frozenset({"no_article", "article_misses_part", "variant_unclear", "weak_match"})
 # Chat filler says nothing about the subject: pronouns, auxiliaries, the words a
 # visitor uses to ask ("graag", "hoe", "lukt") and the generic verbs and
 # nouns around a request ("instellen", "aanvragen", "klant").
@@ -119,6 +124,8 @@ class GapTurn:
     created_at: datetime
     # The visitor's own message of this turn (widget_messages, role user), when stored.
     visitor_text: str | None = None
+    # Widget turns of one conversation count once; an internal turn has none and counts alone.
+    conversation_id: int | None = None
 
 
 def is_gap(signals: Mapping[str, Any]) -> bool:
@@ -231,6 +238,25 @@ def _distinct(values: Iterable[str], limit: int) -> list[str]:
     return list(dict.fromkeys(v for v in values if v))[:limit]
 
 
+def _mask(text: str) -> str:
+    return _MASKED.sub("…", text)
+
+
+GapView = Literal["article_gaps", "contact_requests", "all"]
+
+
+def filter_clusters(clusters: list[dict[str, Any]], show: GapView) -> list[dict[str, Any]]:
+    """The clusters of one view; the list defaults to ``article_gaps``, the gaps an owner can write an article for."""
+    if show == "all":
+        return clusters
+    return [c for c in clusters if (c["kind"] in ARTICLE_GAP_KINDS) == (show == "article_gaps")]
+
+
+def article_gap_group_count(clusters: list[dict[str, Any]]) -> int:
+    """What the Insights tile shows: the decidable groups of the default view."""
+    return sum(1 for c in filter_clusters(clusters, "article_gaps") if c["decidable"])
+
+
 def build_clusters(
     turns: Iterable[GapTurn],
     decisions: Mapping[str, dict[str, Any]],
@@ -239,6 +265,9 @@ def build_clusters(
     literal: bool = True,
 ) -> list[dict[str, Any]]:
     """Group the counted turns per topic, decidable and biggest first; a cluster of one stays, at the bottom of its block.
+
+    "Biggest" is the number of distinct conversations (``count``), not turns: a
+    visitor who rephrases a question five times is one conversation.
 
     ``decisions`` maps a cluster key to its ``portal_gap_proposals`` row
     (``load_cluster_decisions``); a decided cluster is left out unless
@@ -273,7 +302,7 @@ def build_clusters(
         # The visitor's own words; the search query only when the message is gone
         # (the case step rewrites the query into the articles' language).
         questions = _distinct(
-            (" ".join((t.visitor_text or _query(t.signals)).split())[:_QUESTION_CHARS] for t in widget),
+            (_mask(" ".join((t.visitor_text or _query(t.signals)).split()))[:_QUESTION_CHARS] for t in widget),
             _MAX_QUESTIONS,
         )
         open_parts = _distinct((p for t in widget for p in _open_parts(t.signals)), _MAX_OPEN_PARTS)
@@ -289,7 +318,7 @@ def build_clusters(
                 "cluster_key": key,
                 "product": product or None,
                 "topic": topic or product or "—",
-                "count": len(members),
+                "count": len({t.conversation_id if t.conversation_id is not None else id(t) for t in members}),
                 "widget_count": len(widget),
                 "internal_count": len(members) - len(widget),
                 "kind": max(kinds, key=lambda k: (kinds[k], -_KIND_ORDER.index(k))),
@@ -354,6 +383,7 @@ async def load_gap_turns(db: AsyncSession, *, org_id: int, since: datetime) -> l
             select(
                 WidgetMessage.answer_signals,
                 WidgetMessage.created_at,
+                WidgetMessage.conversation_id,
                 WidgetConversation.loaded_origin,
                 WidgetConversation.first_user_query,
                 visitor_text.label("visitor_text"),
@@ -380,7 +410,7 @@ async def load_gap_turns(db: AsyncSession, *, org_id: int, since: datetime) -> l
         )
     ).all()
     return [
-        GapTurn("widget", row.answer_signals, row.created_at, row.visitor_text)
+        GapTurn("widget", row.answer_signals, row.created_at, row.visitor_text, row.conversation_id)
         for row in widget_rows
         if row.loaded_origin != PROBE_ORIGIN and " ".join((row.first_user_query or "").split()) != PROBE_QUESTION
     ] + [GapTurn("internal", row.answer_signals, row.created_at) for row in internal_rows]

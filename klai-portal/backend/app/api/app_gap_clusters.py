@@ -21,7 +21,7 @@ from app.core.profiles import Capability
 from app.models.gap_proposals import PortalGapProposal
 from app.models.portal import PortalOrg, PortalUser
 from app.services.gap_proposals import MAX_EXAMPLE_CHARS, PROPOSAL_MODEL, ProposalDraft, draft_proposal
-from app.services.knowledge_gap_report import knowledge_gap_clusters
+from app.services.knowledge_gap_report import GapView, filter_clusters, knowledge_gap_clusters
 
 router = APIRouter(
     prefix="/api/app",
@@ -139,11 +139,16 @@ class GapDecisionOut(BaseModel):
 async def list_gap_clusters(
     days: int = Query(default=7, ge=1, le=CLUSTER_WINDOW_DAYS),
     include_decided: bool = Query(default=False),
+    show: GapView = Query(default="article_gaps"),
     perms: UserPermissions = Depends(get_caller),
     db: AsyncSession = Depends(get_db),
 ) -> GapClustersResponse:
-    """The org's knowledge-gap clusters over ``days``; decided clusters only with ``include_decided``."""
+    """The org's knowledge-gap clusters over ``days``; decided clusters only with ``include_decided``.
+
+    ``show`` picks the view: article gaps by default, or the visitors who asked for a person, or all.
+    """
     clusters = await knowledge_gap_clusters(db, org_id=perms.org_id, days=days, include_decided=include_decided)
+    clusters = filter_clusters(clusters, show)
     return GapClustersResponse(days=days, clusters=[GapClusterOut.model_validate(c) for c in clusters])
 
 
