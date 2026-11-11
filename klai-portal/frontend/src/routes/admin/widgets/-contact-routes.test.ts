@@ -89,6 +89,13 @@ describe('contact routes: ids and the payload', () => {
     const [route] = toRoutes([filled({ email: ' team@example.com ' })])
     expect(route.email).toBe('team@example.com')
     expect(route.phone).toBeUndefined()
+    expect(route.referral_text).toBeUndefined()
+  })
+
+  it('sends the referral text trimmed and rejects one over 500 characters', () => {
+    const [route] = toRoutes([filled({ referral_text: ' Please call us, we will help. ' })])
+    expect(route.referral_text).toBe('Please call us, we will help.')
+    expect(validateRoute(filled({ referral_text: 'x'.repeat(501) })).referral_text).toEqual({ code: 'too_long', max: 500 })
   })
 })
 

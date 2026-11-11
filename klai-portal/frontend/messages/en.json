@@ -3231,5 +3231,8 @@
   "admin_widgets_routes_error_phone": "Use digits, spaces and + - ( ), with at least 6 digits.",
   "admin_widgets_routes_error_email": "Enter a valid e-mail address.",
   "admin_widgets_routes_error_url": "Enter a full web address starting with http:// or https://.",
-  "admin_widgets_routes_error_link_pair": "Fill in both the link and the link text, or leave both empty."
+  "admin_widgets_routes_error_link_pair": "Fill in both the link and the link text, or leave both empty.",
+  "admin_widgets_routes_referral_label": "Referral text",
+  "admin_widgets_routes_referral_help": "What the chat says when it refers one of the \"do not answer\" subjects to you. Only used for those subjects. Leave empty for the standard text.",
+  "admin_widgets_routes_referral_placeholder": "For this we would like to help you in person. Please get in touch."
 }
