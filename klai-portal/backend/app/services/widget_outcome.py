@@ -12,7 +12,10 @@ Derivation rules, evaluated in this order (first match wins):
 1. ``escalated`` — the visitor was routed out of the bot: a
    ``widget_handoff_sessions`` row is attached, or the last assistant answer is
    the canned helpdesk refusal that points at support (the exact string the
-   chat stores when it could not ground a reply, in either language).
+   chat stores when it could not ground a reply, in either language), or it
+   carries the stored decision of a fixed reply that sends the visitor to a
+   contact route: ``human_request`` (contact, repeated contact and request
+   replies) or ``off_topic`` (referral).
 2. ``abandoned`` — the conversation ends on a visitor message with no assistant
    answer after it, and the conversation has gone quiet. A question posted
    seconds ago is one the assistant is still answering.
@@ -83,6 +86,14 @@ _SUPPORT_REFERRAL_TEXTS: frozenset[str] = frozenset(
     fixed_text(name, language) for name in ("helpdesk_not_found", "helpdesk_not_further") for language in ("nl", "en")
 )
 
+# Decisions the widget stores (``widget_messages.answer_signals->>'decision'``)
+# on the fixed replies that send the visitor to a contact route. Read from the
+# stored decision, not the text: those replies open with the route name, a
+# subject or the tenant's own referral text, so no fixed opening exists, and a
+# reworded text cannot drift out of a decision. ``closing`` is deliberately
+# absent: a closing line routes nobody anywhere.
+_ROUTED_DECISIONS: frozenset[str] = frozenset({"human_request", "off_topic"})
+
 
 def is_support_referral(content: str) -> bool:
     """True when a stored assistant message is the widget's fixed "not found" or "not further"."""
@@ -96,6 +107,7 @@ class ConversationTurn:
     role: str  # 'user' | 'assistant'
     content: str
     rating: str | None  # 'thumbsUp' / 'thumbsDown' / None — assistant rows only
+    decision: str | None = None  # answer_signals->>'decision' — assistant rows only, NULL on older rows
 
 
 def derive_outcome(
@@ -126,7 +138,9 @@ def derive_outcome(
     # handoff, or the assistant referring them to support.
     if has_handoff:
         return "escalated"
-    if last_assistant is not None and is_support_referral(last_assistant.content):
+    if last_assistant is not None and (
+        is_support_referral(last_assistant.content) or last_assistant.decision in _ROUTED_DECISIONS
+    ):
         return "escalated"
 
     # 2. Abandoned: ends on an unanswered visitor message — but only once the
@@ -203,7 +217,7 @@ async def _label_org(org_id: int, cutoff: datetime) -> int:
         msg_result = await db.execute(
             text(
                 """
-                SELECT conversation_id, role, content, rating
+                SELECT conversation_id, role, content, rating, answer_signals ->> 'decision' AS decision
                   FROM widget_messages
                  WHERE conversation_id = ANY(CAST(:conv_ids AS bigint[]))
                  ORDER BY conversation_id, sequence ASC
@@ -214,7 +228,7 @@ async def _label_org(org_id: int, cutoff: datetime) -> int:
         turns_by_conv: dict[int, list[ConversationTurn]] = {cid: [] for cid in conv_ids}
         for row in msg_result.all():
             turns_by_conv[row.conversation_id].append(
-                ConversationTurn(role=row.role, content=row.content, rating=row.rating)
+                ConversationTurn(role=row.role, content=row.content, rating=row.rating, decision=row.decision)
             )
 
         handoff_result = await db.execute(
