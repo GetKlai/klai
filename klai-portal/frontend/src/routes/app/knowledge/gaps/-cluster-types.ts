@@ -1,11 +1,14 @@
-// Shapes and labels shared by the weekly cluster list, the cluster detail and the
+// Shapes and labels shared by the Knowledge gaps list, the group detail and the
 // proposal section (backend: /api/app/gaps/clusters). A cluster is the unit the
 // owner works on: questions from the stored chat signals that point at the same
 // missing or incomplete knowledge.
+import { ApiError } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 
 export type ClusterKind = 'no_article' | 'article_misses_part' | 'variant_unclear' | 'contact_wish' | 'weak_match'
 export type ClusterDecision = 'rejected' | 'out_of_scope'
+// Which kinds the list shows: the article gaps by default, the visitors who asked for a person, or both.
+export type GapView = 'article_gaps' | 'contact_requests' | 'all'
 
 export interface ClusterArticle {
   title: string | null
@@ -62,8 +65,8 @@ export interface ClusterProposal {
   decided_at: string | null
 }
 
-export function clustersPath(days: number, includeDecided: boolean): string {
-  return `/api/app/gaps/clusters?days=${days}&include_decided=${includeDecided}`
+export function clustersPath(days: number, includeDecided: boolean, show: GapView): string {
+  return `/api/app/gaps/clusters?days=${days}&include_decided=${includeDecided}&show=${show}`
 }
 
 export const clusterPath = (clusterKey: string) => `/api/app/gaps/clusters/${encodeURIComponent(clusterKey)}`
@@ -91,6 +94,40 @@ export function notDecidableReason(clusterKey: string): string {
   return clusterKey.startsWith('internal|')
     ? m.gaps_clusters_not_decidable_internal()
     : m.gaps_clusters_not_decidable_no_topic()
+}
+
+// The proposal endpoints answer every refusal with a stable error_code (backend
+// app_gap_clusters.py); each one maps to what the owner can do about it. The raw
+// detail string is never shown.
+export function proposalErrorMessage(err: unknown, fallback: string): string {
+  let code: unknown
+  if (err instanceof ApiError) {
+    try {
+      code = (JSON.parse(err.detail) as { error_code?: unknown }).error_code
+    } catch {
+      // not a structured detail
+    }
+  }
+  switch (code) {
+    case 'telemetry_below_full':
+      return m.gaps_error_telemetry_below_full()
+    case 'proposal_failed_twice':
+      return m.gaps_error_proposal_failed_twice()
+    case 'no_questions':
+      return m.gaps_error_no_questions()
+    case 'proposal_cap_reached':
+      return m.gaps_error_proposal_cap_reached()
+    case 'proposal_upstream_failed':
+      return m.gaps_error_proposal_upstream_failed()
+    case 'proposal_generating':
+      return m.gaps_error_proposal_generating()
+    case 'already_decided':
+      return m.gaps_error_already_decided()
+    case 'not_decidable':
+      return m.gaps_error_not_decidable()
+    default:
+      return fallback
+  }
 }
 
 export function decisionLabel(decision: ClusterDecision): string {

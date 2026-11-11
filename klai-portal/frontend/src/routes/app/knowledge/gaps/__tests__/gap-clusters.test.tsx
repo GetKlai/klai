@@ -1,7 +1,7 @@
 /**
- * Weekly cluster screens (knowledge-gap-to-article phase 1): the list shows the
- * clusters exactly as the API returns them, the detail shows the questions and
- * the proposal, and a decision is final. apiFetch is mocked; the backend
+ * Knowledge gaps screens: the list shows the groups exactly as the API returns
+ * them, the group page shows the questions and the proposal, and a decision is
+ * final. apiFetch is mocked; the backend
  * contract is GET /api/app/gaps/clusters and, per cluster key (URL-encoded),
  * GET/POST .../proposal and POST .../decision.
  */
@@ -56,8 +56,8 @@ vi.mock('@/lib/api-me', () => ({
 }))
 
 import { ApiError } from '@/lib/apiFetch'
-import { GapClustersPage } from '../clusters.index'
-import { GapClusterDetailPage } from '../clusters.$clusterKey'
+import { GapsPage } from '../index'
+import { GapDetailPage } from '../$clusterKey'
 
 function Wrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({
@@ -147,7 +147,7 @@ beforeEach(() => {
   paramsValue = { clusterKey: KEY }
 })
 
-describe('GapClustersPage', () => {
+describe('GapsPage', () => {
   it('lists the clusters in the order the API returns them, with kind labels', async () => {
     mockApi({
       clusters: [
@@ -156,28 +156,27 @@ describe('GapClustersPage', () => {
       ],
     })
 
-    render(<Wrapper><GapClustersPage /></Wrapper>)
+    render(<Wrapper><GapsPage /></Wrapper>)
 
     await screen.findByText(/Eerste/)
     const rows = screen.getAllByRole('row').slice(1)
     expect(rows[0].textContent).toMatch(/Eerste/)
     expect(rows[1].textContent).toMatch(/Tweede/)
-    expect(within(rows[0]).getByText(/zwak gevonden|weak match/i)).toBeTruthy()
-    expect(within(rows[1]).getByText(/^(geen artikel|no article)$/i, { selector: 'div' })).toBeTruthy()
+    expect(within(rows[0]).getByText(/answered from a weak match|beantwoord op een zwakke treffer/i)).toBeTruthy()
+    expect(within(rows[1]).getByText(/no article covers this|geen artikel behandelt dit/i, { selector: 'div' })).toBeTruthy()
     expect(within(rows[1]).getByText(/^(geen artikel|no article)$/i, { selector: 'span' })).toBeTruthy()
   })
 
-  it('shows the product prefix, the shortened question, the split and the proposal marker', async () => {
+  it('shows the product prefix, the shortened question and the proposal marker', async () => {
     mockApi({
       clusters: [cluster({ has_proposal: true, question: 'x'.repeat(200) })],
     })
 
-    render(<Wrapper><GapClustersPage /></Wrapper>)
+    render(<Wrapper><GapsPage /></Wrapper>)
 
     expect(await screen.findByText('Facturatie · Facturen exporteren')).toBeTruthy()
-    expect(screen.getByText(/4 widget · 1 (intern|internal)/)).toBeTruthy()
     expect(screen.queryByText('x'.repeat(200))).toBeNull()
-    expect(screen.getByText(/^(voorstel|proposal)$/i)).toBeTruthy()
+    expect(screen.getByText(/voorstel klaar|proposal ready/i)).toBeTruthy()
   })
 
   it('marks an internal-only cluster instead of showing a question', async () => {
@@ -185,18 +184,18 @@ describe('GapClustersPage', () => {
       clusters: [cluster({ cluster_key: 'internal|billing', widget_count: 0, internal_count: 5, question: null, questions: [], article: null, articles: [] })],
     })
 
-    render(<Wrapper><GapClustersPage /></Wrapper>)
+    render(<Wrapper><GapsPage /></Wrapper>)
 
-    expect(await screen.findByText(/interne chat, zonder tekst|internal chat, no text/i)).toBeTruthy()
+    expect(await screen.findByText(/interne chat, tekst niet bewaard|internal chat, text not kept/i)).toBeTruthy()
   })
 
   it('shows no internal marker for a widget cluster without text', async () => {
     mockApi({ clusters: [cluster({ question: null, questions: [], widget_count: 3, internal_count: 0 })] })
 
-    render(<Wrapper><GapClustersPage /></Wrapper>)
+    render(<Wrapper><GapsPage /></Wrapper>)
 
     await screen.findByText('Facturatie · Facturen exporteren')
-    expect(screen.queryByText(/interne chat, zonder tekst|internal chat, no text/i)).toBeNull()
+    expect(screen.queryByText(/interne chat, tekst niet bewaard|internal chat, text not kept/i)).toBeNull()
   })
 
   it('shows the url as link text when an article has no title', async () => {
@@ -204,7 +203,7 @@ describe('GapClustersPage', () => {
       clusters: [cluster({ article: { title: null, url: 'https://docs.example.com/zonder-titel', score: null } })],
     })
 
-    render(<Wrapper><GapClustersPage /></Wrapper>)
+    render(<Wrapper><GapsPage /></Wrapper>)
 
     const link = await screen.findByRole('link', { name: 'https://docs.example.com/zonder-titel' })
     expect(link.getAttribute('href')).toBe('https://docs.example.com/zonder-titel')
@@ -213,7 +212,7 @@ describe('GapClustersPage', () => {
   it('says there is no article when the article has neither title nor url', async () => {
     mockApi({ clusters: [cluster({ article: { title: null, url: null, score: null } })] })
 
-    render(<Wrapper><GapClustersPage /></Wrapper>)
+    render(<Wrapper><GapsPage /></Wrapper>)
 
     await screen.findByText('Facturatie · Facturen exporteren')
     expect(screen.getByText(/^(geen artikel|no article)$/i, { selector: 'td span' })).toBeTruthy()
@@ -222,32 +221,44 @@ describe('GapClustersPage', () => {
   it('marks a non-decidable cluster in the list', async () => {
     mockApi({ clusters: [cluster({ decidable: false })] })
 
-    render(<Wrapper><GapClustersPage /></Wrapper>)
+    render(<Wrapper><GapsPage /></Wrapper>)
 
-    expect(await screen.findByText(/^(niet te beslissen|cannot be decided)$/i)).toBeTruthy()
+    expect(await screen.findByText(/geen voorstel mogelijk|no proposal possible/i)).toBeTruthy()
   })
 
-  it('refetches with the chosen period and with decided clusters when asked', async () => {
+  it('asks for article gaps by default, and for contact requests, a period or decided groups when chosen', async () => {
     mockApi({})
 
-    render(<Wrapper><GapClustersPage /></Wrapper>)
+    render(<Wrapper><GapsPage /></Wrapper>)
 
     await screen.findByText('Facturatie · Facturen exporteren')
-    expect(listUrls()).toEqual(['/api/app/gaps/clusters?days=7&include_decided=false'])
+    expect(listUrls()).toEqual(['/api/app/gaps/clusters?days=7&include_decided=false&show=article_gaps'])
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: '14' } })
-    await waitFor(() => expect(listUrls()).toContain('/api/app/gaps/clusters?days=14&include_decided=false'))
+    fireEvent.change(screen.getByLabelText(/^(toon|show)$/i), { target: { value: 'contact_requests' } })
+    await waitFor(() => expect(listUrls()).toContain('/api/app/gaps/clusters?days=7&include_decided=false&show=contact_requests'))
 
-    fireEvent.click(screen.getByRole('checkbox', { name: /toon besliste clusters|show decided clusters/i }))
-    await waitFor(() => expect(listUrls()).toContain('/api/app/gaps/clusters?days=14&include_decided=true'))
+    fireEvent.change(screen.getByLabelText(/periode|period/i), { target: { value: '14' } })
+    await waitFor(() => expect(listUrls()).toContain('/api/app/gaps/clusters?days=14&include_decided=false&show=contact_requests'))
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /toon besliste groepen|show decided groups/i }))
+    await waitFor(() => expect(listUrls()).toContain('/api/app/gaps/clusters?days=14&include_decided=true&show=contact_requests'))
+  })
+
+  it('offers the support cases and the transcript import in its header', async () => {
+    mockApi({})
+
+    render(<Wrapper><GapsPage /></Wrapper>)
+
+    const link = await screen.findByRole('link', { name: /supportcases|support cases/i })
+    expect(link.getAttribute('href')).toBe('/app/knowledge/gaps/support-cases')
   })
 })
 
-describe('GapClusterDetailPage', () => {
+describe('GapDetailPage', () => {
   it('renders the questions, open parts, articles and the proposal', async () => {
     mockApi({ get: () => Promise.resolve(proposal()) })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
     expect(await screen.findByText('Kan ik facturen als csv downloaden?')).toBeTruthy()
     expect(screen.getByText('Exporteren naar csv')).toBeTruthy()
@@ -263,7 +274,7 @@ describe('GapClusterDetailPage', () => {
   it('shows the 30-day window above the counts', async () => {
     mockApi({})
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
     expect(await screen.findByText(/cijfers over de laatste 30 dagen|figures over the last 30 days/i)).toBeTruthy()
   })
@@ -271,10 +282,10 @@ describe('GapClusterDetailPage', () => {
   it('shows no internal marker for a widget cluster without text', async () => {
     mockApi({ clusters: [cluster({ question: null, questions: [], widget_count: 3, internal_count: 0 })] })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
     await screen.findByRole('heading', { name: /vragen|questions/i })
-    expect(screen.queryByText(/interne chat, zonder tekst|internal chat, no text/i)).toBeNull()
+    expect(screen.queryByText(/interne chat, tekst niet bewaard|internal chat, text not kept/i)).toBeNull()
   })
 
   it('marks an internal-only cluster on the detail page', async () => {
@@ -282,9 +293,9 @@ describe('GapClusterDetailPage', () => {
       clusters: [cluster({ question: null, questions: [], widget_count: 0, internal_count: 2, decidable: false })],
     })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
-    expect(await screen.findByText(/interne chat, zonder tekst|internal chat, no text/i)).toBeTruthy()
+    expect(await screen.findByText(/interne chat, tekst niet bewaard|internal chat, text not kept/i)).toBeTruthy()
   })
 
   it('renders the url for an untitled article and no percentage for a score of null', async () => {
@@ -299,10 +310,10 @@ describe('GapClusterDetailPage', () => {
       ],
     })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
     expect(await screen.findByRole('link', { name: 'https://docs.example.com/zonder-titel' })).toBeTruthy()
-    expect(screen.getAllByText(/score \d+%/)).toHaveLength(1)
+    expect(screen.getAllByText(/(match|overeenkomst) \d+%/)).toHaveLength(1)
   })
 
   it('names the parent section and the nearest article for a new article', async () => {
@@ -310,10 +321,10 @@ describe('GapClusterDetailPage', () => {
       get: () => Promise.resolve(proposal({ where_kind: 'new', where_section: 'Handleidingen', open_facts: [] })),
     })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
     expect(await screen.findByText(/(nieuw artikel onder|new article under) Handleidingen/i)).toBeTruthy()
-    expect(screen.queryByText(/nog in te vullen|still to fill in/i)).toBeNull()
+    expect(screen.queryByRole('heading', { name: /nog in te vullen|still to fill in/i })).toBeNull()
   })
 
   it('copies the raw markdown and announces it', async () => {
@@ -321,7 +332,7 @@ describe('GapClusterDetailPage', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     mockApi({ get: () => Promise.resolve(proposal()) })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
     fireEvent.click(await screen.findByRole('button', { name: /^(kopieer|copy)$/i }))
 
@@ -329,24 +340,41 @@ describe('GapClusterDetailPage', () => {
     await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/gekopieerd|copied/i))
   })
 
-  it('generates a proposal on "Maak voorstel" and shows the API detail for 409 and 429', async () => {
+  it('generates a proposal on "Maak voorstel" and explains each refusal in its own words, never the raw detail', async () => {
+    const refuse = (status: number, error_code: string) => () =>
+      Promise.reject(new ApiError(status, JSON.stringify({ error_code, message: `raw ${error_code} detail` })))
     const outcomes = [
-      () => Promise.reject(new ApiError(409, 'Telemetry level does not allow proposals')),
-      () => Promise.reject(new ApiError(429, 'Weekly cap of 20 reached (20)')),
+      refuse(409, 'telemetry_below_full'),
+      refuse(409, 'proposal_failed_twice'),
+      refuse(409, 'no_questions'),
+      refuse(429, 'proposal_cap_reached'),
+      refuse(502, 'proposal_upstream_failed'),
+      () => Promise.reject(new ApiError(500, 'something unmapped')),
       () => Promise.resolve(proposal({ missing: 'Zojuist gegenereerd.' })),
+    ]
+    const shown = [
+      /telemetrieniveau|telemetry level/i,
+      /twee keer mislukt|failed twice/i,
+      /geen bewaarde vragen|no saved questions/i,
+      /weeklimiet|weekly limit/i,
+      /kon nu niet worden gemaakt|could not be created this time/i,
+      /kon het voorstel niet maken|could not create the proposal/i,
     ]
     let call = 0
     mockApi({ post: () => outcomes[call++]() })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
     const create = () => screen.findByRole('button', { name: /maak voorstel|create proposal/i })
-    fireEvent.click(await create())
-    expect(await screen.findByText('Telemetry level does not allow proposals')).toBeTruthy()
-    fireEvent.click(await create())
-    expect(await screen.findByText('Weekly cap of 20 reached (20)')).toBeTruthy()
+    for (const expected of shown) {
+      fireEvent.click(await create())
+      expect((await screen.findByRole('alert')).textContent).toMatch(expected)
+      expect(screen.queryByText(/raw .* detail|something unmapped/)).toBeNull()
+    }
     fireEvent.click(await create())
     expect(await screen.findByText('Zojuist gegenereerd.')).toBeTruthy()
+    // The proposal says how to use it, above the actions.
+    expect(screen.getByText(/concept, geen afgeronde tekst|draft, not a finished article/i)).toBeTruthy()
   })
 
   it('asks for confirmation, posts the final decision, shows who and when and hides the buttons', async () => {
@@ -364,7 +392,7 @@ describe('GapClusterDetailPage', () => {
       },
     })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
     fireEvent.click(await screen.findByRole('button', { name: /^(afwijzen|reject)$/i }))
     expect(callsTo('/decision')).toHaveLength(0)
@@ -388,7 +416,7 @@ describe('GapClusterDetailPage', () => {
       get: notFound,
     })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
     expect(await screen.findByText(/Anna Voorbeeld/)).toBeTruthy()
     expect(screen.queryByText(/^(open)$/i)).toBeNull()
@@ -404,9 +432,9 @@ describe('GapClusterDetailPage', () => {
       get: notFound,
     })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
-    expect(await screen.findByText(/niet te beslissen: geen onderwerpwoorden|cannot be decided: no topic words/i)).toBeTruthy()
+    expect(await screen.findByText(/geen duidelijk gemeenschappelijk onderwerp|share no clear topic/i)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /maak voorstel|create proposal/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /^(afwijzen|reject)$/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /^(buiten scope|out of scope)$/i })).toBeNull()
@@ -415,8 +443,8 @@ describe('GapClusterDetailPage', () => {
   it('shows a not-found state when the cluster is not in the list', async () => {
     mockApi({ clusters: [] })
 
-    render(<Wrapper><GapClusterDetailPage /></Wrapper>)
+    render(<Wrapper><GapDetailPage /></Wrapper>)
 
-    expect(await screen.findByText(/kon niet worden gevonden|could not be found/i)).toBeTruthy()
+    expect(await screen.findByText(/staat niet meer in de lijst|not in the list any more/i)).toBeTruthy()
   })
 })

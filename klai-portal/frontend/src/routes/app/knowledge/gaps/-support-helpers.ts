@@ -66,11 +66,10 @@ export function diagnosisOptions(): { value: Diagnosis; label: string }[] {
 }
 
 /** Every reviewer mutation on a case changes what the detail page, the case
-    list and the gap inbox show, so all three caches are refetched together. */
+    list show, so both caches are refetched together. */
 export function invalidateCaseCaches(queryClient: QueryClient, caseId: string, kbSlug: string): void {
   void queryClient.invalidateQueries({ queryKey: ['support-case', caseId] })
   void queryClient.invalidateQueries({ queryKey: ['support-cases', kbSlug] })
-  void queryClient.invalidateQueries({ queryKey: ['app-gaps'] })
 }
 
 /** A finding is not always a content gap: the analyser also reports that the
