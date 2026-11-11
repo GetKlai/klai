@@ -20,11 +20,15 @@ export type LanguageSignal = "nl" | "en";
 
 /** Escalation signal for one assistant turn, from ``delta.escalation``
  * (streaming) or ``message.escalation`` (non-streaming). Exactly one shape:
- * ``{ appointment: boolean }``. ``appointment: true`` means "this answer
+ * ``{ appointment: boolean, booking_url?: string }``. ``appointment: true`` means "this answer
  * offers the visitor an appointment", so the widget renders the booking
  * button under that one message. Absent = no offer. */
 export interface MessageEscalation {
   appointment: boolean;
+  /** Booking link of the contact route this reply is about. Absent on
+   * replies from before per-route links; the widget then uses the link
+   * from its config (see resolveBookingUrl). */
+  booking_url?: string;
 }
 
 export interface Message {
@@ -261,19 +265,43 @@ export function normalizeMessageSources(rawSources: unknown): MessageSource[] {
   return normalized;
 }
 
+/** The one place a booking URL is read and checked. The reply's own link wins,
+ * the widget config's link is the fallback (replies from before per-route
+ * links, restored history), and no usable link anywhere means no button.
+ * Only absolute http(s) passes: the value ends up in an href and an iframe
+ * src, and a restored message comes from storage the page can write to. */
+export function resolveBookingUrl(
+  escalation: MessageEscalation | undefined,
+  configUrl: string | undefined,
+): string | undefined {
+  for (const candidate of [escalation?.booking_url, configUrl]) {
+    const url = typeof candidate === "string" ? candidate.trim() : "";
+    if (/^https?:\/\/\S+$/i.test(url)) {
+      return url;
+    }
+  }
+  return undefined;
+}
+
 /** Strict reader for the escalation signal.
  *
- * The contract is exactly ``{ appointment: boolean }``, so only a literal
- * ``true`` is an offer. Anything else — ``false``, a missing key, a string,
- * a future field we do not know — returns null and the widget renders
+ * The contract is ``{ appointment: boolean, booking_url?: string }``, so only
+ * a literal ``true`` is an offer. Anything else — ``false``, a missing key, a
+ * string, a future field we do not know — returns null and the widget renders
  * nothing. A booking button is a promise of a person; it is never guessed at.
+ * A ``booking_url`` that is not an absolute http(s) URL is dropped, which
+ * leaves the offer to the config fallback.
  */
 export function normalizeEscalation(rawEscalation: unknown): MessageEscalation | null {
   if (!rawEscalation || typeof rawEscalation !== "object") {
     return null;
   }
   const escalation = rawEscalation as Partial<MessageEscalation>;
-  return escalation.appointment === true ? { appointment: true } : null;
+  if (escalation.appointment !== true) {
+    return null;
+  }
+  const bookingUrl = resolveBookingUrl({ appointment: true, booking_url: escalation.booking_url }, undefined);
+  return bookingUrl ? { appointment: true, booking_url: bookingUrl } : { appointment: true };
 }
 
 const KNOWN_LANGUAGES = new Set<string>(["nl", "en"] satisfies LanguageSignal[]);
