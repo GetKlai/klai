@@ -178,8 +178,8 @@ class FakeSession:
             return _Rows([])
         if sql.startswith("UPDATE answer_reviews") or sql.startswith("UPDATE portal_retrieval_gaps"):
             return _Rows([])
-        if sql.startswith("DELETE FROM portal_gap_kept_questions"):
-            return _Rows([])
+        if sql.startswith("DELETE FROM portal_gap_kept_questions") or sql.startswith("SELECT pg_advisory_xact_lock"):
+            return SimpleNamespace(rowcount=0)
         if "JOIN widget_kb_access" in sql:
             return _Rows([SimpleNamespace(slug=self.nearest_kb_slug)] if self.nearest_kb_slug else [])
         if "role = 'user' AND sequence < :sequence" in sql:

@@ -39,6 +39,7 @@ from app.core.config import settings
 from app.core.database import cross_org_session, tenant_scoped_session
 from app.services.knowledge_gap_report import (
     KEPT_QUESTION_DAYS,
+    KEPT_QUESTIONS_LOCK,
     GapTurn,
     cluster_key,
     conversation_ref,
@@ -55,25 +56,32 @@ RETENTION_INTERVAL_SECONDS = 24 * 60 * 60
 _CHUNK_SIZE = 10_000
 
 
-# The counted gap turns of an org at telemetry ``full`` that this run deletes
-# and that are younger than KEPT_QUESTION_DAYS, with the visitor message before
-# each (the same correlated read as load_gap_turns). Selected for the chunk's
-# whole conversations, not only its message ids: a visitor row and its answer
-# can fall into two chunks, and the first chunk to touch the conversation still
-# has both. ON CONFLICT on the insert skips a turn an earlier chunk kept.
+# The counted gap turns of an org at telemetry ``full`` whose visitor message
+# this run deletes (the answer's own time when there is none) and that are
+# younger than KEPT_QUESTION_DAYS, with that visitor message (the same read as
+# load_gap_turns). Deciding on the visitor message keeps the visitor's words
+# when a cutoff falls between a question and its answer: the answer then stays
+# live up to one more day next to its kept row, which the list drops by
+# message id. Selected for the chunk's whole conversations, not only its
+# message ids: a visitor row and its answer can fall into two chunks, and the
+# first chunk to touch the conversation still has both. ON CONFLICT on the
+# insert skips a turn an earlier chunk or run kept.
 _GAP_TURNS_TO_KEEP_SQL = """
 SELECT wm.id, wm.conversation_id, wm.created_at, wm.answer_signals, wc.loaded_origin, wc.first_user_query,
-       (SELECT v.content
-          FROM widget_messages v
-         WHERE v.conversation_id = wm.conversation_id
-           AND v.org_id = :org_id
-           AND v.role = 'user'
-           AND v.sequence < wm.sequence
-         ORDER BY v.sequence DESC
-         LIMIT 1) AS visitor_text
+       v.content AS visitor_text
   FROM widget_messages wm
   JOIN widget_conversations wc ON wc.id = wm.conversation_id AND wc.org_id = :org_id
   JOIN portal_orgs po ON po.id = wm.org_id
+  LEFT JOIN LATERAL (
+        SELECT u.content, u.created_at
+          FROM widget_messages u
+         WHERE u.conversation_id = wm.conversation_id
+           AND u.org_id = :org_id
+           AND u.role = 'user'
+           AND u.sequence < wm.sequence
+         ORDER BY u.sequence DESC
+         LIMIT 1
+       ) v ON true
  WHERE wm.org_id = :org_id
    AND po.telemetry_level = 'full'
    AND wm.conversation_id = ANY(CAST(:conversation_ids AS bigint[]))
@@ -82,8 +90,14 @@ SELECT wm.id, wm.conversation_id, wm.created_at, wm.answer_signals, wc.loaded_or
    AND wc.is_test = false
    AND wc.is_preview = false
    AND wm.created_at >= :kept_since
-   AND wm.created_at < now() - (COALESCE(po.widget_messages_retention_days, :default_days) * interval '1 day')
+   AND COALESCE(v.created_at, wm.created_at)
+       < now() - (COALESCE(po.widget_messages_retention_days, :default_days) * interval '1 day')
 """
+
+
+class _KeepFailed(Exception):
+    """Stands in for a failed keep in the log: where it failed, never the values it held."""
+
 
 _INSERT_KEPT_SQL = """
 INSERT INTO portal_gap_kept_questions
@@ -98,7 +112,17 @@ async def _keep_gap_questions(db: AsyncSession, org_id: int, conversation_ids: l
 
     What counts, what is kept and the grouping key all come from
     knowledge_gap_report, so a kept row lands in the group its live turn was in.
+    Keeps nothing without a configured widget secret: the conversation reference
+    is keyed on it, and hash_audit_value would fall back to a public constant.
     """
+    if not settings.widget_jwt_secret:
+        return 0
+    # Shared KEPT_QUESTIONS_LOCK before reading the level, the test marks and the
+    # decisions: a removal holding it commits first and is seen below, and a
+    # removal that comes later waits for this transaction and deletes what it keeps.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock_shared(:lock, :org_id)"), {"lock": KEPT_QUESTIONS_LOCK, "org_id": org_id}
+    )
     rows = (
         await db.execute(
             text(_GAP_TURNS_TO_KEEP_SQL).columns(answer_signals=JSONB),
@@ -207,15 +231,25 @@ async def _purge_org_chunk(org_id: int, message_ids: list[int], conversation_ids
         )
 
         # In the transaction of the DELETE, so a gap turn is either live or
-        # kept. Under a savepoint, so a failure here keeps nothing and never
-        # holds back the message purge; only the error class is logged, since
-        # a database error can quote the visitor text it choked on.
+        # kept. Under a savepoint, so a failure here keeps nothing and the
+        # messages are still deleted below. Deliberate: a reviewer asked to
+        # fail the transaction so the question survives for a retry, but the
+        # owner's limit is that messages never outlive their retention, so
+        # losing a kept question is the side to fail on.
         kept = 0
         try:
             async with db.begin_nested():
                 kept = await _keep_gap_questions(db, org_id, conversation_ids)
         except Exception as exc:
-            logger.warning("widget_messages_retention_keep_failed", org_id=org_id, error=type(exc).__name__)
+            # The original exception is never logged: SQLAlchemy puts the
+            # insert's parameters in its message, and asyncpg appends the
+            # server's DETAIL, which for a constraint violation is "Failing row
+            # contains (...)" with the masked question. The logged exception
+            # carries the frames of the failure and the error class and
+            # SQLSTATE, nothing else (format_exc_info renders no locals).
+            sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
+            failure = _KeepFailed(f"{type(exc).__name__} sqlstate={sqlstate}").with_traceback(exc.__traceback__)
+            logger.warning("widget_messages_retention_keep_failed", org_id=org_id, exc_info=failure)
 
         result = await db.execute(
             text(

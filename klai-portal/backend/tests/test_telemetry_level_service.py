@@ -186,8 +186,6 @@ def support_purge(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_leaving_full_drops_the_kept_gap_questions_at_once(monkeypatch, support_purge):
-    from sqlalchemy.dialects import postgresql
-
     from app.core import database
     from app.services.telemetry_level import set_telemetry_level
 
@@ -200,9 +198,9 @@ async def test_leaving_full_drops_the_kept_gap_questions_at_once(monkeypatch, su
         db, org_id=42, new_level="off", operator_kind="tenant_admin", operator_user_id="u", reason="Opt out"
     )
 
-    statements = [call.args[0].compile(dialect=postgresql.dialect()) for call in purge_db.execute.await_args_list]
-    deletes = [s for s in statements if str(s).startswith("DELETE FROM portal_gap_kept_questions")]
-    assert [s.params for s in deletes] == [{"org_id_1": 42}]
+    calls = [(str(call.args[0]), call.args[1]) for call in purge_db.execute.await_args_list]
+    deletes = [params for sql, params in calls if sql.startswith("DELETE FROM portal_gap_kept_questions")]
+    assert deletes == [{"org_id": 42}]
     purge_db.commit.assert_awaited()
 
 

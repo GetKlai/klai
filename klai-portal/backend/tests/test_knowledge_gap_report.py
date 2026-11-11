@@ -271,7 +271,8 @@ class _Db:
         elif "FROM portal_retrieval_gaps" in sql:
             result.all.return_value = self.filed_rows
         elif "FROM portal_gap_kept_questions" in sql:
-            result.all.return_value = self.kept_rows
+            since = next(v for k, v in compiled.params.items() if k.startswith("turn_at"))
+            result.all.return_value = [r for r in self.kept_rows if r.turn_at >= since]
         else:
             result.all.return_value = []
         return result
@@ -750,6 +751,26 @@ async def test_a_gap_turn_older_than_the_message_retention_still_appears_in_the_
 
     assert cluster["question"] == "Mail … klant …: wachtmuziek na 18 uur?"
     assert (cluster["kind"], cluster["count"], cluster["decidable"]) == ("article_misses_part", 1, True)
+
+
+@pytest.mark.asyncio
+async def test_a_kept_question_older_than_28_days_is_not_listed_even_in_a_30_day_window() -> None:
+    old = _kept_row(_kept_turn(), message_id=11, conversation_id=3)
+    db = _Db([], kept_rows=[old])
+
+    # The daily purge has not run yet: the row is 29 days old and still stored.
+    assert await knowledge_gap_clusters(db, org_id=7, days=30, now=_T0 + timedelta(days=29)) == []  # type: ignore[arg-type]
+    assert len(await knowledge_gap_clusters(db, org_id=7, days=30, now=_T0 + timedelta(days=27))) == 1  # type: ignore[arg-type]
+
+
+def test_a_product_that_masking_changes_is_not_kept() -> None:
+    turn = _kept_turn()
+    turn.signals["case"]["product"] = "Wolkcentrale 1234567"
+
+    assert report.kept_question(turn) is None
+    # The ordinary product is kept as is: masking leaves it unchanged.
+    kept = report.kept_question(_kept_turn())
+    assert kept is not None and kept[1]["case"]["product"] == "wolkcentrale"
 
 
 @pytest.mark.asyncio

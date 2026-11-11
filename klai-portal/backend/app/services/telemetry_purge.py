@@ -38,7 +38,7 @@ import structlog
 from sqlalchemy import text
 
 from app.core.database import cross_org_session
-from app.services.knowledge_gap_report import KEPT_QUESTION_DAYS
+from app.services.knowledge_gap_report import KEPT_QUESTION_DAYS, conversation_ref
 from app.services.widget_audit import prune_internal_cases
 
 logger = structlog.get_logger()
@@ -71,27 +71,57 @@ EXPIRED_RAW_TELEMETRY_GAPS_SQL = """
 """
 
 
-# A kept gap question (portal_gap_kept_questions) lives KEPT_QUESTION_DAYS, and
-# only while its org stays at telemetry full; an org without a readable level
-# counts as below full.
+# A kept gap question (portal_gap_kept_questions) lives KEPT_QUESTION_DAYS, only
+# while its org stays at telemetry full (an org without a readable level counts
+# as below full) and only while its group is undecided. The removals at the
+# source handle each case at once; this is the backstop that clears whatever
+# they missed within a day.
 _EXPIRED_KEPT_GAP_QUESTIONS_SQL = """
     DELETE FROM portal_gap_kept_questions k
     WHERE k.turn_at < :cutoff
        OR NOT EXISTS (
            SELECT 1 FROM portal_orgs po WHERE po.id = k.org_id AND po.telemetry_level = 'full'
        )
+       OR EXISTS (
+           SELECT 1 FROM portal_gap_proposals p
+            WHERE p.org_id = k.org_id AND p.cluster_key = k.cluster_key AND p.decision <> 'none'
+       )
+"""
+
+# Conversations marked test or preview that can still have kept rows: a kept
+# turn is at most KEPT_QUESTION_DAYS old, so its conversation's last message is too.
+_MARKED_CONVERSATIONS_SQL = """
+    SELECT wc.org_id, wc.id
+      FROM widget_conversations wc
+     WHERE (wc.is_test OR wc.is_preview)
+       AND wc.last_message_at >= :cutoff
+       AND EXISTS (SELECT 1 FROM portal_gap_kept_questions k WHERE k.org_id = wc.org_id)
 """
 
 
 async def purge_kept_gap_questions() -> int:
-    """Delete kept gap questions past their lifetime or of an org below full, in a transaction of its own."""
+    """Delete kept gap questions past their lifetime, of an org below full, of a decided group or of a
+    conversation marked test or preview, in a transaction of its own."""
+    cutoff = datetime.now(UTC) - timedelta(days=KEPT_QUESTION_DAYS)
     async with cross_org_session() as db:
-        result = await db.execute(
-            text(_EXPIRED_KEPT_GAP_QUESTIONS_SQL),
-            {"cutoff": datetime.now(UTC) - timedelta(days=KEPT_QUESTION_DAYS)},
-        )
+        result = await db.execute(text(_EXPIRED_KEPT_GAP_QUESTIONS_SQL), {"cutoff": cutoff})
+        purged = result.rowcount or 0  # type: ignore[attr-defined]
+        # The reference is a keyed hash computed in the app, so the marked
+        # conversations are hashed here, the same way the sweep did.
+        refs: dict[int, list[str | None]] = {}
+        for org_id, conversation_id in (await db.execute(text(_MARKED_CONVERSATIONS_SQL), {"cutoff": cutoff})).all():
+            refs.setdefault(org_id, []).append(conversation_ref(org_id, conversation_id))
+        for org_id, org_refs in refs.items():
+            result = await db.execute(
+                text(
+                    "DELETE FROM portal_gap_kept_questions "
+                    "WHERE org_id = :org_id AND conversation_ref = ANY(CAST(:refs AS varchar[]))"
+                ),
+                {"org_id": org_id, "refs": org_refs},
+            )
+            purged += result.rowcount or 0  # type: ignore[attr-defined]
         await db.commit()
-    return result.rowcount or 0  # type: ignore[attr-defined]
+    return purged
 
 
 async def _purge_once() -> dict[str, int]:

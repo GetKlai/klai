@@ -37,7 +37,7 @@ from app.core.profiles import PROFILE_RANK, Capability
 from app.models.answer_reviews import AnswerReview
 from app.services.gap_events import REVIEW_CALLER_CLIENT_ID, record_gap_event
 from app.services.hubspot_tickets import HubSpotTicketError, HubSpotTickets
-from app.services.knowledge_gap_report import conversation_ref
+from app.services.knowledge_gap_report import drop_kept_questions
 from app.services.secrets import portal_secrets
 from app.services.ticket_content import ReviewNote, TranscriptTurn, build_ticket_content, ticket_subject
 
@@ -179,15 +179,6 @@ UPDATE portal_retrieval_gaps
  WHERE conversation_id = :conversation_id
    AND org_id = :org_id
    AND resolved_by = 'test'
-"""
-
-# Only run when marking: a test conversation's gap questions are never kept,
-# also when it is marked after the retention sweep kept them. Unmarking does
-# not bring them back.
-_DROP_KEPT_GAP_QUESTIONS_SQL = """
-DELETE FROM portal_gap_kept_questions
- WHERE org_id = :org_id
-   AND conversation_ref = :conversation_ref
 """
 
 _MESSAGES_SQL = """
@@ -1174,10 +1165,9 @@ async def set_conversation_test(
             text(_RESOLVE_CONVERSATION_GAPS_SQL),
             {"conversation_id": conversation_id, "org_id": perms.org_id, "resolved_by_user_id": caller.id},
         )
-        await db.execute(
-            text(_DROP_KEPT_GAP_QUESTIONS_SQL),
-            {"org_id": perms.org_id, "conversation_ref": conversation_ref(perms.org_id, conversation_id)},
-        )
+        # A test conversation's gap questions are never kept, also when it is marked
+        # after the retention sweep kept them. Unmarking does not bring them back.
+        await drop_kept_questions(db, perms.org_id, conversation_id=conversation_id)
     else:
         await db.execute(
             text(_REOPEN_CONVERSATION_GAPS_SQL),

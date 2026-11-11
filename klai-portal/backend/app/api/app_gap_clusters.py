@@ -10,7 +10,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,10 +18,16 @@ from app.api.dependencies import require_capability
 from app.core.database import get_db
 from app.core.permissions import UserPermissions, get_caller, require_platform_unlocked
 from app.core.profiles import Capability
-from app.models.gap_proposals import PortalGapKeptQuestion, PortalGapProposal
+from app.models.gap_proposals import PortalGapProposal
 from app.models.portal import PortalOrg, PortalUser
 from app.services.gap_proposals import MAX_EXAMPLE_CHARS, PROPOSAL_MODEL, ProposalDraft, draft_proposal
-from app.services.knowledge_gap_report import GapView, filter_clusters, knowledge_gap_clusters, mask
+from app.services.knowledge_gap_report import (
+    GapView,
+    drop_kept_questions,
+    filter_clusters,
+    knowledge_gap_clusters,
+    mask,
+)
 
 router = APIRouter(
     prefix="/api/app",
@@ -419,11 +425,7 @@ async def decide_gap_cluster(
             raise _already_decided()
     # A question is kept past the message retention only for a gap that is
     # still open; a decided group is not, so its kept questions go with the decision.
-    await db.execute(
-        delete(PortalGapKeptQuestion).where(
-            PortalGapKeptQuestion.org_id == perms.org_id, PortalGapKeptQuestion.cluster_key == cluster_key
-        )
-    )
+    await drop_kept_questions(db, perms.org_id, cluster_key=cluster_key)
     await db.commit()
     return GapDecisionOut(
         cluster_key=cluster_key,

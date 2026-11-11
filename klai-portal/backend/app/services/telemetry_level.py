@@ -21,12 +21,12 @@ import json
 from typing import Literal
 
 import structlog
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.gap_proposals import PortalGapKeptQuestion
 from app.models.portal import PortalOrg
 from app.services.audit import log_event
+from app.services.knowledge_gap_report import drop_kept_questions
 
 logger = structlog.get_logger()
 
@@ -95,7 +95,7 @@ async def set_telemetry_level(
         from app.services.support_cases import purge_support_cases_for_org
 
         async with tenant_scoped_session(org_id) as purge_db:
-            await purge_db.execute(delete(PortalGapKeptQuestion).where(PortalGapKeptQuestion.org_id == org_id))
+            await drop_kept_questions(purge_db, org_id)
             await purge_db.commit()
             purged = await purge_support_cases_for_org(purge_db, org_id)
         logger.info("support_evidence_purged_on_downgrade", org_id=org_id, cases_removed=purged)

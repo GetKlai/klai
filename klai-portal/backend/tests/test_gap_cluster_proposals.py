@@ -78,12 +78,13 @@ class _Store:
                 row.attempts += 1
         return int(ok)
 
-    async def execute(self, stmt: Any) -> MagicMock:
+    async def execute(self, stmt: Any, params: dict | None = None) -> MagicMock:
         compiled = stmt.compile(dialect=postgresql.dialect())
         sql = str(compiled)
         result = MagicMock()
         if sql.startswith("DELETE FROM portal_gap_kept_questions"):
-            self.kept_deleted.append((self._param(compiled, "org_id"), self._param(compiled, "cluster_key")))
+            assert params is not None
+            self.kept_deleted.append((params["org_id"], params["cluster_key"]))
         elif sql.startswith("UPDATE portal_gap_proposals"):
             result.rowcount = self._update(compiled, sql)
         elif "FROM portal_gap_proposals LEFT OUTER JOIN portal_users" in sql:
