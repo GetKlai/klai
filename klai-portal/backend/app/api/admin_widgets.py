@@ -18,7 +18,7 @@ from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +29,7 @@ from app.models.conversation_tickets import WidgetTicketSettings
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.models.widgets import Widget, WidgetKbAccess, generate_widget_id
-from app.services.contact_routes import MAX_ROUTES, ContactRoute, checked_routes, routes_from_config
+from app.services.contact_routes import MAX_ROUTES, ContactRoute, SavedContactRoute, checked_routes, routes_from_config
 from app.services.events import emit_event
 from app.services.hubspot_custom_channel import (
     HubSpotAPIError,
@@ -147,12 +147,30 @@ class WidgetConfig(BaseModel):
     integrations: WidgetIntegrations = Field(default_factory=lambda: WidgetIntegrations())
 
 
+class SavedWidgetConfig(WidgetConfig):
+    """The config as the admin saves it: every route also reachable (SavedContactRoute).
+
+    The responses keep ``WidgetConfig``, so a stored route saved before that
+    rule still reads back instead of failing the list.
+    """
+
+    contact_routes: list[SavedContactRoute] = Field(default_factory=list, max_length=MAX_ROUTES)  # type: ignore[assignment]
+
+
+# A save request's config. A WidgetConfig built in code is checked as a save too,
+# so its routes meet the same rule as a request body's.
+SavedConfigInput = Annotated[
+    SavedWidgetConfig | None,
+    BeforeValidator(lambda value: value.model_dump() if isinstance(value, WidgetConfig) else value),
+]
+
+
 class CreateWidgetRequest(BaseModel):
     name: str = Field(min_length=3, max_length=128)
     description: str | None = None
     kb_ids: list[int] = Field(default_factory=list)
     rate_limit_rpm: int = Field(default=60, ge=10, le=600)
-    widget_config: WidgetConfig | None = None
+    widget_config: SavedConfigInput = None
     public_share_enabled: bool = False
     # REQ-2 (Finding B-2): explicit opt-in for open-world origin policy.
     # When False (default), allowed_origins is auto-filled with the tenant subdomain.
@@ -184,7 +202,7 @@ class UpdateWidgetRequest(BaseModel):
     description: str | None = None
     kb_ids: list[int] | None = None
     rate_limit_rpm: int | None = None
-    widget_config: WidgetConfig | None = None
+    widget_config: SavedConfigInput = None
     public_share_enabled: bool | None = None
     # REQ-2 (Finding B-2): allow toggling the allow_any_origin flag via update.
     allow_any_origin: bool | None = None

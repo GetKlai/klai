@@ -42,7 +42,9 @@ _PHONE_SHAPE = re.compile(r"[0-9 +()\-]+")
 _URL_UNSAFE = re.compile(r"[\s()<>\[\]\"'`\\]")
 # The name, the note and the link label are rendered into the visitor's reply
 # as Markdown: no link, no autolinked address or URL, no emphasis, one line.
-_TEXT_UNSAFE = re.compile(r"[\[\]<>*_`\\@\x00-\x1f]|://|www\.", re.IGNORECASE)
+_TEXT_UNSAFE = re.compile(r"[\[\]<>*_`\\@#~|\x00-\x1f]|://|www\.|^(?:[-+>]|\d+[.)])(?:\s|$)", re.IGNORECASE)
+# Markdown in an e-mail address's local part: emphasis, strikethrough, code.
+_EMAIL_UNSAFE = re.compile(r"[*~`]|(?:^|[^A-Za-z0-9])_|_(?:[^A-Za-z0-9]|$)")
 _ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # The same budget as the referral call (off_topic_referral.py): it runs on a
 # turn that already ends at a human, so it only delays a fixed reply.
@@ -132,10 +134,40 @@ class ContactRoute(BaseModel):
             raise ValueError("must be plain text on one line: no link, address, URL or Markdown characters")
         return value
 
+    @field_validator("email")
+    @classmethod
+    def _no_markdown_in_the_address(cls, value: str | None) -> str | None:
+        # The address is rendered into the reply as it is. first_last@ stays
+        # plain (an underscore inside a word is not emphasis), but *, ~, a
+        # backtick or an underscore at the edge of a word would format the text.
+        if value is not None and _EMAIL_UNSAFE.search(value.partition("@")[0]):
+            raise ValueError("email may not contain *, ~, a backtick, or an underscore at the start or end of a word")
+        return value
+
     @model_validator(mode="after")
     def _link_has_a_label(self) -> ContactRoute:
         if (self.link_url is None) != (self.link_label is None):
             raise ValueError("link_url and link_label go together")
+        return self
+
+
+class SavedContactRoute(ContactRoute):
+    """A route as the admin saves it: reachable as well as valid.
+
+    Only the save requests use it. Reading a stored row (and the response
+    built from it) uses ``ContactRoute``, so a route saved before this rule, or
+    a referral-only route the migration made, never takes a widget down.
+    """
+
+    @model_validator(mode="after")
+    def _reachable(self) -> SavedContactRoute:
+        # A route only reached through its referral text is the old off-topic
+        # setting of a widget without channels; it keeps referring.
+        if not (self.phone or self.email or self.booking_url or self.link_url or self.referral_text):
+            raise ValueError(
+                "a contact route needs a way to reach it: phone, email, booking_url or link_url "
+                "(or a referral_text, for a route that only refers subjects)"
+            )
         return self
 
 

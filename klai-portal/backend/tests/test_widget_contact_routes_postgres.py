@@ -20,7 +20,7 @@ from pathlib import Path
 import asyncpg
 import pytest
 
-from app.services.contact_routes import routes_from_config
+from app.services.contact_routes import SavedContactRoute, routes_from_config
 
 pytestmark = pytest.mark.postgres
 
@@ -52,6 +52,7 @@ _ROWS = {
     # Subjects without a reply never referred, so they may not start referring now.
     "subjects_only": {"off_topic_subjects": "prijzen", "contact_phone": "010 000 0000"},
     "bad_url": {"booking_url": "https://"},
+    "referral_only": {"off_topic_subjects": "prijzen", "off_topic_reply": "Bel ons even."},
 }
 
 
@@ -110,3 +111,14 @@ async def test_the_sql_only_adds_routes_keeps_every_old_key_and_is_idempotent(pg
     assert (route.name, route.booking_url, route.is_default) == ("Support", None, True)
     (legacy,) = routes_from_config(first["legacy"], org_id=1, widget_id="legacy")
     assert legacy.referral_text == _LONG_REPLY
+    # Subjects and a reply without any channel: the referral keeps running and the route can be saved again.
+    assert first["referral_only"]["contact_routes"] == [
+        {
+            "id": "support",
+            "name": "Support",
+            "do_not_answer": "prijzen",
+            "referral_text": "Bel ons even.",
+            "is_default": True,
+        }
+    ]
+    SavedContactRoute.model_validate(first["referral_only"]["contact_routes"][0])
