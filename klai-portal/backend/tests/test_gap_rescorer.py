@@ -593,3 +593,52 @@ async def test_due_support_reanalysis_runs_once_and_clears_only_the_request_it_s
     assert "SET support_reanalysis_requested_at = NULL" in clear_sql
     assert "support_reanalysis_requested_at = :requested_at" in clear_sql
     assert clear_params == {"org_id": 3, "requested_at": picked}
+
+
+@pytest.mark.asyncio
+async def test_rescore_never_closes_a_row_a_reviewer_or_the_judge_filed() -> None:
+    """A reviewer-filed open row stays open even when retrieval now scores above the threshold.
+
+    Only rows the chat path filed on its own (caller client "widget-chat",
+    a third-party MCP client, or none) may be closed by a retrieval score; a
+    row from the human review or the conversation judge is a verdict, not a
+    measurement. Both the selection and the closing update must say so, and a
+    NULL caller (internal chat) must still be closable.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.gap_rescorer import _open_gap_queries_stmt, rescore_open_gaps
+
+    def sql(stmt) -> tuple[str, str]:
+        compiled = stmt.compile(dialect=postgresql.dialect())
+        return str(compiled), str(compiled.params)
+
+    select_sql, select_params = sql(_open_gap_queries_stmt(1, None, datetime.now(tz=UTC) - timedelta(days=30)))
+    assert "caller_client_id IS NULL" in select_sql
+    assert "human-review" in select_params and "quality-judge" in select_params
+
+    row = MagicMock(query_text="what is klai?", gap_type="soft", language=None, telemetry_level="full")
+    found = MagicMock()
+    found.all.return_value = [row]
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[MagicMock(), found, MagicMock()])
+    response = MagicMock(is_success=True)
+    response.json.return_value = {"chunks": [{"reranker_score": 0.8, "score": 0.9}]}
+    with (
+        patch("app.services.gap_rescorer.settings") as mock_settings,
+        patch("app.services.gap_rescorer.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.knowledge_retrieve_url = "http://test-retrieve:8000"
+        mock_settings.internal_secret = "s"
+        mock_settings.retrieval_api_internal_secret = "s"
+        mock_settings.klai_gap_soft_threshold = 0.4
+        mock_settings.klai_gap_dense_threshold = 0.35
+        client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        client.post = AsyncMock(return_value=response)
+        await rescore_open_gaps(org_id=1, zitadel_org_id="z1", kb_slug=None, db=mock_db)
+
+    update_sql, update_params = sql(mock_db.execute.call_args_list[2].args[0])
+    assert "caller_client_id IS NULL" in update_sql
+    assert "human-review" in update_params and "quality-judge" in update_params
