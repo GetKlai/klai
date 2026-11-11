@@ -30,6 +30,7 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -72,18 +73,32 @@ _SETUP_SQL = [
     END;
     $$
     """,
-    f"CREATE TABLE {_SCHEMA}.portal_orgs (id integer PRIMARY KEY, widget_messages_retention_days integer)",
+    f"""CREATE TABLE {_SCHEMA}.portal_orgs (
+        id integer PRIMARY KEY, widget_messages_retention_days integer,
+        telemetry_level varchar(16) NOT NULL DEFAULT 'shadow')""",
     # Only the columns the retention sweep and the judge's selection read or
     # write.
     f"""CREATE TABLE {_SCHEMA}.widget_conversations (
         id bigint PRIMARY KEY, org_id integer NOT NULL, visitor_name text, visitor_email text,
         started_at timestamptz NOT NULL DEFAULT now(), last_message_at timestamptz NOT NULL DEFAULT now(),
-        outcome text, is_preview boolean NOT NULL DEFAULT false, is_test boolean NOT NULL DEFAULT false)""",
+        outcome text, is_preview boolean NOT NULL DEFAULT false, is_test boolean NOT NULL DEFAULT false,
+        loaded_origin varchar(200), first_user_query text, session_key text, ip_hash varchar(64))""",
     f"""CREATE TABLE {_SCHEMA}.widget_messages (
         id bigint PRIMARY KEY,
         conversation_id bigint NOT NULL REFERENCES {_SCHEMA}.widget_conversations(id) ON DELETE CASCADE,
         org_id integer NOT NULL, created_at timestamptz NOT NULL,
-        role text, content text, sources jsonb, rating text, sequence integer NOT NULL DEFAULT 0)""",
+        role text, content text, sources jsonb, rating text, sequence integer NOT NULL DEFAULT 0,
+        answer_signals jsonb)""",
+    # The DDL of migration c8e2f5a1d3b7, without the FK to portal_orgs.
+    f"""CREATE TABLE {_SCHEMA}.portal_gap_kept_questions (
+        id bigserial PRIMARY KEY, org_id integer NOT NULL, message_id bigint NOT NULL,
+        conversation_ref varchar(64) NOT NULL, cluster_key varchar(32) NOT NULL, question varchar(200) NOT NULL,
+        signals jsonb NOT NULL, turn_at timestamptz NOT NULL,
+        CONSTRAINT uq_gap_kept_questions_org_message UNIQUE (org_id, message_id))""",
+    f"GRANT USAGE ON SEQUENCE {_SCHEMA}.portal_gap_kept_questions_id_seq TO {_ROLE}",
+    f"""CREATE TABLE {_SCHEMA}.portal_gap_proposals (
+        id serial PRIMARY KEY, org_id integer NOT NULL, cluster_key varchar NOT NULL,
+        decision varchar(16) NOT NULL DEFAULT 'none')""",
     f"""CREATE TABLE {_SCHEMA}.conversation_quality_judgments (
         id bigserial PRIMARY KEY, org_id integer NOT NULL,
         conversation_id bigint UNIQUE REFERENCES {_SCHEMA}.widget_conversations(id) ON DELETE SET NULL,
@@ -94,7 +109,13 @@ _SETUP_SQL = [
     f"GRANT SELECT ON {_SCHEMA}.portal_orgs, {_SCHEMA}.widget_handoff_sessions TO {_ROLE}",
     f"GRANT USAGE ON SEQUENCE {_SCHEMA}.conversation_quality_judgments_id_seq TO {_ROLE}",
 ]
-for _table in ("widget_conversations", "widget_messages", "conversation_quality_judgments"):
+for _table in (
+    "widget_conversations",
+    "widget_messages",
+    "conversation_quality_judgments",
+    "portal_gap_kept_questions",
+    "portal_gap_proposals",
+):
     _SETUP_SQL += [
         f"ALTER TABLE {_SCHEMA}.{_table} ENABLE ROW LEVEL SECURITY",
         f"ALTER TABLE {_SCHEMA}.{_table} FORCE ROW LEVEL SECURITY",
@@ -297,3 +318,170 @@ async def test_judge_skips_a_conversation_close_to_its_retention_cutoff(admin_en
             (await conn.execute(text("SELECT conversation_id FROM conversation_quality_judgments"))).scalars()
         )
     assert judged_ids == {10, 20, 40}
+
+
+# A refusal with nothing found, eight days old: past the 7-day message
+# retention, inside the 28 days a gap question is kept. Invented text only.
+_GAP_SIGNALS = json.dumps(
+    {
+        "decision": "refusal",
+        "gap_type": "hard",
+        "language": "nl",
+        "case": {"product": "Wolkcentrale", "problem": "wachtmuziek na sluitingstijd"},
+        "search": {"query": "wachtmuziek bel 0612345678", "variants": ["muziek in de wacht"], "found": []},
+        "selection": {"open": []},
+        "reply_text": "Dat staat niet in de kennisbank.",
+    }
+)
+
+
+async def _seed_gap_conversation(
+    conn: object, conversation_id: int, org_id: int, *, is_test: bool = False, days_old: int = 8
+) -> None:
+    await conn.execute(  # type: ignore[attr-defined]
+        text(
+            "INSERT INTO widget_conversations (id, org_id, is_test, loaded_origin, first_user_query, session_key, "
+            "ip_hash, visitor_name, visitor_email) VALUES (:id, :org, :is_test, 'https://shop.example.com', "
+            "'wachtmuziek?', 'sessie-fictief', 'iphash-fictief', 'Piet', 'piet@example.com')"
+        ),
+        {"id": conversation_id, "org": org_id, "is_test": is_test},
+    )
+    await conn.execute(  # type: ignore[attr-defined]
+        text(
+            "INSERT INTO widget_messages (id, conversation_id, org_id, created_at, role, content, sequence, "
+            "answer_signals) VALUES "
+            "(:id * 10 + 1, :id, :org, now() - make_interval(days => :days), 'user', "
+            "'Mail piet@example.com, klant 12345678: wachtmuziek na 18 uur?', 1, NULL), "
+            "(:id * 10 + 2, :id, :org, now() - make_interval(days => :days), 'assistant', "
+            "'Dat staat niet in de kennisbank.', 2, CAST(:signals AS jsonb))"
+        ),
+        {"id": conversation_id, "org": org_id, "days": days_old, "signals": _GAP_SIGNALS},
+    )
+
+
+async def _kept(admin: AsyncEngine) -> list[dict]:
+    async with admin.connect() as conn:
+        rows = await conn.execute(text("SELECT * FROM portal_gap_kept_questions ORDER BY org_id, message_id"))
+        return [dict(r._mapping) for r in rows]
+
+
+async def test_at_full_an_expired_gap_turn_keeps_only_its_masked_question_while_its_messages_are_deleted(
+    admin_engine: AsyncEngine,
+) -> None:
+    from app.services.knowledge_gap_report import GapTurn, cluster_key, conversation_ref
+    from app.services.widget_messages_retention import _retention_run_once
+
+    async with admin_engine.begin() as conn:
+        await conn.execute(text("UPDATE portal_orgs SET telemetry_level = 'full' WHERE id = 1"))
+        await _seed_gap_conversation(conn, 30, 1)
+        await _seed_gap_conversation(conn, 40, 1, is_test=True)
+        # Older than the 28 days a question may be kept.
+        await _seed_gap_conversation(conn, 50, 1, days_old=29)
+
+    await _retention_run_once()
+
+    kept = await _kept(admin_engine)
+    assert [(k["org_id"], k["message_id"]) for k in kept] == [(1, 302)]
+    row = kept[0]
+    assert set(row) == {
+        "id",
+        "org_id",
+        "message_id",
+        "conversation_ref",
+        "cluster_key",
+        "question",
+        "signals",
+        "turn_at",
+    }
+    assert row["question"] == "Mail … klant …: wachtmuziek na 18 uur?"
+    assert row["conversation_ref"] == conversation_ref(1, 30)
+    assert row["cluster_key"] == cluster_key(GapTurn("widget", json.loads(_GAP_SIGNALS), row["turn_at"]))
+    stored = json.dumps(row["signals"]) + row["question"] + row["conversation_ref"]
+    for gone in ("piet@example.com", "12345678", "0612345678", "Piet", "sessie-fictief", "iphash", "kennisbank"):
+        assert gone not in stored
+    assert row["signals"]["search"] == {"query": "", "found": []}
+    # The messages are still deleted after seven days, exactly as before.
+    assert not {301, 302, 401, 402, 501, 502} & set((await _state(admin_engine))["messages"])
+
+
+async def test_below_full_nothing_is_kept(admin_engine: AsyncEngine) -> None:
+    from app.services.widget_messages_retention import _retention_run_once
+
+    async with admin_engine.begin() as conn:
+        await conn.execute(text("UPDATE portal_orgs SET telemetry_level = 'off' WHERE id = 2"))
+        await _seed_gap_conversation(conn, 30, 1)  # org 1 stays at the default, shadow
+        await _seed_gap_conversation(conn, 60, 2)
+
+    result = await _retention_run_once()
+
+    assert await _kept(admin_engine) == []
+    assert result["deleted_count"] == 6
+
+
+async def test_a_turn_of_a_decided_group_is_not_kept(admin_engine: AsyncEngine) -> None:
+    from app.services.knowledge_gap_report import GapTurn, cluster_key
+    from app.services.widget_messages_retention import _retention_run_once
+
+    key = cluster_key(GapTurn("widget", json.loads(_GAP_SIGNALS), datetime.now(UTC)))
+    async with admin_engine.begin() as conn:
+        await conn.execute(text("UPDATE portal_orgs SET telemetry_level = 'full' WHERE id = 1"))
+        await conn.execute(
+            text("INSERT INTO portal_gap_proposals (org_id, cluster_key, decision) VALUES (1, :key, 'rejected')"),
+            {"key": key},
+        )
+        await _seed_gap_conversation(conn, 30, 1)
+
+    await _retention_run_once()
+
+    assert await _kept(admin_engine) == []
+
+
+async def test_a_failing_keep_never_blocks_the_message_purge(admin_engine: AsyncEngine) -> None:
+    from app.services.widget_messages_retention import _retention_run_once
+
+    async with admin_engine.begin() as conn:
+        await conn.execute(text("UPDATE portal_orgs SET telemetry_level = 'full' WHERE id = 1"))
+        await _seed_gap_conversation(conn, 30, 1)
+        await conn.execute(
+            text(
+                "CREATE FUNCTION fail_keep() RETURNS trigger LANGUAGE plpgsql AS "
+                "$$ BEGIN RAISE EXCEPTION 'simulated keep failure'; END; $$"
+            )
+        )
+        await conn.execute(
+            text("CREATE TRIGGER fail_keep BEFORE INSERT ON portal_gap_kept_questions EXECUTE FUNCTION fail_keep()")
+        )
+
+    with structlog.testing.capture_logs() as captured:
+        result = await _retention_run_once()
+
+    assert result["deleted_count"] == 4
+    assert await _kept(admin_engine) == []
+    failures = [e for e in captured if e.get("event") == "widget_messages_retention_keep_failed"]
+    assert [e["org_id"] for e in failures] == [1]
+    assert all("piet" not in json.dumps(e, default=str) for e in captured)
+
+
+async def test_the_daily_purge_drops_kept_questions_past_28_days_and_of_orgs_below_full(
+    admin_engine: AsyncEngine,
+) -> None:
+    from app.services.telemetry_purge import purge_kept_gap_questions
+
+    async with admin_engine.begin() as conn:
+        await conn.execute(text("UPDATE portal_orgs SET telemetry_level = 'full' WHERE id = 1"))
+        await conn.execute(
+            text(
+                "INSERT INTO portal_gap_kept_questions "
+                "(org_id, message_id, conversation_ref, cluster_key, question, signals, turn_at) VALUES "
+                "(1, 1, 'r', 'tkey', 'vraag een', '{}', now() - interval '27 days'), "
+                "(1, 2, 'r', 'tkey', 'vraag twee', '{}', now() - interval '29 days'), "
+                "(2, 3, 'r', 'tkey', 'vraag drie', '{}', now() - interval '1 day')"
+            )
+        )
+
+    with structlog.testing.capture_logs() as captured:
+        purged = await purge_kept_gap_questions()
+
+    assert purged == 2
+    assert [k["message_id"] for k in await _kept(admin_engine)] == [1]
+    assert "vraag" not in json.dumps(captured, default=str)

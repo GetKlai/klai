@@ -234,6 +234,7 @@ def _row(
     signals: dict, *, origin: str | None = "https://shop.example.com", first: str = "Vraag", visitor: str | None = None
 ) -> SimpleNamespace:
     return SimpleNamespace(
+        id=None,
         answer_signals=signals,
         created_at=_T0,
         conversation_id=None,
@@ -247,10 +248,15 @@ class _Db:
     """Answers the widget query with ``widget_rows``, the org's level with ``level``, the rest with nothing."""
 
     def __init__(
-        self, widget_rows: list[SimpleNamespace], level: str = "full", filed_rows: list[SimpleNamespace] | None = None
+        self,
+        widget_rows: list[SimpleNamespace],
+        level: str = "full",
+        filed_rows: list[SimpleNamespace] | None = None,
+        kept_rows: list[SimpleNamespace] | None = None,
     ) -> None:
         self.widget_rows = widget_rows
         self.filed_rows = filed_rows or []
+        self.kept_rows = kept_rows or []
         self.level = level
         self.compiled: list[Any] = []
 
@@ -264,6 +270,8 @@ class _Db:
             result.all.return_value = self.widget_rows
         elif "FROM portal_retrieval_gaps" in sql:
             result.all.return_value = self.filed_rows
+        elif "FROM portal_gap_kept_questions" in sql:
+            result.all.return_value = self.kept_rows
         else:
             result.all.return_value = []
         return result
@@ -292,11 +300,14 @@ async def test_every_read_is_bound_to_the_one_org_and_leaves_previews_and_tests_
 
     await load_gap_turns(db, org_id=7, since=_T0)  # type: ignore[arg-type]
 
-    widget_sql, internal_sql = (str(c) for c in db.compiled)
+    widget_sql, kept_sql, internal_sql = (str(c) for c in db.compiled)
     assert "widget_messages.org_id = " in widget_sql
     assert "widget_conversations.org_id = " in widget_sql
     assert "widget_conversations.is_preview IS false" in widget_sql
     assert "widget_conversations.is_test IS false" in widget_sql
+    # Kept questions are read only while the org is at full, whatever is still stored.
+    assert "portal_gap_kept_questions.org_id = " in kept_sql
+    assert "portal_orgs.telemetry_level = " in kept_sql
     assert "internal_chat_turns.org_id = " in internal_sql
     for compiled in db.compiled:
         assert {v for k, v in compiled.params.items() if k.startswith("org_id")} == {7}
@@ -678,3 +689,86 @@ def test_with_equal_conversations_the_clearer_gap_comes_first_then_the_newest() 
         ("weak_match", "doorschakelen"),
         ("contact_wish", "terugbellen"),
     ]
+
+
+def _kept_turn() -> GapTurn:
+    signals = _signals(
+        decision="partial_answer",
+        problem="wachtmuziek na sluitingstijd",
+        query="wachtmuziek nummer 0612345678 na sluitingstijd",
+        open_parts=["na 18 uur, bel 0201234567"],
+    )
+    # Fields the list never reads: a search variant, a passage text, the reply.
+    signals["search"]["variants"] = ["wachtmuziek voor anna.fictief@example.com"]
+    signals["search"]["found"][0]["text"] = "Passage over wachtmuziek in het belmenu."
+    signals["reply"] = "Het antwoord van de assistent."
+    return GapTurn("widget", signals, _T0, "Mail anna.fictief@example.com, klant 12345678: wachtmuziek na 18 uur?", 3)
+
+
+def test_a_kept_turn_holds_only_the_masked_question_and_the_grouping_signals_and_lands_in_its_group() -> None:
+    turn = _kept_turn()
+
+    kept = report.kept_question(turn)
+
+    assert kept is not None
+    question, signals = kept
+    assert question == "Mail … klant …: wachtmuziek na 18 uur?"
+    assert signals.keys() == {"decision", "gap_type", "language", "case", "search", "selection"}
+    assert signals["search"] == {
+        "query": "",
+        "found": [{"title": "Wachtmuziek instellen", "url": "https://help.example.com/wachtmuziek", "score": 0.82}],
+    }
+    assert signals["selection"] == {"open": ["na 18 uur, bel …"]}
+    stored = repr(signals) + question
+    for gone in ("anna.fictief@example.com", "12345678", "0612345678", "0201234567", "Passage", "assistent"):
+        assert gone not in stored
+    again = GapTurn("widget", signals, _T0, question)
+    assert cluster_key(again) == cluster_key(turn)
+    live, restored = _only(build_clusters([turn], {})), _only(build_clusters([again], {}))
+    for field in ("cluster_key", "topic", "kind", "product", "question", "open_parts", "article", "decidable"):
+        assert restored[field] == live[field]
+
+
+def _kept_row(turn: GapTurn, *, message_id: int, conversation_id: int, org_id: int = 7) -> SimpleNamespace:
+    kept = report.kept_question(turn)
+    assert kept is not None
+    return SimpleNamespace(
+        message_id=message_id,
+        signals=kept[1],
+        turn_at=turn.created_at,
+        question=kept[0],
+        conversation_ref=report.conversation_ref(org_id, conversation_id),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_gap_turn_older_than_the_message_retention_still_appears_in_the_list_with_its_masked_question() -> None:
+    # Its messages are gone: only the kept row is left.
+    db = _Db([], kept_rows=[_kept_row(_kept_turn(), message_id=11, conversation_id=3)])
+
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=28, now=_T0 + timedelta(days=20)))  # type: ignore[arg-type]
+
+    assert cluster["question"] == "Mail … klant …: wachtmuziek na 18 uur?"
+    assert (cluster["kind"], cluster["count"], cluster["decidable"]) == ("article_misses_part", 1, True)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_live_and_kept_on_the_boundary_counts_once_and_its_conversation_once() -> None:
+    turn = _kept_turn()
+    live = _row(turn.signals, visitor=turn.visitor_text)
+    live.id, live.conversation_id = 11, 3
+    later = _row(turn.signals, visitor="wachtmuziek na 18 uur?")
+    later.id, later.conversation_id = 12, 3
+    # The sweep committed between the two reads, so message 11 is live in the first and kept in the
+    # second; message 10 of the same conversation was kept a day earlier.
+    db = _Db(
+        [live, later],
+        kept_rows=[
+            _kept_row(turn, message_id=11, conversation_id=3),
+            _kept_row(turn, message_id=10, conversation_id=3),
+        ],
+    )
+
+    cluster = _only(await knowledge_gap_clusters(db, org_id=7, days=28, now=_T0))  # type: ignore[arg-type]
+
+    assert (cluster["widget_count"], cluster["count"]) == (3, 1)

@@ -30,6 +30,7 @@ CATEGORY_D_MODELS: frozenset[str] = frozenset(
         "PortalUserKBAccess",
         "PortalUserProduct",
         "PortalRetrievalGap",
+        "PortalGapKeptQuestion",
         "PortalSupportCase",
         "PortalTaxonomyNode",
         "PortalTaxonomyProposal",
@@ -70,6 +71,10 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         # Only called by knowledge_gap_clusters on the caller's tenant-scoped session
         # (get_caller dependency); its SELECT also bounds by an explicit org_id.
         "load_filed_gaps",
+        # Same single caller (knowledge_gap_clusters): the gap-cluster routes and the KB
+        # stats route under get_caller, and scripts/knowledge_gap_report.py inside
+        # tenant_scoped_session(org). Its kept-question SELECT also bounds by org_id.
+        "load_gap_turns",
         "_prepare_evidence",
         "_delete_case_findings",
         "_case_findings_count",
@@ -402,6 +407,7 @@ def test_category_d_models_match_rls_guard_constant():
         "portal_user_kb_access",
         "portal_user_products",
         "portal_retrieval_gaps",
+        "portal_gap_kept_questions",
         "portal_taxonomy_nodes",
         "portal_taxonomy_proposals",
         "vexa_meetings",

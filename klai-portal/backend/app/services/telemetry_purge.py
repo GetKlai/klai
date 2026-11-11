@@ -14,6 +14,10 @@ cases older than 30 days:
 4. ``internal_chat_cases``           — the case and kept passages an internal
                                         conversation carries to its next turn,
                                         30 days (widget_audit.INTERNAL_CASE_DAYS)
+5. ``portal_gap_kept_questions``     — a widget gap question kept past the
+                                        message retention: 28 days, and only
+                                        while the org is at telemetry full
+                                        (knowledge_gap_report.KEPT_QUESTION_DAYS)
 
 The job is scheduled via ``asyncio.create_task`` from the FastAPI
 lifespan, mirroring ``recording_cleanup_loop`` (SPEC-GDPR-002-R5). It
@@ -34,6 +38,7 @@ import structlog
 from sqlalchemy import text
 
 from app.core.database import cross_org_session
+from app.services.knowledge_gap_report import KEPT_QUESTION_DAYS
 from app.services.widget_audit import prune_internal_cases
 
 logger = structlog.get_logger()
@@ -66,10 +71,33 @@ EXPIRED_RAW_TELEMETRY_GAPS_SQL = """
 """
 
 
+# A kept gap question (portal_gap_kept_questions) lives KEPT_QUESTION_DAYS, and
+# only while its org stays at telemetry full; an org without a readable level
+# counts as below full.
+_EXPIRED_KEPT_GAP_QUESTIONS_SQL = """
+    DELETE FROM portal_gap_kept_questions k
+    WHERE k.turn_at < :cutoff
+       OR NOT EXISTS (
+           SELECT 1 FROM portal_orgs po WHERE po.id = k.org_id AND po.telemetry_level = 'full'
+       )
+"""
+
+
+async def purge_kept_gap_questions() -> int:
+    """Delete kept gap questions past their lifetime or of an org below full, in a transaction of its own."""
+    async with cross_org_session() as db:
+        result = await db.execute(
+            text(_EXPIRED_KEPT_GAP_QUESTIONS_SQL),
+            {"cutoff": datetime.now(UTC) - timedelta(days=KEPT_QUESTION_DAYS)},
+        )
+        await db.commit()
+    return result.rowcount or 0  # type: ignore[attr-defined]
+
+
 async def _purge_once() -> dict[str, int]:
     """Run the DELETEs in one pass and return per-store counts."""
     cutoff = datetime.now(UTC) - timedelta(days=RETENTION_DAYS)
-    counts: dict[str, int] = {"query_shadow": 0, "retrieval_gaps": 0, "internal_chat_cases": 0}
+    counts: dict[str, int] = {"query_shadow": 0, "retrieval_gaps": 0, "internal_chat_cases": 0, "kept_gap_questions": 0}
 
     async with cross_org_session() as db:
         # 1. telemetry.query_shadow — fully ephemeral, every row > 7d.
@@ -125,12 +153,19 @@ async def _purge_once() -> dict[str, int]:
     except Exception:
         logger.warning("telemetry_purge_internal_chat_cases_failed", exc_info=True)
 
+    # 5. portal_gap_kept_questions, also in its own transaction.
+    try:
+        counts["kept_gap_questions"] = await purge_kept_gap_questions()
+    except Exception:
+        logger.warning("telemetry_purge_kept_gap_questions_failed", exc_info=True)
+
     logger.info(
         "telemetry_purge_complete",
         cutoff=cutoff.isoformat(),
         purged_query_shadow=counts["query_shadow"],
         purged_retrieval_gaps=counts["retrieval_gaps"],
         purged_internal_chat_cases=counts["internal_chat_cases"],
+        purged_kept_gap_questions=counts["kept_gap_questions"],
     )
     return counts
 
