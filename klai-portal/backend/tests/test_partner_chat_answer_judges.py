@@ -854,7 +854,13 @@ async def test_an_uncited_reply_from_chosen_passages_keeps_the_check_on_the_path
 # ─── Subjects this widget does not answer ───────────────────────────────
 
 
-OFF_TOPIC_REPLY = "Deze assistent helpt bij het gebruik van de dienst, niet bij prijzen of offertes."
+# Longer than a note may be and with a link, as the one old off_topic_reply in use is.
+OFF_TOPIC_REPLY = (
+    "Deze assistent helpt bij het gebruik van de dienst, niet bij prijzen of offertes. Voor een offerte, een "
+    "prijsafspraak of een vraag over je contract plan je een gesprek met een collega via "
+    "[onze afsprakenpagina](https://book.example.com/support), of mail naar offerte@example.com, dan nemen we "
+    "binnen een werkdag contact met je op."
+)
 BOOKING_URL = "https://book.example.com/support"
 _BOOKING = {"appointment": True, "booking_url": BOOKING_URL}
 
@@ -885,7 +891,13 @@ async def _off_topic_turn(
     # The live widget's settings as the migration turns them into one route.
     _with_routes(
         monkeypatch,
-        {"id": "support", "name": "Support", "booking_url": BOOKING_URL, "do_not_answer": subjects, "note": reply},
+        {
+            "id": "support",
+            "name": "Support",
+            "booking_url": BOOKING_URL,
+            "do_not_answer": subjects,
+            "referral_text": reply,
+        },
     )
     return await _route_turn(
         monkeypatch,
@@ -948,7 +960,8 @@ async def test_a_request_for_a_person_on_an_excluded_subject_gets_the_contact_re
         question="Kunnen we een call inplannen met jullie techniek over een CRM-koppeling?",
     )
 
-    assert text == contact_reply("nl", RouteChannels(name="Support", booking_url=BOOKING_URL, note=OFF_TOPIC_REPLY))
+    # The tenant's referral text is for the referral only; the contact reply reads as before.
+    assert text == contact_reply("nl")
     assert litellm.answer_requests == []
     assert extras["escalation"] == [_BOOKING]
 

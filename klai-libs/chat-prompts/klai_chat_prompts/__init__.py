@@ -527,6 +527,8 @@ class RouteChannels:
     link_url: str | None = None
     link_label: str | None = None
     note: str | None = None
+    # The tenant's own referral, used verbatim when the subject cannot be named.
+    referral_text: str | None = None
 
 
 def _route_reply(
@@ -535,8 +537,6 @@ def _route_reply(
     language: object,
     route: RouteChannels | None,
     others: Sequence[RouteChannels],
-    *,
-    note: bool = True,
 ) -> str:
     """What happened, the route's name, the offer, the channels and note, then the other routes by name.
 
@@ -551,7 +551,7 @@ def _route_reply(
     parts.extend(offer)
     if route is not None:
         parts.extend(_channel_sentences(route, language))
-        if note and route.note:
+        if route.note:
             parts.append(route.note)
     if listed := [f"{other.name}: {channel}" for other in others if (channel := _first_channel(other, language))]:
         parts.append(fixed_text("contact_others", language).format(routes="; ".join(listed)))
@@ -666,18 +666,19 @@ def referral_reply(
     """The reply to a subject the widget does not answer, sent to ``route``.
 
     With a subject it names what the visitor asked about. Without one the
-    route's own note stands as the referral, as the tenant's fixed sentence did
-    before routes existed, and a route without a note gets a sentence that
-    names no subject. The note is that fallback here, so it never follows a
-    referral that names the subject.
+    route's ``referral_text`` is the whole reply, exactly as the tenant's
+    ``off_topic_reply`` was before routes existed; a route without one gets a
+    sentence that names no subject, with the route's channels.
     """
+    if not subject and route.referral_text:
+        return route.referral_text
     booking = [fixed_text("referral_booking", language)] if route.booking_url else []
-    if subject:
-        status = [fixed_text("referral_subject", language).format(subject=subject)]
-        return _route_reply(status, booking, language, route, others, note=False)
-    if route.note:
-        return _route_reply([route.note], [], language, route, others, note=False)
-    return _route_reply([fixed_text("referral_generic", language)], booking, language, route, others)
+    status = (
+        fixed_text("referral_subject", language).format(subject=subject)
+        if subject
+        else fixed_text("referral_generic", language)
+    )
+    return _route_reply([status], booking, language, route, others)
 
 
 def appointment_offer_sentence(language: object) -> str:

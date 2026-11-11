@@ -86,6 +86,76 @@ def test_the_route_list_needs_unique_ids_one_default_and_at_most_six(routes):
         WidgetConfig(contact_routes=routes)
 
 
+def test_the_referral_text_is_free_text_up_to_the_old_limit():
+    text = "Voor prijzen plan je [een gesprek](https://book.example.com/a) of mail info@example.com."
+    assert ContactRoute.model_validate(_route(referral_text=text)).referral_text == text
+    with pytest.raises(ValidationError):
+        ContactRoute.model_validate(_route(referral_text="x" * 501))
+
+
+def test_reading_stored_routes_drops_bad_values_skips_unusable_routes_and_logs_only_field_names():
+    """A legacy value the old code never checked may not 500 the chat, the widget config or the admin list."""
+    from structlog.testing import capture_logs
+
+    stored = {
+        "contact_routes": [
+            {"id": "a", "name": "Support", "booking_url": "https://", "email": "geen adres", "phone": "0800-HELP"},
+            {"id": "a", "name": "Facturen", "link_url": "https://help.example.com/f", "is_default": True},
+            {"id": "c", "name": "[Bel](https://evil.example.com)"},
+            "geen route",
+            {"id": "d", "name": "Verkoop", "is_default": True},
+        ]
+    }
+
+    with capture_logs() as logs:
+        routes = contact_routes.routes_from_config(stored, org_id=7, widget_id="wgt_acme")
+
+    assert [route.name for route in routes] == ["Support", "Facturen", "Verkoop"]
+    assert (routes[0].booking_url, routes[0].email, routes[0].phone) == (None, None, None)
+    assert (routes[1].link_url, routes[1].link_label) == (None, None)
+    assert routes[1].id != "a"
+    assert [route.is_default for route in routes] == [False, True, False]
+    fields = sorted(log["field"] for log in logs if log["event"] == "contact_route_repaired")
+    assert fields == sorted(
+        ["booking_url", "email", "phone", "link_label", "link_url", "id", "name", "route", "is_default"]
+    )
+    assert all(set(log) >= {"org_id", "widget_id"} for log in logs if log["event"] == "contact_route_repaired")
+    assert "geen adres" not in str(logs) and "evil" not in str(logs)
+
+
+def test_the_admin_list_reads_a_widget_with_a_bad_stored_route():
+    from unittest.mock import MagicMock
+
+    from app.api.admin_widgets import _widget_to_response
+
+    widget = MagicMock(widget_config={"contact_routes": [{"name": "Support", "booking_url": "https://"}]})
+    widget.public_share_enabled = False
+    widget.rate_limit_rpm = 60
+    widget.last_used_at = None
+    widget.created_at, widget.created_by = "2026-01-01", "user-1"
+    widget.name, widget.description, widget.id, widget.widget_id = "Bot", None, "uuid-1", "wgt_acme"
+
+    (route,) = _widget_to_response(widget, kb_access_count=0).widget_config.contact_routes
+    assert (route.name, route.booking_url, route.is_default) == ("Support", None, True)
+
+
+def test_a_save_keeps_the_old_contact_keys_so_the_previous_release_still_works_after_a_rollback():
+    from app.api.admin_widgets import WidgetConfig, _keeping_legacy_contact_keys
+
+    stored = {
+        "booking_url": "https://book.example.com/old",
+        "off_topic_subjects": "prijzen",
+        "integrations": {"appointments": {"enabled": True, "booking_url": "https://book.example.com/embed"}},
+    }
+    saved = WidgetConfig(contact_routes=[{"name": "Support", "is_default": True}]).model_dump()
+
+    kept = _keeping_legacy_contact_keys(stored, saved)
+
+    assert (kept["booking_url"], kept["off_topic_subjects"]) == ("https://book.example.com/old", "prijzen")
+    assert kept["integrations"]["appointments"] == {"enabled": False, "booking_url": "https://book.example.com/embed"}
+    assert kept["contact_routes"] == saved["contact_routes"]
+
+
 def test_an_empty_route_list_is_a_widget_without_routes():
     assert WidgetConfig().contact_routes == []
 

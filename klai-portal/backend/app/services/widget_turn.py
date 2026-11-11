@@ -313,7 +313,7 @@ async def _off_topic_reply(
     # the visitor gets a referral to the contact route those subjects belong
     # to and no answer model sees the articles, so a price cannot slip in from
     # one. The referral names the visitor's subject in a sentence of ours, or
-    # falls back to the route's own note (off_topic_referral.py); that call
+    # falls back to the route's own referral_text (off_topic_referral.py); that call
     # waits up to 2.5 s, on these turns only. A request for a person wins from
     # it: "kan ik jullie ook gewoon bellen" read as such a subject on the
     # meetlat, and the visitor asked how to reach a person, not about it.

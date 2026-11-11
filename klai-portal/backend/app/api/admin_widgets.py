@@ -29,7 +29,7 @@ from app.models.conversation_tickets import WidgetTicketSettings
 from app.models.knowledge_bases import PortalKnowledgeBase
 from app.models.portal import PortalOrg, PortalUser
 from app.models.widgets import Widget, WidgetKbAccess, generate_widget_id
-from app.services.contact_routes import MAX_ROUTES, ContactRoute, checked_routes
+from app.services.contact_routes import MAX_ROUTES, ContactRoute, checked_routes, routes_from_config
 from app.services.events import emit_event
 from app.services.hubspot_custom_channel import (
     HubSpotAPIError,
@@ -228,7 +228,7 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
             # up to 6 stored entries. Truncate on read instead of letting the
             # model's max_length=3 raise here and 500 the list/detail response.
             conversation_starters=(config.get("conversation_starters") or [])[:3],
-            contact_routes=config.get("contact_routes") or [],
+            contact_routes=list(routes_from_config(config, org_id=widget.org_id, widget_id=widget.widget_id)),
             hide_disclaimer=config.get("hide_disclaimer", False),
             ai_disclosure_override=config.get("ai_disclosure_override"),
             footer_text=config.get("footer_text"),
@@ -257,6 +257,22 @@ def _widget_to_response(widget: Widget, kb_access_count: int) -> WidgetResponse:
         created_at=str(widget.created_at),
         created_by=widget.created_by,
     )
+
+
+# The contact settings contact_routes replaced. This release still carries them
+# on every stored row, so the previous image keeps working after a rollback; the
+# release that drops them from the data removes this as well.
+_LEGACY_CONTACT_KEYS = ("booking_url", "contact_email", "contact_phone", "off_topic_subjects", "off_topic_reply")
+
+
+def _keeping_legacy_contact_keys(stored: dict, saved: dict) -> dict:
+    """``saved`` with the old contact keys the stored row still has, which WidgetConfig no longer knows."""
+    kept = {**saved, **{key: stored[key] for key in _LEGACY_CONTACT_KEYS if key in stored}}
+    old_booking = ((stored.get("integrations") or {}).get("appointments") or {}).get("booking_url")
+    if old_booking is not None:
+        appointments = {**kept["integrations"]["appointments"], "booking_url": old_booking}
+        kept["integrations"] = {**kept["integrations"], "appointments": appointments}
+    return kept
 
 
 def _now_iso() -> str:
@@ -981,7 +997,7 @@ async def update_widget(
     if body.rate_limit_rpm is not None:
         widget.rate_limit_rpm = body.rate_limit_rpm
     if body.widget_config is not None:
-        widget.widget_config = body.widget_config.model_dump()
+        widget.widget_config = _keeping_legacy_contact_keys(widget.widget_config or {}, body.widget_config.model_dump())
     if body.public_share_enabled is not None:
         widget.public_share_enabled = body.public_share_enabled
     # REQ-2 (Finding B-2): allow toggling the allow_any_origin flag via PATCH.

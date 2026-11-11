@@ -125,7 +125,7 @@ def _validated_http_url(url: object) -> str:
     return url
 
 
-def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
+def _widget_booking_url(widget_config_data: dict[str, Any], *, org_id: int, widget_id: str) -> str:
     """The default contact route's booking URL, or ``""`` to hide the button.
 
     A chat reply carries the booking URL of the route it names
@@ -134,7 +134,7 @@ def _widget_booking_url(widget_config_data: dict[str, Any]) -> str:
     ``href`` or an iframe ``src``, so it passes the same scheme gate as before
     (``_validated_http_url``) on top of the admin validation.
     """
-    route = default_route(routes_from_config(widget_config_data))
+    route = default_route(routes_from_config(widget_config_data, org_id=org_id, widget_id=widget_id))
     return _validated_http_url(route.booking_url if route else None)
 
 
@@ -150,11 +150,11 @@ def _widget_conversation_starters(widget_config_data: dict[str, Any]) -> list[st
     return starters[:3] if isinstance(starters, list) else []
 
 
-def _widget_appointments_integration(widget_config_data: dict[str, Any]) -> dict[str, Any]:
+def _widget_appointments_integration(widget_config_data: dict[str, Any], booking_url: str) -> dict[str, Any]:
     """The embedded booking panel, as ``{"enabled": bool, "booking_url": str}``.
 
     The toggle decides how the widget presents a booking (embedded panel or
-    new-tab link); the URL is the default route's (``_widget_booking_url``).
+    new-tab link); ``booking_url`` is the default route's (``_widget_booking_url``).
     A panel without a loadable URL is no panel and a switched-off integration
     has no visitor to serve, so ``enabled`` only survives when the toggle is
     on AND the URL validates, and an empty ``booking_url`` is delivered
@@ -164,7 +164,6 @@ def _widget_appointments_integration(widget_config_data: dict[str, Any]) -> dict
     appointments = integrations.get("appointments") if isinstance(integrations, dict) else None
     if not isinstance(appointments, dict) or not appointments.get("enabled"):
         return {"enabled": False, "booking_url": ""}
-    booking_url = _widget_booking_url(widget_config_data)
     return {"enabled": bool(booking_url), "booking_url": booking_url}
 
 
@@ -372,6 +371,7 @@ async def widget_config(
 
     expires_at = datetime.now(UTC) + timedelta(hours=1)
 
+    booking_url = _widget_booking_url(widget_config_data, org_id=widget_row.org_id, widget_id=widget_row.widget_id)
     body = {
         "title": widget_config_data.get("title", "") or widget_row.name,
         "welcome_message": widget_config_data.get("welcome_message", ""),
@@ -406,8 +406,8 @@ async def widget_config(
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
         # The default contact route's booking — see _widget_booking_url.
-        "booking_url": _widget_booking_url(widget_config_data),
-        "appointments": _widget_appointments_integration(widget_config_data),
+        "booking_url": booking_url,
+        "appointments": _widget_appointments_integration(widget_config_data, booking_url),
         "handoff": {
             "hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(org=org, widget_config_data=widget_config_data)}
         },
@@ -525,6 +525,7 @@ async def public_bot_config(
         tenant_slug=org.slug,
     )
     expires_at = datetime.now(UTC) + timedelta(hours=1)
+    booking_url = _widget_booking_url(widget_config_data, org_id=widget_row.org_id, widget_id=widget_row.widget_id)
     body = {
         "title": widget_config_data.get("title", ""),
         "welcome_message": widget_config_data.get("welcome_message", ""),
@@ -544,8 +545,8 @@ async def public_bot_config(
         "show_meta": widget_config_data.get("show_meta", False),
         "page_context_enabled": widget_config_data.get("page_context_enabled", False),
         # The default contact route's booking — see _widget_booking_url.
-        "booking_url": _widget_booking_url(widget_config_data),
-        "appointments": _widget_appointments_integration(widget_config_data),
+        "booking_url": booking_url,
+        "appointments": _widget_appointments_integration(widget_config_data, booking_url),
         "name": widget_row.name,
         "description": widget_row.description or "",
         "ai_disclosure_override": widget_config_data.get("ai_disclosure_override"),
