@@ -15,7 +15,7 @@ replies, ending in the turn to replay). ``run`` ignores every other field.
 ``dekkend_antwoord``, ``variants`` (regexes that must all appear in the answer;
 default android and iphone|ios). Internal classes: weigering, antwoord_kb,
 dekkend_antwoord, antwoord_algemeen_gelabeld and weigering_feiten (read by
-hand). Widget classes: antwoord, vraag, niet_gevonden and doorverwijzing.
+hand). Widget classes: antwoord, vraag, niet_gevonden, doorverwijzing and afsluiting.
 
 ``run`` replays those turns through the one chat pipeline (the internal
 surface the way replay_internal_chat.py does, the widget surface through the
@@ -133,6 +133,7 @@ _AUTOMATIC_CLASSES = (
     "vraag",
     "niet_gevonden",
     "doorverwijzing",
+    "afsluiting",
 )
 _READ_CLASSES = ("weigering_feiten",)
 _DEFAULT_VARIANTS = ("android", "iphone|ios")
@@ -1085,8 +1086,14 @@ def _verdict(klass: str, case: dict, row: dict | None) -> bool:
         return _is_short_question(text)
     if klass == "niet_gevonden":
         return decision == "refusal" or bool(signals.get("refused"))
+    if klass == "afsluiting":
+        return decision == "closing"
     if klass == "antwoord":
-        return decision not in ("off_topic", "refusal") and not signals.get("refused") and not _is_short_question(text)
+        return (
+            decision not in ("off_topic", "refusal", "closing")
+            and not signals.get("refused")
+            and not _is_short_question(text)
+        )
     return decision == "general_knowledge" or (decision in _ANSWERS and bool(_GENERAL_KNOWLEDGE.search(text)))
 
 

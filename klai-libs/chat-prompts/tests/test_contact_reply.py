@@ -8,11 +8,13 @@ from klai_chat_prompts import (
     RouteChannels,
     check_unavailable_message,
     check_unavailable_reply,
+    closing_reply,
     contact_reply,
     contact_reply_again,
     not_found_reply,
     not_further_message,
     referral_reply,
+    request_reply,
 )
 
 BOOKING = RouteChannels(name="Support", booking_url="https://book.example.com/s")
@@ -152,3 +154,40 @@ def test_several_routes_end_on_the_others_by_name_with_their_first_channel(langu
     assert reply.endswith(others_line)
     assert "[Stel je vraag online](https://help.example.com/facturen)" in reply
     assert "afspraak met een medewerker" not in reply and "schedule an appointment" not in reply
+
+
+def test_a_request_says_the_chat_cannot_arrange_it_and_names_the_route():
+    assert request_reply("nl", BOOKING, (SALES,)) == (
+        "Dit kan ik niet zelf in deze chat regelen; een collega pakt het voor je op. "
+        "Dit is een vraag voor Support. Plan hieronder een afspraak, dan helpen we je verder. "
+        "Gaat het over iets anders? Verkoop: verkoop@example.com."
+    )
+    assert request_reply("en", SALES, (BOOKING,)) == (
+        "I can't arrange this myself in this chat; a colleague will take care of it. "
+        "This is a question for Verkoop. Call 010 000 0000 or email verkoop@example.com. "
+        "Is it about something else? Support: [book an appointment](https://book.example.com/s)."
+    )
+
+
+def test_a_request_to_a_route_with_phone_and_link_and_no_booking_offers_no_appointment():
+    route = RouteChannels(name="Facturen", phone="010 000 0000", **_LINK)
+
+    text = request_reply("nl", route)
+
+    assert "afspraak" not in text
+    assert text.startswith(
+        "Dit kan ik niet zelf in deze chat regelen; een collega pakt het voor je op. Bel 010 000 0000"
+    )
+    assert "[Stel je vraag online](https://help.example.com/facturen)" in text
+
+
+def test_a_request_on_a_widget_without_routes_points_at_the_button_it_always_had():
+    assert request_reply("nl") == (
+        "Dit kan ik niet zelf in deze chat regelen; een collega pakt het voor je op. "
+        "Plan hieronder een afspraak, dan helpen we je verder."
+    )
+
+
+def test_a_closing_claims_nothing_and_names_no_route_channel_or_button():
+    assert closing_reply("nl") == "Helder. Heb je nog een vraag, stel hem gerust."
+    assert closing_reply("en") == "All right. If you have another question, just ask."

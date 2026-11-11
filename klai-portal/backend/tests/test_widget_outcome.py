@@ -456,3 +456,17 @@ def test_the_not_further_reply_with_the_widget_s_channels_is_still_the_support_r
     turns = [_turn("user", "het werkt niet"), _turn("assistant", reply)]
 
     assert derive_outcome(turns, has_handoff=False) == "escalated"
+
+
+def test_a_conversation_that_ends_on_a_closing_reply_is_not_labelled_escalated():
+    from klai_chat_prompts import closing_reply
+
+    for language in ("nl", "en"):
+        turns = [
+            _turn("user", "het werkt niet"),
+            _turn("assistant", "Probeer opnieuw."),
+            _turn("user", "top"),
+            _turn("assistant", closing_reply(language)),
+        ]
+
+        assert derive_outcome(turns, has_handoff=False) == "unknown"

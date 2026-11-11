@@ -666,6 +666,11 @@ def test_antwoord_algemeen_gelabeld_needs_a_general_knowledge_label(tmp_path, ca
         ("niet_gevonden", _row("w-1", 0, decision="answer"), False),
         ("doorverwijzing", _row("w-1", 0, decision="off_topic", sources=0, text="Please use the button below."), True),
         ("doorverwijzing", _row("w-1", 0, decision="answer"), False),
+        ("afsluiting", _row("w-1", 0, decision="closing", sources=0, text="Helder. Heb je nog een vraag?"), True),
+        ("afsluiting", _row("w-1", 0, decision="refusal", sources=0, text="Not in our help articles."), False),
+        # A closing is not an answer, and not a "not found" either.
+        ("antwoord", _row("w-1", 0, decision="closing", sources=0, text="All right. Ask again any time."), False),
+        ("niet_gevonden", _row("w-1", 0, decision="closing", sources=0, text="All right. Ask again any time."), False),
     ],
 )
 def test_widget_classes_read_the_kind_of_reply_the_visitor_got(tmp_path, capsys, klass, row, ok):
@@ -1122,7 +1127,7 @@ def test_expected_articles_are_keyed_like_the_evidence_pack_keys_a_source():
 
 
 @pytest.mark.parametrize(
-    "klass", ["niet_gevonden", "vraag", "doorverwijzing", "weigering", "antwoord_algemeen_gelabeld"]
+    "klass", ["niet_gevonden", "vraag", "doorverwijzing", "afsluiting", "weigering", "antwoord_algemeen_gelabeld"]
 )
 def test_a_case_whose_answer_is_not_an_article_expects_none(klass):
     assert meetlat._expected_sources({"id": "w-1", "expect": klass, "articles": [f"{_ART}/a"]}) == []
@@ -1575,6 +1580,30 @@ async def test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance(monkeyp
     assert replay.settings.retrieval_paraphrase_model in _VIBE_ALLOWANCE
     if widget:
         await _a_widget_contact_request_picks_its_route_on_the_vibe_allowance(monkeypatch, _turn, _LiteLLM)
+        await _a_widget_not_found_reads_its_exit_kind_on_the_vibe_allowance(monkeypatch, _turn, _LiteLLM)
+
+
+async def _a_widget_not_found_reads_its_exit_kind_on_the_vibe_allowance(monkeypatch, turn_of, litellm_of):
+    """A turn that ends in the fixed "not found" runs the exit call, on the same allowance and masking."""
+    from tests.test_one_pipeline_answer_decision import _pack
+
+    selection = {"need": "", "parts": [{"ask": "vraag", "evidence": []}], "must_ask_variant": False, "question": ""}
+    llm = litellm_of(selection=selection)
+
+    await turn_of(
+        monkeypatch,
+        llm,
+        profile=ChatProfile(surface="widget"),
+        question="Hoe stel ik de wachtmuziek in?",
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        key_id="wgt_acme",
+        request_body=meetlat._widget_body,
+        models_from_settings=True,
+    )
+
+    assert llm.of("exit_kind")
+    assert {body["model"] for body in llm.calls} <= _VIBE_ALLOWANCE
+    assert all((body.get("metadata") or {}).get("_klai_delegated_org_id") for body in llm.calls)
 
 
 async def _a_widget_contact_request_picks_its_route_on_the_vibe_allowance(monkeypatch, turn_of, litellm_of):
