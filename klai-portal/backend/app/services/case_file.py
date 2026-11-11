@@ -62,9 +62,10 @@ CASE_SYSTEM_PROMPT = (
     "something works or how to fix it), human (asks for a person), contact (asks how to reach the company: "
     "call, mail, ticket; or asks the company to do, change, process, order or arrange something for them, "
     "while a visitor who asks how to do it themselves is knowledge), appointment (asks to schedule or book), "
-    "chat (greeting, thanks, remark about the "
-    "chat), other. A visitor who gives their own number or details, or who says yes to something the "
-    "assistant offered, is not asking for contact: that stays the earlier want.\n"
+    "chat (greeting, thanks, remark about the chat, or an acknowledgement or closing remark after an answer: "
+    "will do, I'll try later, goodbye), other. A visitor who gives their own number or details is not asking "
+    "for contact: that stays the earlier want. A yes to an appointment or contact the assistant offered stays "
+    'that wish; an "ok, will do" to an answer is chat.\n'
     "out_of_scope_quote: the visitor's own words, copied verbatim from the LATEST message, that name one of the "
     "subjects this help chat does not answer; empty when there are none.\n"
     "out_of_scope: true only when the LATEST message asks about one of the subjects this help chat does not "

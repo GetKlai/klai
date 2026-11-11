@@ -1681,6 +1681,29 @@ async def test_a_follow_up_that_asks_for_contact_is_answered_before_any_search(m
     assert litellm.retrieve_requests == []
 
 
+@pytest.mark.parametrize("items", [None, []])
+async def test_a_closing_remark_after_an_answer_gets_a_short_reply_never_the_not_found_text(monkeypatch, items):
+    """ "ok, ik probeer het later nog eens" after an answer was read as a question and got
+    "I can't find this": the case calls it chat, and the selection finds no evidence for a remark."""
+    messages = [
+        {"role": "user", "content": "Hoe stel ik een wachtrij in?"},
+        {"role": "assistant", "content": "Dat doe je in de belplanner."},
+        {"role": "user", "content": "Top, ik probeer het later nog eens"},
+    ]
+    reply = "Fijn, succes ermee!"
+    litellm = _LiteLLM(
+        model_text=reply,
+        case=_case("chat", wants_quote="ik probeer het later nog eens"),
+        selection=_selection("not_in_passages"),
+    )
+    litellm, text, _ = await _route_turn(
+        monkeypatch, band="high", items=_two_articles() if items is None else items, litellm=litellm, messages=messages
+    )
+
+    assert text == reply
+    assert len(litellm.answer_requests) == 1
+
+
 # ─── The case quotes its routes, remembers chosen passages, keeps one language ───
 
 
