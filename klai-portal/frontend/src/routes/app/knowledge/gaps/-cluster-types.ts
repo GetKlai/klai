@@ -14,8 +14,8 @@ export type ClusterKind =
   | 'reported_review'
   | 'reported_judge'
 export type ClusterDecision = 'rejected' | 'out_of_scope'
-// Which kinds the list shows: the article gaps by default, the visitors who asked for a person, or both.
-export type GapView = 'article_gaps' | 'contact_requests' | 'all'
+// Which kinds the list shows: the article gaps by default, the answers given from a weak match, the visitors who asked for a person, or all.
+export type GapView = 'article_gaps' | 'weak_matches' | 'contact_requests' | 'all'
 
 export interface ClusterArticle {
   title: string | null

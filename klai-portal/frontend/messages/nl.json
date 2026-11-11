@@ -3128,7 +3128,7 @@
   "gaps_decision_line": "{decision} door {who} op {date}",
   "gaps_decision_line_no_actor": "{decision} op {date}",
   "gaps_proposal_meta_no_language": "Gemaakt {time}",
-  "gaps_clusters_description": "Vragen die de chat niet goed kon beantwoorden, per onderwerp bij elkaar.",
+  "gaps_clusters_description": "Vragen die de chat niet kon beantwoorden, per onderwerp bij elkaar. Antwoorden op een zwakke treffer staan onder een eigen filter.",
   "gaps_clusters_include_decided": "Toon besliste groepen",
   "gaps_clusters_back": "Terug naar Kennishiaten",
   "gaps_clusters_empty": "Geen groepen voor dit filter en deze periode.",
@@ -3216,5 +3216,6 @@
   "admin_widgets_routes_referral_label": "Verwijstekst",
   "admin_widgets_routes_referral_help": "Wat de chat zegt als hij een van de onderwerpen bij \"Niet beantwoorden\" aan jou doorverwijst. Alleen voor die onderwerpen. Laat leeg voor de standaardtekst.",
   "admin_widgets_routes_referral_placeholder": "Hier helpen we je graag persoonlijk mee. Neem gerust contact op.",
-  "admin_widgets_routes_error_unreachable": "Voeg minstens één manier toe om deze route te bereiken (telefoon, e-mail, afspraakpagina of link), of een verwijstekst."
+  "admin_widgets_routes_error_unreachable": "Voeg minstens één manier toe om deze route te bereiken (telefoon, e-mail, afspraakpagina of link), of een verwijstekst.",
+  "gaps_view_weak_matches": "Beantwoord, maar op een zwakke treffer"
 }
