@@ -25,10 +25,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def _turn(role, content="", rating=None):
+def _turn(role, content="", rating=None, decision=None):
     from app.services.widget_outcome import ConversationTurn
 
-    return ConversationTurn(role=role, content=content, rating=rating)
+    return ConversationTurn(role=role, content=content, rating=rating, decision=decision)
 
 
 # English + Dutch canned helpdesk refusal strings the chat actually stores as
@@ -233,13 +233,21 @@ class _OrgDb:
         if "SELECT id, last_message_at" in sql:
             assert params["org_id"] == self.org_id, "candidate SELECT leaked another org's id"
             return self._result([MagicMock(id=c, last_message_at=t) for c, t in self.candidates])
-        if "SELECT conversation_id, role, content, rating" in sql:
+        if "SELECT conversation_id, role, content, rating, answer_signals" in sql:
             ids = params["conv_ids"]
             assert all(i in {c for c, _ in self.candidates} for i in ids), "cross-org message read"
             rows = []
             for cid in ids:
-                for role, content, rating in self.messages.get(cid, []):
-                    rows.append(MagicMock(conversation_id=cid, role=role, content=content, rating=rating))
+                for role, content, rating, *decision in self.messages.get(cid, []):
+                    rows.append(
+                        MagicMock(
+                            conversation_id=cid,
+                            role=role,
+                            content=content,
+                            rating=rating,
+                            decision=decision[0] if decision else None,
+                        )
+                    )
             return self._result(rows)
         if "SELECT DISTINCT conversation_id" in sql:  # handoff
             ids = params["conv_ids"]
@@ -336,6 +344,26 @@ async def test_label_org_scopes_every_statement_to_its_org():
 
     assert n == 1
     assert org.updates == {700: "resolved"}
+
+
+@pytest.mark.asyncio
+async def test_label_org_reads_the_stored_decision_of_each_message():
+    from app.services.widget_outcome import _label_org
+
+    org = _OrgDb(
+        org_id=7,
+        candidates=[(701, _turn_dt(120))],
+        messages={701: [("user", "q", None, None), ("assistant", "Get in touch.", None, "human_request")]},
+    )
+
+    @asynccontextmanager
+    async def _tenant(org_id):
+        yield org
+
+    with patch("app.services.widget_outcome.tenant_scoped_session", _tenant):
+        await _label_org(7, _turn_dt(120))
+
+    assert org.updates == {701: "escalated"}
 
 
 # ---------------------------------------------------------------------------
@@ -472,16 +500,80 @@ def test_a_conversation_that_ends_on_a_closing_reply_is_not_labelled_escalated()
         assert derive_outcome(turns, has_handoff=False) == "unknown"
 
 
-def test_a_request_reply_is_labelled_like_the_plain_contact_reply():
-    """Neither is a "not found": a conversation ending on a reply that shows contact channels stays unlabelled,
-    and the judge's citation-refusal flag does not fire on it."""
+_ROUTES = (
+    {"route": None, "others": ()},
+    {
+        "route": "Support",
+        "others": ("Sales",),
+    },
+)
+
+
+def _routes(case):
+    from klai_chat_prompts import RouteChannels
+
+    route = RouteChannels(name="Support", email="hallo@example.com", phone="000-0000000") if case["route"] else None
+    others = tuple(RouteChannels(name=name, email="sales@example.com") for name in case["others"])
+    return route, others
+
+
+@pytest.mark.parametrize("language", ["nl", "en"])
+@pytest.mark.parametrize("case", _ROUTES, ids=["single-route", "multi-route-name-first"])
+def test_a_conversation_ending_on_a_contact_or_request_reply_is_escalated(language, case):
+    from klai_chat_prompts import contact_reply, contact_reply_again, request_reply
+
+    route, others = _routes(case)
+    for reply in (
+        contact_reply(language, route, others),
+        contact_reply_again(language, route, others),
+        request_reply(language, route, others),
+    ):
+        turns = [_turn("user", "can you change this"), _turn("assistant", reply, decision="human_request")]
+
+        assert derive_outcome(turns, has_handoff=False) == "escalated"
+
+
+@pytest.mark.parametrize("language", ["nl", "en"])
+def test_a_conversation_ending_on_an_off_topic_referral_is_escalated(language):
+    from klai_chat_prompts import RouteChannels, referral_reply
+
+    route = RouteChannels(name="Support", email="hallo@example.com", referral_text="Ask the front desk.")
+    for subject in ("invoices", None):
+        reply = referral_reply(language, subject, route)
+        turns = [_turn("user", "what about the weather"), _turn("assistant", reply, decision="off_topic")]
+
+        assert derive_outcome(turns, has_handoff=False) == "escalated"
+
+
+def test_an_answer_after_a_contact_reply_decides_the_label_again():
+    from klai_chat_prompts import contact_reply
+
+    turns = [
+        _turn("user", "call me"),
+        _turn("assistant", contact_reply("en"), decision="human_request"),
+        _turn("user", "how do I reset my password"),
+        _turn("assistant", "Use the reset link.", decision="answer"),
+    ]
+
+    assert derive_outcome(turns, has_handoff=False) == "unknown"
+    turns[-1] = _turn("assistant", "Use the reset link.", rating="thumbsUp", decision="answer")
+    assert derive_outcome(turns, has_handoff=False) == "resolved"
+
+
+def test_a_written_answer_and_a_refusal_decision_without_the_fixed_text_stay_unknown():
+    for decision in ("answer", "partial_answer", "refusal", None):
+        turns = [_turn("user", "question"), _turn("assistant", "Some written answer.", decision=decision)]
+
+        assert derive_outcome(turns, has_handoff=False) == "unknown"
+
+
+def test_a_contact_reply_is_not_a_citation_refusal_for_the_judge():
     from klai_chat_prompts import RouteChannels, contact_reply, request_reply
 
-    from app.services.widget_outcome import is_support_referral
+    from app.services.conversation_judge import JudgeTurn, _derive_signals
 
     route = RouteChannels(name="Support", email="hallo@example.com")
     for reply in (contact_reply("nl", route), request_reply("nl", route), request_reply("en", route)):
-        turns = [_turn("user", "kunnen jullie dit wijzigen"), _turn("assistant", reply)]
+        turns = [JudgeTurn("user", "change this", None, None), JudgeTurn("assistant", reply, None, None)]
 
-        assert derive_outcome(turns, has_handoff=False) == "unknown"
-        assert not is_support_referral(reply)
+        assert _derive_signals(turns, had_handoff=False)["had_citation_refusal"] is False
