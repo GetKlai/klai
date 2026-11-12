@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_effective_capabilities
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, cross_org_scope, get_db, set_tenant
-from app.core.permissions import assert_platform_unlocked, resolve_user_permissions
+from app.core.permissions import assert_platform_unlocked, refuse_inactive_membership, resolve_user_permissions
 from app.core.provisioning_names import validate_slug_for_provisioning
 from app.models.connectors import PortalConnector
 from app.models.knowledge_bases import PortalKnowledgeBase
@@ -515,7 +515,8 @@ async def get_user_permissions(
     404 when the user has no portal_users row — fail-closed so a typo in
     the URL or a deleted user surfaces as "no permissions" not "empty
     set" (the latter would silently treat the caller as personal-tier
-    on a deny-by-default policy and be hard to debug).
+    on a deny-by-default policy and be hard to debug). A suspended or
+    offboarded membership answers 403 exactly as ``get_caller`` does.
     """
     await _require_internal_token(request)
 
@@ -528,6 +529,7 @@ async def get_user_permissions(
         )
 
     await _audit_internal_call(request, org_id=perms.org_id)
+    refuse_inactive_membership(perms)
     return UserPermissionsResponse(
         user_id=perms.user_id,
         org_id=perms.org_id,

@@ -19,7 +19,7 @@ from app.services import entitlements
 def _row(role: str, seat_type: str = "chat", enabled_addons: list[str] | None = None) -> MagicMock:
     """Build a mock row that mirrors the SELECT (role, seat_type, unlocked) result."""
     row = MagicMock()
-    row.one_or_none.return_value = (role, seat_type, enabled_addons or [])
+    row.one_or_none.return_value = (role, seat_type, enabled_addons or [], "active")
     return row
 
 

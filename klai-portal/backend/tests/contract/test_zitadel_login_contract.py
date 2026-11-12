@@ -117,7 +117,7 @@ def instance() -> Iterator[dict[str, str]]:
             )
         )
         org = ok(admin.post("/management/v1/orgs", json={"name": f"Contract {uuid.uuid4().hex[:8]}"}))["id"]
-    yield {"login_client": me, "client_id": app["clientId"], "org_id": org}
+    yield {"login_client": me, "client_id": app["clientId"], "org_id": org, "project_id": project}
 
 
 @pytest_asyncio.fixture
@@ -129,6 +129,9 @@ async def client(instance: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> A
     """
     monkeypatch.setattr(settings, "zitadel_base_url", BASE_URL)
     monkeypatch.setattr(settings, "zitadel_pat", PAT)
+    # The contract's OIDC app plays the portal's own client, so finalising a
+    # sign-in for it needs no organisation membership (as in production).
+    monkeypatch.setattr(settings, "zitadel_portal_client_id", instance["client_id"])
     real = ZitadelClient()
 
     async def record(response: httpx.Response) -> None:
@@ -215,14 +218,14 @@ def _wrong(valid: set[str], length: int) -> str:
     return next(c * length for c in "0123456789" if c * length not in valid)
 
 
-async def _auth_request(instance: dict[str, str]) -> str:
+async def _auth_request(instance: dict[str, str], client_id: str = "", redirect_uri: str = REDIRECT_URI) -> str:
     """Start an OIDC authorization the way a relying party does and return its auth request id."""
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=20) as browser:
         resp = await browser.get(
             "/oauth/v2/authorize",
             params={
-                "client_id": instance["client_id"],
-                "redirect_uri": REDIRECT_URI,
+                "client_id": client_id or instance["client_id"],
+                "redirect_uri": redirect_uri,
                 "response_type": "code",
                 "scope": "openid",
             },
@@ -484,3 +487,218 @@ async def test_passkey_enrolment_is_accepted_and_is_not_a_login_second_factor(
     assert await client.login_second_factors(user_id) == []
     result, _, response = await _login(instance, email, policy="optional")
     _assert_finalised(result, response)
+
+
+# ---------------------------------------------------------------------------
+# A sign-in to an organisation's chat application
+# ---------------------------------------------------------------------------
+
+
+class _Result:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> object:
+        return self._value
+
+
+class _PortalRows:
+    """Stands in for ``portal_orgs`` and ``portal_users``: one organisation whose chat
+    client is ``chat_client_id``, and the membership status of the user signing in."""
+
+    def __init__(self, chat_client_id: str, membership_status: str | None) -> None:
+        self._chat_client_id = chat_client_id
+        self._membership_status = membership_status
+
+    async def __aenter__(self) -> _PortalRows:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+    async def execute(self, stmt: Any) -> _Result:
+        params = stmt.compile().params
+        if "zitadel_librechat_client_id_1" in params:
+            return _Result(7 if params["zitadel_librechat_client_id_1"] == self._chat_client_id else None)
+        return _Result(self._membership_status)
+
+
+@pytest_asyncio.fixture
+async def chat_app(client: ZitadelClient, instance: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """An organisation's chat client, created with the call provisioning makes."""
+    from app.core.provisioning_names import validate_slug_for_provisioning
+
+    monkeypatch.setattr(settings, "zitadel_project_id", instance["project_id"])
+    monkeypatch.setattr(settings, "domain", "example.com")
+    slug = f"contract{uuid.uuid4().hex[:6]}"
+    names = validate_slug_for_provisioning(slug, domain=settings.domain)
+    created = await client.create_librechat_oidc_app(slug, names.zitadel_redirect_uri)
+    return {"client_id": created["clientId"], "redirect_uri": names.zitadel_redirect_uri}
+
+
+async def _chat_finalise(
+    client: ZitadelClient, instance: dict[str, str], chat_app: dict[str, str], membership_status: str | None
+) -> str:
+    user_id, _ = await _new_user(client, instance)
+    session = await client.create_session_with_password(user_id, PASSWORD)
+    auth_request_id = await _auth_request(instance, chat_app["client_id"], chat_app["redirect_uri"])
+    rows = _PortalRows(chat_app["client_id"], membership_status)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.core.database.AsyncSessionLocal", lambda: rows)
+        return await client.finalize_auth_request(auth_request_id, session["sessionId"], session["sessionToken"])
+
+
+@pytest.mark.asyncio
+async def test_auth_request_names_the_client_it_was_started_for(
+    client: ZitadelClient, instance: dict[str, str]
+) -> None:
+    auth_request_id = await _auth_request(instance)
+
+    resp = await client._http.get(f"/v2/oidc/auth_requests/{auth_request_id}")
+
+    assert resp.status_code == 200, resp.text
+    print(f"  auth request fields: {sorted(resp.json()['authRequest'])}")
+    assert resp.json()["authRequest"]["clientId"] == instance["client_id"]
+
+
+@pytest.mark.asyncio
+async def test_session_lookup_returns_the_signed_in_user(client: ZitadelClient, instance: dict[str, str]) -> None:
+    user_id, _ = await _new_user(client, instance)
+    session = await client.create_session_with_password(user_id, PASSWORD)
+
+    details = await client.get_session_details(session["sessionId"], session["sessionToken"])
+
+    assert details["zitadel_user_id"] == user_id
+
+
+@pytest.mark.asyncio
+async def test_chat_signin_completes_for_an_active_member(
+    client: ZitadelClient, instance: dict[str, str], chat_app: dict[str, str]
+) -> None:
+    callback = await _chat_finalise(client, instance, chat_app, "active")
+
+    assert callback.startswith(chat_app["redirect_uri"])
+    assert "code=" in callback
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("membership_status", ["suspended", "offboarded", None])
+async def test_chat_signin_is_refused_without_an_active_membership(
+    client: ZitadelClient, instance: dict[str, str], chat_app: dict[str, str], membership_status: str | None
+) -> None:
+    with pytest.raises(HTTPException) as refused:
+        await _chat_finalise(client, instance, chat_app, membership_status)
+
+    assert refused.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_refused_chat_signin_leaves_the_auth_request_unfinalised(
+    client: ZitadelClient, instance: dict[str, str], chat_app: dict[str, str]
+) -> None:
+    user_id, _ = await _new_user(client, instance)
+    session = await client.create_session_with_password(user_id, PASSWORD)
+    auth_request_id = await _auth_request(instance, chat_app["client_id"], chat_app["redirect_uri"])
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.core.database.AsyncSessionLocal", lambda: _PortalRows(chat_app["client_id"], "suspended"))
+        with pytest.raises(HTTPException):
+            await client.finalize_auth_request(auth_request_id, session["sessionId"], session["sessionToken"])
+        # The same request still finalises for an active membership: the refusal handed out nothing.
+        mp.setattr("app.core.database.AsyncSessionLocal", lambda: _PortalRows(chat_app["client_id"], "active"))
+        callback = await client.finalize_auth_request(auth_request_id, session["sessionId"], session["sessionToken"])
+    assert "code=" in callback
+
+
+# ---------------------------------------------------------------------------
+# The identity follows the memberships
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def identity(client: ZitadelClient, instance: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> Any:
+    from app.services import zitadel_identity_recovery
+
+    monkeypatch.setattr(settings, "zitadel_portal_org_id", instance["org_id"])
+    monkeypatch.setattr(zitadel_identity_recovery, "zitadel", client)
+    return zitadel_identity_recovery
+
+
+async def _state(client: ZitadelClient, user_id: str, expected: str) -> None:
+    async def reached() -> bool:
+        return (await client.get_user_v2(user_id))["user"]["state"] == expected
+
+    await _eventually(reached, f"user state {expected}")
+
+
+@pytest.mark.asyncio
+async def test_deactivate_and_reactivate_and_their_preconditions(
+    client: ZitadelClient, instance: dict[str, str]
+) -> None:
+    user_id, _ = await _new_user(client, instance)
+    org = instance["org_id"]
+    await _state(client, user_id, "USER_STATE_ACTIVE")
+
+    with pytest.raises(httpx.HTTPStatusError) as not_inactive:
+        await client.unlock_user(user_id, org)
+    assert not_inactive.value.response.status_code == 400
+
+    await client.lock_user(user_id, org)
+    await _state(client, user_id, "USER_STATE_INACTIVE")
+
+    with pytest.raises(httpx.HTTPStatusError) as already_inactive:
+        await client.lock_user(user_id, org)
+    assert already_inactive.value.response.status_code == 400
+
+    await client.unlock_user(user_id, org)
+    await _state(client, user_id, "USER_STATE_ACTIVE")
+
+
+@pytest.mark.asyncio
+async def test_initial_identity_cannot_be_deactivated(client: ZitadelClient, instance: dict[str, str]) -> None:
+    name = f"contract-initial-{uuid.uuid4().hex[:8]}@example.com"
+    resp = await client._http.post(
+        "/management/v1/users/human/_import",
+        headers={"x-zitadel-orgid": instance["org_id"]},
+        json={"userName": name, "profile": {"firstName": "Contract", "lastName": "Initial"}, "email": {"email": name}},
+    )
+    assert resp.is_success, resp.text
+    user_id = resp.json()["userId"]
+    await _state(client, user_id, "USER_STATE_INITIAL")
+
+    with pytest.raises(httpx.HTTPStatusError) as refused:
+        await client.lock_user(user_id, instance["org_id"])
+
+    assert refused.value.response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_sync_follows_the_memberships_and_skips_a_missing_identity(
+    client: ZitadelClient, instance: dict[str, str], identity: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    user_id, _ = await _new_user(client, instance)
+    await _state(client, user_id, "USER_STATE_ACTIVE")
+    active = {"count": 0}
+
+    async def memberships(_user_id: str) -> Any:
+        return SimpleNamespace(active_count=active["count"])
+
+    monkeypatch.setattr(identity, "get_user_global_membership_state", memberships)
+
+    await identity.sync_identity_login(user_id)
+    await _state(client, user_id, "USER_STATE_INACTIVE")
+    # Already in line: the sync sends nothing Zitadel would refuse.
+    await identity.sync_identity_login(user_id)
+
+    assert await identity.reactivate_identity_if_inactive(user_id) is True
+    await _state(client, user_id, "USER_STATE_ACTIVE")
+    assert await identity.reactivate_identity_if_inactive(user_id) is False
+    active["count"] = 1
+    await identity.sync_identity_login(user_id)
+
+    missing = "999999999999999999"
+    with pytest.raises(httpx.HTTPStatusError) as not_found:
+        await client.get_user_v2(missing)
+    assert not_found.value.response.status_code == 404
+    await identity.sync_identity_login(missing)

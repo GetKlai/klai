@@ -168,6 +168,7 @@ class TestLeaveWorkspace:
         with (
             patch("app.api.admin.users.emit_event", MagicMock()),
             patch("app.api.admin.users.forget_internal_cases", AsyncMock(return_value=0)) as forget,
+            patch("app.api.admin.users.sync_identity_login", AsyncMock()) as sync_identity,
         ):
             result = await leave_workspace(
                 perms=make_perms(role="company", user_id="u1"),
@@ -175,6 +176,7 @@ class TestLeaveWorkspace:
             )
 
         db.delete.assert_awaited_once_with(caller)
+        sync_identity.assert_awaited_once_with("u1")
         # The internal chat's stored cases leave with the employee (same session, before the row goes).
         assert forget.await_args.kwargs["user_id"] == "u1"
         assert result.message

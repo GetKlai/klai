@@ -49,12 +49,14 @@ from app.services.domain_validation import primary_domain_for_email_domain
 from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.provisioning import provision_tenant
 from app.services.user_deletion_orchestrator import delete_user_with_state_machine
-from app.services.user_memberships import get_user_global_membership_state, get_user_membership_summary
+from app.services.user_memberships import get_user_membership_summary
 from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 from app.services.zitadel_identity_recovery import (
     ZitadelIdentityRecoveryError,
     email_hash_for_log,
+    reactivate_identity_if_inactive,
     recover_existing_zitadel_identity_for_invite,
+    sync_identity_login,
 )
 
 
@@ -489,12 +491,7 @@ async def platform_suspend(
     # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
     zitadel_sync_failed = False
     try:
-        membership_state = await get_user_global_membership_state(zitadel_user_id)
-        if membership_state.active_count == 0:
-            await zitadel.lock_user(
-                zitadel_user_id=zitadel_user_id,
-                org_id=settings_zitadel_portal_org_id(),
-            )
+        await sync_identity_login(zitadel_user_id)
     except Exception as exc:
         logger.exception("platform_suspend_zitadel_lock_failed", zitadel_user_id=zitadel_user_id)
         await _emit_audit_safe(
@@ -556,12 +553,7 @@ async def platform_reactivate(
     # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
     zitadel_sync_failed = False
     try:
-        membership_state = await get_user_global_membership_state(zitadel_user_id)
-        if membership_state.active_count > 0:
-            await zitadel.unlock_user(
-                zitadel_user_id=zitadel_user_id,
-                org_id=settings_zitadel_portal_org_id(),
-            )
+        await sync_identity_login(zitadel_user_id)
     except Exception as exc:
         logger.exception("platform_reactivate_zitadel_unlock_failed", zitadel_user_id=zitadel_user_id)
         await _emit_audit_safe(
@@ -762,7 +754,6 @@ async def platform_invite(
     for the target org.
     """
     org = await _load_org_or_404(org_id)
-    from app.core.config import settings  # local import avoids cycle
 
     # 1. Create or reuse the Zitadel user (single portal org), no auto-mail.
     zitadel_user_id, zitadel_user_created = await _create_or_reuse_platform_invite_zitadel_user(
@@ -834,11 +825,7 @@ async def platform_invite(
                 user_row = existing_membership
                 reactivated_offboarded = True
             await create_default_personal_kb(zitadel_user_id, org_id, db)
-            if reactivated_offboarded:
-                await zitadel.unlock_user(
-                    zitadel_user_id=zitadel_user_id,
-                    org_id=settings.zitadel_portal_org_id,
-                )
+            if reactivated_offboarded and await reactivate_identity_if_inactive(zitadel_user_id):
                 reactivated_zitadel_user = True
             await db.commit()
     except HTTPException:
