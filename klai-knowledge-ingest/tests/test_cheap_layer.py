@@ -6,6 +6,7 @@ Synthetic data only: invented products on example.com.
 from __future__ import annotations
 
 import sys
+from contextlib import nullcontext
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -188,6 +189,14 @@ _real_anchors_by_url = kb_patch._anchors_by_url
 def no_link_graph():
     """kb_patch reads the link graph from Postgres; these tests supply the anchors instead."""
     with patch.object(kb_patch, "_anchors_by_url", AsyncMock(return_value={})):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def no_kb_lock():
+    """A write run holds a Postgres advisory lock per KB; its behaviour is tested in
+    test_operation_guards.py."""
+    with patch.object(kb_patch, "kb_operation", lambda *a, **k: nullcontext()):
         yield
 
 
