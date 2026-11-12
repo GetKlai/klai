@@ -3,7 +3,7 @@ import { ArrowRight, Mail } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { apiFetch } from '@/lib/apiFetch'
+import { ApiError, apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
 import { canResendEmailOtp, createInitialEmailOtpState, EMAIL_OTP_CODE_LENGTH, emailOtpReducer } from './-mfa-state'
 
@@ -55,8 +55,13 @@ export function EmailOTPSetup({
       })
       dispatch({ type: 'verifyFinish' })
       onSuccess()
-    } catch {
-      dispatch({ type: 'verifyFail', error: m.error_connection() })
+    } catch (err) {
+      const status = err instanceof ApiError ? err.status : 0
+      const error =
+        status === 400 ? m.setup_mfa_email_error_invalid()
+        : status === 410 ? m.setup_mfa_email_error_expired()
+        : m.error_connection()
+      dispatch({ type: 'verifyFail', error })
     }
   }
 

@@ -2,9 +2,11 @@
 
 Email-OTP MFA flow: setup, confirm, resend. Zitadel v4 activates the e-mail
 code factor on ``POST /v2/users/{id}/otp_email`` and mails nothing; a code is
-mailed only by a session challenge. Setup and resend therefore register the
-factor, open a user session and challenge it, and confirm checks the code on
-that session. tests/contract/test_zitadel_login_contract.py runs the same flow
+mailed only by a session challenge, and Zitadel refuses that challenge while
+the factor is not registered. Setup and resend therefore mark the enrolment as
+unconfirmed, register the factor, open a user session and challenge it; confirm
+checks the code on that session and only then clears the mark. A factor that is
+still marked does not count as enrolled, and an expired enrolment removes it. tests/contract/test_zitadel_login_contract.py runs the same flow
 against the pinned Zitadel image; here Zitadel is mocked with respx.
 """
 
@@ -12,6 +14,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -28,6 +31,7 @@ from app.api.auth import (
 )
 
 _PENDING_KEY = "email_otp_enrolment:uid-1"
+_UNCONFIRMED_KEY = "email_otp_unconfirmed:uid-1"
 
 
 def _mock_enrolment(router: respx.MockRouter, register_status: int = 200) -> dict[str, respx.Route]:
@@ -166,7 +170,7 @@ async def test_email_otp_confirm_without_a_sent_code_is_refused(
         with pytest.raises(HTTPException) as exc:
             await email_otp_confirm(body=EmailOTPConfirmRequest(code="12345678"), user_id="uid-1")
 
-    assert exc.value.status_code == 400
+    assert exc.value.status_code == 410
     assert check.call_count == 0
     audit_log.assert_not_called()
     assert _capture_events(captured, "email_otp_confirm_failed")[0]["reason"] == "expired"
@@ -227,3 +231,97 @@ async def test_email_otp_resend_zitadel_5xx(respx_zitadel: respx.MockRouter, fak
     events = _capture_events(captured, "email_otp_resend_failed")
     assert len(events) == 1
     assert events[0]["reason"] == "zitadel_5xx"
+
+
+# ---------------------------------------------------------------------------
+# An e-mail factor counts only once its code was confirmed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_email_otp_setup_leaves_the_factor_unconfirmed_until_confirm(
+    respx_zitadel: respx.MockRouter, fake_redis: Any
+) -> None:
+    _mock_enrolment(respx_zitadel)
+
+    with _audit_log_patch():
+        await email_otp_setup(user_id="uid-1")
+
+    assert await fake_redis.get(_UNCONFIRMED_KEY)
+
+
+@pytest.mark.asyncio
+async def test_email_otp_confirm_with_the_right_code_makes_the_factor_count(
+    respx_zitadel: respx.MockRouter, fake_redis: Any
+) -> None:
+    await _pending(fake_redis)
+    await fake_redis.set(_UNCONFIRMED_KEY, "1")
+    respx_zitadel.patch("/v2/sessions/sess-1").mock(return_value=httpx.Response(200, json={"sessionToken": "t"}))
+
+    with _audit_log_patch():
+        await email_otp_confirm(body=EmailOTPConfirmRequest(code="12345678"), user_id="uid-1")
+
+    assert await fake_redis.get(_UNCONFIRMED_KEY) is None
+
+
+@pytest.mark.asyncio
+async def test_email_otp_confirm_wrong_code_keeps_the_factor_unconfirmed(
+    respx_zitadel: respx.MockRouter, fake_redis: Any
+) -> None:
+    await _pending(fake_redis)
+    await fake_redis.set(_UNCONFIRMED_KEY, "1")
+    respx_zitadel.patch("/v2/sessions/sess-1").mock(return_value=httpx.Response(400, json={"code": 3}))
+
+    with _audit_log_patch(), pytest.raises(HTTPException):
+        await email_otp_confirm(body=EmailOTPConfirmRequest(code="00000000"), user_id="uid-1")
+
+    assert await fake_redis.get(_UNCONFIRMED_KEY)
+
+
+@pytest.mark.asyncio
+async def test_email_otp_confirm_after_the_code_expired_removes_the_unconfirmed_factor(
+    respx_zitadel: respx.MockRouter, fake_redis: Any
+) -> None:
+    await fake_redis.set(_UNCONFIRMED_KEY, "1")
+    remove = respx_zitadel.delete("/v2/users/uid-1/otp_email").mock(return_value=httpx.Response(200, json={}))
+
+    with capture_logs() as captured, _audit_log_patch(), pytest.raises(HTTPException) as exc:
+        await email_otp_confirm(body=EmailOTPConfirmRequest(code="12345678"), user_id="uid-1")
+
+    assert exc.value.status_code == 410
+    assert remove.call_count == 1
+    assert await fake_redis.get(_UNCONFIRMED_KEY) is None
+    assert _capture_events(captured, "email_otp_confirm_failed")[0]["reason"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_email_otp_setup_when_zitadel_is_unreachable_answers_502(
+    respx_zitadel: respx.MockRouter, fake_redis: Any
+) -> None:
+    respx_zitadel.route().mock(side_effect=httpx.ConnectError("down"))
+
+    with capture_logs() as captured, _audit_log_patch(), pytest.raises(HTTPException) as exc:
+        await email_otp_setup(user_id="uid-1")
+
+    assert exc.value.status_code == 502
+    assert _capture_events(captured, "email_otp_setup_failed")[0]["zitadel_status"] is None
+
+
+@pytest.mark.asyncio
+async def test_email_otp_setup_when_redis_is_down_answers_503(respx_zitadel: respx.MockRouter) -> None:
+    import redis.exceptions as redis_exc
+
+    from app.services import redis_client
+
+    broken = AsyncMock()
+    broken.set = AsyncMock(side_effect=redis_exc.ConnectionError("down"))
+    original = redis_client._pool_holder["pool"]
+    redis_client._pool_holder["pool"] = broken
+    _mock_enrolment(respx_zitadel)
+    try:
+        with _audit_log_patch(), pytest.raises(HTTPException) as exc:
+            await email_otp_setup(user_id="uid-1")
+    finally:
+        redis_client._pool_holder["pool"] = original
+
+    assert exc.value.status_code == 503

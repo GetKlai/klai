@@ -137,7 +137,7 @@ function LoginPage() {
       const resp = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, auth_request_id: authRequestId }),
+        body: JSON.stringify({ email, password, auth_request_id: authRequestId, accepts_email_code: true }),
       })
 
       if (!resp.ok) {

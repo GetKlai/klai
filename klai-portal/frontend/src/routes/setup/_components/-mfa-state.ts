@@ -4,6 +4,12 @@ export const EMAIL_OTP_CODE_LENGTH = 8
 
 export type MfaMethod = 'passkey' | 'email' | 'totp'
 
+// Under the policy "required" only factors the login verifies end the set-up
+// requirement; a passkey does not, so it is not offered there.
+export function availableMfaMethods(policy: string): MfaMethod[] {
+  return policy === 'required' ? ['email', 'totp'] : ['passkey', 'email', 'totp']
+}
+
 export type MfaPageStep = 'pick' | 'setup' | 'done'
 
 export type MfaPageState =

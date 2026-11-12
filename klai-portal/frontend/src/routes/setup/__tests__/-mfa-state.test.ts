@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  availableMfaMethods,
   canResendEmailOtp,
   createInitialEmailOtpState,
   emailOtpReducer,
@@ -97,5 +98,16 @@ describe('TOTP reducer', () => {
     const state = totpReducer(initialTotpState, { type: 'setCode', code: '9a876543' })
 
     expect(state.code).toBe('987654')
+  })
+})
+
+describe('methods offered on the set-up page', () => {
+  it('offers only factors the login verifies when the organisation requires one', () => {
+    expect(availableMfaMethods('required')).toEqual(['email', 'totp'])
+  })
+
+  it('offers the passkey first under the other policies', () => {
+    expect(availableMfaMethods('optional')).toEqual(['passkey', 'email', 'totp'])
+    expect(availableMfaMethods('recommended')).toEqual(['passkey', 'email', 'totp'])
   })
 })

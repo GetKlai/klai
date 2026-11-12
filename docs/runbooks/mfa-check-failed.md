@@ -20,13 +20,20 @@ outcomes:
   pre-auth `find_user_by_email` returns 5xx, or the `PortalOrg` DB fetch
   raises while we know there is a portal user. The user sees a "please retry
   in a moment" error.
-- `outcome="fail-open"` — login proceeded WITHOUT enforcement. This happens
-  under `mfa_policy in {"optional", "recommended"}` (deliberate trade-off in
-  REQ-3) AND when the `portal_user` lookup itself raised before we could
-  determine policy (provisioning grace per REQ-3.2).
+- `outcome="fail-open"` — the org policy could not be determined and the login
+  treats it as `optional`: the `portal_user` lookup itself raised (provisioning
+  grace per REQ-3.2) or the portal user's org row is missing. Registered
+  second factors are still asked for; only the "required" set-up demand is
+  skipped. A failed factor lookup never fails open, under any policy.
 
 Both arms emit the same event so the rate is fully observable in
 VictoriaLogs.
+
+A related event, `login_second_factor_failed` with
+`reason="otp_email_send_failed"` and `outcome="503"`, means the factors were
+read but Zitadel could not mail the e-mail code for this login; the user sees
+the same "please retry" error. Query it with
+`_time:1h service:portal-api event:login_second_factor_failed`.
 
 ## Event schema
 
@@ -38,7 +45,7 @@ VictoriaLogs.
   "request_id": "...",          // bound by LoggingContextMiddleware
   "reason": "has_any_mfa_5xx" | "find_user_by_email_5xx"
           | "db_lookup_failed" | "unexpected",
-  "mfa_policy": "required" | "optional" | "unresolved",
+  "mfa_policy": "required" | "recommended" | "optional" | "unresolved",
   "zitadel_status": 500 | null, // null on RequestError / DB failure
   "email_hash": "<sha256 of lowercased email>",
   "outcome": "503" | "fail-open"
@@ -110,8 +117,7 @@ lowercased email is recorded (privacy + correlation).
 ## Triage — fail-open burst alert
 
 This is a higher-severity signal. A small steady-state of fail-opens is
-expected (every Zitadel hiccup → some optional-policy users see a swallowed
-warning). A *burst* means either a wider outage or a security event.
+expected (a portal-user or org lookup that hiccups during a login). A *burst* means either a wider outage or a security event.
 
 1. **Always check the rate alert first.** If
    `mfa_check_failed_rate_high` is also firing, both alerts share a root

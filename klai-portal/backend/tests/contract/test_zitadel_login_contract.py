@@ -9,13 +9,17 @@ and asserts on Zitadel's real answers and on the codes it really mails.
 
 Two facts about Zitadel shape what is asserted, both observed on v4.20.1:
 
-- Zitadel finalises an auth request for any session the login client presents,
-  whatever factors it carries. The second factor is enforced by the portal not
-  finalising before the check, so the tests assert that the login stops before
-  finalising and that the provider takes the session once the check passed.
+- The portal finalises only after every registered factor is checked, and
+  Zitadel does not repeat that check, so the tests assert that the login stops
+  before finalising and that the provider takes the session once the check
+  passed.
 - Registering the e-mail code factor (``POST /v2/users/{id}/otp_email``) activates
   it at once and mails nothing; there is no verify route. A code is mailed only
-  by a session challenge, which is how both the login and the enrolment get one.
+  by a session challenge, which is how both the login and the enrolment get one,
+  and Zitadel refuses that challenge for a user without the factor. So the
+  enrolment registers first and keeps the factor from counting until the mailed
+  code is confirmed, and a login removes a factor whose enrolment was never
+  confirmed.
 
 The database and Redis stay test doubles (``_make_db_mock``, ``fake_redis``);
 only Zitadel and the mail path are real. Zitadel posts its notifications to
@@ -62,6 +66,8 @@ from app.api.auth import (
     TOTPLoginRequest,
 )
 from app.core.config import settings
+from app.services import email_otp_enrolment
+from app.services.email_otp_enrolment import counted_second_factors
 from app.services.zitadel import ZitadelClient
 
 pytestmark = pytest.mark.zitadel_live
@@ -131,6 +137,7 @@ async def client(instance: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> A
 
     real._http.event_hooks["response"].append(record)
     monkeypatch.setattr(auth_api, "zitadel", real)
+    monkeypatch.setattr(email_otp_enrolment, "zitadel", real)
     yield real
     await real.close()
 
@@ -231,7 +238,7 @@ async def _login(instance: dict[str, str], email: str, policy: str = "required")
     audit_patch, emit_patch = _audit_emit_patches()
     with audit_patch, emit_patch:
         result = await auth_api.login(
-            body=LoginRequest(email=email, password=PASSWORD, auth_request_id=auth_request_id),
+            body=LoginRequest(email=email, password=PASSWORD, auth_request_id=auth_request_id, accepts_email_code=True),
             response=response,
             request=make_request(),
             db=_make_db_mock(org_mfa_policy=policy),
@@ -249,6 +256,11 @@ async def _second_step(temp_token: str, code: str, auth_request_id: str) -> tupl
             db=_make_db_mock(),
         )
     return result, response
+
+
+async def _counted(client: ZitadelClient, user_id: str) -> list[str]:
+    """The factors ``/api/me`` counts as enrolled."""
+    return await counted_second_factors(user_id, await client.login_second_factors(user_id), remove_unconfirmed=False)
 
 
 def _assert_finalised(result: Any, response: MagicMock) -> None:
@@ -325,6 +337,9 @@ async def test_email_code_enrolment_mails_a_code_that_confirms_the_factor(
     with audit_patch, emit_patch:
         await auth_api.email_otp_setup(user_id=user_id)
         first = await _next_mailed_code(email, already=0)
+        # Registered at Zitadel, but not counted until the code is confirmed.
+        await _methods_include(client, user_id, "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL")
+        assert await _counted(client, user_id) == []
         await auth_api.email_otp_resend(user_id=user_id)
         second = await _next_mailed_code(email, already=1)
 
@@ -339,14 +354,53 @@ async def test_email_code_enrolment_mails_a_code_that_confirms_the_factor(
         assert stale.value.status_code == 400
         await auth_api.email_otp_confirm(body=EmailOTPConfirmRequest(code=second), user_id=user_id)
 
-    await _methods_include(client, user_id, "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL")
-    assert await client.login_second_factors(user_id) == ["otpEmail"]
+    assert await _counted(client, user_id) == ["otpEmail"]
 
 
 @pytest.mark.asyncio
-async def test_email_code_login_finalises_only_after_the_mailed_code(
+async def test_zitadel_mails_no_session_code_to_a_user_without_the_factor(
+    client: ZitadelClient, instance: dict[str, str]
+) -> None:
+    """Why the enrolment has to register before the user has received a code."""
+    user_id, _ = await _new_user(client, instance)
+    session = await client.create_session_for_user(user_id, 60)
+
+    with pytest.raises(httpx.HTTPStatusError) as refused:
+        await client.send_session_email_code(session["sessionId"], session["sessionToken"])
+
+    assert refused.value.response.status_code == 400
+    assert "COMMAND-JKLJ3" in refused.value.response.text
+
+
+@pytest.mark.asyncio
+async def test_abandoned_email_code_enrolment_leaves_no_factor_at_the_next_login(
     client: ZitadelClient, instance: dict[str, str], fake_redis: Any
 ) -> None:
+    user_id, email = await _new_user(client, instance)
+    audit_patch, emit_patch = _audit_emit_patches()
+    with audit_patch, emit_patch:
+        await auth_api.email_otp_setup(user_id=user_id)
+    await _next_mailed_code(email, already=0)
+    await _methods_include(client, user_id, "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL")
+    # The code is never entered and its five minutes run out.
+    await fake_redis.delete(f"email_otp_enrolment:{user_id}")
+
+    result, _, response = await _login(instance, email, policy="optional")
+
+    _assert_finalised(result, response)
+    assert len(await _mails_to(email)) == 1
+
+    async def removed() -> bool:
+        return await client.login_second_factors(user_id) == []
+
+    await _eventually(removed, "the unconfirmed e-mail factor to be removed")
+
+
+@pytest.mark.asyncio
+async def test_email_code_factor_registered_before_confirmation_existed_logs_in_with_the_mailed_code(
+    client: ZitadelClient, instance: dict[str, str], fake_redis: Any
+) -> None:
+    """A factor registered without the portal's enrolment (no unconfirmed mark) is kept and asked for."""
     user_id, email = await _new_user(client, instance)
     await client.register_email_otp(user_id)
     await _methods_include(client, user_id, "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL")

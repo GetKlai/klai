@@ -837,6 +837,12 @@ class ZitadelClient:
         if resp.status_code != 409:
             resp.raise_for_status()
 
+    async def remove_email_otp(self, user_id: str) -> None:
+        """Remove the e-mail code factor; a 404 means it is already gone, the state this call is after."""
+        resp = await self._http.delete(f"/v2/users/{user_id}/otp_email")
+        if resp.status_code != 404:
+            resp.raise_for_status()
+
     async def create_session_for_user(self, user_id: str, lifetime_seconds: int) -> dict:
         """Create a Zitadel session that carries only the user check, expiring after ``lifetime_seconds``.
 

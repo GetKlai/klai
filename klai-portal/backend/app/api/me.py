@@ -28,6 +28,7 @@ from app.models.groups import PortalGroup, PortalGroupMembership
 from app.models.knowledge_bases import PortalKnowledgeBase, PortalUserKBAccess
 from app.models.portal import PortalOrg, PortalUser
 from app.services import twenty as twenty_service
+from app.services.email_otp_enrolment import counted_second_factors
 from app.services.partner_rate_limit import check_rate_limit
 from app.services.redis_client import get_redis_pool
 from app.services.zitadel import zitadel
@@ -188,13 +189,21 @@ async def me(
         can_create_org_kbs = perms.effective_kb_limits.can_create_org_kbs
         max_personal_kbs_per_user = perms.effective_kb_limits.max_personal_kbs_per_user
 
-    # Enrolled means a second factor the login verifies (same rule as login())
+    # Enrolled means a second factor the login verifies (same rule as login()).
+    # An unreadable answer is a 503, not "not enrolled": the route guard and the
+    # post-login routing both send a "not enrolled" user to set-up, while a
+    # failed /api/me leaves them where they are.
     mfa_enrolled = False
     if zitadel_user_id:
         try:
-            mfa_enrolled = bool(await zitadel.login_second_factors(zitadel_user_id))
+            checks = await zitadel.login_second_factors(zitadel_user_id)
+            mfa_enrolled = bool(await counted_second_factors(zitadel_user_id, checks, remove_unconfirmed=False))
         except Exception as exc:
-            logger.warning("MFA check failed for user %s, skipping: %s", zitadel_user_id, exc, exc_info=True)
+            logger.warning("MFA check failed for user %s: %s", zitadel_user_id, exc, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication unavailable, please retry",
+            ) from exc
 
     return MeResponse(
         user_id=zitadel_user_id,

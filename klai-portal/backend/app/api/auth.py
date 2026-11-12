@@ -70,6 +70,14 @@ from app.services import audit
 from app.services.auth_links import AuthLinkRoute, build_url_template
 from app.services.bff_session import SessionService
 from app.services.domain_validation import primary_domain_for_email_domain
+from app.services.email_otp_enrolment import (
+    EMAIL_OTP_ENROLMENT_PREFIX,
+    EMAIL_OTP_ENROLMENT_TTL_S,
+    EMAIL_OTP_UNCONFIRMED_PREFIX,
+    counted_second_factors,
+    remove_unconfirmed_email_otp,
+)
+from app.services.email_otp_enrolment import redis_pool as email_otp_redis_pool
 from app.services.events import emit_event
 from app.services.password_policy_guard import PasswordPolicyGuardError, assert_zitadel_password_policy_compatible
 from app.services.pending_session import PendingSessionService
@@ -888,7 +896,11 @@ async def _resolve_and_enforce_mfa(
     mfa_policy = org.mfa_policy if org else "optional"
 
     try:
-        second_factor_checks = await zitadel.login_second_factors(zitadel_user_id)
+        second_factor_checks = await counted_second_factors(
+            zitadel_user_id,
+            await zitadel.login_second_factors(zitadel_user_id),
+            remove_unconfirmed=True,
+        )
     except Exception as exc:
         # REQ-1.6: any failure fails closed. Better a transient 503 than a
         # login that skips a factor it could not see. The reason label is kept
@@ -1005,6 +1017,10 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
     auth_request_id: str
+    # Sent by login pages that have the e-mail code step. A page loaded before
+    # that step existed would navigate to ``callback_url=None`` on the new
+    # status, so it is told to reload instead. Can go once no such page is open.
+    accepts_email_code: bool = False
 
 
 class LoginResponse(BaseModel):
@@ -1496,6 +1512,13 @@ async def login(
         check = second_factor_checks[0]
         session_token = session["sessionToken"]
         if check == "otpEmail":
+            if not body.accepts_email_code:
+                # That page shows ``detail`` under the form; a 409 with any
+                # other detail than "auth_request_stale" is shown as is.
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Please reload this page and sign in again.",
+                )
             try:
                 session_token = await zitadel.send_session_email_code(session["sessionId"], session_token)
             except httpx.HTTPError as exc:
@@ -2043,25 +2066,32 @@ async def passkey_confirm(
     )
 
 
-# Zitadel mails an e-mail code only for a session challenge, so the enrolment
-# sends its test code through a short-lived session for the signed-in user and
-# keeps that session here until the user confirms the code. Five minutes is how
-# long Zitadel keeps an e-mail code valid (OTPEmail generator default, v4.20.1).
-_EMAIL_OTP_ENROLMENT_PREFIX = "email_otp_enrolment:"
-_EMAIL_OTP_ENROLMENT_TTL_S = 300
-
-
 async def _send_email_otp_enrolment_code(user_id: str) -> None:
-    """Register the e-mail code factor and have Zitadel mail a code to confirm it."""
-    await zitadel.register_email_otp(user_id)
-    session = await zitadel.create_session_for_user(user_id, _EMAIL_OTP_ENROLMENT_TTL_S)
-    session_token = await zitadel.send_session_email_code(session["sessionId"], session["sessionToken"])
-    pool = cast("aioredis.Redis", await _get_totp_redis_or_503(phase="email_otp_enrolment"))
-    await pool.set(
-        f"{_EMAIL_OTP_ENROLMENT_PREFIX}{user_id}",
-        json.dumps({"session_id": session["sessionId"], "session_token": session_token}),
-        ex=_EMAIL_OTP_ENROLMENT_TTL_S,
-    )
+    """Register the e-mail code factor, unconfirmed, and have Zitadel mail a code that confirms it.
+
+    Zitadel mails an e-mail code only for a session challenge, so the code goes
+    through a short-lived session for the signed-in user, kept in Redis until
+    the user confirms. The unconfirmed mark is written before the factor is
+    registered, so no failure in between leaves a factor that counts
+    (``app.services.email_otp_enrolment``).
+    """
+    try:
+        pool = await email_otp_redis_pool()
+        await pool.set(f"{EMAIL_OTP_UNCONFIRMED_PREFIX}{user_id}", "1")
+        await zitadel.register_email_otp(user_id)
+        session = await zitadel.create_session_for_user(user_id, EMAIL_OTP_ENROLMENT_TTL_S)
+        session_token = await zitadel.send_session_email_code(session["sessionId"], session["sessionToken"])
+        await pool.set(
+            f"{EMAIL_OTP_ENROLMENT_PREFIX}{user_id}",
+            json.dumps({"session_id": session["sessionId"], "session_token": session_token}),
+            ex=EMAIL_OTP_ENROLMENT_TTL_S,
+        )
+    except (*_REDIS_UNAVAILABLE_ERRORS, RuntimeError) as exc:
+        _slog.error("email_otp_enrolment_redis_unavailable", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication unavailable, please retry",
+        ) from exc
 
 
 @router.post("/auth/email-otp/setup", status_code=status.HTTP_204_NO_CONTENT)
@@ -2074,12 +2104,13 @@ async def email_otp_setup(
     """
     try:
         await _send_email_otp_enrolment_code(user_id)
-    except httpx.HTTPStatusError as exc:
-        _slog.exception("register_email_otp_failed", zitadel_status=exc.response.status_code)
+    except httpx.HTTPError as exc:
+        zitadel_status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        _slog.exception("register_email_otp_failed", zitadel_status=zitadel_status)
         _emit_auth_event(
             "email_otp_setup_failed",
             reason="zitadel_5xx",
-            zitadel_status=exc.response.status_code,
+            zitadel_status=zitadel_status,
             actor_user_id=user_id,
             outcome="502",
             level="error",
@@ -2109,12 +2140,13 @@ async def email_otp_resend(
     """
     try:
         await _send_email_otp_enrolment_code(user_id)
-    except httpx.HTTPStatusError as exc:
-        _slog.exception("register_email_otp_resend_failed", zitadel_status=exc.response.status_code)
+    except httpx.HTTPError as exc:
+        zitadel_status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        _slog.exception("register_email_otp_resend_failed", zitadel_status=zitadel_status)
         _emit_auth_event(
             "email_otp_resend_failed",
             reason="zitadel_5xx",
-            zitadel_status=exc.response.status_code,
+            zitadel_status=zitadel_status,
             actor_user_id=user_id,
             outcome="502",
             level="error",
@@ -2145,18 +2177,23 @@ async def email_otp_confirm(
     event on 4xx (invalid_code, expired) and 5xx (zitadel_5xx).
     """
     pool = cast("aioredis.Redis", await _get_totp_redis_or_503(phase="email_otp_enrolment"))
-    key = f"{_EMAIL_OTP_ENROLMENT_PREFIX}{user_id}"
+    key = f"{EMAIL_OTP_ENROLMENT_PREFIX}{user_id}"
     pending = await pool.get(key)
     if not pending:
+        # The code expired (or none was sent): an enrolment left unconfirmed
+        # ends here, without its factor. 410 lets the page say "expired"
+        # rather than "wrong code".
+        if await pool.exists(f"{EMAIL_OTP_UNCONFIRMED_PREFIX}{user_id}"):
+            await remove_unconfirmed_email_otp(user_id)
         _emit_auth_event(
             "email_otp_confirm_failed",
             reason="expired",
             actor_user_id=user_id,
-            outcome="400",
+            outcome="410",
             level="warning",
         )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_410_GONE,
             detail="Code expired, please request a new one",
         )
     session = json.loads(pending)
@@ -2167,13 +2204,14 @@ async def email_otp_confirm(
             check="otpEmail",
             code=body.code,
         )
-    except httpx.HTTPStatusError as exc:
-        _slog.exception("verify_email_otp_failed", zitadel_status=exc.response.status_code)
-        if exc.response.status_code in (400, 401):
+    except httpx.HTTPError as exc:
+        zitadel_status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        _slog.exception("verify_email_otp_failed", zitadel_status=zitadel_status)
+        if zitadel_status in (400, 401):
             _emit_auth_event(
                 "email_otp_confirm_failed",
                 reason="invalid_code",
-                zitadel_status=exc.response.status_code,
+                zitadel_status=zitadel_status,
                 actor_user_id=user_id,
                 outcome="400",
                 level="warning",
@@ -2185,7 +2223,7 @@ async def email_otp_confirm(
         _emit_auth_event(
             "email_otp_confirm_failed",
             reason="zitadel_5xx",
-            zitadel_status=exc.response.status_code,
+            zitadel_status=zitadel_status,
             actor_user_id=user_id,
             outcome="502",
             level="error",
@@ -2195,7 +2233,7 @@ async def email_otp_confirm(
             detail="Failed to confirm email code, please try again later",
         ) from exc
 
-    await pool.delete(key)
+    await pool.delete(key, f"{EMAIL_OTP_UNCONFIRMED_PREFIX}{user_id}")
     await audit.log_event(
         org_id=0,
         actor=user_id,

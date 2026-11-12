@@ -115,7 +115,7 @@ async def test_find_user_by_email_500_returns_503(respx_zitadel: respx.MockRoute
 
 
 @pytest.mark.asyncio
-async def test_optional_has_any_mfa_500_proceeds_no_event(respx_zitadel: respx.MockRouter) -> None:
+async def test_optional_policy_without_a_factor_logs_in_without_an_event(respx_zitadel: respx.MockRouter) -> None:
     respx_zitadel.post("/v2/users").mock(
         return_value=httpx.Response(
             200, json={"result": [{"userId": "uid-opt", "details": {"resourceOwner": "zorg-opt"}}]}

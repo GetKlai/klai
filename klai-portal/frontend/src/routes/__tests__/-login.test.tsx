@@ -67,6 +67,9 @@ describe('/login second factor', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret' } })
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
 
+    const [, loginInit] = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/auth/login'))!
+    // Tells the backend this page has the e-mail code step.
+    expect(JSON.parse(loginInit.body).accepts_email_code).toBe(true)
     expect(await screen.findByText('We sent a code to your email address.')).toBeTruthy()
     const code = screen.getByLabelText('Verification code')
     const verify = screen.getByRole('button', { name: 'Verify' })
