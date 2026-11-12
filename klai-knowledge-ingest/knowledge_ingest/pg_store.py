@@ -1296,9 +1296,7 @@ async def get_current_graph_episode_uuids_for_org(
     return {episode_id for ids, _ in extractions.values() for episode_id in ids}
 
 
-# Built once at import: the statement is constant and every value is a bound
-# parameter, and a module-level constant keeps it out of the static scan's
-# "string concatenation inside execute()" pattern.
+# Built once at import from two constants; every value is a bound parameter.
 _FORGET_REPLACED_EPISODE_IDS_SQL = (
     _HISTORY_CTE  # noqa: S608 -- constant SQL; values are bound parameters
     + """
@@ -1325,7 +1323,11 @@ async def forget_replaced_episode_ids(
     never a document head, so ``scripts/purge_deleted_documents.py`` (which
     judges heads) reads the same rows as before.
     """
-    await conn.execute(_FORGET_REPLACED_EPISODE_IDS_SQL, org_id, [artifact_id])
+    # The scan flags any composed string passed to execute(). This one is two
+    # module constants joined at import, run through asyncpg with $1/$2 bound.
+    await conn.execute(  # nosemgrep: sqlalchemy-execute-raw-query
+        _FORGET_REPLACED_EPISODE_IDS_SQL, org_id, [artifact_id]
+    )
 
 
 async def get_active_image_hashes_for_kb(
