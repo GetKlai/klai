@@ -452,6 +452,7 @@ class RetrievalPipelineState:
     raw_results: list[dict[str, Any]] = dataclass_field(default_factory=list)
     candidates_retrieved: int = 0
     qdrant_ms: float | None = None
+    graph_found_count: int = 0
     graph_results_count: int = 0
     graph_search_ms: float | None = None
     graph_candidate_ids: set[str] = dataclass_field(default_factory=set)
@@ -885,8 +886,9 @@ async def _run_search(state: RetrievalPipelineState) -> None:
             async with state.trace.step("graph_search", started_at=t_graph) as graph_step:
                 found = await graph_task
                 graph_results = await _label_graph_results(found, req) if found else []
+                state.graph_found_count = len(found)
                 state.graph_results_count = len(graph_results)
-                graph_step.meta("candidates_returned", len(found))
+                graph_step.meta("candidates_returned", state.graph_found_count)
                 graph_step.meta("in_scope", state.graph_results_count)
                 if graph_results:
                     state.graph_candidate_ids = {r["chunk_id"] for r in graph_results}
@@ -1127,7 +1129,8 @@ def _run_quality_boost(state: RetrievalPipelineState) -> None:
     ]
     state.decision_record["graph_search"] = {
         "enabled": settings.graphiti_enabled,
-        "candidates_returned": state.graph_results_count,
+        "candidates_returned": state.graph_found_count,
+        "in_scope": state.graph_results_count,
         "graph_in_top_k": len(state.graph_in_top_k_ids),
         "graph_top_k_chunk_ids": state.graph_in_top_k_ids,
         "served_top_k": len(state.serving),

@@ -10,6 +10,7 @@ which of the graph's facts the request may receive.
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -199,9 +200,10 @@ def _post_retrieve(client, body: dict, graph_facts: list[dict], qdrant: AsyncQdr
 
 @pytest.mark.parametrize(("scope", "expected"), _MATRIX)
 def test_retrieve_serves_only_graph_facts_whose_document_is_in_the_request_scope(
-    client, scope, expected
+    client, scope, expected, caplog
 ):
     qdrant = asyncio.run(_seeded_qdrant())
+    caplog.set_level(logging.INFO)
 
     resp = _post_retrieve(client, scope, _facts(), qdrant)
 
@@ -213,6 +215,11 @@ def test_retrieve_serves_only_graph_facts_whose_document_is_in_the_request_scope
     }
     assert served == expected
     assert resp.json()["metadata"]["graph_results_count"] == len(expected)
+    # Both counts are recorded, so the share of facts a scope withholds can be
+    # read from production records.
+    record = next(r for r in caplog.records if "retrieval_decision_record" in r.getMessage())
+    assert record.msg["graph_search"]["candidates_returned"] == len(_facts())
+    assert record.msg["graph_search"]["in_scope"] == len(expected)
 
 
 @pytest.mark.asyncio
