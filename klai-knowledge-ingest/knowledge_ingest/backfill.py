@@ -89,8 +89,7 @@ def _has_graphiti_episode_record(raw_extra: str | dict | None) -> bool:
 def _get_current_edge_count(org_id: str) -> int:
     """Current RELATES_TO edge count for org_id, via the direct falkordb client.
 
-    Same pattern as ``graph.sweep_orphan_episodes_org_wide`` /
-    ``graph.wipe_org_graph``: the graphiti async driver returns empty result
+    Same pattern as ``graph.wipe_org_graph``: the graphiti async driver returns empty result
     sets for COUNT queries against FalkorDB (a shape mismatch between the
     FalkorDB and Neo4j driver return types), so this goes around it with the
     synchronous ``falkordb`` client instead.

@@ -346,6 +346,32 @@ async def test_connector_ingest_threads_resource_key_to_artifact_and_writer_jobs
 
 
 @pytest.mark.asyncio
+async def test_new_version_extraction_replaces_the_previous_versions_graph_content():
+    """The graph holds one version per document, so the new extraction takes the old one's place.
+
+    ``replace_stale`` makes the job delete the document's earlier episodes when it
+    starts writing, not at ingest, so the old facts stay searchable until then.
+    """
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, _ = _make_mock_app()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="docs/page.md",
+        content="# Title\n\nNew content of an existing page.",
+        source_type="docs",
+        content_type="kb_article",
+    )
+
+    async with _base_patches(mock_app, graphiti_enabled=True):
+        await ingest_document(_make_mock_conn(), req)
+
+    assert mock_app.graphiti_configured.defer_async.await_args.kwargs["replace_stale"] is True
+
+
+@pytest.mark.asyncio
 async def test_already_enqueued_does_not_propagate():
     """When defer_async raises AlreadyEnqueued, ingest_document still returns ok."""
     from knowledge_ingest.models import IngestRequest

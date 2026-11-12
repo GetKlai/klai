@@ -110,6 +110,15 @@ jobs:
           GRAPH_CONTRACT_REQUIRED: "1"
         run: uv run --frozen --extra dev pytest tests/graph_contract -q --tb=short -p no:cacheprovider
 
+      # retrieval-api drops facts Graphiti expired or invalidated after the
+      # search; that needs graphiti-core to read both fields back from FalkorDB.
+      - name: retrieval-api returns only current facts from FalkorDB
+        working-directory: klai-retrieval-api
+        env:
+          GRAPH_CONTRACT_FALKORDB_PORT: "6379"
+          GRAPH_CONTRACT_REQUIRED: "1"
+        run: uv run --frozen --extra dev pytest tests/test_graph_search_current_facts.py -q --tb=short -p no:cacheprovider
+
       - name: FalkorDB log
         if: failure()
         run: docker logs falkordb 2>&1 | tail -n 80 || true

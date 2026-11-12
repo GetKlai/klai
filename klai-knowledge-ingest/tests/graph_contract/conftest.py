@@ -257,3 +257,55 @@ async def contract(request: pytest.FixtureRequest) -> AsyncIterator[Contract]:
         await graphiti.close()
         await probe.aclose()
         monkeypatch.undo()
+
+
+@pytest.fixture
+def graph_helpers(contract: Contract, monkeypatch: pytest.MonkeyPatch) -> Contract:
+    """``contract``, with knowledge_ingest.graph's helpers pointed at its tenant graph."""
+    from knowledge_ingest import graph as graph_module
+
+    monkeypatch.setattr(settings, "graphiti_enabled", True)
+    monkeypatch.setattr(graph_module, "_get_graphiti", lambda: contract.graphiti)
+    return contract
+
+
+async def seed_graph(contract: Contract, episodes: list[str], edges: dict[str, list[str]]) -> None:
+    """Store episodes, and per ``edges`` key one fact edge citing the listed episodes.
+
+    Every edge gets its own two entities, each mentioned by every existing
+    episode the edge cites: graphiti's shape, where an extracted fact's
+    endpoints are mentioned by the episode it came from. A cited uuid without
+    an Episodic node is how an edge outlives its episode.
+    """
+    driver = contract.graphiti.driver.clone(database=contract.group_id)
+    await driver.execute_query(
+        "UNWIND $uuids AS u CREATE (:Episodic {uuid: u, group_id: $g})",
+        uuids=episodes,
+        g=contract.group_id,
+    )
+    for edge, cited in edges.items():
+        await driver.execute_query(
+            "CREATE (a:Entity {uuid: $a, group_id: $g, name: $a})"
+            "-[:RELATES_TO {uuid: $edge, group_id: $g, episodes: $cited, fact: $edge}]->"
+            "(b:Entity {uuid: $b, group_id: $g, name: $b}) "
+            "WITH a, b UNWIND $cited AS c MATCH (e:Episodic {uuid: c}) "
+            "CREATE (e)-[:MENTIONS]->(a), (e)-[:MENTIONS]->(b)",
+            a=f"{edge}-source",
+            b=f"{edge}-target",
+            edge=edge,
+            cited=cited,
+            g=contract.group_id,
+        )
+
+
+async def stored_graph(contract: Contract) -> tuple[set[str], dict[str, list[str]], set[str]]:
+    """(episode uuids, edge uuid -> cited episodes, entity uuids) as stored."""
+    driver = contract.graphiti.driver.clone(database=contract.group_id)
+    records, _, _ = await driver.execute_query("MATCH (e:Episodic) RETURN collect(e.uuid) AS uuids")
+    episodes = set(records[0]["uuids"])
+    records, _, _ = await driver.execute_query(
+        "MATCH ()-[r:RELATES_TO]->() RETURN r.uuid AS uuid, r.episodes AS episodes"
+    )
+    edges = {row["uuid"]: sorted(row["episodes"]) for row in records}
+    records, _, _ = await driver.execute_query("MATCH (n:Entity) RETURN collect(n.uuid) AS uuids")
+    return episodes, edges, set(records[0]["uuids"])

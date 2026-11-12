@@ -1016,6 +1016,11 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         # ``lock`` (execution) alongside ``queueing_lock`` (dedup): a stale-graph
         # refresh for the same artifact must serialise against this job, not
         # run concurrently and delete the episodes it is appending.
+        # ``replace_stale``: the graph holds one version per document, so the
+        # job deletes the episodes of every earlier version once it starts
+        # writing this one. Without it a single tenant had 8,442 episodes of
+        # replaced versions next to 1,748 current ones, and those facts kept
+        # reaching answers.
         await proc_app.ingest_graphiti_episode.configure(  # type: ignore[attr-defined]
             lock=f"graphiti:{artifact_id}",
             queueing_lock=f"graphiti:{artifact_id}",
@@ -1026,6 +1031,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             belief_time_start=kf["belief_time_start"],
             kb_slug=req.kb_slug,
             path=req.path,
+            replace_stale=True,
             **({"resource_key": resource_key} if resource_key else {}),
         )
 

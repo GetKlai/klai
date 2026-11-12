@@ -1183,41 +1183,77 @@ async def get_orphan_image_keys_for_connector(
 
 
 async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str) -> set[str]:
-    """Return every Graphiti episode UUID still referenced by an artifact for this org.
+    """Return the Graphiti episode uuids that are the CURRENT graph content of this org.
+
+    Postgres keeps every version of a document; the graph holds the facts of
+    exactly one: the newest version that was actually extracted. That is the
+    active row's episodes, or, when the active row has none (its extraction
+    was skipped, is still queued, or failed), those of the nearest earlier
+    version along ``superseded_by`` that has some. Episodes of replaced
+    extractions and of removed documents (no active row) are not alive, so the
+    org-wide sweep and ``scripts/prune_stale_graph.py`` delete them.
+
+    A new extraction deletes its predecessors' episodes itself
+    (``ingest_graphiti_episode(replace_stale=True)``), so in steady state this
+    and the graph agree; the rule exists so a skipped extraction keeps the one
+    that stands in.
 
     The list key is authoritative when present; the scalar fallback keeps rows
-    written before GetKlai/klai#1176 visible to the org-wide janitor.
+    written before GetKlai/klai#1176 readable. "no-chunks" (backfill.py) and
+    "skipped:<reason>" (a page held out of the graph, #1148) are sentinels, not
+    episode uuids, so a row holding only those counts as not extracted.
 
-    Excludes the ``no-chunks`` sentinel that artifacts use when an
-    article had no extractable text.
+    depth < 100 bounds the walk, as in ``get_episode_ids_for_document_history``.
     """
     rows = await conn.fetch(
         """
-        SELECT DISTINCT stored_episode.episode_id AS episode_uuid
-          FROM knowledge.artifacts AS a
-          CROSS JOIN LATERAL jsonb_array_elements_text(
-              CASE
-                  WHEN a.extra::jsonb ? 'graphiti_episode_ids'
-                      THEN a.extra::jsonb->'graphiti_episode_ids'
-                  WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
-                      THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
-                  ELSE '[]'::jsonb
-              END
-          ) AS stored_episode(episode_id)
-         WHERE a.org_id = $1
-           AND stored_episode.episode_id <> 'no-chunks'
+        WITH RECURSIVE stored AS (
+            SELECT a.id,
+                   a.superseded_by,
+                   a.belief_time_end = $2 AS active,
+                   ARRAY(
+                       SELECT episode_id
+                       FROM jsonb_array_elements_text(
+                           CASE
+                               WHEN a.extra::jsonb ? 'graphiti_episode_ids'
+                                   THEN a.extra::jsonb->'graphiti_episode_ids'
+                               WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                                   THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
+                               ELSE '[]'::jsonb
+                           END
+                       ) AS stored_episode(episode_id)
+                       WHERE episode_id <> 'no-chunks' AND episode_id NOT LIKE 'skipped:%'
+                   ) AS episode_ids
+            FROM knowledge.artifacts AS a
+            WHERE a.org_id = $1
+        ),
+        walk AS (
+            SELECT s.id AS document, s.id, s.episode_ids, 0 AS depth
+            FROM stored s
+            WHERE s.active
+
+            UNION ALL
+
+            SELECT w.document, p.id, p.episode_ids, w.depth + 1
+            FROM walk w
+            JOIN stored p ON p.superseded_by = w.id
+            WHERE cardinality(w.episode_ids) = 0 AND w.depth < 100
+        ),
+        nearest AS (
+            SELECT episode_ids,
+                   depth,
+                   min(depth) FILTER (WHERE cardinality(episode_ids) > 0)
+                       OVER (PARTITION BY document) AS extracted_depth
+            FROM walk
+        )
+        SELECT DISTINCT unnest(episode_ids) AS episode_uuid
+        FROM nearest
+        WHERE depth = extracted_depth
         """,
         org_id,
+        _SENTINEL,
     )
-    # "no-chunks" and "skipped:<reason>" are sentinels, not episode uuids: the
-    # first from backfill.py, the second from a page held out of the graph
-    # deliberately (#1148). Treating either as alive would have the caller ask
-    # FalkorDB about an episode that never existed.
-    return {
-        r["episode_uuid"]
-        for r in rows
-        if r["episode_uuid"] != "no-chunks" and not r["episode_uuid"].startswith("skipped:")
-    }
+    return {r["episode_uuid"] for r in rows}
 
 
 async def get_active_image_hashes_for_kb(

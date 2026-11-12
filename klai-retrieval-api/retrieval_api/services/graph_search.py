@@ -16,6 +16,7 @@ import math
 import re
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
@@ -25,6 +26,7 @@ from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 from graphiti_core.nodes import EpisodicNode
+from graphiti_core.search.search_config import DEFAULT_SEARCH_LIMIT
 from klai_graphiti_compat import apply_falkordb_compat
 from klai_kb_slugs import parse_episode_name
 
@@ -36,6 +38,8 @@ apply_falkordb_compat(ann_candidate_search=settings.graph_ann_enabled)
 logger = structlog.get_logger()
 
 _graphiti_client: Graphiti | None = None
+# Ceiling on how far _search_current_facts widens past graphiti's default limit.
+_MAX_GRAPH_FETCH = 4 * DEFAULT_SEARCH_LIMIT
 # Provenance is optional garnish on the graph leg: it gets its own small
 # budget so it can never cost more than the search it annotates.
 _PROVENANCE_TIMEOUT = 1.0
@@ -250,11 +254,44 @@ async def _search_with_provenance(
     both bounded and explicit.
     """
     results = await asyncio.wait_for(
-        graphiti.search(query, group_ids=[org_id]),
+        _search_current_facts(graphiti, query, org_id, top_k),
         timeout=settings.graph_search_timeout,
     )
     episode_names = await _resolve_episode_names(graphiti, results, org_id)
     return _convert_results(results, top_k, episode_names)
+
+
+async def _search_current_facts(graphiti: Graphiti, query: str, org_id: str, top_k: int) -> list:
+    """Graphiti's search without the facts Graphiti itself no longer holds true.
+
+    Graphiti keeps a contradicted fact with ``expired_at`` set and a fact that
+    ended with ``invalid_at`` set; in one production week 3 of 31 graph facts in
+    answer material were already expired. They are dropped here rather than with
+    graphiti's ``SearchFilters``: any filter makes the ANN candidate search
+    (klai_graphiti_compat) fall back to the brute-force similarity scan, the scan
+    that hit FalkorDB's query timeout from ~22k edges (SPEC-GRAPH-SCALE-001).
+
+    So that dropped facts do not shrink the answer, the search widens (10, 20,
+    40 edges) until it has as many current facts as an unfiltered search would
+    have returned, or the graph has no more matches. 40 is a ceiling, not a
+    guarantee: a query whose best 40 matches are mostly expired returns fewer.
+    """
+    wanted = min(top_k, DEFAULT_SEARCH_LIMIT)
+    num_results = DEFAULT_SEARCH_LIMIT
+    while True:
+        found = await graphiti.search(query, group_ids=[org_id], num_results=num_results)
+        now = datetime.now(UTC)
+        current = [
+            edge
+            for edge in found
+            if all(
+                moment is None or moment > now
+                for moment in (getattr(edge, "expired_at", None), getattr(edge, "invalid_at", None))
+            )
+        ]
+        if len(current) >= wanted or len(found) < num_results or num_results >= _MAX_GRAPH_FETCH:
+            return current
+        num_results *= 2
 
 
 def _episode_uuids(edge: object) -> list[str]:

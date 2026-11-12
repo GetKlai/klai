@@ -581,155 +581,97 @@ async def rename_episodes_to_document_keys(org_id: str, renames: dict[str, list[
     return renamed
 
 
+# One batch is one full scan of the org's RELATES_TO edges, because an edge
+# lists its episodes in a property FalkorDB cannot index, and FalkorDB
+# evaluates ``x IN $uuids`` linearly. On a synthetic graph the size of the
+# largest tenant (200k edges, 10k episodes; FalkorDB 6.0.4) that read took
+# 335 ms for 100 uuids, 924 ms for 500 and 1685 ms for 1000, against the
+# 5000 ms production query timeout. 200 keeps a batch, writes included, near
+# a second.
+_EPISODE_DELETE_BATCH = 200
+
+
 async def delete_kb_episodes(org_id: str, episode_ids: list[str]) -> None:
-    """Delete FalkorDB nodes for a set of episodes within an org's graph.
+    """Delete episodes from an org's graph together with the facts only they back.
 
-    Deletes:
-    1. Episodic nodes whose uuid matches any episode_id (DETACH DELETE removes incident edges).
-    2. Entity nodes that are no longer connected to any remaining Episodic node.
+    Retrieval searches ``RELATES_TO`` edges, not episodes, so deleting the
+    Episodic node alone leaves every fact it produced searchable, citing a uuid
+    that no longer exists. Per batch this:
 
-    No-op when graphiti is disabled or episode_ids is empty.
+    1. takes the batch's uuids out of each edge's ``episodes`` list and deletes
+       an edge whose list is left empty; an edge another episode still backs
+       stays, minus the removed uuids;
+    2. DETACH DELETEs the Episodic nodes.
+
+    Then Entity nodes no episode mentions any more are deleted.
+
+    ``Graphiti.remove_episode`` does the same per episode but then rebuilds the
+    summary of every surviving entity with LLM calls, one episode at a time.
+    For the thousands of replaced extractions one tenant holds that is an LLM
+    bill for text retrieval never reads (it searches edges, not summaries), so
+    surviving entities keep summary wording from removed episodes.
+
+    Idempotent, so an interrupted run can simply be repeated. No-op when
+    graphiti is disabled or episode_ids is empty.
     """
     if not settings.graphiti_enabled or not episode_ids:
         return
-    graphiti = _get_graphiti()
-    driver = graphiti.driver.clone(org_id)
-    await driver.execute_query(
-        "MATCH (e:Episodic) WHERE e.uuid IN $uuids DETACH DELETE e",
-        uuids=episode_ids,
-    )
-    # Delete Entity nodes no longer referenced by any Episodic node.
+    driver = _get_graphiti().driver.clone(org_id)
+    for start in range(0, len(episode_ids), _EPISODE_DELETE_BATCH):
+        batch = episode_ids[start : start + _EPISODE_DELETE_BATCH]
+        await driver.execute_query(
+            "MATCH ()-[r:RELATES_TO]->() WHERE any(x IN r.episodes WHERE x IN $uuids) "
+            "WITH r, [x IN r.episodes WHERE NOT x IN $uuids] AS kept "
+            "SET r.episodes = kept "
+            "WITH r, kept WHERE size(kept) = 0 "
+            "DELETE r",
+            uuids=batch,
+        )
+        await driver.execute_query(
+            "MATCH (e:Episodic) WHERE e.uuid IN $uuids DETACH DELETE e",
+            uuids=batch,
+        )
     await driver.execute_query(
         "MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n",
     )
     logger.info("graph_kb_episodes_deleted", org_id=org_id, count=len(episode_ids))
 
 
+async def stored_episode_uuids(org_id: str) -> set[str]:
+    """Every Episodic uuid in the org graph.
+
+    ``collect`` answers in one row: FalkorDB caps a result at RESULTSET_SIZE
+    rows (10,000 in production), fewer than the largest tenant's episodes, so
+    a row per episode would silently drop the rest.
+    """
+    driver = _get_graphiti().driver.clone(org_id)
+    records, _, _ = await driver.execute_query("MATCH (e:Episodic) RETURN collect(e.uuid) AS uuids")
+    return {str(uuid) for uuid in records[0]["uuids"] if uuid}
+
+
 async def sweep_orphan_episodes_org_wide(org_id: str, alive_episode_uuids: set[str]) -> int:
-    """ORG-WIDE sweep of FalkorDB episodes whose ``uuid`` is no longer
-    referenced by any artifact in postgres.
+    """Delete every episode in the org graph that ``alive_episode_uuids`` lacks.
 
-    Graphiti's Episodic node-schema has ``uuid``, ``name``, ``group_id``,
-    ``source``, ``source_description``, ``valid_at``, ``created_at`` —
-    but NO ``artifact_id`` property. The ingest pipeline links postgres
-    -> FalkorDB by writing FalkorDB ``Episodic.uuid`` values into
-    ``knowledge.artifacts.extra->'graphiti_episode_ids'`` while retaining the
-    first value in the legacy scalar.
+    ``alive_episode_uuids`` comes from ``pg_store.get_alive_episode_uuids_for_org``:
+    per document, the episodes of its newest extracted version. Everything
+    else (replaced extractions, removed documents, episodes no row records)
+    goes through ``delete_kb_episodes``, so its facts go with it.
 
-    Implementation uses the direct ``falkordb`` Python client (the same
-    pattern as ``routes/stats.py::get_graph_stats``). The earlier
-    attempt via ``graphiti.driver.execute_query`` returned an empty
-    result_set silently because the FalkorDB driver and the Neo4j
-    driver have different return shapes — proven on live e2e:
-    ``alive_episode_count: 0`` while FalkorDB clearly held 31 episodes.
-
-    Lists every Episodic uuid in the org graph, intersects with the
-    alive set, DETACH DELETEs the difference, then sweeps Entities
-    that lost all incident episodes.
-
-    Returns count of episodes deleted. No-op when graphiti is disabled.
+    Returns the number of episodes deleted. No-op when graphiti is disabled.
     """
     if not settings.graphiti_enabled:
         return 0
-    try:
-        from falkordb import FalkorDB as FalkorDBClient
-    except ImportError:
-        logger.warning("falkordb_client_unavailable_for_sweep", org_id=org_id)
-        return 0
-
-    client = FalkorDBClient(host=settings.falkordb_host, port=settings.falkordb_port)
-    graph = client.select_graph(org_id)
-
-    list_res = graph.query("MATCH (e:Episodic) RETURN e.uuid AS uuid")
-    falkor_uuids: set[str] = set()
-    for row in list_res.result_set or []:
-        uid = row[0] if row else None
-        if uid:
-            falkor_uuids.add(str(uid))
-
-    orphan_uuids = falkor_uuids - alive_episode_uuids
-    if not orphan_uuids:
-        logger.info(
-            "graph_orphan_sweep_clean",
-            org_id=org_id,
-            falkor_episodes=len(falkor_uuids),
-            alive=len(alive_episode_uuids),
-        )
-        return 0
-
-    del_res = graph.query(
-        "MATCH (e:Episodic) WHERE e.uuid IN $uuids "
-        "WITH e, e.uuid AS uuid "
-        "DETACH DELETE e "
-        "RETURN count(uuid) AS deleted",
-        params={"uuids": list(orphan_uuids)},
-    )
-    deleted = 0
-    if del_res.result_set:
-        deleted = int(del_res.result_set[0][0] or 0)
-    if deleted:
-        graph.query("MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n")
+    stored = await stored_episode_uuids(org_id)
+    orphan_uuids = sorted(stored - alive_episode_uuids)
+    await delete_kb_episodes(org_id, orphan_uuids)
     logger.info(
         "graph_orphan_episodes_swept",
         org_id=org_id,
-        scanned=len(falkor_uuids),
+        scanned=len(stored),
         alive=len(alive_episode_uuids),
-        orphan_uuids=len(orphan_uuids),
-        episodes_deleted=deleted,
+        episodes_deleted=len(orphan_uuids),
     )
-    return deleted
-
-
-async def delete_orphan_episodes_for_artifact_ids(org_id: str, artifact_ids: list[str]) -> int:
-    """Janitor: drop FalkorDB episodes whose ``artifact_id`` is in the given list.
-
-    SPEC-CONNECTOR-DELETE-LIFECYCLE-001 follow-up. Some Graphiti tasks
-    do synchronous LLM calls that don't honour ``asyncio.CancelledError``
-    — they keep running after the procrastinate cancel and write a fresh
-    episode for an already-deleted artifact. Those episodes never made
-    them into ``knowledge.artifacts.extra`` (the row was already gone), so
-    ``delete_kb_episodes`` cannot find them via
-    the normal path.
-
-    The orchestrator runs this AFTER ``delete_connector_artifacts`` with
-    the artifact-id snapshot taken BEFORE the delete: any episode in
-    FalkorDB referring to those artifact-ids is by definition orphan
-    (the artifact does not exist in postgres anymore).
-
-    Also cleans Entity nodes that lose all incident Episodic edges
-    after the delete — same pattern as ``delete_kb_episodes``.
-
-    Returns the count of Episodic nodes deleted. No-op when graphiti is
-    disabled or ``artifact_ids`` is empty.
-    """
-    if not settings.graphiti_enabled or not artifact_ids:
-        return 0
-    graphiti = _get_graphiti()
-    driver = graphiti.driver.clone(org_id)
-    result = await driver.execute_query(
-        "MATCH (e:Episodic) WHERE e.artifact_id IN $artifact_ids "
-        "WITH e, e.uuid AS uuid "
-        "DETACH DELETE e "
-        "RETURN count(uuid) AS deleted",
-        artifact_ids=artifact_ids,
-    )
-    deleted = 0
-    if result is not None:
-        records, _, _ = result
-        if records:
-            deleted = int(records[0].get("deleted", 0) or 0)
-    if deleted:
-        # Entities now potentially orphaned by the episode-delete above.
-        await driver.execute_query(
-            "MATCH (n:Entity) WHERE NOT ((:Episodic)--(n)) DETACH DELETE n",
-        )
-    logger.info(
-        "graph_orphan_episodes_deleted",
-        org_id=org_id,
-        artifact_count=len(artifact_ids),
-        episodes_deleted=deleted,
-    )
-    return deleted
+    return len(orphan_uuids)
 
 
 def wipe_org_graph(org_id: str) -> int:
@@ -741,9 +683,8 @@ def wipe_org_graph(org_id: str) -> int:
     #   group_id == org_id is DETACH DELETE'd.  Returns the count of nodes
     #   removed so the API can surface it to the orchestrator.
 
-    Uses the direct ``falkordb`` Python client (same pattern as
-    ``sweep_orphan_episodes_org_wide``) because the async Graphiti driver
-    returns empty result_sets for COUNT queries due to shape mismatch.
+    Uses the direct ``falkordb`` Python client because the async Graphiti
+    driver returns empty result_sets for COUNT queries due to shape mismatch.
 
     Returns 0 when graphiti is disabled or the graph is already empty.
     Synchronous — callers wrap in ``asyncio.to_thread`` when called from
@@ -872,7 +813,7 @@ async def _maybe_warn_graph_scale_from_falkordb(org_id: str) -> None:
     path returns immediately.
 
     Uses the direct ``falkordb`` Python client (same pattern as
-    ``sweep_orphan_episodes_org_wide`` / ``wipe_org_graph`` above: the
+    ``wipe_org_graph`` above: the
     graphiti async driver returns empty result sets for COUNT queries against
     FalkorDB), wrapped in ``asyncio.to_thread`` since the client is
     synchronous.

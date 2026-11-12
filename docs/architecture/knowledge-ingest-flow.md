@@ -701,12 +701,22 @@ the vector index.
 
 **Three types of objects in the graph:**
 
-**EpisodicNode** — the document itself as a time-stamped event. Every ingested artifact
-becomes an `EpisodicNode` with the full text, a `valid_from` timestamp, and a
-`belief_time_end` sentinel (`253402300800` = year 9999) that marks it as currently active.
-When a document is re-ingested, the old EpisodicNode gets `belief_time_end = now()` (soft
-delete) and a fresh one is created. This temporal layering means the graph holds a full
-history of what the system "believed" at any point in time.
+**EpisodicNode** — the document text as Graphiti saw it, one or more per extracted version
+(long documents are split into parts), named `doc:<kb_slug>:<path>`.
+
+**History lives in Postgres; the graph holds only what counts now.** `knowledge.artifacts`
+keeps every version of a document (a replaced row gets `belief_time_end` and
+`superseded_by`). The graph, like the vector index, holds the facts of exactly one version
+per document: the newest version that was actually extracted. When a new version's
+extraction starts writing, the job (`ingest_graphiti_episode(replace_stale=True)`) deletes
+the episodes of every earlier version first, so the old facts stay searchable until then.
+When a new version is not extracted (a navigation page, a job still queued or failed), the
+previous extraction stays as the document's graph content.
+`pg_store.get_alive_episode_uuids_for_org` is that rule; the org-wide orphan sweep and
+`scripts/prune_stale_graph.py` (manual, dry run by default) delete everything else.
+Deleting an episode (`graph.delete_kb_episodes`) also deletes every `RELATES_TO` fact only
+that episode backed and takes its uuid out of the facts other episodes still back, because
+retrieval searches facts, not episodes.
 
 **EntityNode** — extracted entities within the document. Graphiti's LLM step extracts
 named entities (people, products, projects, decisions, organisations) from each chunk and
