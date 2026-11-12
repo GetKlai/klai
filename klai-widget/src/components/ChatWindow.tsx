@@ -80,7 +80,7 @@ export function ChatWindow(props: ChatWindowProps) {
   const [visitorName, setVisitorName] = createSignal(chatState.visitorName);
   const [visitorEmail, setVisitorEmail] = createSignal(chatState.visitorEmail);
   // The pre-chat step is answered once per widget load. A remembered identity
-  // (the opt-in below, 30 days) pre-fills the fields but does not skip the
+  // (the opt-in below) pre-fills the fields but does not skip the
   // step: it is the only place that shows what we stored and the only way to
   // wipe it, so a returning visitor confirms with one click instead of losing
   // sight of the details entirely.
