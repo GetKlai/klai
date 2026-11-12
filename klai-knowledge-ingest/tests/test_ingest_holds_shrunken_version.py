@@ -125,6 +125,19 @@ async def test_held_version_seen_again_within_twelve_hours_stays_held() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_candidate_from_days_ago_is_a_first_sighting_again() -> None:
+    # A degraded render that comes back now and then, with good versions in
+    # between, must not count its earlier appearance as the first of two.
+    held = {"content_hash": _hash(_SHRUNK), "first_seen": int(time.time()) - 6 * _TWELVE_HOURS}
+
+    result, create, extra_patch, _ = await _ingest(_connector_request(), _active(held))
+
+    assert result["status"] == "held"
+    create.assert_not_awaited()
+    assert extra_patch.call_args.args[2]["held_candidate"]["first_seen"] >= int(time.time()) - 5
+
+
+@pytest.mark.asyncio
 async def test_a_different_shrunken_candidate_restarts_the_hold() -> None:
     held = {
         "content_hash": "an-earlier-candidate",

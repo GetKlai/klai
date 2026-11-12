@@ -641,8 +641,7 @@ _LOST_MIN_MISSING_WORDS = 50
 _CONTENT_REGRESSION_SUGGESTION = (
     "Most changed pages lost a large part of their stored text, so nothing of this "
     "run was stored. Check that the site is complete (login, content selector); "
-    "if the change is real, set accept_content_regression_until to today's date "
-    "on the connector and sync again."
+    "if the change is real, an operator starts one crawl with accept_content_regression."
 )
 
 

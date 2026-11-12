@@ -372,6 +372,10 @@ async def _graphiti_background(
 # later, so one bad night never overwrites knowledge on first sight.
 _HOLD_BELOW_RETAINED = 0.5
 _HOLD_SECONDS = 12 * 3600
+# The second sighting has to follow the first within 36 hours, i.e. on the
+# next nightly run. A degraded render that returns days later, with good
+# versions in between, starts over instead of counting as confirmed.
+_HOLD_EXPIRES_SECONDS = 36 * 3600
 
 
 async def _hold_shrunken_version(
@@ -397,7 +401,9 @@ async def _hold_shrunken_version(
         "artifact_id": active_artifact["id"],
         "retained": round(retained, 3),
     }
-    if candidate.get("content_hash") != content_hash:
+    same_candidate = candidate.get("content_hash") == content_hash
+    seen_for = now - int(candidate["first_seen"]) if same_candidate else None
+    if seen_for is None or seen_for > _HOLD_EXPIRES_SECONDS:
         # The candidate is recorded on the stored version so the next sighting
         # can be told apart from a new one; nothing else of that row changes.
         await pg_store.update_artifact_extra(
@@ -406,7 +412,7 @@ async def _hold_shrunken_version(
             {"held_candidate": {"content_hash": content_hash, "first_seen": now}},
         )
         logger.info("ingest_shrunken_version_held", **log_fields)
-    elif now - int(candidate["first_seen"]) >= _HOLD_SECONDS:
+    elif seen_for >= _HOLD_SECONDS:
         logger.info("ingest_shrunken_version_accepted", **log_fields)
         return None
     return {"status": "held", "reason": PersistSkipReason.SHRUNKEN_VERSION_HELD.value, "chunks": 0}

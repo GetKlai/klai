@@ -324,8 +324,10 @@ class SyncEngine:
                     # Nor when the previous run left a deletion open: with no new
                     # commit the shortcut would return before the store diff, and a
                     # failed delete would never be retried.
-                    deletions_open_before = bool(prev_cursor.get("deletions_open"))
-                    if old_sha and new_sha and old_sha == new_sha and same_filter and not deletions_open_before:
+                    # A held document counts the same way: it is accepted only
+                    # when it is offered again.
+                    work_open_before = bool(prev_cursor.get("deletions_open") or prev_cursor.get("held_open"))
+                    if old_sha and new_sha and old_sha == new_sha and same_filter and not work_open_before:
                         logger.info("No changes detected for connector %s, skipping sync", connector_id)
                         sync_run.status = SyncStatus.COMPLETED
                         sync_run.completed_at = datetime.now(UTC)
@@ -454,13 +456,13 @@ class SyncEngine:
                             user_id=portal_config.owner_user_id,
                             document_extra=ref.extra,
                         )
-                        resume_ingested_refs.add(ref_key)
                         if changed is None:
                             # Held by knowledge-ingest: neither ingested nor failed.
                             held = PersistSkipReason.SHRUNKEN_VERSION_HELD.value
                             skip_reasons[held] = skip_reasons.get(held, 0) + 1
                             held_refs.add(ref_key)
                             continue
+                        resume_ingested_refs.add(ref_key)
                         documents_ok += 1
                         documents_changed += int(changed)
 
@@ -738,6 +740,7 @@ class SyncEngine:
                     discovered_refs = prev_synced_refs
                 cursor_state["synced_refs"] = sorted(discovered_refs)
                 cursor_state["deletions_open"] = deletions_open
+                cursor_state["held_open"] = bool(held_refs)
             sync_run.cursor_state = cursor_state
             await session.commit()
 
