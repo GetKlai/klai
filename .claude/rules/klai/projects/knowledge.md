@@ -275,6 +275,13 @@ carrying the `database_id` key. Code that filtered on `parent.type` dropped ever
 page and the sync completed with zero documents and no error. Fixed 2026-09-10 by
 matching on `parent.database_id` alone, which is correct for both shapes.
 
+A `database_ids` entry is whatever was pasted into the portal. Until 2026-11-12
+it was compared verbatim, so a link (or an undashed ID) matched nothing and one
+connector completed 19 runs at zero documents. `_extract_config` now reduces
+every entry to the dashed ID, and `_require_databases` retrieves each database
+before the search, so the link of a page, or of a database not shared with the
+integration, fails the sync with Notion's error instead of completing empty.
+
 **Rule:** Never assume `notion_client` has a database-scoped query method, and
 never key off `parent.type` — match on `parent.database_id`. When a Notion
 behaviour looks wrong, check the default `Notion-Version` of the installed
