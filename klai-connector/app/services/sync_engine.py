@@ -206,6 +206,7 @@ class SyncEngine:
         # counter and the formula stay aligned because every increment is
         # accompanied by a ``continue`` that skips the success branch.
         skip_reasons: dict[str, int] = {}
+        held_refs: set[str] = set()
         bytes_processed = 0
         error_details: list[dict[str, Any]] = []
 
@@ -323,8 +324,10 @@ class SyncEngine:
                     # Nor when the previous run left a deletion open: with no new
                     # commit the shortcut would return before the store diff, and a
                     # failed delete would never be retried.
-                    deletions_open_before = bool(prev_cursor.get("deletions_open"))
-                    if old_sha and new_sha and old_sha == new_sha and same_filter and not deletions_open_before:
+                    # A held document counts the same way: it is accepted only
+                    # when it is offered again.
+                    work_open_before = bool(prev_cursor.get("deletions_open") or prev_cursor.get("held_open"))
+                    if old_sha and new_sha and old_sha == new_sha and same_filter and not work_open_before:
                         logger.info("No changes detected for connector %s, skipping sync", connector_id)
                         sync_run.status = SyncStatus.COMPLETED
                         sync_run.completed_at = datetime.now(UTC)
@@ -453,9 +456,15 @@ class SyncEngine:
                             user_id=portal_config.owner_user_id,
                             document_extra=ref.extra,
                         )
+                        if changed is None:
+                            # Held by knowledge-ingest: neither ingested nor failed.
+                            held = PersistSkipReason.SHRUNKEN_VERSION_HELD.value
+                            skip_reasons[held] = skip_reasons.get(held, 0) + 1
+                            held_refs.add(ref_key)
+                            continue
+                        resume_ingested_refs.add(ref_key)
                         documents_ok += 1
                         documents_changed += int(changed)
-                        resume_ingested_refs.add(ref_key)
 
                         # Checkpoint progress every 10 docs so a crash can resume mid-sync.
                         if documents_ok % 10 == 0:
@@ -720,13 +729,18 @@ class SyncEngine:
             # knowledge-ingest stores, not against this list.
             if status == SyncStatus.COMPLETED and cursor_state is not None:
                 failed_refs = {e.get("file", "") for e in error_details}
-                discovered_refs = {r.source_ref or r.path for r in refs if (r.source_ref or r.path) not in failed_refs}
+                # A held document is left out as well: the hold ends only when the
+                # same version is seen again, so the next run must offer it again.
+                discovered_refs = {
+                    r.source_ref or r.path for r in refs if (r.source_ref or r.path) not in failed_refs | held_refs
+                }
                 if stale_cleanup_refused:
                     # The listing was refused as empty; keep the previous refs, or
                     # every document would count as new once the token works again.
                     discovered_refs = prev_synced_refs
                 cursor_state["synced_refs"] = sorted(discovered_refs)
                 cursor_state["deletions_open"] = deletions_open
+                cursor_state["held_open"] = bool(held_refs)
             sync_run.cursor_state = cursor_state
             await session.commit()
 
