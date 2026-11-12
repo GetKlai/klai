@@ -46,8 +46,13 @@ set_dir="$(dirname "$marker")"
 set_name="$(basename "$set_dir")"
 
 # Restoring writes the set's data into new volumes on the same disk once more
-# (the disk reached 100% on 2026-09-18).
-need_kb=$(( $(du -sk "$set_dir" | cut -f1) * 2 ))
+# (the disk reached 100% on 2026-09-18), and larger than it lies in the set:
+# a replayed Postgres dump grows by its indexes and a gzip tar by its
+# compression. Artifacts are restored and removed one at a time, and the SQL
+# dump, which is not compressed, was 9.6 of the set's 12.3 GiB on 2026-11-12,
+# so four times the set covers that dump at three times its size with room
+# for the tars.
+need_kb=$(( $(du -sk "$set_dir" | cut -f1) * 4 ))
 avail_kb="$(df -Pk "$DS_BACKUP_ROOT" | awk 'NR == 2 { print $4 }')"
 if ! [[ "$avail_kb" =~ ^[0-9]+$ ]] || (( avail_kb < need_kb )); then
   echo "::error::not enough disk to rehearse $set_name: ${avail_kb:-unknown} KB free, ${need_kb} KB needed"
