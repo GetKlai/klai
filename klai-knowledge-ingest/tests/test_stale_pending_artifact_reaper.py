@@ -54,6 +54,7 @@ async def test_reap_stale_pending_artifacts_uses_cross_org_admin_connection():
             "kb_slug": "oracle",
             "path": "team.md",
             "created_at": 1700000000,
+            "interrupted": [],
         }
     ]
 

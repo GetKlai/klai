@@ -10,6 +10,12 @@ A reindex whose enrichment job is lost does not reach it, because every way
 such a job ends records the outcome (``derived_state.record_outcome``). Each
 run that marks rows logs ``stale_pending_artifacts_failed`` at warning level,
 which the ``knowledge_ingest_stale_pending_reaper_fired`` alert watches.
+
+A version is born with both product states ``pending``. When its ingest died,
+nothing will finish them, so each product that is still ``pending`` without a
+job becomes ``failed (ingest_interrupted)`` through the one writer, which logs
+``derived_product_failed`` per product. A product that already has an outcome
+is left as it is; nothing is re-queued.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ import structlog
 
 from knowledge_ingest import pg_store, queues
 from knowledge_ingest.db import cross_org_admin_connection
+from knowledge_ingest.derived_state import FAILED, set_product_state
 
 logger = structlog.get_logger()
 
@@ -40,6 +47,11 @@ async def reap_stale_pending_artifacts(
             cutoff_created_at=cutoff,
             limit=limit,
         )
+        for row in rows:
+            for product in row.pop("interrupted"):
+                await set_product_state(
+                    conn, row["artifact_id"], product, FAILED, "ingest_interrupted"
+                )
     if rows:
         logger.warning(
             "stale_pending_artifacts_failed",

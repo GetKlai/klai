@@ -434,6 +434,9 @@ async def test_mark_stale_pending_artifacts_failed_requires_no_runnable_job():
                 "kb_slug": "oracle",
                 "path": "team.md",
                 "created_at": 1700000000,
+                "enrichment_state": "pending",
+                "graph_state": "pending",
+                "graph_job_live": True,
             }
         ]
     )
@@ -451,6 +454,8 @@ async def test_mark_stale_pending_artifacts_failed_requires_no_runnable_job():
             "kb_slug": "oracle",
             "path": "team.md",
             "created_at": 1700000000,
+            # A queued graph job keeps the graph pending; nothing finishes enrichment.
+            "interrupted": ["enrichment"],
         }
     ]
     sql = conn.fetch.call_args[0][0]
@@ -472,6 +477,7 @@ async def test_mark_stale_pending_artifacts_failed_requires_no_runnable_job():
             "knowledge_ingest.enrichment_tasks.enrich_document_bulk",
         ],
         25,
+        "knowledge_ingest.enrichment_tasks.ingest_graphiti_episode",
     )
 
 

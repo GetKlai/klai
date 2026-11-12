@@ -20,7 +20,14 @@ import asyncpg
 import structlog
 from klai_kb_slugs import personal_kb_slug
 
-from knowledge_ingest.derived_state import FAILED, PENDING, ProductState, product_state
+from knowledge_ingest.derived_state import (
+    FAILED,
+    PENDING,
+    PRODUCTS,
+    ProductState,
+    born_pending,
+    product_state,
+)
 
 logger = structlog.get_logger()
 
@@ -222,7 +229,7 @@ async def create_artifact(
     """
     artifact_id = str(uuid.uuid4())
     now = int(time.time())
-    extra_json = json.dumps(extra) if extra else "{}"
+    extra_json = json.dumps({**(extra or {}), **born_pending()})
     parent_ids = _normalise_uuid_strings(derived_from)
 
     async def _insert_artifact_row() -> str:
@@ -2419,6 +2426,10 @@ async def mark_stale_pending_artifacts_failed(
 ) -> list[dict]:
     """Fail artifacts that are pending with no live enrich job.
 
+    Each returned row lists under ``interrupted`` the products that are still
+    ``pending`` without a job that could finish them (a queued graph job keeps
+    the graph pending), for the caller to record as failed.
+
     Cross-org by design: callers must pass a ``cross_org_admin_connection``.
     The runnable-job guard is what keeps a slow but still-progressing
     enrichment from being marked failed by the janitor.
@@ -2452,7 +2463,16 @@ async def mark_stale_pending_artifacts_failed(
             a.org_id AS org_id,
             a.kb_slug AS kb_slug,
             a.path AS path,
-            a.created_at AS created_at
+            a.created_at AS created_at,
+            a.extra->>'enrichment_state' AS enrichment_state,
+            a.extra->>'graph_state' AS graph_state,
+            EXISTS (
+                SELECT 1
+                FROM procrastinate_jobs pj
+                WHERE pj.task_name = $5
+                  AND pj.status IN ('todo', 'doing')
+                  AND pj.args->>'artifact_id' = a.id::text
+            ) AS graph_job_live
         """,
         cutoff_created_at,
         _SENTINEL,
@@ -2461,6 +2481,7 @@ async def mark_stale_pending_artifacts_failed(
             "knowledge_ingest.enrichment_tasks.enrich_document_bulk",
         ],
         limit,
+        "knowledge_ingest.enrichment_tasks.ingest_graphiti_episode",
     )
     return [
         {
@@ -2469,6 +2490,13 @@ async def mark_stale_pending_artifacts_failed(
             "kb_slug": row["kb_slug"],
             "path": row["path"],
             "created_at": int(row["created_at"]),
+            # The products still waiting for an outcome no job will bring.
+            "interrupted": [
+                product
+                for product in PRODUCTS
+                if row[f"{product}_state"] == PENDING
+                and not (product == "graph" and row["graph_job_live"])
+            ],
         }
         for row in rows
     ]

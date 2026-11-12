@@ -633,7 +633,9 @@ state per product (`enrichment`, `graph`) in `knowledge.artifacts.extra`
 `done`, `not_applicable` with a reason, or `failed` with a reason. They live in
 `extra` and not in columns because every reader already loads `extra`, the
 fields old rows are judged by are there too, and nothing queries by state on a
-hot path. `set_product_state` is the one writer. It writes only to the
+hot path. A version is born with both states `pending`: `pg_store.create_artifact`
+writes them in its INSERT (`derived_state.born_pending`), so no row the
+service writes is ever without a state. `set_product_state` is the one writer. It writes only to the
 current version, so an abandoned job leaves no state, and only legal moves:
 to `pending` from any state (queueing is always deliberate: a new version, a
 reindex, a graph refresh, an operator re-queue or rebuild), and from `pending`
@@ -681,7 +683,10 @@ whose text or enrichment failed (read through `product_state`); a failed graph
 extraction leaves the page searchable and is not counted there. The
 stale-pending reaper can still find one case: a version whose ingest request
 died between creating the row and finishing the raw write; it marks it failed
-and logs `stale_pending_artifacts_failed`, which has its own alert.
+and logs `stale_pending_artifacts_failed`, which has its own alert. Each
+product of that version still `pending` (a queued graph job keeps the graph
+pending) becomes `failed (ingest_interrupted)` through `set_product_state`, so
+`derived_product_failed` fires per product; an outcome already recorded stays.
 
 ### 2.7 Periodic tasks
 
@@ -690,7 +695,7 @@ All in UTC, Procrastinate `@periodic`:
 | Schedule | Task | Queue | What it does |
 |---|---|---|---|
 | every minute | `recover_stalled_jobs_periodic` | maintenance | retries jobs whose worker heartbeat expired (`zombie_recovery.py:125-139`) |
-| `*/15 * * * *` | `reap_stale_pending_artifacts_periodic` | ingest-kb | marks versions whose raw write never finished (`pending` for over 30 minutes with no runnable job) as failed, at most 500 per run (`stale_pending_artifact_reaper.py`) |
+| `*/15 * * * *` | `reap_stale_pending_artifacts_periodic` | ingest-kb | marks versions whose raw write never finished (`pending` for over 30 minutes with no runnable job) as failed, and their still-pending products `failed (ingest_interrupted)`, at most 500 per run (`stale_pending_artifact_reaper.py`) |
 | `17 * * * *` | `sweep_unclassified_kbs_periodic` | maintenance | queues one taxonomy backfill per KB that still has chunks without label or taxonomy (`taxonomy_tasks.py:34,88-102`) |
 | `0 2 * * *` | `evaluate_retrieval_quality_periodic_chat` and `_knowledge_org` | rag-eval | one evaluation run per suite (`eval/ragas_runner.py:604-706`) |
 | `30 2 * * *` | `evaluate_ingest_gap_canary_periodic` | rag-eval | probe queries derived from sources (at most 10, 5 minute budget) (`eval/ragas_runner.py:44-48,394-430,651-665`) |
@@ -866,7 +871,7 @@ product rule does not need a rebuild: use `kb_patch`. Procedure:
 | `kb_patch` | `python -m knowledge_ingest.scripts.kb_patch --org [--kb] [--only aliases\|products] [--execute]` | recomputes the cheap layer (2.3) for points whose `cheap_layer_version` differs; batches of 200; no model call | dry run by default; `--execute` needs `INGEST_OK=1`; lock per knowledge base |
 | `sparse_backfill` | `python -m knowledge_ingest.scripts.sparse_backfill --org [--kb] [--execute]` | adds missing `vector_sparse` only | dry run by default; `--execute` needs `INGEST_OK=1`; lock per knowledge base |
 | `requeue_failed_artifacts` | `--dry-run` or `--execute [--org --kb --limit]` | re-defers `enrich_document_bulk` through `queue_derived_work` (state back to `pending`) for active artifacts whose enrichment is `failed` according to `derived_state.product_state`, legacy rows included, from chunk 0, oldest first (`klai-knowledge-ingest/knowledge_ingest/scripts/requeue_failed_artifacts.py`) | dry run by default; `--execute` needs `INGEST_OK=1`; no operation lock, because each job it defers has its own `queueing_lock` per artifact |
-| `convert_document_states` | `python -m knowledge_ingest.scripts.convert_document_states [--org] [--batch-size] [--execute]` | writes, once, an explicit `enrichment_state` and `graph_state` on every artifact row (closed versions included) that has none: the reader's answer where its legacy branch knows, a live job's `pending`, and otherwise the truth from the vector index (`text_enriched` on every point means enriched), the graph and today's policy; a product that was never built gets `failed (missing_before_states)`, closed versions get `not_applicable (not_current)` for enrichment and `failed (missing_before_states)` for the graph, and an upload's old `index_status` gets its current meaning. Never touches a row with an explicit state, logs no `derived_product_failed`, and reports how many rows still have no state; zero is the condition for removing the reader's legacy branch (`klai-knowledge-ingest/knowledge_ingest/scripts/convert_document_states.py`) | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org |
+| `convert_document_states` | `python -m knowledge_ingest.scripts.convert_document_states [--org] [--execute]` | writes, once, an explicit `enrichment_state` and `graph_state` on every artifact row (closed versions included) that has none: the reader's answer where its legacy branch knows, a live job's `pending`, and otherwise the truth from the vector index (`text_enriched` on every point means enriched), the graph and today's policy; a product that was never built gets `failed (missing_before_states)`, closed versions get `not_applicable (not_current)` for enrichment and `failed (missing_before_states)` for the graph, and an upload's old `index_status` gets its current meaning. Never touches a row with an explicit state, logs no `derived_product_failed`, and reports how many rows still have no state; zero is the condition for removing the reader's legacy branch (`klai-knowledge-ingest/knowledge_ingest/scripts/convert_document_states.py`) | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org |
 | `repair_pg_qdrant_drift` | `<artifact_id>... [--execute]` | per artifact: reindex, retire, delete points or skip, decided from the current state | dry run by default; `--execute` needs `INGEST_OK=1`; lock per artifact's knowledge base (its org for orphan points) |
 | `reextract_document_graph` | `python -m scripts.reextract_document_graph --org --artifact [--execute]` in a knowledge-ingest container (`klai-knowledge-ingest/scripts/reextract_document_graph.py:24-28`) | repairs one document whose finished graph extraction lost episodes: keeps the surviving episode ids, marks the extraction not complete with version 0 and queues the normal graph job as a user-requested refresh, without the daily cap or cool-off (`:97-117`; `graph_refresh.py:61-62`) | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org; refuses (exit 2) a document that is not found, not active, not finished, has no missing episode or no stored `document_text` (`:55-90`); when no job is queued the row is written back exactly as it was and the command exits 1 (`:123-134`); nothing runs it automatically |
 | graph `backfill` | `python -m knowledge_ingest.backfill --org-id [--kb-slug] [--limit] [--force] [--execute]` | builds graph episodes for existing artifacts (`backfill.py:1-30`) | dry run by default (counts, and the size estimate with its refusal); `--execute` needs `INGEST_OK=1`; lock per listed knowledge base, or per org |

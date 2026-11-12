@@ -73,6 +73,7 @@ from knowledge_ingest.derived_state import (
     FAILED,
     NOT_APPLICABLE,
     PENDING,
+    PRODUCTS,
     UNKNOWN,
     Product,
     ProductState,
@@ -88,7 +89,6 @@ logger = structlog.get_logger()
 
 MISSING = "missing_before_states"
 NOT_CURRENT = "not_current"
-PRODUCTS: tuple[Product, ...] = ("enrichment", "graph")
 _BATCH = 500
 _SCROLL = 1000
 _FIRST_ID = "00000000-0000-0000-0000-000000000000"
@@ -161,11 +161,13 @@ async def _live_jobs(conn: asyncpg.Connection, artifact_ids: list[str]) -> set[t
 
 
 def _graph_state(row: dict, live: bool) -> ProductState:
+    # A live job comes first, as for enrichment: its own outcome is only a
+    # legal move from pending, so any other answer would have it refused.
+    if row["active"] and live:
+        return ProductState(PENDING)
     known = product_state(row["extra"], "graph")
     if known.state not in (PENDING, UNKNOWN):
         return known
-    if row["active"] and live:
-        return ProductState(PENDING)
     if known.state == PENDING or not row["active"]:
         return ProductState(FAILED, MISSING)
     text = row["extra"].get("document_text")
@@ -349,12 +351,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--org", help="convert one organisation (default: every organisation)")
     parser.add_argument("--execute", action="store_true", help="write; preview without it")
-    parser.add_argument("--batch-size", type=int, default=_BATCH, help="rows per batch")
     args = parser.parse_args()
     guard_cli("convert_document_states", args.execute)
-    _print(
-        asyncio.run(run(args.org, execute=args.execute, batch_size=args.batch_size)), args.execute
-    )
+    _print(asyncio.run(run(args.org, execute=args.execute)), args.execute)
 
 
 if __name__ == "__main__":

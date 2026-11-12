@@ -364,3 +364,67 @@ async def test_a_run_without_the_marker_or_without_the_lock_writes_nothing(
         await script.run(store.org_id, execute=True)
 
     assert await store.state(artifact, "graph") == ProductState(None)
+
+
+# --- review round: a live job, a concurrent writer, the graph switched off ---
+
+
+async def test_a_legacy_graph_outcome_with_a_live_job_converts_to_pending(store) -> None:
+    """The job's own outcome must stay a legal move: pending, not the old answer."""
+    artifact = await store.row({"document_text": _TEXT, "graphiti_quarantined_at": 1})
+    await store.job("ingest_graphiti_episode", artifact)
+
+    await store.convert()
+
+    assert await store.state(artifact, "graph") == ProductState("pending")
+
+
+async def test_a_state_written_by_live_traffic_meanwhile_wins(store, monkeypatch) -> None:
+    from knowledge_ingest.derived_state import set_product_state
+
+    artifact = await store.row({"document_text": _TEXT})
+    real_live_jobs = script._live_jobs
+
+    async def _ingest_writes_meanwhile(conn, artifact_ids):
+        # Between the script's read of the batch and its write, live traffic
+        # records an outcome for this row.
+        await set_product_state(conn, artifact, "graph", "not_applicable", "navigation_page")
+        return await real_live_jobs(conn, artifact_ids)
+
+    monkeypatch.setattr(script, "_live_jobs", _ingest_writes_meanwhile)
+
+    await store.convert()
+
+    assert await store.state(artifact, "graph") == ProductState("not_applicable", "navigation_page")
+
+
+async def test_a_graph_switched_off_is_not_applicable(store, monkeypatch) -> None:
+    monkeypatch.setattr(script.settings, "graphiti_enabled", False)
+    artifact = await store.row({"document_text": _TEXT})
+
+    await store.convert()
+
+    assert await store.state(artifact, "graph") == ProductState("not_applicable", "graph_disabled")
+
+
+async def test_an_upload_with_a_live_enrichment_job_keeps_its_index_status(store) -> None:
+    artifact = await store.row({"document_text": _TEXT}, index_status="pending")
+    await store.job("enrich_document_interactive", artifact)
+
+    await store.convert()
+
+    assert await store.state(artifact, "enrichment") == ProductState("pending")
+    assert (
+        await store.conn.fetchval(
+            "SELECT index_status FROM knowledge.artifacts WHERE id = $1", artifact
+        )
+        == "pending"
+    )
+
+
+def test_the_command_has_no_batch_size_option(monkeypatch) -> None:
+    """A batch size of 0 converted nothing while printing "written"; the flag is gone."""
+    monkeypatch.setattr("sys.argv", ["convert_document_states", "--batch-size", "0"])
+    with pytest.raises(SystemExit) as refused:
+        script.main()
+    assert refused.value.code == 2  # argparse: unrecognised argument
