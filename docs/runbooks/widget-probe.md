@@ -1,5 +1,7 @@
 # Widget Probe
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 Alerts: `widget_probe_failing`, `widget_probe_missing` (both `severity=critical`,
 `page="true"`)
 
@@ -15,7 +17,7 @@ makes (`klai-widget/src/api/widget-config.ts`, `chat-stream.ts`):
 2. `POST /partner/v1/chat/completions` with `Authorization: Bearer <token>` and
    `{"messages": [...], "stream": true}`, read as server-sent events.
 
-The verdict is one JSON line in `/opt/klai/logs/widget-probe.log` (Alloy ships it
+The verdict is one JSON line in `logs/widget-probe.log` in the deploy directory (Alloy ships it
 as `service:widget-probe event:widget_probe`):
 
 ```text
@@ -88,24 +90,23 @@ _time:30m service:caddy status:5* | stats by (status) count() as n
 ```bash
 systemctl status widget-probe.timer widget-probe.service
 journalctl -u widget-probe.service -n 30 --no-pager
-tail -n 3 /opt/klai/logs/widget-probe.log
+tail -n 3 logs/widget-probe.log
 ```
 
 If the log file is fresh, Alloy or VictoriaLogs is the break.
 
 ## Install
 
-`deploy-compose.yml` syncs the script to `/opt/klai/scripts/widget-probe.py` and
-stages the unit and timer in `/opt/klai/systemd/`, but it runs no `systemctl`.
+`deploy-compose.yml` syncs the script to `scripts/widget-probe.py` and
+stages the unit and timer in `systemd/` (both in the deploy directory), but it runs no `systemctl`.
 Activating them, or picking up a changed unit, is manual:
 
 ```bash
-ssh core-01
-sudo ln -sf /opt/klai/systemd/widget-probe.service /etc/systemd/system/widget-probe.service
-sudo ln -sf /opt/klai/systemd/widget-probe.timer   /etc/systemd/system/widget-probe.timer
+sudo ln -sf "$PWD/systemd/widget-probe.service" /etc/systemd/system/widget-probe.service
+sudo ln -sf "$PWD/systemd/widget-probe.timer"   /etc/systemd/system/widget-probe.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now widget-probe.timer
-sudo systemctl start widget-probe.service && tail -n 1 /opt/klai/logs/widget-probe.log
+sudo systemctl start widget-probe.service && tail -n 1 logs/widget-probe.log
 ```
 
 Do this only after the provisioning below, or the first verdicts are `fail`
@@ -143,7 +144,7 @@ probe question. Nothing here is created by the repo.
    origin you put in `WIDGET_PROBE_ORIGIN`). Use a strict, default profile, like a
    customer widget. Note the `wgt_...` id.
 4. **Secret.** Add to the SOPS-managed env inventory for core-01 (the file that
-   becomes `/opt/klai/.env`; see `.claude/rules/klai/infra/secrets.md` and the
+   becomes `.env` in the deploy directory; see `.claude/rules/klai/infra/secrets.md` and the
    private `klai-infra` runbook `sops-edit-via-core01.md`), then let `sync-env.yml`
    deliver it:
 

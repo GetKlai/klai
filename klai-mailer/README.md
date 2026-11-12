@@ -81,7 +81,7 @@ would change production; it never did).
 The service runs as part of the klai core stack:
 
 ```bash
-# On core-01, from /opt/klai/
+# On core-01, from the deploy directory
 docker compose up -d klai-mailer
 
 # View logs

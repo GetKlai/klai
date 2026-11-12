@@ -1,5 +1,7 @@
 # Crawl failures
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > Procedure for the alerts in `deploy/grafana/provisioning/alerting/crawl-rules.yaml`:
 > `crawl_crawler_errors`, `crawl_fleet_signature`, `crawl_success_below_baseline`
 > and `crawl_jobs_silent`.
@@ -20,7 +22,6 @@ Per job the view carries `fetch_total`, `crawler_side_failures`, `top_signature`
 ## Query 1: what happened to one knowledge base
 
 ```bash
-ssh core-01
 docker exec klai-core-postgres-1 psql -U klai -d klai -c "
   SELECT status, reason, fetch_total, crawler_side_failures, top_signature,
          top_signature_share, pages_total, pages_done, to_timestamp(updated_at) AS finished

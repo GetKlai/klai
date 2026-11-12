@@ -1,5 +1,7 @@
 # Local Development Setup
 
+> Servercommando's staan zoals ze op de host draaien, vanuit de deploy-directory (die met `docker-compose.yml`). Zie [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 Stap-voor-stap handleiding om de Klai portal lokaal te draaien voor development.
 
 > **Laatste end-to-end verificatie:** 2026-05-13 (Mark, brisbane workspace). Alle 8 fixes onderaan in changelog gecaptured. Volg dit runbook letterlijk — werkt op een schone macOS met OrbStack + Node 24 + uv + Python 3.13 in `.venv`.
@@ -247,8 +249,8 @@ MOCK_BILLING=true                # Geen Moneybird vereist
 FRONTEND_URL=http://localhost:5174
 CORS_ORIGINS=http://localhost:5174
 
-# Zitadel — alle waarden komen uit prod /opt/klai/.env. Snelste ophaalmethode:
-#   ssh core-01 'grep -E "^(PORTAL_API_ZITADEL_PAT|PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET|ZITADEL_PROJECT_ID|ZITADEL_PORTAL_ORG_ID|ZITADEL_PORTAL_CLIENT_ID|ZITADEL_IDP_GOOGLE_ID|ZITADEL_IDP_MICROSOFT_ID)=" /opt/klai/.env'
+# Zitadel — alle waarden komen uit de prod `.env` (in de deploy-directory op core-01). Snelste ophaalmethode, op core-01 in die directory:
+#   grep -E "^(PORTAL_API_ZITADEL_PAT|PORTAL_API_ZITADEL_PORTAL_CLIENT_SECRET|ZITADEL_PROJECT_ID|ZITADEL_PORTAL_ORG_ID|ZITADEL_PORTAL_CLIENT_ID|ZITADEL_IDP_GOOGLE_ID|ZITADEL_IDP_MICROSOFT_ID)=" .env
 # Of via SOPS:
 #   cd klai-infra && SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops -d core-01/.env.sops | grep '^...'
 ZITADEL_BASE_URL=https://auth.getklai.com
@@ -295,7 +297,7 @@ VITE_OIDC_CLIENT_ID=<ZITADEL_PORTAL_CLIENT_ID uit prod>
 VITE_API_PROXY_TARGET=http://localhost:8010
 ```
 
-> **Let op:** `VITE_OIDC_CLIENT_ID` is de **OIDC Client ID** van de "Klai Portal BFF" app (huidige BFF-pattern sinds SPEC-AUTH-008). Die waarde leeft NIET in dit runbook — haal 'm uit prod via `ssh core-01 'grep ZITADEL_PORTAL_CLIENT_ID /opt/klai/.env'`. Verwar 'm niet met de Zitadel App ID (intern identifier, niet de waarde die de browser gebruikt). Een oudere versie van dit runbook gebruikte een pre-BFF client_id — die heeft de signin-knop allang vervangen.
+> **Let op:** `VITE_OIDC_CLIENT_ID` is de **OIDC Client ID** van de "Klai Portal BFF" app (huidige BFF-pattern sinds SPEC-AUTH-008). Die waarde leeft NIET in dit runbook — haal 'm uit prod via `grep ZITADEL_PORTAL_CLIENT_ID .env` op core-01, in de deploy-directory. Verwar 'm niet met de Zitadel App ID (intern identifier, niet de waarde die de browser gebruikt). Een oudere versie van dit runbook gebruikte een pre-BFF client_id — die heeft de signin-knop allang vervangen.
 
 > **Vite herstart vereist bij env-wijzigingen:** In tegenstelling tot de backend pikt Vite `.env.development.local` wijzigingen pas op na een volledige herstart (`Ctrl+C` → `npm run dev`). Hot reload werkt niet voor env vars.
 
