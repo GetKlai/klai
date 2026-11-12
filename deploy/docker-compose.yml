@@ -269,7 +269,7 @@ services:
   # ─── listmonk PostgreSQL (mailing.getklai.com) ───────────────────────────
   listmonk-db:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:18.7-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -2411,7 +2411,7 @@ services:
   # candidate first, then editing here.
   firecrawl-postgres:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:18.7-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: firecrawl
@@ -2570,7 +2570,7 @@ services:
   # worker running (verified locally 2026-10-22).
   crm-postgres:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:18.7-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -2619,7 +2619,7 @@ services:
   # schema that the restored dump would collide with.
   umami-postgres:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:18.7-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -2651,7 +2651,7 @@ services:
   # 17 -> 18 went the same way, rehearsed against fider v0.38.2.
   fider-postgres:
     logging: *log-rotation
-    image: postgres:18.6-alpine
+    image: postgres:18.7-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
