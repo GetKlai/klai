@@ -91,7 +91,7 @@ describe('AuthProbeFeedback', () => {
         }}
       />,
     )
-    expect(screen.getByText(/could not sign in to this site again by itself/)).toBeTruthy()
+    expect(screen.getByText(/could not sign in again on this site by itself/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('something_new')
   })
 

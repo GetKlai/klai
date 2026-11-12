@@ -110,7 +110,7 @@ describe('cookies per sign-in host', () => {
     expect(await screen.findByText(/To stay logged in, Klai also needs the cookies of idp\.example\.com/)).toBeTruthy()
     expect(screen.getByText(/Paste them in the field for idp\.example\.com above/)).toBeTruthy()
     expect(screen.getByLabelText(/for idp\.example\.com/)).toBeTruthy()
-    expect(screen.getByText(/Open idp\.example\.com in the same browser/)).toBeTruthy()
+    expect(screen.getByText(/Open idp\.example\.com in the browser/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('no_cookies_for')
   })
 
