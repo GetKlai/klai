@@ -61,7 +61,7 @@ is not ok (`app.py:84-140`).
 |---|---|---|
 | Docs editor (Gitea-backed pages) | Gitea push webhook `POST /ingest/v1/webhook/gitea` | the task fetches the current file from Gitea; `source_type="docs"`, `content_type="kb_article"` |
 | Docs bulk sync | `POST /ingest/v1/kb/sync`, called by klai-docs when a KB is created or recovered | one `ingest_document` call per `.md` in the repository, synchronous, no queue |
-| Connectors: github, notion, airtable, confluence, google_drive (aliases google_docs, google_sheets, google_slides), ms_docs, json_feed | klai-connector parses and posts `POST /ingest/v1/document` | `source_type="connector"`, `source_connector_id`, `source_ref`, `resource_generation` (the sync run id) |
+| Connectors: github, notion, airtable, confluence, google_drive (aliases google_docs, google_sheets, google_slides), ms_docs, json_feed | klai-connector parses and posts `POST /ingest/v1/document` | `source_type="connector"`, `source_connector_id`, `source_ref` |
 | Web crawl (connector type `web_crawler`) | `POST /ingest/v1/crawl/sync`, called by klai-connector | only the connector id and crawl settings; the crawl runs inside ingest (1.4) |
 | Crawl wizard | `POST /ingest/v1/crawl/preview`, `POST /ingest/v1/crawl/auth-probe`, `POST /ingest/v1/crawl` (one URL) | preview and probe ingest nothing; `/crawl` fetches and ingests a single URL |
 | File upload (portal) | `POST /ingest/v1/document` from portal-api | text files as they are; converted files as pre-made chunks (1.5) |
@@ -371,7 +371,7 @@ are LiteLLM aliases (6.1).
 
 | # | Phase | What happens | Model or service, timeout | On failure |
 |---|---|---|---|---|
-| 0 | Guard | NUL characters are stripped. With `source_connector_id`, `connector_is_active` must hold, else the result is `skipped`. For a non-crawl generation the connector resource fence row is activated and jobs of the old generation are cancelled (`routes/ingest.py:379-441`) | | `skipped`, nothing written |
+| 0 | Guard | NUL characters are stripped. With `source_connector_id`, `connector_is_active` must hold, else the result is `skipped`. A sync run is not tracked here: the derived jobs belong to the document version (2.6) | | `skipped`, nothing written |
 | 1 | Unchanged check | sha256 of the normalised text (or the caller's `content_hash`) against the active row; equal means `skipped / content unchanged`, with at most a version-gated graph refresh (2.5) (`routes/ingest.py:443-480`) | | |
 | 2 | Chunk | see 2.2; empty means `skipped / empty document` (`routes/ingest.py:481-530`) | | |
 | 3 | Dense embedding | `embedder.embed`, batches of 32 | TEI `/v1/embeddings`, bge-m3, 1024 dimensions, `tei_timeout` 120 s, 5 attempts with jittered backoff up to 30 s (`embedder.py:15-110`, `config.py:12`) | raises; no artifact row exists yet, so the request fails |
@@ -579,13 +579,22 @@ heartbeat. `recover_zombie_jobs` runs at start and every minute
 (`zombie_recovery.py:30-123`); a zombie whose `queueing_lock` is already held by
 a newer todo job is aborted instead of retried.
 
-**Resource key and generation fence.** Jobs for a connector carry a resource key
-built from `(org, kb, connector, generation)` (`resource_jobs.py`,
-`connector_state.py`). A new sync generation activates its key and cancels the
-jobs of the older key (phase 0); during a connector delete the key is marked
-deleting, which stops writers, and `cancel_jobs_by_resource_key` cancels the
-crawl, enrichment and graph jobs (`connector_cleanup.py:196-215`). Crawl
-execution has its own generation fence (1.4).
+**Derived work belongs to the document version.** Enrichment and graph jobs
+carry only `artifact_id`; a new sync or crawl run never cancels or fences them,
+because that run skips unchanged pages and would not queue the work again (in
+2026-11 tying them to the run lost 353 enrichment and 387 graph jobs of
+~11,300). A job stops only when its version is replaced or deleted, or its
+connector is deleting or gone: it then raises procrastinate's `JobAborted`
+(status `aborted`, no retry, `outcome=abandoned` in the log,
+`enrichment_tasks._abandon`). It checks this at the start and again, fresh,
+right before and after each vector write and after each graph part; a lookup it
+cannot make raises and the job is retried. Only crawl runs carry a resource key
+`(org, kb, connector, generation)` (`resource_jobs.py`, `connector_state.py`): a
+new crawl run moves the fence to its generation and cancels the older crawl job
+on `crawl-jobs` only (`crawl_sync.start_crawl_run`); crawl execution has its
+own generation fence (1.4). A connector delete marks the fences deleting,
+cancels crawl jobs by resource key and the enrichment and graph jobs of the
+connector's documents by `artifact_id` (`resource_jobs.cancel_jobs_by_artifact_ids`).
 
 ### 2.7 Periodic tasks
 
@@ -696,7 +705,7 @@ after its artifact was deleted removes what it wrote.
 | Scribe transcript deleted | `DELETE /ingest/v1/document?org_id&path=scribe/<id>` with caller service `scribe`, across all KBs of the organisation (`routes/ingest.py:1446-1482`) | same |
 | Crawled page gone | `adapters/crawler.py` stale purge (4.2) | same |
 | Reindex | `POST /knowledge/v1/artifacts/{id}/reindex` sets `pending` and defers `enrich_document_interactive` (`queueing_lock reindex:{org_id}:{id}`); it may reopen a closed head without successor and never a replaced version or a `deleting` row (`routes/kb_sources.py:243-325`, `pg_store.py:2204-2263`) | none |
-| Connector deleted | `connector_purge_task` to `purge_connector` (`connector_cleanup.py:150-360`): artifact ids captured, resource fences marked deleting, crawl, enrichment and graph jobs cancelled by resource key, Postgres artifacts and crawl rows deleted, graph episodes deleted, Qdrant points deleted by `source_connector_id`, orphaned image keys deleted from object storage, then a janitor pass; finally a callback to the portal (`portal_client.py:203-230`). It does not use `purge_documents` | Postgres, Qdrant, FalkorDB, object storage |
+| Connector deleted | `connector_purge_task` to `purge_connector` (`connector_cleanup.py:150-360`): artifact ids captured, resource fences marked deleting, crawl jobs cancelled by resource key and the documents' enrichment and graph jobs by artifact id, Postgres artifacts and crawl rows deleted, graph episodes deleted, Qdrant points deleted by `source_connector_id`, orphaned image keys deleted from object storage, then a janitor pass; finally a callback to the portal (`portal_client.py:203-230`). It does not use `purge_documents` | Postgres, Qdrant, FalkorDB, object storage |
 | KB deleted | `DELETE /ingest/v1/kb` (`routes/ingest.py:1314-1334`): graph episodes of the KB, `qdrant_store.delete_kb`, `pg_store.delete_kb` (artifacts and their aux tables, `kb_config`, `crawl_jobs`, `crawled_pages`, `page_links`; `knowledge.entities` are organisation-wide and stay) | Postgres, Qdrant, FalkorDB |
 | Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:281-450`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:75-83,91-182`; one transaction that deletes the org's `page_links`, `crawled_pages`, `crawl_jobs`, `crawl_domains`, `kb_config`, `org_config`, `entities` and `artifacts` rows, the last with the rows that cascade from it) | Postgres, Qdrant, FalkorDB |
 
