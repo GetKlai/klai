@@ -174,10 +174,11 @@ service:knowledge-ingest AND event:rebuild_kb_completed AND kb_slug:<slug>
 ## Cost
 
 Not measured here. Every call of a rebuild goes to the `klai-ingest` alias: one
-document summary per artifact and one enrichment call per chunk (the model
+enrichment call per chunk, and one document summary for an artifact that has
+none stored yet (the model
 behind the alias is in `deploy/litellm/config.yaml`). Read the spend per alias
 in the LiteLLM spend logs before and after a trial knowledge base and
-extrapolate from that. The calls share the ingest limiter of 0.6 requests per
+extrapolate from that. The calls share the ingest limiter of 2 requests per
 second with all other enrichment, graph and taxonomy work.
 
 ---

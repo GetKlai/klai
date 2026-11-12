@@ -49,6 +49,7 @@ reason names; a single document is about that document.
 | `queue_unavailable` | both | The job could not be queued after the version row was written; the ingest request failed too. |
 | `stuck_job_not_covered` | both | Zombie recovery found a stuck job whose queueing lock another live job holds, and that job builds something else. |
 | `rebuild_failed` | enrichment | A `rebuild_kb` run deleted the document's parent chunks and its enrichment then failed. |
+| `interrupted` | both | The product was pending for over 30 minutes with no job and no operation that could finish it: an ingest request died after creating the version, or after writing its text and before queueing the product. The stale-pending reaper records it; when the text was never written it also logs `stale_pending_artifacts_failed`. Look for the request's error for that path around the time the product went pending. |
 
 ## Re-queueing
 

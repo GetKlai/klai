@@ -48,6 +48,41 @@ def guard_cli(name: str, execute: bool) -> None:
         raise SystemExit(2) from None
 
 
+def _levels(org_id: str | None, kb_slugs: Iterable[str] | None) -> list[tuple[str, bool]]:
+    """(lock key, shared) for a run on these knowledge bases: its own level
+    exclusive, every wider level shared."""
+    if org_id is None:
+        wanted = [("*:*", False)]
+    elif not kb_slugs:
+        wanted = [("*:*", True), (f"{org_id}:*", False)]
+    else:
+        wanted = [("*:*", True), (f"{org_id}:*", True)]
+        wanted += [(f"{org_id}:{kb_slug}", False) for kb_slug in sorted(kb_slugs)]
+    return [(f"kb-operation:{name}", shared) for name, shared in wanted]
+
+
+async def operation_running(conn: Any, org_id: str, kb_slug: str) -> bool:
+    """Whether a write run holds this knowledge base, its org or every org.
+
+    Read from ``pg_locks`` without taking a lock, so asking never makes a
+    starting run fail as busy. A run holds the level it works on exclusively;
+    a bigint advisory key is split over ``classid`` (high half) and ``objid``.
+    """
+    # The keys of a run on this knowledge base are its own and every wider level.
+    keys = [key for key, _ in _levels(org_id, [kb_slug])]
+    return await conn.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM pg_locks l, unnest($1::text[]) AS k(key)
+            WHERE l.locktype = 'advisory' AND l.objsubid = 1 AND l.granted
+              AND l.mode = 'ExclusiveLock'
+              AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended(k.key, 0)
+        )
+        """,
+        keys,
+    )
+
+
 async def _take(conn: Any, key: str, shared: bool) -> bool:
     if shared:
         return await conn.fetchval(
@@ -78,19 +113,11 @@ async def kb_operation(
     if not execute:
         yield
         return
-    if org_id is None:
-        wanted = [("*:*", False)]
-    elif not kb_slugs:
-        wanted = [("*:*", True), (f"{org_id}:*", False)]
-    else:
-        wanted = [("*:*", True), (f"{org_id}:*", True)]
-        wanted += [(f"{org_id}:{kb_slug}", False) for kb_slug in sorted(kb_slugs)]
     # Advisory locks belong to the session, so one connection holds them all.
     async with (await get_pool()).acquire() as conn:
         held: list[tuple[str, bool]] = []
         try:
-            for name, shared in wanted:
-                key = f"kb-operation:{name}"
+            for key, shared in _levels(org_id, kb_slugs):
                 if not await _take(conn, key, shared):
                     raise OperationBusy(f"another operation is running on {key}")
                 held.append((key, shared))

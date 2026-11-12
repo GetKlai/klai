@@ -4,14 +4,16 @@ A document version (one ``knowledge.artifacts`` row) has two products built
 from its text after ingest: enrichment of its chunks and graph extraction. For
 each, the row records exactly one state in ``extra``:
 
-- ``pending``: queued or running;
+- ``pending``: the version was just created, or its work is queued or running;
 - ``done``;
 - ``failed`` with a reason: the work was needed for a current document and
   could not be done; the job that gave up ends failed too;
 - ``not_applicable`` with a reason: policy said no (held out of the graph on
   purpose, no text to extract, too large for enrichment, switched off).
 
-``product_state`` is the one reader. Rows written before these keys existed
+A version is born with both states ``pending`` (``born_pending``, written by
+``pg_store.create_artifact`` in its INSERT), so every row the service writes
+has them. ``product_state`` is the one reader. Rows written before these keys existed
 are derived from the fields they have, and say ``unknown`` where those fields
 cannot tell, never ``done`` by default. ``set_product_state`` is the one
 writer and enforces the legal transitions; a transition to ``failed`` logs
@@ -38,6 +40,7 @@ import asyncpg
 import structlog
 
 Product = Literal["enrichment", "graph"]
+PRODUCTS: tuple[Product, ...] = ("enrichment", "graph")
 
 PENDING = "pending"
 DONE = "done"
@@ -107,12 +110,32 @@ def _state_patch(product: Product, state: str, reason: str | None) -> dict[str, 
     }
 
 
+def born_pending() -> dict[str, Any]:
+    """The states a new document version is inserted with: both products pending.
+
+    Written in the INSERT itself, so no row the service writes ever exists
+    without a state; an ingest that dies before its outcome leaves pending,
+    which the stale-pending reaper turns into ``failed (interrupted)``.
+    """
+    return {
+        key: value
+        for product in PRODUCTS
+        for key, value in _state_patch(product, PENDING, None).items()
+    }
+
+
+STATE_KEYS: frozenset[str] = frozenset(born_pending())
+"""The ``extra`` keys this module owns; no caller-supplied metadata may carry them."""
+
+
 async def set_product_state(
     conn: asyncpg.Connection,
     artifact_id: str,
     product: Product,
     state: str,
     reason: str | None = None,
+    *,
+    pending_since: int | None = None,
 ) -> bool:
     """Move ``product`` of the current version to ``state``, if that move is legal.
 
@@ -134,6 +157,11 @@ async def set_product_state(
     two concurrent failures only the first moves the row out of pending, and
     only that one logs ``derived_product_failed`` (error level, ids only).
 
+    ``pending_since`` narrows the move to the wait the caller saw: the write
+    lands only while the product's ``_state_at`` is still that value. The
+    stale-pending reaper passes it, so work queued again between its read and
+    its write keeps its new pending instead of being failed.
+
     Returns whether the row now holds ``state``.
     """
     from knowledge_ingest.pg_store import _SENTINEL, PURGE_PENDING
@@ -144,6 +172,7 @@ async def set_product_state(
         SET extra = COALESCE(a.extra, '{}'::jsonb) || $2::jsonb
         WHERE a.id = $1::uuid AND a.belief_time_end = $4 AND a.index_status <> $5
           AND ($6::text = 'pending' OR COALESCE(a.extra->>($3 || '_state'), 'pending') = 'pending')
+          AND ($7::bigint IS NULL OR (a.extra->>($3 || '_state_at'))::bigint = $7)
         RETURNING a.org_id, a.kb_slug
         """,
         artifact_id,
@@ -152,6 +181,7 @@ async def set_product_state(
         _SENTINEL,
         PURGE_PENDING,
         state,
+        pending_since,
     )
     if row is not None:
         if state == FAILED:

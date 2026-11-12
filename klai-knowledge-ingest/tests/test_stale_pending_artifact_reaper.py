@@ -72,6 +72,11 @@ async def test_reap_stale_pending_artifacts_uses_cross_org_admin_connection():
             new_callable=AsyncMock,
             return_value=expected,
         ) as mock_mark,
+        patch(
+            "knowledge_ingest.stale_pending_artifact_reaper.pg_store.stale_pending_products",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
         from knowledge_ingest.stale_pending_artifact_reaper import reap_stale_pending_artifacts
 
