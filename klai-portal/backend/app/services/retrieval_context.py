@@ -856,7 +856,6 @@ async def _retrieve_body(t: _Turn, sub_queries: list[str], retrieval_user_id: st
             user_id=retrieval_user_id,
             scope=profile.kb_scope,
             telemetry_level=t.telemetry_level,
-            kb_narrow=profile.kb_mode == "strict",
         )
         if not t.kb_slugs and profile.kb_scope == "both":
             # Every org KB plus every private KB the employee owns.

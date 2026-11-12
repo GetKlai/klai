@@ -990,6 +990,52 @@ async def resend_invite(
     return MessageResponse(message="Invitation resent.")
 
 
+# Registered before DELETE /users/{zitadel_user_id}: the router dispatches to the
+# first matching route, and that one would otherwise answer /users/me.
+@router.delete("/users/me", response_model=MessageResponse)
+async def leave_workspace(
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """C6.3: Leave the workspace (self-removal). Refuses if caller is last admin.
+    C6.7: Refuses if this would leave the workspace with zero users (last-member case).
+    """
+    if perms.role == ProfileRole.ADMIN:
+        # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
+        await _lock_org_for_role_change(db, perms.org_id)
+
+        admin_count = await db.scalar(
+            select(func.count())
+            .select_from(PortalUser)
+            .where(
+                PortalUser.org_id == perms.org_id,
+                PortalUser.role == "admin",
+            )
+        )
+        if (admin_count or 0) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Promote another admin or delete the workspace before leaving.",
+            )
+
+    # Re-fetch the caller's PortalUser ORM-object for db.delete. UserPermissions
+    # is a snapshot, not the ORM row.
+    caller_row_result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == perms.user_id,
+            PortalUser.org_id == perms.org_id,
+        )
+    )
+    caller_user = caller_row_result.scalar_one()
+    await forget_internal_cases(db, org_id=perms.org_id, user_id=perms.user_id)
+    await db.delete(caller_user)
+    await db.commit()
+    logger.info("leave_workspace: user=%s left org=%d", perms.user_id, perms.org_id)
+    emit_event("user.left_workspace", org_id=perms.org_id, user_id=perms.user_id)
+    await _sync_identity_login_or_502(perms.user_id, perms, "removed")
+    return MessageResponse(message="You have left the workspace.")
+
+
 @router.delete("/users/{zitadel_user_id}", response_model=MessageResponse)
 async def remove_user(
     zitadel_user_id: str,
@@ -1566,47 +1612,3 @@ async def demote_admin(
     # rationale. Fire-and-forget cross-service hop.
     fire_role_change_notification(zitadel_user_id)
     return MessageResponse(message=f"User {zitadel_user_id} demoted to company.")
-
-
-@router.delete("/users/me", response_model=MessageResponse)
-async def leave_workspace(
-    perms: UserPermissions = Depends(get_caller),
-    db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
-    """C6.3: Leave the workspace (self-removal). Refuses if caller is last admin.
-    C6.7: Refuses if this would leave the workspace with zero users (last-member case).
-    """
-    if perms.role == ProfileRole.ADMIN:
-        # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
-        await _lock_org_for_role_change(db, perms.org_id)
-
-        admin_count = await db.scalar(
-            select(func.count())
-            .select_from(PortalUser)
-            .where(
-                PortalUser.org_id == perms.org_id,
-                PortalUser.role == "admin",
-            )
-        )
-        if (admin_count or 0) <= 1:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Promote another admin or delete the workspace before leaving.",
-            )
-
-    # Re-fetch the caller's PortalUser ORM-object for db.delete. UserPermissions
-    # is a snapshot, not the ORM row.
-    caller_row_result = await db.execute(
-        select(PortalUser).where(
-            PortalUser.zitadel_user_id == perms.user_id,
-            PortalUser.org_id == perms.org_id,
-        )
-    )
-    caller_user = caller_row_result.scalar_one()
-    await forget_internal_cases(db, org_id=perms.org_id, user_id=perms.user_id)
-    await db.delete(caller_user)
-    await db.commit()
-    logger.info("leave_workspace: user=%s left org=%d", perms.user_id, perms.org_id)
-    emit_event("user.left_workspace", org_id=perms.org_id, user_id=perms.user_id)
-    await _sync_identity_login_or_502(perms.user_id, perms, "removed")
-    return MessageResponse(message="You have left the workspace.")

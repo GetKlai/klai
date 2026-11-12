@@ -213,7 +213,8 @@ async def test_strict_employee_with_personal_kb_searches_both_as_themselves_in_t
     assert body["kb_slugs"] == ["handboek"]
     assert body["org_id"] == "zorg-acme"
     assert body["top_k"] == 20
-    assert body["kb_narrow"] is True
+    # Strict mode shapes the prompt, not the search: retrieval-api has no such field.
+    assert "kb_narrow" not in body
 
 
 @pytest.mark.asyncio

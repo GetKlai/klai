@@ -1,9 +1,8 @@
 """Shared chat system-prompt constants for Klai.
 
-Owned by SPEC-RAG-MULTILINGUAL-CHAT-001. Both klai-retrieval-api's
-synthesis service and klai-portal's partner_chat service import
-:data:`GROUNDED_CHAT_SYSTEM_PROMPT` from this module. Do not duplicate
-the constant in either service — a CI lint at the monorepo level
+Owned by SPEC-RAG-MULTILINGUAL-CHAT-001. klai-portal's partner_chat
+service imports :data:`GROUNDED_CHAT_SYSTEM_PROMPT` from this module. Do
+not duplicate the constant in a service — a CI lint at the monorepo level
 rejects copies elsewhere.
 
 :data:`GENERAL_CHAT_SYSTEM_PROMPT` is used by the internal chat (portal-api)
@@ -11,17 +10,17 @@ when the user has explicitly opted out of every knowledge-base scope
 (``kb_personal_enabled=False`` AND ``kb_slugs_filter=[]``). Same
 language-detection contract as GROUNDED, but no KB-grounding rules and
 no [n] citation pressure — the model behaves as a general-purpose
-assistant. Paths B and C never reach this prompt because they are
-server-to-server and always carry KB scope.
+assistant. Path B (widget and partner API) never reaches this prompt
+because it always carries KB scope.
 
 :data:`META_CHAT_SYSTEM_PROMPT` is used by the internal chat (portal-api)
 when the user asks a META question about Klai itself — "what is Klai?",
 "what can I do here?", "how does this work?". Same language-detection
 contract as GROUNDED and GENERAL, but no retrieval and no KB-grounding
 rules — the model gives a plain "what Klai is and how to use it"
-answer without fabricating specific features. Paths B and C never
-reach this prompt: partners build their own UI affordances around the
-chat surface, and retrieval-api /chat is server-to-server.
+answer without fabricating specific features. Path B never reaches
+this prompt: partners build their own UI affordances around the chat
+surface.
 
 Behaviour encoded in both prompts (per SPEC REQ-01):
 
@@ -729,10 +728,9 @@ def no_citable_sources_message(language: object, *, suggest_open_mode: bool = Fa
 
     ``suggest_open_mode`` appends a hint to try Open mode. Default False:
     only the internal chat (LibreChat) has a user-facing
-    Strict/Open toggle the hint can point at. Callers without that toggle
-    — partner_chat.py (path B, widget/partner API) and retrieval-api's
-    ``/chat`` (path C) — must leave this False; the hint would reference a
-    switch their caller cannot use.
+    Strict/Open toggle the hint can point at. A caller without that toggle
+    — partner_chat.py (path B, widget/partner API) — must leave this False;
+    the hint would reference a switch its caller cannot use.
 
     ``helpdesk`` returns the public-widget variant instead: customer words
     ("helpartikelen" / "help articles", never "kennisbank"/"kennisbronnen")

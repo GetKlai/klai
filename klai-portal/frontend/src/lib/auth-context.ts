@@ -83,9 +83,21 @@ export function readCsrfCookie(): string | null {
 // Redirect helper
 // ---------------------------------------------------------------------------
 
+/** Same-origin path to return to after sign-in; anything else becomes `/app`. */
+export function safeReturnTo(value: string | undefined): string {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/app'
+  if (value.includes('://')) return '/app'
+  // The URL parser removes C0 controls and spaces at either end and every tab
+  // or newline, and reads a backslash in the path as a slash (WHATWG URL
+  // Standard, basic URL parser steps 1-3, relative and path states), so such a
+  // target would mean something else once navigated.
+  if ([...value].some((c) => c < ' ' || c === '\u007f') || value.endsWith(' ')) return '/app'
+  if (value.split(/[?#]/, 1)[0].includes('\\')) return '/app'
+  return value
+}
+
 /** Start the OIDC authorisation-code flow via the backend. */
 export function redirectToStart(returnTo: string | undefined): void {
-  const safe = returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/app'
-  const url = `/api/auth/oidc/start?return_to=${encodeURIComponent(safe)}`
+  const url = `/api/auth/oidc/start?return_to=${encodeURIComponent(safeReturnTo(returnTo))}`
   window.location.href = url
 }

@@ -70,14 +70,6 @@ def _score(chunk: ChunkResult | dict[str, Any]) -> float:
     return 0.0
 
 
-def _relevance_score(chunk: ChunkResult | dict[str, Any]) -> float | None:
-    for key in ("final_score", "reranker_score"):
-        value = _chunk_value(chunk, key)
-        if isinstance(value, (int, float)):
-            return float(value)
-    return None
-
-
 def _optional_float(value: object) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
@@ -147,7 +139,6 @@ def build_evidence_pack(
     *,
     query: str | None = None,
     max_sources: int = DEFAULT_MAX_SOURCES,
-    min_relevance_score: float | None = None,
 ) -> EvidencePack:
     """Return the citable evidence and source set for a retrieval result.
 
@@ -160,7 +151,6 @@ def build_evidence_pack(
         return EvidencePack(no_citable_reason="no_evidence")
 
     candidates: list[tuple[EvidenceItem, str, str | None, float]] = []
-    below_threshold_count = 0
     for chunk in chunks:
         source_url = _source_url(chunk)
         # Stable source_key via chunk_source_key: URL key for public
@@ -176,14 +166,6 @@ def build_evidence_pack(
         title = _title(chunk, source_url)
         if not source_key:
             continue
-        relevance_score = _relevance_score(chunk)
-        if (
-            min_relevance_score is not None
-            and relevance_score is not None
-            and relevance_score < min_relevance_score
-        ):
-            below_threshold_count += 1
-            continue
         item = _make_item(
             chunk,
             evidence_id=f"E{len(candidates) + 1}",
@@ -195,11 +177,7 @@ def build_evidence_pack(
         candidates.append((item, source_key, source_url, _score(chunk)))
 
     if not candidates:
-        if below_threshold_count:
-            reason = "below_relevance_threshold"
-        else:
-            reason = "no_citable_sources"
-        return EvidencePack(no_citable_reason=reason)
+        return EvidencePack(no_citable_reason="no_citable_sources")
 
     source_order: list[str] = []
     source_meta: dict[str, dict[str, Any]] = {}
@@ -243,60 +221,6 @@ def build_evidence_pack(
     ]
     no_citable_reason = None if sources else "no_citable_sources"
     return EvidencePack(items=selected_items, sources=sources, no_citable_reason=no_citable_reason)
-
-
-def evidence_pack_sources_payload(pack: EvidencePack) -> list[dict[str, object]]:
-    """Return the structured source shape used by chat/portal clients.
-
-    Includes sources without a ``source_url`` (uploaded documents — PDFs,
-    pasted text — that have no public address). The chat client decides
-    how to render a URL-less source: typically as a non-clickable label
-    showing the filename / artifact title, with the option to open it via
-    the portal's KB browse view. Filtering URL-less sources out here would
-    re-introduce the 2026-05-27 bug where a user's uploaded CV was
-    retrieved but never appeared in the citations panel.
-    """
-    payload: list[dict[str, object]] = []
-    for index, source in enumerate(pack.sources, 1):
-        if not source.source_url and not source.artifact_id:
-            # No URL and no artifact: nothing addressable to cite.
-            continue
-        payload.append(
-            {
-                "label": str(index),
-                "title": source.title,
-                "url": source.source_url,
-                "source_id": source.source_id,
-                "evidence_ids": source.evidence_ids,
-                "artifact_id": source.artifact_id,
-                "source_label": source.source_label,
-                "relevance_score": source.relevance_score,
-            }
-        )
-    return payload
-
-
-def evidence_pack_items_as_chunks(pack: EvidencePack) -> list[dict[str, Any]]:
-    """Adapt EvidencePack items to the existing evidence-context renderer."""
-    return [
-        {
-            "chunk_id": item.chunk_id,
-            "artifact_id": item.artifact_id,
-            "content_type": item.content_type,
-            "text": item.text,
-            "title": item.title,
-            "heading_path": item.heading_path,
-            "source_url": item.source_url,
-            "source_label": item.source_label,
-            "score": item.score,
-            "reranker_score": item.reranker_score,
-            "final_score": item.final_score,
-            "scope": item.scope,
-            "image_urls": item.image_urls,
-            "is_parent_text": item.is_parent_text,
-        }
-        for item in pack.items
-    ]
 
 
 def merge_evidence_packs(
