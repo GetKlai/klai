@@ -1189,14 +1189,16 @@ async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[
     complete), held out of the graph on purpose (``skipped:<reason>``, today
     only ``navigation_page``), or no text to extract (``no-chunks``). A row that
     is not finished has an extraction queued, running, failed, aborted or
-    quarantined. ``source_connector_id``/``source_ref`` and ``kb_slug``/``path``
+    quarantined. A row whose delete is in progress (``PURGE_PENDING``) is never
+    active: the document is going, so it has no current graph content.
+    ``source_connector_id``/``source_ref`` and ``kb_slug``/``path``
     identify the document when ``superseded_by`` does not link its versions.
     """
     return await conn.fetch(
         """
         SELECT id::text AS id,
                superseded_by::text AS superseded_by,
-               belief_time_end = $2 AS active,
+               belief_time_end = $2 AND index_status <> $3 AS active,
                kb_slug,
                path,
                extra::jsonb->>'source_connector_id' AS source_connector_id,
@@ -1232,6 +1234,7 @@ async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[
         """,
         org_id,
         _SENTINEL,
+        PURGE_PENDING,
     )
 
 
@@ -1250,15 +1253,23 @@ def current_extractions(rows: list) -> dict[str, tuple[set[str], bool]]:
             continue
         ids: set[str] = set()
         finished = False
+        seen = {row["id"]}
         level = [row]
-        # depth 100 bounds the walk, as in get_episode_ids_for_document_history.
-        for _depth in range(100):
+        # The same walk as _HISTORY_CTE: to the end of the chain, and a row
+        # already visited (a corrupt cycle) is not walked again.
+        while level:
             for version in level:
                 ids.update(version["episode_ids"])
             finished = any(version["finished"] for version in level)
-            if finished or not level:
+            if finished:
                 break
-            level = [older for version in level for older in predecessors.get(version["id"], [])]
+            level = [
+                older
+                for version in level
+                for older in predecessors.get(version["id"], [])
+                if older["id"] not in seen
+            ]
+            seen.update(older["id"] for older in level)
         result[row["id"]] = (ids, finished)
     return result
 
@@ -1292,31 +1303,24 @@ async def forget_replaced_episode_ids(
 
     Called right after those episodes were deleted from the graph, so a closed
     row lists episodes only while they exist. Same walk as
-    ``get_episode_ids_for_document_history``, without the row itself.
+    ``get_episode_ids_for_document_history`` (``_HISTORY_CTE``: to the end,
+    cycle-safe), without the row itself. Only replaced versions are touched,
+    never a document head, so ``scripts/purge_deleted_documents.py`` (which
+    judges heads) reads the same rows as before.
     """
     await conn.execute(
-        """
-        WITH RECURSIVE history AS (
-            SELECT a.id, 0 AS depth
-            FROM knowledge.artifacts a
-            WHERE a.org_id = $1 AND a.id = $2::uuid
-
-            UNION ALL
-
-            SELECT p.id, h.depth + 1
-            FROM history h
-            JOIN knowledge.artifacts p ON p.superseded_by = h.id AND p.org_id = $1
-            WHERE h.depth < 100
-        )
+        _HISTORY_CTE  # noqa: S608 -- constant SQL; values are bound parameters
+        + """
         UPDATE knowledge.artifacts
         SET extra = extra::jsonb
                     || '{"graphiti_episode_ids": [], "graphiti_episode_id": null}'::jsonb
         WHERE org_id = $1
-          AND id IN (SELECT id FROM history WHERE depth > 0)
+          AND id IN (SELECT id FROM history)
+          AND id <> ALL($2::uuid[])
           AND (extra::jsonb ? 'graphiti_episode_ids' OR extra::jsonb ? 'graphiti_episode_id')
         """,
         org_id,
-        artifact_id,
+        [artifact_id],
     )
 
 

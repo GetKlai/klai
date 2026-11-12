@@ -87,3 +87,27 @@ async def test_a_completed_new_extraction_replaces_the_previous_one(
         await conn.fetchval("SELECT extra::text FROM knowledge.artifacts WHERE id = $1", previous)
     )
     assert extra["graphiti_episode_ids"] == []
+
+
+async def test_a_version_held_out_of_the_graph_retires_its_predecessors_and_keeps_its_marker(
+    graph_helpers: Contract, tenant_rows
+) -> None:
+    conn, insert = tenant_rows
+    await seed_graph(graph_helpers, ["previous"], {"previous-fact": ["previous"]})
+    active = await insert({"graphiti_episode_id": "skipped:navigation_page"}, active=True)
+    previous = await insert(
+        {"graphiti_episode_ids": ["previous"]}, active=False, superseded_by=active
+    )
+
+    await graph_module.retire_earlier_extractions(conn, graph_helpers.group_id, active, keep=[])
+
+    assert await stored_graph(graph_helpers) == (set(), {}, set())
+    rows = {
+        row["id"]: json.loads(row["extra"])
+        for row in await conn.fetch(
+            "SELECT id::text, extra::text FROM knowledge.artifacts WHERE id = ANY($1::uuid[])",
+            [active, previous],
+        )
+    }
+    assert rows[previous]["graphiti_episode_ids"] == []
+    assert rows[active]["graphiti_episode_id"] == "skipped:navigation_page"

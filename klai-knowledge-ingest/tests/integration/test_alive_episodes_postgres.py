@@ -181,3 +181,35 @@ async def test_the_sweep_keeps_every_episode_a_row_records(tenant) -> None:
         "partial-1",
         "before-empty",
     }
+
+
+async def test_current_content_walk_reaches_the_end_and_survives_a_cycle(tenant) -> None:
+    """The walk follows the same rules as the purge's history walk (_HISTORY_CTE)."""
+    conn, org_id = tenant
+    # 120 versions in a row without an extraction: only the oldest was extracted.
+    await _chain(conn, org_id, "long", [{"graphiti_episode_ids": ["oldest"]}] + [{}] * 119)
+    # A corrupt cycle: the active row itself points at its oldest unextracted predecessor.
+    active = await _insert(conn, org_id, "cyclic", {}, active=True)
+    first = await _insert(conn, org_id, "cyclic-1", {}, superseded_by=active)
+    second = await _insert(conn, org_id, "cyclic-2", {}, superseded_by=first)
+    await conn.execute(
+        "UPDATE knowledge.artifacts SET superseded_by = $1 WHERE id = $2", second, active
+    )
+
+    current = await pg_store.get_current_graph_episode_uuids_for_org(conn, org_id)
+
+    assert current == {"oldest"}
+
+
+async def test_a_document_being_deleted_has_no_current_content(tenant) -> None:
+    conn, org_id = tenant
+    active = await _insert(
+        conn, org_id, "going", {"graphiti_episode_ids": ["going-1"]}, active=True
+    )
+    await conn.execute(
+        "UPDATE knowledge.artifacts SET index_status = $1 WHERE id = $2",
+        pg_store.PURGE_PENDING,
+        active,
+    )
+
+    assert await pg_store.get_current_graph_episode_uuids_for_org(conn, org_id) == set()
