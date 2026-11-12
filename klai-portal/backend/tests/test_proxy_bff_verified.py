@@ -310,6 +310,99 @@ class TestProxyVerifyBeforeForward:
 
 
 # ---------------------------------------------------------------------------
+# Docs editor API: the organisation in the path is the session's organisation
+# ---------------------------------------------------------------------------
+
+
+def _allow_acme(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api import proxy as proxy_mod
+    from app.services.identity_verifier import VerifyDecision
+
+    async def _fake_verify(**_kw: Any) -> VerifyDecision:
+        return VerifyDecision.allow(user_id="u-zitadel-1", org_id="o-zitadel-acme", org_slug="acme", evidence="jwt")
+
+    monkeypatch.setattr(proxy_mod, "verify_bff_session_identity", _fake_verify)
+
+
+class TestDocsPathOrganisation:
+    @pytest.mark.parametrize(
+        "rest",
+        [
+            "api/orgs/other-org/kbs",
+            "api/orgs/other-org/kbs/handbook/pages/intro",
+            "api/orgs/acme/../other-org/kbs",
+            "api//orgs/other-org/kbs",
+            # A dot segment that is still percent-encoded when it leaves the
+            # proxy is resolved by the upstream's URL parser, not here.
+            "api/orgs/acme/%2e%2e/other-org/kbs",
+            "api/orgs/acme/%2E%2E/other-org/kbs",
+            "x/%2e%2e/api/orgs/other-org/kbs",
+            "api/orgs/acme/.%2e/other-org/kbs",
+        ],
+    )
+    async def test_docs_request_for_another_organisation_returns_403_without_upstream_call(
+        self, monkeypatch: pytest.MonkeyPatch, rest: str
+    ) -> None:
+        from app.api import proxy as proxy_mod
+
+        _allow_acme(monkeypatch)
+
+        class _Tripwire:
+            def build_request(self, **_kw: Any) -> Any:
+                raise AssertionError("upstream MUST NOT be contacted for another organisation")
+
+        monkeypatch.setattr(proxy_mod, "_get_client", lambda: _Tripwire())
+
+        response = await proxy_mod._proxy(
+            service="docs", rest=rest, request=_request(), session=_session(), db=AsyncMock()
+        )
+
+        assert response.status_code == 403
+
+    async def test_docs_request_for_own_organisation_forwards_unchanged_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.api import proxy as proxy_mod
+        from app.core.config import settings
+
+        _allow_acme(monkeypatch)
+        captured: dict[str, Any] = {}
+
+        class _StubClient:
+            def build_request(self, *, method: str, url: str, headers: dict[str, str], content: bytes) -> Any:
+                captured["url"] = url
+                captured["headers"] = headers
+                return SimpleNamespace()
+
+            async def send(self, _req: Any, *, stream: bool) -> Any:
+                return _FakeUpstreamResponse()
+
+        monkeypatch.setattr(proxy_mod, "_get_client", lambda: _StubClient())
+
+        response = await proxy_mod._proxy(
+            service="docs",
+            rest="api/orgs/acme/kbs/handbook/tree",
+            request=_request(headers={"Accept": "application/json", "X-User-ID": "someone-else"}),
+            session=_session(),
+            db=AsyncMock(),
+        )
+
+        assert response.status_code == 200
+        assert captured["url"] == "http://docs-app:3010/docs/api/orgs/acme/kbs/handbook/tree"
+        # docs-app identifies a proxied user from the session's Bearer token,
+        # so the forwarded header set is exactly this one.
+        assert captured["headers"] == {
+            "Accept": "application/json",
+            "Authorization": "Bearer real-portal-bearer-token",
+            "X-Internal-Secret": settings.internal_secret,
+            "X-Klai-Verified-User-Id": "u-zitadel-1",
+            "X-Klai-Verified-Org-Id": "o-zitadel-acme",
+            "X-Klai-Verified-Org-Slug": "acme",
+        }
+        assert settings.internal_secret != settings.docs_internal_secret
+
+
+# ---------------------------------------------------------------------------
 # Inbound X-Klai-Verified-* stripping (REQ-2.3)
 # ---------------------------------------------------------------------------
 
