@@ -33,6 +33,13 @@ from app.api.auth_bff import _client_ip, _safe_return_to
         ("https://evil.example.net", "/app"),
         ("javascript:alert(1)", "/app"),  # no leading /
         ("", "/app"),
+        ("/app?next=https://evil.example.net", "/app"),
+        ("/oauth/authorize-other?next=https%3A%2F%2Fevil.example.net", "/app"),
+        # The MCP consent request may carry the client's redirect_uri in its query.
+        (
+            "/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A54321%2Fcallback",
+            "/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A54321%2Fcallback",
+        ),
         # Legitimate paths → unchanged ORIGINAL value (REQ-21.3)
         ("/app/dashboard", "/app/dashboard"),
         ("/app/dashboard?foo=bar%20baz", "/app/dashboard?foo=bar%20baz"),

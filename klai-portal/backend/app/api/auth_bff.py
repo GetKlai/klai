@@ -423,6 +423,9 @@ def _clear_retry_cookie(response: Response) -> None:
     )
 
 
+_RETURN_TO_PATHS_WITH_URL_QUERY = frozenset({"/oauth/authorize"})
+
+
 # @MX:NOTE: Open-redirect security boundary on the BFF login flow.
 # @MX:SPEC: SPEC-SEC-HYGIENE-001 REQ-21 (percent-decode + backslash + scheme matrix).
 #   MUST return the ORIGINAL (non-decoded) value on success — callers rely on this
@@ -453,7 +456,10 @@ def _safe_return_to(value: str | None) -> str:
         return "/app"
     if decoded.startswith("/\\"):
         return "/app"
-    if "://" in decoded:
+    # The MCP consent request carries the client's redirect_uri in its query;
+    # only for that allow-listed path is the "://" check limited to the path.
+    path = decoded.partition("?")[0]
+    if "://" in (path if path in _RETURN_TO_PATHS_WITH_URL_QUERY else decoded):
         return "/app"
     if "\\\\" in decoded:
         return "/app"
