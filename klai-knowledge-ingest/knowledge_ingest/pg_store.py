@@ -1183,34 +1183,69 @@ async def get_orphan_image_keys_for_connector(
 
 
 async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str) -> set[str]:
-    """Return the Graphiti episode uuids that are the CURRENT graph content of this org.
+    """Every Graphiti episode uuid ANY artifact row of this org records, current or not.
+
+    The org-wide sweep after a connector purge keeps exactly this set, so it
+    only removes true orphans: episodes no row records. Replaced versions'
+    episodes are history the owner removes per run, after seeing the dry-run
+    counts of ``scripts/prune_stale_graph.py``, which selects with
+    ``get_current_graph_episode_uuids_for_org`` instead. Nothing removes them
+    implicitly. In steady state the two sets agree, because a new extraction
+    deletes its predecessors' episodes itself
+    (``ingest_graphiti_episode(replace_stale=True)``) and a deliberately
+    skipped version deletes them at ingest; so the sweep can stay this
+    conservative for good.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT stored_episode.episode_id AS episode_uuid
+          FROM knowledge.artifacts AS a
+          CROSS JOIN LATERAL jsonb_array_elements_text(
+              CASE
+                  WHEN a.extra::jsonb ? 'graphiti_episode_ids'
+                      THEN a.extra::jsonb->'graphiti_episode_ids'
+                  WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                      THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
+                  ELSE '[]'::jsonb
+              END
+          ) AS stored_episode(episode_id)
+         WHERE a.org_id = $1
+           AND stored_episode.episode_id <> 'no-chunks'
+           AND stored_episode.episode_id NOT LIKE 'skipped:%'
+        """,
+        org_id,
+    )
+    return {r["episode_uuid"] for r in rows}
+
+
+async def get_current_graph_episode_uuids_for_org(
+    conn: asyncpg.Connection, org_id: str
+) -> set[str]:
+    """The Graphiti episode uuids that are the CURRENT graph content of this org.
 
     Postgres keeps every version of a document; the graph holds the facts of
-    exactly one: the newest version that was actually extracted. That is the
-    active row's episodes, or, when the active row has none (its extraction
-    was skipped, is still queued, or failed), those of the nearest earlier
-    version along ``superseded_by`` that has some. Episodes of replaced
-    extractions and of removed documents (no active row) are not alive, so the
-    org-wide sweep and ``scripts/prune_stale_graph.py`` delete them.
+    exactly one: its newest extraction. Walking back from the active row along
+    ``superseded_by``, the first row that was extracted decides. A row with
+    episodes was extracted; so was a row deliberately held out of the graph
+    (``skipped:<reason>``, today only ``navigation_page``), whose result is
+    "nothing", so the document then has no graph content. A row with neither
+    (extraction queued, failed, aborted or quarantined) is passed over and the
+    walk continues to the version before it. Removed documents (no active row)
+    have no current content.
 
-    A new extraction deletes its predecessors' episodes itself
-    (``ingest_graphiti_episode(replace_stale=True)``), so in steady state this
-    and the graph agree; the rule exists so a skipped extraction keeps the one
-    that stands in.
-
-    The list key is authoritative when present; the scalar fallback keeps rows
-    written before GetKlai/klai#1176 readable. "no-chunks" (backfill.py) and
-    "skipped:<reason>" (a page held out of the graph, #1148) are sentinels, not
-    episode uuids, so a row holding only those counts as not extracted.
+    This is the selection of ``scripts/prune_stale_graph.py``; the org-wide
+    sweep deliberately uses the broader ``get_alive_episode_uuids_for_org``.
 
     depth < 100 bounds the walk, as in ``get_episode_ids_for_document_history``.
     """
     rows = await conn.fetch(
         """
-        WITH RECURSIVE stored AS (
+        WITH RECURSIVE recorded AS (
             SELECT a.id,
                    a.superseded_by,
                    a.belief_time_end = $2 AS active,
+                   COALESCE(a.extra::jsonb->>'graphiti_episode_id' LIKE 'skipped:%', false)
+                       AS held_out,
                    ARRAY(
                        SELECT episode_id
                        FROM jsonb_array_elements_text(
@@ -1227,23 +1262,28 @@ async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str)
             FROM knowledge.artifacts AS a
             WHERE a.org_id = $1
         ),
+        stored AS (
+            SELECT id, superseded_by, active, episode_ids,
+                   cardinality(episode_ids) > 0 OR held_out AS extracted
+            FROM recorded
+        ),
         walk AS (
-            SELECT s.id AS document, s.id, s.episode_ids, 0 AS depth
+            SELECT s.id AS document, s.id, s.episode_ids, s.extracted, 0 AS depth
             FROM stored s
             WHERE s.active
 
             UNION ALL
 
-            SELECT w.document, p.id, p.episode_ids, w.depth + 1
+            SELECT w.document, p.id, p.episode_ids, p.extracted, w.depth + 1
             FROM walk w
             JOIN stored p ON p.superseded_by = w.id
-            WHERE w.depth < 100
+            WHERE NOT w.extracted AND w.depth < 100
         ),
         nearest AS (
             SELECT episode_ids,
                    depth,
-                   min(depth) FILTER (WHERE cardinality(episode_ids) > 0)
-                       OVER (PARTITION BY document) AS extracted_depth
+                   min(depth) FILTER (WHERE extracted) OVER (PARTITION BY document)
+                       AS extracted_depth
             FROM walk
         )
         SELECT DISTINCT unnest(episode_ids) AS episode_uuid

@@ -707,13 +707,19 @@ the vector index.
 **History lives in Postgres; the graph holds only what counts now.** `knowledge.artifacts`
 keeps every version of a document (a replaced row gets `belief_time_end` and
 `superseded_by`). The graph, like the vector index, holds the facts of exactly one version
-per document: the newest version that was actually extracted. When a new version's
-extraction starts writing, the job (`ingest_graphiti_episode(replace_stale=True)`) deletes
-the episodes of every earlier version first, so the old facts stay searchable until then.
-When a new version is not extracted (a navigation page, a job still queued or failed), the
-previous extraction stays as the document's graph content.
-`pg_store.get_alive_episode_uuids_for_org` is that rule; the org-wide orphan sweep and
-`scripts/prune_stale_graph.py` (manual, dry run by default) delete everything else.
+per document: its newest extraction. When a new version's extraction starts writing, the
+job (`ingest_graphiti_episode(replace_stale=True)`) deletes the episodes of every earlier
+version first, so the old facts stay searchable until then. A version deliberately held
+out of the graph (`skipped:navigation_page`) is an extraction whose result is "nothing":
+ingest deletes the earlier versions' episodes right away and the document has no graph
+content. Only a version whose extraction has not happened (job queued, failed, aborted,
+quarantined) leaves the previous extraction standing in.
+`pg_store.get_current_graph_episode_uuids_for_org` is that rule and the selection of
+`scripts/prune_stale_graph.py` (manual, dry run by default, `--execute` approved per run).
+The org-wide sweep after a connector purge is deliberately broader: it keeps every
+episode any row records (`get_alive_episode_uuids_for_org`) and removes only true
+orphans, so nothing clears history as a side effect. In steady state the two agree,
+because each new extraction or deliberate skip removes its predecessors itself.
 Deleting an episode (`graph.delete_kb_episodes`) also deletes every `RELATES_TO` fact only
 that episode backed and takes its uuid out of the facts other episodes still back, because
 retrieval searches facts, not episodes.

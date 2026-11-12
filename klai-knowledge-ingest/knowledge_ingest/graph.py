@@ -653,9 +653,14 @@ async def sweep_orphan_episodes_org_wide(org_id: str, alive_episode_uuids: set[s
     """Delete every episode in the org graph that ``alive_episode_uuids`` lacks.
 
     ``alive_episode_uuids`` comes from ``pg_store.get_alive_episode_uuids_for_org``:
-    per document, the episodes of its newest extracted version. Everything
-    else (replaced extractions, removed documents, episodes no row records)
-    goes through ``delete_kb_episodes``, so its facts go with it.
+    every episode any artifact row of the org records, replaced versions
+    included. The sweep is a safety net for true orphans (episodes no row
+    records, such as one written after its row was purged), never a way to
+    clear history as a side effect of a connector delete: replaced versions'
+    episodes go only through ``scripts/prune_stale_graph.py``, approved per
+    run. In steady state both agree, because a new extraction removes its
+    predecessors itself. Orphans go through ``delete_kb_episodes``, so their
+    facts go with them.
 
     Returns the number of episodes deleted. No-op when graphiti is disabled.
     """

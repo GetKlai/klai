@@ -1,7 +1,7 @@
 """scripts/prune_stale_graph.py against a real FalkorDB graph.
 
 Postgres is a fake connection here: which episodes are alive is
-``get_alive_episode_uuids_for_org``'s job, proven against real Postgres in
+``get_current_graph_episode_uuids_for_org``'s job, proven against real Postgres in
 tests/integration/test_alive_episodes_postgres.py.
 """
 
@@ -36,7 +36,7 @@ def _postgres(monkeypatch: pytest.MonkeyPatch, rows: list[dict], alive: set[str]
     monkeypatch.setattr(prune_stale_graph, "tenant_scoped_connection", _tenant)
     monkeypatch.setattr(
         prune_stale_graph.pg_store,
-        "get_alive_episode_uuids_for_org",
+        "get_current_graph_episode_uuids_for_org",
         AsyncMock(return_value=alive),
     )
 

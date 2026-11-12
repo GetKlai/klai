@@ -1,9 +1,10 @@
-"""Real-Postgres check of which graph episodes count as a document's current extraction.
+"""Real-Postgres check of which graph episodes the two cleanup paths keep.
 
-Per document the graph holds the facts of exactly one version: the newest one
-that was actually extracted. ``get_alive_episode_uuids_for_org`` is that rule in
-SQL, and the org-wide orphan sweep and ``scripts/prune_stale_graph.py`` delete
-everything it does not return.
+Per document the graph holds the facts of one version: its newest extraction.
+``get_current_graph_episode_uuids_for_org`` is that rule in SQL and the
+selection of ``scripts/prune_stale_graph.py``. The org-wide sweep after a
+connector purge keeps the broader ``get_alive_episode_uuids_for_org``: every
+episode any row records, so it never removes history by itself.
 """
 
 from __future__ import annotations
@@ -74,8 +75,7 @@ async def tenant():
         await conn.close()
 
 
-async def test_only_the_newest_extracted_version_of_each_document_is_alive(tenant) -> None:
-    conn, org_id = tenant
+async def _seed_documents(conn: asyncpg.Connection, org_id: str) -> None:
     # Re-extracted: the replaced version's episodes are history, not search content.
     await _chain(
         conn,
@@ -83,15 +83,15 @@ async def test_only_the_newest_extracted_version_of_each_document_is_alive(tenan
         "re-extracted",
         [{"graphiti_episode_ids": ["old-1", "old-2"]}, {"graphiti_episode_ids": ["new-1"]}],
     )
-    # Newest version held out of the graph: the previous extraction stands in.
+    # Newest version deliberately held out of the graph: that extraction's
+    # result is "nothing", so no earlier version stands in.
     await _chain(
         conn,
         org_id,
         "skipped",
         [
-            {"graphiti_episode_ids": ["stand-in-older"]},
-            {"graphiti_episode_ids": ["stand-in"]},
-            {"graphiti_episode_id": "skipped:navigation"},
+            {"graphiti_episode_ids": ["before-skip"]},
+            {"graphiti_episode_id": "skipped:navigation_page"},
         ],
     )
     # Newest version still queued (no episode keys yet), two versions without
@@ -106,7 +106,18 @@ async def test_only_the_newest_extracted_version_of_each_document_is_alive(tenan
             {},
         ],
     )
-    # Removed document: no active row, so nothing of it is alive.
+    # Queued behind a deliberate skip: the walk stops at the skip.
+    await _chain(
+        conn,
+        org_id,
+        "queued-after-skip",
+        [
+            {"graphiti_episode_ids": ["behind-skip"]},
+            {"graphiti_episode_id": "skipped:navigation_page"},
+            {},
+        ],
+    )
+    # Removed document: no active row, so nothing of it is current.
     await _insert(conn, org_id, "removed", {"graphiti_episode_ids": ["removed-1"]})
     # A rename closes two rows into one new version: the nearest extracted
     # predecessor stands in, not the older extraction behind the other one.
@@ -119,6 +130,30 @@ async def test_only_the_newest_extracted_version_of_each_document_is_alive(tenan
         conn, org_id, "merged-older", {"graphiti_episode_ids": ["older"]}, superseded_by=unextracted
     )
 
+
+async def test_current_graph_content_is_the_newest_extraction_of_each_document(tenant) -> None:
+    conn, org_id = tenant
+    await _seed_documents(conn, org_id)
+
+    current = await pg_store.get_current_graph_episode_uuids_for_org(conn, org_id)
+
+    assert current == {"new-1", "legacy-scalar", "nearest"}
+
+
+async def test_the_sweep_keeps_every_episode_a_row_records(tenant) -> None:
+    conn, org_id = tenant
+    await _seed_documents(conn, org_id)
+
     alive = await pg_store.get_alive_episode_uuids_for_org(conn, org_id)
 
-    assert alive == {"new-1", "stand-in", "legacy-scalar", "nearest"}
+    assert alive == {
+        "old-1",
+        "old-2",
+        "new-1",
+        "before-skip",
+        "legacy-scalar",
+        "behind-skip",
+        "removed-1",
+        "nearest",
+        "older",
+    }

@@ -1,8 +1,8 @@
 """Count, and only with --execute remove, the graph content that no longer counts.
 
 Postgres keeps every version of a document; the graph should hold the facts
-of one: the newest version that was actually extracted
-(``pg_store.get_alive_episode_uuids_for_org``). Before ingest replaced earlier
+of one: its newest extraction
+(``pg_store.get_current_graph_episode_uuids_for_org``). Before ingest replaced earlier
 extractions, one tenant's graph held 1,748 episodes of current versions next
 to 8,442 of replaced versions and 442 of removed documents, and 14,620 of its
 204,498 fact edges cited no episode that still existed. Retrieval searches
@@ -11,9 +11,13 @@ those edges, so the stale facts kept reaching answers.
 By default this only reads and prints counts. ``--execute`` removes the same
 selection through ``graph.delete_kb_episodes`` (bounded batches; an edge goes
 when no remaining episode backs it) and prints the counts again. It removes
-every episode that is not alive, and strips uuids of episodes that no longer
+every episode that is not current graph content, and strips uuids of episodes that no longer
 exist from the edges citing them. It refuses to execute when that would leave
 a document that has graph content now without any.
+
+This is the only path that removes replaced versions' episodes: the
+org-wide sweep after a connector purge keeps every episode any row records,
+so the owner approves this removal per run, after seeing the dry-run counts.
 
 Run it by hand only, one tenant per run (in a knowledge-ingest container):
 
@@ -103,7 +107,7 @@ async def load_snapshot(org_id: str) -> Snapshot:
     episodes, edges = await _graph_state(org_id)
     async with tenant_scoped_connection(org_id) as conn:
         records = await conn.fetch(_ROWS_SQL, org_id, pg_store._SENTINEL)
-        alive = await pg_store.get_alive_episode_uuids_for_org(conn, org_id)
+        alive = await pg_store.get_current_graph_episode_uuids_for_org(conn, org_id)
     rows = [Row(r["id"], r["superseded_by"], r["active"], tuple(r["episode_ids"])) for r in records]
     return Snapshot(rows=rows, alive=alive, episodes=episodes, edges=edges)
 
@@ -178,7 +182,11 @@ def report(snapshot: Snapshot) -> tuple[dict[str, int], list[str]]:
     emptied = [
         document
         for document, history in sorted(_histories(snapshot.rows).items())
-        if history & snapshot.episodes and not history & snapshot.episodes & snapshot.alive
+        # A document whose current extraction is a deliberate skip has no
+        # current content by design; it is never counted here.
+        if history & snapshot.alive
+        and history & snapshot.episodes
+        and not history & snapshot.episodes & snapshot.alive
     ]
     counts["documents_left_without_episode"] = len(emptied)
     return counts, emptied
@@ -203,7 +211,7 @@ async def run(org_id: str, execute: bool) -> int:
         # ids the graph does not hold while an older version's episodes are
         # still there, so applying the rule would empty it.
         print(
-            "REFUSING: the alive rule (newest extracted version per document) keeps "
+            "REFUSING: the current-content rule (newest extraction per document) keeps "
             "episode ids that are not in the graph for these documents, so pruning "
             "would remove their only graph content:"
         )
@@ -214,7 +222,7 @@ async def run(org_id: str, execute: bool) -> int:
         return 0
 
     async with tenant_scoped_connection(org_id) as conn:
-        alive_now = await pg_store.get_alive_episode_uuids_for_org(conn, org_id)
+        alive_now = await pg_store.get_current_graph_episode_uuids_for_org(conn, org_id)
     await graph_module.delete_kb_episodes(org_id, sorted(selection(snapshot) - alive_now))
     after, _ = report(await load_snapshot(org_id))
     _print(f"org {org_id}: after", after)

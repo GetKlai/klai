@@ -372,6 +372,49 @@ async def test_new_version_extraction_replaces_the_previous_versions_graph_conte
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("skip_reason", ["navigation_page", None])
+async def test_a_version_held_out_of_the_graph_removes_the_documents_earlier_facts(skip_reason):
+    """A deliberate skip leaves the document without graph content; a graphed version
+    leaves the earlier facts in place until its own extraction replaces them."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, _ = _make_mock_app()
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="docs/index.md",
+        content="# Index\n\nA page that became a link list.",
+        source_type="docs",
+        content_type="kb_article",
+    )
+
+    async with _base_patches(mock_app, graphiti_enabled=True):
+        with (
+            patch(
+                "knowledge_ingest.routes.ingest.graph_episode_skip_reason",
+                return_value=skip_reason,
+            ),
+            patch(
+                "knowledge_ingest.routes.ingest.pg_store.get_episode_ids_for_document_history",
+                new=AsyncMock(return_value=["earlier-episode"]),
+            ),
+            patch(
+                "knowledge_ingest.routes.ingest.graph_module.delete_kb_episodes",
+                new_callable=AsyncMock,
+            ) as delete_episodes,
+        ):
+            await ingest_document(_make_mock_conn(), req)
+
+    if skip_reason:
+        delete_episodes.assert_awaited_once_with("org-1", ["earlier-episode"])
+        mock_app.graphiti_configured.defer_async.assert_not_awaited()
+    else:
+        delete_episodes.assert_not_awaited()
+        mock_app.graphiti_configured.defer_async.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_already_enqueued_does_not_propagate():
     """When defer_async raises AlreadyEnqueued, ingest_document still returns ok."""
     from knowledge_ingest.models import IngestRequest
