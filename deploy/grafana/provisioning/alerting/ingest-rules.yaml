@@ -312,7 +312,7 @@ groups:
         annotations:
           summary: 'A knowledge-ingest procrastinate worker lane exited and is being restarted'
           description: |
-            A procrastinate worker lane (io, interactive, llm or maintenance)
+            A procrastinate worker lane (io, interactive, llm, graph or maintenance)
             exited while no shutdown was requested; WorkerLifecycle restarts
             it after an exponential backoff of up to 60 s and /health
             returns 503 until then.
