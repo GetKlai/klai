@@ -13,7 +13,7 @@ service alembic migrations whose CHECK constraints reference these
 values:
 
   - ``klai-knowledge-ingest/.../0005_crawl_jobs_fetch_outcomes.py``
-  - ``klai-connector/alembic/versions/009_sync_runs_skip_reasons.py``
+  - ``klai-connector/alembic/versions/010_skip_reason_shrunken_version_held.py`` (latest CHECK)
 """
 
 from __future__ import annotations
@@ -82,6 +82,10 @@ class PersistSkipReason(StrEnum):
     NON_TEXT_CONTENT = "non_text_content"
     EXCLUDED_BY_KB_CONFIG = "excluded_by_kb_config"
     TAXONOMY_CLASSIFY_FAILED = "taxonomy_classify_failed"
+    # An automated source delivered a version that keeps under half of the
+    # stored version's words; the stored version stays until the same
+    # version is seen again 12 hours later (routes/ingest.py).
+    SHRUNKEN_VERSION_HELD = "shrunken_version_held"
 
 
 FETCH_REASON_VALUES: frozenset[str] = frozenset(c.value for c in FetchReasonCode)

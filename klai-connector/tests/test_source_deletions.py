@@ -702,6 +702,19 @@ async def test_github_same_commit_without_open_deletions_still_skips() -> None:
 
 
 @pytest.mark.asyncio
+async def test_github_same_commit_with_a_held_document_lists_again() -> None:
+    # A held document is accepted only when it is offered again; without a new
+    # commit the same-tree shortcut would return before it is.
+    adapter = _github_adapter([_blob("docs/a.md")])
+    adapter.list_documents = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    previous = _previous([_gh_ref("docs/a.md")], tree_sha="c2", path_filter=None, held_open=True)
+
+    await _sync(adapter, _github_config(), previous)
+
+    adapter.list_documents.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_github_truncated_tree_deletes_nothing() -> None:
     adapter = _github_adapter([_blob("docs/a.md")], truncated=True)
 

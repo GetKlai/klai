@@ -116,7 +116,7 @@ class KnowledgeIngestClient:
         connector_type: str = "",
         user_id: str | None = None,
         document_extra: dict[str, object] | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Send a parsed document to knowledge-ingest for embedding.
 
         Args:
@@ -143,7 +143,9 @@ class KnowledgeIngestClient:
             empty document, connector deleting) and ``status: "ok"`` after a
             write. Any status other than ``skipped`` counts as a change, so an
             unexpected answer errs toward reanalysing rather than missing new
-            content.
+            content. None when knowledge-ingest held the version (``held``):
+            it kept under half of the stored text, so the stored version stays
+            until the same version arrives again 12 hours later.
 
         Raises:
             ValueError: If content exceeds the knowledge-ingest request contract.
@@ -189,8 +191,11 @@ class KnowledgeIngestClient:
             headers=headers,
         )
         response.raise_for_status()
+        status = response.json().get("status")
+        if status == "held":
+            return None
         logger.info("Ingested document: %s", path)
-        return response.json().get("status") != "skipped"
+        return status != "skipped"
 
     async def delete_connector_document(
         self,
