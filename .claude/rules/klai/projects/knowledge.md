@@ -267,6 +267,19 @@ matching on `parent.database_id` alone, which is correct for both shapes.
 never key off `parent.type` — match on `parent.database_id`. When a Notion
 behaviour looks wrong, check the default `Notion-Version` of the installed
 client first: it moves with the SDK, not with our code.
+
+## Connector source deletions depend on a complete listing (HIGH)
+
+`sync_engine` deletes a stored ref that a listing no longer contains,
+but only when `adapter.listing_is_complete(connector)` is True for that run. An
+adapter that swallows an error per item, stops at a cap, or reads a change feed
+must answer False, or every document it did not see is deleted from the KB.
+
+**Rule:** In `list_documents`, let any error that is not a definite "gone" (Notion
+`object_not_found`, Drive/Graph 404) raise; call `self._record_listing(connector,
+complete=...)` on every return path, False whenever a cap or truncation could
+have cut the listing. Table and guards: `docs/architecture/knowledge-ingest-flow.md`
+"Source deletions".
 - Spot-check `raw_words` on a known-good page after any crawl config change.
 
 ## crawl4ai usage
