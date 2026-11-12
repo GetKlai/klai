@@ -131,22 +131,33 @@ async def test_generate_document_summary_returns_string_on_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_document_summary_returns_empty_on_http_error() -> None:
-    """500 from LiteLLM proxy: returns empty string, no raise (fail-open per REQ-2)."""
-    from knowledge_ingest.contextual import generate_document_summary
+async def test_generate_document_summary_raises_on_http_error() -> None:
+    """A failed call raises, so the job's retry and capacity deferral see it.
 
-    transport = _MockTransport(status_code=500, json_body={"error": "boom"})
+    Returning "" would send every chunk prompt the document context window
+    instead of the summary: more tokens exactly when the proxy said stop.
+    """
+    from knowledge_ingest.contextual import generate_document_summary
+    from knowledge_ingest.enrichment import EnrichmentError
+    from knowledge_ingest.llm_capacity import is_llm_capacity_error
+
+    transport = _MockTransport(
+        status_code=429, json_body={"error": "No deployments available - crossed budget"}
+    )
     settings = _make_settings()
 
-    with patch("knowledge_ingest.contextual.settings", settings):
-        result = await generate_document_summary(
+    with (
+        patch("knowledge_ingest.contextual.settings", settings),
+        pytest.raises(EnrichmentError) as raised,
+    ):
+        await generate_document_summary(
             text=_DUTCH_PARAGRAPH,
             title="Test",
             language="nl",
             _transport=transport,
         )
 
-    assert result == ""
+    assert is_llm_capacity_error(raised.value)
 
 
 @pytest.mark.asyncio
