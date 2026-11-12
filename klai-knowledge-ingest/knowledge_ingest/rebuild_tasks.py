@@ -344,7 +344,7 @@ async def _rebuild_artifact(
             # and parent expansion silently degraded to chunk-text-only.
             from knowledge_ingest.enrichment_tasks import _enrich_document
 
-            written = await _enrich_document(
+            await _enrich_document(
                 org_id=org_id,
                 kb_slug=kb_slug,
                 path=path,
@@ -360,10 +360,6 @@ async def _rebuild_artifact(
                 parent_index_per_child=parent_index_per_child,
                 heading_path_per_child=heading_path_per_child,
             )
-            # _enrich_document logs and swallows infra failures, returning
-            # False; without this check the artifact counted as processed.
-            if not written:
-                raise RuntimeError("enrichment wrote no chunks to Qdrant")
 
             logger.info(
                 "rebuild_artifact_processed",

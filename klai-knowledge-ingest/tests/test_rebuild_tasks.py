@@ -333,13 +333,13 @@ async def test_rebuild_kb_propagates_failures_per_artifact(_common_patches):
 async def test_rebuild_counts_an_artifact_whose_chunks_were_not_written_as_failed(
     _common_patches,
 ):
-    """_enrich_document swallows an infra failure and returns False. Counting
-    that as processed told the operator the document was rebuilt while Qdrant
-    never received its chunks."""
+    """An infra failure in _enrich_document must not count as processed: the
+    operator would be told the document was rebuilt while Qdrant never
+    received its chunks."""
     from knowledge_ingest.rebuild_tasks import _rebuild_kb_core
 
     _common_patches["mock_list"].return_value = [_make_artifact("art-1", "doc.md", "Text")]
-    _common_patches["mock_enrich"].return_value = False
+    _common_patches["mock_enrich"].side_effect = ConnectionError("embedding service unreachable")
 
     result = await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB)
 

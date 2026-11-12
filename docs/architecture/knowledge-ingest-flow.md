@@ -383,8 +383,8 @@ are LiteLLM aliases (6.1).
 | 9 | Payload | adapter extra, frontmatter, `source_label`, `kb_name`, `connector_type`, `source_domain`, the cheap layer (2.3) and `visibility`, which is read from `kb_config` and set last (`routes/ingest.py:830-900`, `kb_config.py:134-215`) | | |
 | 10 | Raw upsert | `qdrant_store.upsert_chunks`: dense `vector_chunk` and sparse `vector_sparse` per chunk; payload includes `text`, `chunk_index`, `parent_chunk_id`, `heading_path`, `text_fingerprint`, `quality_score=0.5`, `feedback_count=0`. `_replace_points` snapshots the point ids of `(organisation, kb, path)`, upserts the new points, then deletes only the snapshotted ids (`qdrant_store.py:241-362`) | sparse service `POST /embed_sparse_batch`, batches of 64, 30 s in compose (code default 5 s) (`sparse_embedder.py:18-60`) | sparse failure writes dense-only points and never raises; a Qdrant error raises |
 | 11 | Persist extra | `update_artifact_extra`, so a worker can rebuild everything from the artifact id (`routes/ingest.py:931`) | | |
-| 12 | Enrichment decision | only `too_many_chunks` skips (more than 2000 chunks, counting `docling_chunk_count`) and sets `llm_enrichment_skipped`; otherwise, if the organisation has enrichment enabled, defer `enrich_document_interactive` (a direct file upload) or `enrich_document_bulk` with `queueing_lock={org_id}:{kb}:{path}:{artifact}` (`routes/ingest.py:890-974`, `enrichment_policy.py:20-72,98-118`) | | `AlreadyEnqueued` is swallowed |
-| 13 | Status | `index_status='synced'`, except that a direct upload awaiting interactive enrichment stays `pending` (`routes/ingest.py:975-985`) | | raises if no row was updated |
+| 12 | Enrichment decision | `too_many_chunks` (more than 2000 chunks, counting `docling_chunk_count`) or an organisation with enrichment off records enrichment `not_applicable` with that reason; otherwise `derived_state.queue_derived_work` records `pending` and defers `enrich_document_interactive` (a direct file upload) or `enrich_document_bulk` with `queueing_lock={org_id}:{kb}:{path}:{artifact}` (`routes/ingest.py:907-944`, `enrichment_policy.py:20-72,98-118`) | | `AlreadyEnqueued` is logged and the waiting job covers it; any other defer error records `failed (queue_unavailable)` and the request raises (2.6) |
+| 13 | Status | `index_status='synced'` for every source: the raw text is searchable (`routes/ingest.py:946-957`) | | raises if no row was updated |
 | 14 | Graph job | see 2.5 (`routes/ingest.py:988-1067`) | | a cleanup error is logged and ingest still succeeds |
 
 ### 2.2 Chunking and content profiles
@@ -461,8 +461,9 @@ aborts when it is gone, superseded or its connector inactive.
   base ingest); a fence check; `upsert_enriched_chunks` through `_replace_points`
   adds `text_enriched`, `context_prefix`, `questions`, `ingested_at` and
   `valid_from` / `valid_until`; if the artifact became inactive meanwhile the
-  points just written are deleted; `index_status='synced'`
-  (`enrichment_tasks.py:1100-1253`). Raw points carry `belief_time_start` and
+  points just written are deleted; the enrichment state becomes `done` once the
+  whole document or its last batch is written, and an `index_status` still
+  `pending` from a reindex becomes `synced` (`enrichment_tasks.py:_finish`). Raw points carry `belief_time_start` and
   `belief_time_end` but not `valid_from` and `valid_until`, which exist only on
   enriched points (`qdrant_store.py:424-429`).
 - **Failure.** A transport, HTTP or JSON error from the model raises
@@ -470,16 +471,16 @@ aborts when it is gone, superseded or its connector inactive.
   attempts, exponential wait 4; `enrich_document_interactive`: 4 attempts,
   exponential wait 3). A failed chunk is never upserted with a substitute
   prefix. A capacity error (402 or 429 "no deployments", a spent key or budget)
-  re-defers the job for up to 3 days and the artifact stays `pending`
-  (`llm_capacity.py:50-90`, `enrichment_tasks.py:420-465`). Any other exception
-  (embedding service, Qdrant, database) is logged as `enrichment_infra_failed`
-  and swallowed, and the raw points remain searchable. The status becomes
-  `failed` only when the first batch (`chunk_offset` 0) fails and the artifact
-  has no source connector (uploads, docs editor, MCP); the same holds for the
-  `EnrichmentError` path before Procrastinate retries. A connector or crawl
-  document stays `synced`, and so does an artifact whose later batch fails
-  (`enrichment_tasks.py:485-500,1203-1253`). A batch that fails permanently
-  stops the chain; earlier chunks keep their context, later ones stay raw.
+  re-defers the job for up to 3 days with the state still `pending`; when that
+  window is spent the state becomes `failed (llm_capacity_exhausted)` and the
+  job ends failed without a retry (`llm_capacity.py:50-90`). Any other
+  exception (embedding service, Qdrant, database) raises and is retried like
+  `EnrichmentError`. On the last attempt the state becomes
+  `failed (retries_exhausted)`; a row without `document_text` is
+  `failed (no_stored_text)` at once. This holds for every source, uploads,
+  connectors and crawls alike, and for every batch: a batch that fails
+  permanently stops the chain and fails the document, while earlier chunks keep
+  their context and later ones stay raw. The raw text stays searchable.
 
 **The cheap layer.** Part of what a chunk stores follows from its text and the
 KB's `aliases` and `product_rules`, without a model call: the "Also known as"
@@ -515,9 +516,9 @@ For a document that is not a navigation page (at least 8 links and fewer than
 40 prose characters per link, `enrichment_policy.py:graph_episode_skip_reason`),
 ingest defers `ingest_graphiti_episode` on `graphiti-bulk` with
 `queueing_lock=graphiti:{artifact}` and `replace_stale=True`
-(`routes/ingest.py:988-1067`). A navigation page is marked
-`graphiti_episode_id="skipped:navigation_page"` and its earlier extractions are
-retired.
+(`routes/ingest.py:959-1025`). A navigation page records graph
+`not_applicable (navigation_page)` and its earlier extractions are retired; with
+the graph switched off the state is `not_applicable (graph_disabled)`.
 
 The task (`enrichment_tasks.py:631-928`, `graph.py:971-1165`):
 
@@ -533,7 +534,9 @@ The task (`enrichment_tasks.py:631-928`, `graph.py:971-1165`):
   run with exponential wait 4, about 24 hours in total
   (`enrichment_tasks.py:60-72`);
 - a FalkorDB that dies twice during one document's extraction quarantines that
-  build, so it is not retried (`enrichment_tasks.py:72-78`);
+  build, so it is not retried and the graph state is `failed (quarantined)`
+  (`enrichment_tasks.py:72-80`); the last failed attempt records
+  `failed (retries_exhausted)`, a row without text `failed (no_stored_text)`;
 - aborts, and deletes the part just written, when the artifact was deleted or
   superseded during the run;
 - after the parts: Hebbian reinforcement (`weight += 1` on co-mentioned edges),
@@ -546,8 +549,8 @@ The task (`enrichment_tasks.py:631-928`, `graph.py:971-1165`):
   extraction per document; the old facts stay until the new extraction is
   complete. Episodes younger than 24 hours that no artifact refers to are not
   swept as orphans (`graph.py:715`);
-- records `graphiti_episode_ids`, `graphiti_episode_complete` and
-  `graphiti_extraction_version` (2) on the artifact.
+- records `graphiti_episode_ids`, `graphiti_episode_complete`,
+  `graphiti_extraction_version` (2) and graph state `done` on the artifact.
 
 An unchanged re-sync or upload of a document whose extraction version is below 2
 re-queues the graph job without re-chunking, at most 300 per organisation per
@@ -576,8 +579,12 @@ every queue constant is in exactly one lane
 shutdown gets 20 s of the 90 s compose grace (`worker.py:94`,
 `deploy/docker-compose.yml:2188`), and a worker is stalled after 120 s without
 heartbeat. `recover_zombie_jobs` runs at start and every minute
-(`zombie_recovery.py:30-123`); a zombie whose `queueing_lock` is already held by
-a newer todo job is aborted instead of retried.
+(`zombie_recovery.py`); a zombie whose `queueing_lock` is already held by a
+todo job with the same task and arguments is aborted, because that job does the
+same work. When the waiting job does other work (another batch of the same
+document), the zombie ends `failed`, its product records
+`failed (stuck_job_not_covered)` and `zombie_work_not_covered` is logged at
+error level.
 
 **Derived work belongs to the document version.** Enrichment and graph jobs
 carry only `artifact_id`; a new sync or crawl run never cancels or fences them,
@@ -595,6 +602,42 @@ on `crawl-jobs` only (`crawl_sync.start_crawl_run`); crawl execution has its
 own generation fence (1.4). A connector delete marks the fences deleting,
 cancels crawl jobs by resource key and the enrichment and graph jobs of the
 connector's documents by `artifact_id` (`resource_jobs.cancel_jobs_by_artifact_ids`).
+
+**Each version says how its products ended.** `derived_state.py` keeps one
+state per product (`enrichment`, `graph`) in `knowledge.artifacts.extra`
+(`{product}_state`, `{product}_reason`, `{product}_state_at`): `pending`,
+`done`, `not_applicable` with a reason, or `failed` with a reason. They live in
+`extra` and not in columns because every reader already loads `extra`, the
+fields old rows are judged by are there too, and nothing queries by state on a
+hot path. `set_product_state` writes only to the current version, so an
+abandoned job leaves no state. `product_state` is the one reader (graph refresh,
+current graph content, the nightly graph check, `reextract_document_graph`, the
+source list the portal shows); for rows from before the state existed it derives
+one from the old fields (`skipped:<reason>`, `no-chunks`,
+`graphiti_quarantined_at`, `graphiti_exhausted_at`, `graphiti_episode_complete`,
+`llm_enrichment_skipped`, and an upload's `index_status`) and answers `unknown`
+where they cannot tell, never `done`. Those old markers are read and no longer
+written.
+
+Queueing is part of the write: `queue_derived_work` records `pending`, then
+defers. When the defer fails after the version row is committed, the document
+records `failed (queue_unavailable)` and the request raises; failing the
+request alone is not enough, because its retry finds the content unchanged and
+queues nothing.
+
+A move to `failed` logs `derived_product_failed` once, at error level, with
+`artifact_id`, `org_id`, `kb_slug`, `product` and `reason`; the alert of the
+same name fires on any such event in 10 minutes
+([derived-product-failed.md](../runbooks/derived-product-failed.md)). Nothing
+scans for failed or missing work or queues it again: a failed document stays
+failed until its source is synced again or someone re-queues it by hand.
+
+`index_status` describes only the version's raw text in the vector index, the
+same for every source: `pending` while it is written or rewritten by a
+reindex, `synced`, `failed` when that write failed (the stale-pending reaper
+also sets it), `deleting`. It says nothing about enrichment or the graph; the
+portal's source list shows an upload as pending or failed from its enrichment
+state.
 
 ### 2.7 Periodic tasks
 
@@ -649,7 +692,7 @@ list of what ingest writes, and by which step.
 
 | Store | What | Written by |
 |---|---|---|
-| Postgres `knowledge.artifacts` | one row per document version: ids, organisation, KB, path, provenance, assertion mode, `synthesis_depth`, `belief_time_start` / `belief_time_end` (end `253402300800` while active), `superseded_by`, `content_hash`, `index_status` (`pending`, `synced`, `failed`, `deleting`), `extra` JSONB with `document_text`, title, connector provenance, graph episode ids and flags | phases 6, 11, 13; workers |
+| Postgres `knowledge.artifacts` | one row per document version: ids, organisation, KB, path, provenance, assertion mode, `synthesis_depth`, `belief_time_start` / `belief_time_end` (end `253402300800` while active), `superseded_by`, `content_hash`, `index_status` (`pending`, `synced`, `failed`, `deleting`), `extra` JSONB with `document_text`, title, connector provenance, graph episode ids and the per-product state (2.6) | phases 6, 11, 12, 13; workers |
 | `knowledge.parent_chunks` | parent text per artifact (cascade on delete) | phase 8; rewritten by whole-document enrichment |
 | `knowledge.artifact_images`, object storage | image references and bytes | phase 8, `klai-libs/image-storage` |
 | `knowledge.crawl_jobs`, `fetch_outcomes`, checkpoints, `crawl_job_frontier`, `crawled_pages`, `page_links`, `crawl_domains` | crawl state, link graph, selectors, pacing | crawler (1.4) |
@@ -756,7 +799,7 @@ the way to run it. In code there is no dry run, no flag and no `queueing_lock`
 |---|---|---|---|
 | `kb_patch` | `python -m knowledge_ingest.scripts.kb_patch --org [--kb] [--only aliases\|products] [--execute]` | recomputes the cheap layer (2.3) for points whose `cheap_layer_version` differs; batches of 200; no model call | dry run by default; `--execute` is refused unless `INGEST_OK=1` (`klai-knowledge-ingest/knowledge_ingest/scripts/kb_patch.py:285-291`) |
 | `sparse_backfill` | `python -m knowledge_ingest.scripts.sparse_backfill --org [--kb] [--execute]` | adds missing `vector_sparse` only | dry run by default |
-| `requeue_failed_artifacts` | `--dry-run` or `--execute [--org --kb --limit]` | re-defers `enrich_document_bulk` for active artifacts with `index_status = 'failed'`, from chunk 0, oldest first (`klai-knowledge-ingest/knowledge_ingest/scripts/requeue_failed_artifacts.py:24-27,64-80`); it does not find a connector document or a later batch that failed, because those never get `failed` (2.3) | dry run by default |
+| `requeue_failed_artifacts` | `--dry-run` or `--execute [--org --kb --limit]` | re-defers `enrich_document_bulk` for active artifacts whose enrichment state is `failed`, or, for rows from before that state, whose `index_status = 'failed'`, from chunk 0, oldest first (`klai-knowledge-ingest/knowledge_ingest/scripts/requeue_failed_artifacts.py`) | dry run by default |
 | `repair_pg_qdrant_drift` | `<artifact_id>... [--execute]` | per artifact: reindex, retire, delete points or skip, decided from the current state | dry run by default |
 | `reextract_document_graph` | `python -m scripts.reextract_document_graph --org --artifact [--execute]` in a knowledge-ingest container (`klai-knowledge-ingest/scripts/reextract_document_graph.py:24-28`) | repairs one document whose finished graph extraction lost episodes: keeps the surviving episode ids, marks the extraction not complete with version 0 and queues the normal graph job as a user-requested refresh, without the daily cap or cool-off (`:97-117`; `graph_refresh.py:61-62`) | dry run by default; refuses (exit 2) a document that is not found, not active, not finished, has no missing episode or no stored `document_text` (`:55-90`); when no job is queued the row is written back exactly as it was and the command exits 1 (`:123-134`); nothing runs it automatically |
 | graph `backfill` | `python -m knowledge_ingest.backfill --org-id [--kb-slug] [--limit]` | builds graph episodes for existing artifacts (`backfill.py:1-30`) | flags only |
@@ -853,8 +896,8 @@ persists by snapshot only, so a graph database that is killed during its
 shutdown save can lose episodes that Postgres already lists. For each
 organisation `lost_graph_extractions` (`consistency_reconcile.py:136`) takes
 the graph rows (`pg_store.get_graph_rows_for_org`, which now also returns
-`created_at`, `pg_store.py:1202`), keeps the active rows whose extraction is
-finished, records at least one episode id and is older than
+`created_at` and the graph state, `pg_store.py:1202`), keeps the active rows
+whose graph state is `done`, records at least one episode id and is older than
 `graph.ORPHAN_GRACE` of 24 hours (`graph.py:715`), and counts those whose
 recorded ids are not all among the episode uuids the graph holds
 (`graph.stored_episode_uuids`, `graph.py:718`). The event gains `graph_check`

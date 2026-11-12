@@ -1190,21 +1190,32 @@ async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str)
     return {r["episode_uuid"] for r in rows}
 
 
-async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[asyncpg.Record]:
+_GRAPH_STATE_KEYS = (
+    "graph_state",
+    "graph_reason",
+    "graphiti_episode_id",
+    "graphiti_episode_ids",
+    "graphiti_episode_complete",
+    "graphiti_exhausted_at",
+    "graphiti_quarantined_at",
+)
+
+
+async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[dict]:
     """Every artifact row of the org with what the graph rules need to know about it.
 
     ``episode_ids`` are the real uuids the row records (sentinels dropped).
-    ``finished`` means the row's extraction reached a final outcome: written
-    completely (rows from before ``graphiti_episode_complete`` existed count as
-    complete), held out of the graph on purpose (``skipped:<reason>``, today
-    only ``navigation_page``), or no text to extract (``no-chunks``). A row that
-    is not finished has an extraction queued, running, failed, aborted or
-    quarantined. A row whose delete is in progress (``PURGE_PENDING``) is never
-    active: the document is going, so it has no current graph content.
+    ``graph_state`` is ``derived_state.product_state(..., "graph")``, and
+    ``finished`` means it is final for the current-content walk: ``done`` or
+    ``not_applicable``. A row that is not finished has an extraction queued,
+    running or failed. A row whose delete is in progress (``PURGE_PENDING``) is
+    never active: the document is going, so it has no current graph content.
     ``source_connector_id``/``source_ref`` and ``kb_slug``/``path``
     identify the document when ``superseded_by`` does not link its versions.
     """
-    return await conn.fetch(
+    from knowledge_ingest.derived_state import DONE, NOT_APPLICABLE, product_state
+
+    records = await conn.fetch(
         """
         SELECT id::text AS id,
                superseded_by::text AS superseded_by,
@@ -1215,15 +1226,9 @@ async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[
                extra::jsonb->>'source_connector_id' AS source_connector_id,
                extra::jsonb->>'source_ref' AS source_ref,
                episode_ids,
-               COALESCE(
-                   extra::jsonb->>'graphiti_episode_id' LIKE 'skipped:%'
-                   OR extra::jsonb->>'graphiti_episode_id' = 'no-chunks',
-                   false
-               )
-               OR (
-                   cardinality(episode_ids) > 0
-                   AND COALESCE((extra::jsonb->>'graphiti_episode_complete')::boolean, true)
-               ) AS finished
+               (SELECT jsonb_object_agg(key, value)
+                  FROM jsonb_each(a.extra::jsonb)
+                 WHERE key = ANY($4::text[])) AS graph_fields
         FROM (
             SELECT a.*,
                    ARRAY(
@@ -1246,7 +1251,17 @@ async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[
         org_id,
         _SENTINEL,
         PURGE_PENDING,
+        list(_GRAPH_STATE_KEYS),
     )
+    rows = []
+    for record in records:
+        row = dict(record)
+        fields = row.pop("graph_fields")
+        state = product_state(json.loads(fields) if isinstance(fields, str) else fields, "graph")
+        row["graph_state"] = state
+        row["finished"] = state.state in (DONE, NOT_APPLICABLE)
+        rows.append(row)
+    return rows
 
 
 def current_extractions(rows: list) -> dict[str, tuple[set[str], bool]]:
@@ -1948,6 +1963,28 @@ async def count_sources_per_kb(
     return {row["kb_slug"]: int(row["sources_count"] or 0) for row in rows}
 
 
+def _upload_status(row: asyncpg.Record) -> dict:
+    """The status the portal shows for an upload: its text, then its enrichment.
+
+    ``index_status`` says whether the version's text is searchable; the portal's
+    badge has always meant "processed", so an enrichment that is still pending
+    or has failed shows as such (``derived_state``). The time is the later of
+    the two transitions, which is what the badge measures "stuck" against.
+    """
+    from knowledge_ingest.derived_state import FAILED, PENDING, product_state
+
+    fields = row["enrichment_fields"]
+    fields = json.loads(fields) if isinstance(fields, str) else (fields or {})
+    enrichment = product_state(fields, "enrichment")
+    status, changed_at = row["index_status"], row["index_status_changed_at"]
+    if status not in (PENDING, FAILED) and enrichment.state in (PENDING, FAILED):
+        status, changed_at = enrichment.state, fields.get("enrichment_state_at") or changed_at
+    return {
+        "index_status": status,
+        "index_status_changed_at": int(changed_at) if changed_at is not None else None,
+    }
+
+
 async def list_kb_sources(
     conn: asyncpg.Connection, org_id: str, kb_slug: str
 ) -> dict[str, list[dict]]:
@@ -1956,7 +1993,8 @@ async def list_kb_sources(
     Returns ``{"connectors": [...], "uploads": [...]}`` where:
       - connectors: one row per distinct ``source_connector_id`` found in
         artifacts.extra, with aggregate items_count + items_failed_count
-        (active artifacts with index_status='failed') + chunks_count
+        (active artifacts whose text failed to index, or whose enrichment or
+        graph state is failed) + chunks_count
       - uploads: one row per artifact whose ``source_connector_id`` is null
         (direct file/url/text/image uploads), with chunks_count
 
@@ -1975,7 +2013,11 @@ async def list_kb_sources(
         SELECT
             a.extra::jsonb->>'source_connector_id' AS connector_id,
             COUNT(DISTINCT a.id) AS items_count,
-            COUNT(DISTINCT a.id) FILTER (WHERE a.index_status = 'failed') AS items_failed_count,
+            COUNT(DISTINCT a.id) FILTER (
+                WHERE a.index_status = 'failed'
+                   OR a.extra::jsonb->>'enrichment_state' = 'failed'
+                   OR a.extra::jsonb->>'graph_state' = 'failed'
+            ) AS items_failed_count,
             COUNT(pc.id) AS chunks_count
         FROM knowledge.artifacts a
         LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
@@ -2017,7 +2059,13 @@ async def list_kb_sources(
             a.created_at AS created_at,
             COUNT(pc.id) AS chunks_count,
             a.index_status AS index_status,
-            a.index_status_changed_at AS index_status_changed_at
+            a.index_status_changed_at AS index_status_changed_at,
+            jsonb_build_object(
+                'enrichment_state', a.extra::jsonb->'enrichment_state',
+                'enrichment_reason', a.extra::jsonb->'enrichment_reason',
+                'enrichment_state_at', a.extra::jsonb->'enrichment_state_at',
+                'llm_enrichment_skipped', a.extra::jsonb->'llm_enrichment_skipped'
+            ) AS enrichment_fields
         FROM knowledge.artifacts a
         LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
         WHERE a.org_id = $1
@@ -2041,12 +2089,7 @@ async def list_kb_sources(
             "content_type": row["content_type"],
             "created_at": int(row["created_at"]),
             "chunks_count": int(row["chunks_count"] or 0),
-            "index_status": row["index_status"],
-            "index_status_changed_at": (
-                int(row["index_status_changed_at"])
-                if row["index_status_changed_at"] is not None
-                else None
-            ),
+            **_upload_status(row),
         }
         for row in upload_rows
     ]
@@ -2270,6 +2313,29 @@ async def set_artifact_index_status(
     if row is None:
         return None
     return {"artifact_id": row["artifact_id"], "path": row["path"]}
+
+
+async def finish_pending_index_status(
+    conn: asyncpg.Connection, artifact_id: str, status: str
+) -> None:
+    """Move ``index_status`` from ``pending`` to ``status``; any other value stays.
+
+    ``index_status`` is the state of the version's searchable text. It is
+    ``pending`` only while that text is being (re)written: between the row's
+    creation and the end of the ingest request, and during a reindex whose
+    enrichment job rewrites the points. Enrichment ending moves it on; a row
+    that is already ``synced`` (raw chunks written at ingest) is left alone.
+    """
+    await conn.execute(
+        """
+        UPDATE knowledge.artifacts
+        SET index_status = $2, index_status_changed_at = $3
+        WHERE id = $1::uuid AND index_status = 'pending'
+        """,
+        artifact_id,
+        status,
+        int(time.time()),
+    )
 
 
 async def set_artifact_ingest_status(

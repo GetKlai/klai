@@ -97,7 +97,9 @@ class _FakeApp:
         return _Task
 
 
-async def _run_bulk_enrichment(error: Exception, *, llm_deferred_since: int | None = None):
+async def _run_bulk_enrichment(
+    error: Exception, *, llm_deferred_since: int | None = None, attempts: int = 0
+):
     """Run the bulk task for one artifact whose chunk enrichment raises ``error``."""
     app = _FakeApp()
     enrichment_tasks._register_tasks(app)
@@ -117,11 +119,13 @@ async def _run_bulk_enrichment(error: Exception, *, llm_deferred_since: int | No
             synthesis_depth=0,
         )
 
-    context = SimpleNamespace(job=SimpleNamespace(queueing_lock="org-1:kb-1:docs/a.md:a1"))
+    context = SimpleNamespace(
+        job=SimpleNamespace(queueing_lock="org-1:kb-1:docs/a.md:a1", attempts=attempts)
+    )
     with (
         patch.object(enrichment_tasks, "_load_and_enrich", _load_and_enrich),
         patch.object(enrichment_tasks.enrichment, "enrich_chunks", AsyncMock(side_effect=error)),
-        patch.object(enrichment_tasks, "_set_direct_upload_index_status", AsyncMock()) as status,
+        patch.object(enrichment_tasks, "_finish", AsyncMock()) as status,
         structlog.testing.capture_logs() as logs,
     ):
         outcome = None
@@ -155,14 +159,19 @@ async def test_spent_capacity_defers_the_enrichment_job_instead_of_failing_it(an
     assert not [e for e in logs if e["log_level"] == "error"]
 
 
-async def test_other_llm_failure_still_fails_and_retries_the_job():
+async def test_other_llm_failure_is_retried_and_only_the_last_attempt_fails_the_document():
     error = await _litellm_error(UPSTREAM_500)
     task, status, _logs, outcome = await _run_bulk_enrichment(error)
 
     assert outcome is error
-    status.assert_awaited_once()
-    assert status.await_args.args[1] == "failed"
+    status.assert_not_awaited()  # retried: the document stays pending
     task.defer_async.assert_not_awaited()
+
+    task, status, _logs, outcome = await _run_bulk_enrichment(
+        error, attempts=enrichment_tasks._BULK_MAX_ATTEMPTS
+    )
+    assert outcome is error
+    status.assert_awaited_once_with("enrichment", "a1", "failed", "retries_exhausted")
 
 
 async def test_deferral_stops_after_the_window_and_fails_the_artifact_once():
@@ -171,13 +180,11 @@ async def test_deferral_stops_after_the_window_and_fails_the_artifact_once():
         await _litellm_error(KEY_FULL), llm_deferred_since=since
     )
 
-    # Returning instead of raising keeps procrastinate's normal retries from
-    # running the exhausted job again.
-    assert outcome is None
+    # The job ends failed; the retry strategy gives up on _DerivedWorkFailed,
+    # so procrastinate does not run the exhausted job again.
+    assert isinstance(outcome, enrichment_tasks._DerivedWorkFailed)
     task.defer_async.assert_not_awaited()
-    status.assert_awaited_once()
-    assert status.await_args.args[0]["artifact_id"] == "a1"
-    assert status.await_args.args[1] == "failed"
+    status.assert_awaited_once_with("enrichment", "a1", "failed", "llm_capacity_exhausted")
     final = [e for e in logs if e["event"] == "enrichment_llm_capacity_deferral_exhausted"]
     assert len(final) == 1
     assert final[0]["log_level"] == "error"

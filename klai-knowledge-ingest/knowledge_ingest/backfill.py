@@ -41,6 +41,7 @@ from knowledge_ingest import pg_store
 from knowledge_ingest.build_estimate import estimate_graph_build
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
+from knowledge_ingest.derived_state import DONE, NOT_APPLICABLE, state_patch
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
     graph_episode_skip_reason,
@@ -73,6 +74,8 @@ def _has_graphiti_episode_record(raw_extra: str | dict | None) -> bool:
     if not raw_extra:
         return False
     extra = json.loads(raw_extra) if isinstance(raw_extra, str) else raw_extra
+    if extra.get("graph_state") in (DONE, NOT_APPLICABLE):
+        return True
     if "graphiti_episode_ids" in extra:
         if not isinstance(extra["graphiti_episode_ids"], list):
             raise TypeError("graphiti_episode_ids must be a JSON list")
@@ -464,8 +467,8 @@ async def main(
                         "WHERE id = $2::uuid",
                         json.dumps(
                             {
-                                "graphiti_episode_id": "no-chunks",
                                 "graphiti_episode_ids": [],
+                                **state_patch("graph", NOT_APPLICABLE, "no_text"),
                             }
                         ),
                         artifact_id,
@@ -491,8 +494,8 @@ async def main(
                         "WHERE id = $2::uuid",
                         json.dumps(
                             {
-                                "graphiti_episode_id": f"skipped:{skip_reason}",
                                 "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
+                                **state_patch("graph", NOT_APPLICABLE, skip_reason),
                             }
                         ),
                         artifact_id,
@@ -568,6 +571,7 @@ async def main(
                                 "graphiti_episode_complete": True,
                                 "graphiti_model": settings.graphiti_llm_model,
                                 "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
+                                **state_patch("graph", DONE),
                             }
                         ),
                         artifact_id,

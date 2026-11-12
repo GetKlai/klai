@@ -147,6 +147,7 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
                     "chunks_count": 7,
                     "index_status": "synced",
                     "index_status_changed_at": 1700000100,
+                    "enrichment_fields": None,
                 },
             ],
         ]
@@ -239,7 +240,7 @@ async def test_list_kb_sources_connector_query_avoids_join_fanout_on_failed_coun
     await pg_store.list_kb_sources(conn, "org-1", "kb-a")
 
     connector_sql = conn.fetch.await_args_list[0].args[0]
-    assert "COUNT(DISTINCT a.id) FILTER (WHERE a.index_status = 'failed')" in (
+    assert "COUNT(DISTINCT a.id) FILTER ( WHERE a.index_status = 'failed'" in (
         " ".join(connector_sql.split())
     )
     # Structural guard: no un-guarded COUNT(*) FILTER on index_status, which

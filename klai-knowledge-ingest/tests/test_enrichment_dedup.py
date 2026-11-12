@@ -215,8 +215,9 @@ async def test_direct_file_upload_uses_interactive_enrichment_lane():
 
 
 @pytest.mark.asyncio
-async def test_direct_file_upload_stays_pending_until_enrichment_finishes():
-    """Queued enrichment must remain visible instead of reporting a false sync."""
+async def test_direct_file_upload_text_is_synced_while_its_enrichment_is_pending():
+    """index_status says the text is searchable; queued enrichment is the
+    enrichment state's to show (derived_state), as for every other source."""
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
@@ -235,7 +236,7 @@ async def test_direct_file_upload_stays_pending_until_enrichment_finishes():
         result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
-    calls.set_ingest_status.assert_not_awaited()
+    calls.set_ingest_status.assert_awaited_once_with(conn, "art-test", "org-1", "synced")
 
 
 @pytest.mark.asyncio
@@ -263,8 +264,8 @@ async def test_direct_file_upload_is_synced_when_enrichment_is_disabled():
 
 
 @pytest.mark.asyncio
-async def test_direct_file_upload_stays_pending_when_enrichment_is_already_queued():
-    """A deduplicated live job still owns the final pending-to-synced transition."""
+async def test_direct_file_upload_text_is_synced_when_enrichment_is_already_queued():
+    """A deduplicated live job finishes the enrichment state; the text is searchable now."""
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
@@ -286,7 +287,7 @@ async def test_direct_file_upload_stays_pending_when_enrichment_is_already_queue
         result = await ingest_document(conn, req)
 
     assert result["status"] == "ok"
-    calls.set_ingest_status.assert_not_awaited()
+    calls.set_ingest_status.assert_awaited_once_with(conn, "art-test", "org-1", "synced")
 
 
 @pytest.mark.asyncio
@@ -437,6 +438,35 @@ async def test_already_enqueued_does_not_propagate():
     assert result["status"] == "ok"
     # configure was still called (lock was set)
     task_fn.configure.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_a_queue_outage_after_the_row_is_written_fails_the_request_and_the_document():
+    """The version row is committed before the defer. A retry of the request
+    would find the content unchanged and queue nothing, so the document itself
+    must say its enrichment failed, and the caller must see the request fail."""
+    from knowledge_ingest.models import IngestRequest
+    from knowledge_ingest.routes.ingest import ingest_document
+
+    mock_app, _, _ = _make_mock_app(side_effect=ConnectionError("queue unreachable"))
+    req = IngestRequest(
+        org_id="org-1",
+        kb_slug="my-kb",
+        path="docs/page.md",
+        content="# Title\n\nContent.",
+        source_type="docs",
+        content_type="kb_article",
+    )
+
+    with patch("knowledge_ingest.derived_state.set_product_state", AsyncMock()) as record:
+        async with _base_patches(mock_app):
+            with pytest.raises(ConnectionError):
+                await ingest_document(_make_mock_conn(), req)
+
+    assert [c.args[1:] for c in record.await_args_list] == [
+        ("art-test", "enrichment", "pending"),
+        ("art-test", "enrichment", "failed", "queue_unavailable"),
+    ]
 
 
 @pytest.mark.asyncio

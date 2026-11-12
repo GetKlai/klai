@@ -23,7 +23,9 @@ Usage (inside the running container):
 
 Selection: active artifacts (``belief_time_end = _SENTINEL`` -- the same
 "still current" marker every other active-artifact query in ``pg_store.py``
-uses) with ``index_status = 'failed'``, oldest ``created_at`` first,
+uses) whose enrichment failed (``derived_state``: ``enrichment_state =
+'failed'``) or, for rows from before that state existed, whose
+``index_status = 'failed'``, oldest ``created_at`` first,
 optionally scoped by ``--org`` / ``--kb``.
 
 Enqueue: defers ``enrich_document_bulk`` -- the exact task normal bulk
@@ -34,10 +36,9 @@ deliberately distinct from normal ingest's
 collide with (or silently no-op against) a legitimate concurrent re-ingest
 of the same document.
 
-This script does NOT touch ``index_status`` itself. ``enrich_document_bulk``
-(via ``_load_and_enrich`` / ``_set_direct_upload_index_status`` in
-``enrichment_tasks.py``) is the sole owner of that field and sets it to
-``synced`` or ``failed`` once the retry completes.
+This script does NOT touch the state itself. ``enrich_document_bulk``
+(``_finish`` in ``enrichment_tasks.py``) records ``done`` or ``failed``
+once the retry completes.
 """
 
 from __future__ import annotations
@@ -91,7 +92,7 @@ async def _select_failed_artifacts(
             a.path AS path,
             a.created_at AS created_at
         FROM knowledge.artifacts a
-        WHERE a.index_status = 'failed'
+        WHERE (a.extra::jsonb->>'enrichment_state' = 'failed' OR a.index_status = 'failed')
           AND a.belief_time_end = $1
           AND ($2::text IS NULL OR a.org_id = $2)
           AND ($3::text IS NULL OR a.kb_slug = $3)

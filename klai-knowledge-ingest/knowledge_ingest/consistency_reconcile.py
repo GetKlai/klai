@@ -18,6 +18,7 @@ from knowledge_ingest import graph as graph_module
 from knowledge_ingest import pg_store, qdrant_store, queues
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
+from knowledge_ingest.derived_state import DONE
 
 logger = structlog.get_logger()
 
@@ -154,7 +155,7 @@ async def lost_graph_extractions(conn: Any, org_ids: set[str]) -> dict[str, Any]
             row
             for row in await pg_store.get_graph_rows_for_org(conn, org_id)
             if row["active"]
-            and row["finished"]
+            and row["graph_state"].state == DONE
             and row["episode_ids"]
             and row["created_at"] <= cutoff
         ]

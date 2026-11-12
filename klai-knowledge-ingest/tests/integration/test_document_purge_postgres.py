@@ -873,8 +873,8 @@ async def test_enrichment_removes_points_written_after_its_artifact_was_deleted(
     monkeypatch.setattr(
         enrichment_tasks.qdrant_store, "upsert_enriched_chunks", _upsert_after_a_delete_landed
     )
-    status = AsyncMock()
-    monkeypatch.setattr(enrichment_tasks, "_set_direct_upload_index_status", status)
+    finish = AsyncMock()
+    monkeypatch.setattr(enrichment_tasks, "_finish", finish)
 
     # The job ends abandoned (aborted), not as if it had done the work.
     with pytest.raises(real_procrastinate.exceptions.JobAborted):
@@ -896,7 +896,7 @@ async def test_enrichment_removes_points_written_after_its_artifact_was_deleted(
     # The last delete is the one the job issued after its own upsert.
     assert _filter_matches(stores.qdrant.filters[-1], {"org_id": org_id, "artifact_id": doc[0]})
     assert len(stores.qdrant.filters) == 2
-    status.assert_not_awaited()
+    finish.assert_not_awaited()  # an abandoned version records no state
 
 
 # -- backlog report and purge -------------------------------------------------

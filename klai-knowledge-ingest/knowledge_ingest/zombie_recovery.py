@@ -38,9 +38,47 @@ STALLED_WORKER_TIMEOUT_SECONDS = 120.0
 
 # The unique index procrastinate's own ``procrastinate_retry_job_v2`` UPDATE
 # can violate: a newer job already sits in ``todo`` with the same
-# ``queueing_lock`` as the zombie being retried. That newer job already
-# covers the work, so the zombie gets finished instead of retried.
+# ``queueing_lock`` as the zombie being retried, so the zombie cannot go back
+# to ``todo``. Whether that newer job covers the zombie's work is checked, not
+# assumed: an enrichment batch job of a large document shares its lock with
+# the document's other batches.
 QUEUEING_LOCK_UNIQUE_CONSTRAINT = "procrastinate_jobs_queueing_lock_idx_v1"
+
+# Arguments that say when or how often a job waits, not what it does.
+_SCHEDULING_ARGS = ("llm_deferred_since",)
+
+# The document product a zombie task builds, for recording that it was lost.
+_PRODUCT_OF_TASK = {
+    "enrich_document_interactive": "enrichment",
+    "enrich_document_bulk": "enrichment",
+    "ingest_graphiti_episode": "graph",
+}
+
+
+def _work(task_name: str, task_kwargs: dict) -> tuple[str, dict]:
+    return task_name, {k: v for k, v in task_kwargs.items() if k not in _SCHEDULING_ARGS}
+
+
+async def _queued_twin_covers(proc_app: Any, job: Any, queueing_lock: str | None) -> bool:
+    """Whether the todo job holding the zombie's queueing lock does the same work."""
+    twins = await proc_app.job_manager.list_jobs_async(queueing_lock=queueing_lock, status="todo")
+    return any(
+        _work(twin.task_name, twin.task_kwargs) == _work(job.task_name, job.task_kwargs)
+        for twin in twins
+    )
+
+
+async def _record_lost_work(job: Any) -> None:
+    """A zombie whose work nothing covers: the document says failed."""
+    product = _PRODUCT_OF_TASK.get(job.task_name.rsplit(".", 1)[-1])
+    artifact_id = job.task_kwargs.get("artifact_id")
+    if product is None or not artifact_id:
+        return
+    from knowledge_ingest.db import cross_org_admin_connection
+    from knowledge_ingest.derived_state import FAILED, set_product_state
+
+    async with cross_org_admin_connection() as conn:
+        await set_product_state(conn, artifact_id, product, FAILED, "stuck_job_not_covered")
 
 
 async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
@@ -80,10 +118,15 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
                     task=job.task_name,
                 )
                 continue
+            covered = await _queued_twin_covers(proc_app, job, exc.queueing_lock)
             try:
                 await proc_app.job_manager.finish_job_by_id_async(
-                    job_id=job_id, status=Status.ABORTED, delete_job=False
+                    job_id=job_id,
+                    status=Status.ABORTED if covered else Status.FAILED,
+                    delete_job=False,
                 )
+                if not covered:
+                    await _record_lost_work(job)
             except Exception:
                 # Keep recovering the other zombies in this pass.
                 logger.exception(
@@ -93,8 +136,8 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
                     task=job.task_name,
                 )
                 continue
-            logger.info(
-                "zombie_superseded_by_queued_job",
+            (logger.info if covered else logger.error)(
+                "zombie_superseded_by_queued_job" if covered else "zombie_work_not_covered",
                 job_id=job_id,
                 queue=job.queue,
                 task=job.task_name,

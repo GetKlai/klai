@@ -235,7 +235,7 @@ async def test_a_failed_check_before_the_vector_write_fails_the_job(stores, monk
     )
     upsert = AsyncMock()
 
-    with pytest.raises(enrichment_tasks._WriteCheckFailed):
+    with pytest.raises(ConnectionError):
         await _enrichment_job(artifact_id=artifact, upsert=upsert)
     upsert.assert_not_awaited()
 
@@ -259,7 +259,7 @@ async def test_a_failed_check_after_the_vector_write_fails_and_a_retry_removes_t
 
     monkeypatch.setattr(enrichment_tasks.pg_store, "artifact_is_active", _check)
 
-    with pytest.raises(enrichment_tasks._WriteCheckFailed):
+    with pytest.raises(ConnectionError):
         await _enrichment_job(
             artifact_id=artifact, upsert=AsyncMock(side_effect=_upsert_while_a_delete_lands)
         )

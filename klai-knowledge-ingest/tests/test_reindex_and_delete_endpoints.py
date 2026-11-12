@@ -112,6 +112,7 @@ class TestReindexHappyPath:
         conn.fetchrow = AsyncMock(
             side_effect=[
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                {"org_id": _ORG, "kb_slug": "kb", "previous_state": None, "previous_reason": None},
                 _artifact_for_enrichment(),
             ]
         )
@@ -149,6 +150,7 @@ class TestReindexHappyPath:
         conn.fetchrow = AsyncMock(
             side_effect=[
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                {"org_id": _ORG, "kb_slug": "kb", "previous_state": None, "previous_reason": None},
                 _artifact_for_enrichment(),
             ]
         )
@@ -193,6 +195,7 @@ class TestReindexHappyPath:
         conn.fetchrow = AsyncMock(
             side_effect=[
                 {"artifact_id": _ARTIFACT, "path": _PATH},
+                {"org_id": _ORG, "kb_slug": "kb", "previous_state": None, "previous_reason": None},
                 _artifact_for_enrichment(),
             ]
         )
@@ -409,6 +412,7 @@ class TestListKbSourcesIndexStatus:
             "chunks_count": 5,
             "index_status": "pending",
             "index_status_changed_at": 1751330000,
+            "enrichment_fields": None,
         }
         # list_kb_sources makes two fetch calls: connectors then uploads.
         # Make the first call return [] (no connectors), second return the upload.
