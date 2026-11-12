@@ -250,6 +250,7 @@ class TestConnectorCapabilityGate:
         mock_org.plan = "chat"
         mock_user = MagicMock()
         mock_user.role = "admin"
+        mock_user.status = "active"
         mock_result = MagicMock()
         mock_result.one_or_none.return_value = (mock_user, mock_org)
         mock_db.execute.return_value = mock_result

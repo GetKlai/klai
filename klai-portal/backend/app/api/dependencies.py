@@ -177,6 +177,8 @@ async def get_effective_capabilities(user_id: str, db: AsyncSession) -> set[str]
         return set()
 
     user, org = row
+    if user.status != "active":
+        return set()
 
     # @MX:NOTE -- Admin-bypass: an admin role on any plan tier (including "chat")
     # receives the full "knowledge"-tier capability set. This is INTENTIONAL per

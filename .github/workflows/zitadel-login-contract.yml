@@ -1,9 +1,10 @@
 name: Zitadel login contract
 
-# Runs the portal's login and second-factor enrolment handlers, with the real
-# ZitadelClient, against the Zitadel image pinned in deploy/docker-compose.yml,
-# with klai-mailer (built from this checkout) as Zitadel's notification
-# provider, so the e-mail code travels the production mail path.
+# Runs the portal's login and second-factor enrolment handlers, the chat
+# sign-in membership check and the identity sync, with the real ZitadelClient,
+# against the Zitadel image pinned in deploy/docker-compose.yml, with
+# klai-mailer (built from this checkout) as Zitadel's notification provider,
+# so the e-mail code travels the production mail path.
 # The portal's other auth tests mock Zitadel, so they prove the request shapes
 # the portal sends and the response fields it reads, not that Zitadel accepts
 # and returns them. This job is where a Zitadel bump or a changed request shape
@@ -20,6 +21,9 @@ on:
       - 'klai-portal/backend/app/services/zitadel.py'
       - 'klai-portal/backend/app/api/auth.py'
       - 'klai-portal/backend/app/services/email_otp_enrolment.py'
+      - 'klai-portal/backend/app/services/zitadel_identity_recovery.py'
+      - 'klai-portal/backend/app/services/user_memberships.py'
+      - 'klai-portal/backend/app/core/provisioning_names.py'
       - 'klai-portal/backend/uv.lock'
       - 'klai-portal/backend/tests/auth_test_helpers.py'
       - 'klai-portal/backend/tests/helpers.py'
@@ -35,6 +39,9 @@ on:
       - 'klai-portal/backend/app/services/zitadel.py'
       - 'klai-portal/backend/app/api/auth.py'
       - 'klai-portal/backend/app/services/email_otp_enrolment.py'
+      - 'klai-portal/backend/app/services/zitadel_identity_recovery.py'
+      - 'klai-portal/backend/app/services/user_memberships.py'
+      - 'klai-portal/backend/app/core/provisioning_names.py'
       - 'klai-portal/backend/uv.lock'
       - 'klai-portal/backend/tests/auth_test_helpers.py'
       - 'klai-portal/backend/tests/helpers.py'

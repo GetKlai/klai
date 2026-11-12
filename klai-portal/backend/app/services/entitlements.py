@@ -27,15 +27,18 @@ async def get_effective_products(zitadel_user_id: str, db: AsyncSession) -> list
 
     Single SELECT pulls (role, seat_type, platform_unlocked_features); pure-Python
     derivation produces the answer. Returns empty list if user has no
-    portal row yet (pre-provisioning or deleted user).
+    portal row yet (pre-provisioning or deleted user) or the membership is
+    suspended or offboarded.
     """
     result = await db.execute(
-        select(PortalUser.role, PortalUser.seat_type, PortalOrg.platform_unlocked_features)
+        select(PortalUser.role, PortalUser.seat_type, PortalOrg.platform_unlocked_features, PortalUser.status)
         .join(PortalOrg, PortalOrg.id == PortalUser.org_id)
         .where(PortalUser.zitadel_user_id == zitadel_user_id)
     )
     row = result.one_or_none()
     if row is None:
         return []
-    role, seat_type, unlocked = row
+    role, seat_type, unlocked, membership_status = row
+    if membership_status != "active":
+        return []
     return sorted(derive_user_products(role, seat_type, unlocked or []))

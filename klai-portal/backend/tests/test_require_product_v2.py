@@ -15,7 +15,7 @@ from fastapi import HTTPException
 def _mock_org_user_row(role: str, plan: str = "chat", enabled_addons: list[str] | None = None) -> MagicMock:
     """Build a mock row that get_effective_products consumes (role, plan, enabled_addons)."""
     row = MagicMock()
-    row.one_or_none.return_value = (role, plan, enabled_addons or [])
+    row.one_or_none.return_value = (role, plan, enabled_addons or [], "active")
     return row
 
 
