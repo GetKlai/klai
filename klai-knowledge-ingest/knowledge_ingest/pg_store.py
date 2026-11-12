@@ -476,20 +476,21 @@ async def set_superseded_by(
 
 # Every row reachable backwards along ``superseded_by`` from the rows in $2:
 # the given versions plus every version they replaced, bound to the caller's
-# organisation ($1) at every step. get_episode_ids_for_document_history
-# explains the depth limit.
+# organisation ($1) at every step. The walk has no depth limit, because a
+# hard delete has to reach the oldest version (one document in production has
+# 43). UNION, not UNION ALL, discards a row already visited, so a corrupt
+# cycle ends the recursion instead of hanging it.
 _HISTORY_CTE = """
 WITH RECURSIVE history AS (
-    SELECT a.id, 0 AS depth
+    SELECT a.id
     FROM knowledge.artifacts a
     WHERE a.org_id = $1 AND a.id = ANY($2::uuid[])
 
-    UNION ALL
+    UNION
 
-    SELECT p.id, h.depth + 1
+    SELECT p.id
     FROM history h
     JOIN knowledge.artifacts p ON p.superseded_by = h.id AND p.org_id = $1
-    WHERE h.depth < 100
 )
 """
 
@@ -519,11 +520,8 @@ async def get_episode_ids_for_document_history(
     all (a navigation page, #1148). Neither is an episode uuid, and renaming
     one would match nothing.
 
-    depth < 100 bounds the walk. ``superseded_by`` points forward in time so a
-    cycle should be impossible, but an unbounded recursive CTE that meets one
-    hangs the ingest request. Truncating here costs completeness, never
-    correctness: a missed ancestor keeps its current name and the backfill
-    still reaches it.
+    The walk follows the whole chain and stops on a cycle (see
+    ``_HISTORY_CTE``).
     """
     if not artifact_ids:
         return []
@@ -582,6 +580,7 @@ async def list_document_heads(
     org_id: str,
     path: str,
     kb_slug: str | None,
+    connector_id: str | None = None,
 ) -> list[str]:
     """Return the newest row of every document stored under ``path``.
 
@@ -591,6 +590,7 @@ async def list_document_heads(
     ``superseded_by`` and are reached by :func:`list_document_history`.
     ``kb_slug=None`` searches every knowledge base of the organisation, which a
     caller needs when it does not know where the document was added (scribe).
+    ``connector_id`` limits the heads to that connector's documents.
     """
     rows = await conn.fetch(
         """
@@ -599,30 +599,68 @@ async def list_document_heads(
         WHERE org_id = $1
           AND path = $2
           AND ($3::text IS NULL OR kb_slug = $3)
+          AND ($4::text IS NULL OR extra->>'source_connector_id' = $4)
           AND superseded_by IS NULL
         """,
         org_id,
         path,
         kb_slug,
+        connector_id,
     )
     return [str(row["id"]) for row in rows]
 
 
+# index_status of a row whose delete has started but not finished. It marks
+# the row as a purge to retry (the crawler picks these up again) and keeps
+# reindex from reopening a half-cleaned document.
+PURGE_PENDING = "deleting"
+
+
 async def close_artifacts(conn: asyncpg.Connection, org_id: str, artifact_ids: list[str]) -> None:
-    """Close the active rows among ``artifact_ids`` so search and workers stop using them."""
+    """Close these rows and mark them as being purged.
+
+    Closing stops search and the enrichment and graph workers from using the
+    active rows. The marker is set on every given row, closed or not, so a
+    retry of a half-failed delete is recognisable as such.
+    """
     await conn.execute(
         """
         UPDATE knowledge.artifacts
-        SET belief_time_end = $3
+        SET belief_time_end = CASE WHEN belief_time_end = $4 THEN $3 ELSE belief_time_end END,
+            index_status = $5,
+            index_status_changed_at = $3
         WHERE org_id = $1
           AND id = ANY($2::uuid[])
-          AND belief_time_end = $4
         """,
         org_id,
         artifact_ids,
         int(time.time()),
         _SENTINEL,
+        PURGE_PENDING,
     )
+
+
+async def list_connector_paths_pending_purge(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str, connector_id: str
+) -> list[str]:
+    """Return the paths of this connector's documents whose purge did not finish."""
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT path
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND extra->>'source_connector_id' = $3
+          AND superseded_by IS NULL
+          AND index_status = $4
+        ORDER BY path
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+        PURGE_PENDING,
+    )
+    return [str(row["path"]) for row in rows]
 
 
 async def list_document_history(
@@ -1979,31 +2017,56 @@ async def set_artifact_index_status(
     artifact_id: str,
     org_id: str,
     status: str,
+    *,
+    reopen: bool = False,
 ) -> dict | None:
     """Update index_status on a direct-upload artifact scoped to org_id.
 
     Returns a dict with ``{"artifact_id": str, "path": str}`` when the
     artifact was found and updated, or ``None`` when it does not exist,
-    belongs to a different org, or is not the active version. A closed row is
-    either a replaced version or a deleted document; reopening it would bring
-    back content the owner replaced or removed.
+    belongs to a different org, or is not eligible.
+
+    Without ``reopen`` only the active version is eligible. With ``reopen``
+    (the user's reindex action) a closed head is reopened as well: the
+    portal shows an upload whose artifact was closed without a successor
+    (for example by the drift repair) as not synced and offers reindex to
+    repair it. A REPLACED version is never reopened: it has a successor, or
+    another row is active for the same knowledge base and path. Neither is a
+    row whose delete has started (``PURGE_PENDING``); repeating the delete
+    finishes it instead.
     """
     row = await conn.fetchrow(
         """
-        UPDATE knowledge.artifacts
+        UPDATE knowledge.artifacts a
         SET index_status = $1,
-            index_status_changed_at = $5
-        WHERE id = $3::uuid
-          AND org_id = $4
-          AND belief_time_end = $2
-          AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
-        RETURNING id::text AS artifact_id, path
+            index_status_changed_at = $5,
+            belief_time_end = $2
+        WHERE a.id = $3::uuid
+          AND a.org_id = $4
+          AND (a.extra IS NULL OR a.extra::jsonb->>'source_connector_id' IS NULL)
+          AND (
+              a.belief_time_end = $2
+              OR (
+                  $6::bool
+                  AND a.superseded_by IS NULL
+                  AND a.index_status <> $7
+                  AND NOT EXISTS (
+                      SELECT 1 FROM knowledge.artifacts live
+                      WHERE live.org_id = a.org_id AND live.kb_slug = a.kb_slug
+                        AND live.path = a.path AND live.belief_time_end = $2
+                        AND live.id <> a.id
+                  )
+              )
+          )
+        RETURNING a.id::text AS artifact_id, a.path
         """,
         status,
         _SENTINEL,
         artifact_id,
         org_id,
         int(time.time()),
+        reopen,
+        PURGE_PENDING,
     )
     if row is None:
         return None

@@ -259,7 +259,7 @@ async def test_page_that_is_gone_lets_stale_cleanup_retire_it_but_an_auth_error_
     if retired:
         current = mock_pg.list_stale_connector_artifact_paths.await_args.kwargs["current_paths"]
         assert removed not in current
-        stale = mock_pg.purge_stale_paths.await_args.args[3]
+        stale = mock_pg.purge_stale_paths.await_args.args[4]
         assert stale == [removed]
     else:
         mock_pg.list_stale_connector_artifact_paths.assert_not_awaited()
@@ -337,7 +337,9 @@ async def test_crawl_with_gone_pages_does_not_bulk_retire_the_stored_source(
     await _run_job(mock_pg, results, fetch_outcomes)
 
     mock_pg.list_stale_connector_artifact_paths.assert_awaited_once()
-    assert mock_pg.purge_stale_paths.await_count == int(retired)
+    # The purge still runs to retry unfinished deletes; the guard empties the
+    # stale list it is given.
+    assert mock_pg.purge_stale_paths.await_args.args[4] == (stale if retired else [])
 
 
 @pytest.mark.asyncio
@@ -351,7 +353,7 @@ async def test_crawl_without_gone_pages_keeps_retiring_every_stale_page():
 
     await _run_job(mock_pg, results, fetch_outcomes)
 
-    assert mock_pg.purge_stale_paths.await_args.args[3] == stale
+    assert mock_pg.purge_stale_paths.await_args.args[4] == stale
 
 
 @pytest.mark.asyncio

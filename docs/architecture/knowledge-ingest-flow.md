@@ -172,21 +172,31 @@ single-document delete paths go through one operation,
 | A personal item is deleted | `DELETE /knowledge/v1/personal/items/{artifact_id}` |
 | A Scribe transcript is deleted | `DELETE /ingest/v1/document?org_id=&path=scribe/<id>` (all KBs of the org) |
 
-The operation closes the active rows first (search stops returning them, enrichment and
-graph workers abort on a non-active artifact), walks `superseded_by` back to every
-version, deletes the graph episodes and the Qdrant points of all versions, and
-hard-deletes the rows last: `knowledge.artifacts` (including `document_text`),
-`parent_chunks` and `artifact_images` (cascade), `embedding_queue`, `artifact_entities`,
-`derivations`, and `crawled_pages` / `page_links` for paths no live row uses. If an
-external store refuses, the request fails and the rows stay closed, so a repeated delete
-finishes the job (the crawler instead rolls the page back to active and the next complete
-crawl retries it). Every statement is bound to the caller's `org_id`.
+The operation closes the active rows first and marks them `index_status = 'deleting'`
+(search stops returning them, enrichment and graph workers abort on a non-active
+artifact), walks `superseded_by` back to every version (the whole chain; the walk stops
+on a cycle instead of at a depth), deletes the graph episodes and the Qdrant points of all
+versions, and hard-deletes the rows last: `knowledge.artifacts` (including
+`document_text`), `parent_chunks` and `artifact_images` (cascade), `embedding_queue`,
+`artifact_entities`, `derivations`, and `crawled_pages` / `page_links` for paths no live
+row uses. If an external store refuses, the request fails and the rows stay closed and
+marked, so a repeated delete finishes the job; for crawled pages the next complete crawl
+of the connector retries every page of that connector still marked `deleting`. Every
+statement is bound to the caller's `org_id`. An enrichment job that writes points after
+its artifact was deleted or replaced removes them again.
 
-A closed row cannot be re-activated: `POST /knowledge/v1/artifacts/{id}/reindex` answers
-404 for anything but the active version. Documents deleted before this existed are
-reported (dry run) and, per approved run, purged by
-`klai-knowledge-ingest/scripts/purge_deleted_documents.py`. Object-storage images of
-deleted documents are not removed yet.
+The transcript route accepts only `scribe/<transcription id>` paths and only the `scribe`
+caller service. The personal-item delete runs the user-bound identity assertion.
+
+Reindex (`POST /knowledge/v1/artifacts/{id}/reindex`) never reopens a replaced version
+(one with a successor, or one whose knowledge base and path already have an active row)
+nor a document whose delete has not finished. It still reopens a closed head with no
+successor and nothing live on its path, which is how the portal repairs an upload the
+drift repair retired. Documents deleted before this existed are reported (dry run) and,
+per approved run, purged by `klai-knowledge-ingest/scripts/purge_deleted_documents.py`;
+closed rows without `document_text` are reported separately and never purged, because
+the drift repair closes rows the same way. Object-storage images of deleted documents
+are not removed yet.
 
 Whole-connector, whole-KB and whole-organisation deletes were already hard deletes and are
 unchanged.

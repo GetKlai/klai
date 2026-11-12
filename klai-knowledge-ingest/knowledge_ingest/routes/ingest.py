@@ -25,7 +25,7 @@ import asyncpg
 import httpx
 import structlog
 import yaml
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from klai_kb_slugs import episode_name, personal_kb_slug
 
 from knowledge_ingest import (
@@ -1424,14 +1424,21 @@ async def delete_connector_document_route(
 
 
 @router.delete("/ingest/v1/document")
-async def delete_document_route(request: Request, org_id: str, path: str) -> dict:
-    """Delete every document stored under ``path`` in any knowledge base of the org.
+async def delete_document_route(
+    request: Request,
+    org_id: str,
+    path: str = Query(pattern=r"^scribe/[A-Za-z0-9_-]+$"),
+) -> dict:
+    """Delete a scribe transcript from every knowledge base of the org it was added to.
 
-    For callers that know a document by the path they ingested it under but
-    not by artifact id or knowledge base: scribe deletes a transcript it may
-    have added to several knowledge bases under ``scribe/<transcription id>``.
+    Scribe ingests a transcript under ``scribe/<transcription id>`` and does
+    not record which knowledge bases it went into, so the delete is by path
+    across the organisation. The route serves that one caller only: other
+    paths and other services are refused.
     """
     _verify_internal_secret(request)
+    if request.headers.get("x-caller-service") != "scribe":
+        raise HTTPException(status_code=403, detail="only scribe deletes transcripts")
     verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
 
     async with tenant_scoped_connection(verified_org_id) as conn:

@@ -314,6 +314,7 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
             return_value=["https://getklai.com/"],
         )
         mock_pg.list_document_heads = AsyncMock(return_value=["artifact-old"])
+        mock_pg.list_connector_paths_pending_purge = AsyncMock(return_value=[])
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
@@ -336,7 +337,7 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
         current_paths=["https://www.getklai.com/"],
     )
     mock_pg.list_document_heads.assert_awaited_once_with(
-        mock_conn, "org-1", "https://getklai.com/", "klai-web-demo"
+        mock_conn, "org-1", "https://getklai.com/", "klai-web-demo", connector_id="conn-1"
     )
     mock_purge.assert_awaited_once_with(mock_conn, "org-1", ["artifact-old"])
 
@@ -391,6 +392,7 @@ async def test_run_crawl_job_does_not_fail_when_stale_purge_fails():
             return_value=["https://getklai.com/"],
         )
         mock_pg.list_document_heads = AsyncMock(return_value=["artifact-old"])
+        mock_pg.list_connector_paths_pending_purge = AsyncMock(return_value=[])
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
 

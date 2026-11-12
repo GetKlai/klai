@@ -23,6 +23,18 @@ document identity: the same path, or, for a connector document, the same
 ``(source_connector_id, source_ref)``. A candidate whose identity is still live
 is reported as ``kept_unlinked`` and never purged.
 
+Closing is also what the drift repair does when it retires a row
+(``knowledge_ingest/scripts/repair_pg_qdrant_drift.py``), and the portal keeps
+showing such an upload as not synced with a reindex action, so a retired row
+is a document a user still sees. The retire step only closes rows that carry
+no ``document_text``; every ingest since the text was stored on the row writes
+it, and the delete paths never removed it. So a candidate counts as deleted
+only when its head still has its ``document_text``, or carries the
+``deleting`` status a delete that did not finish leaves behind. A candidate
+with neither is reported as ``closed_without_text``: retired by the drift
+repair, or deleted before the text was stored on the row. Nothing on the row
+tells those apart, so ``--execute`` never touches that class.
+
 Known uncertainty: a document whose identity changed in a way neither the
 path nor the connector ``source_ref`` records (a connector without stable
 ``source_ref`` whose page was renamed, and whose old version then lost its
@@ -54,6 +66,7 @@ import structlog
 
 from knowledge_ingest import document_purge
 from knowledge_ingest.db import close_pool, cross_org_admin_connection, tenant_scoped_connection
+from knowledge_ingest.pg_store import PURGE_PENDING
 
 logger = structlog.get_logger()
 
@@ -70,6 +83,7 @@ WITH RECURSIVE heads AS (
         h.id,
         h.org_id,
         coalesce(h.extra->>'source_type', 'unknown') AS source_type,
+        h.index_status = $3 OR coalesce(h.extra->>'document_text', '') <> '' AS deletion_recorded,
         EXISTS (
             SELECT 1 FROM knowledge.artifacts live
             WHERE live.org_id = h.org_id
@@ -91,18 +105,18 @@ WITH RECURSIVE heads AS (
       AND ($2::text IS NULL OR h.org_id = $2)
 ),
 chain AS (
-    SELECT id AS head_id, id, org_id, 0 AS depth FROM heads
-    UNION ALL
-    SELECT c.head_id, p.id, p.org_id, c.depth + 1
+    SELECT id AS head_id, id, org_id FROM heads
+    UNION
+    SELECT c.head_id, p.id, p.org_id
     FROM chain c
     JOIN knowledge.artifacts p ON p.superseded_by = c.id AND p.org_id = c.org_id
-    WHERE c.depth < 100
 )
 SELECT
     c.head_id::text AS head_id,
     h.org_id,
     h.source_type,
     h.identity_live,
+    h.deletion_recorded,
     a.extra->>'document_text' IS NOT NULL AS has_text,
     (SELECT count(*) FROM knowledge.parent_chunks pc WHERE pc.artifact_id = a.id) AS parent_chunks,
     ARRAY(
@@ -144,6 +158,9 @@ class Report:
     deleted: dict[tuple[str, str], _Group]
     # (org_id, source_type) -> totals for unlinked rows of a live document
     kept_unlinked: dict[tuple[str, str], _Group]
+    # (org_id, source_type) -> totals for closed heads without text: retired
+    # by the drift repair or deleted before text was stored; never purged
+    closed_without_text: dict[tuple[str, str], _Group]
     closed_rows: dict[str, int]
     # org_id -> head ids of deleted documents, the purge work list
     deleted_heads: dict[str, list[str]]
@@ -152,16 +169,23 @@ class Report:
 async def collect(conn: asyncpg.Connection, org_id: str | None) -> Report:
     deleted: dict[tuple[str, str], _Group] = defaultdict(_Group)
     kept: dict[tuple[str, str], _Group] = defaultdict(_Group)
+    without_text: dict[tuple[str, str], _Group] = defaultdict(_Group)
     heads: dict[str, set[str]] = defaultdict(set)
-    for row in await conn.fetch(_CANDIDATES_SQL, _SENTINEL, org_id):
+    for row in await conn.fetch(_CANDIDATES_SQL, _SENTINEL, org_id, PURGE_PENDING):
         key = (row["org_id"], row["source_type"])
-        group = kept[key] if row["identity_live"] else deleted[key]
+        is_deleted = not row["identity_live"] and row["deletion_recorded"]
+        if row["identity_live"]:
+            group = kept[key]
+        elif is_deleted:
+            group = deleted[key]
+        else:
+            group = without_text[key]
         group.documents.add(row["head_id"])
         group.rows += 1
         group.rows_with_text += int(row["has_text"])
         group.parent_chunks += row["parent_chunks"]
         group.episode_ids.update(row["episode_ids"])
-        if not row["identity_live"]:
+        if is_deleted:
             heads[row["org_id"]].add(row["head_id"])
     closed = {
         row["org_id"]: row["closed"]
@@ -170,6 +194,7 @@ async def collect(conn: asyncpg.Connection, org_id: str | None) -> Report:
     return Report(
         deleted=dict(deleted),
         kept_unlinked=dict(kept),
+        closed_without_text=dict(without_text),
         closed_rows=closed,
         deleted_heads={org: sorted(ids) for org, ids in heads.items()},
     )
@@ -177,30 +202,33 @@ async def collect(conn: asyncpg.Connection, org_id: str | None) -> Report:
 
 def render(report: Report) -> str:
     lines = [
-        "class          org_id                          source_type   documents     rows"
+        "class                org_id                          source_type   documents     rows"
         "  with_text  parent_chunks  episodes"
     ]
-    for label, groups in (("deleted", report.deleted), ("kept_unlinked", report.kept_unlinked)):
+    classes = (
+        ("deleted", report.deleted),
+        ("kept_unlinked", report.kept_unlinked),
+        ("closed_without_text", report.closed_without_text),
+    )
+    for label, groups in classes:
         for (org, source_type), g in sorted(groups.items()):
             lines.append(
-                f"{label:<14} {org:<31} {source_type:<13} {len(g.documents):>9} {g.rows:>8}"
+                f"{label:<20} {org:<31} {source_type:<13} {len(g.documents):>9} {g.rows:>8}"
                 f" {g.rows_with_text:>10} {g.parent_chunks:>14} {len(g.episode_ids):>9}"
             )
     for org, closed in sorted(report.closed_rows.items()):
-        in_chains = sum(
-            g.rows
-            for groups in (report.deleted, report.kept_unlinked)
-            for (o, _), g in groups.items()
-            if o == org
-        )
+        in_chains = sum(g.rows for _, groups in classes for (o, _), g in groups.items() if o == org)
         lines.append(
-            f"closed rows    {org:<31} total {closed}, replaced versions of live documents"
+            f"closed rows          {org:<31} total {closed}, replaced versions of live documents"
             f" {closed - in_chains} (kept)"
         )
     lines.append(
         "deleted = closed head with no live row of the same path or connector source_ref "
-        "in the same knowledge base; kept_unlinked = closed and unlinked, but such a live "
-        "row exists (never purged). See the module docstring for the residual uncertainty."
+        "in the same knowledge base that still has its text or an unfinished delete "
+        "(purged by --execute); kept_unlinked = closed and unlinked, but such a live row "
+        "exists; closed_without_text = no text on the head, so it may be an upload the drift "
+        "repair retired and a user still sees, or a document deleted before text was stored "
+        "(neither is ever purged). See the module docstring for the residual uncertainty."
     )
     return "\n".join(lines)
 

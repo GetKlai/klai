@@ -252,14 +252,15 @@ async def reindex_upload(
 ) -> ReindexResponse:
     """Set index_status='pending' and re-enqueue enrichment for a direct-upload artifact.
 
-    Returns 404 when the artifact does not exist or belongs to a different org.
+    Returns 404 when the artifact does not exist, belongs to a different org,
+    or is a replaced version (see ``pg_store.set_artifact_index_status``).
     Returns 202 Accepted when the enrichment job has been enqueued.
     """
     verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
     graph_refresh: str | None = None
     async with tenant_scoped_connection(verified_org_id) as conn:
         updated = await pg_store.set_artifact_index_status(
-            conn, artifact_id, verified_org_id, "pending"
+            conn, artifact_id, verified_org_id, "pending", reopen=True
         )
         if updated is not None:
             artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)

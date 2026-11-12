@@ -81,6 +81,7 @@ async def test_crawl_counts_ingested_pages_and_retired_stale_pages_but_not_uncha
     pg.upsert_page_links = AsyncMock()
     pg.list_stale_connector_artifact_paths = AsyncMock(return_value=["https://example.com/old"])
     pg.list_document_heads = AsyncMock(return_value=["artifact-old"])
+    pg.list_connector_paths_pending_purge = AsyncMock(return_value=[])
 
     with (
         patch("knowledge_ingest.adapters.crawler._update_job", new_callable=AsyncMock),

@@ -23,7 +23,7 @@ import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import asyncpg
 import pytest
@@ -38,7 +38,9 @@ from knowledge_ingest.config import settings
 _DSN = os.environ.get("DOCUMENT_PURGE_TEST_DSN")
 _SENTINEL = 253402300800
 # The routes under test only hand the request to the identity checks patched below.
-_REQUEST = cast(Any, SimpleNamespace())
+_REQUEST = cast(Any, SimpleNamespace(headers={}))
+_SCRIBE_REQUEST = cast(Any, SimpleNamespace(headers={"x-caller-service": "scribe"}))
+_PORTAL_REQUEST = cast(Any, SimpleNamespace(headers={"x-caller-service": "portal-api"}))
 
 pytestmark = [
     pytest.mark.postgres,
@@ -90,8 +92,12 @@ class _FakeQdrant:
     def __init__(self) -> None:
         self.filters: list[Filter] = []
         self.delete = AsyncMock(side_effect=self._delete)
+        self.fail_next = False
 
     async def _delete(self, _collection, *, points_selector, **_kwargs) -> None:
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("vector store unavailable")
         self.filters.append(points_selector)
 
     def deletes(self, payload: dict) -> bool:
@@ -144,6 +150,8 @@ async def _seed(
     active: bool = True,
     extra: dict | None = None,
     user_id: str | None = None,
+    text: bool = True,
+    index_status: str = "synced",
 ) -> list[str]:
     """Insert one document with ``versions`` rows, oldest first, newest last."""
     ids = [str(uuid.uuid4()) for _ in range(versions)]
@@ -152,17 +160,16 @@ async def _seed(
     try:
         for i, artifact_id in enumerate(ids):
             is_head = i == versions - 1
-            row_extra = {
-                **(extra or {}),
-                "document_text": f"synthetic body {i} of {path}",
-                "graphiti_episode_ids": [f"ep-{artifact_id}"],
-            }
+            row_extra = {**(extra or {}), "graphiti_episode_ids": [f"ep-{artifact_id}"]}
+            if text:
+                row_extra["document_text"] = f"synthetic body {i} of {path}"
             await conn.execute(
                 """
                 INSERT INTO knowledge.artifacts (
                     id, org_id, user_id, provenance_type, assertion_mode,
-                    belief_time_start, belief_time_end, created_at, kb_slug, path, extra
-                ) VALUES ($1, $2, $3, 'observed', 'factual', $4, $5, $4, $6, $7, $8::jsonb)
+                    belief_time_start, belief_time_end, created_at, kb_slug, path, extra,
+                    index_status
+                ) VALUES ($1, $2, $3, 'observed', 'factual', $4, $5, $4, $6, $7, $8::jsonb, $9)
                 """,
                 artifact_id,
                 org_id,
@@ -172,6 +179,7 @@ async def _seed(
                 kb_slug,
                 path,
                 json.dumps(row_extra),
+                index_status,
             )
             await conn.execute(
                 """INSERT INTO knowledge.parent_chunks
@@ -416,47 +424,138 @@ async def test_failed_external_delete_keeps_rows_closed_and_a_retry_completes(st
 
 # -- path b2: a crawled page that no longer exists ----------------------------
 
+_CRAWL = {"source_connector_id": "connector-1", "source_type": "crawl"}
 
-@pytest.mark.asyncio
-async def test_a_crawled_page_that_is_gone_is_removed_from_every_store(stores) -> None:
+
+async def _crawl_world():
+    return await _world("kb-site", f"https://example.com/{uuid.uuid4().hex}", extra=_CRAWL)
+
+
+async def _purge_stale(w, stale_paths: list[str]) -> int:
     from knowledge_ingest.adapters import crawler
-
-    w = await _world(
-        "kb-site",
-        f"https://example.com/{uuid.uuid4().hex}",
-        extra={"source_connector_id": "connector-1", "source_type": "crawl"},
-    )
 
     conn = await _connect(w.org_id)
     try:
-        retired = await crawler._purge_stale_paths(conn, w.org_id, w.kb, [w.path])
+        return await crawler._purge_stale_paths(conn, w.org_id, w.kb, "connector-1", stale_paths)
     finally:
         await conn.close()
 
-    assert retired == 1
+
+async def _assert_closed_pending_and_kept(w) -> None:
+    conn = await _connect(w.org_id)
+    try:
+        head = await conn.fetchrow(
+            "SELECT belief_time_end, index_status FROM knowledge.artifacts WHERE id = $1",
+            w.doc[-1],
+        )
+    finally:
+        await conn.close()
+    assert head is not None
+    assert head["belief_time_end"] != _SENTINEL, "a half-cleaned page must not stay active"
+    assert head["index_status"] == "deleting"
+    assert await _remaining(w.org_id, w.doc, w.kb, w.path) == _kept(3)
+
+
+@pytest.mark.asyncio
+async def test_a_crawled_page_that_is_gone_is_removed_from_every_store(stores) -> None:
+    w = await _crawl_world()
+
+    assert await _purge_stale(w, [w.path]) == 1
+
     await _assert_document_gone(w, stores)
     await _assert_others_untouched(w, stores)
 
 
 @pytest.mark.asyncio
-async def test_a_crawled_page_whose_purge_fails_stays_active_for_the_next_crawl(stores) -> None:
-    from knowledge_ingest.adapters import crawler
+async def test_crawled_page_failing_after_the_graph_delete_is_finished_by_the_next_crawl(
+    stores,
+) -> None:
+    w = await _crawl_world()
+    stores.qdrant.fail_next = True
 
-    w = await _world("kb-site", f"https://example.com/{uuid.uuid4().hex}")
-    stores.graph.fail_next = True
+    assert await _purge_stale(w, [w.path]) == 0
+
+    await _assert_closed_pending_and_kept(w)
+    assert stores.graph.deleted(w.org_id) == {f"ep-{i}" for i in w.doc}
+    assert not any(stores.qdrant.deletes(_payload(w.org_id, w.kb, w.path, i)) for i in w.doc)
+
+    # The next complete crawl no longer lists the page as active and stale.
+    assert await _purge_stale(w, []) == 1
+
+    await _assert_document_gone(w, stores)
+    await _assert_others_untouched(w, stores)
+
+
+@pytest.mark.asyncio
+async def test_crawled_page_failing_after_the_vector_delete_is_finished_by_the_next_crawl(
+    stores, monkeypatch
+) -> None:
+    from knowledge_ingest import pg_store
+
+    w = await _crawl_world()
+    real_delete = pg_store.delete_artifacts
+    calls = 0
+
+    async def _fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("database unavailable")
+        return await real_delete(*args, **kwargs)
+
+    monkeypatch.setattr(pg_store, "delete_artifacts", _fail_once)
+
+    assert await _purge_stale(w, [w.path]) == 0
+
+    await _assert_closed_pending_and_kept(w)
+    assert all(stores.qdrant.deletes(_payload(w.org_id, w.kb, w.path, i)) for i in w.doc)
+
+    assert await _purge_stale(w, []) == 1
+
+    await _assert_document_gone(w, stores)
+    await _assert_others_untouched(w, stores)
+
+
+@pytest.mark.asyncio
+async def test_crawl_retry_only_picks_up_this_connectors_unfinished_purges(stores) -> None:
+    w = await _crawl_world()
+    other_path = f"https://example.com/{uuid.uuid4().hex}"
+    other = await _seed(
+        w.org_id,
+        w.kb,
+        other_path,
+        versions=1,
+        active=False,
+        index_status="deleting",
+        extra={"source_connector_id": "connector-2"},
+    )
+
+    # Another connector's closed document under the very path that went stale.
+    same_path_other = await _seed(
+        w.org_id,
+        w.kb,
+        w.path,
+        versions=1,
+        active=False,
+        extra={"source_connector_id": "connector-2"},
+    )
+
+    assert await _purge_stale(w, []) == 0
+
+    assert await _remaining(w.org_id, other, w.kb, other_path) == _kept(1)
+    assert await _remaining(w.org_id, w.doc, w.kb, w.path) == _kept(3)
+
+    assert await _purge_stale(w, [w.path]) == 1
 
     conn = await _connect(w.org_id)
     try:
-        retired = await crawler._purge_stale_paths(conn, w.org_id, w.kb, [w.path])
-        head_end = await conn.fetchval(
-            "SELECT belief_time_end FROM knowledge.artifacts WHERE id = $1", w.doc[-1]
+        survivors = await conn.fetchval(
+            "SELECT count(*) FROM knowledge.artifacts WHERE id = ANY($1::uuid[])",
+            [*other, *same_path_other],
         )
     finally:
         await conn.close()
-
-    assert retired == 0
-    assert head_end == _SENTINEL
-    assert await _remaining(w.org_id, w.doc, w.kb, w.path) == _kept(3)
+    assert survivors == 2
 
 
 # -- path b3: a docs page removed through the gitea webhook --------------------
@@ -478,17 +577,54 @@ async def test_a_removed_docs_page_is_removed_from_every_store(stores) -> None:
 # -- path g1: a personal item -------------------------------------------------
 
 
+def _asserter(monkeypatch, *, member: bool) -> AsyncMock:
+    from knowledge_ingest import identity
+
+    verify = AsyncMock(
+        side_effect=lambda **kw: SimpleNamespace(
+            verified=member,
+            org_id=kw["claimed_org_id"] if member else None,
+            reason=None if member else "no_membership",
+        )
+    )
+    monkeypatch.setattr(identity, "_get_asserter", lambda: SimpleNamespace(verify=verify))
+    return verify
+
+
 @pytest.mark.asyncio
-async def test_deleting_a_personal_item_reaches_the_personal_kb_rows(stores) -> None:
+async def test_deleting_a_personal_item_reaches_the_personal_kb_rows(stores, monkeypatch) -> None:
     from knowledge_ingest.routes.personal import delete_personal_item
 
+    verify = _asserter(monkeypatch, member=True)
     user_id = f"user-{uuid.uuid4().hex[:8]}"
     w = await _world(personal_kb_slug(user_id), "notes/synthetic.md", user_id=user_id)
 
-    await delete_personal_item(w.doc[-1], org_id=w.org_id, user_id=user_id)
+    await delete_personal_item(_PORTAL_REQUEST, w.doc[-1], org_id=w.org_id, user_id=user_id)
 
+    assert verify.await_args is not None
+    assert verify.await_args.kwargs["claimed_user_id"] == user_id
+    assert verify.await_args.kwargs["claimed_org_id"] == w.org_id
     await _assert_document_gone(w, stores)
     await _assert_others_untouched(w, stores)
+
+
+@pytest.mark.asyncio
+async def test_personal_item_delete_for_a_user_outside_the_org_removes_nothing(
+    stores, monkeypatch
+) -> None:
+    from knowledge_ingest.routes.personal import delete_personal_item
+
+    _asserter(monkeypatch, member=False)
+    user_id = f"user-{uuid.uuid4().hex[:8]}"
+    w = await _world(personal_kb_slug(user_id), "notes/synthetic.md", user_id=user_id)
+
+    with pytest.raises(HTTPException) as exc:
+        await delete_personal_item(_PORTAL_REQUEST, w.doc[-1], org_id=w.org_id, user_id=user_id)
+
+    assert exc.value.status_code == 403
+    assert await _remaining(w.org_id, w.doc, w.kb, w.path) == _kept(3)
+    assert stores.qdrant.filters == []
+    assert stores.graph.calls == []
 
 
 # -- path g2: a scribe transcript ----------------------------------------------
@@ -498,11 +634,11 @@ async def test_deleting_a_personal_item_reaches_the_personal_kb_rows(stores) -> 
 async def test_deleting_a_document_by_path_removes_it_from_every_knowledge_base(stores) -> None:
     from knowledge_ingest.routes import ingest
 
-    transcript_path = f"scribe/{uuid.uuid4().hex}"
+    transcript_path = f"scribe/txn_{uuid.uuid4().hex}"
     w = await _world("kb-meetings", transcript_path)
     second_kb_copy = await _seed(w.org_id, "kb-other", transcript_path, versions=1)
 
-    result = await ingest.delete_document_route(_REQUEST, org_id=w.org_id, path=w.path)
+    result = await ingest.delete_document_route(_SCRIBE_REQUEST, org_id=w.org_id, path=w.path)
 
     assert result["artifacts_deleted"] == 4
     await _assert_document_gone(w, stores, episodes={f"ep-{i}" for i in w.doc + second_kb_copy})
@@ -536,31 +672,230 @@ async def test_connector_document_delete_still_removes_every_version(stores) -> 
     await _assert_others_untouched(w, stores)
 
 
-# -- a closed version cannot be re-activated ----------------------------------
+# -- reindex reopens a closed head, never a replaced version ------------------
 
 
-@pytest.mark.asyncio
-async def test_reindex_refuses_a_closed_version(stores) -> None:
-    from knowledge_ingest.routes.kb_sources import reindex_upload
+@pytest.fixture
+def enrichment_queue(monkeypatch):
+    from knowledge_ingest import enrichment_tasks
 
-    w = await _world("kb-uploads", f"file:sha256:{uuid.uuid4().hex}")
-    deleted = await _seed(w.org_id, w.kb, f"file:sha256:{uuid.uuid4().hex}", active=False)
+    job = MagicMock()
+    job.configure.return_value.defer_async = AsyncMock()
+    monkeypatch.setattr(
+        enrichment_tasks, "get_app", lambda: SimpleNamespace(enrich_document_interactive=job)
+    )
+    monkeypatch.setattr(
+        "knowledge_ingest.routes.kb_sources.maybe_refresh_stale_graph",
+        AsyncMock(return_value=None),
+    )
+    return job
 
-    for artifact_id in (w.doc[0], deleted[-1]):
-        with pytest.raises(HTTPException) as exc:
-            await reindex_upload(_REQUEST, artifact_id, org_id=w.org_id)
-        assert exc.value.status_code == 404
 
-    conn = await _connect(w.org_id)
+async def _active_ids(org_id: str, ids: list[str]) -> set[str]:
+    conn = await _connect(org_id)
     try:
-        ends = await conn.fetch(
-            "SELECT id::text, belief_time_end FROM knowledge.artifacts WHERE id = ANY($1::uuid[])",
-            [*w.doc, *deleted],
+        rows = await conn.fetch(
+            "SELECT id::text FROM knowledge.artifacts "
+            "WHERE id = ANY($1::uuid[]) AND belief_time_end = $2",
+            ids,
+            _SENTINEL,
         )
     finally:
         await conn.close()
-    active = {row["id"] for row in ends if row["belief_time_end"] == _SENTINEL}
-    assert active == {w.doc[-1]}
+    return {row["id"] for row in rows}
+
+
+@pytest.mark.asyncio
+async def test_reindex_refuses_a_version_that_has_a_successor(stores, enrichment_queue) -> None:
+    from knowledge_ingest.routes.kb_sources import reindex_upload
+
+    w = await _world("kb-uploads", f"file:sha256:{uuid.uuid4().hex}")
+
+    with pytest.raises(HTTPException) as exc:
+        await reindex_upload(_REQUEST, w.doc[0], org_id=w.org_id)
+
+    assert exc.value.status_code == 404
+    assert await _active_ids(w.org_id, w.doc) == {w.doc[-1]}
+
+
+@pytest.mark.asyncio
+async def test_reindex_of_a_closed_document_reopens_its_head_and_never_an_older_version(
+    stores, enrichment_queue
+) -> None:
+    """With nothing live on the path, only the successor check guards the old version."""
+    from knowledge_ingest.routes.kb_sources import reindex_upload
+
+    org_id = f"org-a-{uuid.uuid4().hex[:8]}"
+    doc = await _seed(org_id, "kb-uploads", "file:sha256:two", versions=2, active=False, text=False)
+
+    with pytest.raises(HTTPException) as exc:
+        await reindex_upload(_REQUEST, doc[0], org_id=org_id)
+    assert exc.value.status_code == 404
+    assert await _active_ids(org_id, doc) == set()
+
+    await reindex_upload(_REQUEST, doc[1], org_id=org_id)
+    assert await _active_ids(org_id, doc) == {doc[1]}
+
+
+@pytest.mark.asyncio
+async def test_reindex_refuses_a_closed_row_whose_path_is_live(stores, enrichment_queue) -> None:
+    from knowledge_ingest.routes.kb_sources import reindex_upload
+
+    w = await _world("kb-uploads", f"file:sha256:{uuid.uuid4().hex}")
+    unlinked = await _seed(w.org_id, w.kb, w.path, versions=1, active=False)
+
+    with pytest.raises(HTTPException) as exc:
+        await reindex_upload(_REQUEST, unlinked[0], org_id=w.org_id)
+
+    assert exc.value.status_code == 404
+    assert await _active_ids(w.org_id, [*w.doc, *unlinked]) == {w.doc[-1]}
+
+
+@pytest.mark.asyncio
+async def test_reindex_refuses_a_document_whose_delete_did_not_finish(
+    stores, enrichment_queue
+) -> None:
+    from knowledge_ingest.routes.kb_sources import reindex_upload
+
+    org_id = f"org-a-{uuid.uuid4().hex[:8]}"
+    pending = await _seed(
+        org_id,
+        "kb-uploads",
+        "file:sha256:pending",
+        versions=1,
+        active=False,
+        index_status="deleting",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await reindex_upload(_REQUEST, pending[0], org_id=org_id)
+
+    assert exc.value.status_code == 404
+    assert await _active_ids(org_id, pending) == set()
+
+
+@pytest.mark.asyncio
+async def test_reindex_reopens_a_closed_upload_with_no_successor(stores, enrichment_queue) -> None:
+    """The portal offers reindex for an upload whose artifact was closed (drift repair)."""
+    from knowledge_ingest.routes.kb_sources import reindex_upload
+
+    org_id = f"org-a-{uuid.uuid4().hex[:8]}"
+    retired = await _seed(
+        org_id, "kb-uploads", "file:sha256:retired", versions=1, active=False, text=False
+    )
+
+    response = await reindex_upload(_REQUEST, retired[0], org_id=org_id)
+
+    assert response.index_status == "pending"
+    assert await _active_ids(org_id, retired) == {retired[0]}
+    enrichment_queue.configure.return_value.defer_async.assert_awaited_once_with(
+        artifact_id=retired[0]
+    )
+
+
+# -- the history walk reaches the oldest version ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_reaches_every_version_of_a_long_history(stores) -> None:
+    from knowledge_ingest import document_purge
+
+    org_id = f"org-a-{uuid.uuid4().hex[:8]}"
+    doc = await _seed(org_id, "kb", "long.md", versions=130)
+
+    conn = await _connect(org_id)
+    try:
+        deleted, episodes = await document_purge.purge_documents(conn, org_id, [doc[-1]])
+    finally:
+        await conn.close()
+
+    assert (deleted, episodes) == (130, 130)
+    assert await _remaining(org_id, doc, "kb", "long.md") == _GONE
+
+
+@pytest.mark.asyncio
+async def test_history_walk_ends_on_a_cycle() -> None:
+    from knowledge_ingest import pg_store
+
+    org_id = f"org-a-{uuid.uuid4().hex[:8]}"
+    doc = await _seed(org_id, "kb", "cycle.md", versions=2)
+    conn = await _connect(org_id)
+    try:
+        await conn.execute(
+            "UPDATE knowledge.artifacts SET superseded_by = $1 WHERE id = $2", doc[0], doc[1]
+        )
+        history, _ = await pg_store.list_document_history(conn, org_id, [doc[1]])
+    finally:
+        await conn.close()
+
+    assert sorted(history) == sorted(doc)
+
+
+# -- enrichment that outlives its artifact --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enrichment_removes_points_written_after_its_artifact_was_deleted(
+    stores, monkeypatch
+) -> None:
+    from knowledge_ingest import document_purge, enrichment_tasks
+    from knowledge_ingest.enrichment import EnrichedChunk
+
+    org_id = f"org-a-{uuid.uuid4().hex[:8]}"
+    doc = await _seed(org_id, "kb", "late.md", versions=1)
+    written: list[str] = []
+
+    async def _upsert_after_a_delete_landed(**kwargs) -> None:
+        # The delete runs between the job's active check and its upsert.
+        conn = await _connect(org_id)
+        try:
+            await document_purge.purge_documents(conn, org_id, [doc[0]])
+        finally:
+            await conn.close()
+        written.append(kwargs["artifact_id"])
+
+    monkeypatch.setattr(enrichment_tasks, "tenant_scoped_connection", _tenant_connection)
+    monkeypatch.setattr(
+        enrichment_tasks.enrichment,
+        "enrich_chunks",
+        AsyncMock(return_value=[EnrichedChunk("body", "ctx\n\nbody", "ctx", ["q?"])]),
+    )
+    monkeypatch.setattr(enrichment_tasks.embedder, "embed", AsyncMock(return_value=[[1.0]]))
+    monkeypatch.setattr(
+        enrichment_tasks.sparse_embedder, "embed_sparse_batch", AsyncMock(return_value=[None])
+    )
+    for name, value in (
+        ("get_kb_aliases", []),
+        ("get_kb_product_rules", []),
+        ("get_kb_visibility", "internal"),
+    ):
+        monkeypatch.setattr(enrichment_tasks.kb_config, name, AsyncMock(return_value=value))
+    monkeypatch.setattr(
+        enrichment_tasks.qdrant_store, "upsert_enriched_chunks", _upsert_after_a_delete_landed
+    )
+    status = AsyncMock()
+    monkeypatch.setattr(enrichment_tasks, "_set_direct_upload_index_status", status)
+
+    result = await enrichment_tasks._enrich_document(
+        org_id=org_id,
+        kb_slug="kb",
+        path="late.md",
+        document_text="body",
+        chunks=["body"],
+        title="T",
+        artifact_id=doc[0],
+        user_id=None,
+        extra_payload={"document_summary": "s", "document_language": "en"},
+        synthesis_depth=2,
+    )
+
+    assert written == [doc[0]]
+    assert result is False
+    assert stores.qdrant.deletes(_payload(org_id, "kb", "late.md", doc[0]))
+    # The last delete is the one the job issued after its own upsert.
+    assert _filter_matches(stores.qdrant.filters[-1], {"org_id": org_id, "artifact_id": doc[0]})
+    assert len(stores.qdrant.filters) == 2
+    status.assert_not_awaited()
 
 
 # -- backlog report and purge -------------------------------------------------
@@ -589,34 +924,50 @@ async def test_backlog_report_counts_only_deleted_documents_and_execute_purges_t
     renamed_old = await _seed(
         org_id, kb, "https://example.com/old-title", versions=1, active=False, extra=identity
     )
+    # Retired by the drift repair: closed, no successor, no text. The portal
+    # still shows it with a reindex action, so it must never be purged.
+    retired = await _seed(org_id, kb, "file:sha256:retired", versions=1, active=False, text=False)
+    # A delete that closed the row but did not finish: no text, but marked.
+    unfinished = await _seed(
+        org_id,
+        kb,
+        "file:sha256:unfinished",
+        versions=1,
+        active=False,
+        text=False,
+        index_status="deleting",
+    )
     other_tenant = await _seed(f"org-other-{uuid.uuid4().hex[:8]}", kb, "x", active=False)
 
     async with _tenant_connection(org_id) as conn:
         report = await script.collect(conn, org_id)
 
-    assert report.deleted_heads == {org_id: [deleted[-1]]}
+    assert report.deleted_heads == {org_id: sorted([deleted[-1], unfinished[0]])}
     (group,) = report.deleted.values()
     assert (len(group.documents), group.rows, group.rows_with_text, group.parent_chunks) == (
-        1,
+        2,
+        4,
         3,
-        3,
-        3,
+        4,
     )
-    assert group.episode_ids == {f"ep-{i}" for i in deleted}
+    assert group.episode_ids == {f"ep-{i}" for i in [*deleted, *unfinished]}
     assert sum(len(g.documents) for g in report.kept_unlinked.values()) == 2
-    assert report.closed_rows == {org_id: 3 + 1 + 1 + 1}
+    (without_text,) = report.closed_without_text.values()
+    assert without_text.documents == {retired[0]}
+    assert report.closed_rows == {org_id: 3 + 1 + 1 + 1 + 1 + 1}
+    assert "closed_without_text" in script.render(report)
     assert other_tenant[-1] not in str(report)
 
     purged, failed = await script.purge(org_id, report.deleted_heads[org_id])
 
-    assert (purged, failed) == (1, 0)
+    assert (purged, failed) == (2, 0)
     assert await _remaining(org_id, deleted, kb, "https://example.com/removed") == _GONE
     conn = await _connect(org_id)
     try:
         kept = await conn.fetchval(
             "SELECT count(*) FROM knowledge.artifacts WHERE id = ANY($1::uuid[])",
-            [*replaced, *nulled, *renamed_old],
+            [*replaced, *nulled, *renamed_old, *retired],
         )
     finally:
         await conn.close()
-    assert kept == 4
+    assert kept == 5

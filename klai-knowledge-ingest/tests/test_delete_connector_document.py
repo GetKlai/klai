@@ -8,7 +8,7 @@ cover the route's auth and the order of the shared purge.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -87,6 +87,65 @@ def test_document_delete_by_path_requires_internal_secret(client) -> None:
     )
 
     assert response.status_code == 401
+
+
+def _transcript_delete(client, path: str, caller: str):
+    conn = MagicMock()
+
+    @asynccontextmanager
+    async def _tenant_connection(org_id: str):
+        yield conn
+
+    with (
+        patch(
+            "knowledge_ingest.routes.ingest.assert_caller_identity_tenant_only",
+            new_callable=AsyncMock,
+            return_value="org-1",
+        ),
+        patch("knowledge_ingest.routes.ingest.tenant_scoped_connection", _tenant_connection),
+        patch(
+            "knowledge_ingest.routes.ingest.pg_store.list_document_heads",
+            new_callable=AsyncMock,
+            return_value=["artifact-1"],
+        ) as heads,
+        patch(
+            "knowledge_ingest.routes.ingest.document_purge.purge_documents",
+            new_callable=AsyncMock,
+            return_value=(1, 0),
+        ) as purge,
+    ):
+        response = client.delete(
+            "/ingest/v1/document",
+            params={"org_id": "org-1", "path": path},
+            headers={"X-Caller-Service": caller},
+        )
+    return response, heads, purge
+
+
+def test_document_delete_removes_a_scribe_transcript_in_every_kb(client) -> None:
+    response, heads, purge = _transcript_delete(client, "scribe/txn_0123abcd", "scribe")
+
+    assert response.status_code == 200
+    heads.assert_awaited_once_with(ANY, "org-1", "scribe/txn_0123abcd", None)
+    purge.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "path", ["file:sha256:abc", "docs/page.md", "scribe/../x", "scribe/", "notes/scribe/txn_1"]
+)
+def test_document_delete_refuses_anything_but_a_transcript_path(client, path: str) -> None:
+    response, _, purge = _transcript_delete(client, path, "scribe")
+
+    assert response.status_code == 422
+    purge.assert_not_awaited()
+
+
+@pytest.mark.parametrize("caller", ["portal-api", "connector", "knowledge-mcp"])
+def test_document_delete_refuses_every_caller_but_scribe(client, caller: str) -> None:
+    response, _, purge = _transcript_delete(client, "scribe/txn_0123abcd", caller)
+
+    assert response.status_code == 403
+    purge.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -11,11 +11,12 @@ sees the tenant context.
 from datetime import UTC, datetime
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from klai_kb_slugs import personal_kb_slug
 
 from knowledge_ingest import document_purge, pg_store
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.identity import assert_caller_identity
 from knowledge_ingest.models import ArtifactSummary, PersonalItemsResponse
 
 logger = structlog.get_logger()
@@ -58,13 +59,20 @@ async def list_personal_items(
 
 @router.delete("/knowledge/v1/personal/items/{artifact_id}")
 async def delete_personal_item(
+    request: Request,
     artifact_id: str,
     org_id: str = Query(...),
     user_id: str = Query(...),
 ) -> dict:
-    """Delete a personal knowledge item and every earlier version of it from every store."""
+    """Delete a personal knowledge item and every earlier version of it from every store.
+
+    The item belongs to one user, so the user-bound identity assertion runs:
+    portal confirms that ``user_id`` is a member of ``org_id`` before anything
+    is read or removed.
+    """
     if not org_id or not user_id:
         raise HTTPException(status_code=400, detail="org_id and user_id are required")
+    org_id = await assert_caller_identity(request, claimed_org_id=org_id, claimed_user_id=user_id)
 
     async with tenant_scoped_connection(org_id) as conn:
         artifact = await pg_store.get_personal_artifact(conn, artifact_id, org_id, user_id)
