@@ -84,6 +84,7 @@ async def _sync(
     previous: MagicMock | None,
     *,
     stored: set[str] | dict[str, set[str]] | Exception | None = None,
+    delete_error: Exception | None = None,
 ) -> tuple[MagicMock, MagicMock]:
     """Run one sync and return (sync_run, ingest_client).
 
@@ -106,7 +107,7 @@ async def _sync(
     registry.get = MagicMock(return_value=adapter)
     ingest_client = MagicMock()
     ingest_client.ingest_document = AsyncMock(return_value=True)
-    ingest_client.delete_connector_document = AsyncMock(return_value=True)
+    ingest_client.delete_connector_document = AsyncMock(return_value=True, side_effect=delete_error)
     if stored is None:
         stored = set(previous.cursor_state["synced_refs"]) if previous else set()
     if isinstance(stored, set):
@@ -655,6 +656,43 @@ async def test_github_branch_switch_with_unchanged_content_deletes_nothing() -> 
     _run_, ingest = await _sync(adapter, _github_config(), _previous([]), stored=stored)
 
     _assert_single_scoped_delete(ingest, old_ref.format("docs/gone.md"))
+
+
+@pytest.mark.asyncio
+async def test_github_failed_delete_is_retried_on_the_same_commit() -> None:
+    """With no new commit the unchanged-commit skip must not leave a failed delete undone."""
+    gone = _gh_ref("docs/b.md")
+    stored = {_gh_ref("docs/a.md"): {"docs/a.md"}, gone: {"docs/b.md"}}
+
+    first, ingest = await _sync(
+        _github_adapter([_blob("docs/a.md")]),
+        _github_config(),
+        _previous([_gh_ref("docs/a.md"), gone], tree_sha="c1"),
+        stored=stored,
+        delete_error=RuntimeError("knowledge-ingest unavailable"),
+    )
+    assert first.status == SyncStatus.COMPLETED
+    assert first.cursor_state["deletions_open"] is True
+    previous = MagicMock()
+    previous.cursor_state = first.cursor_state  # same commit c2, same filter
+
+    second, ingest = await _sync(_github_adapter([_blob("docs/a.md")]), _github_config(), previous, stored=stored)
+
+    _assert_single_scoped_delete(ingest, gone)
+    assert second.cursor_state["deletions_open"] is False
+
+
+@pytest.mark.asyncio
+async def test_github_same_commit_without_open_deletions_still_skips() -> None:
+    adapter = _github_adapter([_blob("docs/a.md")])
+    adapter.list_documents = AsyncMock()  # type: ignore[method-assign]
+    previous = _previous([_gh_ref("docs/a.md")], tree_sha="c2", path_filter=None, deletions_open=False)
+
+    run, ingest = await _sync(adapter, _github_config(), previous)
+
+    adapter.list_documents.assert_not_awaited()
+    ingest.list_connector_source_refs.assert_not_awaited()
+    assert run.status == SyncStatus.COMPLETED
 
 
 @pytest.mark.asyncio

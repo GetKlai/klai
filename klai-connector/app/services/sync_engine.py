@@ -182,6 +182,10 @@ class SyncEngine:
         # reanalysis only after a sync that changed something.
         documents_changed = 0
         stale_cleanup_refused = False
+        # True when this run left a source deletion undone (held back, refused or
+        # a failed delete); stored in the cursor so the next run cannot skip the
+        # listing and the store diff that would finish it.
+        deletions_open = False
         # SPEC-INGEST-RECONCILE-001 AC-6 — per-sync skip-reason aggregation
         # ``{PersistSkipReason: count}``. Persisted to
         # ``connector.sync_runs.skip_reasons`` JSONB at the end of the run
@@ -316,7 +320,11 @@ class SyncEngine:
                     # A changed path_filter changes which files belong to the
                     # connector without a new commit, so it must not be skipped.
                     same_filter = prev_cursor.get("path_filter") == (cursor_state or {}).get("path_filter")
-                    if old_sha and new_sha and old_sha == new_sha and same_filter:
+                    # Nor when the previous run left a deletion open: with no new
+                    # commit the shortcut would return before the store diff, and a
+                    # failed delete would never be retried.
+                    deletions_open_before = bool(prev_cursor.get("deletions_open"))
+                    if old_sha and new_sha and old_sha == new_sha and same_filter and not deletions_open_before:
                         logger.info("No changes detected for connector %s, skipping sync", connector_id)
                         sync_run.status = SyncStatus.COMPLETED
                         sync_run.completed_at = datetime.now(UTC)
@@ -597,6 +605,7 @@ class SyncEngine:
                         stale_groups_deleted += 1
                         documents_changed += int(removed)
 
+                deletions_open = bool(held_back or stale_cleanup_refused or stale_delete_failed)
                 logger.info(
                     "Source deletion reconciliation for connector %s",
                     connector_id,
@@ -718,6 +727,7 @@ class SyncEngine:
                     # every document would count as new once the token works again.
                     discovered_refs = prev_synced_refs
                 cursor_state["synced_refs"] = sorted(discovered_refs)
+                cursor_state["deletions_open"] = deletions_open
             sync_run.cursor_state = cursor_state
             await session.commit()
 
