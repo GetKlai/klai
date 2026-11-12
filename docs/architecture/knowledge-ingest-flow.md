@@ -199,6 +199,24 @@ What the crawler does:
   always wins. AI selector detection (`klai-fast`, when a preview has under 100
   words) runs only in the wizard preview (`routes/crawl.py:191,512`), never in a
   scheduled crawl.
+- **Audit before publish.** After fetching and before the first write of any
+  kind, `_judge_run_before_write` (`adapters/crawler.py`) decides whether the
+  run may write at all. Three verdicts write nothing (no page, link-graph row,
+  `crawled_pages` row, stale purge or follow-up job) and end the job
+  `failed_partial`: saved cookies and any walled page (`auth_wall_detected`);
+  an anonymous run walled at the existing dirty-content rate
+  (`boilerplate_or_authwall_dominant`); and a content regression
+  (`content_regression`), judged against the stored text of each page's active
+  version (`artifacts.extra.document_text`, read in one query by
+  `pg_store.get_active_document_texts`). A page lost content when it keeps
+  under 90% of its stored words and at least 50 stored words are gone
+  (`content_retention.retention`); the run regresses when at least 10 pages
+  changed and at least half of them lost content. On production history
+  (2026-11-12) this flags 4 of 116 runs, all logged out. The connector shows
+  the reason as a failed sync. `accept_content_regression` on
+  `POST /ingest/v1/crawl/sync` is a person's one-shot acceptance of a real site
+  change: the run writes and no page of it is held. Template-cluster walls
+  only show per page during the ingest; they still only set the job status.
 - **Link graph before ingest.** `_build_link_graph` runs before the per-page
   ingest (`adapters/crawler.py:1273,1305`) so link data exists when pages are
   written. `links_to` (at most 20), `anchor_texts` and `incoming_link_count`
@@ -373,6 +391,7 @@ are LiteLLM aliases (6.1).
 |---|---|---|---|---|
 | 0 | Guard | NUL characters are stripped. With `source_connector_id`, `connector_is_active` must hold, else the result is `skipped`. A sync run is not tracked here: the derived jobs belong to the document version (2.6) | | `skipped`, nothing written |
 | 1 | Unchanged check | sha256 of the normalised text (or the caller's `content_hash`) against the active row; equal means `skipped / content unchanged`, with at most a version-gated graph refresh (2.5) (`routes/ingest.py:443-480`) | | |
+| 1b | Shrink hold | only with `source_connector_id` (crawls and connector syncs; uploads, transcripts, docs and MCP writes never): a new version that keeps under half of the active version's `document_text` words is `held` (reason `shrunken_version_held`). The candidate hash and first sighting go into the stored row's `extra.held_candidate`; nothing else is written and no model work starts. The same candidate seen again at least 12 hours later replaces the stored version; a different one restarts the hold. A held crawl page keeps its `crawled_pages` hashes, so the next crawl offers it again; a connector sync counts it under `skip_reasons` (`_hold_shrunken_version`) | | |
 | 2 | Chunk | see 2.2; empty means `skipped / empty document` (`routes/ingest.py:481-530`) | | |
 | 3 | Dense embedding | `embedder.embed`, batches of 32 | TEI `/v1/embeddings`, bge-m3, 1024 dimensions, `tei_timeout` 120 s, 5 attempts with jittered backoff up to 30 s (`embedder.py:15-110`, `config.py:12`) | raises; no artifact row exists yet, so the request fails |
 | 4 | Content label | blind label of the text | `klai-ingest`, 15 s (`content_labeler.py`, `config.py:435`) | any error gives `[]`; a spent key or budget gives "not yet classified" and the hourly sweep fills it |

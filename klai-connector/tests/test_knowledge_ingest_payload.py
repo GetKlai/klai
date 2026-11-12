@@ -248,3 +248,25 @@ async def test_ingest_document_reports_whether_knowledge_changed(body: dict, cha
     )
 
     assert result is changed
+
+
+@pytest.mark.asyncio
+async def test_ingest_document_reports_none_when_knowledge_ingest_holds_the_version() -> None:
+    client = KnowledgeIngestClient(base_url="http://knowledge-ingest:8100", internal_secret="placeholder-secret")
+    await client._client.aclose()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value={"status": "held", "reason": "shrunken_version_held", "chunks": 0})
+    client._client = MagicMock()
+    client._client.post = AsyncMock(return_value=response)
+
+    result = await client.ingest_document(
+        org_id="org-1",
+        kb_slug="support",
+        path="doc.md",
+        content="hello",
+        source_connector_id="connector-1",
+        source_ref="doc.md",
+    )
+
+    assert result is None

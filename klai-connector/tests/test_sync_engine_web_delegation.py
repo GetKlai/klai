@@ -247,6 +247,7 @@ class TestCrawlSyncClientContract:
                 "canary_fingerprint": "deadbeef12345678",
                 "login_indicator_selector": "#login-form",
                 "auth_chain_hosts": ["login.example.org"],
+                "accept_content_regression": True,
             },
         )
 
@@ -265,6 +266,7 @@ class TestCrawlSyncClientContract:
         assert body["canary_fingerprint"] == "deadbeef12345678"
         assert body["login_indicator"] == "#login-form"
         assert body["auth_chain_hosts"] == ["login.example.org"]
+        assert body["accept_content_regression"] is True
         assert captured["headers"]["x-internal-secret"] == "s3cr3t"
 
         await client.aclose()

@@ -453,9 +453,14 @@ class SyncEngine:
                             user_id=portal_config.owner_user_id,
                             document_extra=ref.extra,
                         )
+                        resume_ingested_refs.add(ref_key)
+                        if changed is None:
+                            # Held by knowledge-ingest: neither ingested nor failed.
+                            held = PersistSkipReason.SHRUNKEN_VERSION_HELD.value
+                            skip_reasons[held] = skip_reasons.get(held, 0) + 1
+                            continue
                         documents_ok += 1
                         documents_changed += int(changed)
-                        resume_ingested_refs.add(ref_key)
 
                         # Checkpoint progress every 10 docs so a crash can resume mid-sync.
                         if documents_ok % 10 == 0:

@@ -367,3 +367,62 @@ async def test_last_successful_run_ignores_completed_runs_with_failures() -> Non
 
     statement = session.execute.await_args.args[0]
     assert "documents_failed" in str(statement)
+
+
+@pytest.mark.asyncio
+async def test_held_shrunken_version_counts_as_skip_not_ok_or_failed() -> None:
+    """knowledge-ingest holds a version that lost most of its stored text; the run
+    counts it under skip_reasons, neither as ingested nor as failed."""
+    sync_run = MagicMock()
+    sync_run.status = SyncStatus.PENDING
+    sync_run.cursor_state = None
+    sync_run.error_details = None
+    sync_run.quality_status = None
+    sync_run.skip_reasons = {}
+
+    session_maker_mock, _session = _mock_session_maker(sync_run)
+    portal_client = MagicMock()
+    portal_client.get_connector_config = AsyncMock(return_value=_portal_config())
+    portal_client.report_sync_status = AsyncMock()
+
+    adapter = MagicMock()
+    adapter.get_cursor_state = AsyncMock(return_value={})
+    adapter.list_documents = AsyncMock(return_value=[_short_doc_ref("/shrunk.md")])
+    adapter.fetch_document = AsyncMock(return_value=b"<bytes>")
+    adapter.post_sync = AsyncMock(return_value=None)
+    registry = MagicMock()
+    registry.get = MagicMock(return_value=adapter)
+
+    ingest_client = MagicMock()
+    ingest_client.ingest_document = AsyncMock(return_value=None)
+    ingest_client.list_connector_source_refs = AsyncMock(return_value={})
+
+    engine = SyncEngine(
+        session_maker=session_maker_mock,
+        registry=registry,
+        ingest_client=ingest_client,
+        portal_client=portal_client,
+        settings=MagicMock(),
+        image_store=None,
+        crawl_sync_client=MagicMock(),
+    )
+
+    long_text_result = MagicMock()
+    long_text_result.text = "This document is long enough to reach the ingest client. " * 2
+    long_text_result.images = []
+
+    import app.services.sync_engine as engine_module
+
+    original_parser = engine_module.parse_document_with_images
+    engine_module.parse_document_with_images = lambda _c, _f: long_text_result
+    try:
+        await engine.run_sync(
+            uuid.UUID("77777777-7777-7777-7777-777777777777"),
+            uuid.UUID("88888888-8888-8888-8888-888888888888"),
+        )
+    finally:
+        engine_module.parse_document_with_images = original_parser
+
+    assert sync_run.skip_reasons == {PersistSkipReason.SHRUNKEN_VERSION_HELD.value: 1}
+    assert (sync_run.documents_ok, sync_run.documents_failed) == (0, 0)
+    assert sync_run.status == SyncStatus.COMPLETED

@@ -15,6 +15,7 @@ import json
 import time
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from statistics import median
 from urllib.parse import urlparse
 
 import asyncpg
@@ -25,6 +26,7 @@ from klai_image_storage import ImageStore, download_and_upload_crawl_images
 from knowledge_ingest import document_purge, pg_store
 from knowledge_ingest.chunker import noise_counts
 from knowledge_ingest.config import settings
+from knowledge_ingest.content_retention import retention
 from knowledge_ingest.crawl4ai_client import (
     CrawlRateLimitState,
     CrawlResult,
@@ -122,6 +124,10 @@ _CRAWLER_CONFIG_REJECTED_SUGGESTION = (
 # ``decide_ingest_failure_terminal_status`` for why a ratio threshold is
 # NOT used here.
 INGEST_FAILURE_TOTAL_REASON = "ingest_failure_total"
+# The run audit before the first write found that most changed pages lost a
+# large part of their stored text; nothing of the run was written. Surfaced
+# through crawl_jobs.error_summary like the reasons above.
+CONTENT_REGRESSION_REASON = "content_regression"
 
 _NOT_FETCHED_REASON_PREFIX = "not_fetched_"
 
@@ -601,28 +607,137 @@ def _check_login_indicator(result: CrawlResult, selector: str) -> None:
         raise AuthWallDetected(selector)
 
 
-def _logged_out_pages(
-    results: list[CrawlResult],
-    *,
-    cookies: list[dict] | None,
-    login_indicator_selector: str | None,
-) -> list[str]:
-    """URLs of fetched pages that show the crawl ran without its saved session.
+def _walled_pages(results: list[CrawlResult], *, login_indicator_selector: str | None) -> list[str]:
+    """URLs of fetched pages the auth-wall classifier rejects, as the ingest loop would.
 
     Raises AuthWallDetected when any page carries the configured login
-    indicator. Without cookies there is no session to lose; per-page wall
-    handling inside the ingest loop covers anonymous crawls.
+    indicator.
     """
     if login_indicator_selector:
         for result in results:
             _check_login_indicator(result, login_indicator_selector)
-    if (
-        not cookies
-        or not settings.ingest_login_wall_detect_enabled
-        or _resolve_login_wall_mode() != "reject"
-    ):
+    if not settings.ingest_login_wall_detect_enabled or _resolve_login_wall_mode() != "reject":
         return []
     return [r.url for r in results if r.success and _classify_page_wall(r).is_walled]
+
+
+# Run audit before publish: a crawl run is judged against the stored versions
+# before it writes anything. A page "lost content" when it keeps under 90% of
+# its stored words AND at least 50 stored words are gone; a run writes nothing
+# when at least 10 pages changed and at least half of them lost content.
+# Production history (2026-11-12): 116 crawl runs replaced at least 5 pages.
+# By share of replaced pages under 0.9 retained: 0% in 40 runs, under 10% in
+# 48, 10-30% in 15, 30-50% in 7, at least 50% in 6. Those 6 were four
+# logged-out runs of one connector (172-207 pages, median retained 0.83-0.84,
+# about 280 words lost per page) and two small runs: 6 pages, under the floor
+# of 10, and 12 pages of a documentation site that dropped three lines from
+# every small page (15%, about 20 words each), a real change. The 50-word
+# floor lets that one through, so the rule flags exactly the 4 logged-out runs.
+_REGRESSION_MIN_CHANGED_PAGES = 10
+_REGRESSION_MIN_LOST_SHARE = 0.5
+_LOST_BELOW_RETAINED = 0.9
+_LOST_MIN_MISSING_WORDS = 50
+
+_CONTENT_REGRESSION_SUGGESTION = (
+    "Most changed pages lost a large part of their stored text, so nothing of this "
+    "run was stored. Check that the site is complete (login, content selector); "
+    "if the change is real, sync again with accept_content_regression."
+)
+
+
+def _content_regression(results: list[CrawlResult], stored_texts: dict[str, str]) -> dict | None:
+    """Counts of the changed pages against their stored text when the run regressed, else None.
+
+    A page takes part only when it has a stored text and its change hash
+    differs from that text's, the same test the per-page dedup applies.
+    """
+    retained_values: list[float] = []
+    lost = 0
+    for result in results:
+        stored = stored_texts.get(result.url)
+        text = result.fit_markdown or result.raw_markdown or ""
+        if not result.success or stored is None:
+            continue
+        if crawl_change_hash(text, result.url) == crawl_change_hash(stored, result.url):
+            continue
+        retained, missing = retention(stored, text)
+        retained_values.append(retained)
+        if retained < _LOST_BELOW_RETAINED and missing >= _LOST_MIN_MISSING_WORDS:
+            lost += 1
+    changed = len(retained_values)
+    if changed < _REGRESSION_MIN_CHANGED_PAGES or lost < changed * _REGRESSION_MIN_LOST_SHARE:
+        return None
+    return {
+        "reason": CONTENT_REGRESSION_REASON,
+        "changed_pages": changed,
+        "pages_lost_content": lost,
+        "median_retained": round(median(retained_values), 3),
+        "suggestion": _CONTENT_REGRESSION_SUGGESTION,
+    }
+
+
+async def _judge_run_before_write(
+    *,
+    connection_factory: ConnectionFactory,
+    results: list[CrawlResult],
+    auth_wall_pages: list[str],
+    wall_decision_count: int,
+    cookies: list[dict] | None,
+    login_indicator_selector: str | None,
+    accept_content_regression: bool,
+    log_fields: dict,
+) -> tuple[bool, dict | None]:
+    """Decide before the first write whether this run may write at all.
+
+    Returns ``(write_nothing, content_regression_summary)``. Walled pages that
+    make the run untrusted are appended to ``auth_wall_pages`` so the
+    terminal status reports them. Three verdicts write nothing:
+
+    * saved cookies and any walled page: the run lost its session, and a
+      logged-out page does not always show a wall (2026-11-12: 203 pages
+      replaced, median 18.5% of their text lost);
+    * an anonymous run walled at the existing dirty-content rate: its other
+      pages cannot be trusted either;
+    * a content regression against the stored versions (see the constants).
+    """
+    walled = _walled_pages(results, login_indicator_selector=login_indicator_selector)
+    if cookies:
+        untrusted = bool(auth_wall_pages or walled)
+    else:
+        untrusted = bool(
+            decide_terminal_status(
+                auth_wall_count=len(auth_wall_pages) + len(walled),
+                total_count=wall_decision_count,
+                has_cookies=False,
+                has_login_indicator=bool(login_indicator_selector),
+                threshold=settings.ingest_authwall_dirty_trip_rate,
+            )[0]
+        )
+    if untrusted:
+        auth_wall_pages.extend(walled)
+        logger.error(
+            "crawl_session_lost_stored_pages_kept"
+            if cookies
+            else "crawl_walled_run_stored_pages_kept",
+            login_walls=len(auth_wall_pages),
+            pages_kept=len(results),
+            **log_fields,
+        )
+        return True, None
+
+    async with connection_factory() as conn:
+        stored_texts = await pg_store.get_active_document_texts(
+            conn, log_fields["org_id"], log_fields["kb_slug"], [r.url for r in results]
+        )
+    regression = _content_regression(results, stored_texts)
+    if regression is None:
+        return False, None
+    counts = {k: regression[k] for k in ("changed_pages", "pages_lost_content", "median_retained")}
+    if accept_content_regression:
+        logger.info("crawl_content_regression_accepted", **counts, **log_fields)
+        return False, None
+    logger.error("crawl_content_regression_stored_pages_kept", **counts, **log_fields)
+    return True, regression
 
 
 def _classify_page_wall(result: CrawlResult) -> AuthWallClassification:
@@ -962,6 +1077,7 @@ async def run_crawl_job(
     connector_id: str | None = None,
     resource_key: str | None = None,
     discovery_seed_url: str | None = None,
+    accept_content_regression: bool = False,
 ) -> None:
     """
     Crawl a website and ingest each page into the knowledge pipeline.
@@ -994,10 +1110,13 @@ async def run_crawl_job(
     ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
     matched against the HTML of every fetched page before the first page is
     ingested. If a page matches, the job is marked failed with
-    ``error='auth_wall_detected: {selector}'`` and no page is ingested. With
-    saved ``cookies``, a page the auth-wall classifier rejects likewise means
-    the run had no session: it ends ``failed_partial`` and replaces no stored
-    page.
+    ``error='auth_wall_detected: {selector}'`` and no page is ingested. The
+    whole run is judged before its first write (``_judge_run_before_write``):
+    a lost session, an anonymous run dominated by walls, or a content
+    regression against the stored versions ends ``failed_partial`` and
+    writes nothing. ``accept_content_regression`` is a person's one-shot
+    acceptance of a real site change: the run then writes as usual, and
+    ingest_document does not hold its shrunken pages.
 
     SPEC-TI-003-FOLLOWUP-001 AC-1: ``connection_factory`` leases a connection
     with the tenant RLS GUC for each bounded database phase. No connection is
@@ -1289,30 +1408,25 @@ async def run_crawl_job(
         # plus the walls that never became a result.
         wall_decision_count = len(results) + len(http_login_walls)
 
-        # A crawl with a saved session that meets a login wall on any page
-        # ran logged out, and a logged-out page does not always show a wall:
-        # on a wiki with protected tabs the sibling pages render a shortened
-        # public version without any login marker. Ingesting those replaced
-        # the logged-in versions (production, 2026-11-12: 203 pages, median
-        # 18.5% of their text lost). So the whole run is judged before the
-        # first write, and a run without a session writes nothing.
-        auth_wall_pages.extend(
-            _logged_out_pages(
-                results, cookies=cookies, login_indicator_selector=login_indicator_selector
-            )
+        # Audit before publish: every "write nothing" verdict empties this one
+        # list, so no page, link-graph row, crawled_pages row, stale purge or
+        # follow-up job comes out of an untrusted run.
+        write_nothing, regression_summary = await _judge_run_before_write(
+            connection_factory=connection_factory,
+            results=results,
+            auth_wall_pages=auth_wall_pages,
+            wall_decision_count=wall_decision_count,
+            cookies=cookies,
+            login_indicator_selector=login_indicator_selector,
+            accept_content_regression=accept_content_regression,
+            log_fields={
+                "job_id": job_id,
+                "connector_id": connector_id,
+                "org_id": org_id,
+                "kb_slug": kb_slug,
+            },
         )
-        session_lost = bool(cookies and auth_wall_pages)
-        if session_lost:
-            logger.error(
-                "crawl_session_lost_stored_pages_kept",
-                job_id=job_id,
-                connector_id=connector_id,
-                org_id=org_id,
-                kb_slug=kb_slug,
-                login_walls=len(auth_wall_pages),
-                pages_kept=len(results),
-            )
-        pages_to_ingest = [] if session_lost else results
+        pages_to_ingest = [] if write_nothing else results
 
         crawl_outcome_warning = _build_crawl_outcome_warning(
             fetch_outcomes,
@@ -1388,6 +1502,7 @@ async def run_crawl_job(
                             login_indicator_selector=login_indicator_selector,
                             authenticated_context=bool(cookies or login_indicator_selector),
                             connector_id=connector_id,
+                            accept_shrink=accept_content_regression,
                         )
                         pages_done += 1
                     except AnonymousAuthWallDetected as wall_exc:
@@ -1507,6 +1622,11 @@ async def run_crawl_job(
             # fetched before the cancel was observed are still ingested
             # above (pages_done keeps whatever it already counted).
             terminal_status = "cancelled"
+        elif regression_summary:
+            terminal_status = "failed_partial"
+            summary_json = json.dumps(
+                _attach_crawl_warning(regression_summary, crawl_outcome_warning)
+            )
         elif dirty_status:
             terminal_status = dirty_status
             summary_payload = dirty_summary or {}
@@ -1770,12 +1890,13 @@ async def _ingest_crawl_result(
     login_indicator_selector: str | None = None,
     authenticated_context: bool = False,
     connector_id: str | None = None,
+    accept_shrink: bool = False,
 ) -> bool:
     """Process a crawl result: dedup, extract links, ingest.
 
     Returns whether the knowledge base changed: False for every skip (unchanged
-    raw HTML, change-hash noise, too-short content, or knowledge-ingest's own
-    content-hash no-op), True after a real ingest.
+    raw HTML, change-hash noise, too-short content, knowledge-ingest's own
+    content-hash no-op, or a held shrunken version), True after a real ingest.
     """
     if not result.success:
         raise ValueError(f"Crawl failed: {result.error_message}")
@@ -2109,7 +2230,13 @@ async def _ingest_crawl_result(
             extra=extra,
             source_connector_id=connector_id,
         ),
+        accept_shrink=accept_shrink,
     )
+    if ingest_result.get("status") == "held":
+        # crawled_pages keeps the hashes of the stored version, so the next
+        # crawl sees this page as changed again and offers the candidate to
+        # ingest_document, which accepts it once it has been seen for 12 hours.
+        return False
 
     if ingest_result.get("status") != "skipped":
         # Counts only, no text. Logged here and not in the chunker, which runs
