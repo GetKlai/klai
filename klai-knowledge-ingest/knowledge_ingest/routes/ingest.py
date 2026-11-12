@@ -1331,7 +1331,7 @@ async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
         episode_ids = await pg_store.get_episode_ids(conn, org_id, kb_slug)
         await graph_module.delete_kb_episodes(org_id, episode_ids)
         await qdrant_store.delete_kb(org_id, kb_slug)
-        # No store means the image pipeline is off, so no image was written.
+        # No store configured means the image pipeline of this deployment is off.
         image_store = _build_image_store()
         if image_store is not None:
             await image_store.delete_images(org_id, kb_slug)

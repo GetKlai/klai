@@ -176,9 +176,12 @@ class ImageStore:
     async def delete_images(self, org_id: str, kb_slug: str | None = None) -> int:
         """Delete every image of a knowledge base, or of the whole org when ``kb_slug`` is None.
 
-        Content addressing dedupes only inside one ``{org_id}/images/{kb_slug}/``
-        prefix (see ``build_object_key``), so no other knowledge base or org can
-        reference an object under it and a prefix delete is exact. Idempotent:
+        Every writer stores under ``{org_id}/images/{kb_slug}/`` and content
+        addressing dedupes only inside that prefix (see ``build_object_key``),
+        so the prefix holds the images written for that knowledge base and
+        nothing written for another. A page elsewhere that links to one of
+        these images by URL loses it, as it does on the connector purge.
+        Idempotent:
         a rerun finds nothing and returns 0. Raises on any storage error so the
         caller keeps its own rows as the retry ledger instead of reporting a
         delete that left objects behind.

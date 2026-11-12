@@ -926,8 +926,9 @@ async def delete_kb(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> None
             org_id,
             kb_slug,
         )
-        # A missing fence reads as "deleted", so connector jobs still queued for
-        # this KB stop instead of writing into it again.
+        # The fences belong to the KB. A connector job that checks its fence
+        # after this reads the missing row as "deleted" and stops; a sync that
+        # is already past that check can still write.
         await conn.execute(
             "DELETE FROM knowledge.connector_resource_fences WHERE org_id = $1 AND kb_slug = $2",
             org_id,

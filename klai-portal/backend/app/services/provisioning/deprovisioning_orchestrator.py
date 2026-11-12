@@ -71,7 +71,7 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 class _DeprovisionState:
     """Resource handles loaded at the start of the deprovisioning run.
 
-    All fields needed by the 21 step functions are resolved once in `_load_state`
+    All fields needed by the step functions are resolved once in `_load_state`
     before any step runs. This avoids mid-sequence DB reads and keeps each step
     self-contained.
 

@@ -394,11 +394,10 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
     """POST to knowledge-ingest /internal/v1/orgs/{org_id}/wipe-postgres.
 
     Closes G3 of audit Cluster F. The endpoint hard-deletes every row
-    carrying ``org_id`` from the 8 tenant-scoped ``knowledge.*`` tables
-    (page_links, crawled_pages, crawl_jobs, crawl_domains, kb_config,
-    org_config, entities, artifacts) inside a single transaction.
-    Cascade-children (artifact_entities, artifact_images, derivations)
-    are picked up automatically.
+    carrying ``org_id`` from the tenant-scoped ``knowledge.*`` tables
+    inside a single transaction; the list lives with the endpoint
+    (``knowledge_ingest/routes/internal.py``). Cascade-children are
+    picked up automatically.
 
     Without this step, knowledge.* tenant rows are orphaned after
     portal_orgs DELETE: those tables have no FK to portal_orgs (they
