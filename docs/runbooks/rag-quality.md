@@ -1,5 +1,7 @@
 # RAG Quality Runbooks
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > Step-by-step procedures for RAGAS evaluation harness alerts.
 > Harness design: SPEC-RAG-EVAL-001 (historical — SPEC removed in repo cleanup 2026-08-18).
 
@@ -14,8 +16,6 @@
 ### Step 1 — Identify which suite regressed
 
 ```bash
-ssh core-01
-
 docker exec klai-core-postgres-1 psql -U klai -d klai -c "
   SELECT
     suite,
@@ -105,8 +105,6 @@ RAGAS scoring, so the normal aggregate metrics may be NULL for the query.
 ### Step 1 — Inspect the failed canaries
 
 ```bash
-ssh core-01
-
 docker exec klai-core-postgres-1 psql -U klai -d klai -c "
   SELECT
     suite,
@@ -228,7 +226,7 @@ Look at the `reranker_scores_top5` field values (the top five reranker scores of
 Also check whether there was a recent `confidence_band_high_threshold` or `confidence_band_low_threshold` config change in the retrieval-api environment:
 
 ```bash
-ssh core-01 "docker exec klai-core-retrieval-api-1 printenv | grep -i confidence"
+docker exec klai-core-retrieval-api-1 printenv | grep -i confidence
 ```
 
 **Resolution:** if the thresholds are mistimed, adjust `CONFIDENCE_BAND_HIGH_THRESHOLD` and `CONFIDENCE_BAND_LOW_THRESHOLD` env vars in `deploy/docker-compose.yml` (retrieval-api environment block) and redeploy via `compose-up.sh`. The defaults are `0.60` and `0.30` per SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1. Any change below `0.20` for the low threshold or above `0.50` for the high threshold requires SPEC sign-off.
@@ -244,8 +242,6 @@ The reranker runs on the GPU host, not as a core-01 container. When a rerank cal
 Also check retrieval-api container health directly:
 
 ```bash
-ssh core-01
-
 # Retrieval-api recent errors
 docker logs --tail 50 klai-core-retrieval-api-1 2>&1 | grep -iE "error|warn|rerank|timeout" | head -20
 ```
@@ -291,7 +287,6 @@ Mostly `graph_search_timeout` with `/health` fine means FalkorDB is up but slow.
 ### Step 2 — FalkorDB itself
 
 ```bash
-ssh core-01
 docker ps --filter name=klai-core-falkordb-1
 docker logs --tail 100 klai-core-falkordb-1
 ```
@@ -299,5 +294,5 @@ docker logs --tail 100 klai-core-falkordb-1
 A `crashed by signal` line, repeating every few minutes, is the 2026-10-23
 incident (signal 11, about 150 restarts between 03:00 and 10:36 UTC). It is
 also reported by `datastore_process_crashed` and `container_restart_loop`.
-Check the persistence file with `/opt/klai/scripts/persistence-smoke.sh falkordb`
-before restarting anything, and keep `/opt/klai/falkordb-data`.
+Check the persistence file with `scripts/persistence-smoke.sh falkordb`
+before restarting anything, and keep `falkordb-data/` in the deploy directory.

@@ -1,5 +1,7 @@
 # knowledge-ingest Alembic stamp (one-time, before SPEC-INGEST-ALEMBIC-001 deploy)
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > **AI playbook** — execute on prod **before** the first deploy that contains the
 > SPEC-INGEST-ALEMBIC-001 entrypoint (PR #337 or its successor).
 
@@ -36,7 +38,7 @@ no-op until a real new migration is added.
 ## Command
 
 ```bash
-ssh core-01 "docker exec --workdir /repo/klai-knowledge-ingest klai-core-knowledge-ingest-1 alembic stamp 0001_baseline"
+docker exec --workdir /repo/klai-knowledge-ingest klai-core-knowledge-ingest-1 alembic stamp 0001_baseline
 ```
 
 Audit 2026-05-05 finding: `--workdir` is REQUIRED. The `alembic.ini`
@@ -58,7 +60,7 @@ INFO  [alembic.runtime.migration] Running stamp_revision  -> 0001_baseline
 ## Verify
 
 ```bash
-ssh core-01 "docker exec klai-core-knowledge-ingest-1 alembic current"
+docker exec klai-core-knowledge-ingest-1 alembic current
 ```
 
 Expected: `0001_baseline (head)`.

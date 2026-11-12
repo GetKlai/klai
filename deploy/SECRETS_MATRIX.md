@@ -10,13 +10,13 @@ legitimately reads which secret". Keep in lock-step with
 Non-secret values (URLs to sibling services, feature flags, log levels,
 model names, timeouts) are NOT listed — this matrix covers only
 credentials, keys, tokens, and passwords. The rule of thumb: if the
-value is in `/opt/klai/.env` / a SOPS file or looks like a secret, it
+value is in the deploy directory's `.env` / a SOPS file or looks like a secret, it
 belongs here.
 
 ## Migration status
 
 Services previously using `env_file: .env` (the shared global file at
-`/opt/klai/.env`):
+`.env` in the core-01 deploy directory):
 
 | Service | Migrated to explicit `environment:` | Commit |
 |---|---|---|

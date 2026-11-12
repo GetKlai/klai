@@ -59,7 +59,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 | Service | Image | Rationale |
 |---|---|---|
-| `meilisearch` | `getmeili/meilisearch:v1.53.0` | Search index for LibreChat conversations. **Data migration required on minor bumps** — v1.42.1 refused to boot directly on v1.45.2, and 1.45.2 -> 1.53.0 (2026-08-13) was likewise migrated via dump/import (baseline archived at /opt/klai/backups/meili-pre-1.53.0-*). Pin explicitly and keep `MEILI_DB_PATH=/meili_data`; v1.45.2 otherwise starts on `./data.ms` and ignores the mounted volume. |
+| `meilisearch` | `getmeili/meilisearch:v1.53.0` | Search index for LibreChat conversations. **Data migration required on minor bumps** — v1.42.1 refused to boot directly on v1.45.2, and 1.45.2 -> 1.53.0 (2026-08-13) was likewise migrated via dump/import (baseline archived under `backups/meili-pre-1.53.0-*` in the deploy directory). Pin explicitly and keep `MEILI_DB_PATH=/meili_data`; v1.45.2 otherwise starts on `./data.ms` and ignores the mounted volume. |
 | `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.30.0` | Document parsing (PDF, DOCX → structured). |
 | `searxng` | `searxng/searxng:2026.8.12-cdfdaa5a8` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
 | `gitea` | `gitea/gitea:28.2.0` | Self-hosted git for klai-docs. Bumped 2026-08-13: 1.27.1 patches CVE-2026-59774 (critical, unauthenticated file read → RCE) + CVE-2026-60004 (critical, RCE via diffpatch hooks); 1.27.0 patches the high SSRF + PAT-scope CVEs. 1.27.0 breaking changes (Actions reusable workflows, CSP script nonce) do not affect us — Gitea is git-hosting only here. Bumped to 1.27.3 on 2026-09-11: a security release with eighteen fixes, among them package token-scope access, attachment path enforcement, same-repository issue access, and fork pull-request trust boundaries. This row said 1.27.1 while compose ran 1.27.2; the compose pin is the one to trust. Bumped to 28.2.0 on 2026-10-22: upstream renumbered after 1.27 (v28.0.0 followed v1.27.3 on 2026-09-29, both on GitHub releases and Docker Hub), and 28.2.0 adds an x/net security fix and LFS OID validation on top of 28.1.0. 28.0.0's one breaking change is the egress filter for outbound git and webhook calls; it denied the knowledge-ingest webhooks until compose set `GITEA__webhook__ALLOWED_HOST_LIST: private` (see the comment there). Schema migrations 343 -> 358 run on start and are one-way: roll back by restoring the `gitea` database dump and the volume. |
@@ -117,10 +117,10 @@ issues locally.
 
 ## Verification
 
-To audit drift between this file and a running server, run:
+To audit drift between this file and a running server, run on core-01:
 
 ```bash
-ssh <server> "docker ps --format '{{.Names}}\t{{.Image}}' | sort"
+docker ps --format '{{.Names}}\t{{.Image}}' | sort
 ```
 
 Every row must match an entry in this file. New services must be added here **before** they ship.

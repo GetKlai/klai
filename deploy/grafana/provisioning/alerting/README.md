@@ -76,7 +76,7 @@ landing it in a provisioning file.
 ## Verifying an alert end-to-end
 
 1. Provision the rule on a branch.
-2. After deploy-compose lands: `ssh <server> "docker compose up -d grafana"`.
+2. After deploy-compose lands: `docker compose up -d grafana` on core-01, in the deploy directory.
 3. Grafana UI → Alerting → Rules: rule shows status "Normal" or "Firing" (not "Error").
 4. Trigger the condition (real event, drill, or force via log injection — see
    the relevant runbook section in `klai-infra/docs/runbooks/platform-recovery.md`).
