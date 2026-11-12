@@ -45,7 +45,7 @@ describe('AuthProbeFeedback', () => {
     expect(screen.getByText(/go back to step 3 and answer yes/i)).toBeTruthy()
   })
 
-  it('shows one plain warning on a failed cookie test, without renewal or diagnostics', () => {
+  it('shows one plain warning on a failed cookie test, without diagnostics', () => {
     render(
       <AuthProbeFeedback
         result={{
@@ -53,46 +53,12 @@ describe('AuthProbeFeedback', () => {
           match_reasons: ['login_gate_still_present_with_cookies'],
           word_count: 10,
           auth_guard: null,
-          renewal: { can_renew: false, reason: 'no_cookies_for:idp.example.com' },
         }}
       />,
     )
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(screen.getByText(/still logged out with these cookies/i)).toBeTruthy()
-    expect(document.body.textContent).not.toMatch(/login_gate_still_present|no_cookies_for|Detected/)
-  })
-
-  it('names the sign-in host and never the code when logging in works but renewal does not', () => {
-    render(
-      <AuthProbeFeedback
-        result={{
-          classification: 'auth_ok',
-          match_reasons: [],
-          word_count: 300,
-          auth_guard: null,
-          renewal: { can_renew: false, reason: 'no_cookies_for:idp.example.com' },
-        }}
-      />,
-    )
-    expect(screen.getByText(/Logging in works now/)).toBeTruthy()
-    expect(screen.getByText(/cookies of idp\.example\.com/)).toBeTruthy()
-    expect(document.body.textContent).not.toContain('no_cookies_for')
-  })
-
-  it('shows one generic sentence for an unknown renewal reason', () => {
-    render(
-      <AuthProbeFeedback
-        result={{
-          classification: 'auth_ok',
-          match_reasons: [],
-          word_count: 300,
-          auth_guard: null,
-          renewal: { can_renew: false, reason: 'something_new:example.org' },
-        }}
-      />,
-    )
-    expect(screen.getByText(/could not sign in again on this site by itself/)).toBeTruthy()
-    expect(document.body.textContent).not.toContain('something_new')
+    expect(document.body.textContent).not.toMatch(/login_gate_still_present|Detected/)
   })
 
   it('shows credentials rejected message on 401/403', () => {

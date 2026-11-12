@@ -31,12 +31,7 @@ vi.mock('@tanstack/react-router', async () => {
 const apiFetchMock = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/apiFetch', async () => {
   const actual = await vi.importActual<typeof import('@/lib/apiFetch')>('@/lib/apiFetch')
-  // The sign-in host check runs when the auth step opens; it is not what these tests script.
-  return {
-    ...actual,
-    apiFetch: (...args: unknown[]) =>
-      String(args[0]).endsWith('/auth-chain') ? Promise.resolve({ hosts: [] }) : apiFetchMock(...args),
-  }
+  return { ...actual, apiFetch: (...args: unknown[]) => apiFetchMock(...args) }
 })
 
 vi.mock('@/lib/auth', () => ({
@@ -275,7 +270,6 @@ describe('edit connector wizard characterization', () => {
     )
     expect(JSON.parse((authCall?.[1] as RequestInit).body as string)).toEqual({
       url: 'https://docs.example.com/guide/',
-      auth_chain_hosts: [],
       cookies: null,
       connector_id: 'connector-1',
       use_saved_credentials: true,
@@ -312,7 +306,6 @@ describe('edit connector wizard characterization', () => {
     // expired cookie silently deleted the other.
     expect(JSON.parse((authCall?.[1] as RequestInit).body as string)).toEqual({
       url: 'https://docs.example.com/guide/',
-      auth_chain_hosts: [],
       cookies: [
         {
           name: 'sessionid',

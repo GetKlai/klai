@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { KeyRound, Loader2 } from 'lucide-react'
 import { CookieHostPaste } from '@/components/knowledge/CookieHostPaste'
 import { CookieRowsInput } from '@/components/knowledge/CookieRowsInput'
@@ -7,9 +6,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import type { CookieRow } from '../$kbSlug/-kb-types'
-import { AuthProbeFeedback, renewalHost } from '../-connector-feedback'
+import { AuthProbeFeedback } from '../-connector-feedback'
 import type { AuthGuardSuggestion, AuthProbeResult } from '../-connector-types'
-import { buildCrawlerCookies, detectAuthChainHosts, type CrawlerAuthPayload } from './api'
+import { buildCrawlerCookies, type CrawlerAuthPayload } from './api'
 import { hostOf, isManualRow } from './cookieHosts'
 
 type CookieSetupMode = {
@@ -45,11 +44,7 @@ export function isSameOrigin(a: string, b: string): boolean {
 }
 
 type CrawlerAuthSetupStepProps = {
-  kbSlug: string
   baseUrl: string
-  /** Hosts the site signs in through besides the base host; each gets its own cookies. */
-  authChainHosts: string[]
-  onAuthChainHostsDetected: (hosts: string[]) => void
   testUrl: string
   onTestUrlChange: (url: string) => void
   mode: CookieSetupMode | SavedSetupMode
@@ -62,10 +57,7 @@ type CrawlerAuthSetupStepProps = {
 }
 
 export function CrawlerAuthSetupStep({
-  kbSlug,
   baseUrl,
-  authChainHosts,
-  onAuthChainHostsDetected,
   testUrl,
   onTestUrlChange,
   mode,
@@ -77,38 +69,6 @@ export function CrawlerAuthSetupStep({
   onBack,
 }: CrawlerAuthSetupStepProps) {
   const baseHost = hostOf(baseUrl)
-  const [chainCheckFailed, setChainCheckFailed] = useState(false)
-  useEffect(() => {
-    if (!baseUrl.startsWith('https://')) return
-    let stale = false
-    setChainCheckFailed(false)
-    detectAuthChainHosts(kbSlug, baseUrl).then(
-      (hosts) => {
-        if (!stale) onAuthChainHostsDetected(hosts)
-      },
-      () => {
-        if (!stale) setChainCheckFailed(true)
-      },
-    )
-    return () => {
-      stale = true
-    }
-    // The callback is a fresh closure on every render of the page; running on
-    // it would re-check on each keystroke. The check depends on the site only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kbSlug, baseUrl])
-
-  // The test can name a sign-in host the earlier check did not find; the
-  // warning tells the user to paste that host's cookies, so its block must exist.
-  const hostFromTest = result?.renewal?.can_renew === false ? renewalHost(result.renewal.reason) : null
-  useEffect(() => {
-    if (hostFromTest && !authChainHosts.includes(hostFromTest)) {
-      onAuthChainHostsDetected([...authChainHosts, hostFromTest])
-    }
-    // Same reasoning as the check above: the callback is a fresh closure per render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostFromTest, authChainHosts])
-
   const hasSavedCredentials = mode.kind === 'saved' || mode.savedCredentials !== undefined
   const allRowsRemoved =
     mode.kind === 'cookies' &&
@@ -167,7 +127,7 @@ export function CrawlerAuthSetupStep({
                 size="sm"
                 variant="outline"
                 disabled={isPending || !baseUrl || testUrlCrossOrigin}
-                onClick={() => onProbe({ use_saved_credentials: true, auth_chain_hosts: authChainHosts })}
+                onClick={() => onProbe({ use_saved_credentials: true })}
               >
                 {isPending ? (
                   <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_auth_testing()}</>
@@ -187,50 +147,15 @@ export function CrawlerAuthSetupStep({
           <>
             <CookieRowsInput
               idPrefix={mode.idPrefix}
-              value={mode.rows.filter((row) => isManualRow(row, baseHost, authChainHosts))}
-              onChange={(manual) =>
-                mode.onChange([
-                  ...manual,
-                  ...mode.rows.filter((row) => !isManualRow(row, baseHost, authChainHosts)),
-                ])
-              }
+              value={mode.rows.filter(isManualRow)}
+              onChange={(manual) => mode.onChange([...manual, ...mode.rows.filter((row) => !isManualRow(row))])}
             />
             <CookieHostPaste
               host={baseHost}
-              baseHost={baseHost}
-              chainHosts={authChainHosts}
               rows={mode.rows}
               onChange={mode.onChange}
               idPrefix={`${mode.idPrefix}-${baseHost}`}
             />
-            {/* Always shown for a detected sign-in host. The site's own cookies
-                pass the test on the day they are pasted, so a box that only
-                appeared after a failed test was never filled in, and without
-                these cookies Klai cannot sign in again once the site ends its
-                session. */}
-            {authChainHosts.map((host) => (
-              <div key={host} className="space-y-2 border-t border-gray-200 pt-3">
-                <p className="text-sm font-medium text-gray-900">
-                  {m.admin_connectors_webcrawler_cookies_chain_title({ host })}
-                </p>
-                <p className="text-xs text-gray-600">
-                  {m.admin_connectors_webcrawler_cookies_chain_help({ host })}
-                </p>
-                <CookieHostPaste
-                  host={host}
-                  baseHost={baseHost}
-                  chainHosts={authChainHosts}
-                  rows={mode.rows}
-                  onChange={mode.onChange}
-                  idPrefix={`${mode.idPrefix}-${host}`}
-                />
-              </div>
-            ))}
-            {chainCheckFailed && (
-              <p className="text-xs text-[var(--color-destructive)]">
-                {m.admin_connectors_webcrawler_cookies_chain_failed()}
-              </p>
-            )}
             {mode.savedCredentials?.hasPrefilledNames && !allRowsRemoved && (
               <p className="text-xs text-gray-600">
                 {m.admin_connectors_webcrawler_auth_prefilled_hint()}
@@ -250,9 +175,7 @@ export function CrawlerAuthSetupStep({
               size="sm"
               variant="outline"
               disabled={isPending || !baseUrl || testUrlCrossOrigin}
-              onClick={() =>
-                onProbe({ cookies: buildCrawlerCookies(mode.rows, baseUrl), auth_chain_hosts: authChainHosts })
-              }
+              onClick={() => onProbe({ cookies: buildCrawlerCookies(mode.rows, baseUrl) })}
             >
               {isPending ? (
                 <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />{m.admin_connectors_webcrawler_auth_testing()}</>
@@ -265,7 +188,7 @@ export function CrawlerAuthSetupStep({
       </div>
 
       {error && <p className="text-sm text-[var(--color-destructive)]">{error}</p>}
-      {result && <AuthProbeFeedback result={result} savedMode={mode.kind === 'saved'} />}
+      {result && <AuthProbeFeedback result={result} />}
 
       <div className="flex gap-2 pt-1">
         <Button

@@ -1,19 +1,17 @@
-"""Cookies per sign-in host for web_crawler connectors.
+"""Cookie domains for web_crawler connectors.
 
-A site that signs in through a second host (SSO/OAuth) needs that host's
-cookies too. A cookie may only name the base host or a configured sign-in
-host, and no response may carry a cookie value.
+A cookie may only name a domain that covers the base host, and no response
+may carry a cookie value.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 from klai_image_storage.url_guard import _reset_dns_cache
 
-from app.api.app_knowledge_bases import AuthChainRequest, AuthProbeRequest, auth_chain, auth_probe
 from app.api.connectors import (
     ConnectorCredentialMetadataOut,
     _cookie_identities_from_credentials,
@@ -30,11 +28,8 @@ def _stub_dns_resolver():
         yield
 
 
-def _config(*cookies: dict, hosts: list[str] | None = None) -> dict:
-    config: dict = {"base_url": "https://app.example.com", "cookies": list(cookies)}
-    if hosts is not None:
-        config["auth_chain_hosts"] = hosts
-    return config
+def _config(*cookies: dict) -> dict:
+    return {"base_url": "https://app.example.com", "cookies": list(cookies)}
 
 
 def _idp_cookie() -> dict:
@@ -54,25 +49,13 @@ def test_a_cookie_for_the_base_host_is_stored_as_json() -> None:
     assert (stored["secure"], stored["httpOnly"], stored["path"]) == (True, False, "/")
 
 
-def test_a_cookie_for_a_sign_in_host_is_accepted_and_stored_as_json() -> None:
-    validated = _validate_connector_config("web_crawler", _config(_idp_cookie(), hosts=["IDP.example.com"]))
-    assert validated["auth_chain_hosts"] == ["idp.example.com"]
-    assert validated["cookies"][0]["domain"] == "idp.example.com"
-
-
-def test_a_sign_in_host_must_be_a_host_name() -> None:
-    with pytest.raises(HTTPException) as excinfo:
-        _validate_connector_config("web_crawler", _config(hosts=["idp.example.com/oauth"]))
-    assert excinfo.value.status_code == 422
-
-
-def test_a_sign_in_host_on_a_private_address_is_rejected() -> None:
-    with (
-        patch("klai_image_storage.url_guard._resolve_blocking", return_value=("10.0.0.5",)),
-        pytest.raises(HTTPException) as excinfo,
-    ):
-        _validate_connector_config("web_crawler", _config(hosts=["idp.example.com"]))
-    assert excinfo.value.status_code == 422
+def test_a_stored_config_with_sign_in_hosts_still_validates_and_drops_them() -> None:
+    validated = _validate_connector_config(
+        "web_crawler",
+        {**_config({**_idp_cookie(), "domain": "app.example.com"}), "auth_chain_hosts": ["idp.example.com"]},
+    )
+    assert "auth_chain_hosts" not in validated
+    assert validated["cookies"][0]["domain"] == "app.example.com"
 
 
 def test_a_cookie_for_another_host_is_rejected_with_422() -> None:
@@ -115,65 +98,3 @@ def test_saved_cookie_metadata_never_carries_a_value() -> None:
     out = ConnectorCredentialMetadataOut(cookies=_cookie_identities_from_credentials(credentials))
     assert out.cookies[0].domain == "idp.example.com"
     assert _SECRET not in out.model_dump_json()
-
-
-@pytest.mark.asyncio
-async def test_auth_chain_route_returns_the_hosts_knowledge_ingest_found() -> None:
-    perms = MagicMock(org_id=8)
-    org = MagicMock(zitadel_org_id="org-1")
-    with (
-        patch("app.api.app_knowledge_bases._get_kb_or_404", new=AsyncMock()),
-        patch("app.api.app_knowledge_bases.require_connector_manage_access", new=AsyncMock()),
-        patch("app.api.app_knowledge_bases._load_org_or_500", new=AsyncMock(return_value=org)),
-        patch(
-            "app.api.app_knowledge_bases.knowledge_ingest_client.auth_chain",
-            new=AsyncMock(return_value=["idp.example.com"]),
-        ) as call,
-    ):
-        result = await auth_chain("kb", AuthChainRequest(url="https://app.example.com"), perms, MagicMock())
-    assert result.hosts == ["idp.example.com"]
-    call.assert_awaited_once_with(url="https://app.example.com", org_id="org-1")
-
-
-@pytest.mark.asyncio
-async def test_auth_chain_route_fails_loudly_when_knowledge_ingest_is_down() -> None:
-    with (
-        patch("app.api.app_knowledge_bases._get_kb_or_404", new=AsyncMock()),
-        patch("app.api.app_knowledge_bases.require_connector_manage_access", new=AsyncMock()),
-        patch("app.api.app_knowledge_bases._load_org_or_500", new=AsyncMock(return_value=MagicMock())),
-        patch(
-            "app.api.app_knowledge_bases.knowledge_ingest_client.auth_chain",
-            new=AsyncMock(side_effect=RuntimeError("down")),
-        ),
-        pytest.raises(HTTPException) as excinfo,
-    ):
-        await auth_chain("kb", AuthChainRequest(url="https://app.example.com"), MagicMock(org_id=8), MagicMock())
-    assert excinfo.value.status_code == 502
-
-
-@pytest.mark.asyncio
-async def test_auth_probe_asks_knowledge_ingest_to_prove_renewal_and_returns_its_verdict() -> None:
-    org = MagicMock(zitadel_org_id="org-1")
-    verdict = {
-        "classification": "auth_ok",
-        "word_count": 300,
-        "renewal": {"can_renew": False, "reason": "no_cookies_for:idp.example.com"},
-    }
-    cookies = [{"name": "sid", "value": _SECRET, "domain": "app.example.com"}]
-    with (
-        patch("app.api.app_knowledge_bases._get_kb_or_404", new=AsyncMock()),
-        patch("app.api.app_knowledge_bases.require_connector_manage_access", new=AsyncMock()),
-        patch("app.api.app_knowledge_bases._load_org_or_500", new=AsyncMock(return_value=org)),
-        patch(
-            "app.api.app_knowledge_bases.knowledge_ingest_client.auth_probe",
-            new=AsyncMock(return_value=verdict),
-        ) as call,
-    ):
-        result = await auth_probe(
-            "kb",
-            AuthProbeRequest(url="https://app.example.com/page", cookies=cookies, auth_chain_hosts=["idp.example.com"]),
-            MagicMock(org_id=8),
-            MagicMock(),
-        )
-    assert call.await_args.kwargs["auth_chain_hosts"] == ["idp.example.com"]
-    assert result.renewal == {"can_renew": False, "reason": "no_cookies_for:idp.example.com"}

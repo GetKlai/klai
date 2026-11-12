@@ -5,7 +5,6 @@ import {
   CookieJsonError,
   cookieCoversHost,
   isManualRow,
-  ownerHost,
   parseCookieEditorJson,
 } from '../-connector-shared/cookieHosts'
 
@@ -53,12 +52,6 @@ describe('parseCookieEditorJson', () => {
 
 describe('cookie ownership', () => {
   const rows = parseCookieEditorJson(EXPORT, 'app.example.com')
-  const chain = ['idp.example.com']
-
-  it('puts a cookie on the sign-in host it names, and a parent-domain cookie on the base host', () => {
-    expect(ownerHost(rows[0], 'app.example.com', chain)).toBe('idp.example.com')
-    expect(ownerHost(rows[1], 'app.example.com', chain)).toBe('app.example.com')
-  })
 
   it('covers subdomains only with a leading dot, as the crawler does', () => {
     expect(cookieCoversHost('example.com', 'app.example.com')).toBe(false)
@@ -66,10 +59,9 @@ describe('cookie ownership', () => {
     expect(cookieCoversHost('app.example.com', 'app.example.com')).toBe(true)
   })
 
-  it('keeps hand-typed rows as the name/value inputs of the base host', () => {
-    expect(isManualRow({ name: 'a', value: '' }, 'app.example.com', chain)).toBe(true)
-    expect(isManualRow(rows[1], 'app.example.com', chain)).toBe(false)
-    expect(isManualRow({ name: 'saved', value: '', domain: 'idp.example.com' }, 'app.example.com', chain)).toBe(false)
+  it('keeps hand-typed rows as the name/value inputs', () => {
+    expect(isManualRow({ name: 'a', value: '' })).toBe(true)
+    expect(isManualRow(rows[1])).toBe(false)
   })
 })
 
