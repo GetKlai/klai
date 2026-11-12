@@ -84,9 +84,15 @@ async def _ingest(req: IngestRequest, active: dict) -> tuple[dict, AsyncMock, As
 async def test_shrunken_version_from_a_crawl_is_held_on_first_sight() -> None:
     before = int(time.time())
 
-    with capture_logs() as logs:
+    with (
+        capture_logs() as logs,
+        patch("knowledge_ingest.derived_state.set_product_state", AsyncMock()) as states,
+        patch("knowledge_ingest.routes.ingest.set_product_state", states),
+    ):
         result, create, extra_patch, bulk_task = await _ingest(_connector_request(), _active())
 
+    # The stored version keeps its product states exactly as they were.
+    states.assert_not_awaited()
     assert result["status"] == "held"
     assert result["reason"] == "shrunken_version_held"
     create.assert_not_awaited()
@@ -104,11 +110,23 @@ async def test_shrunken_version_from_a_crawl_is_held_on_first_sight() -> None:
 async def test_held_version_seen_again_after_twelve_hours_replaces_the_stored_one() -> None:
     held = {"content_hash": _hash(_SHRUNK), "first_seen": int(time.time()) - _TWELVE_HOURS}
 
-    with capture_logs() as logs:
-        result, create, _, _ = await _ingest(_connector_request(), _active(held))
+    with (
+        capture_logs() as logs,
+        patch("knowledge_ingest.derived_state.set_product_state", AsyncMock()) as states,
+        patch("knowledge_ingest.routes.ingest.set_product_state", states),
+    ):
+        result, create, _, bulk_task = await _ingest(_connector_request(), _active(held))
 
     assert result["status"] == "ok"
     create.assert_awaited_once()
+    # The accepted version is a new version: its own states, its own queued work.
+    assert [c.args[1:] for c in states.await_args_list] == [
+        ("new-artifact", "enrichment", "pending"),
+        ("new-artifact", "graph", "not_applicable", "graph_disabled"),
+    ]
+    bulk_task.configure.return_value.defer_async.assert_awaited_once_with(
+        artifact_id="new-artifact"
+    )
     assert "ingest_shrunken_version_accepted" in [e["event"] for e in logs]
 
 
