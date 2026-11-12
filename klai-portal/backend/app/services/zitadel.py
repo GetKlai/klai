@@ -203,6 +203,18 @@ class ZitadelClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_user_v2(self, user_id: str) -> dict:
+        """``GET /v2/users/{id}``: the user in any organisation of the instance.
+
+        The management read above is scoped to the service account's own
+        organisation and answers 404 for a user of another one (seen on the
+        pinned image in the login contract), so a 404 here means the user is
+        gone, not that it lives elsewhere.
+        """
+        resp = await self._http.get(f"/v2/users/{user_id}")
+        resp.raise_for_status()
+        return resp.json()
+
     # ── Role assignment ───────────────────────────────────────────────────────
 
     async def grant_user_role(self, org_id: str, user_id: str, role: str) -> None:

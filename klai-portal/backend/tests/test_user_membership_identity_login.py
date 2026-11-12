@@ -60,7 +60,7 @@ class FakeZitadel:
         if request.method == "POST" and path == f"/v2/users/{USER_ID}/invite_code":
             self.calls.append("invite_code")
             return httpx.Response(200, json={})
-        if request.method == "GET" and path == f"/management/v1/users/{USER_ID}":
+        if request.method == "GET" and path == f"/v2/users/{USER_ID}":
             return httpx.Response(200, json={"user": {"id": USER_ID, "state": self.state}})
         if request.method == "POST" and path == f"/management/v1/users/{USER_ID}/_deactivate":
             self.calls.append("_deactivate")

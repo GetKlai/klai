@@ -46,7 +46,7 @@ def _extract_zitadel_user_state(user_response: dict) -> str:
 async def _identity_state(zitadel_user_id: str) -> str | None:
     """The identity's Zitadel state, or None when Zitadel no longer has the user."""
     try:
-        return _extract_zitadel_user_state(await zitadel.get_user_by_id(zitadel_user_id))
+        return _extract_zitadel_user_state(await zitadel.get_user_v2(zitadel_user_id))
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code != 404:
             raise
