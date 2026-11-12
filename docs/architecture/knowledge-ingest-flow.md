@@ -744,8 +744,10 @@ module (`klai-knowledge-ingest/knowledge_ingest/operations.py`):
 - **One write run per knowledge base** (`kb_operation`): a Postgres advisory
   lock `kb-operation:<org>:<kb>` held for the run; a second run on the same key
   is refused with `OperationBusy`. A run without a single knowledge base holds
-  `<org>:*` (every org: `*:*`); keys of different width do not exclude each
-  other, only runs of the same width do. A dry run takes no lock.
+  `<org>:*` (every org: `*:*`). A run holds its own key exclusively and the
+  wider keys shared, so a run on one knowledge base and a run on its org or on
+  every org exclude each other, while runs on different knowledge bases go
+  side by side. A dry run takes no lock.
 
 ### 5.1 `rebuild_kb`
 
@@ -781,7 +783,7 @@ product rule does not need a rebuild: use `kb_patch`. Procedure:
 | `reextract_document_graph` | `python -m scripts.reextract_document_graph --org --artifact [--execute]` in a knowledge-ingest container (`klai-knowledge-ingest/scripts/reextract_document_graph.py:24-28`) | repairs one document whose finished graph extraction lost episodes: keeps the surviving episode ids, marks the extraction not complete with version 0 and queues the normal graph job as a user-requested refresh, without the daily cap or cool-off (`:97-117`; `graph_refresh.py:61-62`) | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org; refuses (exit 2) a document that is not found, not active, not finished, has no missing episode or no stored `document_text` (`:55-90`); when no job is queued the row is written back exactly as it was and the command exits 1 (`:123-134`); nothing runs it automatically |
 | graph `backfill` | `python -m knowledge_ingest.backfill --org-id [--kb-slug] [--limit] [--force] [--execute]` | builds graph episodes for existing artifacts (`backfill.py:1-30`) | dry run by default (counts, and the size estimate with its refusal); `--execute` needs `INGEST_OK=1`; lock per listed knowledge base, or per org |
 | `backfill_crawl_source_identity` | `--apply` | fills `source_domain` and `source_label` | dry run unless `--apply`; `--apply` needs `INGEST_OK=1`; one lock for all orgs |
-| login-wall backfill and recover | `python -m knowledge_ingest.backfill_tasks --org\|--org-id --kb [--recover] [--execute]`; the tasks `backfill_detect_login_walls_task` and `recover_purged_pages_task` (no caller in the service) | scan crawled pages and purge login stubs, or un-purge them | dry run by default (counts; the SimHash cache column is still filled); `--execute` and the tasks need `INGEST_OK=1`; lock per knowledge base, which does not exclude a crawl |
+| login-wall backfill and recover | `python -m knowledge_ingest.backfill_tasks --org\|--org-id --kb [--recover] [--execute]`; the tasks `backfill_detect_login_walls_task` and `recover_purged_pages_task` (no caller in the service) | scan crawled pages and purge login stubs, or un-purge them | dry run by default (counts, writes nothing); `--execute` and the tasks need `INGEST_OK=1`; lock per knowledge base, which does not exclude a crawl |
 | `purge_deleted_documents`, `prune_stale_graph` | see the delete section | | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org |
 | `backfill_document_titles`, `backfill_entity_names`, `backfill_episode_document_names`, `backfill_graphiti_episode_ids` | `python -m scripts.<name> --org-id [--kb-slug] [--execute]` | one-time repairs of titles, entity names, episode names and episode ids | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org (per knowledge base for `backfill_entity_names --kb-slug`) |
 | `backfill_docling_parent_chunks` | `python -m scripts.backfill_docling_parent_chunks [--execute]` | adds the missing `parent_chunks` rows of Docling uploads, every org | dry run by default (counts the artifacts); `--execute` needs `INGEST_OK=1`; one lock for all orgs |

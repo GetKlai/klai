@@ -118,12 +118,14 @@ async def _ensure_simhashes(
     *,
     org_id: str,
     kb_slug: str,
+    persist: bool,
 ) -> dict[str, int]:
-    """Compute + persist SimHash for any row missing one; return url→hash map.
+    """Compute SimHash for any row missing one; return url→hash map.
 
     Existing fingerprints are reused; missing ones are computed from
-    ``raw_markdown`` and written via the standard helper so the path matches
-    crawler ingest. Returned map covers every row (including those already
+    ``raw_markdown`` and, with ``persist``, written via the standard helper so
+    the path matches crawler ingest. A preview passes ``persist=False`` and
+    writes nothing. Returned map covers every row (including those already
     populated) for the cluster scan in pass 2.
     """
     url_to_hash: dict[str, int] = {}
@@ -134,7 +136,7 @@ async def _ensure_simhashes(
             # 0 is the empty-content sentinel; do not persist it (would let
             # rendered-but-empty crawl results falsely cluster). Match the
             # crawler's ingest-time behaviour and leave the column NULL.
-            if sh != 0:
+            if sh != 0 and persist:
                 await pg_store.update_crawled_page_simhash(
                     conn,
                     org_id=org_id,
@@ -161,9 +163,9 @@ async def backfill_detect_login_walls(
 ) -> dict[str, int]:
     """Detect + purge wall clusters in ``(org_id, kb_slug)``.
 
-    Without ``execute`` it only counts what would be flagged (the SimHash cache
-    column is still filled); with it the run needs ``INGEST_OK=1`` and holds
-    the knowledge base's operation lock.
+    Without ``execute`` it only counts what would be flagged and writes
+    nothing; with it the run needs ``INGEST_OK=1`` and holds the knowledge
+    base's operation lock.
 
     Returns ``{"processed": N, "flagged": M, "qdrant_deleted": K}``.
     ``processed`` excludes rows already at the placeholder hash (SQL-level
@@ -211,7 +213,9 @@ async def backfill_detect_login_walls(
         )
 
         # Pass 1: ensure every row has a SimHash (Phase D, plan.md item 1).
-        url_to_hash = await _ensure_simhashes(conn, list(rows), org_id=org_id, kb_slug=kb_slug)
+        url_to_hash = await _ensure_simhashes(
+            conn, list(rows), org_id=org_id, kb_slug=kb_slug, persist=execute
+        )
 
         # Pass 2: cluster eval in-memory (single O(N^2) scan, no extra SQL).
         processed = len(rows)
@@ -334,7 +338,9 @@ async def recover_purged_pages(
             kb_slug,
         )
 
-        url_to_hash = await _ensure_simhashes(conn, list(rows), org_id=org_id, kb_slug=kb_slug)
+        url_to_hash = await _ensure_simhashes(
+            conn, list(rows), org_id=org_id, kb_slug=kb_slug, persist=execute
+        )
 
         processed = 0
         recovered = 0

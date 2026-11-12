@@ -89,6 +89,71 @@ async def test_the_lock_is_released_when_the_operation_ends():
     assert "pg_advisory_unlock" in conn.execute.await_args.args[0]
 
 
+class _AdvisoryLocks:
+    """Postgres advisory-lock rules: shared holders coexist, an exclusive one is alone."""
+
+    def __init__(self):
+        self.held: dict[str, list[bool]] = {}
+
+    def pool(self):
+        async def try_lock(sql, key):
+            shared = "_shared" in sql
+            holders = self.held.setdefault(key, [])
+            if holders and not (shared and all(holders)):
+                return False
+            holders.append(shared)
+            return True
+
+        async def unlock(sql, key):
+            self.held[key].remove("_shared" in sql)
+
+        conn = MagicMock()
+        conn.fetchval = try_lock
+        conn.execute = unlock
+        pool = MagicMock()
+        pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+        pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+        return pool
+
+
+ONE_KB = ("org-1", ["kb-1"])
+WHOLE_ORG = ("org-1", None)
+ALL_ORGS = (None, None)
+
+
+@pytest.mark.parametrize(
+    ("running", "starting"),
+    [
+        (ONE_KB, ONE_KB),
+        (ONE_KB, WHOLE_ORG),
+        (WHOLE_ORG, ONE_KB),
+        (ONE_KB, ALL_ORGS),
+        (ALL_ORGS, WHOLE_ORG),
+    ],
+)
+async def test_two_runs_that_reach_the_same_knowledge_base_exclude_each_other(running, starting):
+    locks = _AdvisoryLocks()
+    with patch.object(operations, "get_pool", AsyncMock(side_effect=lambda: locks.pool())):
+        async with operations.kb_operation(*running, execute=True):
+            with pytest.raises(operations.OperationBusy):
+                async with operations.kb_operation(*starting, execute=True):
+                    raise AssertionError("must not start")
+        # The refused run left nothing behind, and the finished one released everything.
+        assert not any(locks.held.values())
+
+
+async def test_runs_on_different_knowledge_bases_go_side_by_side():
+    locks = _AdvisoryLocks()
+    with patch.object(operations, "get_pool", AsyncMock(side_effect=lambda: locks.pool())):
+        async with (
+            operations.kb_operation("org-1", ["kb-1"], execute=True),
+            operations.kb_operation("org-1", ["kb-2"], execute=True),
+            operations.kb_operation("org-2", None, execute=True),
+        ):
+            pass
+    assert not any(locks.held.values())
+
+
 async def test_a_preview_takes_no_lock():
     with patch.object(operations, "get_pool", AsyncMock(side_effect=AssertionError)):
         async with operations.kb_operation("org-1", ["kb-1"], execute=False):

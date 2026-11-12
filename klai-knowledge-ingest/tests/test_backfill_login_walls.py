@@ -159,16 +159,20 @@ class TestBackfillCluster:
         assert qdrant.delete.await_count == 6
 
     @pytest.mark.asyncio()
-    async def test_a_preview_reports_the_walled_pages_and_removes_nothing(
+    async def test_a_preview_reports_the_walled_pages_and_writes_nothing(
         self, patched_externals
     ) -> None:
-        _conn, qdrant, set_rows = patched_externals
+        conn, qdrant, set_rows = patched_externals
         set_rows(_walled_cluster(6))
 
         result = await backfill_detect_login_walls(org_id="100000000000000002", kb_slug="support")
 
         assert result == {"processed": 6, "flagged": 6, "qdrant_deleted": 0}
         qdrant.delete.assert_not_called()
+        # The rows start without a stored fingerprint; a preview computes it
+        # in memory and leaves the column alone.
+        conn.fetchval.assert_not_called()
+        conn.execute.assert_not_called()
 
     @pytest.mark.asyncio()
     async def test_at_threshold_minus_one_not_flagged(self, patched_externals) -> None:
