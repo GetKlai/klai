@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -20,6 +21,53 @@ async def _crawl_db_connection(org_id: str) -> AsyncIterator[Any]:
     async with _crawl_db_connection_slots:
         async with tenant_scoped_connection(org_id) as conn:
             yield conn
+
+
+async def preflight_session(
+    *,
+    job_id: str,
+    org_id: str,
+    connector_id: str,
+    url: str,
+    auth_chain_hosts: list[str] | None,
+) -> bool:
+    """Check the saved session right before a crawl, and sign it in again when it lapsed.
+
+    The nightly crawl must not depend on the keep-alive having caught the
+    lapse first. Returns False, after failing the still-pending job with the
+    ``login_required:<reason>`` error, when the session is gone and signing in
+    again did not work; the sync run then shows the one "log in again" state
+    and no page is fetched or written. Any other verdict (a connector without
+    cookies, a site that did not answer) lets the crawl run: a crawl that
+    meets a login wall with saved cookies writes nothing (run_crawl_job).
+    """
+    from knowledge_ingest.routes.crawl_sync import keep_session
+
+    # Only a job nobody started yet is checked: the task is retried every few
+    # seconds while another execution holds the job (CrawlExecutionBusy), and
+    # each check costs the site several requests.
+    async with _crawl_db_connection(org_id) as conn:
+        status = await conn.fetchval("SELECT status FROM knowledge.crawl_jobs WHERE id=$1", job_id)
+    if status != "pending":
+        return True
+    verdict = await keep_session(
+        connector_id=uuid.UUID(connector_id),
+        org_id=org_id,
+        url=url,
+        auth_chain_hosts=auth_chain_hosts or [],
+    )
+    if not verdict.login_required:
+        return True
+    async with _crawl_db_connection(org_id) as conn:
+        command = await conn.execute(
+            "UPDATE knowledge.crawl_jobs SET status='failed', error=$2,"
+            " updated_at=extract(epoch FROM now())::bigint"
+            " WHERE id=$1 AND status='pending'",
+            job_id,
+            verdict.reason,
+        )
+    # A job another execution claimed in the meantime is left to it.
+    return command == "UPDATE 0"
 
 
 def register_crawl_tasks(procrastinate_app: Any) -> None:
@@ -59,12 +107,21 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         canary_url: str | None = None,
         canary_fingerprint: str | None = None,
         discovery_seed_url: str | None = None,
+        auth_chain_hosts: list[str] | None = None,
     ) -> None:
+        if connector_id and not await preflight_session(
+            job_id=job_id,
+            org_id=org_id,
+            connector_id=connector_id,
+            # The page the keep-alive probes, so both judge the same session.
+            url=canary_url or discovery_seed_url or start_url,
+            auth_chain_hosts=auth_chain_hosts,
+        ):
+            return
+
         # REQ-05.4: decrypt cookies at task run-time, not at enqueue-time,
         # so Procrastinate's ``procrastinate_jobs.args`` column and the
         # worker's "Starting job" log line never hold plaintext cookies.
-        import uuid as _uuid
-
         cookies: list[dict] = []
         if connector_id:
             from knowledge_ingest.config import settings
@@ -73,7 +130,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
 
             pool = await get_pool()
             cookies = await load_connector_cookies(
-                connector_id=_uuid.UUID(connector_id),
+                connector_id=uuid.UUID(connector_id),
                 expected_zitadel_org_id=org_id,
                 pool=pool,
                 kek_hex=settings.encryption_key,

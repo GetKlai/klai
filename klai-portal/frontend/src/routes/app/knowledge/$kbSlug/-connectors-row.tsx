@@ -129,6 +129,17 @@ export function ConnectorRow({
             )}
           </div>
         )}
+        {/* A website whose login Klai could not renew: the owner logs in again
+            and pastes fresh cookies on the edit page. */}
+        {isOwner
+          && connector.last_sync_status?.toUpperCase() === 'AUTH_ERROR'
+          && connector.connector_type === 'web_crawler' && (
+          <div className="mt-1.5">
+            <Button size="sm" variant="outline" onClick={() => onEdit(connector.id)} className="h-7 text-xs">
+              {m.admin_connectors_relogin_action()}
+            </Button>
+          </div>
+        )}
         {connector.last_sync_documents_ok != null && connector.last_sync_documents_ok > 0 && (
           <p className="mt-0.5 text-xs text-gray-600 tabular-nums">
             {connector.last_sync_documents_ok.toLocaleString()} {m.connectors_documents_indexed()}

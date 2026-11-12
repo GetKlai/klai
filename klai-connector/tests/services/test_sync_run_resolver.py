@@ -280,6 +280,28 @@ class TestResolveTerminalFailed:
         portal.report_sync_status.assert_awaited_once()
         assert snap.status == SyncStatus.FAILED
 
+    @pytest.mark.asyncio
+    async def test_a_login_that_could_not_be_renewed_asks_the_owner_to_log_in_again(self) -> None:
+        resolver, _, _, portal = _make_resolver(
+            status_responses=[
+                {
+                    "job_id": "abc123",
+                    "status": "failed",
+                    "pages_done": 0,
+                    "pages_total": None,
+                    "error": "login_required:sign_in_required_at:login.example.org",
+                },
+            ],
+        )
+        row = _row()
+        _register(resolver, row)
+
+        await resolver.resolve(row)
+
+        assert row.status == SyncStatus.AUTH_ERROR
+        assert row.error_details[0]["error"] == "login_required:sign_in_required_at:login.example.org"
+        assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.AUTH_ERROR
+
 
 class TestResolveUpstreamUnreachable:
     """AC-04.4: knowledge-ingest down -> degraded snapshot, no DB write."""

@@ -334,6 +334,7 @@ class CrawlSyncClient:
             "canary_fingerprint": config.get("canary_fingerprint"),
             "login_indicator": config.get("login_indicator_selector"),
             "discovery_seed_url": config.get("discovery_seed_url"),
+            "auth_chain_hosts": list(config.get("auth_chain_hosts") or []),
         }
         resp = await self._client.post(
             "/ingest/v1/crawl/sync",
@@ -359,7 +360,9 @@ class CrawlSyncClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def crawl_keepalive(self, *, connector_id: str, org_id: str, url: str) -> dict[str, bool | str | None]:
+    async def crawl_keepalive(
+        self, *, connector_id: str, org_id: str, url: str, auth_chain_hosts: list[str]
+    ) -> dict[str, bool | str | None]:
         """Touch a connector's stored session via POST /ingest/v1/crawl/keep-alive.
 
         Best-effort liveness ping — the endpoint itself always returns 200 with
@@ -368,16 +371,26 @@ class CrawlSyncClient:
         transport/server failures (network error, knowledge-ingest itself
         down), not "session expired".
 
+        ``auth_chain_hosts`` are the hosts the site signs in through: their
+        sessions are kept alive too, and a lapsed site session is signed in
+        again through them.
+
         Returns:
-            The raw JSON body — {"ok": bool, "reason": str | None}. ``reason``
-            is set whenever ``ok`` is False (e.g. "redirect_to_login",
-            "no_saved_credentials") so callers can log something actionable.
+            The raw JSON body — {"ok", "reason", "login_required", "reminted"}.
+            ``reason`` is set whenever ``ok`` is False (e.g.
+            "login_required:sign_in_required_at:<host>", "no_saved_credentials")
+            so callers can log something actionable.
 
         Raises:
             httpx.HTTPStatusError: on 4xx/5xx (transport/server failure, not a
                 stale-session result — that comes back as ok=False with a 200).
         """
-        body = {"connector_id": connector_id, "org_id": org_id, "url": url}
+        body = {
+            "connector_id": connector_id,
+            "org_id": org_id,
+            "url": url,
+            "auth_chain_hosts": auth_chain_hosts,
+        }
         resp = await self._client.post(
             "/ingest/v1/crawl/keep-alive",
             json=body,
