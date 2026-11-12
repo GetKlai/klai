@@ -71,6 +71,15 @@ SELECT po.id AS org_id, COALESCE(po.widget_messages_retention_days, :default_day
 """
 
 
+def effective_retention_days(override: int | None) -> int:
+    """An org's retention term: its own setting when it has one, else the default.
+
+    The Python side of the COALESCE in the queries of this module, for callers
+    that show the term to a visitor or an editor.
+    """
+    return override if override is not None else settings.widget_messages_retention_days
+
+
 async def _bound_waits(db: AsyncSession) -> None:
     # Bounded waits, so one org cannot stall this sequential run: a blocked
     # or runaway statement raises and takes the caller's skip-and-log path
