@@ -97,6 +97,8 @@ written. It now logs one JSON object per line from
 `klai_kb_citation_render._emit_chat_synthesis_complete`. On every path the query
 side measures the visitor's own text, never the conversation target; logging our
 own target under a field named `*_detected` would make the metric confirm itself.
+Since paths A and C were removed, the one emitter is the portal-api function at
+`klai-portal/backend/app/services/chat_prompting.py:274` (`_emit_language_correctness_log`).
 
 **One identifier, by decision (2026-09-15):** `lingua` was removed from
 klai-portal and klai-retrieval-api. It was only ever the telemetry detector,
@@ -154,7 +156,7 @@ and an audit trail of orphan rows lingers forever:
 | `knowledge.crawled_pages` + `knowledge.page_links` | `pg_store.delete_connector_artifacts` (scoped via artifact URL set — added post-SPEC-CRAWLER-005) |
 | `knowledge.crawl_jobs` | `pg_store.delete_connector_crawl_jobs` (filters on `config->>'connector_id'` — JSONB, no native column) |
 | `connector.sync_runs` | `klai_connector_client.delete_sync_runs` (interim app-level call until SPEC-CONNECTOR-CLEANUP-001 REQ-04 lands the cross-schema FK with `ON DELETE CASCADE`) |
-| Garage `klai-images/{org}/images/{kb_slug}/...` | **NOT YET CLEANED PER CONNECTOR** — image keys carry no `connector_id`, so per-connector cleanup needs an artifact↔image-key tracking table (separate SPEC). KB-level cleanup wipes the whole `{org}/images/{kb_slug}/` prefix on KB delete, but a partial KB still grows orphan images proportionally to the deleted connector. |
+| Object storage `{org}/images/{kb_slug}/...` | **NOT YET CLEANED PER CONNECTOR**: image keys carry no `connector_id`, so per-connector cleanup needs an artifact↔image-key tracking table (separate SPEC). KB delete (`delete_kb_route`) and organisation deprovisioning (`_delete_kb_images`) delete the whole `{org}/images/{kb_slug}/` or `{org}/images/` prefix through `ImageStore.delete_images` (`klai-libs/image-storage/klai_image_storage/storage.py:176-205`), but a partial KB still grows orphan images proportionally to the deleted connector, and deleting a single document does not remove its images. |
 
 **Prevention:** when adding a new data layer that is connector-scoped, immediately
 wire it into `delete_connector_artifacts` (or the Qdrant equivalent), add the call
