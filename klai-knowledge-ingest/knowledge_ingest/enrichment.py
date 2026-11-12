@@ -443,12 +443,14 @@ async def enrich_chunks(
     # rate limit or a spent budget on one chunk, the remaining chunks of the
     # batch (up to 200) would each still make their own failing call while
     # the job is already retried or deferred, and every retry would start
-    # another such set. Cancel them, so a failed batch costs at most the
-    # calls already in flight.
+    # another such set. Cancel them and wait until they have stopped, so a
+    # failed batch costs at most the calls already in flight and none of them
+    # is still running when the job is retried or deferred.
     tasks = [asyncio.ensure_future(_enrich_one(c, i)) for i, c in enumerate(chunks)]
     try:
         return await asyncio.gather(*tasks)
     except BaseException:
         for task in tasks:
             task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         raise

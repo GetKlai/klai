@@ -161,6 +161,24 @@ async def test_generate_document_summary_raises_on_http_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_document_summary_raises_on_an_empty_answer() -> None:
+    """A 200 with blank content is a failed call, not a document without a summary."""
+    from knowledge_ingest.contextual import generate_document_summary
+    from knowledge_ingest.enrichment import EnrichmentError
+
+    blank = {"choices": [{"message": {"role": "assistant", "content": "  "}}]}
+    transport = _MockTransport(status_code=200, json_body=blank)
+
+    with (
+        patch("knowledge_ingest.contextual.settings", _make_settings()),
+        pytest.raises(EnrichmentError),
+    ):
+        await generate_document_summary(
+            text=_DUTCH_PARAGRAPH, title="Test", language="nl", _transport=transport
+        )
+
+
+@pytest.mark.asyncio
 async def test_generate_document_summary_returns_empty_on_blank_input() -> None:
     """Empty/whitespace-only document text short-circuits to empty summary."""
     from knowledge_ingest.contextual import generate_document_summary

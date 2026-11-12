@@ -222,7 +222,12 @@ async def generate_document_summary(
             )
             resp.raise_for_status()
             data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
+        summary = data["choices"][0]["message"]["content"].strip()
+        if not summary:
+            # An empty answer is a failed call too: returned as "", the chunk
+            # prompts would take the document context window without a trace.
+            raise ValueError("the model returned an empty summary")
+        return summary
     except Exception as exc:
         (logger.info if is_llm_capacity_error(exc) else logger.warning)(
             "contextual_summary_failed",

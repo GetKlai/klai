@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from unittest.mock import AsyncMock, patch
 
 import asyncpg
@@ -140,7 +140,11 @@ async def test_a_retry_a_later_batch_and_a_rebuild_reuse_the_versions_summary(db
         await enrichment_tasks._load_and_enrich(version)
     await enrichment_tasks._load_and_enrich(version)  # the retry
     await enrichment_tasks._load_and_enrich(version, batch_offset=200)  # a later batch
-    await rebuild_tasks._rebuild_kb_core(org_id, "docs")
+    with (
+        patch.dict(os.environ, {"INGEST_OK": "1"}),
+        patch("knowledge_ingest.rebuild_tasks.kb_operation", lambda *a, **k: nullcontext()),
+    ):
+        await rebuild_tasks._rebuild_kb_core(org_id, "docs", execute=True)
 
     assert summary.await_count == 1
     assert seen == ["Summary 1"] * 4
