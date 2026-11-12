@@ -863,7 +863,9 @@ async def delete_kb(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> None
     """Hard-delete all PostgreSQL records for a knowledge base.
 
     Removes: artifacts, artifact_entities, derivations, embedding_queue,
-    kb_config, crawl_jobs — all scoped to (org_id, kb_slug).
+    kb_config, crawl_jobs, crawled_pages, page_links and
+    connector_resource_fences — all scoped to (org_id, kb_slug). Parent
+    chunks, image rows and crawl frontiers follow through ON DELETE CASCADE.
 
     Does NOT delete knowledge.entities: entities are org-scoped and may be
     shared across multiple KBs within the same org.
@@ -921,6 +923,13 @@ async def delete_kb(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> None
         )
         await conn.execute(
             "DELETE FROM knowledge.page_links WHERE org_id = $1 AND kb_slug = $2",
+            org_id,
+            kb_slug,
+        )
+        # A missing fence reads as "deleted", so connector jobs still queued for
+        # this KB stop instead of writing into it again.
+        await conn.execute(
+            "DELETE FROM knowledge.connector_resource_fences WHERE org_id = $1 AND kb_slug = $2",
             org_id,
             kb_slug,
         )

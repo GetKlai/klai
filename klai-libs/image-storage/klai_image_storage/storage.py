@@ -173,6 +173,34 @@ class ImageStore:
         except S3Error:
             return False
 
+    async def delete_images(self, org_id: str, kb_slug: str | None = None) -> int:
+        """Delete every image of a knowledge base, or of the whole org when ``kb_slug`` is None.
+
+        Content addressing dedupes only inside one ``{org_id}/images/{kb_slug}/``
+        prefix (see ``build_object_key``), so no other knowledge base or org can
+        reference an object under it and a prefix delete is exact. Idempotent:
+        a rerun finds nothing and returns 0. Raises on any storage error so the
+        caller keeps its own rows as the retry ledger instead of reporting a
+        delete that left objects behind.
+        """
+        for part in (org_id, kb_slug):
+            if part is not None and (not part or "/" in part):
+                raise ValueError(f"invalid image prefix segment: {part!r}")
+        prefix = f"{org_id}/images/" if kb_slug is None else f"{org_id}/images/{kb_slug}/"
+        from minio.deleteobjects import DeleteObject
+
+        def _delete() -> int:
+            listed = self._client.list_objects(self._bucket, prefix=prefix, recursive=True)
+            keys = [o.object_name for o in listed if o.object_name]
+            errors = list(self._client.remove_objects(self._bucket, [DeleteObject(k) for k in keys]))
+            if errors:
+                raise RuntimeError(f"{len(errors)} of {len(keys)} images under {prefix} not deleted: {errors[0]}")
+            return len(keys)
+
+        deleted = await asyncio.to_thread(_delete)
+        logger.info("images_deleted", prefix=prefix, count=deleted)
+        return deleted
+
     async def delete_keys(self, object_keys: list[str]) -> int:
         """Best-effort batch delete. Returns count of keys removed.
 

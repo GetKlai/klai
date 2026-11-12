@@ -1,7 +1,7 @@
 """
 Tenant deprovisioning steps — SPEC-INFRA-TENANT-DELETE-001.
 
-21 idempotent step-functions that are called in order by the deprovisioning
+22 idempotent step-functions that are called in order by the deprovisioning
 orchestrator. Each step accepts a ``_DeprovisionState`` dataclass (defined in
 ``deprovisioning_orchestrator.py``) and returns None on success.
 
@@ -445,6 +445,28 @@ async def _wipe_knowledge_postgres(state: _DeprovisionState) -> None:
             slug=state.slug,
             rows_deleted=data.get("rows_deleted", {}),
         )
+
+
+async def _delete_kb_images(state: _DeprovisionState) -> None:
+    """Delete every knowledge-base image of the org from the image bucket.
+
+    Every writer (connector and crawl extraction, editor uploads) stores under
+    ``{zitadel_org_id}/images/{kb_slug}/``, so the org prefix holds exactly the
+    org's images. Idempotent: a rerun finds nothing. Storage errors raise.
+    """
+    from klai_image_storage import ImageStore
+
+    if not settings.garage_s3_endpoint:
+        raise RuntimeError("garage_s3_endpoint is required for tenant deprovisioning KB image wipe")
+
+    store = ImageStore(
+        endpoint=settings.garage_s3_endpoint,
+        access_key=settings.garage_s3_access_key,
+        secret_key=settings.garage_s3_secret_key,
+        bucket=settings.garage_kb_bucket,
+    )
+    deleted = await store.delete_images(state.zitadel_org_id)
+    logger.info("kb_images_deleted", slug=state.slug, zitadel_org_id=state.zitadel_org_id, count=deleted)
 
 
 # ---------------------------------------------------------------------------
@@ -1005,6 +1027,7 @@ STEPS = [
     # placed adjacent to the FalkorDB wipe so all "external service tells me to
     # purge tenant rows" steps live as a contiguous block in the SPEC R5 order.
     _wipe_knowledge_postgres,
+    _delete_kb_images,
     _wipe_klai_connector_state,
     _wipe_scribe_state,
     _delete_scribe_artifacts,
