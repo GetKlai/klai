@@ -1681,7 +1681,10 @@ async def search_knowledge(
             caller_client_id=identity.client_id,
         )
         # A miss in the user's own notes is no gap of the organisation's knowledge.
-        gap = _classify_gap(chunks) if scope != "personal" else None
+        # retrieval-api narrows a personal-role caller to personal scope whatever
+        # was asked, so the scope searched is judged here, not the one requested.
+        searched_personal_only = scope == "personal" or identity.effective_role == "personal"
+        gap = None if searched_personal_only else _classify_gap(chunks)
         if gap is not None:
             fire_gap_event(
                 org_id=identity.org_id,
