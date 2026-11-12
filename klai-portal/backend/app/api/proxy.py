@@ -188,7 +188,9 @@ def _build_upstream_headers(
     # SPEC-SEC-IDENTITY-ASSERT-002 REQ-2.3: portal-verified identity
     # assertion. Downstream services validate these against the
     # accompanying X-Internal-Secret before trusting the values.
-    headers["X-Internal-Secret"] = settings.internal_secret
+    # The docs app holds only DOCS_INTERNAL_SECRET (the one portal-api already
+    # sends on its provisioning calls), so the docs upstream is sent that one.
+    headers["X-Internal-Secret"] = settings.docs_internal_secret if service == "docs" else settings.internal_secret
     headers["X-Klai-Verified-User-Id"] = verified_user_id
     headers["X-Klai-Verified-Org-Id"] = verified_org_id
     headers["X-Klai-Verified-Org-Slug"] = verified_org_slug
