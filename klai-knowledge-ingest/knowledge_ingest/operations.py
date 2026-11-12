@@ -15,6 +15,7 @@ import os
 import sys
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
+from typing import Any
 
 from knowledge_ingest.db import get_pool
 
@@ -47,6 +48,21 @@ def guard_cli(name: str, execute: bool) -> None:
         raise SystemExit(2) from None
 
 
+async def _take(conn: Any, key: str, shared: bool) -> bool:
+    if shared:
+        return await conn.fetchval(
+            "SELECT pg_try_advisory_lock_shared(hashtextextended($1, 0))", key
+        )
+    return await conn.fetchval("SELECT pg_try_advisory_lock(hashtextextended($1, 0))", key)
+
+
+async def _release(conn: Any, key: str, shared: bool) -> None:
+    if shared:
+        await conn.execute("SELECT pg_advisory_unlock_shared(hashtextextended($1, 0))", key)
+    else:
+        await conn.execute("SELECT pg_advisory_unlock(hashtextextended($1, 0))", key)
+
+
 @asynccontextmanager
 async def kb_operation(
     org_id: str | None, kb_slugs: Iterable[str] | None, *, execute: bool
@@ -63,24 +79,22 @@ async def kb_operation(
         yield
         return
     if org_id is None:
-        wanted = [("*:*", "")]
+        wanted = [("*:*", False)]
     elif not kb_slugs:
-        wanted = [("*:*", "_shared"), (f"{org_id}:*", "")]
+        wanted = [("*:*", True), (f"{org_id}:*", False)]
     else:
-        wanted = [("*:*", "_shared"), (f"{org_id}:*", "_shared")]
-        wanted += [(f"{org_id}:{kb_slug}", "") for kb_slug in sorted(kb_slugs)]
+        wanted = [("*:*", True), (f"{org_id}:*", True)]
+        wanted += [(f"{org_id}:{kb_slug}", False) for kb_slug in sorted(kb_slugs)]
     # Advisory locks belong to the session, so one connection holds them all.
     async with (await get_pool()).acquire() as conn:
-        held: list[tuple[str, str]] = []
+        held: list[tuple[str, bool]] = []
         try:
-            for name, mode in wanted:
+            for name, shared in wanted:
                 key = f"kb-operation:{name}"
-                if not await conn.fetchval(
-                    f"SELECT pg_try_advisory_lock{mode}(hashtextextended($1, 0))", key
-                ):
+                if not await _take(conn, key, shared):
                     raise OperationBusy(f"another operation is running on {key}")
-                held.append((key, mode))
+                held.append((key, shared))
             yield
         finally:
-            for key, mode in reversed(held):
-                await conn.execute(f"SELECT pg_advisory_unlock{mode}(hashtextextended($1, 0))", key)
+            for key, shared in reversed(held):
+                await _release(conn, key, shared)
