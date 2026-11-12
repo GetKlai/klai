@@ -53,6 +53,7 @@ def _make_graph_result(
     r.episodes = episodes if episodes is not None else []
     r.valid_at = valid_at
     r.invalid_at = invalid_at
+    r.expired_at = None
     return r
 
 

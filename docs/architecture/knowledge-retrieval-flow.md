@@ -522,6 +522,11 @@ FalkorDB/Graphiti runs a graph traversal in parallel with the Qdrant search, res
 named entities in the query and traversing relationships to find conceptually connected
 chunks. Results are merged with Qdrant results using the same RRF formula before
 reranking. Timeout: 5 seconds. `GRAPHITI_ENABLED=true` on `retrieval-api` in production.
+Facts Graphiti itself marked as no longer true (`expired_at` or `invalid_at` in the past)
+are dropped after one search for 20 edges, cut to the 10 callers got before;
+a `SearchFilters` filter would switch the ANN candidate search back to a brute-force scan.
+The graph holds one extracted version per document (see
+[knowledge-ingest-flow](knowledge-ingest-flow.md#phase-3-knowledge-graph-ingestion-graphiti--falkordb)).
 
 ---
 

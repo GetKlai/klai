@@ -1145,13 +1145,18 @@ async def get_orphan_image_keys_for_connector(
 
 
 async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str) -> set[str]:
-    """Return every Graphiti episode UUID still referenced by an artifact for this org.
+    """Every Graphiti episode uuid ANY artifact row of this org records, current or not.
 
-    The list key is authoritative when present; the scalar fallback keeps rows
-    written before GetKlai/klai#1176 visible to the org-wide janitor.
-
-    Excludes the ``no-chunks`` sentinel that artifacts use when an
-    article had no extractable text.
+    The org-wide sweep after a connector purge keeps exactly this set, so it
+    only removes true orphans: episodes no row records. Replaced versions'
+    episodes are history the owner removes per run, after seeing the dry-run
+    counts of ``scripts/prune_stale_graph.py``, which selects with
+    ``get_current_graph_episode_uuids_for_org`` instead. Nothing removes them
+    implicitly. In steady state the two sets agree, because a new extraction
+    deletes its predecessors' episodes itself
+    (``ingest_graphiti_episode(replace_stale=True)``) and a deliberately
+    skipped version deletes them at ingest; so the sweep can stay this
+    conservative for good.
     """
     rows = await conn.fetch(
         """
@@ -1168,18 +1173,161 @@ async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str)
           ) AS stored_episode(episode_id)
          WHERE a.org_id = $1
            AND stored_episode.episode_id <> 'no-chunks'
+           AND stored_episode.episode_id NOT LIKE 'skipped:%'
         """,
         org_id,
     )
-    # "no-chunks" and "skipped:<reason>" are sentinels, not episode uuids: the
-    # first from backfill.py, the second from a page held out of the graph
-    # deliberately (#1148). Treating either as alive would have the caller ask
-    # FalkorDB about an episode that never existed.
-    return {
-        r["episode_uuid"]
-        for r in rows
-        if r["episode_uuid"] != "no-chunks" and not r["episode_uuid"].startswith("skipped:")
-    }
+    return {r["episode_uuid"] for r in rows}
+
+
+async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[asyncpg.Record]:
+    """Every artifact row of the org with what the graph rules need to know about it.
+
+    ``episode_ids`` are the real uuids the row records (sentinels dropped).
+    ``finished`` means the row's extraction reached a final outcome: written
+    completely (rows from before ``graphiti_episode_complete`` existed count as
+    complete), held out of the graph on purpose (``skipped:<reason>``, today
+    only ``navigation_page``), or no text to extract (``no-chunks``). A row that
+    is not finished has an extraction queued, running, failed, aborted or
+    quarantined. A row whose delete is in progress (``PURGE_PENDING``) is never
+    active: the document is going, so it has no current graph content.
+    ``source_connector_id``/``source_ref`` and ``kb_slug``/``path``
+    identify the document when ``superseded_by`` does not link its versions.
+    """
+    return await conn.fetch(
+        """
+        SELECT id::text AS id,
+               superseded_by::text AS superseded_by,
+               belief_time_end = $2 AND index_status <> $3 AS active,
+               kb_slug,
+               path,
+               extra::jsonb->>'source_connector_id' AS source_connector_id,
+               extra::jsonb->>'source_ref' AS source_ref,
+               episode_ids,
+               COALESCE(
+                   extra::jsonb->>'graphiti_episode_id' LIKE 'skipped:%'
+                   OR extra::jsonb->>'graphiti_episode_id' = 'no-chunks',
+                   false
+               )
+               OR (
+                   cardinality(episode_ids) > 0
+                   AND COALESCE((extra::jsonb->>'graphiti_episode_complete')::boolean, true)
+               ) AS finished
+        FROM (
+            SELECT a.*,
+                   ARRAY(
+                       SELECT episode_id
+                       FROM jsonb_array_elements_text(
+                           CASE
+                               WHEN a.extra::jsonb ? 'graphiti_episode_ids'
+                                   THEN a.extra::jsonb->'graphiti_episode_ids'
+                               WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
+                                   THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
+                               ELSE '[]'::jsonb
+                           END
+                       ) AS stored_episode(episode_id)
+                       WHERE episode_id <> 'no-chunks' AND episode_id NOT LIKE 'skipped:%'
+                   ) AS episode_ids
+            FROM knowledge.artifacts AS a
+            WHERE a.org_id = $1
+        ) AS a
+        """,
+        org_id,
+        _SENTINEL,
+        PURGE_PENDING,
+    )
+
+
+def current_extractions(rows: list) -> dict[str, tuple[set[str], bool]]:
+    """Active row id -> (its current graph episodes, whether a finished extraction backs them).
+
+    The walk rule is described in ``get_current_graph_episode_uuids_for_org``.
+    """
+    predecessors: dict[str, list] = {}
+    for row in rows:
+        if row["superseded_by"]:
+            predecessors.setdefault(row["superseded_by"], []).append(row)
+    result: dict[str, tuple[set[str], bool]] = {}
+    for row in rows:
+        if not row["active"]:
+            continue
+        ids: set[str] = set()
+        finished = False
+        seen = {row["id"]}
+        level = [row]
+        # The same walk as _HISTORY_CTE: to the end of the chain, and a row
+        # already visited (a corrupt cycle) is not walked again.
+        while level:
+            for version in level:
+                ids.update(version["episode_ids"])
+            finished = any(version["finished"] for version in level)
+            if finished:
+                break
+            level = [
+                older
+                for version in level
+                for older in predecessors.get(version["id"], [])
+                if older["id"] not in seen
+            ]
+            seen.update(older["id"] for older in level)
+        result[row["id"]] = (ids, finished)
+    return result
+
+
+async def get_current_graph_episode_uuids_for_org(
+    conn: asyncpg.Connection, org_id: str
+) -> set[str]:
+    """The Graphiti episode uuids that are the CURRENT graph content of this org.
+
+    Postgres keeps every version of a document; the graph holds the facts of
+    one: its newest finished extraction. Walking back from the active row along
+    ``superseded_by``, every version's episodes are kept up to and including
+    the first finished one (``get_graph_rows_for_org``). So an active row whose
+    extraction is still running or failed keeps its own partial, resumable
+    episodes AND the previous finished extraction, which is only replaced once
+    the new one is complete; a version held out of the graph or without text
+    ends the walk with nothing, so the document has no graph content. Removed
+    documents (no active row) have none either.
+
+    This is the selection of ``scripts/prune_stale_graph.py``; the org-wide
+    sweep deliberately uses the broader ``get_alive_episode_uuids_for_org``.
+    """
+    extractions = current_extractions(await get_graph_rows_for_org(conn, org_id))
+    return {episode_id for ids, _ in extractions.values() for episode_id in ids}
+
+
+# Built once at import from two constants; every value is a bound parameter.
+_FORGET_REPLACED_EPISODE_IDS_SQL = (
+    _HISTORY_CTE  # noqa: S608 -- constant SQL; values are bound parameters
+    + """
+    UPDATE knowledge.artifacts
+    SET extra = extra::jsonb
+                || '{"graphiti_episode_ids": [], "graphiti_episode_id": null}'::jsonb
+    WHERE org_id = $1
+      AND id IN (SELECT id FROM history)
+      AND id <> ALL($2::uuid[])
+      AND (extra::jsonb ? 'graphiti_episode_ids' OR extra::jsonb ? 'graphiti_episode_id')
+    """
+)
+
+
+async def forget_replaced_episode_ids(
+    conn: asyncpg.Connection, org_id: str, artifact_id: str
+) -> None:
+    """Clear the recorded episode ids of every earlier version of this row.
+
+    Called right after those episodes were deleted from the graph, so a closed
+    row lists episodes only while they exist. Same walk as
+    ``get_episode_ids_for_document_history`` (``_HISTORY_CTE``: to the end,
+    cycle-safe), without the row itself. Only replaced versions are touched,
+    never a document head, so ``scripts/purge_deleted_documents.py`` (which
+    judges heads) reads the same rows as before.
+    """
+    # The scan flags any composed string passed to execute(). This one is two
+    # module constants joined at import, run through asyncpg with $1/$2 bound.
+    await conn.execute(  # nosemgrep: sqlalchemy-execute-raw-query
+        _FORGET_REPLACED_EPISODE_IDS_SQL, org_id, [artifact_id]
+    )
 
 
 async def get_active_image_hashes_for_kb(

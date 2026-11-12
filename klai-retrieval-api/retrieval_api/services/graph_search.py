@@ -16,6 +16,7 @@ import math
 import re
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
@@ -25,6 +26,7 @@ from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 from graphiti_core.nodes import EpisodicNode
+from graphiti_core.search.search_config import DEFAULT_SEARCH_LIMIT
 from klai_graphiti_compat import apply_falkordb_compat
 from klai_kb_slugs import parse_episode_name
 
@@ -36,6 +38,15 @@ apply_falkordb_compat(ann_candidate_search=settings.graph_ann_enabled)
 logger = structlog.get_logger()
 
 _graphiti_client: Graphiti | None = None
+# Edges asked of graphiti per search; expired ones are dropped and the rest cut
+# to graphiti's default of 10, the count callers got before. One fixed value for
+# every request: Graphiti.search writes num_results into a module-global config
+# and reads it back after an await, so per-request limits overwrite each other.
+# With ~10% of facts expired, 20 leaves fewer than 10 current facts only when
+# more than half of the best 20 are expired. Measured on a synthetic 20k-edge
+# graph (FalkorDB 6.0.4, median of 22 queries): ANN 23-48 ms at 10, 86-89 ms at
+# 20; brute-force scan 1139-1498 ms at 10, 1131-1521 ms at 20, inside its noise.
+_GRAPH_FETCH = 2 * DEFAULT_SEARCH_LIMIT
 # Provenance is optional garnish on the graph leg: it gets its own small
 # budget so it can never cost more than the search it annotates.
 _PROVENANCE_TIMEOUT = 1.0
@@ -249,12 +260,42 @@ async def _search_with_provenance(
     Worst case is therefore ``graph_search_timeout + _PROVENANCE_TIMEOUT``,
     both bounded and explicit.
     """
-    results = await asyncio.wait_for(
-        graphiti.search(query, group_ids=[org_id]),
+    found = await asyncio.wait_for(
+        graphiti.search(query, group_ids=[org_id], num_results=_GRAPH_FETCH),
         timeout=settings.graph_search_timeout,
     )
+    results = _current_facts(found)
     episode_names = await _resolve_episode_names(graphiti, results, org_id)
     return _convert_results(results, top_k, episode_names)
+
+
+def _still_holds(moment: datetime | None, now: datetime) -> bool:
+    if moment is None:
+        return True
+    # A naive legacy value is UTC; comparing it with an aware one would raise
+    # and take the whole graph leg down for one odd edge.
+    return (moment if moment.tzinfo else moment.replace(tzinfo=UTC)) > now
+
+
+def _current_facts(found: list) -> list:
+    """Graphiti's results without the facts Graphiti itself no longer holds true.
+
+    Graphiti keeps a contradicted fact with ``expired_at`` set and a fact that
+    ended with ``invalid_at`` set; in one production week 3 of 31 graph facts in
+    answer material were already expired. They are dropped here rather than with
+    graphiti's ``SearchFilters``: any filter makes the ANN candidate search
+    (klai_graphiti_compat) fall back to the brute-force similarity scan, the scan
+    that hit FalkorDB's query timeout from ~22k edges (SPEC-GRAPH-SCALE-001).
+    The caller still gets as many facts as before (graphiti's default limit)
+    because the search asks for ``_GRAPH_FETCH`` edges.
+    """
+    now = datetime.now(UTC)
+    return [
+        edge
+        for edge in found
+        if _still_holds(getattr(edge, "expired_at", None), now)
+        and _still_holds(getattr(edge, "invalid_at", None), now)
+    ][:DEFAULT_SEARCH_LIMIT]
 
 
 def _episode_uuids(edge: object) -> list[str]:

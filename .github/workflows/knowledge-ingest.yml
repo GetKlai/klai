@@ -125,11 +125,12 @@ jobs:
         run: psql "$CRAWL_CHECKPOINT_TEST_DSN" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA knowledge"
       - name: Migrate fresh PostgreSQL
         run: uv run --frozen --extra dev alembic upgrade head
-      - name: Test durable crawl recovery, graph refresh budget and document purge against PostgreSQL
+      - name: Test durable crawl recovery, graph refresh budget, document purge and current graph episodes against PostgreSQL
         run: >-
           uv run --frozen --extra dev pytest
           tests/integration/test_crawl_checkpoint_postgres.py
           tests/integration/test_graph_refresh_budget_postgres.py
+          tests/integration/test_alive_episodes_postgres.py
           tests/integration/test_document_purge_postgres.py
           -q --tb=short
 

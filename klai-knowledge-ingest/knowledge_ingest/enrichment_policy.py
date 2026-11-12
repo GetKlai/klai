@@ -26,12 +26,18 @@ def resumable_episode_ids(extra: Mapping[str, Any]) -> list[str]:
     episodes. ``graphiti_episode_ids_version`` is written before the first part
     is extracted, so the ids only count when it matches: ids from an older
     extraction version are exactly what a replacement run must delete.
+
+    ``graphiti_episode_ids_from`` is where this extraction's parts start: a
+    re-extraction of the same row keeps the previous extraction's ids in front
+    of its own until it completes, so they stay recorded and searchable.
     """
     if extra.get("graphiti_episode_complete") is not False:
         return []
     if extra.get("graphiti_episode_ids_version") != GRAPHITI_EXTRACTION_VERSION:
         return []
-    return list(extra.get("graphiti_episode_ids") or [])
+    return list(extra.get("graphiti_episode_ids") or [])[
+        int(extra.get("graphiti_episode_ids_from") or 0) :
+    ]
 
 
 def enrichment_batch_size() -> int:

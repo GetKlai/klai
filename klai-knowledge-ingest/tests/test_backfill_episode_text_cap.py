@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -114,6 +114,7 @@ async def test_backfill_creates_and_records_every_episode_for_a_long_document():
         patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
         patch("knowledge_ingest.backfill.ingest_episode", ingest_episode),
         patch("knowledge_ingest.backfill._get_current_edge_count", return_value=0),
+        patch("knowledge_ingest.backfill.retire_earlier_extractions", AsyncMock()),
     ):
         await backfill.main(org_id="org-1")
 
@@ -128,6 +129,9 @@ async def test_backfill_creates_and_records_every_episode_for_a_long_document():
         "graphiti_episode_part_count": 2,
         "graphiti_episode_complete": False,
         "graphiti_episode_ids_version": 2,
+        "graphiti_episode_ids": [],
+        "graphiti_episode_ids_from": 0,
+        "graphiti_episode_id": None,
     }
     assert [call.args[2] for call in conn.execute.await_args_list[1:3]] == [
         "episode-1",
@@ -168,23 +172,23 @@ async def _backfill_two_part_document(extra: dict, episode_results: list[str]):
         )
     )
     ingest_episode = AsyncMock(side_effect=episode_results)
-    delete_episodes = AsyncMock()
+    retire = AsyncMock()
 
     with (
         patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=ctx),
         patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
         patch("knowledge_ingest.backfill.ingest_episode", ingest_episode),
         patch("knowledge_ingest.backfill._get_current_edge_count", return_value=0),
-        patch("knowledge_ingest.backfill.delete_kb_episodes", delete_episodes),
+        patch("knowledge_ingest.backfill.retire_earlier_extractions", retire),
         patch("knowledge_ingest.backfill.load_entity_graph_data", AsyncMock()),
     ):
         await backfill.main(org_id="org-1")
-    return ingest_episode, delete_episodes
+    return ingest_episode, retire
 
 
 @pytest.mark.asyncio
 async def test_interrupted_backfill_resumes_after_the_parts_it_already_wrote():
-    ingest_episode, delete_episodes = await _backfill_two_part_document(
+    ingest_episode, retire = await _backfill_two_part_document(
         {
             "graphiti_episode_ids": ["episode-1"],
             "graphiti_episode_ids_version": 2,
@@ -195,15 +199,15 @@ async def test_interrupted_backfill_resumes_after_the_parts_it_already_wrote():
 
     assert ingest_episode.await_count == 1
     assert ingest_episode.await_args.kwargs["previous_episode_id"] == "episode-1"
-    delete_episodes.assert_not_awaited()
+    retire.assert_awaited_once_with(ANY, "org-1", "artifact-1", keep=["episode-1", "episode-2"])
 
 
 @pytest.mark.asyncio
-async def test_backfill_deletes_partial_episodes_of_an_older_extraction_before_starting():
-    ingest_episode, delete_episodes = await _backfill_two_part_document(
+async def test_backfill_retires_an_older_extraction_only_after_the_new_one_is_written():
+    ingest_episode, retire = await _backfill_two_part_document(
         {"graphiti_episode_ids": ["episode-old"], "graphiti_episode_complete": False},
         ["episode-1", "episode-2"],
     )
 
-    delete_episodes.assert_awaited_once_with("org-1", ["episode-old"])
     assert ingest_episode.await_count == 2
+    retire.assert_awaited_once_with(ANY, "org-1", "artifact-1", keep=["episode-1", "episode-2"])

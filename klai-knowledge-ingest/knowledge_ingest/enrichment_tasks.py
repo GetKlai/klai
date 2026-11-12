@@ -718,42 +718,40 @@ def _register_tasks(procrastinate_app: Any) -> None:
             from knowledge_ingest import graph as graph_module
 
             done_ids = resumable_episode_ids(artifact["extra"])
-            if replace_stale:
-                # Delete at execution time so old episodes stay readable while
-                # the bulk queue drains. A resumed run keeps the parts an
-                # earlier run of this extraction already wrote.
-                stale_ids = [
+            if not done_ids:
+                # A new extraction starts. Whatever this row already records
+                # (the previous extraction when graph_refresh re-extracts the
+                # same row, or parts of an abandoned run) stays in front of the
+                # new parts, recorded and searchable, until the new extraction
+                # is complete; graphiti_episode_ids_from marks where the new
+                # parts begin. The list is written out explicitly because
+                # append_graphiti_episode_id turns a lone legacy scalar into a
+                # list element; the scalar goes so a sentinel cannot outlive
+                # the new episodes. complete/part_count reset in the same
+                # write: a worker kill before the part-count update below must
+                # not leave a row that reads as "complete".
+                extra = artifact["extra"]
+                recorded = [
                     episode_id
-                    for episode_id in await pg_store.get_episode_ids_for_document_history(
-                        conn, org_id, [artifact_id]
+                    for episode_id in (
+                        extra["graphiti_episode_ids"]
+                        if isinstance(extra.get("graphiti_episode_ids"), list)
+                        else [extra.get("graphiti_episode_id")]
                     )
-                    if episode_id not in done_ids
+                    if episode_id
+                    and episode_id != "no-chunks"
+                    and not str(episode_id).startswith("skipped:")
                 ]
-                if stale_ids:
-                    await graph_module.delete_kb_episodes(org_id, stale_ids)
-                if not done_ids:
-                    # Null the legacy scalar too: append_graphiti_episode_id
-                    # keeps an existing scalar via COALESCE, so leaving the old
-                    # value in place would pin it to a just-deleted episode
-                    # uuid forever. complete/part_count reset in the same
-                    # write: a worker kill between this statement and the
-                    # part-count update below must not leave a row that reads
-                    # as "complete with zero episodes".
-                    await pg_store.update_artifact_extra(
-                        conn,
-                        artifact_id,
-                        {
-                            "graphiti_episode_ids": [],
-                            "graphiti_episode_id": None,
-                            "graphiti_episode_complete": False,
-                            "graphiti_episode_part_count": 0,
-                        },
-                    )
-                logger.info(
-                    "graphiti_stale_episodes_replaced",
-                    artifact_id=artifact_id,
-                    org_id=org_id,
-                    deleted=len(stale_ids),
+                await pg_store.update_artifact_extra(
+                    conn,
+                    artifact_id,
+                    {
+                        "graphiti_episode_ids": recorded,
+                        "graphiti_episode_ids_from": len(recorded),
+                        "graphiti_episode_id": recorded[0] if recorded else None,
+                        "graphiti_episode_complete": False,
+                        "graphiti_episode_part_count": 0,
+                    },
                 )
             logger.info(
                 "graphiti_episode_started",
@@ -904,14 +902,27 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 logger.exception("entity_graph_data_failed", artifact_id=artifact_id)
             if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
                 return
-            await pg_store.update_artifact_extra(
-                conn,
-                artifact_id,
-                {
-                    "graphiti_episode_complete": True,
-                    "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
-                },
-            )
+            final: dict[str, Any] = {
+                "graphiti_episode_complete": True,
+                "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
+            }
+            if replace_stale:
+                # Only now, with every part written, does this extraction
+                # replace the earlier ones (other versions and this row's own
+                # previous extraction). A run that fails or aborts before this
+                # point leaves the previous facts in place next to its parts.
+                await graph_module.retire_earlier_extractions(
+                    conn, org_id, artifact_id, keep=episode_ids
+                )
+                final |= {
+                    "graphiti_episode_ids": episode_ids,
+                    "graphiti_episode_ids_from": 0,
+                    "graphiti_episode_id": episode_ids[0],
+                }
+                logger.info(
+                    "graphiti_stale_episodes_replaced", artifact_id=artifact_id, org_id=org_id
+                )
+            await pg_store.update_artifact_extra(conn, artifact_id, final)
 
     procrastinate_app.ingest_graphiti_episode = ingest_graphiti_episode  # type: ignore[attr-defined]
 

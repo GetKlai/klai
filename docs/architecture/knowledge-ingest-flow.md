@@ -817,12 +817,32 @@ the vector index.
 
 **Three types of objects in the graph:**
 
-**EpisodicNode** — the document itself as a time-stamped event. Every ingested artifact
-becomes an `EpisodicNode` with the full text, a `valid_from` timestamp, and a
-`belief_time_end` sentinel (`253402300800` = year 9999) that marks it as currently active.
-When a document is re-ingested, the old EpisodicNode gets `belief_time_end = now()` (soft
-delete) and a fresh one is created. This temporal layering means the graph holds a full
-history of what the system "believed" at any point in time.
+**EpisodicNode** — the document text as Graphiti saw it, one or more per extracted version
+(long documents are split into parts), named `doc:<kb_slug>:<path>`.
+
+**History lives in Postgres; the graph holds only what counts now.** `knowledge.artifacts`
+keeps every version of a document (a replaced row gets `belief_time_end` and
+`superseded_by`). The graph, like the vector index, holds the facts of exactly one version
+per document: its newest finished extraction. A new extraction
+(`ingest_graphiti_episode(replace_stale=True)`, also used by `graph_refresh` to re-extract
+the same row) deletes the episodes of every earlier extraction only once all its parts are
+written, in the same step that marks the row complete and clears the closed rows' recorded
+ids (`graph.retire_earlier_extractions`). Until then old and new facts coexist, so a run
+that fails or is quarantined never leaves a document without facts. A version
+deliberately held out of the graph (`skipped:navigation_page`) or without text
+(`no-chunks`) is a finished outcome of "nothing": the earlier versions' episodes go at
+that point and the document has no graph content.
+`pg_store.get_current_graph_episode_uuids_for_org` is that rule and the selection of
+`scripts/prune_stale_graph.py` (manual, dry run by default, `--execute` approved per run).
+The org-wide sweep after a connector purge is deliberately broader: it keeps every
+episode any row records (`get_alive_episode_uuids_for_org`) and removes only true
+orphans, so nothing clears history as a side effect. In steady state the two agree,
+because each finished extraction removes its predecessors itself. Neither treats an
+episode younger than `graph.ORPHAN_GRACE` (24 h, the graph job's retry span) as stale:
+a job writes its episode before it records the uuid.
+Deleting an episode (`graph.delete_kb_episodes`) also deletes every `RELATES_TO` fact only
+that episode backed and takes its uuid out of the facts other episodes still back, because
+retrieval searches facts, not episodes.
 
 **EntityNode** — extracted entities within the document. Graphiti's LLM step extracts
 named entities (people, products, projects, decisions, organisations) from each chunk and

@@ -38,6 +38,22 @@ jobs:
   graph-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The connector-purge sweep test reads the alive set from real Postgres
+    # and sweeps a real FalkorDB graph; same image as knowledge-ingest.yml.
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: klai
+          POSTGRES_PASSWORD: klai
+          POSTGRES_DB: graph_contract
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U klai -d graph_contract"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -102,13 +118,35 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
+      - name: Migrate Postgres for the purge-sweep test
+        working-directory: klai-knowledge-ingest
+        env:
+          DATABASE_URL: postgresql+asyncpg://klai:klai@localhost:5432/graph_contract
+          KNOWLEDGE_INGEST_SECRET: test-secret-value-123
+          PORTAL_INTERNAL_TOKEN: test-portal-internal-token-456
+          GITEA_WEBHOOK_SECRET: test-gitea-webhook-secret-789
+        run: |
+          set -euo pipefail
+          psql "postgresql://klai:klai@localhost:5432/graph_contract" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA knowledge"
+          uv run --frozen --extra dev alembic upgrade head
+
       - name: Graphiti write and read paths against FalkorDB
         working-directory: klai-knowledge-ingest
         env:
+          GRAPH_REFRESH_BUDGET_TEST_DSN: postgresql://klai:klai@localhost:5432/graph_contract
           GRAPH_CONTRACT_FALKORDB_PORT: "6379"
           # An unreachable server fails the run instead of skipping every test.
           GRAPH_CONTRACT_REQUIRED: "1"
         run: uv run --frozen --extra dev pytest tests/graph_contract -q --tb=short -p no:cacheprovider
+
+      # retrieval-api drops facts Graphiti expired or invalidated after the
+      # search; that needs graphiti-core to read both fields back from FalkorDB.
+      - name: retrieval-api returns only current facts from FalkorDB
+        working-directory: klai-retrieval-api
+        env:
+          GRAPH_CONTRACT_FALKORDB_PORT: "6379"
+          GRAPH_CONTRACT_REQUIRED: "1"
+        run: uv run --frozen --extra dev pytest tests/test_graph_search_current_facts.py -q --tb=short -p no:cacheprovider
 
       - name: FalkorDB log
         if: failure()

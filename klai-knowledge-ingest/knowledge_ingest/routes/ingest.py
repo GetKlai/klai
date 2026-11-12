@@ -1010,6 +1010,20 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             path=req.path,
             reason=graph_skip,
         )
+        # A deliberate skip is an extraction whose result is "nothing", so the
+        # document now has no graph content: the earlier versions' facts go, as
+        # graph_refresh does for a page that turns into a skip. A failure is
+        # logged at error level and does not fail the ingest, whose supersede
+        # is already committed; scripts/prune_stale_graph.py counts what is left.
+        try:
+            await graph_module.retire_earlier_extractions(conn, req.org_id, artifact_id, keep=[])
+        except Exception:
+            logger.exception(
+                "graphiti_skipped_page_episodes_delete_failed",
+                artifact_id=artifact_id,
+                org_id=req.org_id,
+                path=req.path,
+            )
     elif settings.graphiti_enabled:
         from knowledge_ingest import enrichment_tasks
 
@@ -1017,6 +1031,11 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         # ``lock`` (execution) alongside ``queueing_lock`` (dedup): a stale-graph
         # refresh for the same artifact must serialise against this job, not
         # run concurrently and delete the episodes it is appending.
+        # ``replace_stale``: the graph holds one version per document, so the
+        # job deletes the episodes of every earlier version once it starts
+        # writing this one. Without it a single tenant had 8,442 episodes of
+        # replaced versions next to 1,748 current ones, and those facts kept
+        # reaching answers.
         await proc_app.ingest_graphiti_episode.configure(  # type: ignore[attr-defined]
             lock=f"graphiti:{artifact_id}",
             queueing_lock=f"graphiti:{artifact_id}",
@@ -1027,6 +1046,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             belief_time_start=kf["belief_time_start"],
             kb_slug=req.kb_slug,
             path=req.path,
+            replace_stale=True,
             **({"resource_key": resource_key} if resource_key else {}),
         )
 

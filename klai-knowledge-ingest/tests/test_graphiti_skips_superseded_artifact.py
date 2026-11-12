@@ -211,7 +211,9 @@ async def test_short_document_creates_one_episode_and_records_both_id_keys(graph
     ingest_episode.assert_awaited_once()
     assert ingest_episode.call_args.kwargs["document_text"] == "One short sentence."
     pg_store.append_graphiti_episode_id.assert_awaited_once_with(ANY, _ARTIFACT_ID, "episode-1")
-    assert pg_store.update_artifact_extra.await_args_list[0].args[2] == {
+    # [0] marks where this extraction's parts start (see the ingest_graphiti_episode test
+    # in tests/graph_contract/test_new_extraction_replaces_on_completion.py).
+    assert pg_store.update_artifact_extra.await_args_list[1].args[2] == {
         "graphiti_episode_part_count": 1,
         "graphiti_episode_complete": False,
         "graphiti_episode_ids_version": 2,
@@ -260,7 +262,7 @@ async def test_partial_failure_records_episodes_created_before_the_error(graphit
 
     assert ingest_episode.await_count == 2
     pg_store.append_graphiti_episode_id.assert_awaited_once_with(ANY, _ARTIFACT_ID, "episode-1")
-    assert pg_store.update_artifact_extra.await_count == 1
+    assert pg_store.update_artifact_extra.await_count == 2
     graph_module.flush_entity_graph_data.assert_not_awaited()
 
 

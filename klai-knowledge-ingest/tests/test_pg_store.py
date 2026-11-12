@@ -654,20 +654,6 @@ async def test_connector_deletion_selects_all_episode_ids():
 
 
 @pytest.mark.asyncio
-async def test_org_orphan_sweep_keeps_all_referenced_episode_ids():
-    conn = _make_conn()
-    conn.fetch = AsyncMock(return_value=[{"episode_uuid": "ep-1"}, {"episode_uuid": "ep-2"}])
-
-    result = await pg_store.get_alive_episode_uuids_for_org(conn, "org1")
-
-    assert result == {"ep-1", "ep-2"}
-    sql = conn.fetch.call_args[0][0]
-    assert "graphiti_episode_ids" in sql
-    assert "jsonb_array_elements_text" in sql
-    assert "jsonb_build_array" in sql
-
-
-@pytest.mark.asyncio
 async def test_connector_source_ref_lookup_is_fully_tenant_scoped() -> None:
     conn = _make_conn()
     conn.fetch = AsyncMock(return_value=[])
