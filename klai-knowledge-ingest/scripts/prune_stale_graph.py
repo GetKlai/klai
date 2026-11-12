@@ -43,6 +43,7 @@ from knowledge_ingest import graph as graph_module
 from knowledge_ingest import pg_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.operations import guard_cli, kb_operation
 
 # FalkorDB caps a result at RESULTSET_SIZE rows (10,000 in production), so edges
 # are read as one collected row per id range. 20,000 edges per range read in
@@ -229,7 +230,13 @@ def main() -> int:
         "--execute", action="store_true", help="Remove the selection; without it only counts"
     )
     args = parser.parse_args()
-    return asyncio.run(run(args.org, args.execute))
+    guard_cli("prune_stale_graph", args.execute)
+    return asyncio.run(_run_locked(args.org, args.execute))
+
+
+async def _run_locked(org_id: str, execute: bool) -> int:
+    async with kb_operation(org_id, None, execute=execute):
+        return await run(org_id, execute)
 
 
 if __name__ == "__main__":

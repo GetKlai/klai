@@ -41,6 +41,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from knowledge_ingest import pg_store, queues
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.operations import guard_cli, kb_operation, require_ingest_ok
 from knowledge_ingest.qdrant_store import COLLECTION
 from knowledge_ingest.qdrant_store import get_client as get_qdrant_client
 from knowledge_ingest.utils.auth_wall_detector import (
@@ -117,12 +118,14 @@ async def _ensure_simhashes(
     *,
     org_id: str,
     kb_slug: str,
+    persist: bool,
 ) -> dict[str, int]:
-    """Compute + persist SimHash for any row missing one; return url→hash map.
+    """Compute SimHash for any row missing one; return url→hash map.
 
     Existing fingerprints are reused; missing ones are computed from
-    ``raw_markdown`` and written via the standard helper so the path matches
-    crawler ingest. Returned map covers every row (including those already
+    ``raw_markdown`` and, with ``persist``, written via the standard helper so
+    the path matches crawler ingest. A preview passes ``persist=False`` and
+    writes nothing. Returned map covers every row (including those already
     populated) for the cluster scan in pass 2.
     """
     url_to_hash: dict[str, int] = {}
@@ -133,7 +136,7 @@ async def _ensure_simhashes(
             # 0 is the empty-content sentinel; do not persist it (would let
             # rendered-but-empty crawl results falsely cluster). Match the
             # crawler's ingest-time behaviour and leave the column NULL.
-            if sh != 0:
+            if sh != 0 and persist:
                 await pg_store.update_crawled_page_simhash(
                     conn,
                     org_id=org_id,
@@ -156,8 +159,13 @@ async def backfill_detect_login_walls(
     *,
     cluster_min: int = DEFAULT_CLUSTER_MIN,
     hamming_max: int = DEFAULT_HAMMING_MAX,
+    execute: bool = False,
 ) -> dict[str, int]:
     """Detect + purge wall clusters in ``(org_id, kb_slug)``.
+
+    Without ``execute`` it only counts what would be flagged and writes
+    nothing; with it the run needs ``INGEST_OK=1`` and holds the knowledge
+    base's operation lock.
 
     Returns ``{"processed": N, "flagged": M, "qdrant_deleted": K}``.
     ``processed`` excludes rows already at the placeholder hash (SQL-level
@@ -180,14 +188,19 @@ async def backfill_detect_login_walls(
     leave new pages without simhashes (read-then-write split): pass-1
     snapshots rows; concurrent ingest inserts new rows AFTER the
     snapshot; pass-2 evaluates the snapshot. Operators MUST ensure no
-    crawl is in flight before triggering. @MX:REASON — Procrastinate's
-    queueing_lock would help but is not wired in this task.
+    crawl is in flight before triggering. @MX:REASON — the operation lock
+    excludes other operations on the knowledge base, not a crawl.
     Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-04, REQ-09.
     """
+    if execute:
+        require_ingest_ok("backfill_detect_login_walls")
     qdrant = get_qdrant_client()
     log = logger.bind(org_id=org_id, kb_slug=kb_slug)
 
-    async with tenant_scoped_connection(org_id) as conn:
+    async with (
+        kb_operation(org_id, [kb_slug], execute=execute),
+        tenant_scoped_connection(org_id) as conn,
+    ):
         rows = await conn.fetch(
             "SELECT url, raw_markdown, content_hash, content_simhash "
             "FROM knowledge.crawled_pages "
@@ -200,7 +213,9 @@ async def backfill_detect_login_walls(
         )
 
         # Pass 1: ensure every row has a SimHash (Phase D, plan.md item 1).
-        url_to_hash = await _ensure_simhashes(conn, list(rows), org_id=org_id, kb_slug=kb_slug)
+        url_to_hash = await _ensure_simhashes(
+            conn, list(rows), org_id=org_id, kb_slug=kb_slug, persist=execute
+        )
 
         # Pass 2: cluster eval in-memory (single O(N^2) scan, no extra SQL).
         processed = len(rows)
@@ -216,6 +231,8 @@ async def backfill_detect_login_walls(
                 continue
 
             flagged += 1
+            if not execute:
+                continue
 
             # REQ-09.1 — tenant isolation: filter MUST include org_id +
             # kb_slug + path. Removing any one of these is blocked by the
@@ -273,8 +290,12 @@ async def recover_purged_pages(
     *,
     cluster_min: int = DEFAULT_CLUSTER_MIN,
     hamming_max: int = DEFAULT_HAMMING_MAX,
+    execute: bool = False,
 ) -> dict[str, int]:
     """Un-purge pages whose v2 cluster size dropped below threshold.
+
+    Without ``execute`` it only counts the pages that would be recovered; with
+    it the run needs ``INGEST_OK=1`` and holds the knowledge base's operation lock.
 
     Returns ``{"processed": N, "recovered": M}``. ``processed`` counts only
     pages currently at the placeholder hash; ``recovered`` is how many of
@@ -298,9 +319,14 @@ async def recover_purged_pages(
     ``acceptance.md`` AC-05.1 recovery semantics note.
     Reason: SPEC-INGEST-LOGIN-WALL-DETECT-002 REQ-05.
     """
+    if execute:
+        require_ingest_ok("recover_purged_pages")
     log = logger.bind(org_id=org_id, kb_slug=kb_slug)
 
-    async with tenant_scoped_connection(org_id) as conn:
+    async with (
+        kb_operation(org_id, [kb_slug], execute=execute),
+        tenant_scoped_connection(org_id) as conn,
+    ):
         # Fetch ALL rows (including purged) so we can both un-purge purged
         # rows and use the live rows as cluster context.
         rows = await conn.fetch(
@@ -312,7 +338,9 @@ async def recover_purged_pages(
             kb_slug,
         )
 
-        url_to_hash = await _ensure_simhashes(conn, list(rows), org_id=org_id, kb_slug=kb_slug)
+        url_to_hash = await _ensure_simhashes(
+            conn, list(rows), org_id=org_id, kb_slug=kb_slug, persist=execute
+        )
 
         processed = 0
         recovered = 0
@@ -330,14 +358,15 @@ async def recover_purged_pages(
                 continue
             # Cluster shrunk below threshold → un-purge so next crawl
             # re-ingests through the v2 ingest-time detector.
-            await conn.execute(
-                "UPDATE knowledge.crawled_pages "
-                "SET content_hash = '' "
-                "WHERE org_id = $1 AND kb_slug = $2 AND url = $3",
-                org_id,
-                kb_slug,
-                url,
-            )
+            if execute:
+                await conn.execute(
+                    "UPDATE knowledge.crawled_pages "
+                    "SET content_hash = '' "
+                    "WHERE org_id = $1 AND kb_slug = $2 AND url = $3",
+                    org_id,
+                    kb_slug,
+                    url,
+                )
             recovered += 1
             log.info(
                 "recover_purged_page_unpurged",
@@ -364,11 +393,11 @@ def register_backfill_login_walls_task(procrastinate_app: Any) -> None:
 
     @procrastinate_app.task(queue=queues.ENRICH_BULK)
     async def backfill_detect_login_walls_task(org_id: str, kb_slug: str) -> dict[str, int]:
-        return await backfill_detect_login_walls(org_id=org_id, kb_slug=kb_slug)
+        return await backfill_detect_login_walls(org_id=org_id, kb_slug=kb_slug, execute=True)
 
     @procrastinate_app.task(queue=queues.ENRICH_BULK)
     async def recover_purged_pages_task(org_id: str, kb_slug: str) -> dict[str, int]:
-        return await recover_purged_pages(org_id=org_id, kb_slug=kb_slug)
+        return await recover_purged_pages(org_id=org_id, kb_slug=kb_slug, execute=True)
 
     procrastinate_app.backfill_detect_login_walls_task = (  # type: ignore[attr-defined]
         backfill_detect_login_walls_task
@@ -409,13 +438,15 @@ async def _cli_main(args: argparse.Namespace) -> None:
         org_id = await _resolve_org_slug_to_zitadel_id(args.org)
 
     if args.recover:
-        result = await recover_purged_pages(org_id=org_id, kb_slug=args.kb)
+        result = await recover_purged_pages(org_id=org_id, kb_slug=args.kb, execute=args.execute)
         print(
             f"recover complete: org={org_id} kb={args.kb} "
             f"processed={result['processed']} recovered={result['recovered']}"
         )
     else:
-        result = await backfill_detect_login_walls(org_id=org_id, kb_slug=args.kb)
+        result = await backfill_detect_login_walls(
+            org_id=org_id, kb_slug=args.kb, execute=args.execute
+        )
         print(
             f"backfill complete: org={org_id} kb={args.kb} "
             f"processed={result['processed']} flagged={result['flagged']} "
@@ -449,11 +480,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "cluster size dropped below threshold."
         ),
     )
+    p.add_argument(
+        "--execute",
+        action="store_true",
+        help="Write (needs the approval marker); without it only count.",
+    )
     return p
 
 
 def main() -> None:
     args = _build_parser().parse_args()
+    guard_cli("backfill_tasks", args.execute)
     if not args.org and not args.org_id:
         raise SystemExit("Either --org SLUG or --org-id ZITADEL_ID is required")
     asyncio.run(_cli_main(args))

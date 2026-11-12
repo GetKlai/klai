@@ -244,6 +244,31 @@ enrichment and graph jobs of the connector's documents by `artifact_id`.
 Cancellation uses `abort=True, delete_job=False`; never query or count the
 legacy `aborting` status.
 
+## Audit a run before it writes; a per-page verdict is not enough (CRIT)
+
+In 2026-11 a nightly crawl that ran without its login replaced 203 pages with
+versions missing 19% of their words. Logged out, the site left out protected
+sections without any login marker, so every per-page guard passed, and the
+run-level verdicts were computed after the pages had been written. No guard
+compared a new version with the stored one; hash inequality decided everything.
+
+- `run_crawl_job` judges the whole run in `_judge_run_before_write` before the
+  first write: session lost (saved cookies and any walled page), wall-dominant
+  (anonymous crawls), and a content regression against the stored text
+  (`content_retention.retention`). A run that fails the audit writes nothing.
+- `ingest_document` holds a version from an automated source that keeps under
+  half of the stored words until the same version arrives again on the next
+  run (12 to 36 hours). Uploads are never held.
+- A held or failed document must be offered again: keep it out of the sync
+  run's `synced_refs` and leave `crawled_pages` untouched, or the hold never ends.
+- A verdict that only sets the job status is not a guard. A guard that can stop
+  a write sits before the write loop, and its thresholds carry the measured
+  distribution in the comment next to the constant.
+
+**Rule:** before adding a path that replaces stored knowledge, name what
+compares the new version with the stored one. Hash inequality is not a
+comparison.
+
 ## Graph-first, content-second for bulk crawls (HIGH)
 
 When a graph-lookup feeds the payload of a per-row write, build the whole graph BEFORE

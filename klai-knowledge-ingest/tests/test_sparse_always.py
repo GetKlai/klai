@@ -270,6 +270,19 @@ async def test_prechunked_document_routes_on_its_points_not_on_a_rechunk_of_its_
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="contract to meet: chunks a caller supplied survive enrichment at any document size",
+)
+async def test_few_caller_chunks_survive_enrichment_with_their_speaker_turns(mem_client):
+    caller_chunks = ["Ann: hello there", "Bo: hi Ann"]
+    await _write_raw(caller_chunks)
+
+    enrich, _ = await _run_batch(offset=0, size=200, extra={"document_text": "hello there hi Ann"})
+
+    assert enrich.await_args.kwargs["chunks"] == caller_chunks
+
+
 async def test_sparse_result_count_mismatch_is_a_loud_error_not_a_silent_drop(mem_client):
     short = AsyncMock(return_value=_sparse_for(["only one"]))
     with patch.object(qs.sparse_embedder, "embed_sparse_batch", short):
