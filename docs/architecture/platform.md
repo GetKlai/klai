@@ -1,6 +1,6 @@
 # Klai Platform: What Runs Today
 
-**Verified on 12 November 2026 against commit `3987ee2a9` of `main`.** This document describes the platform as it runs now: the services, how tenants are kept apart, the portal, how people and services authenticate, the models, the other product surfaces, how a change reaches production, and how the platform is observed and backed up. It says nothing about how the platform came to be; that is in [evolution.md](evolution.md) (Dutch), which also holds the decisions, the alternatives that were rejected and the plans that were never built.
+**Verified on 12 November 2026 against commit `3987ee2a9` of `main`, with the two later changes of 12 November (#2340, #2341) folded in and the anchors rechecked at `631b5a82f`.** This document describes the platform as it runs now: the services, how tenants are kept apart, the portal, how people and services authenticate, the models, the other product surfaces, how a change reaches production, and how the platform is observed and backed up. It says nothing about how the platform came to be; that is in [evolution.md](evolution.md) (Dutch), which also holds the decisions, the alternatives that were rejected and the plans that were never built.
 
 Every statement carries an anchor (`path:line`). Anchors are relative to the repository root. Where a paragraph names a base directory, anchors in that paragraph are relative to it. The detail of the knowledge stack and the chat lives in its own documents, linked in section 6. This document is public: it describes service contracts and host roles, not Klai's live production topology (see [the infrastructure boundary](../contributing/infrastructure-boundary.md)). Host roles used here: `core-01` runs the main compose file, `gpu-01` runs the inference compose file, `public-01` runs the website and the status page and has no compose file in this repository.
 
@@ -26,8 +26,8 @@ All run on core-01 from `deploy/docker-compose.yml`. Images are built by the wor
 | portal-api (1053) | `klai-portal/backend` | Portal backend: sessions, workspaces, provisioning, Partner API, Shield API, meeting integration | Yes: the portal API, `/partner/*`, `/kb-images/*`, the MCP OAuth endpoints, `/static/*` (`deploy/caddy/Caddyfile:338,349,432,473,495`) |
 | portal frontend | `klai-portal/frontend` | Static files built by CI and served by Caddy, no container (`deploy/docker-compose.yml:195`) | Yes, as the catch-all with SPA fallback (`deploy/caddy/Caddyfile:554-565`) |
 | retrieval-api (1603) | `klai-retrieval-api` | Hybrid retrieval: `POST /retrieve`, `POST /chat`, taxonomy routes (`klai-retrieval-api/retrieval_api/api/retrieve.py:1411`, `klai-retrieval-api/retrieval_api/api/chat.py:24`) | No |
-| knowledge-ingest (2178) | `klai-knowledge-ingest` | Ingest, enrichment, graph extraction, crawl orchestration, job queue on Procrastinate | No |
-| klai-connector (2293) | `klai-connector` | Connector scheduler and source adapters | Yes, own host (`deploy/caddy/Caddyfile:245-254`) |
+| knowledge-ingest (2188) | `klai-knowledge-ingest` | Ingest, enrichment, graph extraction, crawl orchestration, job queue on Procrastinate | No |
+| klai-connector (2303) | `klai-connector` | Connector scheduler and source adapters | Yes, own host (`deploy/caddy/Caddyfile:245-254`) |
 | scribe-api (1794) | `klai-scribe/scribe-api` | Audio upload, transcription, summaries, hand-off to a knowledge base | No; reached through the portal proxy (`deploy/caddy/Caddyfile:524-531`) |
 | docs-app (1733) | `klai-docs` | Docs reader and editor, `basePath /docs`, port 3010 | Reader only; `/docs/api/*` answers 404 (`deploy/caddy/Caddyfile:507-518`) |
 | klai-knowledge-mcp (1764) | `klai-knowledge-mcp` | MCP server | Yes, own host (`deploy/caddy/Caddyfile:306-315`) |
@@ -48,9 +48,9 @@ All on core-01. Each application database has its own network; the main Postgres
 | mongodb (210) | LibreChat users and conversations, one database per workspace |
 | redis (252) | Portal sessions and rate limits, LiteLLM budgets and router counters, mailer rate limit, retrieval-api, GlitchTip |
 | qdrant (2120) | One collection `klai_knowledge` with named vectors `vector_chunk`, `vector_questions`, `vector_sparse` (`klai-retrieval-api/retrieval_api/config.py:12`, `klai-retrieval-api/retrieval_api/services/search.py:1-4`) |
-| falkordb (2142) | The Graphiti knowledge graph; `GRAPHITI_ENABLED` is true on retrieval-api and knowledge-ingest (`deploy/docker-compose.yml:1627,2211`) |
+| falkordb (2142) | The Graphiti knowledge graph; `GRAPHITI_ENABLED` is true on retrieval-api and knowledge-ingest (`deploy/docker-compose.yml:1627,2221`) |
 | meilisearch (292) | LibreChat conversation search, with workspace-scoped keys (`klai-portal/backend/app/services/provisioning/orchestrator.py:157,196-207`) |
-| garage (2266) | S3-compatible object storage: knowledge-base images, Scribe artifacts, Vexa recordings |
+| garage (2276) | S3-compatible object storage: knowledge-base images, Scribe artifacts, Vexa recordings |
 | gitea (1684) | Git repositories behind the docs knowledge bases |
 | victoriametrics, victorialogs, victorialogs-content | Metrics, 30-day logs, 7-day content-class logs (section 9) |
 | listmonk-db, firecrawl-postgres, crm-postgres, umami-postgres, fider-postgres, crm-redis, vexa12-redis, firecrawl-rabbitmq | One store per third-party application |
@@ -65,8 +65,8 @@ pgvector is in the Postgres image name only; the ingest code does not use it for
 | presidio-analyzer (545), presidio-anonymizer (600) | core-01 | PII detection and masking on the internal `inference` network, no route |
 | docling-serve (1577) | core-01 | File to markdown; the caller is portal-api (`klai-portal/backend/app/core/config.py:259-262`) |
 | searxng (1591) | core-01 | Web search for portal-api, LiteLLM (`deploy/litellm/config.yaml:327`) and the workspace LibreChat |
-| crawl4ai (2364) | core-01 | Crawler used by knowledge-ingest (`deploy/docker-compose.yml:2319`) |
-| firecrawl-api (2453) | core-01 | Crawler used by the workspace LibreChat (`klai-portal/backend/app/services/provisioning/generators.py:338-339`) |
+| crawl4ai (2374) | core-01 | Crawler used by knowledge-ingest (`deploy/docker-compose.yml:2329`) |
+| firecrawl-api (2463) | core-01 | Crawler used by the workspace LibreChat (`klai-portal/backend/app/services/provisioning/generators.py:338-339`) |
 | ollama (690) | core-01 | Runs, but no model alias or fallback in LiteLLM uses it (`deploy/litellm/config.yaml:363-366`) |
 | librechat-getklai (616) | core-01 | The one workspace LibreChat container kept in compose; Klai builds the image from upstream with patches (`deploy/librechat/Dockerfile.klai:23`) |
 | tei, infinity, bge-m3-sparse | gpu-01 | Dense embeddings (BGE-M3), reranker (`bge-reranker-v2-m3`), sparse embeddings (`deploy/docker-compose.gpu.yml:11,37,69`) |

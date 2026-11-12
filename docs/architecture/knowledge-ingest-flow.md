@@ -1,7 +1,8 @@
 # Knowledge ingest: how content gets into the knowledge base
 
 Engineering reference for the ingest side of the knowledge system, verified on
-12 November 2026 against commit `3987ee2a9` (`origin/main`).
+12 November 2026 against commit `3987ee2a9` (`origin/main`), with the two later changes
+of 12 November (#2340, #2341) folded in and the anchors rechecked at `631b5a82f`.
 
 It covers everything between a source and the stores: where content comes from,
 what `klai-knowledge-ingest` does with it, what it writes, how an update and a
@@ -202,12 +203,12 @@ What the crawler does:
   `raw_markdown` and `content_simhash`. An unchanged raw hash skips the page; a
   changed raw hash with an unchanged content hash updates the raw hash only;
   both changed means a full re-ingest (`adapters/crawler.py:1727-1745`). The
-  hashes of a job are read in one batch query (`pg_store.py:1608`).
+  hashes of a job are read in one batch query (`pg_store.py:1609`).
 - **Authenticated crawls.** Cookies are applied on every request. A canary URL
   and a `login_indicator` selector are checked against fetched pages; a page
   that matches an auth wall fails the run instead of being ingested. Login-wall
   detection for anonymous crawls is on by default in `reject` mode
-  (`utils/auth_wall_detector.py`, `deploy/docker-compose.yml:2250-2251`). The
+  (`utils/auth_wall_detector.py`, `deploy/docker-compose.yml:2259-2260`). The
   connector's `SessionKeepAlive` calls `POST /ingest/v1/crawl/keep-alive` every
   1800 s for scheduled crawlers with saved credentials
   (`klai-connector/app/services/session_keepalive.py:24`,
@@ -306,7 +307,7 @@ connector.
 | Connector | Listing | Deletes? | Why not |
 |---|---|---|---|
 | json_feed | whole feed | yes | |
-| notion (search) | all pages via search, filtered on `database_ids` | yes | `max_pages` (500) reached (`adapters/notion.py:101,298-300`) |
+| notion (search) | all pages via search, filtered on `database_ids` | yes | `max_pages` (500) reached (`adapters/notion.py:124,339-341`) |
 | notion (`page_ids`) | each page retrieved | yes | |
 | github | recursive git tree | yes | tree `truncated` (`adapters/github.py:172`) |
 | confluence | pages with `status=current` per space | yes | a space or the space discovery hit the cap of 100, or a space page listing was incomplete (`adapters/confluence.py:63,373`) |
@@ -316,6 +317,17 @@ connector.
 | ms_docs, pinned items | each item fetched | yes | |
 | ms_docs, drive, site or folder | Graph delta after the first run | no | `delta_mode` (`adapters/ms_docs.py:250,256`) |
 | web_crawler | delegated to ingest | own stale-page handling (4.2) | |
+
+A Notion `database_ids` entry is whatever was pasted into the portal, so
+`_extract_config` reduces every entry (a link, a dashed or an undashed id) to
+the dashed id that Notion reports as `parent.database_id`, and raises when an
+entry holds no Notion id (`adapters/notion.py:53-63,123`). Before the search,
+`list_documents` retrieves each filtered database (`_require_databases`,
+`adapters/notion.py:176-190`, called at `:332`), so a filter that names a page,
+or a database not shared with the integration, fails the sync with Notion's
+error instead of completing with zero documents (#2340). A connector that holds
+`page_ids` and an unusable `database_ids` entry now fails as well, because the
+entry is reduced before the pinned pages are looked at.
 
 The first complete sync of a connector after this logic also removes documents
 that were deleted at the source before it, because the store still holds them.
@@ -476,7 +488,7 @@ ingest defers `ingest_graphiti_episode` on `graphiti-bulk` with
 `graphiti_episode_id="skipped:navigation_page"` and its earlier extractions are
 retired.
 
-The task (`enrichment_tasks.py:631-928`, `graph.py:971-1170`):
+The task (`enrichment_tasks.py:631-928`, `graph.py:971-1165`):
 
 - splits the text into parts of at most 30,000 characters (`episode_text.py:3`)
   and calls `graph.ingest_episode` per part: graphiti-core `add_episode` on
@@ -511,7 +523,7 @@ re-queues the graph job without re-chunking, at most 300 per organisation per
 UTC day, with a 7-day cool-off after exhausted retries
 (`graph_refresh.py:27-60,141-193`). "Current" in the graph means the newest
 finished extraction recorded on the artifact rows
-(`pg_store.py:1241-1311`). Taxonomy has no periodic re-clustering task
+(`pg_store.py:1242-1312`). Taxonomy has no periodic re-clustering task
 (`GAP-TAX-01`); classification happens at ingest (phase 5) and in the jobs of 7.
 
 ### 2.6 Queues and lanes
@@ -531,7 +543,7 @@ every queue constant is in exactly one lane
 (`klai-knowledge-ingest/tests/test_queues_constants.py:71`). Jobs live in Postgres
 (`procrastinate_jobs`), the pool holds 4 to 20 connections (`worker.py:107-108`),
 shutdown gets 20 s of the 90 s compose grace (`worker.py:94`,
-`deploy/docker-compose.yml:2178`), and a worker is stalled after 120 s without
+`deploy/docker-compose.yml:2188`), and a worker is stalled after 120 s without
 heartbeat. `recover_zombie_jobs` runs at start and every minute
 (`zombie_recovery.py:30-123`); a zombie whose `queueing_lock` is already held by
 a newer todo job is aborted instead of retried.
@@ -555,7 +567,7 @@ All in UTC, Procrastinate `@periodic`:
 | `17 * * * *` | `sweep_unclassified_kbs_periodic` | maintenance | queues one taxonomy backfill per KB that still has chunks without label or taxonomy (`taxonomy_tasks.py:34,88-102`) |
 | `0 2 * * *` | `evaluate_retrieval_quality_periodic_chat` and `_knowledge_org` | rag-eval | one evaluation run per suite (`eval/ragas_runner.py:604-706`) |
 | `30 2 * * *` | `evaluate_ingest_gap_canary_periodic` | rag-eval | probe queries derived from sources (at most 10, 5 minute budget) (`eval/ragas_runner.py:20-25,394-430,651-665`) |
-| `30 3 * * *` | `reconcile_pg_qdrant_periodic` | maintenance | read-only diff of active artifacts against Qdrant artifact ids (7.2) |
+| `30 3 * * *` | `reconcile_pg_qdrant_periodic` | maintenance | read-only diff of active artifacts against Qdrant artifact ids and, with the graph on, of recorded graph episodes against the graph (7.2) |
 
 Not periodic: rebuild, patch, sparse backfill, purge scripts.
 
@@ -568,7 +580,7 @@ ingest does nothing per language; the chat language behaviour is described in
 
 ### 2.8 Settings and code that look active and are not
 
-- `GRAPHITI_LLM_RPS` in the compose file (`deploy/docker-compose.yml:2221`) is
+- `GRAPHITI_LLM_RPS` in the compose file (`deploy/docker-compose.yml:2231`) is
   read by nothing: there is no such setting. LLM pacing for enrichment, graph,
   taxonomy and labelling is the one shared limiter, `litellm_klai_fast_rps` 0.6
   and `litellm_klai_fast_burst` 10 (`config.py:339-340`,
@@ -652,7 +664,7 @@ after its artifact was deleted removes what it wrote.
 | Document gone at a connector | `DELETE /ingest/v1/connector/document` (`routes/ingest.py:1410-1444`) | same |
 | Scribe transcript deleted | `DELETE /ingest/v1/document?org_id&path=scribe/<id>` with caller service `scribe`, across all KBs of the organisation (`routes/ingest.py:1446-1482`) | same |
 | Crawled page gone | `adapters/crawler.py` stale purge (4.2) | same |
-| Reindex | `POST /knowledge/v1/artifacts/{id}/reindex` sets `pending` and defers `enrich_document_interactive` (`queueing_lock reindex:{org_id}:{id}`); it may reopen a closed head without successor and never a replaced version or a `deleting` row (`routes/kb_sources.py:243-325`, `pg_store.py:2203-2262`) | none |
+| Reindex | `POST /knowledge/v1/artifacts/{id}/reindex` sets `pending` and defers `enrich_document_interactive` (`queueing_lock reindex:{org_id}:{id}`); it may reopen a closed head without successor and never a replaced version or a `deleting` row (`routes/kb_sources.py:243-325`, `pg_store.py:2204-2263`) | none |
 | Connector deleted | `connector_purge_task` to `purge_connector` (`connector_cleanup.py:150-360`): artifact ids captured, resource fences marked deleting, crawl, enrichment and graph jobs cancelled by resource key, Postgres artifacts and crawl rows deleted, graph episodes deleted, Qdrant points deleted by `source_connector_id`, orphaned image keys deleted from object storage, then a janitor pass; finally a callback to the portal (`portal_client.py:203-230`). It does not use `purge_documents` | Postgres, Qdrant, FalkorDB, object storage |
 | KB deleted | `DELETE /ingest/v1/kb` (`routes/ingest.py:1314-1334`): graph episodes of the KB, `qdrant_store.delete_kb`, `pg_store.delete_kb` (artifacts and their aux tables, `kb_config`, `crawl_jobs`, `crawled_pages`, `page_links`; `knowledge.entities` are organisation-wide and stay) | Postgres, Qdrant, FalkorDB |
 | Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:281-450`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:91-182`, one transaction for all `knowledge.*` rows of the org) | Postgres, Qdrant, FalkorDB |
@@ -706,6 +718,7 @@ the way to run it. In code there is no dry run, no flag and no `queueing_lock`
 | `sparse_backfill` | `python -m knowledge_ingest.scripts.sparse_backfill --org [--kb] [--execute]` | adds missing `vector_sparse` only | dry run by default |
 | `requeue_failed_artifacts` | `--dry-run` or `--execute [--org --kb --limit]` | re-defers `enrich_document_bulk` for active `failed` artifacts, from chunk 0 | dry run by default |
 | `repair_pg_qdrant_drift` | `<artifact_id>... [--execute]` | per artifact: reindex, retire, delete points or skip, decided from the current state | dry run by default |
+| `reextract_document_graph` | `python -m scripts.reextract_document_graph --org --artifact [--execute]` in a knowledge-ingest container (`klai-knowledge-ingest/scripts/reextract_document_graph.py:24-28`) | repairs one document whose finished graph extraction lost episodes: keeps the surviving episode ids, marks the extraction not complete with version 0 and queues the normal graph job as a user-requested refresh, without the daily cap or cool-off (`:97-117`; `graph_refresh.py:61-62`) | dry run by default; refuses (exit 2) a document that is not found, not active, not finished, has no missing episode or no stored `document_text` (`:55-90`); when no job is queued the row is written back exactly as it was and the command exits 1 (`:123-134`); nothing runs it automatically |
 | graph `backfill` | `python -m knowledge_ingest.backfill --org-id [--kb-slug] [--limit]` | builds graph episodes for existing artifacts (`backfill.py:1-30`) | flags only |
 | `backfill_crawl_source_identity` | `--apply` | fills `source_domain` and `source_label` | dry run unless `--apply` |
 | login-wall tasks | `backfill_detect_login_walls_task`, `recover_purged_pages_task` | scan crawled pages and purge login stubs | operator-triggered |
@@ -732,7 +745,7 @@ Defined in `deploy/litellm/config.yaml`:
 
 Defined in `deploy/docker-compose.gpu.yml` (the GPU host); the core-01 services
 reach them at the docker bridge gateway address given by `TEI_URL` and
-`SPARSE_SIDECAR_URL` (`deploy/docker-compose.yml:2198-2199`).
+`SPARSE_SIDECAR_URL` (`deploy/docker-compose.yml:2208-2209`).
 
 | Role | Compose service | Image or model | Port | Used by |
 |---|---|---|---|---|
@@ -743,9 +756,9 @@ reach them at the docker bridge gateway address given by `TEI_URL` and
 
 On core-01 (`deploy/docker-compose.yml`): `docling-serve` v1.38.2 (`:1577`,
 internal network only, single-use results off, removal delay 86400 s),
-`crawl4ai` 0.9.5 (`:2364`), `qdrant` v1.20.0 (`:2120`), `falkordb` 6.0.4
-(`:2142`, query timeout 5000), `garage` v2.5.0 (`:2266`), `knowledge-ingest`,
-`klai-connector` (`:2293`), `gitea`, `docs-app`, `klai-knowledge-mcp`,
+`crawl4ai` 0.9.5 (`:2374`), `qdrant` v1.20.0 (`:2120`), `falkordb` 6.0.4
+(`:2142`, query timeout 5000), `garage` v2.5.0 (`:2276`), `knowledge-ingest`,
+`klai-connector` (`:2303`), `gitea`, `docs-app`, `klai-knowledge-mcp`,
 `scribe-api` and `retrieval-api`. The compose file sets
 `SPARSE_SIDECAR_TIMEOUT=30` (code default 5 s) and `GRAPH_ANN_ENABLED=true`
 (candidate search on FalkorDB vector indexes, falling back to a scan per query).
@@ -773,9 +786,36 @@ ingest-gap canary at 02:30 and the reconcile at 03:30 (2.7).
 `reconcile_pg_qdrant_periodic` diffs active artifacts against the artifact ids
 in Qdrant, tolerating writes from the last 15 minutes, with a 900 s timeout, and
 logs the event `pg_qdrant_reconcile` with `missing_in_qdrant` and
-`orphaned_in_qdrant` (`consistency_reconcile.py:23-35,86-91,134-192`). It
-detects and does not repair; [pg-qdrant-reconcile.md](../runbooks/pg-qdrant-reconcile.md)
-has the alert procedure.
+`orphaned_in_qdrant` (`consistency_reconcile.py:24-32,88-94,175-247`).
+
+With `GRAPHITI_ENABLED` on, the same run also looks for graph writes that were
+lost (#2341). Postgres records an extraction as finished while the graph
+persists by snapshot only, so a graph database that is killed during its
+shutdown save can lose episodes that Postgres already lists. For each
+organisation `lost_graph_extractions` (`consistency_reconcile.py:136`) takes
+the graph rows (`pg_store.get_graph_rows_for_org`, which now also returns
+`created_at`, `pg_store.py:1202`), keeps the active rows whose extraction is
+finished, records at least one episode id and is older than
+`graph.ORPHAN_GRACE` of 24 hours (`graph.py:715`), and counts those whose
+recorded ids are not all among the episode uuids the graph holds
+(`graph.stored_episode_uuids`, `graph.py:718`). The event gains `graph_check`
+(`ok`, `error` or `disabled`), `graph_lost_extractions`, `graph_lost_by_org`
+and a sample of at most 20 organisation and artifact ids, ids only. A loss
+makes the status `failed`; a graph that cannot be read sets `graph_check` to
+`error` and the status to `error`, and is never counted as missing episodes
+(`consistency_reconcile.py:183-213`). Both reach the existing
+`pg_qdrant_reconcile_failed` alert (`deploy/grafana/provisioning/alerting/ingest-rules.yaml:118`), where
+`discrepancies_total` is the Qdrant side and `graph_lost_extractions` the graph
+side, and one loss that nobody repairs keeps the alert firing every night
+(the comment at `:114-117`). The check detects and does not repair; the
+repair of one document is the `reextract_document_graph` script of 5.2.
+[pg-qdrant-reconcile.md](../runbooks/pg-qdrant-reconcile.md) has the alert
+procedure. To make a lost write less likely, the `falkordb` service has a stop
+grace period of 60 s instead of Docker's 10 s, because the shutdown save of the
+1.3 GB dump took about 7 s (`deploy/docker-compose.yml:2146-2155`). When
+measured on 12 November 2026, 290 of 10,922 recorded episode ids in one
+organisation were missing from the graph; #2341 calls the link to restarts
+likely and not proven.
 
 Taxonomy jobs: `run_taxonomy_backfill` (four phases: content labels, migrate the
 node id field, classify the unclassified, tags; `taxonomy_tasks.py:168-215`),

@@ -1,7 +1,7 @@
 # Knowledge Retrieval Flow: the retrieval service
 
 > Engineering reference for `klai-retrieval-api`, the service that turns a question and a caller's scope into ranked passages and a citable evidence pack.
-> Verified against the code on 12 November 2026 (`origin/main` at `3987ee2a9`).
+> Verified against the code on 12 November 2026 (`origin/main` at `3987ee2a9`), with the two later changes of 12 November (#2340, #2341) folded in and the anchors rechecked at `631b5a82f`.
 >
 > This document covers the service itself: who may call it, what a request means, the pipeline in the order the code runs it, what is stored and logged per request, how quality is measured, and the settings. It leaves two neighbouring subjects to their own documents:
 >
@@ -39,7 +39,7 @@ All callers use `POST /retrieve` with `X-Internal-Secret` and an `X-Caller-Servi
 - portal-api chat: widget, partner API, internal chat: sends `X-Caller-Service` `portal-api`. Query clipped to 7800 characters; `scope` `org` for widget and partner, the profile's scope for the internal chat; `top_k` per surface; last 6 history turns, each clipped to 7800 characters; `query_variants` (two paraphrases on a first widget or partner question, the case queries on follow-ups, none for fanned-out messages); `max_sources` = `min(top_k, 8)`; `sub_queries` (up to 6); `product`; `page_context` (widget); for the internal chat also `user_id`, `telemetry_level` and `include_owned_private_kbs`. It sends neither `raw_query` nor `coreference_resolved`, so retrieval-api resolves coreference itself whenever history is not empty. Timeout 10 s widget and partner, 60 s internal. Anchor: `klai-portal/backend/app/services/retrieval_context.py:811` (body), `:875` (call), `:512-516` (timeouts); `klai-portal/backend/app/services/chat_prompting.py:104-126` (history).
 - portal-api gap re-scorer: sends `X-Caller-Service` `portal-api`. `scope=org`, `top_k=5`, `purpose=background`, no `user_id`. Timeout 10 s. Anchor: `klai-portal/backend/app/services/gap_rescorer.py:149-176`.
 - portal-api support-case analysis: sends `X-Caller-Service` `portal-api`. `scope=org`, exactly one `kb_slugs` entry, `user_id`, `top_k=8`, optional `raw_query`; the caller discards `graph_edge` chunks and checks each chunk's `kb_slug` against its own. Timeout 15 s. Anchor: `klai-portal/backend/app/services/support_case_analysis.py:67-69`, `:765-800`.
-- portal-api shield: sends `X-Caller-Service` `portal-api`. `scope=both`, `raw_query` equal to `query`, `telemetry_level=shadow`, `effective_role=admin`; it reads `chunks` from the response and also looks for `trusted_sources` and `sources`, keys the response does not have, so its `sources` list is always empty. Timeout 5 s. Anchor: `klai-portal/backend/app/api/shield.py:596-660`.
+- portal-api shield: sends `X-Caller-Service` `portal-api`. `scope=both`, `raw_query` equal to `query`, `telemetry_level=shadow`, `effective_role=admin`; it reads `chunks` from the response and also looks for `trusted_sources` and `sources`, keys the response does not have, so its `sources` list is always empty. Timeout 5 s. Anchor: `klai-portal/backend/app/api/shield.py:596-648`.
 - klai-knowledge-mcp `search_knowledge`: sends `X-Caller-Service` `knowledge-mcp`. `raw_query` equal to `query`, `top_k` clamped to 1..15, `scope` from the tool (default `both`), `kb_slugs` clamped to 20 and dropped for `personal`, `telemetry_level=shadow`, `effective_role`. Timeout 3 s. Anchor: `klai-knowledge-mcp/main.py:1546-1650`; URL from `KNOWLEDGE_RETRIEVE_URL` (`deploy/docker-compose.yml:1785`).
 - knowledge-ingest RAGAS harness: sends `X-Caller-Service` `knowledge-ingest`. `query`, `org_id`, `user_id`, `kb_slugs` from the suite; every other field at its default, so `purpose=chat` and `telemetry_level=shadow`. Timeout 10 s (`rag_eval_retrieval_timeout`). Anchor: `klai-knowledge-ingest/knowledge_ingest/eval/retrieval_client.py:55-120`, `klai-knowledge-ingest/knowledge_ingest/config.py:549`.
 - Measurement scripts: sends `X-Caller-Service` portal's own. `meetlat` replays a chat turn with `debug_stages=true`; the one-off launcher opens the service's Postgres connections read-only. Anchor: `klai-portal/backend/scripts/meetlat.py:846-865`, `deploy/scripts/retrieval-api-oneoff-launch.py`.
@@ -249,7 +249,7 @@ The service does not classify gaps. Callers do, from the response: no chunks is 
 
 The harness lives in knowledge-ingest, not in this service (`klai-knowledge-ingest/knowledge_ingest/eval/ragas_runner.py`, `register_eval_tasks` at `:604`). One Procrastinate task per suite runs on the `rag-eval` queue at 02:00 UTC for the suites `chat` and `knowledge_org`, with one attempt and a queueing lock per suite (`:674-700`). A second periodic task, the ingest-gap canary, runs at 02:30 UTC (`:651`).
 
-The suites are YAML files read from `RAG_EVAL_SUITES_DIR`. The repository ships only a synthetic `_sample.yaml`; in production the directory is mounted read-only from outside the repository (`deploy/docker-compose.yml:2231`, `:2252`).
+The suites are YAML files read from `RAG_EVAL_SUITES_DIR`. The repository ships only a synthetic `_sample.yaml`; in production the directory is mounted read-only from outside the repository (`deploy/docker-compose.yml:2241`, `:2262`).
 
 Per query, the harness:
 
