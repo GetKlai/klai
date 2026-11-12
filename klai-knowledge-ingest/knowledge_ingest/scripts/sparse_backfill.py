@@ -41,6 +41,7 @@ from qdrant_client.models import (
 
 from knowledge_ingest import sparse_embedder
 from knowledge_ingest.config import settings
+from knowledge_ingest.operations import guard_cli, kb_operation
 from knowledge_ingest.qdrant_store import COLLECTION, get_client
 
 logger = structlog.get_logger()
@@ -155,9 +156,12 @@ async def _main(args: argparse.Namespace) -> None:
     client = get_client()
     print("before:")
     _print_counts(await count_chunks(client, args.org, args.kb))
-    result = await backfill_sparse(
-        client, args.org, args.kb, execute=args.execute, batch_size=args.batch_size
-    )
+    result: Counter = Counter()
+    for slug in [args.kb] if args.kb else sorted(await count_chunks(client, args.org)):
+        async with kb_operation(args.org, [slug], execute=args.execute):
+            result += await backfill_sparse(
+                client, args.org, slug, execute=args.execute, batch_size=args.batch_size
+            )
     if args.execute:
         print(f"backfill: {result['written']} written, {result['failed']} failed")
         print("after:")
@@ -172,7 +176,9 @@ def main() -> None:
     parser.add_argument("--kb", help="limit to one knowledge base slug")
     parser.add_argument("--execute", action="store_true", help="write the missing vectors")
     parser.add_argument("--batch-size", type=int, help="points per sidecar call")
-    asyncio.run(_main(parser.parse_args()))
+    args = parser.parse_args()
+    guard_cli("sparse_backfill", args.execute)
+    asyncio.run(_main(args))
 
 
 if __name__ == "__main__":

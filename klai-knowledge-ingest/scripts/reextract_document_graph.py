@@ -39,6 +39,7 @@ from knowledge_ingest import graph as graph_module
 from knowledge_ingest import pg_store
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.graph_refresh import maybe_refresh_stale_graph
+from knowledge_ingest.operations import guard_cli, kb_operation
 from knowledge_ingest.scripts.requeue_failed_artifacts import _procrastinate_app
 
 
@@ -142,7 +143,13 @@ def main() -> int:
         "--execute", action="store_true", help="Mark it not extracted and queue the job"
     )
     args = parser.parse_args()
-    return asyncio.run(run(args.org, args.artifact, args.execute))
+    guard_cli("reextract_document_graph", args.execute)
+    return asyncio.run(_run_locked(args.org, args.artifact, args.execute))
+
+
+async def _run_locked(org_id: str, artifact_id: str, execute: bool) -> int:
+    async with kb_operation(org_id, None, execute=execute):
+        return await run(org_id, artifact_id, execute)
 
 
 if __name__ == "__main__":
