@@ -19,7 +19,6 @@ because they are retained, so the guard never fired.
 
 from __future__ import annotations
 
-import sys
 from contextlib import asynccontextmanager, suppress
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -35,15 +34,15 @@ _ARTIFACT_ID = "0f9c1a2b-3d4e-4f50-9a61-72b83c94d5e6"
 _ORG_ID = "368884765035593759"
 
 
-class _Abandoned(Exception):
-    """Stands in for procrastinate.exceptions.JobAborted (procrastinate needs libpq)."""
+# procrastinate's own JobAborted (``real_procrastinate``), so an abandoned job is
+# asserted to be what the worker records as ``aborted`` and does not retry.
+JobAborted: type[BaseException]
 
 
 @pytest.fixture(autouse=True)
-def _job_aborted(monkeypatch):
-    monkeypatch.setitem(
-        sys.modules, "procrastinate.exceptions", SimpleNamespace(JobAborted=_Abandoned)
-    )
+def _job_aborted(real_procrastinate):
+    global JobAborted
+    JobAborted = real_procrastinate.exceptions.JobAborted
 
 
 class _CapturingApp:
@@ -112,7 +111,7 @@ async def _run(
         patch.object(knowledge_ingest, "pg_store", pg_store),
         patch.object(knowledge_ingest, "graph", graph_module),
         patch.object(enrichment_tasks, "tenant_scoped_connection", _fake_conn),
-        suppress(_Abandoned),
+        suppress(JobAborted),
     ):
         await graphiti_task(
             artifact_id=_ARTIFACT_ID,
@@ -302,7 +301,7 @@ async def test_deletion_between_episode_parts_aborts_before_the_next_write(graph
         patch.object(knowledge_ingest, "pg_store", pg_store),
         patch.object(knowledge_ingest, "graph", graph_module),
         patch.object(enrichment_tasks, "tenant_scoped_connection", _fake_conn),
-        pytest.raises(_Abandoned),
+        pytest.raises(JobAborted),
     ):
         await graphiti_task(
             artifact_id=_ARTIFACT_ID,

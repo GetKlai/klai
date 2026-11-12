@@ -46,17 +46,15 @@ def _install_procrastinate_stub() -> None:
 _install_procrastinate_stub()
 
 
-class _Abandoned(Exception):
-    """Stub for procrastinate.exceptions.JobAborted: an abandoned job ends ``aborted``."""
+# procrastinate's own JobAborted (``real_procrastinate``), so an abandoned job is
+# asserted to be what the worker records as ``aborted`` and does not retry.
+JobAborted: type[BaseException]
 
 
 @pytest.fixture(autouse=True)
-def _job_aborted(monkeypatch):
-    monkeypatch.setitem(
-        sys.modules,
-        "procrastinate.exceptions",
-        types.SimpleNamespace(JobAborted=_Abandoned, AlreadyEnqueued=_AlreadyEnqueued),
-    )
+def _job_aborted(real_procrastinate):
+    global JobAborted
+    JobAborted = real_procrastinate.exceptions.JobAborted
 
 
 def _make_mock_conn() -> MagicMock:
@@ -242,13 +240,18 @@ async def test_load_and_enrich_skips_when_artifact_missing():
         patch(
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
+        patch(
+            "knowledge_ingest.enrichment_tasks.qdrant_store.delete_points_of_artifact",
+            new_callable=AsyncMock,
+        ) as remove_points,
     ):
         from knowledge_ingest.enrichment_tasks import _load_and_enrich
 
-        with pytest.raises(_Abandoned):
+        with pytest.raises(JobAborted):
             await _load_and_enrich("00000000-0000-0000-0000-000000000000")
 
     mock_enrich.assert_not_called()
+    remove_points.assert_awaited_once_with("00000000-0000-0000-0000-000000000000")
 
 
 @pytest.mark.asyncio
@@ -564,7 +567,7 @@ async def test_enrich_document_skips_qdrant_write_when_artifact_superseded():
             "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
             new_callable=AsyncMock,
         ) as mock_status,
-        pytest.raises(_Abandoned),
+        pytest.raises(JobAborted),
     ):
         await _enrich_document(
             org_id="org-1",
@@ -626,7 +629,7 @@ async def test_load_and_enrich_skips_superseded_artifact():
     ):
         from knowledge_ingest.enrichment_tasks import _load_and_enrich
 
-        with pytest.raises(_Abandoned):
+        with pytest.raises(JobAborted):
             await _load_and_enrich("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
     enrich.assert_not_awaited()

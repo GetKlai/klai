@@ -195,6 +195,21 @@ def _normalize_path_prefix(base_url: str, path_prefix: str | None) -> str | None
     return None if normalized == "/" else normalized
 
 
+async def start_crawl_run(proc_app: Any, pool: Any, org_id: str, resource_key: str) -> None:
+    """Make this crawl run the connector's current one and stop the older run's crawl job.
+
+    Only the crawl job: the enrichment and graph jobs the older run queued
+    belong to document versions that are still current, and this run skips
+    unchanged pages without queueing them again. Cancelling them lost 353
+    enrichment and 387 graph jobs of ~11,300 on production.
+    """
+    async with tenant_scoped_connection(org_id) as conn:
+        old_resource_key = await get_current_connector_resource_key(conn, resource_key)
+        await activate_connector_resource(conn, resource_key)
+    if old_resource_key and old_resource_key != resource_key:
+        await cancel_jobs_by_resource_key(proc_app, pool, old_resource_key, queues=(CRAWL_JOBS,))
+
+
 @router.post(
     "/ingest/v1/crawl/sync",
     response_model=CrawlSyncResponse,
@@ -249,16 +264,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
 
     proc_app = enrichment_tasks.get_app()
     resource_key = connector_resource_key(req.org_id, req.kb_slug, req.connector_id, req.generation)
-    async with tenant_scoped_connection(req.org_id) as conn:
-        old_resource_key = await get_current_connector_resource_key(conn, resource_key)
-        await activate_connector_resource(conn, resource_key)
-    if old_resource_key and old_resource_key != resource_key:
-        # The new run replaces the old run's crawl job only. The enrichment and
-        # graph jobs the old run queued belong to document versions that are
-        # still current, and the new run skips unchanged pages without queueing
-        # them again: cancelling them lost 353 enrichment and 387 graph jobs out
-        # of ~11,300 on production.
-        await cancel_jobs_by_resource_key(proc_app, pool, old_resource_key, queues=(CRAWL_JOBS,))
+    await start_crawl_run(proc_app, pool, req.org_id, resource_key)
     await proc_app.run_crawl.defer_async(  # type: ignore[attr-defined]
         job_id=job_id,
         org_id=req.org_id,

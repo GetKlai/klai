@@ -10,7 +10,6 @@ FalkorDB; only the LLM work is replaced.
 
 from __future__ import annotations
 
-import sys
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -24,9 +23,15 @@ from knowledge_ingest.resource_jobs import connector_resource_key
 from tests.graph_contract.conftest import Contract, seed_graph, stored_graph
 from tests.test_graph_refresh_on_stale_extraction_version import _CapturingApp
 
+# procrastinate's own JobAborted (``real_procrastinate``), so an abandoned job is
+# asserted to be what the worker records as ``aborted`` and does not retry.
+JobAborted: type[BaseException]
 
-class _Abandoned(Exception):
-    """Stands in for procrastinate.exceptions.JobAborted (procrastinate needs libpq)."""
+
+@pytest.fixture(autouse=True)
+def _job_aborted(real_procrastinate):
+    global JobAborted
+    JobAborted = real_procrastinate.exceptions.JobAborted
 
 
 @pytest.fixture
@@ -50,9 +55,6 @@ def stores(graph_helpers: Contract, tenant_rows, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(enrichment_tasks, "cross_org_admin_connection", lambda: _tenant(org_id))
     monkeypatch.setattr(connector_state, "tenant_scoped_connection", _tenant)
     monkeypatch.setattr(connector_state, "get_pool", _pool)
-    monkeypatch.setitem(
-        sys.modules, "procrastinate.exceptions", SimpleNamespace(JobAborted=_Abandoned)
-    )
     connector_state.invalidate_cache()
 
     async def setup() -> None:
@@ -152,27 +154,21 @@ async def test_graph_work_of_run_a_still_completes_after_run_b_starts(
     assert set(edges) == {"part-1-fact", "part-2-fact"}
 
 
-async def test_enrichment_of_run_a_still_writes_after_run_b_starts(stores, monkeypatch) -> None:
-    await stores.setup()
-    run_a = await _start_run(stores, "run-a")
-    artifact = await _connector_page(stores, run_a)
-    await _start_run(stores, "run-b")
-    upsert = AsyncMock()
+async def _enrichment_job(*, upsert=None, during_model_work=None, **args) -> AsyncMock:
+    """Run the real bulk enrichment job; only the model work and the vector write are faked."""
+    upsert = upsert or AsyncMock()
+
+    async def _enrich(**kw):
+        if during_model_work:
+            await during_model_work()
+        return [enrichment_tasks.enrichment.EnrichedChunk(c, c, "", []) for c in kw["chunks"]]
 
     with (
         patch.object(
             enrichment_tasks.qdrant_store, "has_chunks_from", AsyncMock(return_value=False)
         ),
         patch.object(enrichment_tasks.qdrant_store, "upsert_enriched_chunks", upsert),
-        patch.object(
-            enrichment_tasks.enrichment,
-            "enrich_chunks",
-            AsyncMock(
-                side_effect=lambda **kw: [
-                    enrichment_tasks.enrichment.EnrichedChunk(c, c, "", []) for c in kw["chunks"]
-                ]
-            ),
-        ),
+        patch.object(enrichment_tasks.enrichment, "enrich_chunks", _enrich),
         patch.object(
             enrichment_tasks.embedder, "embed", AsyncMock(side_effect=lambda t: [[0.1]] * len(t))
         ),
@@ -188,15 +184,153 @@ async def test_enrichment_of_run_a_still_writes_after_run_b_starts(stores, monke
     ):
         app = _CapturingApp()
         enrichment_tasks._register_tasks(app)
-        # Queued by run A before this change: the job still carries its run key.
-        await app.tasks["enrich_document_bulk"](None, artifact_id=artifact, resource_key=run_a)
+        await app.tasks["enrich_document_bulk"](None, **args)
+    return upsert
+
+
+async def test_enrichment_of_run_a_still_writes_after_run_b_starts(stores) -> None:
+    await stores.setup()
+    run_a = await _start_run(stores, "run-a")
+    artifact = await _connector_page(stores, run_a)
+    await _start_run(stores, "run-b")
+
+    # Queued by run A before this change: the job still carries its run key.
+    upsert = await _enrichment_job(artifact_id=artifact, resource_key=run_a)
 
     upsert.assert_awaited_once()
     assert upsert.await_args.kwargs["artifact_id"] == artifact
 
 
+async def _flip_connector_without_touching_the_cache(stores, state: str) -> None:
+    """Production order: the job has already cached "active" when the state flips."""
+    await stores.conn.execute(
+        "UPDATE public.portal_connectors SET state = $2 WHERE id = $1", stores.connector_id, state
+    )
+
+
+async def test_enrichment_does_not_write_after_its_connector_started_deleting(stores) -> None:
+    await stores.setup()
+    artifact = await _connector_page(stores, await _start_run(stores, "run-a"))
+
+    with pytest.raises(JobAborted):
+        upsert = AsyncMock()
+        await _enrichment_job(
+            artifact_id=artifact,
+            upsert=upsert,
+            during_model_work=lambda: _flip_connector_without_touching_the_cache(
+                stores, "deleting"
+            ),
+        )
+    upsert.assert_not_awaited()
+
+
+async def test_a_failed_check_before_the_vector_write_fails_the_job(stores, monkeypatch) -> None:
+    await stores.setup()
+    artifact = await _connector_page(stores, await _start_run(stores, "run-a"))
+    # The job-start read succeeds; the check right before the write cannot be made.
+    monkeypatch.setattr(
+        enrichment_tasks.pg_store,
+        "artifact_is_active",
+        AsyncMock(side_effect=ConnectionError("database unavailable")),
+    )
+    upsert = AsyncMock()
+
+    with pytest.raises(enrichment_tasks._WriteCheckFailed):
+        await _enrichment_job(artifact_id=artifact, upsert=upsert)
+    upsert.assert_not_awaited()
+
+
+async def test_a_failed_check_after_the_vector_write_fails_and_a_retry_removes_the_points(
+    stores, monkeypatch
+) -> None:
+    await stores.setup()
+    artifact = await _connector_page(stores, await _start_run(stores, "run-a"))
+    real_check = enrichment_tasks.pg_store.artifact_is_active
+    calls = []
+
+    async def _check(conn, artifact_id):
+        calls.append(artifact_id)
+        if len(calls) > 1:  # the check after the write
+            raise ConnectionError("database unavailable")
+        return await real_check(conn, artifact_id)
+
+    async def _upsert_while_a_delete_lands(**_kwargs):
+        await stores.conn.execute("DELETE FROM knowledge.artifacts WHERE id = $1", artifact)
+
+    monkeypatch.setattr(enrichment_tasks.pg_store, "artifact_is_active", _check)
+
+    with pytest.raises(enrichment_tasks._WriteCheckFailed):
+        await _enrichment_job(
+            artifact_id=artifact, upsert=AsyncMock(side_effect=_upsert_while_a_delete_lands)
+        )
+
+    # The retry finds the version gone and removes the points the first attempt wrote.
+    point = SimpleNamespace(payload={"org_id": stores.org_id})
+    vector_store = SimpleNamespace(
+        scroll=AsyncMock(return_value=([point], None)), delete=AsyncMock()
+    )
+    monkeypatch.setattr(enrichment_tasks.qdrant_store, "get_client", lambda: vector_store)
+    with pytest.raises(JobAborted):
+        await _enrichment_job(artifact_id=artifact)
+    deleted = vector_store.delete.await_args.kwargs["points_selector"]
+    assert {
+        c.key: getattr(c.match, "value", None) or getattr(c.match, "any", None)
+        for c in deleted.must + deleted.should
+    } == {
+        "org_id": stores.org_id,
+        "artifact_id": [artifact],
+    }
+
+
+async def test_a_graph_part_written_after_the_connector_started_deleting_is_removed(
+    graph_helpers: Contract, stores, monkeypatch
+) -> None:
+    await stores.setup()
+    artifact = await _connector_page(stores, await _start_run(stores, "run-a"))
+
+    await _assert_abandoned_with_nothing_written(
+        graph_helpers,
+        monkeypatch,
+        artifact,
+        between_parts=lambda: _flip_connector_without_touching_the_cache(stores, "deleting"),
+    )
+
+
+async def test_an_abandoned_job_ends_aborted_and_is_not_retried(
+    graph_helpers: Contract, stores, monkeypatch, real_procrastinate
+) -> None:
+    """Through procrastinate's own worker: the job row says aborted, not succeeded."""
+    from procrastinate.testing import InMemoryConnector
+
+    await stores.setup()
+    artifact = await _connector_page(stores, await _start_run(stores, "run-a"))
+    await _set_connector(stores, "deleting")
+    monkeypatch.setattr(enrichment_tasks, "split_episode_text", lambda _text: ["one"])
+    connector = InMemoryConnector()
+    app = real_procrastinate.App(connector=connector)
+    enrichment_tasks._register_tasks(app)
+
+    async with app.open_async():
+        await app.ingest_graphiti_episode.defer_async(
+            artifact_id=artifact,
+            org_id=graph_helpers.group_id,
+            content_type="kb_article",
+            belief_time_start=1,
+            kb_slug="docs",
+            path="page",
+            replace_stale=True,
+        )
+        await app.run_worker_async(
+            queues=["graphiti-bulk"], wait=False, install_signal_handlers=False
+        )
+
+    jobs = list(connector.jobs.values())
+    # One attempt, one row: aborted, and no retry was scheduled.
+    assert [(job["status"], job["attempts"]) for job in jobs] == [("aborted", 1)]
+
+
 async def _assert_abandoned_with_nothing_written(contract, monkeypatch, artifact, **kw) -> None:
-    with pytest.raises(_Abandoned):
+    with pytest.raises(JobAborted):
         await _graph_job(contract, monkeypatch, artifact, **kw)
     episodes, edges, _ = await stored_graph(contract)
     assert episodes == set() and edges == {}

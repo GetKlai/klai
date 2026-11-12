@@ -162,7 +162,7 @@ async def check_connector_resource_fence(resource_key: str, *, fresh: bool = Fal
     return result
 
 
-async def connector_is_active(connector_id: str | None) -> bool:
+async def connector_is_active(connector_id: str | None, *, fresh: bool = False) -> bool:
     """Return True iff the connector exists and has state='active'.
 
     Returns False on:
@@ -172,16 +172,18 @@ async def connector_is_active(connector_id: str | None) -> bool:
       - connector_id is unknown to portal_connectors (deleted, hard-purged)
       - state is anything other than 'active' (e.g. 'deleting')
 
-    Raises when the lookup itself fails.
+    Raises when the lookup itself fails. ``fresh`` skips the cache: a check
+    that decides about a write just made or about to be made must see a
+    connector that flipped to ``deleting`` a moment ago.
     """
     if not connector_id:
         return False
 
-    state = await get_connector_state(connector_id)
+    state = await get_connector_state(connector_id, fresh=fresh)
     return state == "active"
 
 
-async def get_connector_state(connector_id: str) -> str | None:
+async def get_connector_state(connector_id: str, *, fresh: bool = False) -> str | None:
     """Return the ``state`` value from ``portal_connectors`` or None.
 
     None means the row is not found; a failed query raises. The typical
@@ -192,7 +194,7 @@ async def get_connector_state(connector_id: str) -> str | None:
     """
     now = time.monotonic()
     cached = _state_cache.get(connector_id)
-    if cached is not None and cached[1] > now:
+    if not fresh and cached is not None and cached[1] > now:
         return cached[0]
 
     # A failed lookup raises. Returning "not active" here made a database

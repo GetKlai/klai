@@ -18,7 +18,6 @@ from __future__ import annotations
 import itertools
 import json
 import os
-import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -837,7 +836,7 @@ async def test_history_walk_ends_on_a_cycle() -> None:
 
 @pytest.mark.asyncio
 async def test_enrichment_removes_points_written_after_its_artifact_was_deleted(
-    stores, monkeypatch
+    stores, monkeypatch, real_procrastinate
 ) -> None:
     from knowledge_ingest import document_purge, enrichment_tasks
     from knowledge_ingest.enrichment import EnrichedChunk
@@ -877,15 +876,8 @@ async def test_enrichment_removes_points_written_after_its_artifact_was_deleted(
     status = AsyncMock()
     monkeypatch.setattr(enrichment_tasks, "_set_direct_upload_index_status", status)
 
-    class _Abandoned(Exception):
-        """Stands in for procrastinate.exceptions.JobAborted (procrastinate needs libpq)."""
-
-    monkeypatch.setitem(
-        sys.modules, "procrastinate.exceptions", SimpleNamespace(JobAborted=_Abandoned)
-    )
-
     # The job ends abandoned (aborted), not as if it had done the work.
-    with pytest.raises(_Abandoned):
+    with pytest.raises(real_procrastinate.exceptions.JobAborted):
         await enrichment_tasks._enrich_document(
             org_id=org_id,
             kb_slug="kb",

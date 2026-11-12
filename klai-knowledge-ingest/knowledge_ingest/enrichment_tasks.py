@@ -201,6 +201,9 @@ async def _load_and_enrich(artifact_id: str, batch_offset: int = 0) -> None:
     async with cross_org_admin_connection() as admin_conn:
         artifact = await pg_store.read_artifact_for_enrichment(admin_conn, artifact_id)
     if artifact is None:
+        # Points this job (or a failed earlier attempt of it) wrote for a
+        # version that is gone now belong to no row; nothing else removes them.
+        await qdrant_store.delete_points_of_artifact(artifact_id)
         _abandon("enrichment_aborted_artifact_missing", artifact_id=artifact_id)
     if artifact["belief_time_end"] != pg_store._SENTINEL:
         _abandon(
@@ -397,12 +400,40 @@ def _abandon(event: str, **fields: Any) -> NoReturn:
     raise JobAborted(event)
 
 
-async def _abandon_if_connector_inactive(connector_id: str | None, **fields: Any) -> None:
-    """Abandon the job when the document's connector is being deleted or is gone."""
+async def _abandon_if_connector_inactive(
+    connector_id: str | None, *, fresh: bool = False, **fields: Any
+) -> None:
+    """Abandon the job when the document's connector is being deleted or is gone.
+
+    ``fresh`` bypasses the 5-second state cache; use it where the answer
+    decides about a write just made or about to be made.
+    """
     from knowledge_ingest.connector_state import connector_is_active
 
-    if connector_id and not await connector_is_active(connector_id):
+    if connector_id and not await connector_is_active(connector_id, fresh=fresh):
         _abandon("derived_job_aborted_connector_inactive", connector_id=connector_id, **fields)
+
+
+class _WriteCheckFailed(Exception):
+    """The check that decides about a vector write could not be made.
+
+    Raised instead of the lookup error so ``_enrich_document``'s handler for
+    infrastructure failures does not swallow it: the job must fail and be
+    retried, not end as done with stale or unchecked points.
+    """
+
+
+async def _still_current_for_write(org_id: str, artifact_id: str, connector_id: str | None) -> bool:
+    """Fresh: is the artifact the active version and its connector active?"""
+    from knowledge_ingest.connector_state import connector_is_active
+
+    try:
+        async with tenant_scoped_connection(org_id) as conn:
+            if not await pg_store.artifact_is_active(conn, artifact_id):
+                return False
+        return not connector_id or await connector_is_active(connector_id, fresh=True)
+    except Exception as exc:
+        raise _WriteCheckFailed(f"cannot tell whether artifact {artifact_id} is current") from exc
 
 
 class _EnrichmentDeferred(LLMCapacityUnavailable):
@@ -848,7 +879,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     )
                 episode_ids.append(episode_id)
                 try:
-                    await _abandon_if_connector_inactive(connector_id, artifact_id=artifact_id)
+                    await _abandon_if_connector_inactive(
+                        connector_id, fresh=True, artifact_id=artifact_id
+                    )
                 except BaseException:
                     # Abandoned, or the state could not be read: either way
                     # this part must not outlive the job as an unrecorded
@@ -1066,16 +1099,17 @@ async def _enrich_document(
         # change that happened while this task was queued or running.
         # SPEC-TI-003-FOLLOWUP-001 AC-1: tenant_scoped_connection so kb_config +
         # insert_parent_chunks see the RLS GUC for this org.
+        # Fresh, right before the writes: minutes of model work lie between
+        # this and the check at job start.
+        if not await _still_current_for_write(org_id, artifact_id, source_connector_id):
+            _abandon(
+                "enrichment_aborted_not_current",
+                artifact_id=artifact_id,
+                kb_slug=kb_slug,
+                path=path,
+                org_id=org_id,
+            )
         async with tenant_scoped_connection(org_id) as conn:
-            if not await pg_store.artifact_is_active(conn, artifact_id):
-                _abandon(
-                    "enrichment_aborted_artifact_superseded",
-                    artifact_id=artifact_id,
-                    kb_slug=kb_slug,
-                    path=path,
-                    org_id=org_id,
-                )
-
             extra_payload["visibility"] = await kb_config.get_kb_visibility(conn, org_id, kb_slug)
 
             # SPEC-RAG-PARENT-CHILD-001: persist parents to Postgres NOW so the
@@ -1124,9 +1158,7 @@ async def _enrich_document(
         # points just written would belong to no row and nothing would remove
         # them. Parent chunks need no such check: their foreign key rejects an
         # insert for a deleted row and cascades on a later delete.
-        async with tenant_scoped_connection(org_id) as conn:
-            still_active = await pg_store.artifact_is_active(conn, artifact_id)
-        if not still_active:
+        if not await _still_current_for_write(org_id, artifact_id, source_connector_id):
             await qdrant_store.delete_artifacts(org_id, [artifact_id], [])
             _abandon(
                 "enrichment_points_removed_artifact_inactive",
@@ -1197,8 +1229,8 @@ async def _enrich_document(
     except Exception as exc:
         from procrastinate.exceptions import JobAborted
 
-        if isinstance(exc, JobAborted):
-            raise  # an abandoned job (_abandon), not an infrastructure failure
+        if isinstance(exc, JobAborted | _WriteCheckFailed):
+            raise  # abandoned, or the write check could not be made: not swallowed
         # Non-enrichment failures (embedding, Qdrant, network): log and swallow.
         # Raw vectors remain in Qdrant — document is still searchable with
         # basic embeddings.  These are infrastructure issues, not data quality
