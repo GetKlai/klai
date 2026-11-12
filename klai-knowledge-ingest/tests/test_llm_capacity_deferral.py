@@ -142,7 +142,11 @@ class _FakeApp:
 
 
 async def _run_bulk_enrichment(
-    error: Exception, *, llm_deferred_since: int | None = None, attempts: int = 0
+    error: Exception,
+    *,
+    llm_deferred_since: int | None = None,
+    attempts: int = 0,
+    extra_payload: dict | None = None,
 ):
     """Run the bulk task for one artifact whose chunk enrichment raises ``error``."""
     app = _FakeApp()
@@ -159,7 +163,11 @@ async def _run_bulk_enrichment(
             title="A",
             artifact_id=artifact_id,
             user_id=None,
-            extra_payload={"document_summary": "s", "document_language": "en"},
+            extra_payload=(
+                {"document_summary": "s", "document_language": "en"}
+                if extra_payload is None
+                else extra_payload
+            ),
             synthesis_depth=0,
         )
 
@@ -201,6 +209,33 @@ async def test_spent_capacity_defers_the_enrichment_job_instead_of_failing_it(an
         "info"
     ]
     assert not [e for e in logs if e["log_level"] == "error"]
+
+
+async def test_spent_capacity_on_the_summary_call_defers_the_job():
+    """The summary call meets the spent budget first; it defers, not falls back."""
+    from knowledge_ingest import contextual
+
+    status, message = BUDGET_CROSSED
+    transport = httpx.MockTransport(lambda request: httpx.Response(status, text=message))
+    real_client = httpx.AsyncClient
+    with (
+        patch(
+            "knowledge_ingest.contextual.httpx.AsyncClient",
+            lambda **kwargs: real_client(transport=transport, **kwargs),
+        ),
+        patch(
+            "knowledge_ingest.contextual.shared_klai_fast_limiter",
+            return_value=MagicMock(acquire=AsyncMock()),
+        ),
+        patch.object(contextual, "detect_language", return_value="en"),
+    ):
+        task, status_mock, _logs, outcome = await _run_bulk_enrichment(
+            AssertionError("no chunk call may be made"), extra_payload={}
+        )
+
+    assert outcome is None
+    status_mock.assert_not_awaited()
+    task.defer_async.assert_awaited_once()
 
 
 async def test_other_llm_failure_is_retried_and_only_the_last_attempt_fails_the_document():
