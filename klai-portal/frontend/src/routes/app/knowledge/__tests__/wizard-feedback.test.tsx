@@ -45,21 +45,54 @@ describe('AuthProbeFeedback', () => {
     expect(screen.getByText(/go back to step 3 and answer yes/i)).toBeTruthy()
   })
 
-  it('exposes match_reasons on auth_failed_still_walled', () => {
+  it('shows one plain warning on a failed cookie test, without renewal or diagnostics', () => {
     render(
       <AuthProbeFeedback
         result={{
           classification: 'auth_failed_still_walled',
-          match_reasons: ['session_cookie_minimal_body', 'end_of_body_login_marker'],
+          match_reasons: ['login_gate_still_present_with_cookies'],
           word_count: 10,
           auth_guard: null,
+          renewal: { can_renew: false, reason: 'no_cookies_for:idp.example.com' },
         }}
       />,
     )
-    expect(
-      screen.getByText(/session_cookie_minimal_body/),
-    ).toBeTruthy()
-    expect(screen.getByText(/end_of_body_login_marker/)).toBeTruthy()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByText(/still logged out with these cookies/i)).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/login_gate_still_present|no_cookies_for|Detected/)
+  })
+
+  it('names the sign-in host and never the code when logging in works but renewal does not', () => {
+    render(
+      <AuthProbeFeedback
+        result={{
+          classification: 'auth_ok',
+          match_reasons: [],
+          word_count: 300,
+          auth_guard: null,
+          renewal: { can_renew: false, reason: 'no_cookies_for:idp.example.com' },
+        }}
+      />,
+    )
+    expect(screen.getByText(/Logging in works now/)).toBeTruthy()
+    expect(screen.getByText(/cookies of idp\.example\.com/)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('no_cookies_for')
+  })
+
+  it('shows one generic sentence for an unknown renewal reason', () => {
+    render(
+      <AuthProbeFeedback
+        result={{
+          classification: 'auth_ok',
+          match_reasons: [],
+          word_count: 300,
+          auth_guard: null,
+          renewal: { can_renew: false, reason: 'something_new:example.org' },
+        }}
+      />,
+    )
+    expect(screen.getByText(/could not sign in to this site again by itself/)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('something_new')
   })
 
   it('shows credentials rejected message on 401/403', () => {

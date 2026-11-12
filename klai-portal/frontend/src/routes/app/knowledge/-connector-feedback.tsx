@@ -3,8 +3,8 @@
 // Per the "File organization for shared types and helpers" rule
 // (.claude/rules/klai/projects/portal-frontend.md).
 //
-// These two components are pure functions of their props (no internal
-// state, no side effects). They render the structured feedback for the
+// These two components are pure functions of their props (AuthProbeFeedback
+// only writes the raw probe output to the debug log). They render the structured feedback for the
 // wizard's two probe outcomes:
 //   - AuthProbeFeedback: REQ-2 - auth-probe classification + reasons.
 //   - PreviewClassificationFeedback: REQ-3 - preview-pipeline judgement.
@@ -12,27 +12,84 @@
 // Both are tested directly via __tests__/wizard-feedback.test.tsx (no
 // router/query-client setup required).
 
+import { useEffect } from 'react'
 import { Alert } from '@/components/ui/alert'
+import { adminLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 import type { AuthProbeResult, PreviewClassification } from './-connector-types'
 
+const HOST_CODES = ['no_cookies_for', 'sign_in_required_at', 'keepalive_cannot_read_session_at']
+
+function splitReason(reason: string | null): [string, string] {
+  const [code, ...rest] = (reason ?? '').split(':')
+  return [code, rest.join(':')]
+}
+
+/** The sign-in host whose cookies a failed renewal asks for, if the reason names one. */
+export function renewalHost(reason: string | null): string | null {
+  const [code, host] = splitReason(reason)
+  return host && HOST_CODES.includes(code) ? host : null
+}
+
+function renewalMessage(reason: string | null, savedMode: boolean): string {
+  const [code, host] = splitReason(reason)
+  const action = savedMode
+    ? m.admin_connectors_webcrawler_auth_renewal_action_replace({ host })
+    : m.admin_connectors_webcrawler_auth_renewal_action_paste({ host })
+  switch (code) {
+    case 'no_cookies_for':
+      return `${m.admin_connectors_webcrawler_auth_renewal_no_cookies({ host })} ${action}`
+    case 'sign_in_required_at':
+      return `${m.admin_connectors_webcrawler_auth_renewal_sign_in_required({ host })} ${action}`
+    case 'keepalive_cannot_read_session_at':
+      return `${m.admin_connectors_webcrawler_auth_renewal_keepalive({ host })} ${action}`
+    case 'callback_rejected':
+      return m.admin_connectors_webcrawler_auth_renewal_callback_rejected()
+    case 'still_logged_out':
+      return m.admin_connectors_webcrawler_auth_renewal_still_logged_out()
+    case 'no_login_link':
+      return m.admin_connectors_webcrawler_auth_renewal_no_login_link()
+    case 'redirect_left_host':
+      return m.admin_connectors_webcrawler_auth_renewal_redirect_left_host({ host })
+    case 'too_many_redirects':
+      return m.admin_connectors_webcrawler_auth_renewal_too_many_redirects()
+    default:
+      return m.admin_connectors_webcrawler_auth_renewal_no()
+  }
+}
+
 /**
  * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 - render auth-probe outcome.
- * Shared by add-connector and edit-connector flows.
+ * Shared by add-connector and edit-connector flows. `savedMode` is the edit
+ * flow showing saved cookies, where the sign-in host's field only appears
+ * after "Replace cookies".
  */
-export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
+export function AuthProbeFeedback({ result, savedMode = false }: { result: AuthProbeResult; savedMode?: boolean }) {
+  // Raw detector output means nothing to a user; it stays in the debug log.
+  useEffect(() => {
+    adminLogger.debug('auth probe', {
+      classification: result.classification,
+      match_reasons: result.match_reasons,
+      renewal: result.renewal,
+    })
+  }, [result])
+
+  // Renewal only matters once the login itself works; before that the one
+  // verdict box says what to do.
+  const renewal = result.classification === 'auth_ok' ? result.renewal : null
   return (
     <div className="space-y-2">
       <AuthProbeVerdict result={result} />
-      {result.renewal && (
+      {renewal && (
         // Proven on the real site when the cookies are tested: a sign-in with
         // only the sign-in host's cookies. Without it the login lasts until the
-        // site ends its own session.
-        <Alert variant={result.renewal.can_renew ? 'success' : 'warning'} size="sm">
+        // site ends its own session. Advice with a consequence: a warning, as
+        // in PreviewClassificationFeedback, never destructive.
+        <Alert variant={renewal.can_renew ? 'success' : 'warning'} size="sm">
           <span>
-            {result.renewal.can_renew
+            {renewal.can_renew
               ? m.admin_connectors_webcrawler_auth_renewal_yes()
-              : m.admin_connectors_webcrawler_auth_renewal_no({ reason: result.renewal.reason ?? '' })}
+              : renewalMessage(renewal.reason, savedMode)}
           </span>
         </Alert>
       )}
@@ -48,16 +105,13 @@ function AuthProbeVerdict({ result }: { result: AuthProbeResult }) {
       </Alert>
     )
   }
-  const reasons = result.match_reasons.length > 0
-    ? ` ${m.admin_connectors_webcrawler_auth_probe_detected({ reasons: result.match_reasons.join(', ') })}`
-    : ''
   let message: string
   switch (result.classification) {
     case 'auth_failed_no_cookies':
       message = m.admin_connectors_webcrawler_auth_probe_no_cookies()
       break
     case 'auth_failed_still_walled':
-      message = `${m.admin_connectors_webcrawler_auth_probe_still_walled()}${reasons}`
+      message = m.admin_connectors_webcrawler_auth_probe_still_walled()
       break
     case 'auth_failed_credentials_invalid':
       message = m.admin_connectors_webcrawler_auth_probe_credentials_invalid()
@@ -66,7 +120,7 @@ function AuthProbeVerdict({ result }: { result: AuthProbeResult }) {
       message = m.admin_connectors_webcrawler_auth_probe_unreachable()
       break
     default:
-      message = `${m.admin_connectors_webcrawler_auth_probe_failed()}${reasons}`
+      message = m.admin_connectors_webcrawler_auth_probe_failed()
   }
   return (
     <Alert variant="warning" size="sm">
