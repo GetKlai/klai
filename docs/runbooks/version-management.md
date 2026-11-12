@@ -137,7 +137,7 @@ For any external service (non-`ghcr.io/getklai/*`):
 
 1. **Research**: read the release notes between current pinned version and target. Data-migration-on-startup? Config file syntax change? Image labels show new required env vars?
 2. **Repo**: edit `deploy/docker-compose.yml` with the new explicit version tag.
-3. **VERSIONS.md**: update the row with the new version; re-check rationale is still accurate.
+3. **VERSIONS.md**: do not write the version there; it states none, and `deploy/check-versions-doc.py` fails a PR that does. Only re-check that the rationale for the service is still accurate (a held-back image, a migration note).
 4. **Stateful-service pre-flight** (if the service has a `category: data` entry in `deploy/volume-mounts.yaml`):
    - Run `scripts/audit-compose-volumes.sh` locally — CI will run it on the PR anyway, but catching it locally saves a roundtrip.
    - Confirm the last Storage Box backup is ≤ 24h old via `sftp -P 23 $STORAGEBOX_USER@$STORAGEBOX_HOST ls backups/core-01/` — if older, trigger a manual `sudo -u klai scripts/backup.sh` before the upgrade.
@@ -171,8 +171,8 @@ For each `pinned-service-*` Trivy finding batch:
    registry and upstream releases. Do not move production pins to `latest`,
    pre-release, nightly, `dev`, or timestamp tags unless `VERSIONS.md` documents
    the explicit rationale.
-2. **If a newer stable tag exists**: follow §3.3, update the compose pin and
-   `VERSIONS.md`, then run:
+2. **If a newer stable tag exists**: follow §3.3, update the compose pin (and
+   the `VERSIONS.md` rationale if it changed), then run:
    ```bash
    sh deploy/check-image-tags.sh
    sh deploy/check-image-pullable.sh
@@ -206,7 +206,7 @@ Same as minor + **always** these extra steps:
 4. **Plan rollback**: know the exact `git revert <sha>` command + how to restore the volume from backup.
 5. **Execute in low-traffic window**: prod bumps for stateful services happen outside business hours.
 6. **Run persistence-smoke after startup**: container `Up X (healthy)` is necessary but not sufficient. Run `sudo scripts/persistence-smoke.sh <service>` and confirm OK before closing the PR.
-7. **Update `VERSIONS.md` rationale**: a major bump often changes the upgrade path for future bumps.
+7. **Update the `VERSIONS.md` rationale** (not a version, it lists none): a major bump often changes the upgrade path for future bumps.
 
 ### 3.6 Python runtime upgrade (e.g. 3.13 → 3.14)
 
@@ -501,11 +501,11 @@ When an alert fires:
 
 Quarterly, run a full audit:
 
-1. Check `VERSIONS.md` for drift:
+1. Check the server for drift against compose (`VERSIONS.md` states no versions, so it cannot drift on them; `deploy/check-versions-doc.py` runs in CI on every PR that touches a compose file or the document):
    ```bash
    docker ps --format '{{.Names}}\t{{.Image}}' | sort
    ```
-   Every row must match a pin in `VERSIONS.md`. Differences indicate either unpulled images on the server or stale pins in the file.
+   Every running image must match the tag in the compose files. Differences indicate unpulled images on the server.
 
 2. Scan for latest stable versions of every pinned image:
    ```bash

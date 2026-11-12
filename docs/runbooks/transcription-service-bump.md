@@ -79,7 +79,7 @@ After the live image runs, sync the repo:
 
 1. Update `deploy/docker-compose.gpu.yml` — both `transcription-worker-{1,2}`
    image refs to the new tag.
-2. Update `deploy/VERSIONS.md` — the locally-built note + table row.
+2. Update the prose in `deploy/VERSIONS.md` only if the build recipe changed; the tag lives in compose and the document states no version.
 3. Run `sh deploy/check-image-pullable.sh` — must say `OK: … N locally-built ref(s) accepted.`
 4. Run `sh deploy/check-image-tags.sh` — same.
 5. Open PR, merge.
@@ -109,5 +109,5 @@ commit is rejected. PR #269 would have failed this check.
 ## See also
 
 - `.claude/rules/klai/pitfalls/process-rules.md` — `verify-image-pullable-before-pin` pitfall.
-- `deploy/VERSIONS.md` — the canonical pin table.
+- `deploy/VERSIONS.md` — why each image is held where it is (no versions; compose is the pin).
 - SPEC-VEXA-003 deploy-notes — original local-build context.
