@@ -65,6 +65,13 @@ class VersionsDocTest(unittest.TestCase):
         self.assertIn("beta-old", result.stderr)
         self.assertIn("deploy/docker-compose.yml", result.stderr)
 
+    def test_rejects_a_service_cell_that_names_no_compose_service(self) -> None:
+        # Without backticks the name was never compared with compose, so a row
+        # for a service that no longer exists passed.
+        result = self.run_tree(CLEAN_DOC.replace("`beta`", "beta-old"))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("beta-old", result.stderr)
+
     def test_rejects_a_service_missing_from_the_dev_compose(self) -> None:
         doc = CLEAN_DOC.replace("`alpha-db` | Same", "`beta` | Same")
         result = self.run_tree(doc)

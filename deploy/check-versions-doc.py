@@ -77,7 +77,9 @@ def check(root):
             elif in_service_table and not set(cells[0]) <= {"-", ":", " "}:
                 kind = "dev" if "docker-compose.dev.yml" in heading else "deploy"
                 rels, names = known[kind]
-                for name in re.findall(r"`([^`]+)`", cells[0]):
+                # A cell without backticks still names a service: compare it
+                # whole, or a row for a removed service would pass unseen.
+                for name in re.findall(r"`([^`]+)`", cells[0]) or [cells[0]]:
                     if name not in names:
                         errors.append(
                             f"{doc_rel}:{number}: service `{name}` is not in "
