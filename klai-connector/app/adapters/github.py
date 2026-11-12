@@ -160,6 +160,16 @@ class GitHubAdapter(BaseAdapter):
                 )
             )
 
+        # A recursive tree over GitHub's size limit (100,000 entries / 7 MB)
+        # comes back with truncated=true and silently omits the rest of the
+        # repository; those files must not be read as deleted.
+        truncated = bool(tree.get("truncated"))
+        if truncated:
+            logger.warning(
+                "GitHub tree for %s/%s@%s is truncated; stale cleanup skipped",
+                repo_owner, repo_name, branch,
+            )
+        self._record_listing(connector, complete=not truncated)
         logger.info(
             "Listed %d documents from %s/%s@%s",
             len(refs), repo_owner, repo_name, branch,
@@ -251,7 +261,7 @@ class GitHubAdapter(BaseAdapter):
                 "branch": branch,
             },
         )
-        return {"tree_sha": ref_data["object"]["sha"]}
+        return {"tree_sha": ref_data["object"]["sha"], "path_filter": config.get("path_filter")}
 
     # -- Rate limiting --------------------------------------------------------
 

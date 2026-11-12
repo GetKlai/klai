@@ -56,8 +56,10 @@ _DRIVE_START_PAGE_TOKEN_URL = "https://www.googleapis.com/drive/v3/changes/start
 # Fields requested for files.list / changes.list. Kept minimal — we only need
 # what the DocumentRef contract requires.
 # owners and permissions are added for SPEC-KB-CONNECTORS-001 R5.5 (identifier capture).
+# trashed is read because files.get returns a trashed file like any other; only
+# files.list can exclude it with its q= filter.
 _FILE_FIELDS = (
-    "id, name, mimeType, modifiedTime, webViewLink, size, "
+    "id, name, mimeType, modifiedTime, webViewLink, size, trashed, "
     "owners(emailAddress, displayName), permissions(role, emailAddress)"
 )
 _LIST_FIELDS = f"nextPageToken, files({_FILE_FIELDS})"
@@ -342,9 +344,14 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
             # Applying the filter here keeps list_documents correct regardless.
             raw_files = [f for f in raw_files if f and f.get("mimeType") in allowed_mimes]
 
+        # Only a scoped selection is listed in full every run; the unscoped mode
+        # reads the change feed after its first run. max_files cuts a listing
+        # short, and every file past the cut would otherwise look deleted.
+        self._record_listing(connector, complete=scoped_selection and len(raw_files) <= max_files)
+
         refs: list[DocumentRef] = []
         for file in raw_files[:max_files]:
-            if not file:
+            if not file or file.get("trashed"):
                 continue
             mime = file.get("mimeType", "")
             if mime == _GOOGLE_FOLDER_MIME:
@@ -652,6 +659,12 @@ class GoogleDriveAdapter(OAuthAdapterBase, BaseAdapter):
                     headers={"Authorization": f"Bearer {token}"},
                     params={"fields": _FILE_FIELDS, "supportsAllDrives": "true"},
                 )
+                # Drive answers 404 for a deleted file and for one the user can
+                # no longer see; both are gone for this connector. Any other
+                # error still fails the listing.
+                if response.status_code == 404:
+                    logger.info("Selected Drive file %s is gone or no longer shared", file_id)
+                    continue
                 response.raise_for_status()
                 file = response.json()
                 if allowed_mimes is not None and file.get("mimeType") not in allowed_mimes:

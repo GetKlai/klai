@@ -182,6 +182,9 @@ class SyncEngine:
         # reanalysis only after a sync that changed something.
         documents_changed = 0
         stale_cleanup_refused = False
+        # Previously synced refs this run did not delete although the listing
+        # missed them; they stay in the baseline for the next run.
+        stale_refs_kept: set[str] = set()
         # SPEC-INGEST-RECONCILE-001 AC-6 — per-sync skip-reason aggregation
         # ``{PersistSkipReason: count}``. Persisted to
         # ``connector.sync_runs.skip_reasons`` JSONB at the end of the run
@@ -313,11 +316,17 @@ class SyncEngine:
                 if prev_cursor:
                     old_sha = prev_cursor.get("tree_sha")
                     new_sha = (cursor_state or {}).get("tree_sha")
-                    if old_sha and new_sha and old_sha == new_sha:
+                    # A changed path_filter changes which files belong to the
+                    # connector without a new commit, so it must not be skipped.
+                    same_filter = prev_cursor.get("path_filter") == (cursor_state or {}).get("path_filter")
+                    if old_sha and new_sha and old_sha == new_sha and same_filter:
                         logger.info("No changes detected for connector %s, skipping sync", connector_id)
                         sync_run.status = SyncStatus.COMPLETED
                         sync_run.completed_at = datetime.now(UTC)
-                        sync_run.cursor_state = cursor_state
+                        # Carry the baseline forward: this run becomes the next run's
+                        # "last successful run", and without synced_refs a file
+                        # deleted in a later commit would never be found missing.
+                        sync_run.cursor_state = {**(cursor_state or {}), "synced_refs": sorted(prev_synced_refs)}
                         await session.commit()
                         await self._portal_client.report_sync_status(
                             connector_id=connector_id,
@@ -337,6 +346,7 @@ class SyncEngine:
                 # cursor_context still passed for adapters that use it (e.g. webcrawler).
                 cursor_context = prev_cursor or None
                 refs = await adapter.list_documents(portal_config, cursor_context=cursor_context)
+                listing_complete = adapter.listing_is_complete(portal_config) is True
                 adapter_metrics = adapter.get_sync_metrics(portal_config)
                 if isinstance(adapter_metrics, dict):
                     groups_total = int(adapter_metrics.get("groups_total", 0))
@@ -466,63 +476,91 @@ class SyncEngine:
 
                 await adapter.post_sync(portal_config)
 
-                # REQ-5: only adapters whose discovery is a complete snapshot may
-                # opt into destructive stale-ref reconciliation. A partial run is
-                # never allowed to delete downstream state.
-                if documents_failed == 0 and adapter.stale_ref_cleanup_enabled is True:
-                    current_refs = {ref.source_ref or ref.path for ref in refs}
-                    stale_refs = sorted(prev_synced_refs - current_refs)
-                    # Refuse only when the listing itself shrank to under half: a
-                    # transient subset must not erase the KB. Counting missing refs
-                    # instead also refused a same-size listing whose part names all
-                    # changed, which left every old json_feed part indexed forever.
-                    if stale_refs and len(current_refs) * 2 < len(prev_synced_refs):
-                        stale_cleanup_refused = True
-                        error_details.append(
-                            {
-                                "warning": "stale_cleanup_refused_shrink",
-                                "stale_cleanup_refused": True,
-                                "previous_ref_count": len(prev_synced_refs),
-                                "current_ref_count": len(current_refs),
-                            }
-                        )
-                        logger.warning(
-                            "Refusing stale cleanup for connector %s after listing shrink",
-                            connector_id,
-                            extra={
-                                "event": "stale_cleanup_refused_shrink",
-                                "connector_id": str(connector_id),
-                                "previous_ref_count": len(prev_synced_refs),
-                                "current_ref_count": len(current_refs),
-                            },
-                        )
-                    else:
-                        for stale_ref in stale_refs:
-                            try:
-                                removed = await self._ingest_client.delete_connector_document(
-                                    org_id=portal_config.zitadel_org_id,
-                                    kb_slug=portal_config.kb_slug,
-                                    source_connector_id=str(connector_id),
-                                    source_ref=stale_ref,
-                                )
-                            except Exception as cleanup_err:
-                                status = SyncStatus.FAILED
-                                error_details.append(
-                                    {
-                                        "error": "Stale source_ref cleanup failed",
-                                        "source_ref": stale_ref,
-                                        "reason": str(cleanup_err),
-                                    }
-                                )
-                                logger.exception(
-                                    "Failed to delete stale source_ref %s for connector %s",
-                                    stale_ref,
-                                    connector_id,
-                                    extra={"connector_id": str(connector_id)},
-                                )
-                                break
-                            stale_groups_deleted += 1
-                            documents_changed += int(removed)
+                # Source deletions. A ref the previous successful run synced that
+                # this listing no longer contains was deleted, trashed or unshared
+                # at the source, and is removed downstream. Only a listing the
+                # adapter vouches for as complete may delete: a capped, truncated
+                # or incremental listing would make every document it never saw
+                # look deleted. One failed document gates it as well, so a partial
+                # run never removes downstream state. Whatever is not deleted
+                # stays in the baseline, so a later complete listing still finds it.
+                current_refs = {ref.source_ref or ref.path for ref in refs}
+                stale_refs = sorted(prev_synced_refs - current_refs)
+                stale_delete_failed = 0
+                if not listing_complete or documents_failed:
+                    stale_refs_kept.update(stale_refs)
+                elif stale_refs and not current_refs:
+                    # An expired or narrowed token and a source that was emptied on
+                    # purpose both list nothing, and only the first is common. The
+                    # baseline is kept and the refusal repeats every run until the
+                    # source lists documents again or the connector is removed.
+                    stale_cleanup_refused = True
+                    stale_refs_kept.update(stale_refs)
+                    error_details.append(
+                        {
+                            "warning": "stale_cleanup_refused_empty",
+                            "stale_cleanup_refused": True,
+                            "previous_ref_count": len(prev_synced_refs),
+                        }
+                    )
+                    logger.warning(
+                        "Refusing stale cleanup for connector %s: the listing is empty",
+                        connector_id,
+                        extra={
+                            "event": "stale_cleanup_refused_empty",
+                            "connector_id": str(connector_id),
+                            "previous_ref_count": len(prev_synced_refs),
+                        },
+                    )
+                else:
+                    for stale_ref in stale_refs:
+                        try:
+                            removed = await self._ingest_client.delete_connector_document(
+                                org_id=portal_config.zitadel_org_id,
+                                kb_slug=portal_config.kb_slug,
+                                source_connector_id=str(connector_id),
+                                source_ref=stale_ref,
+                            )
+                        except Exception as cleanup_err:
+                            # The documents of this run are already ingested, so the
+                            # run still completes; the ref stays in the baseline and
+                            # the next run retries the delete.
+                            stale_delete_failed += 1
+                            stale_refs_kept.add(stale_ref)
+                            error_details.append(
+                                {
+                                    "warning": "stale_cleanup_delete_failed",
+                                    "source_ref": stale_ref,
+                                    "reason": str(cleanup_err),
+                                }
+                            )
+                            logger.warning(
+                                "Failed to delete stale source_ref %s for connector %s",
+                                stale_ref,
+                                connector_id,
+                                exc_info=True,
+                                extra={"event": "stale_cleanup_delete_failed", "connector_id": str(connector_id)},
+                            )
+                            continue
+                        stale_groups_deleted += 1
+                        documents_changed += int(removed)
+
+                logger.info(
+                    "Source deletion reconciliation for connector %s",
+                    connector_id,
+                    extra={
+                        "event": "source_deletions",
+                        "connector_id": str(connector_id),
+                        "listing_complete": listing_complete,
+                        "listed": len(current_refs),
+                        "known": len(prev_synced_refs),
+                        "removed": stale_groups_deleted,
+                        "kept": len(prev_synced_refs & current_refs),
+                        "missing_kept": len(stale_refs_kept),
+                        "delete_failed": stale_delete_failed,
+                        "refused_empty": stale_cleanup_refused,
+                    },
+                )
 
                 # @MX:NOTE: Layer C boilerplate detection and CanaryMismatchError /
                 #   CrawlJobPendingError handling were removed in SPEC-CRAWLER-004
@@ -621,8 +659,7 @@ class SyncEngine:
             if status == SyncStatus.COMPLETED and cursor_state is not None:
                 failed_refs = {e.get("file", "") for e in error_details}
                 discovered_refs = {r.source_ref or r.path for r in refs if (r.source_ref or r.path) not in failed_refs}
-                if stale_cleanup_refused:
-                    discovered_refs.update(prev_synced_refs)
+                discovered_refs.update(stale_refs_kept)
                 cursor_state["synced_refs"] = sorted(discovered_refs)
             sync_run.cursor_state = cursor_state
             await session.commit()

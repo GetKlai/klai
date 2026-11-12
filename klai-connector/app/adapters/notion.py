@@ -17,7 +17,7 @@ import asyncio
 from typing import Any
 
 import httpx
-from notion_client import Client
+from notion_client import APIErrorCode, APIResponseError, Client
 from notion_sync import fetch_blocks_recursive
 from notion_sync.client import RateLimitedNotionClient
 from notion_sync.extract import extract_block_text, extract_rich_text
@@ -39,6 +39,16 @@ _SKIP_BLOCK_TYPES = frozenset({"child_page", "child_database"})
 # The URLs are Notion-hosted S3 presigned URLs that expire in ~1h and
 # produce garbage when chunked. Captions are useful; URLs are not.
 _MEDIA_BLOCK_TYPES = frozenset({"image", "video", "file", "pdf"})
+
+
+def _is_trashed(page: dict[str, Any]) -> bool:
+    """Whether a page object is in the trash.
+
+    Notion-Version 2025-09-03 (the notion-client 3.1.0 default) returns both
+    ``in_trash`` and the deprecated ``archived`` flag; later API versions drop
+    ``archived``, so both are read and either one means the page is gone.
+    """
+    return bool(page.get("in_trash") or page.get("archived"))
 
 
 class NotionAdapter(BaseAdapter):
@@ -114,7 +124,10 @@ class NotionAdapter(BaseAdapter):
             page_ids: List of Notion page UUIDs to fetch.
 
         Returns:
-            List of Notion page objects (skips archived or missing pages).
+            List of Notion page objects. A page that is trashed, deleted or no
+            longer shared with the integration is left out, because it is gone
+            for the connector. Any other error raises: a page that failed to load
+            for a transient reason would otherwise be read as deleted.
         """
         pages: list[dict[str, Any]] = []
         for page_id in page_ids:
@@ -124,11 +137,16 @@ class NotionAdapter(BaseAdapter):
                     client.notion.pages.retrieve,
                     page_id=page_id,
                 )
-                if page.get("archived", False):
-                    continue
-                pages.append(page)
-            except Exception:
-                logger.warning("Failed to retrieve Notion page %s — skipping", page_id)
+            except APIResponseError as err:
+                # Notion answers object_not_found both for a deleted page and for
+                # one the integration can no longer see.
+                if err.code != APIErrorCode.ObjectNotFound:
+                    raise
+                logger.info("Notion page %s is gone or no longer shared", page_id)
+                continue
+            if _is_trashed(page):
+                continue
+            pages.append(page)
         return pages
 
     @staticmethod
@@ -178,7 +196,7 @@ class NotionAdapter(BaseAdapter):
             for page in response.get("results", []):
                 if page.get("object") != "page":
                     continue
-                if page.get("archived", False):
+                if _is_trashed(page):
                     continue
                 if db_filter:
                     # Match on parent.database_id, not parent.type: since Notion
@@ -274,6 +292,10 @@ class NotionAdapter(BaseAdapter):
             pages = await asyncio.to_thread(
                 self._search_all_pages, client, max_pages, database_ids or None
             )
+        # Every page id is either returned or confirmed gone, so the pinned
+        # listing is complete; a search listing is complete unless max_pages
+        # cut it off (a listing of exactly max_pages may have been cut, too).
+        self._record_listing(connector, complete=bool(page_ids) or len(pages) < max_pages)
 
         refs = [
             DocumentRef(

@@ -227,6 +227,9 @@ class AirtableAdapter(BaseAdapter):
                     )
                 )
 
+        # pyairtable follows every offset and raises on any failed page, so a
+        # returned listing holds every record of the configured tables and view.
+        self._record_listing(connector, complete=True)
         logger.info(
             "Airtable list_documents complete: base=%s tables=%s records=%d",
             base_id,

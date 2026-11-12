@@ -276,6 +276,52 @@ All connector adapters call the same `POST /ingest/v1/document` endpoint that di
 use. A `source_ref` (`owner/repo:branch:path`) is used as a deduplication key so
 re-syncing the same content updates rather than duplicates.
 
+**Source deletions (klai-connector `sync_engine`).** Each successful run stores the refs it
+saw in `sync_runs.cursor_state.synced_refs`. The next run compares that baseline with its
+own listing; a ref that is no longer listed was deleted, trashed or unshared at the source
+and is removed through `DELETE /ingest/v1/connector/document` (all versions, vectors and
+graph episodes), scoped by organisation, knowledge base and connector id. A document outside
+a narrowed connector filter (fewer databases, spaces, tables, a tighter `path_filter`, a
+smaller folder or file selection) counts as gone; one inside the filter never does.
+
+Deletion runs only after a listing the adapter vouches for as complete
+(`BaseAdapter.listing_is_complete`, default `False`), because a partial listing would make
+every document it never saw look deleted. The guards:
+
+- a listing that raised (pagination error, rate limit after retries, timeout, a permission
+  error) fails the run; nothing is deleted and the baseline is not advanced;
+- a listing cut short by a per-run cap or truncated by the source deletes nothing, and the
+  refs it did not see stay in the baseline so a later complete listing still finds them;
+- one failed document in the run blocks every delete (and the run is `failed`);
+- an **empty** listing while the baseline holds refs is refused: an expired or narrowed token
+  and an emptied source look the same. The run completes with warning
+  `stale_cleanup_refused_empty` in `error_details` and a log event of the same name, the
+  baseline is kept, and the refusal repeats until the source lists documents again or the
+  connector is removed;
+- a failed delete call does not fail the run; the ref stays in the baseline and the next run
+  retries it (`stale_cleanup_delete_failed` warning).
+
+Every run logs one `source_deletions` event with `listing_complete`, `listed`, `known`,
+`removed`, `kept`, `missing_kept` and `delete_failed`. There is no percentage cap: a complete
+listing that shrank is the source's own statement.
+
+| Connector | Listing per run | Deletes | Trashed / gone looks like |
+|---|---|---|---|
+| json_feed | whole feed | yes | record group no longer rendered |
+| notion (search) | all pages via search, filtered on `database_ids` | yes, unless `max_pages` (default 500) was reached | `in_trash`/`archived` flag, or absent from search |
+| notion (`page_ids`) | each page retrieved | yes | 404 `object_not_found`, or trash flag |
+| github | recursive git tree | yes, unless the tree is `truncated` | file absent from the tree |
+| confluence | pages with `status=current` per space | yes, unless a space reached 100 pages, discovery reached 100 spaces, or a configured space is not visible | trashed/archived pages are not `current` |
+| airtable | every record of each table (and view) | yes | record absent |
+| google_drive (folder or file selection) | `files.list` with `trashed = false`, or `files.get` per file | yes, unless `max_files` (default 500) cut the listing | excluded by the query, `trashed: true`, or 404 |
+| google_drive (whole drive) | change feed after the first run | **no**: incremental | — |
+| ms_docs (pinned items) | each item fetched | yes | 404 |
+| ms_docs (drive/site/folder) | Graph delta after the first run | **no**: incremental | — |
+| web_crawler | delegated to knowledge-ingest | own stale-page handling | — |
+
+The GitHub tree-SHA skip carries `synced_refs` forward, and a changed `path_filter` is never
+skipped, so a filter change takes effect without a new commit.
+
 ### 1.3 Meeting transcripts via scribe-api
 
 > Corrected 2026-06-11 against `klai-scribe/scribe-api` source. Two earlier claims were

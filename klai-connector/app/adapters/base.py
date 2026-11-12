@@ -81,9 +81,27 @@ class BaseAdapter(ABC):
     implements this interface.
     """
 
-    # Destructive reconciliation is opt-in because not every adapter's
-    # ``list_documents`` call is guaranteed to be a complete source snapshot.
-    stale_ref_cleanup_enabled = False
+    def listing_is_complete(self, connector: Any) -> bool:
+        """Whether the last ``list_documents`` call for *connector* returned every
+        document the source holds under the connector's configuration.
+
+        The sync engine deletes previously synced refs that are missing from the
+        listing only when this is True. A listing that was incremental (a change
+        feed), capped by a per-run limit, or truncated by the source must answer
+        False, because every document it never saw would otherwise look deleted.
+        The default is False so destructive reconciliation stays opt-in.
+        """
+        return str(connector.id) in vars(self).get("_complete_listings", ())
+
+    def _record_listing(self, connector: Any, *, complete: bool) -> None:
+        """Remember whether the listing just produced for *connector* was complete."""
+        # Kept per instance (adapters are process singletons shared by all
+        # connectors), so subclasses need no __init__ cooperation.
+        listings: set[str] = vars(self).setdefault("_complete_listings", set())
+        if complete:
+            listings.add(str(connector.id))
+        else:
+            listings.discard(str(connector.id))
 
     @abstractmethod
     async def list_documents(

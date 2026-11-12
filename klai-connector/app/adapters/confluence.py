@@ -125,12 +125,14 @@ def _paginate_v2(
 
     while True:
         payload: Any = client.get(endpoint, params=request_params)
+        # An unexpected body ends the listing with an error, not quietly: the
+        # items it would have held would otherwise be read as deleted.
         if not isinstance(payload, dict):
-            break
+            raise ValueError(f"Confluence {what}: response is not a JSON object")
         page = cast(dict[str, Any], payload)
         batch = page.get("results")
         if not isinstance(batch, list):
-            break
+            raise ValueError(f"Confluence {what}: response has no results list")
         for item in cast(list[Any], batch):
             if isinstance(item, dict):
                 collected.append(cast(dict[str, Any], item))
@@ -298,8 +300,8 @@ class ConfluenceAdapter(BaseAdapter):
             self._discover_all_spaces, client, space_keys
         )
 
+        missing = [key for key in space_keys if key not in space_ids_by_key]
         if space_keys:
-            missing = [key for key in space_keys if key not in space_ids_by_key]
             if missing:
                 logger.warning(
                     "Confluence list_documents: configured space key(s) %s not "
@@ -316,11 +318,20 @@ class ConfluenceAdapter(BaseAdapter):
             selected = space_ids_by_key
 
         refs: list[DocumentRef] = []
+        # The listing is complete only if every configured space was visible and
+        # no space or page listing reached its cap (a listing of exactly the cap
+        # may have been cut, too). A configured space that disappeared can be a
+        # deleted space or a revoked permission; both keep its pages until a
+        # person removes the space from the connector.
+        complete = not missing and (
+            bool(space_keys) or len(space_ids_by_key) < _MAX_SPACES
+        )
 
         for space_key, space_id in selected.items():
             pages = await asyncio.to_thread(
                 self._fetch_all_pages_in_space, client, space_key, space_id
             )
+            complete = complete and len(pages) < _MAX_PAGES_PER_SPACE
             for page in pages:
                 page_id: str = str(page.get("id", ""))
                 version: dict[str, Any] = cast(dict[str, Any], page.get("version") or {})
@@ -347,6 +358,7 @@ class ConfluenceAdapter(BaseAdapter):
                     )
                 )
 
+        self._record_listing(connector, complete=complete)
         logger.info(
             "Confluence list_documents complete: spaces=%s pages=%d",
             list(selected),
