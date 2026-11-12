@@ -311,7 +311,9 @@ class TestEmptyResults:
 class TestPersonalScopeIsNoOrganisationGap:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("scope", "fired"), [("personal", 0), ("both", 1), ("org", 1)])
-    async def test_empty_personal_search_files_no_gap(self, scope: str, fired: int) -> None:
+    async def test_empty_personal_search_files_no_gap(
+        self, scope: Literal["org", "personal", "both"], fired: int
+    ) -> None:
         """A miss in the user's own notes says nothing about the organisation's knowledge."""
         from main import search_knowledge
 
