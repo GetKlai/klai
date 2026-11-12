@@ -16,7 +16,7 @@ The source of truth is `klai-portal/backend/app/core/permissions.py`,
 A user's identity (name, e-mail, password, second factors) lives in Zitadel.
 Membership of a workspace is a row in `portal_users` with the Zitadel user id,
 the integer `org_id`, `role`, `seat_type` and `status`
-(`klai-portal/backend/app/models/portal.py:228-262`). One person can have rows
+(`klai-portal/backend/app/models/portal.py:227-261`). One person can have rows
 in several workspaces; the session is bound to one of them
 ([auth-flows.md](auth-flows.md), step 9).
 
@@ -40,7 +40,7 @@ Five roles in a strict order, each including everything below it
 | 5 | `admin` | `knowledge` |
 
 The column default for a new `portal_users` row is `company`
-(`models/portal.py:233-246`). The founder of a workspace becomes `admin` at
+(`models/portal.py:232-245`). The founder of a workspace becomes `admin` at
 signup (`klai-portal/backend/app/api/signup.py:455`). The account-type mapping
 is `DEFAULT_SEAT_FOR_ROLE` (`seats.py:146-152`).
 
@@ -197,7 +197,7 @@ notification mail (`klai-portal/backend/app/api/admin/join_requests.py:63`,
 ## Lifecycle
 
 `portal_users.status` is `active`, `suspended` or `offboarded`, enforced by a
-check constraint (`models/portal.py:215`). All endpoints below require
+check constraint (`models/portal.py:214`). All endpoints below require
 `admin` and are scoped to the caller's organisation.
 
 | Method | Path | Effect |

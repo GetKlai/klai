@@ -50,18 +50,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from sqlalchemy import column, func, or_, select, table, text
+from sqlalchemy import column, func, or_, select, table
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.models.gap_proposals import PortalGapKeptQuestion, PortalGapProposal
+from app.models.gap_proposals import PortalGapProposal
 from app.models.portal import PortalOrg, PortalUser
 from app.models.retrieval_gaps import PortalRetrievalGap
 from app.models.widgets import WidgetConversation, WidgetMessage
 from app.services.citations import source_url_key
 from app.services.gap_events import JUDGE_CALLER_CLIENT_ID, REVIEW_CALLER_CLIENT_ID
-from app.services.widget_audit import hash_audit_value
 
 GAP_DECISIONS = ("refusal", "clarifying_question", "human_request", "partial_answer")
 GapKind = Literal[
@@ -90,16 +89,6 @@ _KIND_ORDER: tuple[GapKind, ...] = (
 # asks this fixed question from this origin every run; it is not a visitor.
 PROBE_ORIGIN = "https://probe.example.com"
 PROBE_QUESTION = "Hoe lang rijst het deeg van het Proefbrood van Probe Bakkerij?"
-
-# How long the question of a counted widget turn is kept after its messages are deleted, at telemetry
-# ``full`` only (portal_gap_kept_questions): long enough for a subject to collect conversations over four
-# weekly lists. Owner decision of 2026-11-11, docs/architecture/knowledge-gap-to-article.md §6.
-KEPT_QUESTION_DAYS = 28
-# Advisory lock class (with the org id as second key) that orders the keep against every removal. The
-# retention sweep takes it shared before it reads the level, the test marks and the decisions it keeps on;
-# a removal takes it exclusively before its DELETE. So a removal either waits for the sweep's commit and
-# deletes what it kept, or the sweep waits for the removal's commit and sees the new state.
-KEPT_QUESTIONS_LOCK = 20261111
 
 _TOPIC_WORDS = 3
 _MIN_WORD = 3
@@ -154,9 +143,8 @@ class GapTurn:
     created_at: datetime
     # The visitor's own message of this turn (widget_messages, role user), when stored.
     visitor_text: str | None = None
-    # Widget turns of one conversation count once; an internal turn has none and counts alone. The loaders
-    # fill in conversation_ref(), the value a kept turn also carries.
-    conversation_id: int | str | None = None
+    # Widget turns of one conversation count once; an internal turn has none and counts alone.
+    conversation_id: int | None = None
 
 
 def is_gap(signals: Mapping[str, Any]) -> bool:
@@ -279,77 +267,6 @@ def mask(text: str) -> str:
     return _MASKED.sub("…", text)
 
 
-def _shown_question(turn: GapTurn) -> str:
-    # The visitor's own words; the search query only when the message is gone
-    # (the case step rewrites the query into the articles' language).
-    return mask(" ".join((turn.visitor_text or _query(turn.signals)).split()))[:_QUESTION_CHARS]
-
-
-def conversation_ref(org_id: int, conversation_id: int | None) -> str | None:
-    """What the list counts distinct conversations on: a keyed hash, so a kept turn has no link back to its row."""
-    return None if conversation_id is None else hash_audit_value(f"gap-conversation:{org_id}:{conversation_id}")
-
-
-async def drop_kept_questions(
-    db: AsyncSession, org_id: int, *, cluster_key: str | None = None, conversation_id: int | None = None
-) -> int:
-    """Delete an org's kept gap questions (of one group, or one conversation) in the caller's transaction.
-
-    Takes KEPT_QUESTIONS_LOCK exclusively first, so rows a running sweep is
-    about to commit are deleted as well; the lock ends with the transaction.
-    """
-    await db.execute(
-        text("SELECT pg_advisory_xact_lock(:lock, :org_id)"), {"lock": KEPT_QUESTIONS_LOCK, "org_id": org_id}
-    )
-    sql = "DELETE FROM portal_gap_kept_questions WHERE org_id = :org_id"
-    params: dict[str, Any] = {"org_id": org_id}
-    if cluster_key is not None:
-        sql += " AND cluster_key = :cluster_key"
-        params["cluster_key"] = cluster_key
-    if conversation_id is not None:
-        sql += " AND conversation_ref = :conversation_ref"
-        params["conversation_ref"] = conversation_ref(org_id, conversation_id)
-    result = await db.execute(text(sql), params)
-    return result.rowcount or 0  # type: ignore[attr-defined]
-
-
-def is_probe(loaded_origin: str | None, first_user_query: str | None) -> bool:
-    return loaded_origin == PROBE_ORIGIN or " ".join((first_user_query or "").split()) == PROBE_QUESTION
-
-
-def kept_question(turn: GapTurn) -> tuple[str, dict[str, Any]] | None:
-    """(question, signals) a counted widget turn keeps once its messages are deleted: only what the list reads.
-
-    The question is the one the list shows (masked, cut); the signals keep the
-    decision, gap type and language, the case's product and its topic words in
-    place of the problem text, the found articles' title, url and score, and the
-    masked open parts. The search query, the passages, the reply and every other
-    field are dropped. None when the reduced signals would land the turn in
-    another group or kind (a product that masking changes, or a change to the
-    grouping); such a turn is not kept.
-    """
-    signals = turn.signals
-    product, terms = _topic(turn)
-    kept: dict[str, Any] = {
-        "decision": signals.get("decision"),
-        "gap_type": signals.get("gap_type"),
-        "language": signals.get("language"),
-        # A product carrying an address or a digit run changes when masked, so its key changes and the
-        # guard below keeps nothing of that turn.
-        "case": {"product": mask(product), "problem": " ".join(word for _, word in terms)},
-        "selection": {"open": [mask(part) for part in _open_parts(signals)]},
-    }
-    search = signals.get("search")
-    if isinstance(search, dict):
-        found = [f for f in search.get("found") or [] if isinstance(f, dict)]
-        kept["search"] = {"query": "", "found": [{k: f.get(k) for k in ("title", "url", "score")} for f in found]}
-    question = _shown_question(turn)
-    reduced = GapTurn("widget", kept, turn.created_at, question)
-    if cluster_key(reduced) != cluster_key(turn) or gap_kind(kept) != gap_kind(signals):
-        return None
-    return question, kept
-
-
 GapView = Literal["article_gaps", "weak_matches", "contact_requests", "all"]
 
 
@@ -434,7 +351,12 @@ def build_clusters(
         ):
             best.setdefault(str(f.get("url") or f.get("title")), f)
         articles = [{"title": f.get("title"), "url": f.get("url"), "score": f.get("score")} for f in best.values()]
-        questions = _distinct((_shown_question(t) for t in widget), _MAX_QUESTIONS)
+        # The visitor's own words; the search query only when the message is gone
+        # (the case step rewrites the query into the articles' language).
+        questions = _distinct(
+            (mask(" ".join((t.visitor_text or _query(t.signals)).split()))[:_QUESTION_CHARS] for t in widget),
+            _MAX_QUESTIONS,
+        )
         open_parts = _distinct((mask(p) for t in widget for p in _open_parts(t.signals)), _MAX_OPEN_PARTS)
         languages = Counter(str(t.signals["language"]) for t in members if t.signals.get("language"))
         if anchored:
@@ -489,17 +411,13 @@ def _counted(signals: Any) -> Any:
     return or_(signals["decision"].astext.in_(GAP_DECISIONS), signals["gap_type"].astext == "soft")
 
 
-async def load_gap_turns(
-    db: AsyncSession, *, org_id: int, since: datetime, now: datetime | None = None
-) -> list[GapTurn]:
+async def load_gap_turns(db: AsyncSession, *, org_id: int, since: datetime) -> list[GapTurn]:
     """The org's counted turns since ``since``: widget answers (preview, test and probe left out) and internal turns.
 
     Runs on a tenant-scoped session (Cat-D on all three tables) and names the
     org in every predicate as well. A widget answer brings the visitor's own
     message: the latest user row of the conversation before it (the user row
-    is written first, record_widget_turn). A widget turn whose messages the
-    retention sweep deleted comes from portal_gap_kept_questions, while the
-    org is at ``full``.
+    is written first, record_widget_turn).
     """
     visitor = aliased(WidgetMessage)
     visitor_text = (
@@ -518,7 +436,6 @@ async def load_gap_turns(
     widget_rows = (
         await db.execute(
             select(
-                WidgetMessage.id,
                 WidgetMessage.answer_signals,
                 WidgetMessage.created_at,
                 WidgetMessage.conversation_id,
@@ -538,27 +455,6 @@ async def load_gap_turns(
             )
         )
     ).all()
-    # Read after the live turns: a turn the retention sweep moves in between is
-    # kept in this read and dropped below by its message id, so it counts once.
-    kept_rows = (
-        await db.execute(
-            select(
-                PortalGapKeptQuestion.message_id,
-                PortalGapKeptQuestion.signals,
-                PortalGapKeptQuestion.turn_at,
-                PortalGapKeptQuestion.question,
-                PortalGapKeptQuestion.conversation_ref,
-            )
-            .join(PortalOrg, PortalOrg.id == PortalGapKeptQuestion.org_id)
-            .where(
-                PortalGapKeptQuestion.org_id == org_id,
-                PortalOrg.telemetry_level == "full",
-                # Never older than the kept lifetime, whatever window was asked: the daily purge may be a day behind.
-                PortalGapKeptQuestion.turn_at
-                >= max(since, (now or datetime.now(tz=UTC)) - timedelta(days=KEPT_QUESTION_DAYS)),
-            )
-        )
-    ).all()
     internal_rows = (
         await db.execute(
             select(_internal_chat_turns.c.answer_signals, _internal_chat_turns.c.created_at).where(
@@ -568,26 +464,11 @@ async def load_gap_turns(
             )
         )
     ).all()
-    live_ids = {row.id for row in widget_rows}
-    return (
-        [
-            GapTurn(
-                "widget",
-                row.answer_signals,
-                row.created_at,
-                row.visitor_text,
-                conversation_ref(org_id, row.conversation_id),
-            )
-            for row in widget_rows
-            if not is_probe(row.loaded_origin, row.first_user_query)
-        ]
-        + [
-            GapTurn("widget", row.signals, row.turn_at, row.question, row.conversation_ref)
-            for row in kept_rows
-            if row.message_id not in live_ids
-        ]
-        + [GapTurn("internal", row.answer_signals, row.created_at) for row in internal_rows]
-    )
+    return [
+        GapTurn("widget", row.answer_signals, row.created_at, row.visitor_text, row.conversation_id)
+        for row in widget_rows
+        if row.loaded_origin != PROBE_ORIGIN and " ".join((row.first_user_query or "").split()) != PROBE_QUESTION
+    ] + [GapTurn("internal", row.answer_signals, row.created_at) for row in internal_rows]
 
 
 async def load_filed_gaps(db: AsyncSession, *, org_id: int, since: datetime) -> list[GapTurn]:
@@ -634,7 +515,7 @@ async def load_filed_gaps(db: AsyncSession, *, org_id: int, since: datetime) -> 
             "case": {"problem": text, "product": ""},
             "search": {"query": text, "found": []},
         }
-        turns.append(GapTurn("widget", signals, row.occurred_at, text, conversation_ref(org_id, row.conversation_id)))
+        turns.append(GapTurn("widget", signals, row.occurred_at, text, row.conversation_id))
     return turns
 
 
@@ -668,11 +549,8 @@ async def knowledge_gap_clusters(
 ) -> list[dict[str, Any]]:
     # The level is the org's own, re-read here as record_gap_event does: never a caller's.
     level = (await db.execute(select(PortalOrg.telemetry_level).where(PortalOrg.id == org_id))).scalar_one()
-    now = now or datetime.now(tz=UTC)
-    since = now - timedelta(days=days)
-    turns = await load_gap_turns(db, org_id=org_id, since=since, now=now) + await load_filed_gaps(
-        db, org_id=org_id, since=since
-    )
+    since = (now or datetime.now(tz=UTC)) - timedelta(days=days)
+    turns = await load_gap_turns(db, org_id=org_id, since=since) + await load_filed_gaps(db, org_id=org_id, since=since)
     return build_clusters(
         turns,
         await load_cluster_decisions(db, org_id=org_id),

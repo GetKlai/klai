@@ -42,7 +42,6 @@ _STRICT_MODELS: frozenset[str] = frozenset(
         "PortalTaxonomyNode",
         "PortalTaxonomyProposal",
         "PortalRetrievalGap",
-        "PortalGapKeptQuestion",
         "PortalSupportCase",
         "PortalKbTombstone",
         "Widget",

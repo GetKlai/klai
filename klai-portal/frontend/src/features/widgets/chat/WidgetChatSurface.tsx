@@ -45,6 +45,15 @@ function claimPlainLinkClick(event: React.MouseEvent<HTMLAnchorElement>) {
   return true
 }
 
+// The retention term as it reads inside the identity-step notice, leading space
+// included so that no term at all leaves a sentence without a hole. Intl gives
+// the localized "1 dag" / "90 days"; English needs its "for" in front.
+function retentionTerm(days?: number) {
+  if (days === undefined) return ''
+  const amount = new Intl.NumberFormat(getLocale(), { style: 'unit', unit: 'day', unitDisplay: 'long' }).format(days)
+  return getLocale() === 'nl' ? ` ${amount}` : ` for ${amount}`
+}
+
 export interface WidgetChatSurfaceProps {
   botName: string
   headerTitle?: string
@@ -73,6 +82,9 @@ export interface WidgetChatSurfaceProps {
   showSources?: boolean
   showMeta?: boolean
   collectUserInfo?: boolean
+  // Days the organisation keeps conversations, quoted in the identity-step
+  // notice. Unset when the config response predates the field.
+  retentionDays?: number
   pageContextEnabled?: boolean
   variant?: 'public' | 'admin-preview'
   onClose?: () => void
@@ -226,6 +238,7 @@ export function WidgetChatSurface({
   showSources = true,
   showMeta = false,
   collectUserInfo = false,
+  retentionDays,
   pageContextEnabled = false,
   variant = 'public',
   onClose,
@@ -549,7 +562,7 @@ export function WidgetChatSurface({
                 {m.widget_chat_user_info_title()}
               </p>
               <p className={`mt-2 max-w-md text-sm ${isDark ? 'text-[var(--color-rl-bg)]/65' : 'text-gray-500'}`}>
-                {m.widget_chat_user_info_help()}
+                {m.widget_chat_user_info_help({ term: retentionTerm(retentionDays) })}
               </p>
               <form
                 onSubmit={(e) => {

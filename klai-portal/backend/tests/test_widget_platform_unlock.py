@@ -102,6 +102,7 @@ async def test_widget_config_returns_404_when_widgets_not_unlocked():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
+        mock_settings.widget_messages_retention_days = 7
 
         with pytest.raises(HTTPException) as exc_info:
             await widget_config(id=widget.widget_id, request=request, db=db)
@@ -125,6 +126,7 @@ async def test_widget_config_returns_200_when_widgets_unlocked():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
+        mock_settings.widget_messages_retention_days = 7
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -151,6 +153,7 @@ async def test_public_bot_config_returns_404_when_widgets_not_unlocked():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
+        mock_settings.widget_messages_retention_days = 7
 
         with pytest.raises(HTTPException) as exc_info:
             await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
@@ -173,6 +176,7 @@ async def test_public_bot_config_returns_200_when_widgets_unlocked():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
+        mock_settings.widget_messages_retention_days = 7
 
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
@@ -212,6 +216,7 @@ async def test_chat_completion_returns_403_when_widgets_not_unlocked():
         patch("app.api.partner_dependencies.decode_session_token") as mock_decode,
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
+        mock_settings.widget_messages_retention_days = 7
         # decode_session_token returns a valid payload — platform check should fire after verification.
         mock_decode.return_value = {
             "org_id": 42,
