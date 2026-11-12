@@ -12,6 +12,7 @@ from knowledge_ingest.logging_setup import RequestContextMiddleware, setup_loggi
 from knowledge_ingest.middleware.auth import InternalSecretMiddleware
 from knowledge_ingest.routes import (
     crawl,
+    crawl_auth_chain,
     crawl_sync,
     ingest,
     internal,
@@ -72,6 +73,7 @@ app.add_middleware(InternalSecretMiddleware)
 app.add_middleware(RequestContextMiddleware)
 app.include_router(ingest.router)
 app.include_router(crawl.router)
+app.include_router(crawl_auth_chain.router)
 app.include_router(crawl_sync.router)
 app.include_router(personal.router)
 app.include_router(knowledge.router)
