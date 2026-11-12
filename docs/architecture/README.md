@@ -1,42 +1,44 @@
 # Architecture
 
-Platform-wide architectural decisions relevant to all Klai repositories.
+How the Klai platform works and how it came to be. The documents fall into three kinds, and each fact has one home: a description of what runs says nothing about why, and a history says nothing about how it works today.
 
-## Files
+## What runs today
 
-| File | Contents |
-|------|----------|
-| [platform.md](platform.md) | Stack choices, server layout, phases, models, knowledge system design principles, RAG stack, Compatibility Review |
-| [klai-knowledge-architecture.md](klai-knowledge-architecture.md) | Klai Knowledge platform architecture — §§0-14 incl. knowledge model, ingestion, retrieval (+ evidence-weighted scoring §7.4), gap detection, AI interface, multi-tenancy |
-| [knowledge-ingest-flow.md](knowledge-ingest-flow.md) | **Engineering reference** — the running ingest system on core-01: content sources, pipeline phases, Qdrant scope, Procrastinate scheduling, HyPE, docling |
-| [chat-system.md](chat-system.md) | **Engineering reference (NL), verified 2026-09-24, widget path re-verified 2026-09-29** — how both chat paths work today (internal chat via LiteLLM, widget via portal-api): every step, every LLM call, where answer/clarify/refuse is decided, what is measured, and what was tried and rejected. Read before changing the chat path |
-| [chat-quality-history-and-plan.md](chat-quality-history-and-plan.md) | Chat quality (NL), the single document: how the system evolved, what external research says next to what we do, the target design, the working agreements and the plan with results per step |
-| [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) | **Engineering reference** (Part 1 on the chat request path is out of date, see chat-system.md) — the running retrieval system: LiteLLM hook (`klai_kb_*` modules), retrieval pipeline, strict/open answer policy, context injection, UI toggles, config values |
-| [regular-chat-knowledge-retrieval-citations.md](regular-chat-knowledge-retrieval-citations.md) | Source-traced walkthrough (NL) of the regular-chat retrieval + citation path — `_klai_kb_meta`, `EvidencePack.sources`, scope translation, Web Search interplay |
-| [knowledge-base-ingestion-and-retrieval-plan.md](knowledge-base-ingestion-and-retrieval-plan.md) | Kennisbank: ingestion en retrieval zoals ze draaien (23 oktober 2026), de stand van de techniek met bronnen, de vergelijking en het verbeterplan met zijn uitkomsten per stap; vervangt de plannen van mei en juni |
-| [knowledge-gap-to-article.md](knowledge-gap-to-article.md) | Ontwerp: van een kennisgat in de chat naar een voorstel voor een artikel dat de eigenaar beslist (signaal, voorstel per groep, inbox, bestemmingen per kennisbank, fasen en maten) |
-| [product-gaps-backlog.md](product-gaps-backlog.md) | **Type-B gaps** — where these docs describe a richer design than the code implements today; product-improvement opportunities with code evidence, referenced inline by `GAP-*` IDs |
-| [scribe-transcription.md](scribe-transcription.md) | Public-safe Scribe/transcription architecture, contributor model, and build/deploy split |
-| [support-gap-detection.md](support-gap-detection.md) | Research-backed support gap detection, existing Klai integration seams, and a HubSpot-first case-analysis proposal |
+Each of these was checked against the code on 12 November 2026 and carries `path:line` anchors. When one of them and the code disagree, the code is right and the document needs a fix in the same change.
 
-> **Engineering references are authoritative.** When there is a conflict between an architecture doc and an engineering reference, the engineering reference wins — it is verified against live code.
->
-> **Intended vs. current.** Several sections describe a *target* design that is built more simply today. Those carry an inline "Intended vs. current" callout pointing to a `GAP-*` ID in [product-gaps-backlog.md](product-gaps-backlog.md). The docs keep the ambition (it is the roadmap); the backlog tracks the delta.
+| File | Answers |
+|------|---------|
+| [platform.md](platform.md) | Which services exist and where they run, tenancy, the portal and its API, login and service authentication, model aliases, the other product surfaces, deployment, observability and backup |
+| [chat-system.md](chat-system.md) | (Dutch) How one chat turn runs on the help widget, the partner API and the internal chat: every step, every model call, where answering, asking and refusing are decided, conversation state, what is recorded. Read it before changing the chat path |
+| [knowledge-ingest-flow.md](knowledge-ingest-flow.md) | Where knowledge comes from (connectors, crawling, uploads, the docs editor, MCP), the ingest pipeline phase by phase, queues and schedules, what is written where, change and delete, operations |
+| [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) | The retrieval service: callers and authentication, how a scope becomes filters, the pipeline from query to evidence pack, what is logged, the nightly evaluation, configuration |
+| [klai-knowledge-architecture.md](klai-knowledge-architecture.md) | The knowledge model as stored (fields in Postgres and in the vector store), versions and deletion, the stores, taxonomy, the graph layer, the MCP tools, personal and shared knowledge, the docs app |
+| [knowledge-gap-to-article.md](knowledge-gap-to-article.md) | (Dutch) How a question the chat could not answer becomes a proposal the owner of a knowledge base decides on: what is built (phase 1) and the design of what is not |
+| [support-gap-detection.md](support-gap-detection.md) | Gap detection from support cases: the research behind it, the implementation contract and what of it is built |
+| [scribe-transcription.md](scribe-transcription.md) | Scribe and meeting transcription: components, the backend contract, the build and deploy split |
 
-## Research
+Login, API authentication and roles are described in detail next to the portal code: [auth-flows.md](../../klai-portal/docs/auth-flows.md), [api-auth.md](../../klai-portal/docs/api-auth.md) and [admin-roles.md](../../klai-portal/docs/admin-roles.md).
 
-Background research documents that underpin the architecture decisions:
+## How it came to be
 
-| File | Contents |
-|------|----------|
-| [../research/knowledge-system-fundamentals.md](../research/knowledge-system-fundamentals.md) | 16 empirically grounded findings on knowledge system design — entity types, retrieval, graph layer, taxonomy, monitoring |
-| [../research/knowledge-pipeline-architecture.md](../research/knowledge-pipeline-architecture.md) | Detailed design document: extraction schema, prompt strategy, GDPR, gap detection, widget SDK evaluation, publication layer |
+| File | Answers |
+|------|---------|
+| [evolution.md](evolution.md) | (Dutch) The whole system from March 2026 to today: the phases, a chronology per month, the platform decisions with where each stands now, and what no longer exists |
+| [chat-quality-history-and-plan.md](chat-quality-history-and-plan.md) | (Dutch) The evolution document of the chat: the chronology, what research says next to what we do, the design, the working agreements, the plan and the measured outcome of every step. Source files cite its sections by number |
+| [knowledge-base-ingestion-and-retrieval-plan.md](knowledge-base-ingestion-and-retrieval-plan.md) | (Dutch) The same for the knowledge base: the state of the art, the plan and the dated outcome of every change to ingest, the stores, the graph and retrieval |
 
-The conclusions from these documents are distilled in `platform.md § Knowledge System Design Principles`. The research docs are the archive for anyone who wants to trace the reasoning.
+Before proposing a change to the chat or to retrieval, look the idea up in the last two: most obvious ideas have been measured, and the documents say with what result.
 
-The research programme underpinning evidence-weighted scoring lives in [`docs/research/`](../research/README.md). Four dimensions studied: content type, assertion mode, temporal decay, cross-source corroboration.
+## What is designed and not built
+
+| File | Answers |
+|------|---------|
+| [product-gaps-backlog.md](product-gaps-backlog.md) | The target design for Klai Knowledge that the code does not implement, per `GAP-*` id: what the design wants, what the code does today, the status |
+
+## Research and operations
+
+Research that underpins these documents is in [`docs/research/`](../research/README.md). How to operate the system (alerts, rebuilds, rollouts, incidents) is in [`docs/runbooks/`](../runbooks/), and write-ups of past incidents are in [`docs/retros/`](../retros/).
 
 ## Scope
 
-This directory contains decisions about the **entire Klai platform** — not website-specific, not repo-specific.
-Project-specific architecture documentation lives in that project's own `docs/` directory.
+This directory holds what is true of the platform as a whole. Documentation of a single service lives next to its code (`klai-portal/docs/`, `klai-docs/docs/`, the `README.md` of a library under `klai-libs/`).

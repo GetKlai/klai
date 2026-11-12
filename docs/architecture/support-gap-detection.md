@@ -1,6 +1,6 @@
 # Support knowledge gap detection
 
-Status: implemented; source access and acceptance gates must be verified for each deployment. Updated: 2026-09-18.
+Status: implemented are the HubSpot support-case reader, the evidence store, the analyzer, the support-case screens (import, finding review, role and reference review) and the nightly assessor check. Not implemented are proposal drafting, placement, collaborative editing and publication for support findings, a screen that groups support findings under taxonomy topics, HubSpot webhooks and OAuth onboarding. Source access and acceptance gates must be verified for each deployment. Updated: 2026-11-12; the table of existing code and the inbox passages follow the rework of 2026-11-11 (#2321), which replaced the gap inbox with the grouped list described in [knowledge-gap-to-article.md](knowledge-gap-to-article.md).
 
 ## Decision and scope
 
@@ -60,27 +60,33 @@ The following describes source code in this checkout, not a claim that every pat
 
 | Component | Current behavior | Reuse or extension |
 |---|---|---|
-| [HubSpot draft function](../../klai-hubspot/klai-email-support/src/app/functions/NewFunction.js) | Reads ticket subject/content from card context, generates/revises a draft, stores a support session | Reuse ticket linkage and authenticated partner integration; add independent complete-case ingestion |
+| [HubSpot draft function](../../klai-hubspot/klai-email-support/src/app/functions/NewFunction.js) | Reads ticket subject/content from card context, generates/revises a draft, stores a support session | Reuse ticket linkage and authenticated partner integration; complete-case ingestion is a separate path (next two rows) |
 | [Partner support sessions](../../klai-portal/backend/app/models/partner_support.py) | Tracks draft-assistance sessions per ticket/user; message roles are agent, assistant, system | Link case evidence to sessions; do not treat draft history as actual customer correspondence or confirmed resolution |
-| [Connector adapters](../../klai-connector/app/adapters/base.py) and [sync engine](../../klai-connector/app/services/sync_engine.py) | Adapter enumeration/fetch/cursors, scheduling, status and resume bookkeeping; normal sink calls knowledge ingestion | Reuse scheduling/configuration concepts; introduce a support-case destination before enabling HubSpot sync |
+| [Connector adapters](../../klai-connector/app/adapters/base.py) and [sync engine](../../klai-connector/app/services/sync_engine.py) | Adapter enumeration/fetch/cursors, scheduling, status and resume bookkeeping; the normal sink calls knowledge ingestion. Connector type `hubspot_support` is not an adapter: `_run_hubspot_support_sync` in `sync_engine.py` reads cases and posts each to the portal, never to knowledge ingestion | Scheduling and configuration concepts are reused |
+| [HubSpot support reader](../../klai-connector/app/services/support_source.py) | Read-only reader for tickets, threads, messages and linked notes/emails with account verification, bounded retries and an explicit completeness flag | See "First implementation contract" |
+| [Support-case store](../../klai-portal/backend/app/services/support_cases.py) and [analyzer](../../klai-portal/backend/app/services/support_case_analysis.py) | `portal_support_cases` (stable identity, content hash, state, human `reviews`); the analyzer (versioned by `ANALYSIS_VERSION`) extracts questions, retrieves and assesses them; every actionable finding becomes a `PortalRetrievalGap` row with `gap_type="content"` | Import: [internal routes](../../klai-portal/backend/app/api/internal_support_cases.py) and the [transcript route](../../klai-portal/backend/app/api/app_support_cases.py) |
 | [Automatic classification](../../klai-portal/backend/app/services/gap_classification.py) | `hard` for no chunks, `soft` for uniformly low available reranker scores or dense scores | Keep as retrieval telemetry, separate from content-gap diagnosis |
 | [Human review](../../klai-portal/backend/app/api/app_activity.py) | Maps knowledge-missing/wrong reviews into gaps | Reuse editorial feedback, including explicit rejection of false positives |
-| [Gap recording](../../klai-portal/backend/app/services/gap_events.py) | Organization-scoped events, telemetry policy and optional taxonomy classification | Preserve privacy policy; add attributable external case evidence and import idempotency |
-| [Gap inbox](../../klai-portal/backend/app/api/app_gaps.py) | Exact question/type/language grouping, frequency, taxonomy and manual resolve | Extend with case links, semantic grouping, diagnosis, and editorial decisions |
-| [Gap rescoring](../../klai-portal/backend/app/services/gap_rescorer.py) | Re-runs retrieval after content updates and closes score-based gaps | Do not automatically close content diagnoses solely because retrieval scores improve |
+| [Gap recording](../../klai-portal/backend/app/services/gap_events.py) | Organization-scoped events, telemetry policy, a `question_key` on every row, optional taxonomy classification and, at telemetry `full`, a model-assisted fold into an open group | Chat, MCP, review and judge rows use it; support findings are written directly by `support_cases.py` |
+| [Grouped gap list](../../klai-portal/backend/app/api/app_gap_clusters.py) (replaced the gap inbox) | Groups chat signals and the rows a reviewer or the conversation judge filed by topic, with proposals and decisions; support findings are excluded and have their own screens. [`app_gaps.py`](../../klai-portal/backend/app/api/app_gaps.py) serves the support-case evidence route | Specified in [knowledge-gap-to-article.md](knowledge-gap-to-article.md) |
+| [Gap rescoring](../../klai-portal/backend/app/services/gap_rescorer.py) | Re-runs retrieval after a connector sync and closes score-based chat-path gaps; case-backed, review and judge rows are excluded from selection and closing. Support cases are re-analysed after a sync that changed documents, debounced after a quiet period | A retrieval score alone never closes a content diagnosis |
 | [Scribe provider](../../klai-scribe/scribe-api/app/services/providers.py) | Sends normalized audio to a self-hosted endpoint with deferred admission and bounded retries; returns text and summary metadata | Reuse inference; preserve segment/speaker evidence separately if the backend provides it |
 
-`record_gap_event` has verified inbound paths from internal events, partner/widget retrieval, and human activity review. Ordinary calls insert events; they do not deduplicate an external import. The current [gap model](../../klai-portal/backend/app/models/retrieval_gaps.py) links widget conversations, not arbitrary HubSpot cases. Do not fabricate widget conversations to fit imported support data.
+The grouped gap list replaced the gap inbox on 2026-11-11 (#2321). Support cases are re-analysed after a sync that changed documents, once their request has been quiet for 15 minutes (`SUPPORT_REANALYSIS_DEBOUNCE_SECONDS` in `gap_rescorer.py`).
+
+`record_gap_event` has inbound paths from the chat path, the MCP gap-event endpoint, human activity review and the conversation judge. Ordinary calls insert events; they do not deduplicate an external import, which is why support findings are written by `support_cases.py` with their own identity. The [gap model](../../klai-portal/backend/app/models/retrieval_gaps.py) carries a nullable `support_case_id` next to the widget `conversation_id`, so imported cases stay apart from widget conversations. Do not fabricate widget conversations to fit imported support data.
 
 The connector's normal document path publishes content to the selected knowledge collection. Raw support cases must first remain restricted evidence: otherwise the answer extracted from a case can enter the comparison corpus and hide the gap being investigated. Approved reusable knowledge can enter the existing ingestion pipeline later.
 
 ## HubSpot-first implementation sequence
 
+Status 2026-11-12: steps 2 to 4 are implemented as the contract below describes. Step 5 lists release gates, which are run per deployment.
+
 ### 1. Establish account access and inspect the real schema
 
 Use the existing app integration where its installation and granted scopes permit it. The [app manifest](../../klai-hubspot/klai-email-support/src/app/app-hsmeta.json) declares `tickets`, `conversations.read` and contact read access; that does not prove a local CLI credential or a particular installed app has those permissions. Keep the first connector read-only in behavior and minimize granted scopes supported by the selected HubSpot app/API version. Do not use a developer personal access key as the production connector credential.
 
-There are three existing authentication paths: the CLI's developer credential; the email card's static app token, injected by HubSpot as `PRIVATE_APP_ACCESS_TOKEN`; and the custom-channel service's OAuth credentials. A working custom-channel installation does not establish ticket access or installation in the intended account. Inspect granted token scopes and account identity before choosing a path. Keep connector credentials scoped to the organization's connector rather than borrowing the custom-channel service's global token.
+The repository shows two existing authentication paths: the email card's static app token, injected by HubSpot as `PRIVATE_APP_ACCESS_TOKEN`; and the custom-channel service's OAuth credentials (portal settings `hubspot_webchat_client_id` and `hubspot_webchat_refresh_token`, used by [hubspot_custom_channel.py](../../klai-portal/backend/app/services/hubspot_custom_channel.py)). A working custom-channel installation does not establish ticket access or installation in the intended account. Inspect granted token scopes and account identity before choosing a path. Keep connector credentials scoped to the organization's connector rather than borrowing the custom-channel service's global token.
 
 Read [ticket property metadata](https://developers.hubspot.com/docs/api-reference/legacy/crm/properties/guide), pipeline/stage metadata and available inboxes first. Measure field presence and variation across actual cases rather than requiring speculative custom fields. Do not retain personal field values in discovery reports or public documentation.
 
@@ -111,7 +117,7 @@ Extract distinct customer questions with applicable product/context, agent reaso
 
 Keep the diagnosis categories above separate from the existing `hard`/`soft` signal. Group semantically related questions while preserving different causes and applicability. Count unique cases and retain cluster examples. Findings need an analysis version and links to evidence and the compared article revisions so a repeat run updates a finding instead of inflating demand.
 
-Reuse the portal gap inbox and taxonomy for editorial work. Extend its source rendering and workflow where required. Confirm visibility against the organization's telemetry policy before persisting case-derived questions. Customer/internal audience boundaries apply to evidence views and drafts as well as published content.
+The gap inbox this step meant to reuse was replaced on 2026-11-11 (#2321); support findings are reviewed on the support-case screens, and taxonomy ids are stored on the finding rows. The set of diagnoses that create findings is still named `INBOX_DIAGNOSES` in the code. Confirm visibility against the organization's telemetry policy before persisting case-derived questions. Customer/internal audience boundaries apply to evidence views and drafts as well as published content.
 
 ### 4. Reconstruct each conversation medium, then share knowledge comparison
 
@@ -227,15 +233,17 @@ Article evidence contains actual returned `chunk_id`, `artifact_id`, `kb_slug`, 
 
 ### Existing inbox and transcript input
 
+Status 2026-11-12: the gap inbox this section extends was replaced on 2026-11-11 (#2321) by the grouped list in [knowledge-gap-to-article.md](knowledge-gap-to-article.md), which leaves support findings out. The support-case list and detail screens take over the third bullet, and `POST /api/app/gaps/resolve` (manual close) no longer exists.
+
 - Extend `PortalRetrievalGap` with nullable case linkage, diagnosis, stable question key and evidence. Support findings use `gap_type="content"`; retain the analyzer's nullable hard/soft retrieval signal in evidence. This keeps existing hard/soft meanings and callers intact, including when highly relevant articles still have a content gap. One finding per case/question/diagnosis, regardless of import retries. Keep source cases separate from widget conversation IDs.
 - Exclude case-backed rows from both the score rescorer's selection and closing UPDATE. Group support findings separately from retrieval telemetry, keeping diagnosis, KB, language and audience distinctions. Bounded semantic matching can assign a verified existing group; measure its accuracy against human-labelled pairs before using frequency as a quality measure.
-- Extend the existing gap inbox with source `support`, diagnosis and evidence access. Case detail shows source messages/segments, rationale, missing information and compared articles. Use existing capability/unlock checks, tenant/KB access and explicit loading/error states. Manual close cannot close an unrelated diagnosis or KB group.
+- Show support findings with source, diagnosis and evidence access on the support-case screens. Case detail shows source messages/segments, rationale, missing information and compared articles. Use existing capability/unlock checks, tenant/KB access and explicit loading/error states.
 - `GET /api/app/gaps/support-cases/{case_id}` returns authorized case evidence and analysis. `POST /api/app/knowledge-bases/{kb_slug}/support-cases/transcript` accepts `{transcript: <native Whisper verbose-JSON result including _source>}`; normalize it to this case contract. Use `_source.sha256` as recording identity; validate finite, ordered segment timing against recording duration (allow up to two seconds of model timestamp overrun) and do not fabricate speakers or dates. Identical recording copies count as one case.
 - Add HubSpot setup to the existing connector form and JSON transcript import to the gap workflow. Both use the same backend case analysis; neither publishes knowledge.
 
 ### Integration gates
 
-First prove negative cases: raw support cases never call knowledge ingestion; retry and concurrent import do not duplicate findings; changed evidence invalidates prior results; tenant/KB/policy checks deny evidence leakage; high retrieval scores cannot close content findings; partial source pages cannot reconcile deletions. Then validate source pagination, notes, truncation, rate limits, transcript timing/deduplication, model evidence references, grouping and manual close. Run package tests, lint/types, real PostgreSQL RLS/concurrency checks, changed-path mutation tests and the local portal browser flow before the whole-change review.
+First prove negative cases: raw support cases never call knowledge ingestion; retry and concurrent import do not duplicate findings; changed evidence invalidates prior results; tenant/KB/policy checks deny evidence leakage; high retrieval scores cannot close content findings; partial source pages cannot reconcile deletions. Then validate source pagination, notes, truncation, rate limits, transcript timing/deduplication, model evidence references and grouping. Run package tests, lint/types, real PostgreSQL RLS/concurrency checks, changed-path mutation tests and the local portal browser flow before the whole-change review.
 
 
 ### Human review workspace
@@ -271,8 +279,10 @@ Measure acceptance, material edits, rejection reasons, review time and duplicate
 proposals by source channel and overall. These are editorial outcomes, not recall
 or proof of published-answer correctness. Reference-set precision/recall remains
 available only when independently reviewed case references actually exist.
-The current implementation below supports finding review; proposal drafting,
-placement, collaborative editing and publication are not yet a complete flow.
+The current implementation below supports finding review. Proposal drafting and
+placement exist for chat gaps (copy-only, see
+[knowledge-gap-to-article.md](knowledge-gap-to-article.md)); for support findings,
+proposal drafting, placement, collaborative editing and publication are not built.
 Existing Knowledge MCP create/update tools write Klai Docs pages. They do not
 establish write access to an externally crawled help center. Resolve the original
 publication destination before wiring acceptance to a write; updating a retrieval
@@ -330,11 +340,15 @@ Evaluate both missed and false merges on fixed examples in multiple input orders
 including unseen examples with opposite actions and different devices. Model
 agreement alone is not an accuracy reference.
 
-The overview groups these distinct needs under existing KB taxonomy topics.
+Not built as a screen (the endpoint `GET /api/app/gaps/by-taxonomy` exists in
+[app_gaps.py](../../klai-portal/backend/app/api/app_gaps.py) and no screen calls it):
+the overview groups these distinct needs under existing KB taxonomy topics.
 Topic membership never merges separate questions or adds their case counts
 together. Topics must belong to the same organization and KB; unclassified
 needs remain visible under “Not yet grouped”. Raw automatic retrieval signals
-have a separate view because they do not establish missing knowledge.
+are a separate view, the grouped list in
+[knowledge-gap-to-article.md](knowledge-gap-to-article.md), because they do not
+establish missing knowledge.
 
 ### Source roles and human corrections
 
@@ -350,8 +364,7 @@ metadata cannot replace that audit. Complete failed or pending cases expose a
 revision for retry and role correction; incomplete source cases remain blocked.
 
 Finding verdicts are revision-bound human annotations, separate from machine
-output. A corrected diagnosis determines whether a reviewed finding enters the
-inbox; a dismissal or uncertain verdict suppresses it. This is editorial
+output. A corrected diagnosis determines whether a reviewed finding becomes a gap row; a dismissal or uncertain verdict suppresses it. This is editorial
 feedback, not automatic model training. A full-case reference review is stored
 separately, bound to the evidence content hash. It can contain questions the
 model missed, and an explicitly complete empty review means no reusable needs.
@@ -478,7 +491,7 @@ for controlled checks rather than introducing another question generator.
 [Ragas documents source-derived synthetic test sets](https://docs.ragas.io/en/stable/concepts/test_data_generation/rag/);
 their results still need to be distinguished from independent customer-case accuracy.
 
-`scripts/evaluate_ingest_gaps.py` in the portal backend accepts a frozen export
+`klai-portal/backend/scripts/evaluate_ingest_gaps.py` accepts a frozen export
 containing `snapshot_id` and enriched `chunks` with their existing `questions`.
 It runs the actual support assessor with the source present, then with all
 evidence withheld through a per-call retrieval override. Questions the source-present
