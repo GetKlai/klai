@@ -1,5 +1,7 @@
 # Zitadel Password Policy Migration
 
+> Server paths are relative to the deploy directory on core-01. See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 Klai validates onboarding passwords locally before calling Zitadel. Production
 startup also checks Zitadel's password-complexity policy. If Zitadel still
 requires legacy composition rules when the portal is deployed, the portal API
@@ -41,7 +43,7 @@ uv run python scripts/update_zitadel_password_policy.py
 
 The `portal-api` production workflow runs the same script before building a
 new image for `main`. That CI gate reads `ZITADEL_ADMIN_PAT` from
-`/opt/klai/.env` on `core-01` over the deployment SSH path, then masks it in
+`.env` in the `core-01` deploy directory over the deployment SSH path, then masks it in
 Actions. Keep that server env in sync via infra/SOPS; do not create a second
 repository secret as the source of truth for this gate.
 

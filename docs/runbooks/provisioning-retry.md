@@ -1,5 +1,7 @@
 # Tenant Provisioning — Retry & Recovery
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > Covers: SPEC-PROV-001 state machine, admin retry endpoint, stuck detector, manual cleanup.
 > Grafana dashboard: https://grafana.getklai.com/d/klai-provisioning
 
@@ -101,8 +103,8 @@ resources in reverse order of the state sequence:
    - LiteLLM team: `curl http://litellm:4000/team/list` (from core-01)
    - MongoDB user: `mongosh --eval 'db.getUsers({filter:{user:"librechat-<slug>"}})'`
    - Docker container: `docker ps -a --filter name=librechat-<slug>`
-   - Caddyfile: `ls /opt/klai/caddy/tenants/<slug>.caddyfile`
-   - Tenant dir: `ls /opt/klai/librechat-data/<slug>`
+   - Caddyfile: `ls caddy/tenants/<slug>.caddyfile` (in the deploy directory)
+   - Tenant dir: `ls librechat-data/<slug>` (in the deploy directory)
 3. **Remove each resource that exists.** The deprovisioning scripts in
    `klai-infra/scripts/deprovision-tenant.sh` (when available) handle most of
    this; otherwise remove by hand.

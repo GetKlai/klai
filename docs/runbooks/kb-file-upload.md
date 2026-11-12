@@ -1,5 +1,7 @@
 # KB file upload — operator runbook
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > SPEC-KB-FILE-UPLOAD-001 — file ingestion for `.md / .txt / .csv /
 > .pdf / .docx / .pptx / .xlsx / .json / .xml`. Archives (`.zip / .tar`) are
 > live as an all-or-nothing container: preflight, extract with caps, validate
@@ -64,8 +66,8 @@ Browser ──multipart archive──▶ portal-api archive preflight
    (`entrypoint.sh` runs `alembic upgrade head`). Confirm:
 
    ```bash
-   ssh core-01 "docker exec klai-core-portal-api-1 alembic current"
-   ssh core-01 "docker exec klai-core-portal-api-1 alembic heads"
+   docker exec klai-core-portal-api-1 alembic current
+   docker exec klai-core-portal-api-1 alembic heads
    # Both print the same revision id
    ```
 
@@ -73,19 +75,20 @@ Browser ──multipart archive──▶ portal-api archive preflight
    role does not own `kb_uploads` and cannot ENABLE RLS on it. Run:
 
    ```bash
-   scp klai-portal/backend/alembic/versions/post_deploy_85e5d0a7cb98_kb_uploads_rls.sql \
-       core-01:/tmp/post_deploy.sql
-   ssh core-01 "docker cp /tmp/post_deploy.sql klai-core-postgres-1:/tmp/"
-   ssh core-01 "docker exec klai-core-postgres-1 sh -c \
-       'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -f /tmp/post_deploy.sql'"
+   # First copy klai-portal/backend/alembic/versions/post_deploy_85e5d0a7cb98_kb_uploads_rls.sql
+   # from your machine to /tmp/post_deploy.sql on core-01 (how: private infrastructure runbooks).
+   # Then, on core-01:
+   docker cp /tmp/post_deploy.sql klai-core-postgres-1:/tmp/
+   docker exec klai-core-postgres-1 sh -c \
+       'psql -U $POSTGRES_USER -d $POSTGRES_DB -f /tmp/post_deploy.sql'
    ```
 
    Verify:
 
    ```bash
-   ssh core-01 "docker exec klai-core-postgres-1 sh -c \
-       'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \
-       \"SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = '\''kb_uploads'\'';\"'"
+   docker exec klai-core-postgres-1 sh -c \
+       'psql -U $POSTGRES_USER -d $POSTGRES_DB -c \
+       "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = '\''kb_uploads'\'';"'
    # Expect: (t, t)
    ```
 
@@ -96,10 +99,10 @@ Browser ──multipart archive──▶ portal-api archive preflight
 
    ```bash
    # Should show one done + one processing within seconds
-   ssh core-01 "docker logs --tail 50 klai-core-portal-api-1 | grep kb_upload_received"
+   docker logs --tail 50 klai-core-portal-api-1 | grep kb_upload_received
 
    # Should show the poller advancing the PDF row through processing→done
-   ssh core-01 "docker logs --tail 50 klai-core-portal-api-1 | grep kb_upload_done"
+   docker logs --tail 50 klai-core-portal-api-1 | grep kb_upload_done
    ```
 
 ## What can go wrong
@@ -112,8 +115,8 @@ submission.
 Diagnose:
 
 ```bash
-ssh core-01 "docker exec klai-core-portal-api-1 sh -c \
-    'curl -sf http://docling-serve:5001/health > /dev/null && echo OK || echo FAIL'"
+docker exec klai-core-portal-api-1 sh -c \
+    'curl -sf http://docling-serve:5001/health > /dev/null && echo OK || echo FAIL'
 ```
 
 If `FAIL`: `docker compose ps docling-serve` on core-01. The container
@@ -169,8 +172,8 @@ DOCLING_SERVE_RESULT_REMOVAL_DELAY: "86400"
 Diagnose the live container environment:
 
 ```bash
-ssh core-01 "docker exec klai-core-docling-serve-1 sh -c \
-    'env | grep DOCLING_SERVE_ | sort'"
+docker exec klai-core-docling-serve-1 sh -c \
+    'env | grep DOCLING_SERVE_ | sort'
 ```
 
 If the variables are missing after a merge, redeploy the compose stack or

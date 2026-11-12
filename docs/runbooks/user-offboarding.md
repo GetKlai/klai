@@ -1,5 +1,7 @@
 # User Offboarding — Admin Workflow
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > Covers: SPEC-PORTAL-KB-OWNERSHIP-001 — admin disposition wizard for KB-owning
 > users, auto-revoke of API keys + MCP tokens, irreversible by design.
 > Related runbook: `tenant-delete.md` (workspace-level delete, separate flow).
@@ -118,8 +120,7 @@ can still log in until manually deactivated. This is the documented "DB-side
 offboarded, IdP-side still active" state. Manual fix:
 
 ```bash
-# As ops on core-01
-ssh core-01
+# As ops, on core-01
 # Verify the gap:
 docker exec klai-core-postgres-1 psql -U $POSTGRES_USER -d $POSTGRES_DB \
   -c "SELECT zitadel_user_id, status FROM portal_users WHERE zitadel_user_id = '<id>';"
