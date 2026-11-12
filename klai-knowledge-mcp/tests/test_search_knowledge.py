@@ -308,6 +308,34 @@ class TestEmptyResults:
         assert mock_gap.call_args.kwargs.get("gap_type") == "hard"
 
 
+class TestPersonalScopeIsNoOrganisationGap:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("scope", "fired"), [("personal", 0), ("both", 1), ("org", 1)])
+    async def test_empty_personal_search_files_no_gap(self, scope: str, fired: int) -> None:
+        """A miss in the user's own notes says nothing about the organisation's knowledge."""
+        from main import search_knowledge
+
+        ctx = _librechat_ctx()
+
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch(
+                "httpx.AsyncClient.post",
+                new_callable=AsyncMock,
+                return_value=_make_retrieve_response([]),
+            ),
+            patch("main.fire_retrieval_log"),
+            patch("main.fire_gap_event") as mock_gap,
+        ):
+            await search_knowledge(query="q", ctx=ctx, scope=scope)
+
+        assert mock_gap.call_count == fired
+
+
 class TestTelemetryFailureSwallowed:
     @pytest.mark.asyncio
     async def test_telemetry_post_failure_does_not_break_tool(self) -> None:

@@ -1680,7 +1680,8 @@ async def search_knowledge(
             query_resolved=query,
             caller_client_id=identity.client_id,
         )
-        gap = _classify_gap(chunks)
+        # A miss in the user's own notes is no gap of the organisation's knowledge.
+        gap = _classify_gap(chunks) if scope != "personal" else None
         if gap is not None:
             fire_gap_event(
                 org_id=identity.org_id,
