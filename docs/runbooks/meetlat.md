@@ -10,7 +10,7 @@ live outside the repository, in the output directory of a throwaway portal-api c
   there ([Measure the retrieval](#measure-the-retrieval)).
 
 A case is one JSON object per line: `cid` (first 8 characters of a conversation id), `turn` (index of the user turn),
-`class` (`weigering`, `antwoord_kb`, `dekkend_antwoord`, `antwoord_algemeen_gelabeld` or `weigering_feiten`) and,
+`class` (internal: `weigering`, `antwoord_kb`, `dekkend_antwoord`, `antwoord_algemeen_gelabeld` or `weigering_feiten`; widget: `antwoord`, `vraag`, `niet_gevonden`, `doorverwijzing` or `afsluiting`) and,
 for `dekkend_antwoord`, optionally `variants` (regexes that must all appear in the answer, default `android` and
 `iphone|ios`). `run` reads only `cid` and `turn`.
 
@@ -106,7 +106,7 @@ tenant and reaches Mistral unmasked.
    A widget round replays as one widget, through the route itself (a preview session token, the answer held), so the
    widget's own settings and articles apply and nothing is recorded. Its cases carry their own conversation: `id`,
    `messages` (the visitor's turns and the earlier replies, ending in the turn to replay) and `expect` (`antwoord`,
-   `vraag`, `niet_gevonden` or `doorverwijzing`). `--widget` names a JSON file with `wgt_id`, `org_id`, `kb_ids`,
+   `vraag`, `niet_gevonden`, `doorverwijzing` or `afsluiting`). `--widget` names a JSON file with `wgt_id`, `org_id`, `kb_ids`,
    `slug` and `origin`, kept next to the cases, outside the repository:
 
    ```bash

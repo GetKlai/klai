@@ -10,17 +10,18 @@ Klai Docs consists of two layers:
 | **Backend + reader** | `klai-docs` | Render public KB pages + REST API for the editor |
 
 ```
-Browser (logged in to portal)
-    │  Zitadel Bearer token (via react-oidc-context)
+Browser (logged in to the portal, session cookie)
+    │  /api/docs/...  ← editor calls from the portal SPA
     ▼
-getklai.getklai.com/docs/api/...   ← API calls from portal SPA
-    │  Caddy → docs-app:3010
+portal-api BFF proxy  (klai-portal/backend/app/api/proxy.py)
+    │  Authorization: Bearer <session access token>
+    │  X-Klai-Verified-User-Id / Org-Id / Org-Slug
     ▼
-docs-app  (Next.js, basePath: /docs)
-    │  validateBearer() → Zitadel JWKS
+docs-app  (Next.js, port 3010, basePath: /docs)
+    │  requireOrgAccess() → Zitadel JWKS
     │  Gitea API for content CRUD
     ▼
-getklai.getklai.com/docs/{kb}/...  ← Public reader (SSR, no auth)
+acme.example.com/docs/{kb}/...  ← Public reader (SSR, no login)
 ```
 
 ---
@@ -29,18 +30,9 @@ getklai.getklai.com/docs/{kb}/...  ← Public reader (SSR, no auth)
 
 ### Editor (authenticated)
 
-The editor lives in the portal SPA (`klai-portal`). The portal already has a Zitadel OIDC session via `react-oidc-context`. When the editor makes an API call to docs-app:
+The editor lives in the portal SPA (`klai-portal`). The portal is a backend-for-frontend: the browser holds a session cookie, and portal-api keeps the Zitadel tokens server-side (`klai-portal/docs/auth-flows.md`). The editor calls docs-app through portal-api's proxy at `/api/docs/*` (`DOCS_BASE` in `klai-portal/frontend/src/lib/kb-editor/tree-utils.ts:5`). The proxy checks the session and the caller's membership, then forwards the request to `http://docs-app:3010/docs` with the session's access token as Bearer and the portal-verified identity headers (`klai-portal/backend/app/api/proxy.py:150-189`, `:386-394`). The reverse proxy answers 404 for docs-app's own `/docs/api/*` path, so the API is reached only through portal-api (`deploy/caddy/Caddyfile:504-510`).
 
-```typescript
-// In the portal SPA
-const token = auth.user?.access_token   // Zitadel Bearer token
-
-fetch('/docs/api/orgs/getklai/kbs', {
-  headers: { Authorization: `Bearer ${token}` }
-})
-```
-
-docs-app validates this token directly against Zitadel's JWKS endpoint:
+docs-app validates the Bearer token against Zitadel's JWKS endpoint with `jose` (`klai-docs/lib/auth.ts:13-45`):
 
 ```typescript
 // lib/auth.ts in docs-app
@@ -48,16 +40,15 @@ const JWKS = createRemoteJWKSet(new URL(`${ISSUER}/oauth/v2/keys`))
 
 const { payload } = await jwtVerify(token, JWKS, { issuer: ISSUER })
 // payload.sub = Zitadel user ID
-// payload["urn:zitadel:iam:user:resourceowner:id"] = Zitadel org ID
 ```
 
-**Advantage:** no double login. The same session used by Chat, Scribe, and Focus works for Docs as well.
+Service callers can instead send `X-Internal-Secret` with `DOCS_INTERNAL_SECRET` and an `X-User-ID`, which `requireAuthOrService` accepts as the acting user (`klai-docs/lib/auth.ts:66-85`); portal-api's provisioning client uses this to create a tenant's repository. Org-scoped routes call `requireOrgAccess`, which authenticates the caller and resolves the organisation from the slug in the path (`klai-docs/lib/auth.ts:111-131`), and personal KBs are limited to their creator by `checkKBAccess` (`klai-docs/lib/auth.ts:92-100`).
+
+**Advantage:** no double login. The portal session used for Chat and Scribe works for Docs as well.
 
 ### Public reader
 
-The reader (`getklai.getklai.com/docs/{kb}/...`) is a Next.js SSR page. There is currently no auth for private KBs in the reader — all KBs are accessible to anyone with the URL.
-
-**TODO:** for private KBs, the reader needs to validate the Zitadel session cookie. Approach: Zitadel sets a session cookie on `.getklai.com` after login. The reader reads this cookie and validates it via the Zitadel userinfo endpoint (`/oidc/v1/userinfo`).
+The reader (`acme.example.com/docs/{kb}/...`) is a Next.js SSR page without login. It serves only public KBs: a personal KB or a KB with `visibility = private` returns 404 (`klai-docs/app/(reader)/[...path]/page.tsx:116`).
 
 ---
 

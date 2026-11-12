@@ -326,8 +326,9 @@ async def _resolve_episode_names(graphiti: Graphiti, results: list, org_id: str)
     redundancy: it keeps the read fail-closed if a future Graphiti change
     alters how a driver resolves its database.
 
-    Fail-open on error: returning ``{}`` costs citations, raising would cost
-    the whole graph leg.
+    On error it returns ``{}``: the facts then carry no document pointer, and
+    the caller serves a fact only when its document resolves in the request's
+    scope.
     """
     uuids = sorted({uuid for edge in results for uuid in _episode_uuids(edge)})
     if not uuids:
@@ -436,8 +437,8 @@ def _convert_results(
         document = next((parsed for name in names if (parsed := parse_episode_name(name))), None)
         source_name = None if document else next(iter(names), None)
         # A doc-key edge gets its artifact_id from the CURRENT version at
-        # label time; a legacy edge carries the (possibly superseded) id it
-        # was named after, which keeps it citable exactly as it is today.
+        # label time; a legacy edge carries the id it was named after and is
+        # served only while that version still resolves.
         artifact_id = source_name
         converted.append(
             {

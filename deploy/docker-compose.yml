@@ -291,7 +291,7 @@ services:
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
     logging: *log-rotation
-    image: getmeili/meilisearch:v1.56.1
+    image: getmeili/meilisearch:v1.56.2
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
@@ -2782,7 +2782,7 @@ services:
   # SPEC-INFRA-COOLIFY-EXIT-001 T2 has the procedure and why it took four hops.
   crm:
     logging: *log-rotation
-    image: twentycrm/twenty:v2.56.1
+    image: twentycrm/twenty:v2.57.0
     restart: unless-stopped
     environment:
       SERVER_URL: https://crm.${DOMAIN}
@@ -2824,7 +2824,7 @@ services:
 
   crm-worker:
     logging: *log-rotation
-    image: twentycrm/twenty:v2.56.1
+    image: twentycrm/twenty:v2.57.0
     restart: unless-stopped
     command: ["yarn", "worker:prod"]
     environment:

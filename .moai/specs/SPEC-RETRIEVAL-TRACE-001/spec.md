@@ -14,7 +14,7 @@ related:
   - SPEC-KB-021
 references:
   - docs/architecture/knowledge-retrieval-flow.md
-  - docs/knowledge-retrieval-low-confidence-abstain-2026-05-08.md
+  - docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md
   - .claude/rules/klai/projects/knowledge.md
   - klai-retrieval-api/retrieval_api/api/retrieve.py
 ---
@@ -321,6 +321,6 @@ The handler stays readable during migration: wrap existing blocks, do not extrac
 Note on `related`: `SPEC-PRIVACY-QUERY-SHADOW-001` has no spec directory under `.moai/specs/` anymore — it was implemented and archived. Its requirements survive as code comments in `retrieve.py` and `metrics.py`; treat those as the authoritative reference.
 
 - [Knowledge Retrieval Flow](../../../docs/architecture/knowledge-retrieval-flow.md)
-- [Low-Confidence Abstain implementation notes](../../../docs/knowledge-retrieval-low-confidence-abstain-2026-05-08.md)
+- [Low-confidence band and abstain, history and outcomes (plan §6, 7 and 8 May 2026)](../../../docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md)
 - [Knowledge Domain Patterns](../../../.claude/rules/klai/projects/knowledge.md)
 - [`retrieve.py`](../../../klai-retrieval-api/retrieval_api/api/retrieve.py)

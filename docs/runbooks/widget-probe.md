@@ -33,8 +33,11 @@ but retrieval found nothing. `reason` is the first failing check:
 | `unreachable` | no connection to `api.getklai.com` from core-01 (DNS, Caddy, portal-api down) |
 | `timeout` | a read stalled for 45 s |
 | `http` | non-2xx on the mint or the chat call (`http_status` says which code; 403 on the mint is the origin or widget, 401 on chat is the token, 5xx is portal-api) |
+| `cors` | the chat response lacks the `Access-Control-Allow-Origin` a browser needs for the probe's origin (`scripts/widget-probe.py:98-104`) |
 | `mint_response` | the mint answered 200 without `session_token` / `chat_endpoint` |
 | `stream_error` | an SSE `error` frame (the answer model failed) |
+| `stream_broken` | the connection broke while the stream was being read |
+| `stream_incomplete` | the stream ended without the `[DONE]` frame, even if text and sources had arrived |
 | `empty_answer` | stream ended with no text |
 | `no_sources` | answer without any citation: retrieval returned nothing or the fixed error reply |
 | `latency` | answered, but slower than the threshold |
@@ -166,8 +169,7 @@ probe question. Nothing here is created by the repo.
    changed the origin or the question above, also pass `E2E_PROBE_WIDGET_ORIGIN` /
    `E2E_PROBE_QUESTION` in the workflow's `env:`; the spec defaults match the
    defaults of the probe.
-7. **Unpause the alerts.** Both rules in
-   `deploy/grafana/provisioning/alerting/widget-probe-rules.yaml` ship with
-   `isPaused: true`. Once the first `ok` verdict is in VictoriaLogs, set both to
-   `isPaused: false` in a PR and check after the deploy that Grafana shows them
-   as Normal, not Paused. Until then nothing pages.
+7. **Alerts.** Both rules in
+   `deploy/grafana/provisioning/alerting/widget-probe-rules.yaml` ship active
+   (`isPaused: false`, lines 78 and 161). After the deploy, check that Grafana
+   shows them as Normal, and that the first `ok` verdict is in VictoriaLogs.
