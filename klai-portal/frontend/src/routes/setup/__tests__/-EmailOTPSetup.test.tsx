@@ -43,7 +43,7 @@ describe('EmailOTPSetup', () => {
     expect(screen.getByRole<HTMLButtonElement>('button', { name: /send code/i }).disabled).toBe(false)
   })
 
-  it('shows verification failures after the user reaches the code step', async () => {
+  it('submits the 8-digit code Zitadel mails and shows a verification failure', async () => {
     apiFetchMock
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('invalid code'))
@@ -53,13 +53,13 @@ describe('EmailOTPSetup', () => {
     fireEvent.click(screen.getByRole('button', { name: /send code/i }))
     await screen.findByRole('heading', { name: /enter code/i })
 
-    fireEvent.change(screen.getByLabelText(/code/i), { target: { value: '123456' } })
+    fireEvent.change(screen.getByLabelText(/code/i), { target: { value: '12345678' } })
     fireEvent.click(screen.getByRole('button', { name: /verify/i }))
 
     await waitFor(() => {
       expect(apiFetchMock).toHaveBeenLastCalledWith('/api/auth/email-otp/confirm', {
         method: 'POST',
-        body: JSON.stringify({ code: '123456' }),
+        body: JSON.stringify({ code: '12345678' }),
       })
     })
     expect(await screen.findByText('Connection error')).not.toBeNull()

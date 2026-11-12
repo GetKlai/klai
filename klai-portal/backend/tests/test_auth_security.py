@@ -54,12 +54,10 @@ class TestAuthAuditLogging:
             patch("app.api.auth.audit") as mock_audit,
             patch("app.api.auth.emit_event"),
         ):
-            # find_user_by_email returns (user_id, org_id), has_totp = False
             mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-1", "zorg-1"))
-            mock_zitadel.has_totp = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
             mock_zitadel.create_session_with_password = AsyncMock(return_value=_make_session_response())
             mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=True)
 
             # Mock the portal user lookup for MFA (Fix 2 runs before Fix 1 audit)
             mock_portal_user = MagicMock()
@@ -97,7 +95,7 @@ class TestAuthAuditLogging:
             patch("app.api.auth.emit_event"),
         ):
             mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-2", "zorg-2"))
-            mock_zitadel.has_totp = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
             mock_zitadel.create_session_with_password = AsyncMock(side_effect=_make_http_error(401))
             mock_audit.log_event = AsyncMock()
 
@@ -188,7 +186,7 @@ class TestAuthAuditLogging:
             patch("app.api.auth.zitadel") as mock_zitadel,
             patch("app.api.auth.audit") as mock_audit,
         ):
-            mock_zitadel.update_session_with_totp = AsyncMock(
+            mock_zitadel.update_session_with_otp = AsyncMock(
                 return_value={
                     "sessionId": "sess-totp",
                     "sessionToken": "tok-totp-new",
@@ -230,7 +228,7 @@ class TestAuthAuditLogging:
             patch("app.api.auth.zitadel") as mock_zitadel,
             patch("app.api.auth.audit") as mock_audit,
         ):
-            mock_zitadel.update_session_with_totp = AsyncMock(side_effect=_make_http_error(400))
+            mock_zitadel.update_session_with_otp = AsyncMock(side_effect=_make_http_error(400))
             mock_audit.log_event = AsyncMock()
 
             with pytest.raises(HTTPException):
@@ -263,10 +261,9 @@ class TestAuthAuditLogging:
             patch("app.api.auth.emit_event"),
         ):
             mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-1", "zorg-1"))
-            mock_zitadel.has_totp = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
             mock_zitadel.create_session_with_password = AsyncMock(return_value=_make_session_response())
             mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=True)
 
             # Mock portal user lookup for MFA
             mock_portal_user = MagicMock()
@@ -309,9 +306,8 @@ class TestMFAPolicyEnforcement:
             patch("app.api.auth.select"),
         ):
             mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-mfa", "zorg-mfa"))
-            mock_zitadel.has_totp = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
             mock_zitadel.create_session_with_password = AsyncMock(return_value=_make_session_response())
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
             mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
 
             # Portal user belongs to an org with mfa_policy=required
@@ -345,9 +341,8 @@ class TestMFAPolicyEnforcement:
             patch("app.api.auth.select"),
         ):
             mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-mfa", "zorg-mfa"))
-            mock_zitadel.has_totp = AsyncMock(return_value=True)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=["totp"])
             mock_zitadel.create_session_with_password = AsyncMock(return_value=_make_session_response())
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=True)
             mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
 
             mock_portal_user = MagicMock()
@@ -360,13 +355,12 @@ class TestMFAPolicyEnforcement:
             mock_audit.log_event = AsyncMock()
 
             # Should NOT raise 403 -- user has MFA enrolled
-            # (will return totp_required since has_totp=True)
             result = await login(body=body, response=response, request=make_request(), db=db)
             assert result.status == "totp_required"
 
     @pytest.mark.asyncio
     async def test_mfa_optional_no_enforcement(self) -> None:
-        """When org.mfa_policy='optional', has_any_mfa is NOT called."""
+        """When org.mfa_policy='optional' and no verifiable factor is registered, the login finalises."""
         from app.api.auth import LoginRequest, login
 
         body = LoginRequest(email="user@test.example.net", password="pass123", auth_request_id="ar-mfa-3")
@@ -380,10 +374,9 @@ class TestMFAPolicyEnforcement:
             patch("app.api.auth.select"),
         ):
             mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-opt", "zorg-opt"))
-            mock_zitadel.has_totp = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
             mock_zitadel.create_session_with_password = AsyncMock(return_value=_make_session_response())
             mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
 
             mock_portal_user = MagicMock()
             mock_portal_user.org_id = 10
@@ -395,10 +388,8 @@ class TestMFAPolicyEnforcement:
             mock_audit.log_event = AsyncMock()
 
             result = await login(body=body, response=response, request=make_request(), db=db)
-            # Login should succeed -- no 403
-            assert result is not None
-            # has_any_mfa should NOT have been called
-            mock_zitadel.has_any_mfa.assert_not_called()
+            assert result.status == "ok"
+            response.set_cookie.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_mfa_policy_lookup_failure_defaults_to_optional(self) -> None:
@@ -423,7 +414,7 @@ class TestMFAPolicyEnforcement:
             patch("app.api.auth.select"),
         ):
             mock_zitadel.find_user_by_email = AsyncMock(return_value=("uid-err", "zorg-err"))
-            mock_zitadel.has_totp = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
             mock_zitadel.create_session_with_password = AsyncMock(return_value=_make_session_response())
             mock_zitadel.finalize_auth_request = AsyncMock(return_value="https://chat.getklai.com/callback")
 

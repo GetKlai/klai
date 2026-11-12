@@ -188,11 +188,11 @@ async def me(
         can_create_org_kbs = perms.effective_kb_limits.can_create_org_kbs
         max_personal_kbs_per_user = perms.effective_kb_limits.max_personal_kbs_per_user
 
-    # Check whether the user has any MFA method enrolled
+    # Enrolled means a second factor the login verifies (same rule as login())
     mfa_enrolled = False
     if zitadel_user_id:
         try:
-            mfa_enrolled = await zitadel.has_any_mfa(zitadel_user_id)
+            mfa_enrolled = bool(await zitadel.login_second_factors(zitadel_user_id))
         except Exception as exc:
             logger.warning("MFA check failed for user %s, skipping: %s", zitadel_user_id, exc, exc_info=True)
 
@@ -582,7 +582,7 @@ async def sar_export(
 
     mfa_enrolled = False
     try:
-        mfa_enrolled = await zitadel.has_any_mfa(user_id)
+        mfa_enrolled = bool(await zitadel.login_second_factors(user_id))
     except Exception as exc:
         logger.warning("SAR: MFA check failed for %s: %s", user_id, exc, exc_info=True)
 

@@ -2,7 +2,7 @@
 Auth endpoints for the custom login UI.
 
 POST /api/auth/login          -- email+password -> Zitadel session -> OIDC callback URL
-POST /api/auth/totp-login     -- complete login with TOTP code (when user has 2FA)
+POST /api/auth/totp-login     -- complete login with the TOTP or e-mail code (when user has 2FA)
 POST /api/auth/sso-complete   -- reuse portal session to silently complete LibreChat OIDC
 POST /api/auth/totp/setup     -- initiate TOTP registration (requires Bearer token)
 POST /api/auth/totp/confirm   -- activate TOTP after scanning QR (requires Bearer token)
@@ -206,7 +206,7 @@ def _decrypt_sso(cookie_value: str) -> dict | None:
 #
 # Two keys per token (kept separate so the read-mostly state hash and the
 # write-mostly counter do not contend on the same primitive):
-#   ``totp_pending:<token>``           HASH  session_id, session_token, ua_hash, ip_subnet
+#   ``totp_pending:<token>``           HASH  session_id, session_token, ua_hash, ip_subnet, check
 #   ``totp_pending_failures:<token>``  STR   incremented; ``INCR`` returns the new count
 #
 # Both keys carry the same TTL set at create time. ``INCR`` does not refresh
@@ -255,8 +255,13 @@ async def _totp_pending_create(
     ip_subnet: str,
     zitadel_user_id: str = "",
     email: str = "",
+    check: str = "totp",
 ) -> str:
     """Allocate a fresh ``temp_token`` and store the pending state in Redis.
+
+    ``check`` is the Zitadel session-check key the second step verifies
+    (``totp`` or ``otpEmail``); both factors share this store, its lifetime
+    and its failure ceiling.
 
     The three Redis writes (state HASH + state TTL + failure counter with
     its own TTL) execute in a single ``MULTI``/``EXEC`` pipeline so the
@@ -287,6 +292,7 @@ async def _totp_pending_create(
                     # same domain-match routing as login() after TOTP succeeds.
                     "zitadel_user_id": zitadel_user_id,
                     "email": email,
+                    "check": check,
                 },
             )
             pipe.expire(state_key, ttl)
@@ -792,27 +798,30 @@ async def _resolve_and_enforce_mfa(
     zitadel_user_id: str,
     email: str,
     db: AsyncSession,
-) -> "PortalUser | None":
+) -> "tuple[PortalUser | None, list[str]]":
     """Resolve mfa_policy for the calling user and enforce SPEC-SEC-MFA-001.
 
-    Returns the ``PortalUser`` row for downstream audit context, or ``None``
-    when the user is not yet provisioned in portal.
+    Returns the ``PortalUser`` row for downstream audit context (``None``
+    when the user is not yet provisioned in portal) and the session-check
+    keys of the second factors the login must verify before finalising
+    (``ZitadelClient.login_second_factors``), under every policy: a factor
+    the user registered is always asked for.
 
     Raises:
         HTTPException(503): Org fetch failed (cannot determine policy for a
-            known portal user) OR Zitadel/connection failure during
-            ``has_any_mfa`` under ``mfa_policy="required"``.
+            known portal user) OR the registered factors cannot be read from
+            Zitadel, under any policy: without them the login cannot know
+            which factor to ask for.
 
-    Fail-open paths (login proceeds):
+    Fail-open paths (policy treated as optional):
         - portal_user lookup raised — cannot map email to org; preserve
           provisioning grace (REQ-3.2 fail-open arm).
         - portal_user found but PortalOrg row is missing (orphan FK — deleted
           or soft-deleted org). We log + fail-open since this is data-integrity,
           not infrastructure failure, and a real user with a stale org should
           not be locked out without observability.
-        - ``mfa_policy in {"optional", "recommended"}`` regardless of
-          ``has_any_mfa`` outcome — orgs that have not opted into enforcement
-          accept availability over security at login time (REQ-3).
+        - ``mfa_policy in {"optional", "recommended"}``: a user without a
+          verifiable factor logs in with the password alone (REQ-3).
     """
     portal_user: PortalUser | None = None
     db_failure: str | None = None
@@ -845,7 +854,6 @@ async def _resolve_and_enforce_mfa(
             email=email,
             level="warning",
         )
-        return portal_user  # always None on this branch
 
     if db_failure == "portal_org":
         # REQ-3.2 fail-closed arm: known portal_user but unresolvable org
@@ -878,47 +886,24 @@ async def _resolve_and_enforce_mfa(
         )
 
     mfa_policy = org.mfa_policy if org else "optional"
-    if mfa_policy != "required":
-        # REQ-3 / REQ-3.4: optional and recommended preserve fail-open.
-        # has_any_mfa is short-circuited entirely under these policies.
-        return portal_user
 
     try:
-        user_has_mfa = await zitadel.has_any_mfa(zitadel_user_id)
-    except httpx.HTTPStatusError as exc:
-        _emit_mfa_check_failed(
-            reason="has_any_mfa_5xx",
-            mfa_policy="required",
-            outcome="503",
-            email=email,
-            zitadel_status=exc.response.status_code,
-            level="error",
-        )
-        raise _mfa_unavailable() from exc
-    except httpx.RequestError as exc:
-        _emit_mfa_check_failed(
-            reason="has_any_mfa_5xx",
-            mfa_policy="required",
-            outcome="503",
-            email=email,
-            zitadel_status=None,
-            level="error",
-        )
-        raise _mfa_unavailable() from exc
+        second_factor_checks = await zitadel.login_second_factors(zitadel_user_id)
     except Exception as exc:
-        # REQ-1.6: any unexpected exception type still fails closed under
-        # required policy. Better a transient 503 than a silent bypass.
+        # REQ-1.6: any failure fails closed. Better a transient 503 than a
+        # login that skips a factor it could not see. The reason label is kept
+        # for the mfa-check-failed runbook and its alert queries.
         _emit_mfa_check_failed(
-            reason="unexpected",
-            mfa_policy="required",
+            reason="has_any_mfa_5xx" if isinstance(exc, httpx.HTTPError) else "unexpected",
+            mfa_policy=mfa_policy,
             outcome="503",
             email=email,
-            zitadel_status=None,
+            zitadel_status=exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None,
             level="error",
         )
         raise _mfa_unavailable() from exc
 
-    if not user_has_mfa:
+    if mfa_policy == "required" and not second_factor_checks:
         # Bootstrap path for org-required MFA: the password has been verified,
         # so allow the OIDC/BFF session to be created solely so the frontend can
         # route the user to /setup/mfa and the setup endpoints can register the
@@ -933,7 +918,7 @@ async def _resolve_and_enforce_mfa(
             level="warning",
         )
 
-    return portal_user
+    return portal_user, second_factor_checks
 
 
 # ---------------------------------------------------------------------------
@@ -1415,11 +1400,10 @@ async def login(
 ) -> LoginResponse:
     # 1a. Find Zitadel user by email — SPEC-SEC-MFA-001 REQ-2: split 4xx ↔ 5xx
     zitadel_user_id: str | None = None
-    org_id_zitadel: str | None = None
     try:
         user_info = await zitadel.find_user_by_email(body.email)
         if user_info:
-            zitadel_user_id, org_id_zitadel = user_info
+            zitadel_user_id = user_info[0]
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code >= 500:
             _emit_mfa_check_failed(
@@ -1444,22 +1428,6 @@ async def login(
             level="error",
         )
         raise _mfa_unavailable() from exc
-
-    # 1b. has_totp — UI-flag only; failure is fail-open (no enforcement
-    # implication; user simply does not see the TOTP prompt). REQ-2.6 moves
-    # this OUT of the find_user_by_email try so a TOTP outage never causes a
-    # find_user_by_email-style 5xx escalation.
-    has_totp = False
-    if zitadel_user_id:
-        try:
-            has_totp = await zitadel.has_totp(zitadel_user_id, org_id_zitadel)
-        except (httpx.HTTPStatusError, httpx.RequestError):
-            # has_totp drives only the UI prompt; failure here is fail-open
-            # (user falls through to password-only screen). We use structlog
-            # explicitly because portal-logging-py rules require it for any
-            # NEW log statement, and this catch is added by SPEC-SEC-MFA-001.
-            _slog.warning("has_totp_check_failed", exc_info=True)
-            has_totp = False
 
     # 2. Create a Zitadel session — pass the canonical Zitadel user_id
     # resolved in step 1a, NOT the raw user-typed email. Zitadel matches
@@ -1499,8 +1467,9 @@ async def login(
     # NEN 7510 REQ-SEC-001-08 implementation: fail-closed under required,
     # documented fail-open under optional).
     portal_user_for_mfa: PortalUser | None = None
+    second_factor_checks: list[str] = []
     if zitadel_user_id:
-        portal_user_for_mfa = await _resolve_and_enforce_mfa(
+        portal_user_for_mfa, second_factor_checks = await _resolve_and_enforce_mfa(
             zitadel_user_id=zitadel_user_id,
             email=body.email,
             db=db,
@@ -1521,8 +1490,24 @@ async def login(
     except Exception:
         logger.warning("Audit log write failed for auth.login (non-fatal)", exc_info=True)
 
-    # 3. If the user has TOTP, require a code before finalizing
-    if has_totp:
+    # 3. A registered second factor is verified before finalizing: TOTP when
+    # the user has it, otherwise the e-mail code, which Zitadel mails now.
+    if second_factor_checks:
+        check = second_factor_checks[0]
+        session_token = session["sessionToken"]
+        if check == "otpEmail":
+            try:
+                session_token = await zitadel.send_session_email_code(session["sessionId"], session_token)
+            except httpx.HTTPError as exc:
+                _emit_auth_event(
+                    "login_second_factor_failed",
+                    reason="otp_email_send_failed",
+                    outcome="503",
+                    email=body.email,
+                    zitadel_status=exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None,
+                    level="error",
+                )
+                raise _mfa_unavailable() from exc
         # SPEC-SEC-SESSION-001 REQ-1.1: store the pending state in Redis
         # (cross-replica atomic counter) and snapshot UA + IP-subnet so a
         # follow-up SPEC can add binding-on-consume without a Redis schema
@@ -1533,13 +1518,17 @@ async def login(
         ip_subnet = resolve_caller_ip_subnet(request)
         temp_token = await _totp_pending_create(
             session_id=session["sessionId"],
-            session_token=session["sessionToken"],
+            session_token=session_token,
             ua_hash=ua_hash,
             ip_subnet=ip_subnet,
             zitadel_user_id=zitadel_user_id or "",
             email=str(body.email),
+            check=check,
         )
-        return LoginResponse(status="totp_required", temp_token=temp_token)
+        return LoginResponse(
+            status="totp_required" if check == "totp" else "otp_email_required",
+            temp_token=temp_token,
+        )
 
     # 3b. SPEC-AUTH-010 R7: zero-membership user with a verified email that
     # matches an existing workspace domain → workspace picker instead of
@@ -1557,7 +1546,7 @@ async def login(
         if picker_ref:
             return LoginResponse(status="select_workspace", ref=picker_ref)
 
-    # 4. No TOTP — finalize and set cookie
+    # 4. No second factor to verify — finalize and set cookie
     return await _finalize_and_set_cookie(
         response=response,
         auth_request_id=body.auth_request_id,
@@ -1595,15 +1584,18 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
             detail="Session expired, please log in again",
         )
 
-    # Verify TOTP code by updating the session
+    # Verify the code by updating the session. A pending entry written before
+    # the factor was recorded came from a TOTP prompt.
+    check = pending.get("check", "totp")
     try:
-        updated = await zitadel.update_session_with_totp(
+        updated = await zitadel.update_session_with_otp(
             session_id=pending["session_id"],
             session_token=pending["session_token"],
+            check=check,
             code=body.code,
         )
     except httpx.HTTPStatusError as exc:
-        _slog.exception("update_session_with_totp_failed", zitadel_status=exc.response.status_code)
+        _slog.exception("update_session_with_otp_failed", check=check, zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
             new_failures = await _totp_pending_incr_failures(body.temp_token)
             await audit.log_event(
@@ -1667,7 +1659,7 @@ async def totp_login(body: TOTPLoginRequest, response: Response, db: AsyncSessio
         action="auth.login.totp",
         resource_type="session",
         resource_id=pending["session_id"],
-        details={"method": "totp"},
+        details={"method": check},
     )
 
     session_id = updated.get("sessionId", pending["session_id"])
@@ -1784,7 +1776,7 @@ async def totp_setup(
         resource_id=user_id,
         details={"reason": "initiated"},
     )
-    return TOTPSetupResponse(uri=result["uri"], secret=result["totpSecret"])
+    return TOTPSetupResponse(uri=result["uri"], secret=result["secret"])
 
 
 class VerifyEmailRequest(BaseModel):
@@ -2051,16 +2043,37 @@ async def passkey_confirm(
     )
 
 
+# Zitadel mails an e-mail code only for a session challenge, so the enrolment
+# sends its test code through a short-lived session for the signed-in user and
+# keeps that session here until the user confirms the code. Five minutes is how
+# long Zitadel keeps an e-mail code valid (OTPEmail generator default, v4.20.1).
+_EMAIL_OTP_ENROLMENT_PREFIX = "email_otp_enrolment:"
+_EMAIL_OTP_ENROLMENT_TTL_S = 300
+
+
+async def _send_email_otp_enrolment_code(user_id: str) -> None:
+    """Register the e-mail code factor and have Zitadel mail a code to confirm it."""
+    await zitadel.register_email_otp(user_id)
+    session = await zitadel.create_session_for_user(user_id, _EMAIL_OTP_ENROLMENT_TTL_S)
+    session_token = await zitadel.send_session_email_code(session["sessionId"], session["sessionToken"])
+    pool = cast("aioredis.Redis", await _get_totp_redis_or_503(phase="email_otp_enrolment"))
+    await pool.set(
+        f"{_EMAIL_OTP_ENROLMENT_PREFIX}{user_id}",
+        json.dumps({"session_id": session["sessionId"], "session_token": session_token}),
+        ex=_EMAIL_OTP_ENROLMENT_TTL_S,
+    )
+
+
 @router.post("/auth/email-otp/setup", status_code=status.HTTP_204_NO_CONTENT)
 async def email_otp_setup(
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Register email OTP for the user. Zitadel sends a verification code to the user's email.
+    """Register email OTP for the user and mail a code that confirms it.
 
     SPEC-SEC-AUTH-COVERAGE-001 REQ-1.11: emit audit on success, structured event on 5xx.
     """
     try:
-        await zitadel.register_email_otp(user_id)
+        await _send_email_otp_enrolment_code(user_id)
     except httpx.HTTPStatusError as exc:
         _slog.exception("register_email_otp_failed", zitadel_status=exc.response.status_code)
         _emit_auth_event(
@@ -2090,30 +2103,12 @@ async def email_otp_setup(
 async def email_otp_resend(
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Resend the email OTP verification code by removing and re-registering the method.
+    """Mail a new enrolment code; the previous one stops confirming.
 
     SPEC-SEC-AUTH-COVERAGE-001 REQ-1.13: emit audit on success, structured event on 5xx.
     """
     try:
-        await zitadel.remove_email_otp(user_id)
-    except httpx.HTTPStatusError as exc:
-        # If not registered yet, ignore — proceed to register
-        if exc.response.status_code != 404:
-            _slog.exception("remove_email_otp_failed", zitadel_status=exc.response.status_code)
-            _emit_auth_event(
-                "email_otp_resend_failed",
-                reason="zitadel_5xx",
-                zitadel_status=exc.response.status_code,
-                actor_user_id=user_id,
-                outcome="502",
-                level="error",
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to resend email code, please try again later",
-            ) from exc
-    try:
-        await zitadel.register_email_otp(user_id)
+        await _send_email_otp_enrolment_code(user_id)
     except httpx.HTTPStatusError as exc:
         _slog.exception("register_email_otp_resend_failed", zitadel_status=exc.response.status_code)
         _emit_auth_event(
@@ -2144,13 +2139,34 @@ async def email_otp_confirm(
     body: EmailOTPConfirmRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> None:
-    """Verify and activate the email OTP using the code sent during setup.
+    """Confirm the e-mail code factor with the code mailed by setup or resend.
 
     SPEC-SEC-AUTH-COVERAGE-001 REQ-1.12: emit audit on success, structured
-    event on 4xx (invalid_code) and 5xx (zitadel_5xx).
+    event on 4xx (invalid_code, expired) and 5xx (zitadel_5xx).
     """
+    pool = cast("aioredis.Redis", await _get_totp_redis_or_503(phase="email_otp_enrolment"))
+    key = f"{_EMAIL_OTP_ENROLMENT_PREFIX}{user_id}"
+    pending = await pool.get(key)
+    if not pending:
+        _emit_auth_event(
+            "email_otp_confirm_failed",
+            reason="expired",
+            actor_user_id=user_id,
+            outcome="400",
+            level="warning",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Code expired, please request a new one",
+        )
+    session = json.loads(pending)
     try:
-        await zitadel.verify_email_otp(user_id, body.code)
+        await zitadel.update_session_with_otp(
+            session_id=session["session_id"],
+            session_token=session["session_token"],
+            check="otpEmail",
+            code=body.code,
+        )
     except httpx.HTTPStatusError as exc:
         _slog.exception("verify_email_otp_failed", zitadel_status=exc.response.status_code)
         if exc.response.status_code in (400, 401):
@@ -2179,6 +2195,7 @@ async def email_otp_confirm(
             detail="Failed to confirm email code, please try again later",
         ) from exc
 
+    await pool.delete(key)
     await audit.log_event(
         org_id=0,
         actor=user_id,

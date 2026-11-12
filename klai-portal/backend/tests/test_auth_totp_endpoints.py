@@ -65,8 +65,15 @@ async def _put_pending(fake_redis: Any, failures: int = 0) -> str:
 
 @pytest.mark.asyncio
 async def test_totp_setup_happy(respx_zitadel: respx.MockRouter) -> None:
-    """REQ-1.1 — setup happy path emits audit + returns uri/secret."""
-    respx_zitadel.route().mock(return_value=httpx.Response(200, json={"uri": "otpauth://totp/x", "totpSecret": "ABCD"}))
+    """REQ-1.1 — setup happy path emits audit + returns uri/secret.
+
+    The mocked body is Zitadel's ``RegisterTOTPResponse`` (``uri``, ``secret``)
+    as v4.20.1 answers it; tests/contract/test_zitadel_login_contract.py runs
+    the same call against the real image.
+    """
+    respx_zitadel.route().mock(
+        return_value=httpx.Response(200, json={"details": {}, "uri": "otpauth://totp/x", "secret": "ABCD"})
+    )
 
     with capture_logs() as captured, _audit_log_patch() as audit_log:
         result = await totp_setup(user_id="uid-1")

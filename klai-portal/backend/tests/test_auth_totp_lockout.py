@@ -57,7 +57,7 @@ async def test_cross_replica_lockout_at_attempt_5(fake_redis: Any, monkeypatch: 
     )
 
     monkeypatch.setattr(
-        "app.api.auth.zitadel.update_session_with_totp",
+        "app.api.auth.zitadel.update_session_with_otp",
         AsyncMock(side_effect=_zitadel_400_error()),
     )
     monkeypatch.setattr("app.api.auth.audit.log_event", AsyncMock())
@@ -106,7 +106,7 @@ async def test_sixth_attempt_after_lockout_returns_session_expired(
         ip_subnet="0.0.0.0",  # noqa: S104 — placeholder, not a network bind
     )
     monkeypatch.setattr(
-        "app.api.auth.zitadel.update_session_with_totp",
+        "app.api.auth.zitadel.update_session_with_otp",
         AsyncMock(side_effect=_zitadel_400_error()),
     )
     monkeypatch.setattr("app.api.auth.audit.log_event", AsyncMock())
@@ -266,7 +266,7 @@ async def test_redis_connection_error_during_incr_fails_closed(
     )
 
     monkeypatch.setattr(
-        "app.api.auth.zitadel.update_session_with_totp",
+        "app.api.auth.zitadel.update_session_with_otp",
         AsyncMock(side_effect=_zitadel_400_error()),
     )
     monkeypatch.setattr("app.api.auth.audit.log_event", AsyncMock())
@@ -314,7 +314,7 @@ async def test_redis_connection_error_during_delete_fails_closed(
     )
 
     monkeypatch.setattr(
-        "app.api.auth.zitadel.update_session_with_totp",
+        "app.api.auth.zitadel.update_session_with_otp",
         AsyncMock(return_value={"sessionId": "sess-del", "sessionToken": "tok-del-renewed"}),
     )
     monkeypatch.setattr("app.api.auth.audit.log_event", AsyncMock())

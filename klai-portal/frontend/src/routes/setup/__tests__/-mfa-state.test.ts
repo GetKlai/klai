@@ -67,10 +67,10 @@ describe('email OTP reducer', () => {
     expect(canResendEmailOtp(emailOtpReducer(verifying, { type: 'tick', now: 31_000 }))).toBe(true)
   })
 
-  it('keeps verification codes numeric and six digits long', () => {
-    const state = emailOtpReducer(createInitialEmailOtpState(), { type: 'setCode', code: '12a34-567' })
+  it('keeps verification codes numeric and eight digits long, the length Zitadel mails', () => {
+    const state = emailOtpReducer(createInitialEmailOtpState(), { type: 'setCode', code: '12a34-5678-9' })
 
-    expect(state.code).toBe('123456')
+    expect(state.code).toBe('12345678')
   })
 })
 

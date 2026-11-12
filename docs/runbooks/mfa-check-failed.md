@@ -14,10 +14,12 @@ MFA enforcement check for a login attempt. The event covers two distinct
 outcomes:
 
 - `outcome="503"` — login was rejected with HTTP 503 + `Retry-After: 5`.
-  This happens under `mfa_policy="required"` whenever Zitadel is unreachable,
-  the `has_any_mfa` lookup raises, the pre-auth `find_user_by_email` returns
-  5xx, or the `PortalOrg` DB fetch raises while we know there is a portal
-  user. The user sees a "please retry in a moment" error.
+  This happens under every policy when the lookup of the user's registered
+  second factors (`login_second_factors`, reason `has_any_mfa_5xx`) raises,
+  because the login cannot tell which factor to ask for; and when the
+  pre-auth `find_user_by_email` returns 5xx, or the `PortalOrg` DB fetch
+  raises while we know there is a portal user. The user sees a "please retry
+  in a moment" error.
 - `outcome="fail-open"` — login proceeded WITHOUT enforcement. This happens
   under `mfa_policy in {"optional", "recommended"}` (deliberate trade-off in
   REQ-3) AND when the `portal_user` lookup itself raised before we could
@@ -97,7 +99,7 @@ lowercased email is recorded (privacy + correlation).
 
 4. **If `reason` is `unexpected`:** an exception type that is neither
    `httpx.HTTPStatusError` nor `httpx.RequestError` raised inside
-   `has_any_mfa`. Treat as a code regression — check the recent merges to
+   `login_second_factors`. Treat as a code regression — check the recent merges to
    `klai-portal/backend/app/services/zitadel.py` and
    `klai-portal/backend/app/api/auth.py`.
 
@@ -124,10 +126,6 @@ warning). A *burst* means either a wider outage or a security event.
    ```
 
    Patterns:
-   - `reason=has_any_mfa_5xx` and `mfa_policy=optional` dominating →
-     Zitadel-wide outage affecting optional-policy orgs. This is the
-     documented expected fail mode — no security action required, just wait
-     for Zitadel recovery and let the rate alert run its `keepFiringFor`.
    - `reason=db_lookup_failed` dominating → DB-level issue affecting our
      ability to determine policy. See § "high-rate alert" step 3.
    - Single `reason=unexpected` repeating → likely a code regression. Check

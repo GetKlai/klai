@@ -44,6 +44,13 @@ def _append_lang_to_url(url: str, lang: str | None) -> str:
     return f"{url}{separator}lang={lang}"
 
 
+# Events whose templateData.url points at Zitadel's hosted login, which the
+# deployed Zitadel image does not serve (404 on v4.20.1). The user types the
+# code from the mail into the portal's own login page, so these mails carry the
+# code and no button.
+_CODE_ONLY_EVENT_TYPES: frozenset[str] = frozenset({"session.otp.email.challenged"})
+
+
 # Inline styles injected on plain-text-to-HTML converted elements.
 # Applied via regex so they survive Outlook's CSS stripping.
 _ELEMENT_STYLES: list[tuple[str, str]] = [
@@ -116,7 +123,8 @@ class Renderer:
             "subject": payload.subject(),
             "preheader": payload.pre_header(),
             "body_html": body_html,
-            "has_button": payload.has_button(),
+            "has_button": payload.has_button()
+            and payload.event_type() not in _CODE_ONLY_EVENT_TYPES,
             "button_text": payload.button_text(),
             "button_url": _append_lang_to_url(payload.button_url(), lang),
             "footer_note": payload.footer_note(),

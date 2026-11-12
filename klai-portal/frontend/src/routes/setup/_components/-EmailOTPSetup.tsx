@@ -5,7 +5,7 @@ import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { apiFetch } from '@/lib/apiFetch'
 import * as m from '@/paraglide/messages'
-import { canResendEmailOtp, createInitialEmailOtpState, emailOtpReducer } from './-mfa-state'
+import { canResendEmailOtp, createInitialEmailOtpState, EMAIL_OTP_CODE_LENGTH, emailOtpReducer } from './-mfa-state'
 
 export function EmailOTPSetup({
   email,
@@ -94,7 +94,7 @@ export function EmailOTPSetup({
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                maxLength={6}
+                maxLength={EMAIL_OTP_CODE_LENGTH}
                 value={state.code}
                 onChange={(e) => dispatch({ type: 'setCode', code: e.target.value })}
                 required
@@ -112,7 +112,7 @@ export function EmailOTPSetup({
               type="submit"
               size="lg"
               className="w-full gap-3"
-              disabled={state.verifying || state.code.length !== 6}
+              disabled={state.verifying || state.code.length !== EMAIL_OTP_CODE_LENGTH}
             >
               {state.verifying ? m.setup_mfa_email_verify_loading() : m.setup_mfa_email_verify_submit()}
               {!state.verifying && <ArrowRight size={16} />}
