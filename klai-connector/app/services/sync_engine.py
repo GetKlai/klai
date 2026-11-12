@@ -444,7 +444,6 @@ class SyncEngine:
                             path=ref.path,
                             content=text,
                             source_connector_id=str(connector_id),
-                            resource_generation=str(sync_run_id),
                             source_ref=ref.source_ref,
                             source_url=ref.source_url,
                             content_type=ref.content_type,

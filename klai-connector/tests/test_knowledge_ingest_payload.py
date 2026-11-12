@@ -216,10 +216,9 @@ def test_client_content_limit_matches_knowledge_ingest_request_contract() -> Non
     assert downstream_limit == MAX_INGEST_CONTENT_CHARS
 
 
-def test_connector_payload_forwards_sync_generation() -> None:
-    payload = _build_payload(**_base_kwargs(), resource_generation="sync-run-42")
-
-    assert payload["resource_generation"] == "sync-run-42"
+def test_connector_payload_carries_no_sync_run() -> None:
+    """Derived work belongs to the document; a sync run must not own or cancel it."""
+    assert "resource_generation" not in _build_payload(**_base_kwargs())
 
 
 @pytest.mark.asyncio

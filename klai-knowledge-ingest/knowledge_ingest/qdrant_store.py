@@ -569,6 +569,26 @@ async def delete_artifacts(
     )
 
 
+async def delete_points_of_artifact(artifact_id: str) -> None:
+    """Delete the points of an artifact version whose row no longer exists.
+
+    The organisation is read from the points themselves (an artifact id is a
+    uuid4 and belongs to one organisation), so a job that only knows the
+    artifact id can still delete within that organisation only.
+    """
+    points, _ = await get_client().scroll(
+        COLLECTION,
+        scroll_filter=Filter(
+            must=[FieldCondition(key="artifact_id", match=MatchValue(value=artifact_id))]
+        ),
+        limit=1,
+        with_payload=["org_id"],
+        with_vectors=False,
+    )
+    if points and (points[0].payload or {}).get("org_id"):
+        await delete_artifacts(str(points[0].payload["org_id"]), [artifact_id], [])
+
+
 async def delete_kb(org_id: str, kb_slug: str) -> None:
     """Delete all Qdrant chunks for an entire knowledge base."""
     client = get_client()

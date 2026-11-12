@@ -63,7 +63,6 @@ from knowledge_ingest.reason_codes import (
     FetchReasonCode,
     PersistSkipReason,
 )
-from knowledge_ingest.resource_jobs import parse_connector_resource_key
 from knowledge_ingest.utils.auth_wall_classifier import (
     AuthWallClassification,
     classify_auth_wall,
@@ -1389,7 +1388,6 @@ async def run_crawl_job(
                             login_indicator_selector=login_indicator_selector,
                             authenticated_context=bool(cookies or login_indicator_selector),
                             connector_id=connector_id,
-                            resource_key=resource_key,
                         )
                         pages_done += 1
                     except AnonymousAuthWallDetected as wall_exc:
@@ -1772,7 +1770,6 @@ async def _ingest_crawl_result(
     login_indicator_selector: str | None = None,
     authenticated_context: bool = False,
     connector_id: str | None = None,
-    resource_key: str | None = None,
 ) -> bool:
     """Process a crawl result: dedup, extract links, ingest.
 
@@ -2043,8 +2040,6 @@ async def _ingest_crawl_result(
         # Before this, every crawl chunk had source_connector_id=None and
         # neither Qdrant nor artifact delete matched.
         extra["source_connector_id"] = connector_id
-        if resource_key:
-            extra["resource_key"] = resource_key
     if is_pdf and front_matter:
         extra["front_matter"] = front_matter
 
@@ -2113,9 +2108,6 @@ async def _ingest_crawl_result(
             synthesis_depth=1,
             extra=extra,
             source_connector_id=connector_id,
-            resource_generation=(
-                parse_connector_resource_key(resource_key).generation if resource_key else None
-            ),
         ),
     )
 

@@ -176,40 +176,39 @@ Qdrant points, then hard-deletes the rows (artifacts incl. `document_text`,
 the row. The real-PostgreSQL proof is `tests/integration/test_document_purge_postgres.py`;
 a new delete path gets a case there.
 
-## Connector-scoped async jobs require a resource key and fence (HIGH)
+## Derived work belongs to the document version, not to a run (HIGH)
 
-Every Procrastinate job that can write connector-owned knowledge carries the
-same top-level authority key for its sync generation:
-`connector:{org_id}:{kb_slug}:{connector_id}:{generation}`. This applies to
-`crawl-jobs`, `enrich-bulk`, and `graphiti-bulk`. Artifact-scoped jobs keep
-`artifact_id` as their work item and also carry `resource_key`; the artifact
-row stores the key in `extra`.
+Enrichment (`enrich-interactive`, `enrich-bulk`) and graph (`graphiti-bulk`)
+jobs carry `artifact_id` as their work item and nothing that ties them to a
+sync or crawl run. A job stops only when its document version is no longer
+current (the artifact is replaced or deleted) or its connector is being
+deleted or is gone (`portal_connectors.state`). A new sync or crawl run never
+cancels, aborts or fences them: in 2026-11 tying them to the run id lost 353
+enrichment and 387 graph jobs of ~11,300, because the newer run skipped the
+unchanged pages and nothing queued the work again.
 
-Delete/rebuild first changes the generation fence, then requests cancellation
-by exact `args->>'resource_key'` for live `todo`/`doing` jobs. Cancellation uses
-`abort=True, delete_job=False`; abort-requested running jobs remain `doing`
-until they cooperate and then become `aborted`. Never query or count the legacy
-`aborting` status. A one-deploy compatibility fallback may match old enrichment
-and Graphiti jobs by top-level `artifact_id`, but resource keys are the primary
-index.
+A job ends in exactly one of three ways: it did the work (`succeeded`); its
+document is no longer current or its connector is going away, in which case it
+raises procrastinate's `JobAborted` through `enrichment_tasks._abandon` (status
+`aborted`, never retried, logged with `outcome=abandoned`); or it could not do
+the work or could not tell whether it may write (a failed artifact or
+connector lookup included), in which case it raises, is retried, and ends
+`failed` when retries run out. Never return early without having done the work.
 
-Cancellation is best effort. Each writer must check the fence before expensive
-work and again immediately before Qdrant/Graphiti writes. Artifact existence is
-a secondary guard: an existing artifact can still belong to a stale generation.
-Fence lookup errors fail closed. Crawl per-page checks use the <=5 second cache
-to avoid a database roundtrip per page; enrichment and Graphiti pre-write checks
-are fresh.
+Every writer checks the artifact is active and its connector is active before
+expensive work and again before each irreversible write (Qdrant upsert, each
+graph part); a part written after the document stopped being current is
+removed again before the job stops.
 
-Runbook query for one generation (Procrastinate 3.x vocabulary):
-
-```sql
-SELECT status, count(*)
-FROM procrastinate_jobs
-WHERE args->>'resource_key' = 'connector:<org>:<kb>:<connector>:<generation>'
-  AND status IN ('todo', 'doing', 'cancelled', 'aborted', 'failed', 'succeeded')
-GROUP BY status
-ORDER BY status;
-```
+Run-level ownership is for crawl runs only. A crawl job carries
+`resource_key` (`connector:{org}:{kb}:{connector}:{generation}`); a new crawl
+run moves `knowledge.connector_resource_fences` to its generation and cancels
+the older run's job on `crawl-jobs` only, and the crawler checks the fence per
+page (<=5 s cache) so a running older crawl stops. Connector delete marks the
+fences deleting, cancels crawl jobs by resource key, and cancels the live
+enrichment and graph jobs of the connector's documents by `artifact_id`.
+Cancellation uses `abort=True, delete_job=False`; never query or count the
+legacy `aborting` status.
 
 ## Graph-first, content-second for bulk crawls (HIGH)
 

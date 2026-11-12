@@ -315,12 +315,17 @@ async def test_connector_ingest_still_finishes_raw_index_as_synced():
 
 
 @pytest.mark.asyncio
-async def test_connector_ingest_threads_resource_key_to_artifact_and_writer_jobs():
+async def test_connector_ingest_queues_document_work_without_a_run_key():
+    """The work belongs to the document version, not to the sync run.
+
+    A connector still sending ``resource_generation`` (one deployed before this
+    change) is accepted, and the field is ignored: a new run neither tags nor
+    cancels the derived jobs of documents that are still current.
+    """
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
     mock_app, _, enrichment_configured = _make_mock_app()
-    conn = _make_mock_conn()
     req = IngestRequest(
         org_id="org-1",
         kb_slug="my-kb",
@@ -333,16 +338,11 @@ async def test_connector_ingest_threads_resource_key_to_artifact_and_writer_jobs
     )
 
     async with _base_patches(mock_app, graphiti_enabled=True):
-        await ingest_document(conn, req)
+        await ingest_document(_make_mock_conn(), req)
 
-    resource_key = "connector:org-1:my-kb:connector-1:sync-run-42"
-    assert enrichment_configured.defer_async.await_args.kwargs == {
-        "artifact_id": "art-test",
-        "resource_key": resource_key,
-    }
-    assert (
-        mock_app.graphiti_configured.defer_async.await_args.kwargs["resource_key"] == resource_key
-    )
+    assert enrichment_configured.defer_async.await_args.kwargs == {"artifact_id": "art-test"}
+    assert "resource_key" not in mock_app.graphiti_configured.defer_async.await_args.kwargs
+    mock_app.job_manager.cancel_job_by_id_async.assert_not_called()
 
 
 @pytest.mark.asyncio

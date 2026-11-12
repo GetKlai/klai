@@ -132,6 +132,54 @@ from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+_QUEUE_PACKAGES = ("procrastinate", "psycopg", "psycopg_pool")
+
+
+def _queue_modules() -> dict[str, types.ModuleType]:
+    return {
+        name: module
+        for name, module in sys.modules.items()
+        if name.split(".")[0] in _QUEUE_PACKAGES
+    }
+
+
+@pytest.fixture
+def real_procrastinate():
+    """The real procrastinate package instead of the stub, for the duration of a test.
+
+    Needed where the outcome is procrastinate's own: that ``JobAborted`` ends a
+    job ``aborted`` without a retry (the in-memory worker), or what
+    cancellation does to real job rows (``.has_libpq``: the psycopg connector).
+    Without libpq the package is loaded over a psycopg stub, as tests/eval does,
+    which is enough for the in-memory worker.
+    """
+    saved = _queue_modules()
+    for name in saved:
+        del sys.modules[name]
+    try:
+        import procrastinate
+
+        has_libpq = True
+    except ImportError:
+        for name in _queue_modules():
+            del sys.modules[name]
+        from tests.eval.conftest import _stub_psycopg_if_absent
+
+        _stub_psycopg_if_absent()
+        import procrastinate
+
+        has_libpq = False
+    import procrastinate.testing
+
+    procrastinate.has_libpq = has_libpq  # type: ignore[attr-defined]
+    try:
+        yield procrastinate
+    finally:
+        for name in _queue_modules():
+            del sys.modules[name]
+        sys.modules.update(saved)
+
+
 # Default header that lets existing TestClient requests pass through the
 # SPEC-SEC-011 ``InternalSecretMiddleware`` without each test having to set
 # it explicitly. Matches the value seeded into the process environment above.

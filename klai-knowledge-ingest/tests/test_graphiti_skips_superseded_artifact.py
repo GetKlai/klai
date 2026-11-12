@@ -19,7 +19,7 @@ because they are retained, so the guard never fired.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -27,12 +27,22 @@ import pytest
 
 import knowledge_ingest
 from knowledge_ingest import enrichment_tasks, queues
-from knowledge_ingest.connector_state import FenceState
 from knowledge_ingest.episode_text import MAX_TEXT_CHARS
 from knowledge_ingest.routes import ingest as ingest_route
 
 _ARTIFACT_ID = "0f9c1a2b-3d4e-4f50-9a61-72b83c94d5e6"
 _ORG_ID = "368884765035593759"
+
+
+# procrastinate's own JobAborted (``real_procrastinate``), so an abandoned job is
+# asserted to be what the worker records as ``aborted`` and does not retry.
+JobAborted: type[BaseException]
+
+
+@pytest.fixture(autouse=True)
+def _job_aborted(real_procrastinate):
+    global JobAborted
+    JobAborted = real_procrastinate.exceptions.JobAborted
 
 
 class _CapturingApp:
@@ -75,8 +85,6 @@ async def _run(
     *,
     exists: bool,
     active: bool,
-    resource_key: str | None = None,
-    fence_state: FenceState = FenceState.ACTIVE,
 ):
     """Run the task against a stubbed pg_store; return the ingest_episode mock."""
     ingest_episode = AsyncMock(return_value="episode-uuid")
@@ -103,17 +111,13 @@ async def _run(
         patch.object(knowledge_ingest, "pg_store", pg_store),
         patch.object(knowledge_ingest, "graph", graph_module),
         patch.object(enrichment_tasks, "tenant_scoped_connection", _fake_conn),
-        patch(
-            "knowledge_ingest.connector_state.check_connector_resource_fence",
-            new=AsyncMock(return_value=fence_state),
-        ),
+        suppress(JobAborted),
     ):
         await graphiti_task(
             artifact_id=_ARTIFACT_ID,
             org_id=_ORG_ID,
             content_type="text/markdown",
             belief_time_start=0,
-            resource_key=resource_key,
         )
     return ingest_episode
 
@@ -172,27 +176,6 @@ async def test_active_artifact_still_reaches_the_graph(graphiti_task):
     """The guard must not break the normal path it is wrapped around."""
     ingest_episode = await _run(graphiti_task, exists=True, active=True)
     ingest_episode.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_rebuild_fences_old_graphiti_generation_but_allows_new_generation(graphiti_task):
-    old_job = await _run(
-        graphiti_task,
-        exists=True,
-        active=True,
-        resource_key="connector:368884765035593759:support:connector-1:old-run",
-        fence_state=FenceState.STALE_GENERATION,
-    )
-    new_job = await _run(
-        graphiti_task,
-        exists=True,
-        active=True,
-        resource_key="connector:368884765035593759:support:connector-1:new-run",
-        fence_state=FenceState.ACTIVE,
-    )
-
-    old_job.assert_not_awaited()
-    new_job.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -318,6 +301,7 @@ async def test_deletion_between_episode_parts_aborts_before_the_next_write(graph
         patch.object(knowledge_ingest, "pg_store", pg_store),
         patch.object(knowledge_ingest, "graph", graph_module),
         patch.object(enrichment_tasks, "tenant_scoped_connection", _fake_conn),
+        pytest.raises(JobAborted),
     ):
         await graphiti_task(
             artifact_id=_ARTIFACT_ID,

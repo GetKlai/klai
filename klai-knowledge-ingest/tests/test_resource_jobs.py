@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from structlog.testing import capture_logs
 
-from knowledge_ingest.queues import CRAWL_JOBS, ENRICH_BULK, GRAPHITI_BULK
+from knowledge_ingest.queues import CRAWL_JOBS
 from knowledge_ingest.resource_jobs import (
     CONNECTOR_WRITER_QUEUES,
     ConnectorResource,
@@ -54,8 +54,9 @@ def test_connector_resource_key_rejects_delimiter_in_components() -> None:
         connector_resource_key("org-1", "support", "connector-7", "run:42")
 
 
-def test_connector_writer_queues_are_explicit() -> None:
-    assert CONNECTOR_WRITER_QUEUES == (CRAWL_JOBS, ENRICH_BULK, GRAPHITI_BULK)
+def test_only_crawl_runs_are_owned_by_a_run_key() -> None:
+    """Enrichment and graph jobs belong to a document version, not to a run."""
+    assert CONNECTOR_WRITER_QUEUES == (CRAWL_JOBS,)
 
 
 def _pool_with_rows(rows):
