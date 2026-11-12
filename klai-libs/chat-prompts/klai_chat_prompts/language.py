@@ -1179,9 +1179,9 @@ def language_correctness(query_language: str | None, response_language: str | No
     ``None``: the sample is unmeasurable, not a failure, and aggregate metrics
     MUST skip it rather than count it against the rate.
 
-    Kept next to the identifier so the three surfaces that emit
-    ``chat_synthesis_complete`` (partner_chat, synthesis, the cross-lingual
-    eval) score it identically. A second implementation is a second metric.
+    Kept next to the identifier so partner_chat's ``chat_synthesis_complete``
+    event and the cross-lingual eval score it identically. A second
+    implementation is a second metric.
     """
     if query_language in (None, "", UNKNOWN_LANGUAGE):
         return None

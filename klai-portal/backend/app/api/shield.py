@@ -637,12 +637,10 @@ async def shield_query(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Knowledge retrieval unavailable"
         ) from exc
 
-    evidence_pack = result.get("evidence_pack") or {}
-    chunks = result.get("chunks")
-    if chunks is None and isinstance(evidence_pack, dict):
-        chunks = evidence_pack.get("items") or []
+    # retrieval-api's RetrieveResponse: ``chunks`` is always present, the cited
+    # sources are the evidence pack's (klai-retrieval-api/retrieval_api/models.py).
     return {
-        "chunks": chunks or [],
-        "sources": result.get("trusted_sources") or result.get("sources") or [],
+        "chunks": result["chunks"],
+        "sources": (result.get("evidence_pack") or {}).get("sources", []),
         "retrieval_available": True,
     }

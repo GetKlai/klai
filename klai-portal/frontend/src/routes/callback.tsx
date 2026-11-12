@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth, type AuthContextValue } from '@/lib/auth'
+import { safeReturnTo } from '@/lib/auth-context'
 import * as Sentry from '@sentry/react'
 import * as m from '@/paraglide/messages'
 import { useLocale } from '@/lib/locale'
@@ -163,9 +164,7 @@ function CallbackPage() {
 
     redirected.current = true
     const controller = new AbortController()
-    const safeReturnTo = sanitizeReturnTo(return_to)
-
-    void applyDecision(auth, safeReturnTo, controller.signal, setPostLoginError)
+    void applyDecision(auth, safeReturnTo(return_to), controller.signal, setPostLoginError)
 
     return () => {
       controller.abort()
@@ -188,13 +187,6 @@ function CallbackPage() {
   }
 
   return <LoadingScreen />
-}
-
-/** Same-origin check: refuse //other.host, javascript:, etc. */
-function sanitizeReturnTo(value: string | undefined): string {
-  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/app'
-  if (value.includes('://')) return '/app'
-  return value
 }
 
 /**

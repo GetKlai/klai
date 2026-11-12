@@ -423,6 +423,9 @@ def _clear_retry_cookie(response: Response) -> None:
     )
 
 
+_RETURN_TO_PATHS_WITH_URL_QUERY = frozenset({"/oauth/authorize"})
+
+
 # @MX:NOTE: Open-redirect security boundary on the BFF login flow.
 # @MX:SPEC: SPEC-SEC-HYGIENE-001 REQ-21 (percent-decode + backslash + scheme matrix).
 #   MUST return the ORIGINAL (non-decoded) value on success — callers rely on this
@@ -451,11 +454,21 @@ def _safe_return_to(value: str | None) -> str:
         return "/app"
     if decoded.startswith("//"):
         return "/app"
-    if decoded.startswith("/\\"):
+    # The browser's URL parser removes C0 controls and spaces at either end and
+    # every tab or newline, and reads a backslash in the path as a slash
+    # (WHATWG URL Standard, basic URL parser steps 1-3, relative and path
+    # states), so a target with any of them would mean something else once
+    # navigated. Query and fragment keep a backslash as it is.
+    if any(c < " " or c == "\x7f" for c in decoded) or decoded.endswith(" "):
         return "/app"
-    if "://" in decoded:
+    # The MCP consent request carries the client's redirect_uri and state in
+    # its query; only for that allow-listed path are the "://" and double
+    # backslash checks limited to the path.
+    path = decoded.partition("?")[0]
+    if "\\" in path:
         return "/app"
-    if "\\\\" in decoded:
+    checked = path if path in _RETURN_TO_PATHS_WITH_URL_QUERY else decoded
+    if "://" in checked or "\\\\" in checked:
         return "/app"
     # REQ-21.3: legitimate path — return ORIGINAL value, preserving the
     # caller's encoded query string verbatim.

@@ -822,13 +822,11 @@ async def _run_router(state: RetrievalPipelineState) -> None:
                 )
             else:
                 routing = await route_to_sources(
-                    query_resolved=state.query_resolved,
                     query_vector=state.query_vector,
                     org_id=req.org_id,
                     source_label_catalog=source_label_catalog,
                     margin_single=settings.router_margin_single,
                     margin_dual=settings.router_margin_dual,
-                    llm_fallback=settings.router_llm_fallback,
                     centroid_ttl_seconds=settings.router_centroid_ttl_seconds,
                     kb_slugs=req.kb_slugs,
                 )

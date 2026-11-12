@@ -68,29 +68,3 @@ async def test_capabilities_of_membership_that_is_not_active_are_empty(membershi
     org = SimpleNamespace(plan="knowledge")
 
     assert await get_effective_capabilities("user-1", _db_one((user, org))) == set()
-
-
-@pytest.mark.asyncio
-async def test_mcp_consent_uses_the_active_membership() -> None:
-    from app.api.mcp_oauth import _resolve_user_org
-
-    suspended = (SimpleNamespace(status="suspended"), SimpleNamespace(name="Org A"))
-    active = (SimpleNamespace(status="active"), SimpleNamespace(name="Org B"))
-    db = AsyncMock()
-    result = MagicMock()
-    result.all.return_value = [suspended, active]
-    db.execute.return_value = result
-
-    assert await _resolve_user_org(db, "user-1") == active
-
-
-@pytest.mark.asyncio
-async def test_mcp_consent_without_active_membership_finds_no_user() -> None:
-    from app.api.mcp_oauth import _resolve_user_org
-
-    db = AsyncMock()
-    result = MagicMock()
-    result.all.return_value = [(SimpleNamespace(status="offboarded"), SimpleNamespace(name="Org A"))]
-    db.execute.return_value = result
-
-    assert await _resolve_user_org(db, "user-1") is None

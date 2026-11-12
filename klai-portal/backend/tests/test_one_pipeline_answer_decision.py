@@ -281,7 +281,6 @@ async def _turn(
         router.post(f"{RETRIEVAL}/retrieve").mock(
             return_value=retrieval_response or httpx.Response(200, json=retrieval or {})
         )
-        router.get(url__startswith=f"{RETRIEVAL}/internal/v1/taxonomy").mock(return_value=httpx.Response(200, json={}))
         response = await chat_completions(request=request, http_request=http_request, auth=auth, db=db, profile=profile)
         frames: list[dict] = []
         message: dict = {}
