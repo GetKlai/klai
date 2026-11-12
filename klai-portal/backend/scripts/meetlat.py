@@ -1242,7 +1242,6 @@ def _compare(args: argparse.Namespace) -> int:
 
 # --- check-cases -----------------------------------------------------------------------------------------------
 
-_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 # Six digits with any spaces, dots or dashes between them: a phone or customer number however it is typed.
 _DIGIT_RUN = re.compile(r"\d(?:[ .\-]*\d){5,}")
 _OVERLAP_WORDS = 6

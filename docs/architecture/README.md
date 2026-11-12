@@ -15,6 +15,7 @@ Each of these was checked against the code on 12 November 2026 and carries `path
 | [klai-knowledge-architecture.md](klai-knowledge-architecture.md) | The knowledge model as stored (fields in Postgres and in the vector store), versions and deletion, the stores, taxonomy, the graph layer, the MCP tools, personal and shared knowledge, the docs app |
 | [knowledge-gap-to-article.md](knowledge-gap-to-article.md) | (Dutch) How a question the chat could not answer becomes a proposal the owner of a knowledge base decides on: what is built (phase 1) and the design of what is not |
 | [support-gap-detection.md](support-gap-detection.md) | Gap detection from support cases: the research behind it, the implementation contract and what of it is built |
+| [conversation-retention-and-learning.md](conversation-retention-and-learning.md) | (Dutch) How long anything from a widget conversation stays: the one retention term, what the daily sweep clears, what the visitor is told, how the gap list and the nightly judge depend on the messages, and how the measuring stick learns from conversations without keeping them |
 | [scribe-transcription.md](scribe-transcription.md) | Scribe and meeting transcription: components, the backend contract, the build and deploy split |
 
 Login, API authentication and roles are described in detail next to the portal code: [auth-flows.md](../../klai-portal/docs/auth-flows.md), [api-auth.md](../../klai-portal/docs/api-auth.md) and [admin-roles.md](../../klai-portal/docs/admin-roles.md).
