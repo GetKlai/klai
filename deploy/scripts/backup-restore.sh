@@ -96,7 +96,10 @@ usage() {
 
 rs_cleanup() {
   (( KEEP )) && return 0
-  (( ${#RS_CTRS[@]} == 0 )) || docker rm -f "${RS_CTRS[@]}" > /dev/null 2>&1 || true
+  # -v: the engine images declare their data directory as a volume. Without it
+  # the first production rehearsal (2026-11-12) left eight unnamed volumes
+  # behind, 7.3 GiB of them the restored main database.
+  (( ${#RS_CTRS[@]} == 0 )) || docker rm -f -v "${RS_CTRS[@]}" > /dev/null 2>&1 || true
   (( ${#RS_VOLS[@]} == 0 )) || docker volume rm "${RS_VOLS[@]}" > /dev/null 2>&1 || true
   RS_CTRS=(); RS_VOLS=()
 }
