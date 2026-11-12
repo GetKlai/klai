@@ -111,7 +111,9 @@ check "  every artifact has its own ok line" "$ALL_ARTIFACTS" "$(sed -n 's/^ok  
 check "  postgres: rows of the dump equal the rows restored" 1 "$(count '^ok   postgres: 3 tables with as many rows as the dump holds')"
 check "  every throwaway container is on --network none, labelled, limited" 0 "$(grep 'docker run -d' "$case_dir/fake/calls" | grep -vc -- '--network none --label klai.adhoc=datastore-restore --memory 6g --cpus 2' || true)"
 check "  nothing mounts a live volume" 0 "$( (grep 'docker run' "$case_dir/fake/calls" | grep -c -- '--volumes-from') || true)"
-check "  every container is removed afterwards" yes "$(grep -q 'docker rm -f klai-backup-restore-' "$case_dir/fake/calls" && echo yes || echo no)"
+# -v: the engine images declare their data directory as a volume, and a container
+# removed without it leaves that volume behind with the whole restored database.
+check "  every container is removed afterwards, with the volumes it created" yes "$(grep -q 'docker rm -f -v klai-backup-restore-' "$case_dir/fake/calls" && echo yes || echo no)"
 check "  the work directory is removed" "" "$(find "$case_dir/backups" -name '.backup-restore.*')"
 
 # --- (b) damaged artifacts: named, the others still restored ------------------
