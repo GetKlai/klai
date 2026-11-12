@@ -82,6 +82,50 @@ async def test_only_spent_capacity_counts_as_capacity(answer, is_capacity):
     assert llm_capacity.is_llm_capacity_error(await _litellm_error(answer)) is is_capacity
 
 
+async def test_a_failed_chunk_call_stops_the_other_chunk_calls_of_the_batch():
+    """One spent-budget answer ends the batch: the other chunks make no call.
+
+    Without this a 200-chunk batch made 200 failing calls for every deferral
+    or retry of the job, each still taking a token from the shared limiter.
+    """
+    import asyncio
+
+    status, message = BUDGET_CROSSED
+    calls = 0
+
+    async def _answer(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.01)  # a real call takes 0.64 s at the median
+        return httpx.Response(status, text=json.dumps({"error": {"message": message}}))
+
+    transport = httpx.MockTransport(_answer)
+    real_client = httpx.AsyncClient
+    with (
+        patch(
+            "knowledge_ingest.enrichment.httpx.AsyncClient",
+            lambda **kwargs: real_client(transport=transport, **kwargs),
+        ),
+        patch(
+            "knowledge_ingest.enrichment.shared_klai_fast_limiter",
+            return_value=MagicMock(acquire=AsyncMock()),
+        ),
+        pytest.raises(enrichment.EnrichmentError),
+    ):
+        await enrichment.enrich_chunks(
+            document_text="body",
+            chunks=[f"chunk {i}" for i in range(50)],
+            title="A",
+            path="docs/a.md",
+            document_summary="A short summary.",
+        )
+    await asyncio.sleep(0.2)  # time for calls that were left running
+
+    # The calls in flight, plus the ones that took their freed slots before
+    # the cancellation landed; not one per chunk.
+    assert calls <= 2 * enrichment.settings.enrichment_max_concurrent
+
+
 class _Task:
     def __init__(self, fn):
         self.fn = fn
