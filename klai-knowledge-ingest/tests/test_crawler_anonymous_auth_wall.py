@@ -15,7 +15,6 @@ import pytest
 
 from knowledge_ingest.adapters.crawler import (
     AnonymousAuthWallDetected,
-    AuthWallDetected,
     run_crawl_job,
 )
 from knowledge_ingest.crawl4ai_client import CrawlResult
@@ -325,20 +324,17 @@ class TestFailedPartial:
 class TestAuthenticatedHaltUnchanged:
     @pytest.mark.asyncio()
     async def test_authwall_detected_still_halts_bfs(self, patched_pool) -> None:
-        """When the ingest step finds the login indicator on a page,
-        AuthWallDetected must STILL halt BFS — the SPEC-CRAWLER-004 contract
-        is preserved."""
+        """A page with the login indicator fails the job with the
+        SPEC-CRAWLER-004 error, and no page of that run is ingested."""
         clean = _result("https://example.com/clean")
         walled = _result("https://example.com/walled")
+        walled.html = '<html><body><form id="login-form"></form></body></html>'
         unreached = _result("https://example.com/unreached")
 
         ingested_urls: list[str] = []
 
         async def ingest_side_effect(*args, **kwargs):
-            url = args[2] if len(args) >= 3 else kwargs.get("url")
-            if url == walled.url:
-                raise AuthWallDetected("#login-form")
-            ingested_urls.append(url)
+            ingested_urls.append(args[2] if len(args) >= 3 else kwargs.get("url"))
 
         patches = _patch_crawler_externals([clean, walled, unreached], ingest_side_effect)
         for p in patches:
@@ -356,9 +352,7 @@ class TestAuthenticatedHaltUnchanged:
             for p in patches:
                 p.stop()
 
-        # Only the first clean page ingested; walled aborts BFS, unreached
-        # never reached.
-        assert ingested_urls == ["https://example.com/clean"]
+        assert ingested_urls == []
 
         status_calls = _find_status_calls(patched_pool.execute)
         terminal_args = [a for a in status_calls[-1].args if isinstance(a, str)]

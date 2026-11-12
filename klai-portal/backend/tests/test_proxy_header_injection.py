@@ -168,6 +168,24 @@ def test_blocked_injection_emits_structlog_entry_without_value():
     assert "attacker-attempt-9999" not in serialised
 
 
+def test_client_supplied_identity_headers_never_reach_upstream():
+    """The acting user and organisation come only from the verified session;
+    an inbound ``X-User-ID`` / ``X-Org-ID`` is dropped for every upstream."""
+    from app.api.proxy import _build_upstream_headers
+
+    for service in ("docs", "scribe"):
+        headers = _build_upstream_headers(
+            _request_with_headers({"X-User-ID": "someone-else", "x-org-id": "other-org", "Accept": "application/json"}),
+            _session(),
+            service=service,
+            **_VERIFIED_KW,
+        )
+        lowered = {k.lower() for k in headers}
+        assert "x-user-id" not in lowered
+        assert "x-org-id" not in lowered
+        assert headers.get("Accept") == "application/json"
+
+
 def test_authorization_is_portal_injected_not_inbound():
     """AC-3.4: portal-api always injects its own Bearer; inbound Authorization is dropped first."""
     from app.api.proxy import _build_upstream_headers

@@ -1,5 +1,7 @@
 # Runbook — Toggling a tenant's telemetry mode
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 Status: live since 2026-05-08 (SPEC-PRIVACY-QUERY-SHADOW-001).
 
 ## What this runbook covers
@@ -23,7 +25,6 @@ the same DB-write + audit-log + cache-invalidation behaviour.
 ## How to toggle (operator path — internal admin)
 
 ```bash
-ssh core-01
 TOKEN="$(printenv PORTAL_INTERNAL_SECRET)"
 
 # Check current state (the endpoint is POST-only; read the column)
@@ -65,14 +66,14 @@ non-emergency toggles.
 
 ```bash
 # 1. DB state
-ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai \
-  -c \"SELECT slug, telemetry_level FROM portal_orgs WHERE id = <org_id>;\""
+docker exec klai-core-postgres-1 psql -U klai -d klai \
+  -c "SELECT slug, telemetry_level FROM portal_orgs WHERE id = <org_id>;"
 
 # 3. Audit row
-ssh core-01 "docker exec klai-core-postgres-1 psql -U klai -d klai \
-  -c \"SELECT details FROM portal_audit_log
+docker exec klai-core-postgres-1 psql -U klai -d klai \
+  -c "SELECT details FROM portal_audit_log
         WHERE org_id = <org_id> AND action = 'telemetry_level_changed'
-        ORDER BY created_at DESC LIMIT 3;\""
+        ORDER BY created_at DESC LIMIT 3;"
 
 # 4. Live behavior — wait 60s, then run a /retrieve and tail VictoriaLogs:
 #    service:retrieval-api AND request_id:<your_test_id>
@@ -109,8 +110,10 @@ spikes; `service:retrieval-api AND message:"undefined_table"`.
 
 Fix:
 ```bash
-ssh core-01 "docker exec -i klai-core-postgres-1 psql -U klai -d klai" \
-  < klai-portal/backend/alembic/versions/post_deploy_g5h6i7j8k9l0.sql
+# On core-01, with klai-portal/backend/alembic/versions/post_deploy_g5h6i7j8k9l0.sql
+# copied there from your checkout (how: private infrastructure runbooks):
+docker exec -i klai-core-postgres-1 psql -U klai -d klai \
+  < post_deploy_g5h6i7j8k9l0.sql
 ```
 
 (Or via the canonical wrapper: `scripts/apply_post_deploy_sql.sh g5h6i7j8k9l0`.)

@@ -63,7 +63,10 @@ from knowledge_ingest.reason_codes import (
     FetchReasonCode,
     PersistSkipReason,
 )
-from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
+from knowledge_ingest.utils.auth_wall_classifier import (
+    AuthWallClassification,
+    classify_auth_wall,
+)
 from knowledge_ingest.utils.auth_wall_detector import (
     AuthWallSignal,
     detect_anonymous_auth_wall,
@@ -587,6 +590,53 @@ def _header_value(headers: dict | None, name: str) -> str | None:
     return None
 
 
+def _check_login_indicator(result: CrawlResult, selector: str) -> None:
+    """Raise AuthWallDetected when a fetched page carries the login indicator.
+
+    SPEC-CRAWLER-004 Fase B: matched on crawl4ai's cleaned HTML, so a user menu
+    in a stripped header never reads as a login wall. It used to ride in
+    crawl4ai's JS wait_for, which 0.9.5 refuses.
+    """
+    if result.success and html_has_element(result.cleaned_html or result.html or "", selector):
+        raise AuthWallDetected(selector)
+
+
+def _logged_out_pages(
+    results: list[CrawlResult],
+    *,
+    cookies: list[dict] | None,
+    login_indicator_selector: str | None,
+) -> list[str]:
+    """URLs of fetched pages that show the crawl ran without its saved session.
+
+    Raises AuthWallDetected when any page carries the configured login
+    indicator. Without cookies there is no session to lose; per-page wall
+    handling inside the ingest loop covers anonymous crawls.
+    """
+    if login_indicator_selector:
+        for result in results:
+            _check_login_indicator(result, login_indicator_selector)
+    if (
+        not cookies
+        or not settings.ingest_login_wall_detect_enabled
+        or _resolve_login_wall_mode() != "reject"
+    ):
+        return []
+    return [r.url for r in results if r.success and _classify_page_wall(r).is_walled]
+
+
+def _classify_page_wall(result: CrawlResult) -> AuthWallClassification:
+    """Classify a fetched page the same way before the ingest loop and inside it."""
+    return classify_auth_wall(
+        response_status_code=None,
+        redirect_target_url=None,
+        set_cookie_header=_header_value(result.response_headers, "set-cookie"),
+        word_count=result.word_count,
+        fit_markdown=result.fit_markdown or result.raw_markdown or "",
+        raw_html=result.html or "",
+    )
+
+
 def _attach_crawl_warning(summary: dict, crawl_warning: dict | None) -> dict:
     """Attach warning details without replacing a stronger top-level reason."""
     if crawl_warning is not None:
@@ -594,9 +644,9 @@ def _attach_crawl_warning(summary: dict, crawl_warning: dict | None) -> dict:
     return summary
 
 
-# @MX:ANCHOR: AuthWallDetected -- propagates login-indicator triggers from _ingest_crawl_result
-#   back up to run_crawl_job, which converts them into a single structured
-#   crawl_jobs.error entry and halts the remaining BFS pages.
+# @MX:ANCHOR: AuthWallDetected -- raised by _check_login_indicator before the
+#   ingest loop; run_crawl_job converts it into a single structured
+#   crawl_jobs.error entry and ingests no page of that run.
 # @MX:REASON: A silent auth wall would otherwise ingest login pages as "content"
 #   and pollute Qdrant. Hard failing with a typed exception keeps the error
 #   surface at exactly one row per sync regardless of page count.
@@ -942,10 +992,12 @@ async def run_crawl_job(
     over subsequent clean crawls (same module).
 
     ``login_indicator_selector`` (SPEC-CRAWLER-004 Fase B / REQ-02.3) is
-    matched against the HTML of every page before it is ingested. If a page
-    matches, it is flagged as auth-walled and the job is marked failed
-    with ``error='auth_wall_detected: {selector}'`` and no further pages
-    are ingested.
+    matched against the HTML of every fetched page before the first page is
+    ingested. If a page matches, the job is marked failed with
+    ``error='auth_wall_detected: {selector}'`` and no page is ingested. With
+    saved ``cookies``, a page the auth-wall classifier rejects likewise means
+    the run had no session: it ends ``failed_partial`` and replaces no stored
+    page.
 
     SPEC-TI-003-FOLLOWUP-001 AC-1: ``connection_factory`` leases a connection
     with the tenant RLS GUC for each bounded database phase. No connection is
@@ -1237,6 +1289,31 @@ async def run_crawl_job(
         # plus the walls that never became a result.
         wall_decision_count = len(results) + len(http_login_walls)
 
+        # A crawl with a saved session that meets a login wall on any page
+        # ran logged out, and a logged-out page does not always show a wall:
+        # on a wiki with protected tabs the sibling pages render a shortened
+        # public version without any login marker. Ingesting those replaced
+        # the logged-in versions (production, 2026-11-12: 203 pages, median
+        # 18.5% of their text lost). So the whole run is judged before the
+        # first write, and a run without a session writes nothing.
+        auth_wall_pages.extend(
+            _logged_out_pages(
+                results, cookies=cookies, login_indicator_selector=login_indicator_selector
+            )
+        )
+        session_lost = bool(cookies and auth_wall_pages)
+        if session_lost:
+            logger.error(
+                "crawl_session_lost_stored_pages_kept",
+                job_id=job_id,
+                connector_id=connector_id,
+                org_id=org_id,
+                kb_slug=kb_slug,
+                login_walls=len(auth_wall_pages),
+                pages_kept=len(results),
+            )
+        pages_to_ingest = [] if session_lost else results
+
         crawl_outcome_warning = _build_crawl_outcome_warning(
             fetch_outcomes,
             max_pages=max_pages,
@@ -1269,14 +1346,14 @@ async def run_crawl_job(
 
                 # SPEC-CRAWLER-005 Fase 1: build link graph BEFORE per-page ingest so
                 # late pages don't read an empty graph. REQ-01.1.
-                await _build_link_graph(conn, results, org_id, kb_slug)
+                await _build_link_graph(conn, pages_to_ingest, org_id, kb_slug)
 
         # Batch-fetch all known content hashes in a single query
-        urls = [r.url for r in results]
+        urls = [r.url for r in pages_to_ingest]
         async with connection_factory() as conn:
             known_hashes = await pg_store.get_crawled_page_hashes(conn, org_id, kb_slug, urls)
 
-        for result in results:
+        for result in pages_to_ingest:
             url = result.url
             if resource_key:
                 from knowledge_ingest.connector_state import (
@@ -1313,10 +1390,6 @@ async def run_crawl_job(
                             connector_id=connector_id,
                         )
                         pages_done += 1
-                    except AuthWallDetected:
-                        # Halt the whole BFS — downstream handler in the except block
-                        # writes the job row; do not keep ingesting follow-up pages.
-                        raise
                     except AnonymousAuthWallDetected as wall_exc:
                         # SPEC-INGEST-LOGIN-WALL-DETECT-001 REQ-04.1 — per-page wall,
                         # NOT a session-wide failure. Record + continue BFS so sibling
@@ -1707,14 +1780,6 @@ async def _ingest_crawl_result(
     if not result.success:
         raise ValueError(f"Crawl failed: {result.error_message}")
 
-    # SPEC-CRAWLER-004 Fase B: the login indicator is checked on the fetched
-    # HTML. It used to ride in crawl4ai's JS wait_for, which 0.9.5 refuses.
-    # Surfacing it as AuthWallDetected gives one structured failure per sync.
-    if login_indicator_selector and html_has_element(
-        result.cleaned_html or result.html or "", login_indicator_selector
-    ):
-        raise AuthWallDetected(login_indicator_selector)
-
     # Detect PDF: check Content-Type header first, fall back to URL extension
     content_type_header = ""
     if result.response_headers:
@@ -1870,14 +1935,7 @@ async def _ingest_crawl_result(
     login_wall_mode: str | None = None
     effective_authenticated_context = authenticated_context or login_indicator_selector is not None
     if settings.ingest_login_wall_detect_enabled:
-        auth_wall = classify_auth_wall(
-            response_status_code=None,
-            redirect_target_url=None,
-            set_cookie_header=_header_value(result.response_headers, "set-cookie"),
-            word_count=result.word_count,
-            fit_markdown=text,
-            raw_html=raw_html,
-        )
+        auth_wall = _classify_page_wall(result)
         if auth_wall.is_walled:
             login_wall_signal = AuthWallSignal(
                 pattern="auth_wall_classifier",

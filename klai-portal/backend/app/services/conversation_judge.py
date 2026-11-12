@@ -539,6 +539,14 @@ async def _judge_org(org_id: int) -> int:
                    AND wc.started_at > now()
                        - COALESCE(po.widget_messages_retention_days, :default_days) * interval '1 day'
                        + :safety_margin
+                   -- A conversation whose messages an earlier, shorter term
+                   -- already purged can fall inside the window again when the
+                   -- term grows (7 to 90 days on 2026-11-12); judging it would
+                   -- be a model call on an empty transcript.
+                   AND EXISTS (
+                         SELECT 1 FROM widget_messages wm
+                          WHERE wm.conversation_id = wc.id AND wm.org_id = :org_id
+                       )
                  ORDER BY wc.last_message_at
                  LIMIT :batch_size
                 """

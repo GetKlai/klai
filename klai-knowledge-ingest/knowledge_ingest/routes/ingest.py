@@ -41,6 +41,7 @@ from knowledge_ingest import (
 from knowledge_ingest import (
     graph as graph_module,
 )
+from knowledge_ingest.adapters.crawler import _build_image_store
 from knowledge_ingest.clustering import classify_by_centroid, load_centroids
 from knowledge_ingest.config import settings
 from knowledge_ingest.content_labeler import generate_content_label
@@ -1280,8 +1281,10 @@ async def _get_org_id(gitea_org_name: str) -> str | None:
 
 @router.delete("/ingest/v1/kb")
 async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
-    """Delete all data for a knowledge base: graph nodes + Qdrant chunks + PostgreSQL records.
-    Called by the portal on KB deletion. Scoped to (org_id, kb_slug).
+    """Delete all data for a knowledge base: graph, vectors, images and PostgreSQL records.
+    Called by the portal on KB deletion. Scoped to (org_id, kb_slug). The rows go
+    last: when an earlier store raises, the portal keeps its KB and retries, and
+    every step here is safe to repeat.
     SPEC-TI-003 AC-6: identity assertion on query-param org_id.
 
     Tenant-only assertion: KB delete is a tenant-scoped operation; no end-user is
@@ -1295,6 +1298,10 @@ async def delete_kb_route(request: Request, org_id: str, kb_slug: str) -> dict:
         episode_ids = await pg_store.get_episode_ids(conn, org_id, kb_slug)
         await graph_module.delete_kb_episodes(org_id, episode_ids)
         await qdrant_store.delete_kb(org_id, kb_slug)
+        # No store configured means the image pipeline of this deployment is off.
+        image_store = _build_image_store()
+        if image_store is not None:
+            await image_store.delete_images(org_id, kb_slug)
         await pg_store.delete_kb(conn, org_id, kb_slug)
     logger.info("kb_deleted", org_id=org_id, kb_slug=kb_slug, episodes_deleted=len(episode_ids))
     return {"status": "ok"}

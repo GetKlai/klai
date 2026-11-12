@@ -45,7 +45,11 @@ export interface WidgetLabels {
   handoffConnected: string
   userInfoName: string
   userInfoEmail: string
+  // {term} takes retentionTerm* (leading space included) or "" when the
+  // config response predates retention_days, so the sentence never has a hole.
   userInfoHelp: string
+  retentionTermOne: string
+  retentionTermOther: string
   userInfoTitle: string
   userInfoStart: string
   userInfoSkip: string
@@ -125,7 +129,9 @@ const nl: WidgetLabels = {
   userInfoName: "Naam",
   userInfoEmail: "E-mailadres",
   userInfoHelp:
-    "We lezen elk gesprek na om te zien hoe goed de AI antwoordt. Klopt een antwoord niet, dan sturen we je per e-mail een correctie.",
+    "We bewaren dit gesprek{term} om ons systeem beter te maken. Je e-mailadres gebruiken we om te zien bij welke klant het gesprek hoort, zodat we contact met je kunnen opnemen als dat nodig is.",
+  retentionTermOne: " 1 dag",
+  retentionTermOther: " {count} dagen",
   userInfoTitle: "Voordat we beginnen",
   userInfoStart: "Begin het gesprek",
   userInfoSkip: "Liever niet, ga direct naar de chat",
@@ -193,7 +199,9 @@ const en: WidgetLabels = {
   userInfoName: "Name",
   userInfoEmail: "Email address",
   userInfoHelp:
-    "We read every conversation to see how well the AI answered. If an answer turns out to be wrong, we email you a correction.",
+    "We keep this conversation{term} to improve our system. We use your e-mail address to see which customer the conversation belongs to, so we can contact you if needed.",
+  retentionTermOne: " for 1 day",
+  retentionTermOther: " for {count} days",
   userInfoTitle: "Before we start",
   userInfoStart: "Start the chat",
   userInfoSkip: "No thanks, take me to the chat",
@@ -278,6 +286,14 @@ export function t(): WidgetLabels {
 
 function pluralLabel(count: number, one: string, other: string): string {
   return count === 1 ? one : other.replace("{count}", String(count))
+}
+
+export function userInfoHelpLabel(retentionDays?: number): string {
+  const term =
+    retentionDays === undefined
+      ? ""
+      : pluralLabel(retentionDays, t().retentionTermOne, t().retentionTermOther)
+  return t().userInfoHelp.replace("{term}", term)
 }
 
 export function sourceCountLabel(count: number): string {

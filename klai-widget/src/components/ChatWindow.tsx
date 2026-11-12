@@ -36,7 +36,7 @@ import {
   startHubSpotHandoff,
   streamHubSpotHandoffEvents,
 } from "../api/handoff";
-import { currentLocale, setLanguage, t } from "../i18n/labels";
+import { currentLocale, setLanguage, t, userInfoHelpLabel } from "../i18n/labels";
 
 interface ChatWindowProps {
   title: string;
@@ -735,7 +735,7 @@ export function ChatWindow(props: ChatWindowProps) {
       <Show when={showIdentityStep()}>
         <div class="klai-identity-step">
           <p class="klai-identity-title">{t().userInfoTitle}</p>
-          <p class="klai-identity-help">{t().userInfoHelp}</p>
+          <p class="klai-identity-help">{userInfoHelpLabel(chatState.config?.retention_days)}</p>
           <form
             class="klai-identity-form"
             onSubmit={(e) => {

@@ -1,7 +1,7 @@
 # Evidence-Weighted Knowledge Retrieval: Research Synthesis
 
 > Last updated: 2026-03-30
-> Status: Active research programme — informs Klai knowledge architecture decisions
+> Status: Historical rationale. The evidence-tier scoring this programme led to was removed from the code on 2026-08-20 (#1122, `2ce085277`) after a shadow run recorded no paired answer-quality outcome; see `GAP-EVID-01` in [product-gaps-backlog.md](../architecture/product-gaps-backlog.md). The research below is kept as the reasoning behind that work, not as a plan to activate.
 > Authors: Mark Duijndam + AI research assistants
 
 ---
@@ -145,17 +145,29 @@ Concrete code changes to implement evidence-weighted scoring in Klai.
 
 | # | Gap | Status |
 |---|---|---|
-| 1 | `content_type` stored but not used for scoring | Ready to implement |
-| 2 | `assertion_mode` dropped at Qdrant upsert | Ready to implement |
-| 3 | Corroboration count not computed | Deferred (prerequisites needed) |
-| 4 | Chunk ordering not optimised (Lost in the Middle) | Ready to implement |
-| 5 | No temporal decay in scoring | Ready to implement |
-| 6 | `ingested_at` and `assertion_mode` not returned in retrieval | Ready to implement |
+| 1 | `content_type` stored but not used for scoring | Scoring built, then removed 2026-08-20; `content_type` is response metadata |
+| 2 | `assertion_mode` dropped at Qdrant upsert | Payload field now written and returned as response metadata; not used for ranking |
+| 3 | Corroboration count not computed | Not built (prerequisites not met) |
+| 4 | Chunk ordering not optimised (Lost in the Middle) | Built, then removed 2026-08-20 with the scorer |
+| 5 | No temporal decay in scoring | Built, then removed 2026-08-20 with the scorer |
+| 6 | `ingested_at` and `assertion_mode` not returned in retrieval | `assertion_mode` is returned as response metadata |
 
 **Deliberately not implemented:**
 - Conflict detection (ACL 2025: no reliable method exists)
 - Confidence calibration (ICLR 2020: systematically miscalibrated without calibration step)
 - Near-duplicate detection for Qdrant chunks (separate project)
+
+---
+
+### Conversation retention
+
+How long other chat and evaluation products keep the text of a conversation, and what remains after the term.
+
+| Document | Scope | Language |
+|---|---|---|
+| [Conversation retention in other systems](conversation-retention-other-systems.md) | Retention terms of Intercom Fin, Ada, Microsoft Copilot Studio, Zendesk, Langfuse and LangSmith from their own documentation (12 November 2026; three statements re-read in the source), three recurring patterns, and what regulators ask. | NL |
+
+**Key finding:** the shortest default found is thirty days; products that learn from conversations keep raw conversations short and a chosen test set long. The rule Klai derived from it is in [conversation-retention-and-learning.md](../architecture/conversation-retention-and-learning.md).
 
 ---
 

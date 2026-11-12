@@ -972,3 +972,302 @@ async def test_backlog_report_counts_only_deleted_documents_and_execute_purges_t
     finally:
         await conn.close()
     assert kept == 5
+
+
+# -- a whole knowledge base and a whole organisation --------------------------
+
+_CHILD_TABLES = (
+    ("parent_chunks", "artifact_id"),
+    ("artifact_images", "artifact_id"),
+    ("embedding_queue", "artifact_id"),
+    ("artifact_entities", "artifact_id"),
+    ("derivations", "child_id"),
+)
+
+
+class _FakeBucket:
+    """The image bucket as the minio client inside the image store sees it."""
+
+    def __init__(self, keys: set[str]) -> None:
+        self.keys = set(keys)
+        self.fail_next = False
+
+    def list_objects(self, _bucket, prefix: str, recursive=False):
+        assert recursive, "image keys sit below the knowledge-base level of the prefix"
+        return [SimpleNamespace(object_name=k) for k in sorted(self.keys) if k.startswith(prefix)]
+
+    def remove_objects(self, _bucket, delete_object_list):
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("object store unavailable")
+        for obj in list(delete_object_list):
+            self.keys.discard(obj.name)
+        return iter(())
+
+
+def _image_key(org_id: str, kb_slug: str, content: str) -> str:
+    return f"{org_id}/images/{kb_slug}/{content * 64}.png"
+
+
+async def _seed_scope(org_id: str, kb_slug: str) -> list[str]:
+    """One document with history plus every knowledge-base-scoped row."""
+    ids = await _seed(org_id, kb_slug, f"https://example.com/{kb_slug}")
+    job_id = f"job-{uuid.uuid4().hex}"
+    now = int(time.time())
+    conn = await _connect(org_id)
+    try:
+        await conn.execute(
+            "INSERT INTO knowledge.derivations (child_id, parent_id) VALUES ($1, $2)",
+            ids[1],
+            ids[0],
+        )
+        await conn.execute(
+            "INSERT INTO knowledge.kb_config (org_id, kb_slug) VALUES ($1, $2)", org_id, kb_slug
+        )
+        await conn.execute(
+            """INSERT INTO knowledge.crawl_jobs
+                   (id, org_id, kb_slug, config, created_at, updated_at)
+               VALUES ($1, $2, $3, '{}'::jsonb, $4, $4)""",
+            job_id,
+            org_id,
+            kb_slug,
+            now,
+        )
+        await conn.execute(
+            """INSERT INTO knowledge.crawl_job_frontier
+                   (job_id, org_id, crawl_scope, canonical_url, url, depth, source_kind,
+                    priority, discovery_order, state)
+               VALUES ($1, $2, 'primary', 'https://example.com/', 'https://example.com/', 0,
+                       'start', 0, 1, 'queued')""",
+            job_id,
+            org_id,
+        )
+        await conn.execute(
+            """INSERT INTO knowledge.connector_resource_fences
+                   (org_id, kb_slug, connector_id, current_generation, state)
+               VALUES ($1, $2, 'connector-1', 'g1', 'active')""",
+            org_id,
+            kb_slug,
+        )
+    finally:
+        await conn.close()
+    return ids
+
+
+async def _seed_org_rows(org_id: str, artifact_id: str) -> None:
+    """Rows that belong to the organisation rather than to one knowledge base."""
+    entity_id = str(uuid.uuid4())
+    conn = await _connect(org_id)
+    try:
+        await conn.execute(
+            """INSERT INTO knowledge.entities (id, org_id, name, type, created_at)
+               VALUES ($1, $2, 'synthetic', 'concept', 0)""",
+            entity_id,
+            org_id,
+        )
+        await conn.execute(
+            "INSERT INTO knowledge.artifact_entities (artifact_id, entity_id) VALUES ($1, $2)",
+            artifact_id,
+            entity_id,
+        )
+        await conn.execute(
+            """INSERT INTO knowledge.crawl_domains (domain, org_id, css_selector, selector_source)
+               VALUES ('example.com', $1, 'main', 'user')""",
+            org_id,
+        )
+        await conn.execute(
+            "INSERT INTO knowledge.org_config (org_id, updated_at) VALUES ($1, 0)", org_id
+        )
+        await conn.execute(
+            """INSERT INTO knowledge.graph_refresh_budget (org_id, day, enqueued)
+               VALUES ($1, current_date, 1)""",
+            org_id,
+        )
+    finally:
+        await conn.close()
+
+
+async def _rows_per_table(org_id: str, kb_slug: str | None = None) -> dict[str, int]:
+    """Rows of the scope in every knowledge table that carries its key.
+
+    The tables are read from the live schema, so a table added later is counted
+    here without editing a list.
+    """
+    conn = await _connect(org_id)
+    try:
+        tables = [
+            r["table_name"]
+            for r in await conn.fetch(
+                """SELECT table_name FROM information_schema.columns
+                   WHERE table_schema = 'knowledge' AND column_name = 'org_id'
+                   INTERSECT
+                   SELECT table_name FROM information_schema.columns
+                   WHERE table_schema = 'knowledge' AND column_name = $1""",
+                "org_id" if kb_slug is None else "kb_slug",
+            )
+        ]
+        scope = [org_id] if kb_slug is None else [org_id, kb_slug]
+        where = "org_id = $1" if kb_slug is None else "org_id = $1 AND kb_slug = $2"
+        counts = {}
+        for table in sorted(tables):
+            counts[table] = await conn.fetchval(
+                f"SELECT count(*) FROM knowledge.{table} WHERE {where}",  # noqa: S608
+                *scope,
+            )
+        if kb_slug is not None:
+            counts["crawl_job_frontier"] = await conn.fetchval(
+                """SELECT count(*) FROM knowledge.crawl_job_frontier f
+                   JOIN knowledge.crawl_jobs j ON j.id = f.job_id AND j.org_id = f.org_id
+                   WHERE f.org_id = $1 AND j.kb_slug = $2""",
+                org_id,
+                kb_slug,
+            )
+        return counts
+    finally:
+        await conn.close()
+
+
+async def _child_rows(org_id: str, ids: list[str]) -> dict[str, int]:
+    """Rows of the tables without an owner key, reached through the artifact ids."""
+    conn = await _connect(org_id)
+    try:
+        counts = {}
+        for table, column in _CHILD_TABLES:
+            counts[table] = await conn.fetchval(
+                f"SELECT count(*) FROM knowledge.{table} WHERE {column} = ANY($1::uuid[])",  # noqa: S608
+                ids,
+            )
+        return counts
+    finally:
+        await conn.close()
+
+
+def _none(counts: dict[str, int]) -> dict[str, int]:
+    return dict.fromkeys(counts, 0)
+
+
+async def _kb_world():
+    """A knowledge base to delete, a sibling in the same organisation and another organisation.
+
+    The sibling and the other organisation hold an image with the same content,
+    so a delete that follows the content instead of the owner is caught.
+    """
+    org_id = f"org-a-{uuid.uuid4().hex[:8]}"
+    foreign_org = f"org-b-{uuid.uuid4().hex[:8]}"
+    kb, sibling = "kb-gone", "kb-stays"
+    w = SimpleNamespace(org_id=org_id, foreign_org=foreign_org, kb=kb, sibling=sibling)
+    w.doc = await _seed_scope(org_id, kb)
+    w.sibling_doc = await _seed_scope(org_id, sibling)
+    w.foreign_doc = await _seed_scope(foreign_org, kb)
+    await _seed_org_rows(org_id, w.doc[-1])
+    await _seed_org_rows(foreign_org, w.foreign_doc[-1])
+    w.gone_keys = {_image_key(org_id, kb, "a"), _image_key(org_id, kb, "b")}
+    w.kept_keys = {
+        _image_key(org_id, sibling, "a"),
+        _image_key(foreign_org, kb, "a"),
+        # A knowledge base whose slug starts with the deleted slug is another prefix.
+        _image_key(org_id, f"{kb}-2", "a"),
+    }
+    w.bucket = _FakeBucket(w.gone_keys | w.kept_keys)
+    w.sibling_before = await _rows_per_table(org_id, sibling)
+    w.sibling_children = await _child_rows(org_id, w.sibling_doc)
+    w.foreign_before = await _rows_per_table(foreign_org)
+    w.foreign_children = await _child_rows(foreign_org, w.foreign_doc)
+    return w
+
+
+async def _assert_others_kept(w, *, sibling: bool) -> None:
+    if sibling:
+        assert await _rows_per_table(w.org_id, w.sibling) == w.sibling_before
+        assert await _child_rows(w.org_id, w.sibling_doc) == w.sibling_children
+    assert await _rows_per_table(w.foreign_org) == w.foreign_before
+    assert await _child_rows(w.foreign_org, w.foreign_doc) == w.foreign_children
+
+
+@pytest.fixture
+def image_bucket(monkeypatch):
+    from klai_image_storage import ImageStore
+
+    holder = SimpleNamespace(bucket=None)
+
+    def _build():
+        store = ImageStore("storage.example.com:3900", "key", "secret", "klai-images")
+        store._client = holder.bucket  # type: ignore[attr-defined]
+        return store
+
+    monkeypatch.setattr("knowledge_ingest.routes.ingest._build_image_store", _build)
+    return holder
+
+
+async def _delete_kb(w) -> None:
+    from knowledge_ingest.routes.ingest import delete_kb_route
+
+    await delete_kb_route(_REQUEST, w.org_id, w.kb)
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_knowledge_base_leaves_nothing_of_it_in_any_store(
+    stores, image_bucket
+) -> None:
+    w = await _kb_world()
+    image_bucket.bucket = w.bucket
+
+    await _delete_kb(w)
+
+    remaining = await _rows_per_table(w.org_id, w.kb)
+    assert remaining == _none(remaining)
+    children = await _child_rows(w.org_id, w.doc)
+    assert children == _none(children)
+    assert w.bucket.keys == w.kept_keys
+    assert stores.graph.deleted(w.org_id) == {f"ep-{i}" for i in w.doc}
+    await _assert_others_kept(w, sibling=True)
+
+
+@pytest.mark.asyncio
+async def test_a_knowledge_base_delete_that_fails_on_the_images_is_finished_by_a_retry(
+    stores, image_bucket
+) -> None:
+    w = await _kb_world()
+    image_bucket.bucket = w.bucket
+    w.bucket.fail_next = True
+
+    with pytest.raises(RuntimeError, match="object store unavailable"):
+        await _delete_kb(w)
+
+    # The rows stay as the ledger the portal's retry works from.
+    assert (await _rows_per_table(w.org_id, w.kb))["artifacts"] == 3
+    assert w.bucket.keys == w.gone_keys | w.kept_keys
+
+    await _delete_kb(w)
+
+    remaining = await _rows_per_table(w.org_id, w.kb)
+    assert remaining == _none(remaining)
+    assert w.bucket.keys == w.kept_keys
+    await _assert_others_kept(w, sibling=True)
+
+
+@pytest.mark.asyncio
+async def test_wiping_an_organisation_leaves_no_row_of_it_in_any_knowledge_table(
+    monkeypatch,
+) -> None:
+    from knowledge_ingest.routes import internal
+
+    w = await _kb_world()
+    pool = await asyncpg.create_pool(_DSN, min_size=1, max_size=1)
+
+    async def _pool():
+        return pool
+
+    monkeypatch.setattr(internal, "get_pool", _pool)
+    try:
+        await internal._wipe_org_postgres(w.org_id)
+        # A rerun after a later step failed finds nothing and succeeds.
+        assert set((await internal._wipe_org_postgres(w.org_id)).values()) == {0}
+    finally:
+        await pool.close()
+
+    remaining = await _rows_per_table(w.org_id)
+    assert remaining == _none(remaining)
+    children = await _child_rows(w.org_id, w.doc + w.sibling_doc)
+    assert children == _none(children)
+    await _assert_others_kept(w, sibling=False)

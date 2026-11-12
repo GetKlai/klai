@@ -18,14 +18,13 @@ import pytest
 import structlog.testing
 
 from knowledge_ingest.adapters.crawler import (
-    AnonymousAuthWallDetected,
     AuthWallDetected,
+    _check_login_indicator,
     _ingest_crawl_result,
     run_crawl_job,
 )
 from knowledge_ingest.crawl4ai_client import CrawlResult
 from knowledge_ingest.crawl_result_processing import html_has_element
-from knowledge_ingest.utils.auth_wall_detector import AuthWallSignal
 from tests.conftest import connection_factory_for
 
 
@@ -34,7 +33,7 @@ class _StopAfterCheck(Exception):
 
 
 class TestIngestCrawlResultAuthWall:
-    """_ingest_crawl_result raises AuthWallDetected when appropriate."""
+    """The login-indicator check and _ingest_crawl_result raise when appropriate."""
 
     @pytest.mark.asyncio()
     async def test_login_indicator_in_fetched_html_raises_auth_wall(self) -> None:
@@ -46,16 +45,8 @@ class TestIngestCrawlResultAuthWall:
             word_count=4,
             success=True,
         )
-        mock_conn = MagicMock()
         with pytest.raises(AuthWallDetected) as excinfo:
-            await _ingest_crawl_result(
-                mock_conn,
-                walled,
-                url=walled.url,
-                org_id="org",
-                kb_slug="support",
-                login_indicator_selector="#login-form",
-            )
+            _check_login_indicator(walled, "#login-form")
         assert "auth_wall_detected" in str(excinfo.value)
         assert excinfo.value.selector == "#login-form"
 
@@ -86,14 +77,7 @@ class TestIngestCrawlResultAuthWall:
             patch("knowledge_ingest.adapters.crawler.html_has_element", side_effect=matcher),
             pytest.raises(_StopAfterCheck),
         ):
-            await _ingest_crawl_result(
-                MagicMock(),
-                logged_in,
-                url=logged_in.url,
-                org_id="org",
-                kb_slug="support",
-                login_indicator_selector=".user-menu",
-            )
+            _check_login_indicator(logged_in, ".user-menu")
         assert seen == [logged_in.cleaned_html]
         assert html_has_element(logged_in.html, ".user-menu") is True
         assert html_has_element(logged_in.cleaned_html, ".user-menu") is False
@@ -122,12 +106,13 @@ class TestIngestCrawlResultAuthWall:
 
 
 class TestRunCrawlJobAuthWall:
-    """run_crawl_job halts on the first auth-walled page and writes a failed row."""
+    """run_crawl_job judges every fetched page before the first write."""
 
     @pytest.mark.asyncio()
     async def test_auth_wall_halts_bfs_and_fails_job(self) -> None:
         # crawl_site returns a happy first page followed by an auth-walled one.
-        # After the auth wall fires, we must not attempt to ingest the 3rd page.
+        # The run ran logged out, so not even the first page replaces its
+        # stored version.
         happy = CrawlResult(
             url="https://wiki.example/a",
             fit_markdown="content",
@@ -193,7 +178,7 @@ class TestRunCrawlJobAuthWall:
             ),
             patch(
                 "knowledge_ingest.adapters.crawler._ingest_crawl_result",
-                new=AsyncMock(side_effect=[None, AuthWallDetected("#login-form")]),
+                new=AsyncMock(return_value=True),
             ) as ingest_mock,
         ):
             await run_crawl_job(
@@ -205,10 +190,7 @@ class TestRunCrawlJobAuthWall:
                 login_indicator_selector="#login-form",
             )
 
-        # The walled page raises, so the third page is never attempted.
-        assert ingest_mock.call_count == 2
-        # SPEC-TI-003-FOLLOWUP-001: _ingest_crawl_result(conn, result, url, org, kb, ...)
-        assert [c.args[1] for c in ingest_mock.await_args_list] == [happy, walled]
+        ingest_mock.assert_not_awaited()
 
         # Verify at least one UPDATE marked the job as failed with auth_wall_detected.
         update_calls = mock_conn.execute.await_args_list
@@ -259,14 +241,6 @@ class TestRunCrawlJobAuthWall:
         mock_conn.fetchval = AsyncMock(return_value=None)
         mock_conn.fetchrow = AsyncMock(return_value=None)
 
-        wall_exc = AnonymousAuthWallDetected(
-            walled.url,
-            AuthWallSignal(
-                pattern="auth_wall_classifier",
-                evidence=("embedded_login_gate",),
-                confidence=0.95,
-            ),
-        )
         with (
             patch(
                 "knowledge_ingest.adapters.crawler.crawl_site",
@@ -278,7 +252,7 @@ class TestRunCrawlJobAuthWall:
             ),
             patch(
                 "knowledge_ingest.adapters.crawler._ingest_crawl_result",
-                new=AsyncMock(side_effect=wall_exc),
+                new=AsyncMock(return_value=True),
             ) as ingest_mock,
             structlog.testing.capture_logs() as captured,
         ):
@@ -296,17 +270,7 @@ class TestRunCrawlJobAuthWall:
         rate_events = [e for e in captured if e["event"] == "crawl_job_auth_wall_rate_high"]
         assert [(e["log_level"], e["wall_rate"]) for e in rate_events] == [("error", 1.0)]
 
-        ingest_mock.assert_awaited_with(
-            mock_conn,
-            walled,
-            walled.url,
-            "org",
-            "support",
-            stored=None,
-            login_indicator_selector=None,
-            authenticated_context=True,
-            connector_id=None,
-        )
+        ingest_mock.assert_not_awaited()
 
         terminal_updates = [
             c

@@ -1,10 +1,12 @@
 # KB file upload — operator runbook
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 > SPEC-KB-FILE-UPLOAD-001 — file ingestion for `.md / .txt / .csv /
-> .pdf / .docx / .pptx / .xlsx / .json / .xml`. Archive (`.zip / .tar`)
-> support is specified as an all-or-nothing batch container path: preflight,
-> stage, validate every member, then enqueue each member as its own upload.
-> Legacy `.doc` remains phase-pending until the LibreOffice sidecar ships.
+> .pdf / .docx / .pptx / .xlsx / .json / .xml`. Archives (`.zip / .tar`) are
+> live as an all-or-nothing container: preflight, extract with caps, validate
+> every member, then dispatch each member as its own upload. Legacy `.doc` is
+> `phase_pending` and not processed.
 
 ## Architecture
 
@@ -30,7 +32,6 @@ Browser ──multipart 200 MB──▶ Caddy ──▶ portal-api
                                                           chunks=[...]
                                                           content=<bounded preview>
                                                           content_hash=<source sha256>
-                                                          skip LLM enrichment when preview is truncated
                                                         → kb_uploads.status=done
                                              → failure: kb_uploads.status=failed
                                          frontend polls
@@ -41,10 +42,9 @@ archive path (.zip/.tar):
 Browser ──multipart archive──▶ portal-api archive preflight
                               ├─ any bad member: reject whole archive, no rows/jobs
                               └─ all members valid:
-                                   stage members on disk/object storage
-                                   create archive_batch_id
-                                   create one kb_uploads row per member
-                                   enqueue one member ingest job per row
+                                   members staged in spooled temp files
+                                   (disk above 1 MB)
+                                   each member re-dispatched as its own upload
                                    text members → direct ingest
                                    docling members → Docling async queue + poller
 ```
@@ -55,7 +55,7 @@ Browser ──multipart archive──▶ portal-api archive preflight
 |---|---|
 | Caddy | `request_body { max_size 200MB }` on `^/api/app/knowledge-bases/[^/]+/sources/file$` |
 | portal-api | new `POST /api/app/knowledge-bases/{kb}/sources/file`, new `GET .../sources/file/{id}/status`, new `kb_uploads` table + cat-D RLS, `kb_upload_poller` background task |
-| docling-serve | v1.30.0 on klai-net; async hybrid chunk endpoint; non-single-use result retention configured for retry tolerance |
+| docling-serve | v1.38.2 on klai-net (`deploy/docker-compose.yml`); async hybrid chunk endpoint; non-single-use result retention configured for retry tolerance |
 | knowledge-ingest | receives either normal text content or Docling pre-computed chunks via the existing `/ingest/v1/document` endpoint |
 
 ## Deploy steps
@@ -66,43 +66,43 @@ Browser ──multipart archive──▶ portal-api archive preflight
    (`entrypoint.sh` runs `alembic upgrade head`). Confirm:
 
    ```bash
-   ssh core-01 "docker exec klai-core-portal-api-1 alembic current"
-   # Expect: 85e5d0a7cb98 (head)
+   docker exec klai-core-portal-api-1 alembic current
+   docker exec klai-core-portal-api-1 alembic heads
+   # Both print the same revision id
    ```
 
 3. **Apply the post-deploy RLS SQL as `klai` superuser.** portal_api
    role does not own `kb_uploads` and cannot ENABLE RLS on it. Run:
 
    ```bash
-   ssh core-01 "docker cp klai-core-postgres-1:/dev/null /tmp/post_deploy.sql"  # placeholder
-   # Either copy the file in:
-   scp klai-portal/backend/alembic/versions/post_deploy_85e5d0a7cb98_kb_uploads_rls.sql \
-       core-01:/tmp/post_deploy.sql
-   ssh core-01 "docker cp /tmp/post_deploy.sql klai-core-postgres-1:/tmp/"
-   ssh core-01 "docker exec klai-core-postgres-1 sh -c \
-       'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -f /tmp/post_deploy.sql'"
+   # First copy klai-portal/backend/alembic/versions/post_deploy_85e5d0a7cb98_kb_uploads_rls.sql
+   # from your machine to /tmp/post_deploy.sql on core-01 (how: private infrastructure runbooks).
+   # Then, on core-01:
+   docker cp /tmp/post_deploy.sql klai-core-postgres-1:/tmp/
+   docker exec klai-core-postgres-1 sh -c \
+       'psql -U $POSTGRES_USER -d $POSTGRES_DB -f /tmp/post_deploy.sql'
    ```
 
    Verify:
 
    ```bash
-   ssh core-01 "docker exec klai-core-postgres-1 sh -c \
-       'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \
-       \"SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = '\''kb_uploads'\'';\"'"
+   docker exec klai-core-postgres-1 sh -c \
+       'psql -U $POSTGRES_USER -d $POSTGRES_DB -c \
+       "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = '\''kb_uploads'\'';"'
    # Expect: (t, t)
    ```
 
 4. **Smoke test.** Upload `sample.md` via the UI on a test KB. Then
-   upload a small PDF (5 pages). For the regression path, upload
-   `/Users/mvletter/Downloads/Chemie Overal 4VWO.pdf` to a fresh test KB
-   and watch it reach `done` with non-zero chunks.
+   upload a small PDF (5 pages). For the large-document path, upload a
+   textbook-size PDF to a fresh test KB and watch it reach `done` with
+   non-zero chunks.
 
    ```bash
    # Should show one done + one processing within seconds
-   ssh core-01 "docker logs --tail 50 klai-core-portal-api-1 | grep kb_upload_received"
+   docker logs --tail 50 klai-core-portal-api-1 | grep kb_upload_received
 
    # Should show the poller advancing the PDF row through processing→done
-   ssh core-01 "docker logs --tail 50 klai-core-portal-api-1 | grep kb_upload_done"
+   docker logs --tail 50 klai-core-portal-api-1 | grep kb_upload_done
    ```
 
 ## What can go wrong
@@ -115,8 +115,8 @@ submission.
 Diagnose:
 
 ```bash
-ssh core-01 "docker exec klai-core-portal-api-1 sh -c \
-    'curl -sf http://docling-serve:5001/health > /dev/null && echo OK || echo FAIL'"
+docker exec klai-core-portal-api-1 sh -c \
+    'curl -sf http://docling-serve:5001/health > /dev/null && echo OK || echo FAIL'
 ```
 
 If `FAIL`: `docker compose ps docling-serve` on core-01. The container
@@ -124,14 +124,23 @@ is internal-only (no Caddy route), so external probes are not useful.
 
 ### kb_uploads stuck in `processing` forever
 
-Two causes:
+The poller ends a row by itself in these cases (`klai-portal/backend/app/services/kb_upload_poller.py`):
 
-1. **docling-serve restarted and lost the task.** `task_id` no longer
-   resolves; poller logs `docling result fetch failed`. Solution:
-   manual UPDATE to `failed` so the user can re-upload, then ask the
-   user to re-submit.
-2. **Poller stopped.** Check `kb_upload_poller_started` log on
-   portal-api startup. Restart portal-api if missing.
+- A row that docling keeps reporting as not finished is failed with
+  `processing_deadline_exceeded` after 3 hours (`:57`), logged as
+  `kb_upload_processing_deadline_exceeded` (`:62-90`).
+- A failed status call to docling-serve fails the row with `docling_unreachable`
+  (`:126-131`).
+- A failed result fetch after docling reported success logs
+  `kb_upload_result_fetch_failed` and fails the row with `extraction_failed`
+  (`:155-165`).
+- An `ingesting` row whose result is gone fails with `docling_result_not_found`
+  (`:196-201`, next section).
+
+A row that stays in `processing` or `ingesting` past those limits means the
+**poller stopped**. Check the `kb_upload_poller_started` log on portal-api
+startup and restart portal-api if it is missing. Only for a row the poller cannot
+see, mark it `failed` by hand so the user can re-upload.
 
 Manual recovery query:
 
@@ -163,8 +172,8 @@ DOCLING_SERVE_RESULT_REMOVAL_DELAY: "86400"
 Diagnose the live container environment:
 
 ```bash
-ssh core-01 "docker exec klai-core-docling-serve-1 sh -c \
-    'env | grep DOCLING_SERVE_ | sort'"
+docker exec klai-core-docling-serve-1 sh -c \
+    'env | grep DOCLING_SERVE_ | sort'
 ```
 
 If the variables are missing after a merge, redeploy the compose stack or
@@ -222,7 +231,14 @@ enriched. It keeps its raw chunks and its artifact extra carries:
 If a batch fails permanently the chain stops there: chunks before it carry
 their context, chunks after it stay raw (still dense and sparse). Requeue the
 artifact with `knowledge_ingest.scripts.requeue_failed_artifacts`; that starts
-over at chunk 0.
+over at chunk 0. The script selects active artifacts with `index_status = 'failed'`
+(`klai-knowledge-ingest/knowledge_ingest/scripts/requeue_failed_artifacts.py:24-27,64-80`),
+and a failed enrichment only sets that status for an upload without a source
+connector whose first batch failed (`klai-knowledge-ingest/knowledge_ingest/enrichment_tasks.py:485-500,1233-1253`).
+A later batch that failed, or a connector document, stays `synced` and is not
+found by the script. For an upload whose later batch failed, the reindex route
+re-enqueues enrichment (`POST /knowledge/v1/artifacts/{id}/reindex`,
+`klai-knowledge-ingest/knowledge_ingest/routes/kb_sources.py:243-300`).
 
 ### Chunks without a sparse vector
 
@@ -278,15 +294,16 @@ VictoriaLogs queries:
 
 ## Archive pipeline (`.zip` / `.tar`)
 
-Archive files are transport containers, not documents. Klai should never send
-the archive itself to Docling or index it as one artifact. The intended flow is:
+Archive files are transport containers, not documents. The archive itself is
+never sent to Docling or indexed as one artifact. The flow
+(`klai-portal/backend/app/api/app_knowledge_sources.py:579-640`):
 
 1. Preflight archive metadata before decompression where possible.
 2. Reject the whole archive if any member is not acceptable.
-3. Stream surviving member payloads into disk-backed staging.
-4. Run the same per-file validation as direct uploads.
-5. Only after every member is valid, create one upload row and queued downstream
-   job per member with a shared `archive_batch_id`.
+3. Stream member payloads into spooled temporary files (disk above 1 MB).
+4. Run the same per-file validation as direct uploads on every member.
+5. Only after every member is valid, dispatch each member through the same
+   dispatcher as a direct upload, one upload row per member.
 
 This means unsupported files inside an archive are not skipped. A zip containing
 `notes.md`, `handbook.pdf`, and `script.exe` is rejected entirely. This is
@@ -297,9 +314,8 @@ normalized paths, tar member types, and declared sizes. It cannot fully prove
 compression ratio or magic-byte correctness. Those checks still happen while
 streaming the member content.
 
-`app/services/archive.py` should implement stdlib-only safe extraction with
-sunzip-style guards. Member payloads must be staged on disk or object storage,
-not accumulated in process memory.
+`klai-portal/backend/app/services/archive.py` does stdlib-only safe extraction
+with sunzip-style guards; its caps are the constants at the top of that file.
 
 | Guard | Value |
 |---|---|
@@ -326,16 +342,6 @@ Complexity units:
 | `.pdf` up to 10 MB | 10 |
 | `.pdf` above 10 MB | 10 + 1 per additional started 10 MB |
 
-Accepted entries recurse through the same direct upload dispatcher with
-`allow_archive=False`. Text entries complete through direct ingest; Docling
-entries enter the Docling queue. The UI should show one source row per member,
-not one source row for the archive.
-
-## Out of scope (next iterations)
-
-- `.doc` legacy support — needs a `libreoffice-headless` sidecar
-  container to convert to `.docx` before docling.
-- Garage S3 backing store — current architecture uses docling-serve's
-  internal task storage. A future iteration can persist the original
-  binary in Garage for audit + re-process at the cost of one extra
-  hop. See SPEC-KB-FILE-UPLOAD-001 §7 for the design.
+Accepted entries go through the same direct upload dispatcher with
+`allow_archive=False`. Text entries complete through direct ingest; Docling entries enter the Docling
+queue. Each member gets its own source row; the archive does not.
