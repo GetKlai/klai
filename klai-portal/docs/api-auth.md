@@ -14,14 +14,14 @@ configuration variable names, not values.
 | Surface | How the caller proves itself | Checked by | Identity the handler receives |
 |---|---|---|---|
 | Portal SPA (browser) | `__Secure-klai_session` cookie; `X-CSRF-Token` header on state-changing methods | `SessionMiddleware` (`klai-portal/backend/app/middleware/session.py:144-174`), then `get_caller` (`klai-portal/backend/app/core/permissions.py:315-336`) | `UserPermissions` for the session's org (`permissions.py:62-108`) |
-| BFF proxy to scribe-api and the docs app (`/api/scribe/*`, `/api/docs/*`) | The browser session; portal-api forwards the session's access token as Bearer plus portal-verified identity headers | `get_session` and `verify_bff_session_identity` (`klai-portal/backend/app/api/proxy.py:207-260`, `:375-394`) | Upstream receives `Authorization`, `X-Internal-Secret` and `X-Klai-Verified-User-Id/Org-Id/Org-Slug` (`proxy.py:180-189`) |
+| BFF proxy to scribe-api and the docs app (`/api/scribe/*`, `/api/docs/*`) | The browser session; portal-api forwards the session's access token as Bearer plus portal-verified identity headers | `get_session` and `verify_bff_session_identity` (`klai-portal/backend/app/api/proxy.py:233-330`, `:418-440`) | Upstream receives `Authorization`, `X-Internal-Secret` and `X-Klai-Verified-User-Id/Org-Id/Org-Slug` (`proxy.py:187-194`) |
 | Partner API `/partner/v1/*` | `Authorization: Bearer pk_live_<40 hex>` | `get_partner_key` (`klai-portal/backend/app/api/partner_dependencies.py:248-330`) | `PartnerAuthContext`: key id, org, permissions, KB access, rate limit (`partner_dependencies.py:54-68`) |
 | Chat widget on a customer site | A widget session JWT (HS256, one hour) obtained from `GET /partner/v1/widget-config`, then sent as Bearer | `get_partner_key`, JWT branch `_auth_via_session_token` (`partner_dependencies.py:105-200`) | `PartnerAuthContext` for the widget's org and KBs |
 | Tenant LibreChat | The tenant's internal-chat partner key (`KLAI_CHAT_API_KEY`) against `/partner/v1` | `get_partner_key` | `PartnerAuthContext` with the `internal_chat` permission |
 | Internal services calling `/internal/*` | `Authorization: Bearer <INTERNAL_SECRET>`; one route may accept a second, narrower secret | `_require_internal_token` (`klai-portal/backend/app/api/internal.py:305-345`) | No user; the handler resolves the org from path or body and sets the tenant itself |
 | Services verifying a user or tenant claim | `POST /internal/identity/verify`, `/internal/identity/verify-tenant`, `/internal/mcp-token/verify`, through `klai-libs/identity-assert` | `_require_internal_token` plus the identity verifier (`internal.py:2116`, `:2408`, `:2800`) | A verified or denied decision for the claimed user and org |
 | portal-api calling knowledge-ingest and retrieval-api | `X-Internal-Secret` with a separate secret per target | The target service | `org_id` as the Zitadel org id string (`klai-portal/backend/app/services/retrieval_context.py:830-840`) |
-| Docs app (klai-docs) | A Zitadel access token verified against the issuer's JWKS, or `X-Internal-Secret` with `DOCS_INTERNAL_SECRET` plus `X-User-ID` | `requireAuthOrService` and `requireOrgAccess` (`klai-docs/lib/auth.ts:34-85`, `:111-131`) | The token payload (`sub`) and the org row for the slug in the path |
+| Docs app (klai-docs) | `X-Internal-Secret` matching `DOCS_INTERNAL_SECRET` together with the portal's `X-Klai-Verified-User-Id`, `-Org-Id` and `-Org-Slug` headers; or that secret with `X-User-ID` for service callers; or a Zitadel access token verified against the issuer's JWKS | `requireAuthOrService`, `callerMayAccessOrg` and `requireOrgAccess` (`klai-docs/lib/auth.ts:72-95`, `:102-108`, `:134-153`) | The verified user, limited to the verified organisation slug; or the service's acting user; or the token payload (`sub`) and the org row for the slug in the path |
 | MCP clients (knowledge MCP) | An access token `klai_mcp_...` issued by portal-api acting as OAuth 2.1 authorisation server | `klai-knowledge-mcp` calls `/internal/mcp-token/verify` | The user, org and scope bound to the token row |
 | Slack (klai-slack) | Towards portal-api: `INTERNAL_SECRET` on `/internal/slack/*`; for questions: a partner key with the `slack` permission | `_require_internal_token` (`klai-portal/backend/app/api/internal_slack.py:115-182`); `get_partner_key` | Org from the signed link token; `PartnerAuthContext` for chat |
 | Shield browser extension | `Authorization: Bearer ks_live_...`, obtained through a one-time `ks_code_...` exchange | `get_shield_auth` (`klai-portal/backend/app/api/shield.py:162-200`) | The user in the platform org who created the token |
@@ -38,12 +38,12 @@ one of three dependencies:
   the `SessionContext` (session id, Zitadel user id, access token, CSRF token,
   expiry, org id; `klai-portal/backend/app/core/session.py:35-66`) or answers
   401 `cookie_required`.
-- `get_current_user_id` (`klai-portal/backend/app/api/auth.py:620-633`) returns
+- `get_current_user_id` (`klai-portal/backend/app/api/auth.py:634-657`) returns
   only the Zitadel user id after a userinfo check. The MFA enrolment routes use
   it.
 - `get_caller` and the gates built on it (`get_caller_at_least`,
   `require_capability`, `require_product`, `require_platform_unlocked`,
-  `require_platform_admin`; `permissions.py:360-476`) return `UserPermissions`
+  `require_platform_admin`; `permissions.py:323-484`) return `UserPermissions`
   and set the row-level-security tenant for the request.
 
 All three get their credential from the session. `bearer()` turns the session
@@ -96,9 +96,12 @@ connector, knowledge-ingest, knowledge MCP, retrieval-api and scribe-api
 depend on it. Membership in `portal_users` is the source of truth for which
 org a user belongs to.
 
-`klai-libs/service-auth` contains an OAuth client-credentials token client
-(`klai-libs/service-auth/klai_service_auth/client.py:1-25`). The only runtime
-import is `project_role_scopes`, used by retrieval-api to read scopes
+`klai-libs/service-auth` holds `project_role_scopes`, the receiver-side parser
+for the roles a Zitadel access token grants to a project
+(`klai-libs/service-auth/klai_service_auth/claims.py:22`), and an operator
+script that creates a Zitadel service account
+(`klai-libs/service-auth/scripts/zitadel-create-service-account.py`). The only
+runtime import is `project_role_scopes`, used by retrieval-api to read scopes
 (`klai-retrieval-api/retrieval_api/middleware/auth.py:41`).
 
 ### Docs app
@@ -106,11 +109,25 @@ import is `project_role_scopes`, used by retrieval-api to read scopes
 The portal SPA reaches the docs app only through the BFF proxy at
 `/api/docs/*`; the reverse proxy answers 404 for the docs app's own API path
 and serves only the public reader directly (`deploy/caddy/Caddyfile:504-520`).
-Inside the docs app, `requireAuthOrService` accepts `X-Internal-Secret`
-matching `DOCS_INTERNAL_SECRET` with an `X-User-ID`, which portal-api's
-provisioning client uses (`klai-portal/backend/app/services/docs_client.py:40`),
-and otherwise verifies the Bearer token with `jose` against the issuer's JWKS.
-`requireOrgAccess` then resolves the organisation from the slug in the path.
+Inside the docs app, `requireAuthOrService` first checks `X-Internal-Secret`
+against `DOCS_INTERNAL_SECRET` in constant time. With the secret, a request
+that carries the `X-Klai-Verified-*` headers is a proxied user and reaches only
+the organisation slug the portal verified; a request with `X-User-ID` is a
+service caller, which is how portal-api's provisioning client calls it
+(`klai-portal/backend/app/services/docs_client.py:40`). Without the secret, the
+Bearer token is verified with `jose` against the issuer's JWKS
+(`klai-docs/lib/auth.ts:72-95`). `callerMayAccessOrg` compares the verified slug
+or the token's organisation with the organisation row, and `requireOrgAccess`
+resolves that row from the slug in the path (`klai-docs/lib/auth.ts:102-153`).
+Each identification through the assertion or the Bearer token logs one
+`docs_auth_identified` line with the kind only (`klai-docs/lib/auth.ts:40-42`).
+The portal proxy sends the internal secret setting of portal-api, not
+`DOCS_INTERNAL_SECRET` (`klai-portal/backend/app/api/proxy.py:191`,
+`klai-portal/backend/app/core/config.py:129,169`), so a proxied editor request
+is identified by its Bearer token today; the portal also drops any
+client-supplied identity headers and refuses a path that names another
+organisation than the session's, answering 403 with the reason `org_mismatch`
+(`klai-portal/backend/app/api/proxy.py:79-102`, `:198-216`, `:320-335`).
 The public reader needs no login and returns 404 for personal KBs and KBs with
 `visibility = private`
 (`klai-docs/app/(reader)/[...path]/page.tsx:116`).
@@ -139,7 +156,13 @@ portal-api is an OAuth 2.1 authorisation server for MCP clients
 | `POST /oauth/authorize` | Consent submit, protected by its own form CSRF token stored in Redis |
 | `POST /oauth/token` | Code exchange and refresh |
 
-The consent page requires a BFF session. Approval issues an authorisation
+The consent page requires a BFF session: without one, the browser is sent
+through the portal's sign-in (`/api/auth/oidc/start`) and returns to the same
+consent request, which is the one path whose query may carry URLs in the return
+target (`klai-portal/backend/app/api/mcp_oauth.py:366-373`,
+`klai-portal/backend/app/api/auth_bff.py:426`, `:470`). The code is issued for
+the organisation of the session, and only while that membership is active
+(`_resolve_user_org`, `mcp_oauth.py:286-300`). Approval issues an authorisation
 code (60 seconds) that the client exchanges, with its PKCE verifier, for an
 access token `klai_mcp_...` and a refresh token `klai_mcp_rt_...`, scope
 `mcp:knowledge` (`klai-portal/backend/app/services/mcp_oauth.py:60-80`). The
@@ -185,33 +208,41 @@ All of these are served by portal-api on the login host and the tenant hosts.
 
 ### POST /api/auth/login
 
-Request `{email, password, auth_request_id}`; `auth_request_id` is the
-`authRequest` value Zitadel put on `/login`.
+Request `{email, password, auth_request_id, accepts_email_code}`;
+`auth_request_id` is the `authRequest` value Zitadel put on `/login`, and
+`accepts_email_code` (default false) is sent by a login page that can show the
+e-mail code step (`auth.py:1016-1023`, handler `auth.py:1411-1578`). A user who
+has registered a second factor always gets one of the two second-step answers
+below, under every organisation policy.
 
 | Status | Body | Meaning |
 |---|---|---|
 | 200 | `{"callback_url": "...", "status": "ok"}` | Done; the browser follows `callback_url` |
-| 200 | `{"status": "totp_required", "temp_token": "..."}` | Continue with `/api/auth/totp-login` within 300 seconds |
+| 200 | `{"status": "totp_required", "temp_token": "..."}` | Continue with `/api/auth/totp-login` within 300 seconds, with the authenticator code |
+| 200 | `{"status": "otp_email_required", "temp_token": "..."}` | Zitadel has mailed an 8-digit code; continue with `/api/auth/totp-login` within 300 seconds |
 | 200 | `{"status": "select_workspace", "ref": "..."}` | Continue at `/select-workspace?ref=...` |
 | 401 | `{"detail": "Email address or password is incorrect"}` | Wrong credentials |
 | 409 | `{"detail": "auth_request_stale"}` | Zitadel already handled this auth request; restart at `/` |
 | 400 | `{"detail": "Login request expired, please try again"}` | Zitadel no longer knows the auth request |
-| 503 | | Zitadel unavailable for the user or policy lookup |
+| 409 | `{"detail": "Please reload this page and sign in again."}` | The user's second factor is the e-mail code and the request did not send `accepts_email_code` |
+| 503 | | Zitadel unavailable for the user lookup, for the registered-factor lookup (under every policy) or for sending the e-mail code |
 
 ### POST /api/auth/totp-login
 
-Request `{temp_token, code, auth_request_id}`. Answers like `/login` on
+Request `{temp_token, code, auth_request_id}`; the code is checked on the
+Zitadel session as the factor the login stored with the pending state, an
+authenticator code or the mailed e-mail code. Answers like `/login` on
 success. A wrong code answers 400 `Invalid code, please try again`; the fifth
 wrong code ends the pending login with 429; an unknown or expired
 `temp_token` answers 400 `Session expired, please log in again`
-(`auth.py:1569-1699`).
+(`auth.py:1581-1714`).
 
 ### POST /api/auth/sso-complete
 
 Request `{auth_request_id}`, with the `klai_sso` cookie. 200 with
 `callback_url` when the stored Zitadel session is still valid; 401 when there
 is no cookie, the cookie cannot be decrypted or Zitadel rejects the session
-(`auth.py:1702-1750`).
+(`auth.py:1717-1765`).
 
 ### Second-factor enrolment
 
@@ -223,10 +254,16 @@ All require a signed-in user.
 | POST | `/api/auth/totp/confirm` | `{code}` | 204 |
 | POST | `/api/auth/passkey/setup` | none | `{passkey_id, options}` |
 | POST | `/api/auth/passkey/confirm` | `{passkey_id, public_key_credential, passkey_name}` | 204 |
-| POST | `/api/auth/email-otp/setup` | none | 204, Zitadel mails a code |
-| POST | `/api/auth/email-otp/resend` | none | 204 |
-| POST | `/api/auth/email-otp/confirm` | `{code}` | 204 |
+| POST | `/api/auth/email-otp/setup` | none | 204; registers the factor as unconfirmed and Zitadel mails an 8-digit code (`auth.py:2097`) |
+| POST | `/api/auth/email-otp/resend` | none | 204; mails a new code (`auth.py:2133`) |
+| POST | `/api/auth/email-otp/confirm` | `{code}` | 204 once the code checks out; 400 for a wrong code, 410 for an expired one (`auth.py:2169`) |
 
+The e-mail code factor counts as a second factor only after `confirm`; an
+enrolment that is still unconfirmed at the next login is removed there
+([auth-flows.md](auth-flows.md), section 4). The second factors the
+login verifies are the authenticator code and the e-mail code
+(`klai-portal/backend/app/services/zitadel.py:843-857`); a passkey can be
+enrolled but does not count as one.
 ### Password and e-mail
 
 | Method | Path | Body | Response |
