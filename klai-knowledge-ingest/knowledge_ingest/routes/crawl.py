@@ -165,6 +165,16 @@ class AuthProbeRequest(BaseModel):
     url: str
     org_id: str = ""
     cookies: list[dict] | None = None
+    # Hosts the site signs in through. When set, the probe also proves on the
+    # real site whether Klai can sign in again by itself (``renewal``).
+    auth_chain_hosts: list[str] = []
+
+
+class RenewalProof(BaseModel):
+    """Whether Klai signed in to the site again with only the sign-in hosts' cookies."""
+
+    can_renew: bool
+    reason: str | None = None
 
 
 class AuthProbeResponse(BaseModel):
@@ -185,6 +195,7 @@ class AuthProbeResponse(BaseModel):
     match_reasons: list[str] = []
     word_count: int
     auth_guard: AuthGuardSuggestion | None = None
+    renewal: RenewalProof | None = None
 
 
 # Minimum word count for a crawl result to be considered usable content.
@@ -840,7 +851,7 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
     # threshold. The gate itself is the proof, judged by the same classifier
     # the keep-alive applies on every tick, so the wizard and the keep-alive
     # cannot disagree about one session.
-    from knowledge_ingest.routes.crawl_sync import _classify_probe
+    from knowledge_ingest.routes.crawl_sync import _classify_probe, prove_renewal
 
     gated_without = not _classify_probe(without_cookies, None)[0]
     gated_with = not _classify_probe(with_cookies, None)[0]
@@ -862,6 +873,12 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
     elif gated_without:
         match_reasons.append("login_gate_removed_by_cookies")
 
+    renewal = (
+        await prove_renewal(body.url, body.cookies, body.auth_chain_hosts)
+        if body.auth_chain_hosts
+        else None
+    )
+
     if not significant:
         # Cookies have no measurable effect. The wizard MUST NOT green-light
         # this — auth-probe lying like the old heuristic did is what got us
@@ -878,6 +895,7 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
             match_reasons=match_reasons,
             word_count=with_cookies.word_count,
             auth_guard=None,
+            renewal=renewal,
         )
 
     # Cookies authenticate. Build auth_guard for downstream cron-sync use:
@@ -912,6 +930,7 @@ async def auth_probe(body: AuthProbeRequest, request: Request) -> AuthProbeRespo
         match_reasons=match_reasons,
         word_count=with_cookies.word_count,
         auth_guard=auth_guard,
+        renewal=renewal,
     )
 
 
