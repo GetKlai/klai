@@ -105,11 +105,11 @@ groups:
       # dead-man's switch for nights where the worker never logs any
       # reconcile event.
       #
-      # State on 2026-10-23: this has fired every day for 30 days on the same
-      # 17 discrepancies (8 artifacts missing in Qdrant, 9 orphaned in Qdrant,
-      # out of 3,160 active artifacts), unchanged from run to run. The
-      # condition is real and stays an email; it does not page. Cleaning up the
-      # 17 rows is the way to make the alert go quiet.
+      # History: until October 2026 this fired every day on the same 17
+      # discrepancies (8 artifacts missing in Qdrant, 9 orphaned in Qdrant, out
+      # of 3,160 active artifacts). They have since been cleaned up: the run of
+      # 2026-11-12 reported 0 discrepancies on 3,258 active artifacts. The
+      # condition is real and stays an email; it does not page.
       #
       # Since 2026-11 the same event also carries the graph check: status covers
       # both, and discrepancies_total (Qdrant) vs graph_lost_extractions (graph)
