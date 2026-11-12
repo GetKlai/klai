@@ -227,6 +227,42 @@ class KnowledgeIngestClient:
         logger.info("Deleted stale connector document: %s", source_ref)
         return response.json()["artifacts_deleted"] > 0
 
+    async def list_connector_source_refs(
+        self,
+        *,
+        org_id: str,
+        kb_slug: str,
+        source_connector_id: str,
+    ) -> set[str]:
+        """Every source_ref knowledge-ingest stores for this connector.
+
+        Follows the keyset cursor until a short page; any HTTP error raises, so
+        a failed read is never mistaken for an empty store.
+        """
+        refs: set[str] = set()
+        after = ""
+        while True:
+            response = await self._client.get(
+                "/ingest/v1/connector/source-refs",
+                params={
+                    "org_id": org_id,
+                    "kb_slug": kb_slug,
+                    "connector_id": source_connector_id,
+                    "after": after,
+                    "limit": 1000,
+                },
+                headers={
+                    "X-Internal-Secret": self._internal_secret,
+                    "X-Caller-Service": "connector",
+                },
+            )
+            response.raise_for_status()
+            page = response.json()
+            refs.update(page["source_refs"])
+            if not page.get("next_after"):
+                return refs
+            after = page["next_after"]
+
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()

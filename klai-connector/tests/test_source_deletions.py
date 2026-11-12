@@ -35,6 +35,7 @@ from app.adapters.google_drive import GoogleDriveAdapter
 from app.adapters.json_feed import JsonFeedAdapter
 from app.adapters.ms_docs import MsDocsAdapter
 from app.adapters.notion import NotionAdapter
+from app.clients.knowledge_ingest import KnowledgeIngestClient
 from app.core.enums import SyncStatus
 from app.services.portal_client import PortalConnectorConfig
 from app.services.sync_engine import SyncEngine
@@ -71,6 +72,7 @@ def _run() -> MagicMock:
 
 
 def _previous(known: list[str], **cursor: Any) -> MagicMock:
+    """The previous successful run; unless a test says otherwise the store holds the same refs."""
     previous = MagicMock()
     previous.cursor_state = {"synced_refs": known, **cursor}
     return previous
@@ -80,8 +82,14 @@ async def _sync(
     adapter: Any,
     portal_config: PortalConnectorConfig,
     previous: MagicMock | None,
+    *,
+    stored: set[str] | Exception | None = None,
 ) -> tuple[MagicMock, MagicMock]:
-    """Run one sync and return (sync_run, ingest_client)."""
+    """Run one sync and return (sync_run, ingest_client).
+
+    ``stored`` is what knowledge-ingest holds for the connector; it defaults to
+    the previous run's synced_refs.
+    """
     run = _run()
 
     @asynccontextmanager
@@ -98,6 +106,12 @@ async def _sync(
     ingest_client = MagicMock()
     ingest_client.ingest_document = AsyncMock(return_value=True)
     ingest_client.delete_connector_document = AsyncMock(return_value=True)
+    if stored is None:
+        stored = set(previous.cursor_state["synced_refs"]) if previous else set()
+    if isinstance(stored, Exception):
+        ingest_client.list_connector_source_refs = AsyncMock(side_effect=stored)
+    else:
+        ingest_client.list_connector_source_refs = AsyncMock(return_value=stored)
     engine = SyncEngine(
         session_maker=session_maker,
         registry=registry,
@@ -143,6 +157,7 @@ def _json(request: httpx.Request) -> dict[str, Any]:
 
 def _fake_adapter(refs: list[DocumentRef], *, complete: bool = True) -> MagicMock:
     adapter = MagicMock()
+    adapter.confirm_gone = AsyncMock(side_effect=lambda _connector, missing: set(missing))
     adapter.get_cursor_state = AsyncMock(return_value={})
     adapter.list_documents = AsyncMock(return_value=refs)
     adapter.listing_is_complete = MagicMock(return_value=complete)
@@ -168,7 +183,7 @@ async def test_listing_that_raised_deletes_nothing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_listing_with_known_documents_is_refused_and_keeps_the_baseline(
+async def test_empty_listing_while_the_store_holds_documents_is_refused(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """An expired token and an emptied source look the same; nothing is deleted."""
@@ -178,12 +193,11 @@ async def test_empty_listing_with_known_documents_is_refused_and_keeps_the_basel
 
     assert run.status == SyncStatus.COMPLETED
     ingest.delete_connector_document.assert_not_awaited()
-    assert run.cursor_state["synced_refs"] == ["ref-a", "ref-b"]
     assert run.error_details == [
-        {"warning": "stale_cleanup_refused_empty", "stale_cleanup_refused": True, "previous_ref_count": 2}
+        {"warning": "stale_cleanup_refused_empty", "stale_cleanup_refused": True, "stored_ref_count": 2}
     ]
     refused = next(r for r in caplog.records if getattr(r, "event", None) == "stale_cleanup_refused_empty")
-    assert refused.previous_ref_count == 2
+    assert refused.stored_ref_count == 2
 
 
 @pytest.mark.asyncio
@@ -192,12 +206,87 @@ async def test_incomplete_listing_deletes_nothing_and_a_later_complete_one_does(
         _fake_adapter([_doc("ref-a")], complete=False), _portal_config("notion", {}), _previous(["ref-a", "ref-b"])
     )
     ingest.delete_connector_document.assert_not_awaited()
-    assert first.cursor_state["synced_refs"] == ["ref-a", "ref-b"]
+    ingest.list_connector_source_refs.assert_not_awaited()
 
     _second, ingest = await _sync(
-        _fake_adapter([_doc("ref-a")]), _portal_config("notion", {}), _previous(first.cursor_state["synced_refs"])
+        _fake_adapter([_doc("ref-a")]),
+        _portal_config("notion", {}),
+        _previous(first.cursor_state["synced_refs"]),
+        stored={"ref-a", "ref-b"},
     )
     _assert_single_scoped_delete(ingest, "ref-b")
+
+
+@pytest.mark.asyncio
+async def test_stale_complete_flag_from_an_earlier_run_never_deletes() -> None:
+    """A listing path that records nothing must not inherit True from the run before."""
+
+    class _Adapter(NotionAdapter):
+        record = True
+
+        async def list_documents(self, connector: Any, cursor_context: Any = None) -> list[DocumentRef]:
+            if self.record:
+                self._record_listing(connector, complete=True)
+            return [_doc("ref-a")]
+
+        async def get_cursor_state(self, connector: Any) -> dict[str, Any]:
+            return {}
+
+        async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
+            return b"body"
+
+        async def confirm_gone(self, connector: Any, source_refs: list[str]) -> set[str]:
+            return set(source_refs)
+
+    adapter = _Adapter(MagicMock())
+    _first, ingest = await _sync(adapter, _portal_config("notion", {}), _previous(["ref-a", "ref-b"]))
+    _assert_single_scoped_delete(ingest, "ref-b")
+
+    adapter.record = False
+    _second, ingest = await _sync(
+        adapter, _portal_config("notion", {}), _previous(["ref-a"]), stored={"ref-a", "ref-c"}
+    )
+
+    ingest.delete_connector_document.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_document_the_store_holds_but_no_run_remembered_is_removed() -> None:
+    """The diff is against the store, so a document deleted before any run noticed still goes."""
+    _run_, ingest = await _sync(
+        _fake_adapter([_doc("ref-a")]), _portal_config("notion", {}), _previous(["ref-a"]), stored={"ref-a", "ref-old"}
+    )
+
+    _assert_single_scoped_delete(ingest, "ref-old")
+    ingest.list_connector_source_refs.assert_awaited_once_with(
+        org_id=ORG_ID, kb_slug=KB_SLUG, source_connector_id=str(CONNECTOR_ID)
+    )
+
+
+@pytest.mark.asyncio
+async def test_store_read_failure_deletes_nothing() -> None:
+    run, ingest = await _sync(
+        _fake_adapter([_doc("ref-a")]),
+        _portal_config("notion", {}),
+        _previous(["ref-a", "ref-b"]),
+        stored=RuntimeError("knowledge-ingest unavailable"),
+    )
+
+    assert run.status == SyncStatus.COMPLETED
+    ingest.delete_connector_document.assert_not_awaited()
+    assert run.error_details[0]["warning"] == "stale_cleanup_store_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_refs_the_adapter_does_not_confirm_as_gone_are_kept() -> None:
+    adapter = _fake_adapter([_doc("ref-a")])
+    adapter.confirm_gone = AsyncMock(return_value={"ref-c"})
+
+    _run_, ingest = await _sync(adapter, _portal_config("notion", {}), _previous(["ref-a", "ref-b", "ref-c"]))
+
+    _assert_single_scoped_delete(ingest, "ref-c")
+    adapter.confirm_gone.assert_awaited_once()
+    assert adapter.confirm_gone.await_args.args[1] == ["ref-b", "ref-c"]
 
 
 @pytest.mark.asyncio
@@ -225,20 +314,6 @@ async def test_baseline_is_read_for_this_connector_only() -> None:
     compiled = statement.compile(dialect=postgresql.dialect())
     assert "sync_runs.connector_id = %(connector_id_1)s" in str(compiled)
     assert compiled.params["connector_id_1"] == other_connector
-
-
-@pytest.mark.asyncio
-async def test_unchanged_tree_sha_skip_carries_the_baseline_forward() -> None:
-    """Without it, the run after a skip knows no refs and never finds a deleted file."""
-    adapter = _fake_adapter([])
-    adapter.get_cursor_state = AsyncMock(return_value={"tree_sha": "c1", "path_filter": None})
-
-    run, _ingest = await _sync(
-        adapter, _portal_config("github", {}), _previous(["ref-a"], tree_sha="c1", path_filter=None)
-    )
-
-    adapter.list_documents.assert_not_awaited()
-    assert run.cursor_state == {"tree_sha": "c1", "path_filter": None, "synced_refs": ["ref-a"]}
 
 
 @pytest.mark.asyncio
@@ -282,10 +357,24 @@ def _notion_adapter(monkeypatch: pytest.MonkeyPatch, handler: Any) -> NotionAdap
     return adapter
 
 
-def _search(pages: list[dict[str, Any]]) -> Any:
+def _notion_error(status: int, code: str) -> httpx.Response:
+    return httpx.Response(status, json={"object": "error", "status": status, "code": code, "message": "x"})
+
+
+def _search(pages: list[dict[str, Any]], retrieve: dict[str, Any] | None = None) -> Any:
+    """Serve search with *pages*; a direct retrieve answers from *retrieve*, else
+    from the search pages, else 404 object_not_found."""
+    by_id = {page["id"]: page for page in pages} | (retrieve or {})
+
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/v1/search"
-        return httpx.Response(200, json={"results": pages, "has_more": False, "next_cursor": None})
+        if request.url.path == "/v1/search":
+            return httpx.Response(200, json={"results": pages, "has_more": False, "next_cursor": None})
+        found = by_id.get(request.url.path.rsplit("/", 1)[-1])
+        if found is None:
+            return _notion_error(404, "object_not_found")
+        if isinstance(found, httpx.Response):
+            return found
+        return httpx.Response(200, json=found)
 
     return handler
 
@@ -325,6 +414,54 @@ async def test_notion_trashed_page_is_removed(monkeypatch: pytest.MonkeyPatch, t
 
 
 @pytest.mark.asyncio
+async def test_notion_page_missing_from_search_but_still_in_scope_is_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Search lags; a page that still exists and still belongs must survive its absence."""
+    lagging = _notion_page("page-lagging")
+    adapter = _notion_adapter(monkeypatch, _search([_notion_page("page-live")], {"page-lagging": lagging}))
+
+    _run_, ingest = await _sync(
+        adapter, _notion_config(database_ids=["db-a"]), _previous(["page-live", "page-lagging"])
+    )
+
+    ingest.delete_connector_document.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_notion_page_missing_from_search_and_now_trashed_is_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+    trashed = _notion_page("page-x", in_trash=True)
+    adapter = _notion_adapter(monkeypatch, _search([_notion_page("page-live")], {"page-x": trashed}))
+
+    _run_, ingest = await _sync(adapter, _notion_config(), _previous(["page-live", "page-x"]))
+
+    _assert_single_scoped_delete(ingest, "page-x")
+
+
+@pytest.mark.asyncio
+async def test_notion_page_missing_from_search_and_outside_the_filter_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    moved = _notion_page("page-x", database_id="db-b")
+    adapter = _notion_adapter(monkeypatch, _search([_notion_page("page-live")], {"page-x": moved}))
+
+    _run_, ingest = await _sync(adapter, _notion_config(database_ids=["db-a"]), _previous(["page-live", "page-x"]))
+
+    _assert_single_scoped_delete(ingest, "page-x")
+
+
+@pytest.mark.parametrize("status,code", [(500, "internal_server_error"), (429, "rate_limited")])
+@pytest.mark.asyncio
+async def test_notion_confirmation_that_fails_keeps_the_page(
+    monkeypatch: pytest.MonkeyPatch, status: int, code: str
+) -> None:
+    flaky = {"page-x": _notion_error(status, code)}
+    adapter = _notion_adapter(monkeypatch, _search([_notion_page("page-live")], flaky))
+
+    _run_, ingest = await _sync(adapter, _notion_config(), _previous(["page-live", "page-x", "page-gone"]))
+
+    _assert_single_scoped_delete(ingest, "page-gone")
+
+
+@pytest.mark.asyncio
 async def test_notion_listing_cut_by_max_pages_deletes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if _json(request).get("start_cursor"):
@@ -338,7 +475,6 @@ async def test_notion_listing_cut_by_max_pages_deletes_nothing(monkeypatch: pyte
 
     assert run.status == SyncStatus.COMPLETED
     ingest.delete_connector_document.assert_not_awaited()
-    assert "page-9" in run.cursor_state["synced_refs"]
 
 
 @pytest.mark.parametrize("status,code", [(500, "internal_server_error"), (429, "rate_limited")])
@@ -818,3 +954,43 @@ async def test_json_feed_group_gone_from_the_feed_is_removed(monkeypatch: pytest
     _run_, ingest = await _sync(adapter, config, _previous([live_ref, gone_ref]))
 
     _assert_single_scoped_delete(ingest, gone_ref)
+
+
+# -- Caller side of GET /ingest/v1/connector/source-refs -------------------------
+
+
+@pytest.mark.asyncio
+async def test_client_reads_every_page_of_stored_refs_for_the_connector() -> None:
+    seen: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/ingest/v1/connector/source-refs"
+        assert request.headers["X-Internal-Secret"] == "internal-secret"
+        assert request.headers["X-Caller-Service"] == "connector"
+        params = dict(request.url.params)
+        seen.append(params)
+        if params["after"] == "":
+            return httpx.Response(200, json={"source_refs": ["ref-a", "ref-b"], "next_after": "ref-b"})
+        return httpx.Response(200, json={"source_refs": ["ref-c"], "next_after": None})
+
+    client = KnowledgeIngestClient("http://knowledge-ingest", "internal-secret")
+    client._client = httpx.AsyncClient(base_url="http://knowledge-ingest", transport=httpx.MockTransport(handler))
+
+    refs = await client.list_connector_source_refs(org_id=ORG_ID, kb_slug=KB_SLUG, source_connector_id="c-1")
+
+    assert refs == {"ref-a", "ref-b", "ref-c"}
+    assert [(p["org_id"], p["kb_slug"], p["connector_id"], p["after"]) for p in seen] == [
+        (ORG_ID, KB_SLUG, "c-1", ""),
+        (ORG_ID, KB_SLUG, "c-1", "ref-b"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_client_raises_when_the_store_read_fails() -> None:
+    client = KnowledgeIngestClient("http://knowledge-ingest", "internal-secret")
+    client._client = httpx.AsyncClient(
+        base_url="http://knowledge-ingest", transport=httpx.MockTransport(lambda _r: httpx.Response(500))
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.list_connector_source_refs(org_id=ORG_ID, kb_slug=KB_SLUG, source_connector_id="c-1")

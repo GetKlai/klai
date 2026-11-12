@@ -2085,6 +2085,40 @@ async def list_artifacts_for_connector(
     return items, int(total or 0)
 
 
+async def list_connector_source_refs(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    after: str,
+    limit: int,
+) -> list[str]:
+    """One page of the distinct source_refs stored for a connector, ordered.
+
+    Rows of every version count, not only active ones: a connector delete that
+    closed the active row but failed on Qdrant or the graph leaves only closed
+    rows, and the connector must still see that ref to retry the delete.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT extra::jsonb->>'source_ref' AS source_ref
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND extra::jsonb->>'source_connector_id' = $3
+          AND extra::jsonb->>'source_ref' > $4
+        ORDER BY 1
+        LIMIT $5
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+        after,
+        limit,
+    )
+    return [str(row["source_ref"]) for row in rows]
+
+
 async def list_chunks_for_artifact(
     conn: asyncpg.Connection,
     org_id: str,

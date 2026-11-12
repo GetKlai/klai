@@ -313,6 +313,55 @@ class NotionAdapter(BaseAdapter):
         logger.info("Listed %d Notion pages (connector=%s)", len(refs), connector_id)
         return refs
 
+    async def confirm_gone(self, connector: Any, source_refs: list[str]) -> set[str]:
+        """Confirm each page missing from a search listing before it is deleted.
+
+        Notion's search index lags behind edits and sharing, so absence from
+        search is no proof a page is gone; a wrong delete drops the page from
+        answers and re-ingests it with all its model work on the next sync. A
+        page counts as gone only when Notion answers object_not_found, the page
+        is trashed, or it now falls outside the configured database filter. Any
+        other answer or error keeps it. A ``page_ids`` listing already retrieved
+        every page, so its missing refs need no second call.
+        """
+        cfg = self._extract_config(connector)
+        if cfg["page_ids"]:
+            return set(source_refs)
+        return await asyncio.to_thread(
+            self._confirm_gone_sync,
+            self._build_sync_client(cfg["access_token"]),
+            source_refs,
+            set(cfg["database_ids"]),
+        )
+
+    @staticmethod
+    def _confirm_gone_sync(
+        client: RateLimitedNotionClient,
+        source_refs: list[str],
+        database_ids: set[str],
+    ) -> set[str]:
+        gone: set[str] = set()
+        for page_id in source_refs:
+            try:
+                page = client._execute_with_retry(  # noqa: SLF001
+                    f"retrieve page {page_id}",
+                    client.notion.pages.retrieve,
+                    page_id=page_id,
+                )
+            except APIResponseError as err:
+                if err.code == APIErrorCode.ObjectNotFound:
+                    gone.add(page_id)
+                else:
+                    logger.warning("Keeping Notion page %s: retrieve failed (%s)", page_id, err.code)
+                continue
+            except Exception:
+                logger.warning("Keeping Notion page %s: retrieve failed", page_id, exc_info=True)
+                continue
+            outside_filter = bool(database_ids) and page.get("parent", {}).get("database_id") not in database_ids
+            if _is_trashed(page) or outside_filter:
+                gone.add(page_id)
+        return gone
+
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
         """Fetch page content as plain-text bytes using notion-sync-lib.
 

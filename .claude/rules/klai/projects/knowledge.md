@@ -270,7 +270,7 @@ client first: it moves with the SDK, not with our code.
 
 ## Connector source deletions depend on a complete listing (HIGH)
 
-`sync_engine` deletes a previously synced ref that a listing no longer contains,
+`sync_engine` deletes a stored ref that a listing no longer contains,
 but only when `adapter.listing_is_complete(connector)` is True for that run. An
 adapter that swallows an error per item, stops at a cap, or reads a change feed
 must answer False, or every document it did not see is deleted from the KB.

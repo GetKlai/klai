@@ -276,29 +276,39 @@ All connector adapters call the same `POST /ingest/v1/document` endpoint that di
 use. A `source_ref` (`owner/repo:branch:path`) is used as a deduplication key so
 re-syncing the same content updates rather than duplicates.
 
-**Source deletions (klai-connector `sync_engine`).** Each successful run stores the refs it
-saw in `sync_runs.cursor_state.synced_refs`. The next run compares that baseline with its
-own listing; a ref that is no longer listed was deleted, trashed or unshared at the source
-and is removed through `DELETE /ingest/v1/connector/document` (all versions, vectors and
-graph episodes), scoped by organisation, knowledge base and connector id. A document outside
+**Source deletions (klai-connector `sync_engine`).** After a complete listing the connector
+reads every `source_ref` knowledge-ingest stores for the connector
+(`GET /ingest/v1/connector/source-refs`, keyset-paginated, org + KB + connector scoped, rows
+of every version so a half-finished delete is retried) and diffs it against the listing. A
+stored ref the source no longer lists was deleted, trashed or unshared there and is removed
+through `DELETE /ingest/v1/connector/document` (all versions, vectors and graph episodes).
+Because the diff is against the store, a document deleted before any run noticed, or one
+whose earlier delete failed, is found again on the next run; `synced_refs` in
+`sync_runs.cursor_state` only serves new-document detection. If the store read fails,
+nothing is deleted in that run (`stale_cleanup_store_unavailable` warning). Before deleting,
+the adapter may confirm each candidate (`BaseAdapter.confirm_gone`, default: missing means
+gone). Notion search listings do: the search index lags, so each missing page is retrieved
+and deleted only on `object_not_found`, a trash flag, or a page now outside the configured
+database filter; any other answer or error keeps it. A document outside
 a narrowed connector filter (fewer databases, spaces, tables, a tighter `path_filter`, a
 smaller folder or file selection) counts as gone; one inside the filter never does.
 
 Deletion runs only after a listing the adapter vouches for as complete
 (`BaseAdapter.listing_is_complete`, default `False`), because a partial listing would make
-every document it never saw look deleted. The guards:
+every document it never saw look deleted. The engine clears that flag before every listing
+(`forget_listing`), so a code path that records nothing can never inherit an earlier
+"complete". The guards:
 
 - a listing that raised (pagination error, rate limit after retries, timeout, a permission
-  error) fails the run; nothing is deleted and the baseline is not advanced;
-- a listing cut short by a per-run cap or truncated by the source deletes nothing, and the
-  refs it did not see stay in the baseline so a later complete listing still finds them;
+  error) fails the run and deletes nothing;
+- a listing cut short by a per-run cap or truncated by the source deletes nothing; the store
+  still holds what it did not see, so a later complete listing finds it;
 - one failed document in the run blocks every delete (and the run is `failed`);
-- an **empty** listing while the baseline holds refs is refused: an expired or narrowed token
+- an **empty** listing while the store holds refs is refused: an expired or narrowed token
   and an emptied source look the same. The run completes with warning
-  `stale_cleanup_refused_empty` in `error_details` and a log event of the same name, the
-  baseline is kept, and the refusal repeats until the source lists documents again or the
-  connector is removed;
-- a failed delete call does not fail the run; the ref stays in the baseline and the next run
+  `stale_cleanup_refused_empty` in `error_details` and a log event of the same name, and the
+  refusal repeats until the source lists documents again or the connector is removed;
+- a failed delete call does not fail the run; the ref is still stored, so the next run
   retries it (`stale_cleanup_delete_failed` warning).
 
 Every run logs one `source_deletions` event with `listing_complete`, `listed`, `known`,
@@ -319,8 +329,11 @@ listing that shrank is the source's own statement.
 | ms_docs (drive/site/folder) | Graph delta after the first run | **no**: incremental | — |
 | web_crawler | delegated to knowledge-ingest | own stale-page handling | — |
 
-The GitHub tree-SHA skip carries `synced_refs` forward, and a changed `path_filter` is never
-skipped, so a filter change takes effect without a new commit.
+The GitHub tree-SHA skip is not taken when `path_filter` changed, so a filter change takes
+effect without a new commit.
+
+The first complete sync of each connector after this change also removes documents that were
+deleted at the source before it, because the store still holds them.
 
 ### 1.3 Meeting transcripts via scribe-api
 

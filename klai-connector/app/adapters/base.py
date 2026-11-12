@@ -93,6 +93,15 @@ class BaseAdapter(ABC):
         """
         return str(connector.id) in vars(self).get("_complete_listings", ())
 
+    def forget_listing(self, connector: Any) -> None:
+        """Clear the completeness flag; the sync engine calls this before every listing.
+
+        Without it, a code path that returns without recording (an early return,
+        a mode added later, a connector switched to an incremental mode) would
+        inherit True from an earlier run and delete everything it did not list.
+        """
+        vars(self).get("_complete_listings", set()).discard(str(connector.id))
+
     def _record_listing(self, connector: Any, *, complete: bool) -> None:
         """Remember whether the listing just produced for *connector* was complete."""
         # Kept per instance (adapters are process singletons shared by all
@@ -102,6 +111,15 @@ class BaseAdapter(ABC):
             listings.add(str(connector.id))
         else:
             listings.discard(str(connector.id))
+
+    async def confirm_gone(self, connector: Any, source_refs: list[str]) -> set[str]:
+        """Return the subset of *source_refs*, missing from a complete listing, that is gone.
+
+        By default a ref missing from a complete listing is gone. An adapter whose
+        listing is complete but not a reliable proof of absence (a search index
+        that lags) overrides this to check each candidate at the source.
+        """
+        return set(source_refs)
 
     @abstractmethod
     async def list_documents(

@@ -74,6 +74,7 @@ def _session_maker(*runs: MagicMock) -> Any:
 def _adapter(refs: list[DocumentRef]) -> MagicMock:
     adapter = MagicMock()
     adapter.listing_is_complete = MagicMock(return_value=True)
+    adapter.confirm_gone = AsyncMock(side_effect=lambda _connector, missing: set(missing))
     adapter.get_cursor_state = AsyncMock(side_effect=lambda _connector: {})
     adapter.list_documents = AsyncMock(return_value=refs)
     adapter.fetch_document = AsyncMock(return_value=b"rendered feed document")
@@ -100,6 +101,10 @@ def _engine(
     portal_client.report_sync_status = AsyncMock()
     registry = MagicMock()
     registry.get = MagicMock(return_value=adapter)
+    # What knowledge-ingest stores for the connector; here the previous run's refs.
+    if isinstance(ingest_client, MagicMock) and not isinstance(ingest_client.list_connector_source_refs, AsyncMock):
+        stored = set(previous_run.cursor_state["synced_refs"]) if previous_run else set()
+        ingest_client.list_connector_source_refs = AsyncMock(return_value=stored)
     engine = SyncEngine(
         session_maker=_session_maker(*runs),
         registry=registry,
@@ -266,8 +271,6 @@ async def test_adapters_without_explicit_opt_in_never_delete_missing_refs() -> N
 
     assert current.status == SyncStatus.COMPLETED
     ingest_client.delete_connector_document.assert_not_awaited()
-    # The unseen ref stays in the baseline, so a later complete listing still finds it missing.
-    assert current.cursor_state["synced_refs"] == sorted([ref.source_ref, "provider:missing"])
 
 
 @pytest.mark.asyncio
@@ -316,8 +319,12 @@ async def test_failed_delete_completes_the_run_and_is_retried_next_sync(
     ingest_client.delete_connector_document = AsyncMock(
         side_effect=[RuntimeError("downstream delete failed"), True, True]
     )
+    # The store still holds the ref whose delete failed, so the next run finds it again.
+    ingest_client.list_connector_source_refs = AsyncMock(
+        side_effect=[{ref.source_ref, failing_ref, other_ref}, {ref.source_ref, failing_ref}]
+    )
     previous = MagicMock()
-    previous.cursor_state = {"synced_refs": [ref.source_ref, failing_ref, other_ref]}
+    previous.cursor_state = {"synced_refs": [ref.source_ref]}
     engine = _engine(runs=[first, second], adapter=adapter, ingest_client=ingest_client, previous_run=previous)
 
     caplog.set_level(logging.INFO)
@@ -331,16 +338,13 @@ async def test_failed_delete_completes_the_run_and_is_retried_next_sync(
     assert first.error_details == [
         {"warning": "stale_cleanup_delete_failed", "source_ref": failing_ref, "reason": "downstream delete failed"}
     ]
-    assert first.cursor_state["synced_refs"] == sorted([ref.source_ref, failing_ref])
     counts = next(r for r in caplog.records if getattr(r, "event", None) == "source_deletions")
     assert (counts.listed, counts.known, counts.removed, counts.kept, counts.delete_failed) == (1, 3, 1, 1, 1)
 
-    engine._get_last_successful_run = AsyncMock(return_value=first)  # type: ignore[method-assign]
     await engine.run_sync(CONNECTOR_ID, uuid.uuid4())
 
     assert ingest_client.delete_connector_document.await_args_list[-1].kwargs["source_ref"] == failing_ref
     assert second.status == SyncStatus.COMPLETED
-    assert second.cursor_state["synced_refs"] == [ref.source_ref]
 
 
 class _ContentHashDedupFake:
@@ -362,6 +366,9 @@ class _ContentHashDedupFake:
 
     async def delete_connector_document(self, **_kwargs: Any) -> None:
         return None
+
+    async def list_connector_source_refs(self, **_kwargs: Any) -> set[str]:
+        return set()
 
 
 @pytest.mark.asyncio

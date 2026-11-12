@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
-from knowledge_ingest import qdrant_store
+from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.identity import assert_caller_identity_tenant_only
@@ -143,3 +143,34 @@ async def get_graph_stats(
     except Exception:
         logger.warning("stats_graph_stats_failed", org_id=org_id, exc_info=True)
         return GraphStatsResponse()
+
+
+class ConnectorSourceRefsResponse(BaseModel):
+    source_refs: list[str]
+    next_after: str | None = None
+
+
+@router.get("/ingest/v1/connector/source-refs", response_model=ConnectorSourceRefsResponse)
+async def get_connector_source_refs(
+    request: Request,
+    org_id: str = Query(..., description="Zitadel org ID"),
+    kb_slug: str = Query(..., description="Knowledge base slug"),
+    connector_id: str = Query(..., description="Portal connector ID"),
+    after: str = Query("", description="Return refs ordered after this one (keyset cursor)"),
+    limit: int = Query(1000, ge=1, le=5000),
+) -> ConnectorSourceRefsResponse:
+    """The source_refs this store holds for one connector, one page at a time.
+
+    klai-connector diffs this set against its current source listing to find
+    documents deleted at the source. Unlike the stats routes above, errors are
+    not swallowed: an empty answer would read as "nothing stored", and the
+    caller deletes nothing when this call fails.
+    """
+    verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
+    async with tenant_scoped_connection(verified_org_id) as conn:
+        refs = await pg_store.list_connector_source_refs(
+            conn, verified_org_id, kb_slug, connector_id, after, limit
+        )
+    return ConnectorSourceRefsResponse(
+        source_refs=refs, next_after=refs[-1] if len(refs) == limit else None
+    )
