@@ -1,4 +1,4 @@
-"""Recovery helpers for reusing existing Zitadel identities in invite flows."""
+"""Keeping the one Zitadel identity of a person in step with their portal memberships."""
 
 from __future__ import annotations
 
@@ -8,13 +8,14 @@ from dataclasses import dataclass
 import structlog
 
 from app.core.config import settings
-from app.services.user_memberships import get_user_membership_summary
+from app.services.user_memberships import get_user_global_membership_state, get_user_membership_summary
 from app.services.zitadel import zitadel
 
 _slog = structlog.get_logger()
 
 _INVITE_READY_STATES = {"USER_STATE_ACTIVE"}
 _BROKEN_IMPORT_STATE = "USER_STATE_INITIAL"
+_INACTIVE_STATE = "USER_STATE_INACTIVE"
 
 
 class ZitadelIdentityRecoveryError(RuntimeError):
@@ -39,6 +40,28 @@ def _extract_zitadel_user_state(user_response: dict) -> str:
     if not isinstance(state, str) or not state:
         raise ZitadelIdentityRecoveryError("Zitadel user response did not include a user state")
     return state
+
+
+async def sync_identity_login(zitadel_user_id: str) -> None:
+    """Let the identity sign in exactly when one of its memberships is active.
+
+    Call after the ``portal_users`` change is committed. One identity serves
+    every organisation the person belongs to, so suspending or offboarding one
+    membership deactivates it only when no other membership is active, and
+    reactivating a membership reactivates it. Zitadel refuses ``_deactivate``
+    on an inactive user and ``_reactivate`` on one that is not inactive with a
+    failed precondition (internal/command/user.go: Errors.User.AlreadyInactive,
+    Errors.User.NotInactive), so the call follows the identity's current
+    state. An initial identity cannot be deactivated
+    (Errors.User.CantDeactivateInitial) and cannot sign in either (see
+    ``ZitadelClient.invite_user``), so it is left as it is.
+    """
+    has_active_membership = (await get_user_global_membership_state(zitadel_user_id)).active_count > 0
+    state = _extract_zitadel_user_state(await zitadel.get_user_by_id(zitadel_user_id))
+    if not has_active_membership and state not in (_INACTIVE_STATE, _BROKEN_IMPORT_STATE):
+        await zitadel.lock_user(zitadel_user_id=zitadel_user_id, org_id=settings.zitadel_portal_org_id)
+    elif has_active_membership and state == _INACTIVE_STATE:
+        await zitadel.unlock_user(zitadel_user_id=zitadel_user_id, org_id=settings.zitadel_portal_org_id)
 
 
 async def recover_existing_zitadel_identity_for_invite(

@@ -268,17 +268,19 @@ async def _resolve_caller_with_options(
             },
         )
 
-    # REQ-12 (Finding A-6, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): suspended
-    # users may NOT keep using a valid bearer token. 403 (not 401) so the
-    # client distinguishes "your token is fine, your account is paused"
-    # from "your token is invalid" — UX-actionable, no token-refresh loop.
+    # REQ-12 (Finding A-6, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): a suspended
+    # or offboarded membership may NOT keep using a valid bearer token. The
+    # identity stays valid while another membership is active, so this check,
+    # not the identity provider, ends access to this organisation. 403 (not
+    # 401) so the client distinguishes "your token is fine, your account is
+    # paused" from "your token is invalid": no token-refresh loop.
     # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
-    if perms.status == "suspended":
+    if perms.status != "active":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
-                "error_code": "user_suspended",
-                "message": "User account is suspended. Contact the organisation admin to reactivate.",
+                "error_code": f"user_{perms.status}",
+                "message": "User account is not active in this organisation. Contact the organisation admin.",
             },
         )
 

@@ -71,11 +71,10 @@ async def test_offboard_user_does_not_wipe_other_org_memberships() -> None:
     perms = make_perms(role="admin", user_id="admin-1", org_id=101)
 
     with (
-        patch("app.api.admin.users.zitadel") as mock_zitadel,
+        patch("app.api.admin.users.sync_identity_login", new=AsyncMock()),
         patch("app.api.admin.users.log_event", new=AsyncMock()),
         patch("app.api.admin.users.remove_github_org_member", new=AsyncMock()),
     ):
-        mock_zitadel.deactivate_user = AsyncMock()
         await offboard_user(zitadel_user_id="user-U", perms=perms, db=mock_db)
 
     # Locate the DELETE on portal_group_memberships among all executed statements.

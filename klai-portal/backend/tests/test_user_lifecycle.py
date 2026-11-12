@@ -74,6 +74,13 @@ def _offboard_db_mock(user: MagicMock, org: MagicMock) -> AsyncMock:
     return db
 
 
+@pytest.fixture(autouse=True)
+def identity_sync():
+    """The identity side is covered in test_user_membership_identity_login.py."""
+    with patch("app.api.admin.users.sync_identity_login", new=AsyncMock()) as sync:
+        yield sync
+
+
 # ---------------------------------------------------------------------------
 # Suspend
 # ---------------------------------------------------------------------------
@@ -199,7 +206,7 @@ class TestReactivateUser:
 
 class TestOffboardUser:
     @pytest.mark.asyncio
-    async def test_offboard_active_user_cascade(self) -> None:
+    async def test_offboard_active_user_cascade(self, identity_sync: AsyncMock) -> None:
         """Offboard with no KBs / tokens: still flips status, deletes memberships, calls Zitadel.
 
         SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3: offboard now ALSO computes the
@@ -207,7 +214,7 @@ class TestOffboardUser:
         in the same DB transaction. With an empty preview the new path is a
         sequence of empty SELECTs / rowcount=0 mutations, so the only
         observable side-effects are the same as before: status flip + commit
-        + Zitadel deactivate.
+        + the identity following the remaining memberships.
         """
         from app.api.admin.users import offboard_user
 
@@ -216,23 +223,17 @@ class TestOffboardUser:
         org.slug = "voys"
         org.zitadel_org_id = "zitadel-org-1"
         mock_db = _offboard_db_mock(user, org)
-        mock_zitadel = AsyncMock()
 
-        with (
-            patch("app.api.admin.users.zitadel", mock_zitadel),
-            patch("app.api.admin.users.settings") as mock_settings,
-        ):
-            mock_settings.zitadel_portal_org_id = "org-id"
-            result = await offboard_user(
-                zitadel_user_id="user-1",
-                body=None,
-                perms=make_perms(role="admin", user_id="admin-1", org_id=1),
-                db=mock_db,
-            )
+        result = await offboard_user(
+            zitadel_user_id="user-1",
+            body=None,
+            perms=make_perms(role="admin", user_id="admin-1", org_id=1),
+            db=mock_db,
+        )
 
         assert user.status == "offboarded"
         assert "offboarded" in result.message
-        mock_zitadel.deactivate_user.assert_awaited_once()
+        identity_sync.assert_awaited_once_with("user-1")
         mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -262,19 +263,13 @@ class TestOffboardUser:
         org.slug = "voys"
         org.zitadel_org_id = "zitadel-org-1"
         mock_db = _offboard_db_mock(user, org)
-        mock_zitadel = AsyncMock()
 
-        with (
-            patch("app.api.admin.users.zitadel", mock_zitadel),
-            patch("app.api.admin.users.settings") as mock_settings,
-        ):
-            mock_settings.zitadel_portal_org_id = "org-id"
-            await offboard_user(
-                zitadel_user_id="user-1",
-                body=None,
-                perms=make_perms(role="admin", user_id="admin-1", org_id=1),
-                db=mock_db,
-            )
+        await offboard_user(
+            zitadel_user_id="user-1",
+            body=None,
+            perms=make_perms(role="admin", user_id="admin-1", org_id=1),
+            db=mock_db,
+        )
 
         assert user.status == "offboarded"
 
