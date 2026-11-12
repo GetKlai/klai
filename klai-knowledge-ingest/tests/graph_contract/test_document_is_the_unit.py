@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from knowledge_ingest import connector_state, enrichment_tasks
+from knowledge_ingest import connector_state, contextual, enrichment_tasks
 from knowledge_ingest import graph as graph_module
 from knowledge_ingest.resource_jobs import connector_resource_key
 from tests.graph_contract.conftest import Contract, seed_graph, stored_graph
@@ -169,6 +169,7 @@ async def _enrichment_job(*, upsert=None, during_model_work=None, **args) -> Asy
         ),
         patch.object(enrichment_tasks.qdrant_store, "upsert_enriched_chunks", upsert),
         patch.object(enrichment_tasks.enrichment, "enrich_chunks", _enrich),
+        patch.object(contextual, "generate_document_summary", AsyncMock(return_value="S.")),
         patch.object(
             enrichment_tasks.embedder, "embed", AsyncMock(side_effect=lambda t: [[0.1]] * len(t))
         ),

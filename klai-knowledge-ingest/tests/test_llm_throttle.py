@@ -64,6 +64,44 @@ class TestSharedKlaiFastLimiterSingleton:
         assert first is second
 
 
+class TestPacingFitsTheKlaiIngestAlias:
+    """The shared rate takes its documented share of the klai-ingest limits.
+
+    The derivation is next to ``litellm_klai_fast_rps`` in config.py. This
+    fails when the rate (or burst) is raised past that share, and also when the
+    alias limits in deploy/litellm/config.yaml move far enough that the rate
+    should be revisited in either direction.
+    """
+
+    # Busiest minute in the week to 12 Nov 2026 on klai-ingest: 87 calls,
+    # 182,268 tokens.
+    BUSIEST_MINUTE_TOKENS_PER_CALL = 182_268 / 87
+
+    def test_rate_and_burst_take_their_share_of_the_alias_limits(self, monkeypatch):
+        import yaml
+
+        from knowledge_ingest.config import Settings
+        from knowledge_ingest.worker import WorkerLifecycle
+
+        litellm = Path(__file__).resolve().parents[2] / "deploy" / "litellm" / "config.yaml"
+        (alias,) = [
+            m
+            for m in yaml.safe_load(litellm.read_text(encoding="utf-8"))["model_list"]
+            if m["model_name"] == "klai-ingest"
+        ]
+        monkeypatch.setenv("KNOWLEDGE_INGEST_SECRET", "test-secret")
+        settings = Settings(_env_file=None)
+        first_minute = settings.litellm_klai_fast_rps * 60 + settings.litellm_klai_fast_burst
+
+        token_share = first_minute * self.BUSIEST_MINUTE_TOKENS_PER_CALL / alias["tpm"]
+        assert 0.5 <= token_share <= 0.65, token_share
+        assert first_minute / alias["rpm"] <= 0.2
+        # The LLM lane keeps the limiter fed: rate x 2.41 s (95th percentile
+        # call time) calls must be able to be in flight at once.
+        in_flight = WorkerLifecycle.LLM_CONCURRENCY * settings.enrichment_max_concurrent
+        assert in_flight >= settings.litellm_klai_fast_rps * 2.41
+
+
 class TestChatCompletionsThrottleDriftGuard:
     """Fails loudly when a new klai-fast caller forgets to throttle.
 

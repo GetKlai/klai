@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import structlog
 
-from knowledge_ingest import enrichment_tasks, llm_capacity
+from knowledge_ingest import contextual, enrichment_tasks, llm_capacity
 from knowledge_ingest import graph as graph_module
 from knowledge_ingest.derived_state import ProductState, product_state, set_product_state
 from tests.graph_contract.conftest import Contract, seed_graph
@@ -213,6 +213,7 @@ async def _enrich(jobs, artifact_id: str, *, attempts=0, error=None, **args):
         ),
         patch.object(enrichment_tasks.qdrant_store, "upsert_enriched_chunks", AsyncMock()),
         patch.object(enrichment_tasks.enrichment, "enrich_chunks", _chunks),
+        patch.object(contextual, "generate_document_summary", AsyncMock(return_value="S.")),
         patch.object(
             enrichment_tasks.embedder, "embed", AsyncMock(side_effect=lambda t: [[0.1]] * len(t))
         ),

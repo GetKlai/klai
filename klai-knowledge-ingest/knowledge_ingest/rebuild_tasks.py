@@ -18,9 +18,10 @@ After deploying pipeline changes that alter how chunks are produced:
 
 Idempotency
 -----------
-Re-running with unchanged content yields the same output. The LiteLLM proxy
-may cache summary generation; chunking and enrichment are deterministic per
-input. Qdrant writes replace the points of each path — no orphans.
+Re-running with unchanged content yields the same output. The document
+summary stored on each version's ``extra`` is reused, so a rebuild pays only
+for the chunk calls; chunking and enrichment are deterministic per input.
+Qdrant writes replace the points of each path — no orphans.
 
 Queues
 ------

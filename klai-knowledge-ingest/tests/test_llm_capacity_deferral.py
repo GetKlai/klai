@@ -82,6 +82,50 @@ async def test_only_spent_capacity_counts_as_capacity(answer, is_capacity):
     assert llm_capacity.is_llm_capacity_error(await _litellm_error(answer)) is is_capacity
 
 
+async def test_a_failed_chunk_call_stops_the_other_chunk_calls_of_the_batch():
+    """One spent-budget answer ends the batch: the other chunks make no call.
+
+    Without this a 200-chunk batch made 200 failing calls for every deferral
+    or retry of the job, each still taking a token from the shared limiter.
+    """
+    import asyncio
+
+    status, message = BUDGET_CROSSED
+    calls = 0
+
+    async def _answer(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.01)  # a real call takes 0.64 s at the median
+        return httpx.Response(status, text=json.dumps({"error": {"message": message}}))
+
+    transport = httpx.MockTransport(_answer)
+    real_client = httpx.AsyncClient
+    with (
+        patch(
+            "knowledge_ingest.enrichment.httpx.AsyncClient",
+            lambda **kwargs: real_client(transport=transport, **kwargs),
+        ),
+        patch(
+            "knowledge_ingest.enrichment.shared_klai_fast_limiter",
+            return_value=MagicMock(acquire=AsyncMock()),
+        ),
+        pytest.raises(enrichment.EnrichmentError),
+    ):
+        await enrichment.enrich_chunks(
+            document_text="body",
+            chunks=[f"chunk {i}" for i in range(50)],
+            title="A",
+            path="docs/a.md",
+            document_summary="A short summary.",
+        )
+    await asyncio.sleep(0.2)  # time for calls that were left running
+
+    # The calls in flight, plus the ones that took their freed slots before
+    # the cancellation landed; not one per chunk.
+    assert calls <= 2 * enrichment.settings.enrichment_max_concurrent
+
+
 class _Task:
     def __init__(self, fn):
         self.fn = fn
@@ -98,7 +142,11 @@ class _FakeApp:
 
 
 async def _run_bulk_enrichment(
-    error: Exception, *, llm_deferred_since: int | None = None, attempts: int = 0
+    error: Exception,
+    *,
+    llm_deferred_since: int | None = None,
+    attempts: int = 0,
+    extra_payload: dict | None = None,
 ):
     """Run the bulk task for one artifact whose chunk enrichment raises ``error``."""
     app = _FakeApp()
@@ -115,7 +163,11 @@ async def _run_bulk_enrichment(
             title="A",
             artifact_id=artifact_id,
             user_id=None,
-            extra_payload={"document_summary": "s", "document_language": "en"},
+            extra_payload=(
+                {"document_summary": "s", "document_language": "en"}
+                if extra_payload is None
+                else extra_payload
+            ),
             synthesis_depth=0,
         )
 
@@ -157,6 +209,33 @@ async def test_spent_capacity_defers_the_enrichment_job_instead_of_failing_it(an
         "info"
     ]
     assert not [e for e in logs if e["log_level"] == "error"]
+
+
+async def test_spent_capacity_on_the_summary_call_defers_the_job():
+    """The summary call meets the spent budget first; it defers, not falls back."""
+    from knowledge_ingest import contextual
+
+    status, message = BUDGET_CROSSED
+    transport = httpx.MockTransport(lambda request: httpx.Response(status, text=message))
+    real_client = httpx.AsyncClient
+    with (
+        patch(
+            "knowledge_ingest.contextual.httpx.AsyncClient",
+            lambda **kwargs: real_client(transport=transport, **kwargs),
+        ),
+        patch(
+            "knowledge_ingest.contextual.shared_klai_fast_limiter",
+            return_value=MagicMock(acquire=AsyncMock()),
+        ),
+        patch.object(contextual, "detect_language", return_value="en"),
+    ):
+        task, status_mock, _logs, outcome = await _run_bulk_enrichment(
+            AssertionError("no chunk call may be made"), extra_payload={}
+        )
+
+    assert outcome is None
+    status_mock.assert_not_awaited()
+    task.defer_async.assert_awaited_once()
 
 
 async def test_other_llm_failure_is_retried_and_only_the_last_attempt_fails_the_document():
