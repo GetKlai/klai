@@ -1,4 +1,14 @@
+// Zitadel's e-mail codes are 8 digits (OTPEmail secret generator default in
+// cmd/defaults.yaml, v4.20.1), the same code the login asks for.
+export const EMAIL_OTP_CODE_LENGTH = 8
+
 export type MfaMethod = 'passkey' | 'email' | 'totp'
+
+// Under the policy "required" only factors the login verifies end the set-up
+// requirement; a passkey does not, so it is not offered there.
+export function availableMfaMethods(policy: string): MfaMethod[] {
+  return policy === 'required' ? ['email', 'totp'] : ['passkey', 'email', 'totp']
+}
 
 export type MfaPageStep = 'pick' | 'setup' | 'done'
 
@@ -116,7 +126,7 @@ export function emailOtpReducer(state: EmailOtpState, action: EmailOtpAction): E
     case 'resendFail':
       return { ...state, sending: false, error: action.error }
     case 'setCode':
-      return { ...state, code: action.code.replace(/\D/g, '').slice(0, 6) }
+      return { ...state, code: action.code.replace(/\D/g, '').slice(0, EMAIL_OTP_CODE_LENGTH) }
     case 'verifyStart':
       return { ...state, verifying: true, error: null }
     case 'verifyFail':
