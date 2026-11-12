@@ -245,8 +245,15 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
         # appropriate when the user multi-selected specific files.
         if cfg["item_ids"]:
             refs = await self._list_pinned_items(connector, cfg["item_ids"])
+            # Every pinned id is either returned or answered 404 (deleted, in
+            # the recycle bin, or no longer visible), so this listing is complete.
+            self._record_listing(connector, complete=True)
             logger.info("Listed %d MS pinned items (connector=%s)", len(refs), connector_id)
             return refs
+
+        # Delta mode returns only what changed since the cursor, so a missing
+        # item says nothing about whether it still exists.
+        self._record_listing(connector, complete=False, reason="delta_mode")
 
         delta_link = (cursor_context or {}).get("delta_link")
         if delta_link:
