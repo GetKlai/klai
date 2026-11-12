@@ -39,7 +39,8 @@ This is the password path for a user who arrives without a session.
    without a session first navigates to `/` (`useProtectedRoute`,
    `klai-portal/frontend/src/hooks/useProtectedRoute.ts:117-120`).
 3. `oidc_start` (`klai-portal/backend/app/api/auth_bff.py:151-178`) reduces
-   `return_to` to a same-origin path (`_safe_return_to`, `:431`), generates
+   `return_to` to a path on the portal's own origin (`_safe_return_to`, `:434-475`; the
+   frontend applies the same rule in `safeReturnTo`, `auth-context.ts:86-98`), generates
    `state` and a PKCE verifier with its S256 challenge, stores
    `{state, verifier, return_to, user-agent hash}` in Redis for 600 seconds
    (`klai-portal/backend/app/services/oidc_pending.py:24`), and redirects to
@@ -56,43 +57,54 @@ This is the password path for a user who arrives without a session.
    4 seconds and showing the form after 5 seconds at most
    (`klai-portal/frontend/src/routes/login.tsx:43-88`). See section 3.
 5. Without a reusable Zitadel session the page shows the form and posts
-   `POST /api/auth/login {email, password, auth_request_id}`
-   (`login.tsx:129-176`). The handler `login`
-   (`klai-portal/backend/app/api/auth.py:1409-1566`):
+   `POST /api/auth/login {email, password, auth_request_id, accepts_email_code}`
+   (`login.tsx:131-177`; the page always sends `accepts_email_code: true`,
+   `login.tsx:140`). The handler `login`
+   (`klai-portal/backend/app/api/auth.py:1411-1578`):
    - looks the user up by e-mail in Zitadel; a 5xx or network error answers
-     503 (`auth.py:1416-1446`);
-   - checks whether the user has a TOTP factor (`has_totp`,
-     `klai-portal/backend/app/services/zitadel.py:781-786`);
+     503 (`auth.py:1417-1446`);
    - creates a Zitadel session with the password; wrong credentials answer a
-     uniform 401 (`auth.py:1464-1496`);
-   - applies the organisation's second-factor policy (`_resolve_and_enforce_mfa`,
-     `auth.py:790-940`, see section 4);
+     uniform 401 (`auth.py:1448-1480`);
+   - reads the second factors the user has registered and applies the
+     organisation's second-factor policy (`_resolve_and_enforce_mfa`,
+     `auth.py:804-933`, see section 4);
    - records the `login` product event and an `auth.login` audit row
-     (`auth.py:1509-1522`).
-6. If the user has TOTP, the handler stores the pending Zitadel session in
-   Redis (`totp_pending:<token>` plus a failure counter, TTL
-   `totp_pending_ttl_seconds` = 300, `klai-portal/backend/app/core/config.py:81`)
-   and answers `{"status": "totp_required", "temp_token": ...}`
-   (`auth.py:1524-1542`). The page then posts `POST /api/auth/totp-login`,
-   which adds the code to the Zitadel session
-   (`update_session_with_totp`, `zitadel.py:845-855`). The fifth wrong code
-   deletes the pending state and answers 429 (`_TOTP_MAX_FAILURES`,
-   `auth.py:216`, `auth.py:1607-1638`).
+     (`auth.py:1494-1507`).
+6. A registered second factor is always asked for, under every policy. When
+   `login_second_factors` lists one, the handler takes the first: an
+   authenticator code (`totp`) before an e-mail code (`otpEmail`)
+   (`auth.py:1509-1512`). For the e-mail code it first has Zitadel mail a code
+   through a session challenge (`send_session_email_code`, `zitadel.py:914`);
+   a page that did not send `accepts_email_code` is told with a 409 to reload
+   and sign in again, and a failed send answers 503 (`auth.py:1514-1533`). The
+   handler stores the pending Zitadel session in Redis
+   (`totp_pending:<token>` plus a failure counter, the factor in the field
+   `check`, TTL `totp_pending_ttl_seconds` = 300,
+   `klai-portal/backend/app/core/config.py:81`) and answers
+   `{"status": "totp_required", "temp_token": ...}` or
+   `{"status": "otp_email_required", "temp_token": ...}`
+   (`auth.py:1542-1554`). The page then posts `POST /api/auth/totp-login` for
+   both factors, with a code of 6 digits for the authenticator and 8 for the
+   e-mail code (`login.tsx:157-159`, `:227`); the handler adds the code to the
+   Zitadel session as the factor stored in `check`
+   (`update_session_with_otp`, `zitadel.py:931`). The fifth wrong code deletes
+   the pending state and answers 429 (`_TOTP_MAX_FAILURES`, `auth.py:224`,
+   `auth.py:1581-1714`).
 7. If the user has no portal membership yet but a verified e-mail whose domain
    matches a workspace's `primary_domain`, the answer is
    `{"status": "select_workspace", "ref": ...}` and the browser goes to
-   `/select-workspace` (`_maybe_select_workspace_ref`, `auth.py:944`;
-   `auth.py:1544-1558`; `login.tsx:163-166`). `POST /api/auth/select-workspace`
+   `/select-workspace` (`_maybe_select_workspace_ref`, `auth.py:941`;
+   `auth.py:1556-1570`; `login.tsx:165-168`). `POST /api/auth/select-workspace`
    then finalises for an existing member, adds a `portal_users` row when the
    workspace has `auto_accept_same_domain`, or files a join request
    (`klai-portal/backend/app/api/auth_select.py:1-11`, `:188`).
-8. Otherwise `_finalize_and_set_cookie` (`auth.py:645-689`) finalises the
+8. Otherwise `_finalize_and_set_cookie` (`auth.py:659-702`) finalises the
    Zitadel auth request with the session, sets the `klai_sso` cookie (section 3)
-   and returns a callback URL that `_validate_callback_url` (`auth.py:545`)
+   and returns a callback URL that `_validate_callback_url` (`auth.py:559`)
    accepts only for localhost, the apex and login host, active tenant
    subdomains and the approved per-tenant prefixes. A request Zitadel already
    handled (back button, double submit) answers 409 `auth_request_stale`, on
-   which the page restarts at `/` (`auth.py:660-665`, `login.tsx:144-148`).
+   which the page restarts at `/` (`auth.py:674-680`, `login.tsx:146-150`).
 9. The browser follows the callback URL. Zitadel redirects to
    `GET /api/auth/oidc/callback` (`oidc_callback`, `auth_bff.py:186-291`),
    which consumes `state` from Redis, exchanges the code with the stored
@@ -129,15 +141,16 @@ This is the password path for a user who arrives without a session.
     `redirect_to` for API calls, which `apiFetch` follows
     (`klai-portal/frontend/src/lib/apiFetch.ts:148-160`).
 13. A route that needs the caller depends on `get_caller`
-    (`klai-portal/backend/app/core/permissions.py:315-336`). Its credentials come
+    (`klai-portal/backend/app/core/permissions.py:323-345`). Its credentials come
     from `bearer()`, which builds `Authorization: Bearer <access token>` from
     the session; a Bearer header sent by the client is not read
     (`klai-portal/backend/app/api/bearer.py:21-32`). `get_caller` validates the
     token through Zitadel userinfo (60-second cache), loads org and user in one
     query bound to the session's org, answers 403 `tenant_deleting` while the
-    tenant is being deprovisioned and 403 `user_suspended` for a suspended
-    user, then sets the tenant for row-level security and the acting user
-    (`permissions.py:235-301`). The handler receives a `UserPermissions`
+    tenant is being deprovisioned and 403 `user_suspended` or `user_offboarded`
+    for a membership that is not active (`refuse_inactive_membership`,
+    `permissions.py:301-310`), then sets the tenant for row-level security and
+    the acting user (`permissions.py:235-290`). The handler receives a `UserPermissions`
     snapshot (`permissions.py:62-108`).
 
 ## 2. What the browser holds, what the server holds
@@ -184,9 +197,9 @@ pattern that is fixed in code rather than configurable
 
 Every successful login also stores the Zitadel session in the `klai_sso`
 cookie (Fernet, key `SSO_COOKIE_KEY`, Domain=`.example.com`, HttpOnly, Secure,
-Lax; `auth.py:183-195`, `auth.py:678-686`). When another OIDC client sends the
+Lax; `auth.py:172-203`, `auth.py:692-701`). When another OIDC client sends the
 browser to `/login?authRequest=<id>`, the page calls
-`POST /api/auth/sso-complete` (`auth.py:1702-1750`), which decrypts the cookie
+`POST /api/auth/sso-complete` (`auth.py:1717-1765`), which decrypts the cookie
 and finalises the new auth request with that Zitadel session. Zitadel decides
 whether the session is still valid; when it is not, the endpoint answers 401
 and the page shows the form. The same mechanism completes a fresh portal login
@@ -203,40 +216,61 @@ the login page runs inside an iframe and silent completion fails, it posts
 Each organisation has `mfa_policy`: `optional` (default), `recommended` or
 `required` (`klai-portal/backend/app/models/portal.py:108`).
 
-- At login the portal verifies a TOTP code when the user has a TOTP factor
-  (step 6).
-- `_resolve_and_enforce_mfa` (`auth.py:790-940`) reads the user's org policy.
-  Under `required` it asks Zitadel whether any second factor is registered
-  (`has_any_mfa`, `zitadel.py:788-801`); a user without one is let through so
-  they can enrol, and an unavailable Zitadel answers 503. Under `optional` and
-  `recommended` the login proceeds without that check.
+- `ZitadelClient.login_second_factors` is the one answer to which registered
+  second factors the login can verify: an authenticator code (`totp`) first,
+  then an e-mail code (`otpEmail`). A passkey, a security key or an SMS code is
+  not in it, because the login has no step that verifies them
+  (`klai-portal/backend/app/services/zitadel.py:19-25`, `:843-857`). An e-mail
+  code whose enrolment is not yet confirmed does not count either
+  (`counted_second_factors`,
+  `klai-portal/backend/app/services/email_otp_enrolment.py:45-59`).
+- `_resolve_and_enforce_mfa` (`auth.py:804-933`) reads that list under every
+  policy, and the login asks for the first factor in it (steps 5 and 6). When
+  the list cannot be read, the login answers 503 under every policy
+  (`auth.py:898-916`). Under `required` a user with no counted factor is let
+  through so they can enrol; under `optional` and `recommended` such a user
+  signs in with the password alone (`auth.py:918-931`).
 - `/api/me` returns `mfa_enrolled`, `mfa_policy` and `requires_2fa_setup`
-  (true when the policy is `required` and no factor is registered,
-  `klai-portal/backend/app/api/me.py:190-209`). The protected-route hook sends
-  such a user to `/setup/mfa` until they enrol (`useProtectedRoute.ts:126-130`);
-  `/setup/2fa` redirects there as well.
+  (true when the policy is `required` and no counted factor is registered),
+  from the same two functions; an unreadable answer is a 503, not "not
+  enrolled" (`klai-portal/backend/app/api/me.py:192-204`, `:216-218`). The
+  protected-route hook sends such a user to `/setup/mfa` until they enrol
+  (`useProtectedRoute.ts:126-130`); `/setup/2fa` redirects there as well.
 - Enrolment endpoints, all for the signed-in user (`get_current_user_id`,
-  `auth.py:620`): TOTP `POST /api/auth/totp/setup` and `/totp/confirm`
-  (`auth.py:1753`, `:1912`), passkey `POST /api/auth/passkey/setup` and
-  `/passkey/confirm` (`auth.py:1962`, `:2002`), and e-mail code
+  `auth.py:634`): TOTP `POST /api/auth/totp/setup` and `/totp/confirm`
+  (`auth.py:1768`, `:1927`), passkey `POST /api/auth/passkey/setup` and
+  `/passkey/confirm` (`auth.py:1977`, `:2017`), and e-mail code
   `POST /api/auth/email-otp/setup`, `/resend` and `/confirm`
-  (`auth.py:2054`, `:2089`, `:2142`).
+  (`auth.py:2097`, `:2133`, `:2169`).
+- The e-mail code enrolment has a confirm step. `setup` writes an
+  "unconfirmed" mark in Redis, registers the factor and has Zitadel mail an
+  8-digit code through a short-lived session kept in Redis for 300 seconds
+  (`_send_email_otp_enrolment_code`, `auth.py:2069-2094`); `resend` mails a new
+  one. The factor counts only after `confirm` has checked the code on that
+  session and cleared the mark. When the code has expired, `confirm` removes
+  the unconfirmed factor and answers 410; a factor that is still unconfirmed at
+  the next login is removed there (`auth.py:2169-2245`,
+  `email_otp_enrolment.py:38-59`). The mail for that code carries the code and
+  no button (`klai-mailer/app/renderer.py:46-51`).
 
 ## 5. Single sign-on through an external identity provider
 
 The login page offers Google and Microsoft. `POST /api/auth/idp-intent`
-(`auth.py:2192`) resolves the requested provider to one of the two
+(`auth.py:2247`) resolves the requested provider to one of the two
 instance-level Zitadel IdP ids (`ZITADEL_IDP_GOOGLE_ID`,
-`ZITADEL_IDP_MICROSOFT_ID`; `_resolve_idp_id`, `auth.py:1093-1102`), creates a
+`ZITADEL_IDP_MICROSOFT_ID`; `_resolve_idp_id`, `auth.py:1094-1102`), creates a
 Zitadel IdP intent whose success URL is `/api/auth/idp-callback` and returns
-the provider's URL. `GET /api/auth/idp-callback` (`auth.py:2335`) retrieves the
+the provider's URL. `GET /api/auth/idp-callback` (`auth.py:2390`) retrieves the
 intent, creates a Zitadel user on first use, creates a Zitadel session, runs
 the same membership and domain-match routing as the password path, finalises
 the auth request, sets `klai_sso` and redirects to the validated callback URL
-(`auth.py:2546-2575`). Signing up with a provider uses
+(`auth.py:2612-2640`). This path asks for no second factor of its own: the
+provider has already done its sign-in, second step included, and Klai does not
+ask again (decided by the owner on 12 November 2026; `login_second_factors` is
+called only on the password path, `auth.py:901`). Signing up with a provider uses
 `POST /api/auth/idp-intent-signup` and `GET /api/auth/idp-signup-callback`
-(`auth.py:2604`, `:2671`), with a 10-minute encrypted `klai_idp_pending`
-cookie carrying the signup state between steps (`auth.py:1116-1118`).
+(`auth.py:2659`, `:2726`), with a 10-minute encrypted `klai_idp_pending`
+cookie carrying the signup state between steps (`auth.py:1118-1119`).
 
 ## 6. Signup, password reset and e-mail verification
 
@@ -248,10 +282,10 @@ cookie carrying the signup state between steps (`auth.py:1116-1118`).
   `POST /api/signup/social` and `/api/signup/social/join` (`signup.py:651`,
   `:859`).
 - Password reset: `POST /api/auth/password/reset` always answers 204
-  (`auth.py:1186`). The mail links to `/password/set` on the login host, and
-  `POST /api/auth/password/set` (`auth.py:1247`) sets the password with the
+  (`auth.py:1187`). The mail links to `/password/set` on the login host, and
+  `POST /api/auth/password/set` (`auth.py:1248`) sets the password with the
   code; the same endpoint finishes an invitation.
-- E-mail verification: `POST /api/auth/verify-email` (`auth.py:1848`).
+- E-mail verification: `POST /api/auth/verify-email` (`auth.py:1863`).
 
 All three are pre-session endpoints and are exempt from the CSRF check.
 
@@ -296,4 +330,4 @@ cookie (`session.py:164-172`, `session.py:212-221`). The frontend uses
   commit 21b870851, the cookie-based frontend in 195d56565 and the end of
   Bearer-header acceptance in e2199a04e (all 19 April 2026). The pending TOTP
   state, then an in-memory cache, moved to Redis under SPEC-SEC-SESSION-001
-  (`auth.py:198-214`).
+  (`auth.py:205-222`).

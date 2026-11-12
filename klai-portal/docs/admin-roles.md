@@ -21,7 +21,7 @@ in several workspaces; the session is bound to one of them
 ([auth-flows.md](auth-flows.md), step 9).
 
 Every authenticated request resolves a `UserPermissions` snapshot in one
-query (`resolve_user_permissions`, `permissions.py:171-232`): user id, org id
+query (`resolve_user_permissions`, `permissions.py:171-227`): user id, org id
 and slug, role, account type, plan, the org's platform unlocks, effective
 capabilities, effective products, KB limits and whether the caller is a
 platform admin. Handlers read that snapshot instead of querying again.
@@ -47,19 +47,20 @@ is `DEFAULT_SEAT_FOR_ROLE` (`seats.py:146-152`).
 Gates are FastAPI dependencies on `get_caller`:
 
 - `get_caller_at_least(role)` answers 403 below the given role
-  (`permissions.py:372-391`). Members of the platform organisation pass every
-  role gate (`has_role_at_least`, `permissions.py:360-369`).
+  (`permissions.py:380-399`). Members of the platform organisation pass every
+  role gate (`has_role_at_least`, `permissions.py:368-377`).
 - `require_capability(capability)` checks the effective capabilities
-  (`permissions.py:409-424`).
+  (`permissions.py:417-432`).
 - `require_product(product)` checks the effective products
-  (`permissions.py:394-406`); `knowledge.py` and `meetings.py` use a second
-  implementation with the same derivation
-  (`klai-portal/backend/app/api/dependencies.py:78-101`,
-  `klai-portal/backend/app/services/entitlements.py:25-41`).
+  (`permissions.py:402-414`); `knowledge.py` and `meetings.py` import that same
+  function (`klai-portal/backend/app/api/knowledge.py:20`,
+  `klai-portal/backend/app/api/meetings.py:25`). The products come from
+  `get_effective_products`, which returns none for a membership that is not
+  active (`klai-portal/backend/app/services/entitlements.py:25-41`).
 - `require_platform_unlocked(feature)` checks the org's platform unlocks
-  (`permissions.py:456-476`).
+  (`permissions.py:464-484`).
 - `require_platform_admin()` requires the `admin` role inside the platform
-  organisation (`permissions.py:427-453`).
+  organisation (`permissions.py:435-461`).
 
 ### What each role may do
 
@@ -121,7 +122,7 @@ A user's products are `derive_user_products(role, account_type, platform_unlocke
 with `partner_api`, `scribe` and `widgets` (`models/portal.py:28`). Only
 `scribe` and `docs` become products; the others gate features through
 `require_platform_unlocked` or, for partner keys, `assert_platform_unlocked`
-(`permissions.py:479-498`). Only platform admins change unlocks, through
+(`permissions.py:487-507`). Only platform admins change unlocks, through
 `PATCH /api/admin/orgs/{slug}/platform-unlocks`
 (`klai-portal/backend/app/api/admin/platform_unlocks.py:115`); a tenant admin reads
 the state of their own organisation at `GET /api/admin/extensions`
@@ -169,7 +170,7 @@ A group admin may edit and delete meetings scoped to the group
 
 ## Invitations and joining
 
-`POST /api/admin/users/invite` (`users.py:508-725`, admin):
+`POST /api/admin/users/invite` (`users.py:510-726`, admin):
 
 1. creates the person as a Zitadel user in the portal's Zitadel organisation
    (`ZITADEL_PORTAL_ORG_ID`) with a pre-verified e-mail and no password
@@ -180,11 +181,14 @@ A group admin may edit and delete meetings scoped to the group
    from it; an earlier `offboarded` row for the same person is reactivated
    instead;
 4. sends the invitation code with a link to `/password/set` on the login host,
-   where the invitee chooses a password (`users.py:655-671`).
+   where the invitee chooses a password (`users.py:657-673`).
 
-`POST /api/admin/users/{id}/resend-invite` (`users.py:922`) sends a new code
-and, for an offboarded user, reactivates the row and unlocks the Zitadel user.
-There is no seat cap on invitations (`users.py:527-533`).
+`POST /api/admin/users/{id}/resend-invite` (`users.py:924`) sends a new code
+and, for an offboarded user, reactivates the row and, only when the Zitadel
+identity is inactive, the identity too (`reactivate_identity_if_inactive`,
+`klai-portal/backend/app/services/zitadel_identity_recovery.py:82-95`,
+`users.py:957`); a failed invite undoes only that reactivation. There is no
+seat cap on invitations (`users.py:529-535`).
 
 A person whose verified e-mail domain matches a workspace's `primary_domain`
 can ask to join it at login ([auth-flows.md](auth-flows.md), step 7). With
@@ -202,34 +206,62 @@ check constraint (`models/portal.py:214`). All endpoints below require
 
 | Method | Path | Effect |
 |---|---|---|
-| POST | `/api/admin/users/{id}/suspend` | `active` → `suspended`, audited (`users.py:1046-1077`) |
-| POST | `/api/admin/users/{id}/reactivate` | `suspended` → `active` (`users.py:1080-1104`) |
-| GET | `/api/admin/users/{id}/offboard-preview` | Knowledge bases that need a decision (`users.py:1107`) |
-| POST | `/api/admin/users/{id}/offboard` | Offboarding, below (`users.py:1168-1310`) |
-| GET | `/api/admin/users/{id}/delete-preview` | As the offboard preview (`users.py:1312`) |
-| POST | `/api/admin/users/{id}/delete` | Delete with knowledge-base decisions (`users.py:1331`) |
-| DELETE | `/api/admin/users/{id}` | Delete without decisions (`users.py:992-1043`) |
-| PATCH | `/api/admin/users/{id}/role` | Change role; refuses to change the last admin (`users.py:763-856`) |
-| POST | `/api/admin/users/{id}/promote-admin`, `/demote-admin` | Demotion sets `company` and refuses to leave zero admins (`users.py:1423`, `:1481`) |
+| POST | `/api/admin/users/{id}/suspend` | `active` → `suspended`, audited (`users.py:1121-1156`) |
+| POST | `/api/admin/users/{id}/reactivate` | `suspended` → `active` (`users.py:1158-1185`) |
+| GET | `/api/admin/users/{id}/offboard-preview` | Knowledge bases that need a decision (`users.py:1187`) |
+| POST | `/api/admin/users/{id}/offboard` | Offboarding, below (`users.py:1248-1388`) |
+| GET | `/api/admin/users/{id}/delete-preview` | As the offboard preview (`users.py:1390`) |
+| POST | `/api/admin/users/{id}/delete` | Delete with knowledge-base decisions (`users.py:1409`) |
+| DELETE | `/api/admin/users/{id}` | Delete without decisions (`users.py:1039-1092`) |
+| PATCH | `/api/admin/users/{id}/role` | Change role; refuses to change the last admin (`users.py:765-857`) |
+| POST | `/api/admin/users/{id}/promote-admin`, `/demote-admin` | Demotion sets `company` and refuses to leave zero admins (`users.py:1501`, `:1559`) |
 
-**Suspend** sets the portal status to `suspended`. `get_caller` answers 403
-`user_suspended` for a suspended user on every request
-(`permissions.py:276-285`), so the session stops working while memberships,
-products and data stay as they were. Reactivation restores access.
+**Identity sync.** One Zitadel identity serves every workspace a person
+belongs to, and `portal_users.status` decides whether a membership is active.
+After the portal change is committed, suspend, reactivate, offboard, remove and
+leave all call `sync_identity_login`: it counts the person's active memberships
+and reads the identity's state, deactivates the identity when none is active,
+reactivates it when one is, and does nothing when the state already fits
+(`klai-portal/backend/app/services/zitadel_identity_recovery.py:57-80`). When
+the identity provider fails, the portal change stays, a
+`user.identity_sync_failed` audit row is written and the answer is 502;
+repeating the action runs the sync again (`users.py:1095-1118`).
+
+**A membership that is not active has no access** to its workspace, whatever
+the state of the identity. `refuse_inactive_membership` answers 403
+`user_suspended` or `user_offboarded`
+(`permissions.py:301-310`); it runs in `get_caller` (`permissions.py:271`) and
+in the internal permissions route (`klai-portal/backend/app/api/internal.py:532`).
+The products and capabilities of such a membership are empty, and completing a
+sign-in for a workspace's chat client requires an active membership of that
+workspace (`ZitadelClient._require_chat_membership`,
+`klai-portal/backend/app/services/zitadel.py:566-602`; the LibreChat user
+lookup refuses it too, `klai-portal/backend/app/services/internal_chat_identity.py:34-105`).
+
+**Suspend** sets the portal status to `suspended`, so every request of that
+session answers 403 `user_suspended`, while memberships, products and data stay
+as they were. Reactivation restores access.
 
 **Offboard** runs in one database transaction: it requires a decision
 (transfer or delete) for every knowledge base the preview lists, applies
 those decisions, revokes the user's partner API keys and MCP tokens, removes
 the user's group memberships in this organisation, removes the internal chat
 cases kept for the user, sets `offboarded` and writes the audit row. After the
-commit it deactivates the Zitadel user and removes the linked GitHub
-organisation membership (`users.py:1175-1310`). An offboarded user returns
+commit it removes the linked GitHub organisation membership and runs the
+identity sync, so the Zitadel identity is deactivated only when the person has
+no other active membership (`users.py:1248-1388`). An offboarded user returns
 through a new invitation, which reactivates the row.
 
 **Delete** removes the `portal_users` row. The Zitadel identity is removed only
-when the person has no membership in another workspace; platform-admin
-identities cannot be deleted from a tenant (`users.py:1012-1043`). An admin
-cannot delete themselves this way.
+when the person has no membership in another workspace, otherwise the identity
+sync runs; platform-admin identities cannot be deleted from a tenant
+(`users.py:1039-1092`). An admin cannot delete themselves this way.
+
+**Leave.** Any signed-in member can leave their workspace with
+`DELETE /api/admin/users/me`, which is registered before the delete route with
+a path parameter so that it is reachable. It is refused with 409 for the last
+admin, removes the member's row and the internal chat cases kept for them, and
+runs the identity sync (`users.py:995-1036`).
 
 Deleting a whole workspace is a separate flow: `DELETE /api/admin/org/me` for
 its admin and the platform endpoints under `/api/admin/orgs/{slug}/`

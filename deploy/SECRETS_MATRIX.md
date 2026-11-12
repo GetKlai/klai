@@ -118,7 +118,7 @@ details in the private infra repo.
 | `RETRIEVAL_API_ZITADEL_AUDIENCE` | retrieval-api | Zitadel audience for JWT validation. Mapped to `ZITADEL_API_AUDIENCE` in-container. |
 | `VEXA_ADMIN_TOKEN` | portal-api | Reserved for Vexa admin-API calls (tenant provisioning, quota inspection). @MX:NOTE in config.py — no runtime reader yet; declared to preserve pre-migration env-shape. |
 | `VEXA_BOT_MANAGER_API_KEY` | portal-api | Vexa bot-manager API key. Mapped to `VEXA_API_KEY` in-container. |
-| `VEXA_MEETING_API_URL` | portal-api | Base URL for Vexa meeting-api (prod routes through `api-gateway:8000`, not the raw meeting-api). Overrides the config.py default. |
+| `VEXA_MEETING_API_URL` | portal-api | Base URL for Vexa meeting-api (`vexa12-meeting-api:8080`, reached over the dedicated `vexa12-portal` network; no gateway is deployed). Defaults to the same value in compose. |
 | `VEXA_WEBHOOK_SECRET` | portal-api | Signs Vexa webhook deliveries to portal; config.py validator fails closed on empty/whitespace (SEC-013 F-033). |
 | `VICTORIALOGS_AUTH_PASSWORD` | victorialogs | HTTP basic-auth password (set via `-httpAuth.password` cmdline flag). Also needed inside the container so the busybox-wget healthcheck can build the auth header. |
 | `VICTORIALOGS_AUTH_USER` | victorialogs | HTTP basic-auth username (set via `-httpAuth.username` cmdline flag). Also needed inside the container for the healthcheck. |

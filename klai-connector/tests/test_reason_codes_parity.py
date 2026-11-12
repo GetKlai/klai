@@ -74,7 +74,7 @@ def test_persist_skip_reason_values_match_migration_check_constraint() -> None:
         / "klai-connector"
         / "alembic"
         / "versions"
-        / "010_skip_reason_shrunken_version_held.py"
+        / "010_skip_reason_held.py"
     )
     assert migration.exists(), f"Migration 010 (latest skip_reasons CHECK) missing at {migration}"
     text = migration.read_text(encoding="utf-8")

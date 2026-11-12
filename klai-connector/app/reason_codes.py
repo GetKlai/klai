@@ -13,7 +13,7 @@ service alembic migrations whose CHECK constraints reference these
 values:
 
   - ``klai-knowledge-ingest/.../0005_crawl_jobs_fetch_outcomes.py``
-  - ``klai-connector/alembic/versions/010_skip_reason_shrunken_version_held.py`` (latest CHECK)
+  - ``klai-connector/alembic/versions/010_skip_reason_held.py`` (latest CHECK)
 """
 
 from __future__ import annotations

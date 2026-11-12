@@ -54,6 +54,7 @@ from knowledge_ingest.graph import (
     load_entity_graph_data,
     retire_earlier_extractions,
 )
+from knowledge_ingest.operations import guard_cli, kb_operation
 
 __all__ = ["MAX_TEXT_CHARS"]
 
@@ -161,7 +162,10 @@ async def main(
     kb_slugs: list[str] | None = None,
     concurrency: int = 1,
     force: bool = False,
+    execute: bool = False,
 ) -> int:
+    """Without ``execute`` this reports what would be ingested and the pre-flight
+    estimate, and writes nothing."""
     qdrant = AsyncQdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key or None,
@@ -390,6 +394,10 @@ async def main(
                     total_chars,
                     current_edge_count,
                 )
+
+        if not execute:
+            log.info("dry run: %d artifacts would be ingested; nothing written", len(to_process))
+            return 0
 
         # ---- Process (sequential) ------------------------------------------
         # ingest_episode() owns concurrency control via its own semaphore.
@@ -644,15 +652,23 @@ if __name__ == "__main__":
         action="store_true",
         help="Overrides the SPEC-GRAPH-SCALE-001 pre-flight refusal. The override is logged.",
     )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Ingest the episodes (needs the approval marker); without it only count.",
+    )
     args = parser.parse_args()
-    sys.exit(
-        asyncio.run(
-            main(
+    guard_cli("graph backfill", args.execute)
+
+    async def run() -> int:
+        async with kb_operation(args.org_id, args.kb_slugs, execute=args.execute):
+            return await main(
                 org_id=args.org_id,
                 limit=args.limit,
                 kb_slugs=args.kb_slugs,
                 concurrency=args.concurrency,
                 force=args.force,
+                execute=args.execute,
             )
-        )
-    )
+
+    sys.exit(asyncio.run(run()))

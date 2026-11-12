@@ -100,12 +100,12 @@ The designed loop: users ask, low-confidence answers and support conversations b
 ### GAP-TAX-02: coverage as a fraction  ·  M  ·  NOT BUILT
 
 - **Design.** Coverage is the share of the corpus assigned to non-noise clusters.
-- **Today.** `get_kb_taxonomy_coverage` (`klai-retrieval-api/retrieval_api/services/taxonomy_lookup.py:127`) returns 1.0 when a knowledge base has at least one node, otherwise 0.0. No code in the repository calls the routes that expose it (`retrieval_api/api/taxonomy.py`). The portal coverage widget counts chunks per node through ingest `coverage-stats` (`routes/taxonomy.py:738`).
+- **Today.** No coverage fraction is computed: retrieval-api has one route, `POST /retrieve` (`klai-retrieval-api/retrieval_api/main.py:100`), and no taxonomy routes. The portal coverage widget counts chunks per node through ingest `coverage-stats` (`routes/taxonomy.py:738`).
 
 ### GAP-TAX-03: classification used at retrieval time  ·  L  ·  PARTLY
 
 - **Design.** Per-document taxonomy classification narrows retrieval.
-- **Today.** Documents are classified at ingest (centroid match first, then the `klai-ingest` alias; `taxonomy_classifier.py:57`) and the ids are stored in the payload. Retrieval filters on `taxonomy_node_ids` only when a request carries them (`search.py:466`); portal chat, the widget path and `klai-knowledge-mcp` do not send them. Gap rows use the ids (`gap_events.py:236`, `GET /api/app/gaps/by-taxonomy` at `app_gaps.py:178`, which no frontend file calls).
+- **Today.** Documents are classified at ingest (centroid match first, then the `klai-ingest` alias; `taxonomy_classifier.py:57`) and the ids are stored in the payload. Retrieval filters on `taxonomy_node_ids` only when a request carries them (`search.py:466`); portal chat, the widget path and `klai-knowledge-mcp` do not send them. Gap rows store the ids (`gap_events.py:236`); no route reads them by taxonomy node, since `GET /api/app/gaps/by-taxonomy` was removed on 12 November 2026.
 
 ## Open: retrieval routing
 
@@ -122,7 +122,7 @@ The designed loop: users ask, low-confidence answers and support conversations b
 ### GAP-ROUTE-03: a model tie-breaker in source routing  ·  M  ·  NOT BUILT
 
 - **Design.** An optional language-model layer decides when keyword and centroid routing are inconclusive.
-- **Today.** The branch is guarded by `if llm_fallback and llm_fn` (`klai-retrieval-api/retrieval_api/services/router.py:280`); the caller in `retrieve.py` passes no `llm_fn` and `router_llm_fallback` defaults to `False` (`config.py:105`), so the branch cannot run. With keyword and centroid routing inconclusive the router returns no selection.
+- **Today.** `route_to_sources` has one layer, the centroid match, and answers `semantic` or, when it selects nothing, `none` with no selection (`klai-retrieval-api/retrieval_api/services/router.py:226-280`). The model branch and the `router_llm_fallback` setting no longer exist (removed in #2363).
 
 ### GAP-ANALYTICS-01: analytic questions answered from PostgreSQL  ·  L  ·  NOT BUILT
 

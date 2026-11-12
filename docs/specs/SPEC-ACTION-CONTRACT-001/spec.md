@@ -187,7 +187,7 @@ tests:
     - cross-tenant isolation where data is tenant-scoped
 
 docs:
-  spec: .moai/specs/SPEC-MCP-RETRIEVAL-001/spec.md
+  spec: docs/specs/SPEC-MCP-RETRIEVAL-001/spec.md
   runbook: optional
 ```
 

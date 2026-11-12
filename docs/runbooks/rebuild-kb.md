@@ -48,18 +48,24 @@ model work is done, as in the table above.
 A rebuild on production follows the order in `AGENTS.md` ("production knowledge
 data is rewritten only with approval per run"): dry-run counts first, the
 owner's yes for that one run, one knowledge base as a trial, then the rest. The
-code has no dry run of its own (no flag, no preview), so the counts come from
-the active artifacts of the knowledge base, which is the set the rebuild
-iterates (`_list_active_artifacts` in `knowledge_ingest/rebuild_tasks.py`):
+code enforces the start conditions (`knowledge_ingest/operations.py`, shared by
+every operation that rewrites knowledge data):
 
-```sql
-SELECT count(*) FROM knowledge.artifacts
- WHERE org_id = '<org_zitadel_id>' AND kb_slug = '<kb_slug>'
-   AND belief_time_end = 253402300800;
-```
-
-Each of those artifacts costs one summary call plus one model call per chunk,
-all on the `klai-ingest` alias.
+- **Dry run is the default.** Without `--execute` the command only previews. It
+  counts the active artifacts of the knowledge base (the set the rebuild
+  iterates, `_list_active_artifacts` in `knowledge_ingest/rebuild_tasks.py`),
+  how many have no stored `document_text` (those are rebuilt from their Qdrant
+  chunks, so their chunk count is only known at run time), the chunks the
+  others would be cut into, an estimate of the model calls (one summary per
+  artifact plus one call per chunk, all on the `klai-ingest` alias), and the
+  first ten documents with their chunk and parent counts.
+- **`--execute` needs `INGEST_OK=1`** in the environment of the command, set
+  only after the owner's yes for that one run. Without it the command exits 2
+  before reading anything.
+- **One run per knowledge base.** A write run holds a Postgres advisory lock for
+  `(org, kb)`; a second run for the same knowledge base (command line, inline
+  function or queued task) is refused with `OperationBusy`. Runs on other
+  knowledge bases are not affected.
 
 ---
 
@@ -99,16 +105,21 @@ Before triggering the rebuild:
 
 ## How to trigger
 
-### Inline (visible progress)
+### Preview, then run (visible progress)
 
 ```bash
+# preview: counts and the first documents, nothing written
 docker exec klai-core-knowledge-ingest-1 \
-  python -c 'import asyncio; from knowledge_ingest.rebuild_tasks import rebuild_kb_inline; result = asyncio.run(rebuild_kb_inline("<org_zitadel_id>", "<kb_slug>")); print(result)'
+  python -m knowledge_ingest.rebuild_tasks --org <org_zitadel_id> --kb <kb_slug>
+
+# the run, only after the owner's yes for this one run
+INGEST_OK=1 docker exec -e INGEST_OK=1 klai-core-knowledge-ingest-1 \
+  python -m knowledge_ingest.rebuild_tasks --org <org_zitadel_id> --kb <kb_slug> --execute
 ```
 
 Replace `<org_zitadel_id>` with the Zitadel organisation ID (found in portal-api logs or the `portal_orgs` table) and `<kb_slug>` with the KB slug.
 
-The function runs synchronously and prints a result dict on completion:
+The command runs synchronously and prints a result dict on completion:
 
 ```json
 {
@@ -124,12 +135,13 @@ The function runs synchronously and prints a result dict on completion:
 ### Queue task
 
 `rebuild_kb` is also registered as a Procrastinate task on the `rebuild-kb`
-queue, but no route or script defers it, and `get_app()` raises in a fresh
-`docker exec` process, because the app exists only inside the running service.
-The inline function above is the way to run a rebuild. The task and the inline
-function share one core, and neither sets a `queueing_lock` (the task has
-`max_attempts=1`), so two runs for one knowledge base can overlap: start a
-second one only after the first has printed its result.
+queue (`max_attempts=1`), but no route or script defers it, and `get_app()`
+raises in a fresh `docker exec` process, because the app exists only inside the
+running service. The command above is the way to run a rebuild. The task, the
+command and `rebuild_kb_inline(org, kb, execute=False)` share one core, which
+enforces the marker and the per-knowledge-base lock, so a task started by any
+other means is refused without `INGEST_OK=1` in the worker's environment and
+cannot overlap another run on the same knowledge base.
 
 ---
 

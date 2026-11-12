@@ -14,8 +14,8 @@ from app.core.features import derive_user_products
 from app.models.portal import PortalOrg, PortalUser
 
 
-# @MX:ANCHOR fan_in=4 -- called from /api/me, /internal/users/{id}/products,
-#   dependencies.require_product, and SPEC-SEC-022 gating. Signature stable.
+# @MX:ANCHOR fan_in=3+ -- called from /api/me, /internal/users/{id}/products,
+#   and SPEC-SEC-022 gating. Signature stable.
 # @MX:NOTE SPEC-PORTAL-EXTENSIONS-UNIFY-001: derivation is account type OR
 #   platform_unlocked_features gated by FEATURE_MIN_PROFILE. No per-user /
 #   per-group feature tables. No tenant-context self-healing — both

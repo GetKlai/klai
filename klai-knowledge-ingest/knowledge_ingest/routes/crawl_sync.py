@@ -995,8 +995,6 @@ async def keep_session(
     jar = CookieJar(stored.payload["cookies"], validated.hostname)
     chain_hosts = _chain_hosts(auth_chain_hosts, jar.base_host)
     own = {(jar.base_host, urlparse(url).port or 443)}
-    result: _ProbeResponse | None = None
-    final = url
     sign_in_alive: dict[str, bool | None] = {}
     renewal_failure: str | None = None
     reminted = False
@@ -1115,7 +1113,6 @@ async def prove_renewal(url: str, cookies: list[dict], auth_chain_hosts: list[st
     never stores its renewed cookies, and that session then lapses two hours
     later. Nothing is stored; no cookie value is logged.
     """
-    failure: str | None
     try:
         validated = await validate_url_pinned(url)
         base = validated.hostname.lower()
