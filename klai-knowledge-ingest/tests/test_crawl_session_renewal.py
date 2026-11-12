@@ -340,15 +340,15 @@ class _JobRows:
 
     def __init__(self) -> None:
         self.failed: list[tuple[str, str]] = []
-
-    @contextmanager
-    def _noop(self):
-        yield
+        self.status = "pending"
 
     def factory(self, _org_id: str):
         rows = self
 
         class _Conn:
+            async def fetchval(self, _sql: str, _job_id: str) -> str:
+                return rows.status
+
             async def execute(self, _sql: str, job_id: str, error: str) -> str:
                 rows.failed.append((job_id, error))
                 return "UPDATE 1"
@@ -607,3 +607,13 @@ async def test_a_crawl_whose_login_cannot_be_renewed_fetches_nothing() -> None:
     assert check.await_args.kwargs["auth_chain_hosts"] == [SIGN_IN]
     run_job.assert_not_awaited()
     assert rows.failed == [("job-1", verdict.reason)]
+
+
+@pytest.mark.asyncio
+async def test_a_crawl_another_execution_already_runs_is_not_checked_again() -> None:
+    rows = _JobRows()
+    rows.status = "running"
+    check = AsyncMock()
+    with patch("knowledge_ingest.routes.crawl_sync.keep_session", check):
+        assert await _preflight(rows) is True
+    check.assert_not_awaited()

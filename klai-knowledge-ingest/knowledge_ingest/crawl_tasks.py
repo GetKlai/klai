@@ -43,6 +43,13 @@ async def preflight_session(
     """
     from knowledge_ingest.routes.crawl_sync import keep_session
 
+    # Only a job nobody started yet is checked: the task is retried every few
+    # seconds while another execution holds the job (CrawlExecutionBusy), and
+    # each check costs the site several requests.
+    async with _crawl_db_connection(org_id) as conn:
+        status = await conn.fetchval("SELECT status FROM knowledge.crawl_jobs WHERE id=$1", job_id)
+    if status != "pending":
+        return True
     verdict = await keep_session(
         connector_id=uuid.UUID(connector_id),
         org_id=org_id,
@@ -59,7 +66,7 @@ async def preflight_session(
             job_id,
             verdict.reason,
         )
-    # A job another execution already claimed is left to it.
+    # A job another execution claimed in the meantime is left to it.
     return command == "UPDATE 0"
 
 
