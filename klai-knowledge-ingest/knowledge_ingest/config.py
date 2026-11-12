@@ -333,10 +333,19 @@ class Settings(BaseSettings):
     # SPEC-INGEST-LLM-THROTTLE-001 — shared client-side rate limit for every
     # LiteLLM chat call this service makes (enrichment, Graphiti, taxonomy,
     # selector-AI, labelers, RAGAS judge). See knowledge_ingest/llm_throttle.py.
-    # Default 0.6 rps = 36 rpm, sized for the 45 rpm klai-fast budget these
-    # calls shared before they moved to klai-ingest (900 rpm). The env names
-    # keep "klai_fast" so existing overrides stay valid.
-    litellm_klai_fast_rps: float = 0.6
+    # Sized on the klai-ingest alias (deploy/litellm/config.yaml: 900 rpm,
+    # 450k tpm). Tokens bind first: over 7 days to 12 Nov 2026 a call averaged
+    # 1,651 tokens (1,537 in, 114 out) and the busiest minute carried 87 calls
+    # and 182,268 tokens, 2,095 per call. 2 rps is 120 calls a minute; with
+    # the burst of 10 on top that is 130 calls, 272k tokens at the busiest
+    # minute's call size: 61% of the tpm limit and 14% of the rpm limit, so a
+    # minute of unusually large calls (up to 3,460 tokens each, 1.65x the
+    # busiest minute) still fits. A night of 6,000-8,000 calls takes 50-67
+    # minutes at this rate instead of the 3-4 hours it took at 0.6 rps. The
+    # rate does not change what a document costs, only how fast the work
+    # runs. tests/test_llm_throttle.py pins this share against the alias.
+    # The env names keep "klai_fast" so existing overrides stay valid.
+    litellm_klai_fast_rps: float = 2.0
     litellm_klai_fast_burst: float = 10.0
     # Model for the few calls made while a user waits on the response (crawl
     # preview / auth-probe selector detection, taxonomy bootstrap proposals,
@@ -354,8 +363,8 @@ class Settings(BaseSettings):
     # tasks of this size, each queued behind the other documents' work.
     enrichment_max_chunks: int = 200
     # Documents above this stay on their raw chunks (dense + sparse, no LLM).
-    # 2000 chunks = 10 batches = ~56 min of the whole shared klai-ingest budget
-    # at litellm_klai_fast_rps (0.6) for one document.
+    # 2000 chunks = 10 batches = ~17 min of the whole shared klai-ingest budget
+    # at litellm_klai_fast_rps (2.0) for one document.
     enrichment_hard_max_chunks: int = 2000
     enrichment_max_document_tokens: int = 2000
     # Sparse embedding sidecar (BGE-M3 FlagEmbedding)
@@ -388,7 +397,22 @@ class Settings(BaseSettings):
     graphiti_enabled: bool = True
     graph_ann_enabled: bool = False
     graphiti_llm_model: str = "klai-ingest"
-    graphiti_max_concurrent: int = 1  # concurrent episodes; increase with paid LLM plan
+    # Episodes in flight at once; also the size of the worker's graph lane.
+    # One, and not for lack of LLM budget: graphiti-core requires episodes of
+    # a graph to be added one after another (Graphiti.add_episode docstring,
+    # 0.28.2), FalkorDB's vector index gave empty results under interleaved
+    # writes (SPEC-GRAPH-SCALE-001), and the FalkorDB death check blames the
+    # one episode in flight. In the week to 12 Nov 2026 a graph job ran 5.1
+    # min at the median, and from 05:00 to noon the service made ~290 calls
+    # an hour against the 2,160 the 0.6 rps limiter allowed: the graph's pace
+    # is set by FalkorDB and graphiti per episode, not by the LLM budget,
+    # and a faster limiter does not shorten that tail. The next step
+    # is 2 with one episode per organisation at a time; see
+    # docs/architecture/knowledge-ingest-flow.md 2.5 for what to watch.
+    graphiti_max_concurrent: int = 1
+    # Pause after each episode before the next one starts. 10 s is 3% of the
+    # 5.1-minute median graph job and the only quiet gap FalkorDB gets between
+    # write-heavy episodes; not where the hours go, so it stays.
     graphiti_episode_delay: float = 10.0
     # SPEC-GRAPH-SCALE-001 REQ-1 — pre-flight graph-build cost estimator
     # constants. The legacy flag-off constants remain calibrated to the one

@@ -455,21 +455,27 @@ aborts when it is gone, superseded or its connector inactive.
   `_enrich_next_batch` enriches 200 indexed chunks at a time and defers the
   next batch on `enrich-bulk` (`enrichment_tasks.py:317-380`). Enrichment is
   never skipped at 200; the ceiling is `enrichment_hard_max_chunks` = 2000
-  (`config.py:355-359`), about 56 minutes of the shared `klai-ingest` budget at
-  0.6 requests per second for one document.
+  (`config.py`), about 17 minutes of the shared `klai-ingest` budget at
+  2 requests per second for one document.
 - **Document summary.** `contextual.generate_document_summary` (language by
-  lingua), `klai-ingest`, `max_tokens` 220, 30 s. The summary is reused when the payload already holds one, but nothing writes
-  it back to the artifact, so every batch and every retry generates it again. On
-  failure it returns an empty string and the chunk prompts fall back to the
-  document context window (`enrichment_tasks.py:1017-1034`,
-  `contextual.py:60-61,173-230`).
+  lingua), `klai-ingest`, `max_tokens` 220, 30 s. It is computed once per
+  document version: `_enrich_document` stores `document_summary` and
+  `document_language` on that version's `artifacts.extra` before the chunk
+  calls, and every later run of the version (a retry, a later batch, a
+  rebuild) reads it from there. A new version is a new row and computes its
+  own. A failed summary call raises `EnrichmentError`, so it goes through the
+  job's retry and capacity deferral; only an empty answer leaves the chunk
+  prompts on the document context window (`enrichment_tasks.py`,
+  `contextual.py`, `tests/integration/test_document_summary_postgres.py`).
 - **Per-chunk call.** One LLM call per chunk returns the context sentence and
   the generated questions: `klai-ingest`, `max_tokens` 300, 15 s, without
   fallback to larger models (`add_no_fallback`). Concurrency is 2 chunks
   (`enrichment_max_concurrent`) and every call takes a token from the shared
-  limiter, 0.6 requests per second with a burst of 10
-  (`enrichment.py:158-192,367-442`, `llm_throttle.py:73-90`). The prompt also
-  receives the KB name, connector type and source domain.
+  limiter, 2 requests per second with a burst of 10
+  (`enrichment.py`, `llm_throttle.py`). When one chunk call fails, the other
+  chunk calls of the batch are cancelled, so a rate limit or a spent budget
+  costs at most the calls already in flight. The prompt also receives the KB
+  name, connector type and source domain.
 - **Embedded text.** `context_prefix + "\n\n" + chunk`, with the alias and
   anchor lines of the cheap layer first. Dense and sparse embeddings of the same
   text are computed in parallel. `vector_questions` is the embedding of the
@@ -547,7 +553,8 @@ The task (`enrichment_tasks.py:631-928`, `graph.py:971-1165`):
   FalkorDB (one graph per org through `driver.clone(org_id)`, `graph.py:528`), LLM `klai-ingest`
   (`graphiti_llm_model`), embeddings by TEI bge-m3, every HTTP call taking a
   token from the shared limiter. `graphiti_max_concurrent` is 1 and
-  `graphiti_episode_delay` 10 s;
+  `graphiti_episode_delay` 10 s, and the jobs run in their own graph lane with
+  that many slots (pacing and what to watch: 2.6);
 - `ingest_episode` makes three attempts with two waits between them: 65 s * 2^n
   on a rate limit, 30 s * 2^n on 503 or provider errors and 1 s * 2^n otherwise
   (`graph.py:408-423,1005-1009,1141-1152`); the task itself retries 8 times after the first
@@ -582,17 +589,63 @@ finished extraction recorded on the artifact rows
 
 ### 2.6 Queues and lanes
 
-Ten queues in four lanes, one Procrastinate worker per lane, each supervised and
-restarted with 1 to 60 s backoff (`queues.py:42-121`, `worker.py:207-280`):
+Ten queues in five lanes, one Procrastinate worker per lane, each supervised and
+restarted with 1 to 60 s backoff (`queues.py`, `worker.py`):
 
 | Lane | Concurrency | Queues | Tasks |
 |---|---|---|---|
 | io | 8 | `ingest-kb`, `connector-purge`, `crawl-jobs` | `ingest_from_gitea`; stale-pending reaper; `connector_purge_task` (5 attempts, waits 60, 300, 1500, 7200, 36000 s); `run_crawl` |
 | interactive | 2 | `enrich-interactive` | `enrich_document_interactive` |
-| llm | 4 | `enrich-bulk`, `graphiti-bulk`, `rag-eval`, `taxonomy-backfill`, `rebuild-kb` | `enrich_document_bulk`; `ingest_graphiti_episode`; eval tasks; `run_taxonomy_backfill` (one retry, none on a capacity error); `run_auto_categorise` (waits 30, 300, 1800 s); login-wall backfill tasks; `rebuild_kb` (1 attempt) |
+| llm | 4 | `enrich-bulk`, `rag-eval`, `taxonomy-backfill`, `rebuild-kb` | `enrich_document_bulk`; eval tasks; `run_taxonomy_backfill` (one retry, none on a capacity error); `run_auto_categorise` (waits 30, 300, 1800 s); login-wall backfill tasks; `rebuild_kb` (1 attempt) |
+| graph | `graphiti_max_concurrent` (1) | `graphiti-bulk` | `ingest_graphiti_episode` |
 | maintenance | 1 | `maintenance` | stalled-job recovery, Postgres-Qdrant reconcile, taxonomy sweep |
 
-`ALL_QUEUES` is the four lists together (`queues.py:119`); a test pins that
+The graph lane exists because a graph job in the llm lane waited for the
+episode semaphore while holding one of the four slots: in the week to
+12 November 2026 enrichment (0.2 min of work per job) waited 132 min at the
+median behind graph jobs of 5.1 min each.
+
+**Pacing.** Measured in the week to 12 November 2026: 66,942 calls on
+`klai-ingest`, 1,537 input and 114 output tokens per call, 0.64 s median and
+2.41 s 95th-percentile call time, busiest minute 87 calls and 182,268 tokens.
+At 0.6 requests per second a night of 6,000 to 8,000 calls was pinned at the
+limiter from 02:00 to 05:00 and finished around eleven hours after it started.
+The limiter now runs at 2 requests per second (burst 10): 130 calls in the
+first minute is 272k tokens at the busiest minute's call size, 61% of the
+450k tpm limit and 14% of the 900 rpm limit, and the night takes 50 to 67
+minutes of limiter time. The rate counts requests only; at these call sizes
+that keeps tokens inside the limit (`llm_throttle.py` docstring).
+`tests/test_llm_throttle.py` fails when the rate leaves 50-65% of the tpm
+limit or the llm lane can no longer keep the limiter fed. The daily budget of
+20 USD is about 106k calls at the measured size, so a normal day stays at 1 to
+4 USD and only a backlog of more than ~15 hours flat out reaches it.
+
+The graph stays at one episode at a time with 10 s between episodes:
+graphiti-core requires the episodes of a graph to be added one after another,
+the FalkorDB death check blames the one episode in flight, and from 05:00 to
+noon graph jobs ran at a 5.1-minute median while the limiter had room, so the
+graph tail is set per episode, not by the LLM budget. After a deploy, watch
+the queue wait of `enrich-bulk` (it should fall from 132 minutes median to
+minutes) and of `graphiti-bulk`, `graphiti_ingest_retry` with
+`retry_reason=rate_limited`, `enrichment_llm_error` (the alert at 30 per 15
+min), FalkorDB query timeouts, and `klai-ingest` spend per day. Go back to
+0.6 requests per second if rate-limit 429s from the proxy appear, or the
+daily spend passes 10 USD on a normal night. The next graph step is 2 episodes
+at a time with at most one per organisation, which also needs the death check
+to name the episode it blames.
+
+**Work done twice on purpose.** The request chunks the text and the
+enrichment job chunks it again from the stored text: deterministic, a few
+milliseconds of CPU, and it lets the job read the version from Postgres
+instead of frozen task arguments. Raw chunks are embedded (dense and sparse)
+in the request and the enriched text again in the job: different text, so
+different vectors, on the local TEI and sparse sidecar, and the raw vectors
+make a document searchable before its enrichment runs. The blind content
+label and the taxonomy classification read the same first 500 characters in
+two calls on purpose (SPEC-KB-023: the label is written without the taxonomy
+so the classification cannot bias it), each a few hundred tokens.
+
+`ALL_QUEUES` is the five lists together (`queues.py`); a test pins that
 every queue constant is in exactly one lane
 (`klai-knowledge-ingest/tests/test_queues_constants.py:71`). Jobs live in Postgres
 (`procrastinate_jobs`), the pool holds 4 to 20 connections (`worker.py:107-108`),
@@ -709,9 +762,9 @@ ingest does nothing per language; the chat language behaviour is described in
 
 - `GRAPHITI_LLM_RPS` in the compose file (`deploy/docker-compose.yml:2231`) is
   read by nothing: there is no such setting. LLM pacing for enrichment, graph,
-  taxonomy and labelling is the one shared limiter, `litellm_klai_fast_rps` 0.6
-  and `litellm_klai_fast_burst` 10 (`config.py:339-340`,
-  `llm_throttle.py:73-90`). `GRAPHITI_EPISODE_DELAY` is read.
+  taxonomy and labelling is the one shared limiter, `litellm_klai_fast_rps` 2
+  and `litellm_klai_fast_burst` 10 (`config.py`, `llm_throttle.py`).
+  `GRAPHITI_EPISODE_DELAY` is read.
 - `knowledge.embedding_queue` is never inserted into; only deleted from
   (`pg_store.py:732,880,985`). The dual-store outbox did not land
   (`GAP-SYNC-01`); consistency is checked by the nightly reconcile (7.2).

@@ -80,8 +80,9 @@ MAINTENANCE = "maintenance"
 #
 # * I/O lane — HTTP, file ops, DB. Bursty user-triggered work, sub-second
 #   per-task. Concurrency tuned for parallel HTTP fan-out.
-# * LLM lane — Mistral calls via LiteLLM, 5-60 s per task. Concurrency
-#   bounded by upstream rate limit (token bucket in ``graph.py``).
+# * LLM lane — Mistral calls via LiteLLM, 5-60 s per task. Paced by the
+#   shared limiter (``llm_throttle``).
+# * Graph lane — graph extraction, as many slots as episodes may run at once.
 #
 # Adding a new queue: pick the lane, append the constant to that lane's list.
 # ``ALL_QUEUES`` is computed; the lane invariant is enforced by
@@ -106,16 +107,24 @@ a lane with bulk queues made "drains first" a lie in practice
 
 LLM_QUEUES: list[str] = [
     ENRICH_BULK,
-    GRAPHITI_BULK,
     RAG_EVAL,
     TAXONOMY_BACKFILL,
     REBUILD_KB,
 ]
 """Throughput-bound LLM work — bounded by upstream rate limit."""
 
+GRAPH_QUEUES: list[str] = [GRAPHITI_BULK]
+"""Graph extraction, one lane slot per episode allowed in flight
+(``graphiti_max_concurrent``). In the LLM lane a graph job waiting for the
+episode semaphore held one of its four slots: in the week to 12 Nov 2026
+enrichment, 0.2 min of work per job, waited 132 min at the median behind graph
+jobs running 5.1 min each."""
+
 MAINTENANCE_QUEUES: list[str] = [MAINTENANCE]
 """Recovery/control work with a dedicated worker slot."""
 
-ALL_QUEUES: list[str] = IO_QUEUES + INTERACTIVE_QUEUES + LLM_QUEUES + MAINTENANCE_QUEUES
+ALL_QUEUES: list[str] = (
+    IO_QUEUES + INTERACTIVE_QUEUES + LLM_QUEUES + GRAPH_QUEUES + MAINTENANCE_QUEUES
+)
 """Union of all lanes. Tests pin that every declared constant is in exactly
 one lane and that ALL_QUEUES contains every constant."""

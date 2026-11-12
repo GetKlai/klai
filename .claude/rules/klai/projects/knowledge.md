@@ -498,6 +498,15 @@ For `klai-fast`, route chat calls through
 test that fails when a new `chat/completions` call bypasses that limiter, and alert
 on sustained 429/error events rather than relying on queue health.
 
+The rate is derived from the `klai-ingest` alias limits and the measured call
+size, with the derivation next to `litellm_klai_fast_rps` in `config.py`;
+`tests/test_llm_throttle.py` pins its share of the limits, so a changed rate or
+a changed alias limit fails until the other is revisited. A job that waits on
+an in-process semaphore (the graph's episode semaphore) gets its own worker
+lane sized to that semaphore: in a shared lane it holds a slot while it waits,
+and on 12 November 2026 that made enrichment wait 132 minutes (median) for 0.2
+minutes of work.
+
 ## Configuration requires a production reader
 
 When adding a knowledge setting or threshold, identify the production code that

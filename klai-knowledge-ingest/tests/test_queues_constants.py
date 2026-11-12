@@ -76,21 +76,18 @@ def test_lanes_partition_all_queues():
     by competing worker processes and the lane SLAs collapse. Both are
     silent failures — pin the partition mechanically.
     """
-    io = set(queues.IO_QUEUES)
-    interactive = set(queues.INTERACTIVE_QUEUES)
-    llm = set(queues.LLM_QUEUES)
-    maintenance = set(queues.MAINTENANCE_QUEUES)
-    all_q = set(queues.ALL_QUEUES)
-
-    assert io & llm == set(), f"queue belongs to both I/O and LLM lanes: {io & llm}"
-    assert io & interactive == set(), f"queue in both I/O and interactive: {io & interactive}"
-    assert interactive & llm == set(), f"queue in both interactive and LLM: {interactive & llm}"
-    assert maintenance.isdisjoint(io | interactive | llm)
-    assert io | interactive | llm | maintenance == all_q, (
-        f"lanes do not cover ALL_QUEUES.\n"
-        f"  in ALL_QUEUES but not in any lane: {all_q - (io | interactive | llm | maintenance)}\n"
-        f"  in lanes but not in ALL_QUEUES: {(io | interactive | llm | maintenance) - all_q}"
-    )
+    lanes = {
+        "io": set(queues.IO_QUEUES),
+        "interactive": set(queues.INTERACTIVE_QUEUES),
+        "llm": set(queues.LLM_QUEUES),
+        "graph": set(queues.GRAPH_QUEUES),
+        "maintenance": set(queues.MAINTENANCE_QUEUES),
+    }
+    names = list(lanes)
+    for i, a in enumerate(names):
+        for b in names[i + 1 :]:
+            assert lanes[a].isdisjoint(lanes[b]), f"in {a} and {b}: {lanes[a] & lanes[b]}"
+    assert set().union(*lanes.values()) == set(queues.ALL_QUEUES)
 
 
 def test_all_queues_is_lanes_concatenated_in_order():
@@ -101,7 +98,11 @@ def test_all_queues_is_lanes_concatenated_in_order():
     + downstream tests rely on the union being deterministic.
     """
     assert queues.ALL_QUEUES == (
-        queues.IO_QUEUES + queues.INTERACTIVE_QUEUES + queues.LLM_QUEUES + queues.MAINTENANCE_QUEUES
+        queues.IO_QUEUES
+        + queues.INTERACTIVE_QUEUES
+        + queues.LLM_QUEUES
+        + queues.GRAPH_QUEUES
+        + queues.MAINTENANCE_QUEUES
     )
 
 
@@ -125,10 +126,14 @@ def test_crawl_jobs_lives_in_io_lane():
     assert queues.CRAWL_JOBS not in queues.LLM_QUEUES
 
 
-def test_graphiti_bulk_lives_in_llm_lane():
-    """SPEC-WORKER-LANES-001 REQ-1: graphiti episode ingest IS LLM-bound."""
-    assert queues.GRAPHITI_BULK in queues.LLM_QUEUES
-    assert queues.GRAPHITI_BULK not in queues.IO_QUEUES
+def test_graphiti_bulk_has_its_own_lane():
+    """A graph job waiting for the episode semaphore must not hold an enrichment slot.
+
+    In the LLM lane it did: enrichment (0.2 min of work) waited 132 min at the
+    median behind graph jobs of 5.1 min each (week to 12 Nov 2026).
+    """
+    assert queues.GRAPH_QUEUES == [queues.GRAPHITI_BULK]
+    assert queues.GRAPHITI_BULK not in queues.LLM_QUEUES
 
 
 def test_connector_purge_lives_in_io_lane():

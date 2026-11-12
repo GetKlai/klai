@@ -670,9 +670,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
     ) -> None:
         """Ingest a document into the Graphiti knowledge graph.
 
-        Runs on the graphiti-bulk queue, which the worker drains AFTER enrich-bulk.
-        This ensures enrichment LLM calls complete before Graphiti starts, preventing
-        both from competing on the same 1 req/s upstream rate limit simultaneously.
+        Runs on the graphiti-bulk queue in the worker's own graph lane, so a
+        graph job waiting its turn never holds an enrichment slot; both share
+        the one LLM limiter (``llm_throttle``).
 
         SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: artifact-existence guard.
         If the artifact has been deleted between enqueue and dequeue (e.g. by
