@@ -85,13 +85,17 @@ class BaseAdapter(ABC):
         """Whether the last ``list_documents`` call for *connector* returned every
         document the source holds under the connector's configuration.
 
-        The sync engine deletes previously synced refs that are missing from the
-        listing only when this is True. A listing that was incremental (a change
-        feed), capped by a per-run limit, or truncated by the source must answer
-        False, because every document it never saw would otherwise look deleted.
-        The default is False so destructive reconciliation stays opt-in.
+        The sync engine deletes stored refs that are missing from the listing
+        only when this is True. A listing that was incremental (a change feed),
+        capped by a per-run limit, or truncated by the source must answer False,
+        because every document it never saw would otherwise look deleted. The
+        default is False so destructive reconciliation stays opt-in.
         """
-        return str(connector.id) in vars(self).get("_complete_listings", ())
+        return vars(self).get("_listings", {}).get(str(connector.id)) == ""
+
+    def listing_incomplete_reason(self, connector: Any) -> str:
+        """Why the last listing for *connector* was not complete ("" when it was)."""
+        return vars(self).get("_listings", {}).get(str(connector.id), "not_recorded")
 
     def forget_listing(self, connector: Any) -> None:
         """Clear the completeness flag; the sync engine calls this before every listing.
@@ -100,17 +104,15 @@ class BaseAdapter(ABC):
         a mode added later, a connector switched to an incremental mode) would
         inherit True from an earlier run and delete everything it did not list.
         """
-        vars(self).get("_complete_listings", set()).discard(str(connector.id))
+        vars(self).get("_listings", {}).pop(str(connector.id), None)
 
-    def _record_listing(self, connector: Any, *, complete: bool) -> None:
-        """Remember whether the listing just produced for *connector* was complete."""
+    def _record_listing(self, connector: Any, *, complete: bool, reason: str = "") -> None:
+        """Remember whether the listing just produced for *connector* was complete,
+        and if not, why (the cap or mode), so a held-back cleanup can say so."""
         # Kept per instance (adapters are process singletons shared by all
         # connectors), so subclasses need no __init__ cooperation.
-        listings: set[str] = vars(self).setdefault("_complete_listings", set())
-        if complete:
-            listings.add(str(connector.id))
-        else:
-            listings.discard(str(connector.id))
+        listings: dict[str, str] = vars(self).setdefault("_listings", {})
+        listings[str(connector.id)] = "" if complete else (reason or "incomplete")
 
     async def confirm_gone(self, connector: Any, source_refs: list[str]) -> set[str]:
         """Return the subset of *source_refs*, missing from a complete listing, that is gone.

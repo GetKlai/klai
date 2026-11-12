@@ -103,8 +103,8 @@ def _engine(
     registry.get = MagicMock(return_value=adapter)
     # What knowledge-ingest stores for the connector; here the previous run's refs.
     if isinstance(ingest_client, MagicMock) and not isinstance(ingest_client.list_connector_source_refs, AsyncMock):
-        stored = set(previous_run.cursor_state["synced_refs"]) if previous_run else set()
-        ingest_client.list_connector_source_refs = AsyncMock(return_value=stored)
+        refs = previous_run.cursor_state["synced_refs"] if previous_run else []
+        ingest_client.list_connector_source_refs = AsyncMock(return_value={r: {f"stored-path:{r}"} for r in refs})
     engine = SyncEngine(
         session_maker=_session_maker(*runs),
         registry=registry,
@@ -321,7 +321,10 @@ async def test_failed_delete_completes_the_run_and_is_retried_next_sync(
     )
     # The store still holds the ref whose delete failed, so the next run finds it again.
     ingest_client.list_connector_source_refs = AsyncMock(
-        side_effect=[{ref.source_ref, failing_ref, other_ref}, {ref.source_ref, failing_ref}]
+        side_effect=[
+            {r: {f"stored-path:{r}"} for r in (ref.source_ref, failing_ref, other_ref)},
+            {r: {f"stored-path:{r}"} for r in (ref.source_ref, failing_ref)},
+        ]
     )
     previous = MagicMock()
     previous.cursor_state = {"synced_refs": [ref.source_ref]}
@@ -367,8 +370,8 @@ class _ContentHashDedupFake:
     async def delete_connector_document(self, **_kwargs: Any) -> None:
         return None
 
-    async def list_connector_source_refs(self, **_kwargs: Any) -> set[str]:
-        return set()
+    async def list_connector_source_refs(self, **_kwargs: Any) -> dict[str, set[str]]:
+        return {}
 
 
 @pytest.mark.asyncio

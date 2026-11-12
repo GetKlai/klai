@@ -43,6 +43,7 @@ Image carve-out (SPEC-KB-CONNECTORS-001 R4.4):
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.parse import parse_qsl, urlparse
@@ -70,6 +71,9 @@ _MAX_PAGES_PER_SPACE = 100
 
 # Per-request page size for the v2 cursor pagination.
 _PAGE_BATCH = 100
+
+# The space key inside a page source_ref (``{base}/wiki/spaces/{KEY}/pages/{id}``).
+_SPACE_IN_URL = re.compile(r"/wiki/spaces/([^/]+)/pages/")
 
 
 def _next_params(payload: dict[str, Any]) -> dict[str, str] | None:
@@ -106,8 +110,12 @@ def _paginate_v2(
     params: dict[str, Any],
     cap: int,
     what: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
     """Follow the v2 cursor until *cap* items are collected or pages run out.
+
+    Returns the items and whether they are the complete listing: False when the
+    cap cut the listing short or an item was not an object and was skipped,
+    because a document missing from an incomplete listing is not gone.
 
     The SDK's typed ``get_pages`` / ``get_spaces`` helpers materialise a whole
     space or site before returning — ``limit`` is their per-request batch size,
@@ -121,6 +129,7 @@ def _paginate_v2(
     run failed (``AGENTS.md`` "fail loudly").
     """
     collected: list[dict[str, Any]] = []
+    skipped = 0
     request_params = dict(params)
 
     while True:
@@ -136,18 +145,21 @@ def _paginate_v2(
         for item in cast(list[Any], batch):
             if isinstance(item, dict):
                 collected.append(cast(dict[str, Any], item))
+            else:
+                skipped += 1
 
         next_query = _next_params(page)
-        if len(collected) >= cap:
-            if len(collected) > cap or next_query:
+        truncated = len(collected) > cap or (len(collected) == cap and next_query is not None)
+        if len(collected) >= cap or next_query is None:
+            if truncated:
                 logger.warning(
                     "Confluence: %s truncated at %d — the remainder is not synced",
                     what,
                     cap,
                 )
-            return collected[:cap]
-        if next_query is None:
-            return collected
+            if skipped:
+                logger.warning("Confluence: %s skipped %d item(s) that were not objects", what, skipped)
+            return collected[:cap], not truncated and not skipped
         request_params = next_query
 
     return collected[:cap]
@@ -186,6 +198,8 @@ class ConfluenceAdapter(BaseAdapter):
     def __init__(self, settings: Settings) -> None:
         # Settings kept for interface compatibility; no global Confluence credentials.
         self._settings = settings
+        # connector id -> space keys the last listing returned, for confirm_gone.
+        self._listed_spaces: dict[str, set[str]] = {}
 
     async def aclose(self) -> None:
         """No persistent resources to close."""
@@ -296,7 +310,7 @@ class ConfluenceAdapter(BaseAdapter):
             _build_confluence_client, base_url, email, api_token
         )
 
-        space_ids_by_key = await asyncio.to_thread(
+        space_ids_by_key, spaces_complete = await asyncio.to_thread(
             self._discover_all_spaces, client, space_keys
         )
 
@@ -318,20 +332,17 @@ class ConfluenceAdapter(BaseAdapter):
             selected = space_ids_by_key
 
         refs: list[DocumentRef] = []
-        # The listing is complete only if every configured space was visible and
-        # no space or page listing reached its cap (a listing of exactly the cap
-        # may have been cut, too). A configured space that disappeared can be a
-        # deleted space or a revoked permission; both keep its pages until a
-        # person removes the space from the connector.
-        complete = not missing and (
-            bool(space_keys) or len(space_ids_by_key) < _MAX_SPACES
-        )
+        # A space missing from the listing keeps its pages (see confirm_gone);
+        # within the listed spaces the listing is complete unless a cap cut it
+        # or an item was skipped.
+        incomplete: list[str] = [] if spaces_complete else ["space_listing_incomplete"]
 
         for space_key, space_id in selected.items():
-            pages = await asyncio.to_thread(
+            pages, pages_complete = await asyncio.to_thread(
                 self._fetch_all_pages_in_space, client, space_key, space_id
             )
-            complete = complete and len(pages) < _MAX_PAGES_PER_SPACE
+            if not pages_complete:
+                incomplete.append(f"page_listing_incomplete:{space_key}")
             for page in pages:
                 page_id: str = str(page.get("id", ""))
                 version: dict[str, Any] = cast(dict[str, Any], page.get("version") or {})
@@ -358,13 +369,41 @@ class ConfluenceAdapter(BaseAdapter):
                     )
                 )
 
-        self._record_listing(connector, complete=complete)
+        self._listed_spaces[str(connector.id)] = set(selected)
+        self._record_listing(connector, complete=not incomplete, reason=",".join(incomplete))
         logger.info(
             "Confluence list_documents complete: spaces=%s pages=%d",
             list(selected),
             len(refs),
         )
         return refs
+
+    async def confirm_gone(self, connector: Any, source_refs: list[str]) -> set[str]:
+        """Keep the pages of a space the listing did not return at all.
+
+        A space the token can no longer see and a deleted space look the same,
+        and only the first is common, so its pages stay until a person removes
+        the connector or, with configured spaces, removes the space from the
+        configuration (then its pages are gone like any page outside the filter).
+        """
+        cfg = self._extract_config(connector)
+        configured = set(cfg["space_keys"])
+        listed = self._listed_spaces.get(str(connector.id), set())
+        gone: set[str] = set()
+        kept_spaces: set[str] = set()
+        for source_ref in source_refs:
+            match = _SPACE_IN_URL.search(source_ref)
+            space = match.group(1) if match else ""
+            if space in listed or (configured and space not in configured):
+                gone.add(source_ref)
+            else:
+                kept_spaces.add(space)
+        if kept_spaces:
+            logger.warning(
+                "Confluence: keeping pages of space(s) %s that the listing did not return",
+                sorted(kept_spaces),
+            )
+        return gone
 
     async def fetch_document(self, ref: DocumentRef, connector: Any) -> bytes:
         """Fetch a single Confluence page and return it as UTF-8 encoded bytes.
@@ -438,7 +477,7 @@ class ConfluenceAdapter(BaseAdapter):
     def _discover_all_spaces(
         client: Any,
         space_keys: list[str] | None = None,
-    ) -> dict[str, str]:
+    ) -> tuple[dict[str, str], bool]:
         """Map Confluence space keys to their v2 space ids (synchronous).
 
         Wrapped via asyncio.to_thread() in async callers.
@@ -453,7 +492,8 @@ class ConfluenceAdapter(BaseAdapter):
         ``_paginate_v2``.
 
         Returns:
-            Mapping of space key -> space id, in listing order.
+            Mapping of space key -> space id, in listing order, and whether the
+            space listing was complete.
         """
         params: dict[str, Any] = {"limit": _PAGE_BATCH}
         cap = _MAX_SPACES
@@ -466,7 +506,7 @@ class ConfluenceAdapter(BaseAdapter):
             # them as "not visible to this token", which is a lie about why.
             cap = max(_MAX_SPACES, len(space_keys))
 
-        spaces = _paginate_v2(
+        spaces, complete = _paginate_v2(
             client,
             client.get_endpoint("spaces"),
             params,
@@ -480,14 +520,14 @@ class ConfluenceAdapter(BaseAdapter):
             space_id: Any = space.get("id")
             if key and space_id and str(key) not in ids_by_key:
                 ids_by_key[str(key)] = str(space_id)
-        return ids_by_key
+        return ids_by_key, complete
 
     @staticmethod
     def _fetch_all_pages_in_space(
         client: Any,
         space_key: str,
         space_id: str,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], bool]:
         """Fetch pages from a single Confluence space by space id (synchronous).
 
         Wrapped via asyncio.to_thread() in async callers. Pagination stops at

@@ -2092,21 +2092,27 @@ async def list_connector_source_refs(
     connector_id: str,
     after: str,
     limit: int,
-) -> list[str]:
-    """One page of the distinct source_refs stored for a connector, ordered.
+) -> list[dict]:
+    """One page of the source_refs stored for a connector, each with its paths.
 
     Rows of every version count, not only active ones: a connector delete that
     closed the active row but failed on Qdrant or the graph leaves only closed
-    rows, and the connector must still see that ref to retry the delete.
+    rows, and the connector must still see that ref to retry the delete. The
+    paths come along because a row is matched by path at ingest: an unchanged
+    document re-ingested under a new ref (branch switch, renamed repository)
+    keeps its old ref, so the connector must not delete a ref whose path it
+    still lists.
     """
     rows = await conn.fetch(
         """
-        SELECT DISTINCT extra::jsonb->>'source_ref' AS source_ref
+        SELECT extra::jsonb->>'source_ref' AS source_ref,
+               array_agg(DISTINCT path ORDER BY path) AS paths
         FROM knowledge.artifacts
         WHERE org_id = $1
           AND kb_slug = $2
           AND extra::jsonb->>'source_connector_id' = $3
           AND extra::jsonb->>'source_ref' > $4
+        GROUP BY 1
         ORDER BY 1
         LIMIT $5
         """,
@@ -2116,7 +2122,7 @@ async def list_connector_source_refs(
         after,
         limit,
     )
-    return [str(row["source_ref"]) for row in rows]
+    return [{"source_ref": str(row["source_ref"]), "paths": list(row["paths"])} for row in rows]
 
 
 async def list_chunks_for_artifact(

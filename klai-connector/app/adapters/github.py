@@ -169,7 +169,7 @@ class GitHubAdapter(BaseAdapter):
                 "GitHub tree for %s/%s@%s is truncated; stale cleanup skipped",
                 repo_owner, repo_name, branch,
             )
-        self._record_listing(connector, complete=not truncated)
+        self._record_listing(connector, complete=not truncated, reason="tree_truncated")
         logger.info(
             "Listed %d documents from %s/%s@%s",
             len(refs), repo_owner, repo_name, branch,

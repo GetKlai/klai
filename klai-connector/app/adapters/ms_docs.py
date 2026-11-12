@@ -253,7 +253,7 @@ class MsDocsAdapter(OAuthAdapterBase, BaseAdapter):
 
         # Delta mode returns only what changed since the cursor, so a missing
         # item says nothing about whether it still exists.
-        self._record_listing(connector, complete=False)
+        self._record_listing(connector, complete=False, reason="delta_mode")
 
         delta_link = (cursor_context or {}).get("delta_link")
         if delta_link:

@@ -282,6 +282,11 @@ reads every `source_ref` knowledge-ingest stores for the connector
 of every version so a half-finished delete is retried) and diffs it against the listing. A
 stored ref the source no longer lists was deleted, trashed or unshared there and is removed
 through `DELETE /ingest/v1/connector/document` (all versions, vectors and graph episodes).
+The route returns each stored ref with its stored paths, and a ref is gone only when its
+path is not the path of any listed document either: knowledge-ingest matches a row by path,
+so an unchanged document re-ingested under a new ref (GitHub branch switch or renamed
+repository, edited Confluence base URL) keeps its old ref, and same-named Drive files share
+one path. A ref whose path is still listed is never deleted.
 Because the diff is against the store, a document deleted before any run noticed, or one
 whose earlier delete failed, is found again on the next run; `synced_refs` in
 `sync_runs.cursor_state` only serves new-document detection. If the store read fails,
@@ -312,7 +317,13 @@ every document it never saw look deleted. The engine clears that flag before eve
   retries it (`stale_cleanup_delete_failed` warning).
 
 Every run logs one `source_deletions` event with `listing_complete`, `listed`, `known`,
-`removed`, `kept`, `missing_kept` and `delete_failed`. There is no percentage cap: a complete
+`removed`, `kept`, `missing_kept`, `delete_failed`, `held_back` and `documents_failed`. When
+deletions are held back, `error_details` also carries `stale_cleanup_held_back` with the
+reason (`documents_failed`, or `listing_incomplete:<cap or mode>` such as
+`max_pages_reached`, `max_files_reached`, `incomplete_search`, `tree_truncated`,
+`page_listing_incomplete:<space>`, `change_feed`, `delta_mode`), so a connector whose cleanup
+never runs can be alerted on. Candidates an adapter declines to confirm are counted in
+`stale_cleanup_kept_unconfirmed`. There is no percentage cap: a complete
 listing that shrank is the source's own statement.
 
 | Connector | Listing per run | Deletes | Trashed / gone looks like |
@@ -321,9 +332,9 @@ listing that shrank is the source's own statement.
 | notion (search) | all pages via search, filtered on `database_ids` | yes, unless `max_pages` (default 500) was reached | `in_trash`/`archived` flag, or absent from search |
 | notion (`page_ids`) | each page retrieved | yes | 404 `object_not_found`, or trash flag |
 | github | recursive git tree | yes, unless the tree is `truncated` | file absent from the tree |
-| confluence | pages with `status=current` per space | yes, unless a space reached 100 pages, discovery reached 100 spaces, or a configured space is not visible | trashed/archived pages are not `current` |
+| confluence | pages with `status=current` per space | yes, unless a space or the space discovery hit its 100 cap or an item was not an object; pages of a space the listing did not return at all (lost permission or deleted space) are kept, in both modes, until the space leaves the config or the connector is removed | trashed/archived pages are not `current` |
 | airtable | every record of each table (and view) | yes | record absent |
-| google_drive (folder or file selection) | `files.list` with `trashed = false`, or `files.get` per file | yes, unless `max_files` (default 500) cut the listing | excluded by the query, `trashed: true`, or 404 |
+| google_drive (folder or file selection) | `files.list` with `trashed = false`, or `files.get` per file | yes, unless `max_files` (default 500) cut the listing or Drive answered `incompleteSearch` | excluded by the query, `trashed: true`, or 404 |
 | google_drive (whole drive) | change feed after the first run | **no**: incremental | — |
 | ms_docs (pinned items) | each item fetched | yes | 404 |
 | ms_docs (drive/site/folder) | Graph delta after the first run | **no**: incremental | — |

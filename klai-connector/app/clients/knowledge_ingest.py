@@ -233,13 +233,13 @@ class KnowledgeIngestClient:
         org_id: str,
         kb_slug: str,
         source_connector_id: str,
-    ) -> set[str]:
-        """Every source_ref knowledge-ingest stores for this connector.
+    ) -> dict[str, set[str]]:
+        """Every source_ref knowledge-ingest stores for this connector, with its paths.
 
         Follows the keyset cursor until a short page; any HTTP error raises, so
         a failed read is never mistaken for an empty store.
         """
-        refs: set[str] = set()
+        refs: dict[str, set[str]] = {}
         after = ""
         while True:
             response = await self._client.get(
@@ -258,7 +258,8 @@ class KnowledgeIngestClient:
             )
             response.raise_for_status()
             page = response.json()
-            refs.update(page["source_refs"])
+            for stored in page["source_refs"]:
+                refs[stored["source_ref"]] = set(stored["paths"])
             if not page.get("next_after"):
                 return refs
             after = page["next_after"]

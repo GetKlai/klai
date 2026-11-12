@@ -83,12 +83,13 @@ async def _sync(
     portal_config: PortalConnectorConfig,
     previous: MagicMock | None,
     *,
-    stored: set[str] | Exception | None = None,
+    stored: set[str] | dict[str, set[str]] | Exception | None = None,
 ) -> tuple[MagicMock, MagicMock]:
     """Run one sync and return (sync_run, ingest_client).
 
-    ``stored`` is what knowledge-ingest holds for the connector; it defaults to
-    the previous run's synced_refs.
+    ``stored`` is what knowledge-ingest holds for the connector (ref -> stored
+    paths); it defaults to the previous run's synced_refs. A plain set of refs
+    gives each ref a path of its own that no listing yields.
     """
     run = _run()
 
@@ -108,6 +109,8 @@ async def _sync(
     ingest_client.delete_connector_document = AsyncMock(return_value=True)
     if stored is None:
         stored = set(previous.cursor_state["synced_refs"]) if previous else set()
+    if isinstance(stored, set):
+        stored = {ref: {f"stored-path:{ref}"} for ref in stored}
     if isinstance(stored, Exception):
         ingest_client.list_connector_source_refs = AsyncMock(side_effect=stored)
     else:
@@ -287,6 +290,58 @@ async def test_refs_the_adapter_does_not_confirm_as_gone_are_kept() -> None:
     _assert_single_scoped_delete(ingest, "ref-c")
     adapter.confirm_gone.assert_awaited_once()
     assert adapter.confirm_gone.await_args.args[1] == ["ref-b", "ref-c"]
+
+
+@pytest.mark.asyncio
+async def test_failed_document_holding_back_deletions_is_reported(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO")
+    adapter = _fake_adapter([_doc("ref-a"), _doc("ref-c")])
+    adapter.fetch_document = AsyncMock(side_effect=[RuntimeError("parse failed"), b"body"])
+
+    run, ingest = await _sync(adapter, _portal_config("notion", {}), _previous(["ref-a", "ref-b"]))
+
+    ingest.delete_connector_document.assert_not_awaited()
+    assert {"warning": "stale_cleanup_held_back", "reason": "documents_failed", "documents_failed": 1} in (
+        run.error_details
+    )
+    counts = next(r for r in caplog.records if getattr(r, "event", None) == "source_deletions")
+    assert (counts.held_back, counts.documents_failed) == ("documents_failed", 1)
+
+
+@pytest.mark.asyncio
+async def test_incomplete_listing_reports_the_cap_that_held_deletions_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if _json(request).get("start_cursor"):
+            return httpx.Response(200, json={"results": [_notion_page("page-3")], "has_more": False})
+        return httpx.Response(200, json={"results": [_notion_page("page-1")], "has_more": True, "next_cursor": "c2"})
+
+    adapter = _notion_adapter(monkeypatch, handler)
+
+    run, _ingest = await _sync(adapter, _notion_config(max_pages=1), _previous(["page-1", "page-9"]))
+
+    held = next(e for e in run.error_details if e.get("warning") == "stale_cleanup_held_back")
+    assert held["reason"] == "listing_incomplete:max_pages_reached"
+
+
+@pytest.mark.asyncio
+async def test_empty_listing_refusal_keeps_the_previous_synced_refs() -> None:
+    """Otherwise every document counts as new and is fetched again once the token works."""
+    run, _ingest = await _sync(_fake_adapter([]), _portal_config("notion", {}), _previous(["ref-a", "ref-b"]))
+
+    assert run.cursor_state["synced_refs"] == ["ref-a", "ref-b"]
+
+
+@pytest.mark.asyncio
+async def test_unchanged_commit_skip_carries_synced_refs_forward() -> None:
+    adapter = _fake_adapter([])
+    adapter.get_cursor_state = AsyncMock(return_value={"tree_sha": "c1", "path_filter": None})
+
+    run, _ingest = await _sync(
+        adapter, _portal_config("github", {}), _previous(["ref-a"], tree_sha="c1", path_filter=None)
+    )
+
+    adapter.list_documents.assert_not_awaited()
+    assert run.cursor_state == {"tree_sha": "c1", "path_filter": None, "synced_refs": ["ref-a"]}
 
 
 @pytest.mark.asyncio
@@ -591,6 +646,18 @@ async def test_github_file_removed_from_the_repository_is_removed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_github_branch_switch_with_unchanged_content_deletes_nothing() -> None:
+    """Unchanged files are skipped at ingest and keep the old branch's ref in the store."""
+    adapter = _github_adapter([_blob("docs/a.md"), _blob("docs/b.md")])
+    old_ref = "acme/handbook:release:{}"
+    stored = {old_ref.format(p): {p} for p in ("docs/a.md", "docs/b.md", "docs/gone.md")}
+
+    _run_, ingest = await _sync(adapter, _github_config(), _previous([]), stored=stored)
+
+    _assert_single_scoped_delete(ingest, old_ref.format("docs/gone.md"))
+
+
+@pytest.mark.asyncio
 async def test_github_truncated_tree_deletes_nothing() -> None:
     adapter = _github_adapter([_blob("docs/a.md")], truncated=True)
 
@@ -620,7 +687,7 @@ async def test_github_path_filter_removes_files_outside_it_and_keeps_files_insid
 class _FakeConfluence:
     """Serves v2 /spaces and /pages and honours the ``status`` filter like the API does."""
 
-    def __init__(self, spaces: dict[str, str], pages: dict[str, list[dict[str, Any]]]) -> None:
+    def __init__(self, spaces: dict[str, str], pages: dict[str, list[Any]]) -> None:
         self._spaces = spaces
         self._pages = pages
 
@@ -633,7 +700,11 @@ class _FakeConfluence:
             return {"results": [{"key": k, "id": self._spaces[k]} for k in keys if k in self._spaces], "_links": {}}
         pages = self._pages.get(params["space-id"], [])
         statuses = set(str(params.get("status", "current,archived,trashed,draft")).split(","))
-        return {"results": [p for p in pages if p["status"] in statuses], "_links": {}}
+        listed = [p for p in pages if not isinstance(p, dict) or p["status"] in statuses]
+        start = int(params.get("cursor", 0))
+        end = start + int(params["limit"])
+        links = {"next": f"/wiki/api/v2/pages?cursor={end}&limit={params['limit']}"} if end < len(listed) else {}
+        return {"results": listed[start:end], "_links": links}
 
 
 def _confluence_adapter(monkeypatch: pytest.MonkeyPatch, fake: _FakeConfluence) -> ConfluenceAdapter:
@@ -687,7 +758,7 @@ async def test_confluence_trashed_or_archived_page_is_removed(monkeypatch: pytes
 
 @pytest.mark.asyncio
 async def test_confluence_space_at_the_page_cap_deletes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    pages = {"1": [_cf_page(str(i)) for i in range(confluence_module._MAX_PAGES_PER_SPACE)]}
+    pages = {"1": [_cf_page(str(i)) for i in range(confluence_module._MAX_PAGES_PER_SPACE + 1)]}
     adapter = _confluence_adapter(monkeypatch, _FakeConfluence({"ENG": "1"}, pages))
 
     _run_, ingest = await _sync(
@@ -697,17 +768,35 @@ async def test_confluence_space_at_the_page_cap_deletes_nothing(monkeypatch: pyt
     ingest.delete_connector_document.assert_not_awaited()
 
 
+@pytest.mark.parametrize("space_keys", [["ENG", "OPS"], []], ids=["configured", "all-spaces"])
 @pytest.mark.asyncio
-async def test_confluence_configured_space_no_longer_visible_deletes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_confluence_space_the_listing_no_longer_returns_keeps_its_pages(
+    monkeypatch: pytest.MonkeyPatch, space_keys: list[str]
+) -> None:
+    """A lost permission and a deleted space look the same; its pages stay, the rest is cleaned."""
     adapter = _confluence_adapter(monkeypatch, _FakeConfluence({"ENG": "1"}, {"1": [_cf_page("10")]}))
 
-    _run_, ingest = await _sync(
+    run, ingest = await _sync(
         adapter,
-        _confluence_config(space_keys=["ENG", "OPS"]),
-        _previous([_cf_ref("ENG", "10"), _cf_ref("OPS", "20")]),
+        _confluence_config(space_keys=space_keys),
+        _previous([_cf_ref("ENG", "10"), _cf_ref("ENG", "11"), _cf_ref("OPS", "20")]),
+    )
+
+    _assert_single_scoped_delete(ingest, _cf_ref("ENG", "11"))
+    assert {"warning": "stale_cleanup_kept_unconfirmed", "count": 1} in run.error_details
+
+
+@pytest.mark.asyncio
+async def test_confluence_listing_with_a_skipped_item_is_not_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = _confluence_adapter(monkeypatch, _FakeConfluence({"ENG": "1"}, {"1": [_cf_page("10"), "not-an-object"]}))
+
+    run, ingest = await _sync(
+        adapter, _confluence_config(space_keys=["ENG"]), _previous([_cf_ref("ENG", "10"), _cf_ref("ENG", "11")])
     )
 
     ingest.delete_connector_document.assert_not_awaited()
+    held = next(e for e in run.error_details if e.get("warning") == "stale_cleanup_held_back")
+    assert held["reason"] == "listing_incomplete:page_listing_incomplete:ENG"
 
 
 @pytest.mark.asyncio
@@ -786,7 +875,9 @@ async def test_airtable_page_failing_mid_listing_deletes_nothing(monkeypatch: py
 # -- Google Drive (adapter over httpx, transport faked) ---------------------------
 
 
-def _drive(monkeypatch: pytest.MonkeyPatch, files: dict[str, dict[str, Any] | int]) -> GoogleDriveAdapter:
+def _drive(
+    monkeypatch: pytest.MonkeyPatch, files: dict[str, dict[str, Any] | int], *, incomplete_search: bool = False
+) -> GoogleDriveAdapter:
     """``files`` maps id -> file object, or id -> HTTP status for files.get."""
     doc_mime = "application/vnd.google-apps.document"
 
@@ -801,7 +892,8 @@ def _drive(monkeypatch: pytest.MonkeyPatch, files: dict[str, dict[str, Any] | in
                 for f in files.values()
                 if isinstance(f, dict) and not ("trashed = false" in query and f.get("trashed"))
             ]
-            return httpx.Response(200, json={"files": listed})
+            assert "incompleteSearch" in request.url.params["fields"]
+            return httpx.Response(200, json={"files": listed, "incompleteSearch": incomplete_search})
         entry = files[path.rsplit("/", 1)[-1]]
         if isinstance(entry, int):
             return httpx.Response(entry, json={"error": {"code": entry}})
@@ -846,6 +938,34 @@ async def test_drive_selected_file_deleted_or_trashed_is_removed(monkeypatch: py
     )
 
     assert sorted(_deleted(ingest)) == ["f2", "f3"]
+
+
+@pytest.mark.asyncio
+async def test_drive_same_named_files_one_deleted_keeps_the_remaining_files_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive paths are file names; the stored row may carry the deleted twin's ref."""
+    adapter = _drive(monkeypatch, {"f1": {"id": "f1", "name": "Report.docx"}})
+
+    _run_, ingest = await _sync(
+        adapter,
+        _portal_config("google_drive", {"folder_id": "fold"}),
+        _previous(["f1", "f2"]),
+        stored={"f2": {"Report.docx"}, "f3": {"Other.docx"}},
+    )
+
+    _assert_single_scoped_delete(ingest, "f3")
+
+
+@pytest.mark.asyncio
+async def test_drive_incomplete_search_deletes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = _drive(monkeypatch, {"f1": {"id": "f1"}}, incomplete_search=True)
+
+    run, ingest = await _sync(adapter, _portal_config("google_drive", {"folder_id": "fold"}), _previous(["f1", "f9"]))
+
+    ingest.delete_connector_document.assert_not_awaited()
+    held = next(e for e in run.error_details if e.get("warning") == "stale_cleanup_held_back")
+    assert held["reason"] == "listing_incomplete:incomplete_search"
 
 
 @pytest.mark.asyncio
@@ -970,15 +1090,21 @@ async def test_client_reads_every_page_of_stored_refs_for_the_connector() -> Non
         params = dict(request.url.params)
         seen.append(params)
         if params["after"] == "":
-            return httpx.Response(200, json={"source_refs": ["ref-a", "ref-b"], "next_after": "ref-b"})
-        return httpx.Response(200, json={"source_refs": ["ref-c"], "next_after": None})
+            page = [
+                {"source_ref": "ref-a", "paths": ["a.md"]},
+                {"source_ref": "ref-b", "paths": ["b.md", "b-old.md"]},
+            ]
+            return httpx.Response(200, json={"source_refs": page, "next_after": "ref-b"})
+        return httpx.Response(
+            200, json={"source_refs": [{"source_ref": "ref-c", "paths": ["c.md"]}], "next_after": None}
+        )
 
     client = KnowledgeIngestClient("http://knowledge-ingest", "internal-secret")
     client._client = httpx.AsyncClient(base_url="http://knowledge-ingest", transport=httpx.MockTransport(handler))
 
     refs = await client.list_connector_source_refs(org_id=ORG_ID, kb_slug=KB_SLUG, source_connector_id="c-1")
 
-    assert refs == {"ref-a", "ref-b", "ref-c"}
+    assert refs == {"ref-a": {"a.md"}, "ref-b": {"b.md", "b-old.md"}, "ref-c": {"c.md"}}
     assert [(p["org_id"], p["kb_slug"], p["connector_id"], p["after"]) for p in seen] == [
         (ORG_ID, KB_SLUG, "c-1", ""),
         (ORG_ID, KB_SLUG, "c-1", "ref-b"),

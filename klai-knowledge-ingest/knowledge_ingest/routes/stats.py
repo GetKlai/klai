@@ -145,8 +145,13 @@ async def get_graph_stats(
         return GraphStatsResponse()
 
 
+class StoredConnectorRef(BaseModel):
+    source_ref: str
+    paths: list[str]
+
+
 class ConnectorSourceRefsResponse(BaseModel):
-    source_refs: list[str]
+    source_refs: list[StoredConnectorRef]
     next_after: str | None = None
 
 
@@ -159,7 +164,7 @@ async def get_connector_source_refs(
     after: str = Query("", description="Return refs ordered after this one (keyset cursor)"),
     limit: int = Query(1000, ge=1, le=5000),
 ) -> ConnectorSourceRefsResponse:
-    """The source_refs this store holds for one connector, one page at a time.
+    """The source_refs this store holds for one connector, with their paths, one page at a time.
 
     klai-connector diffs this set against its current source listing to find
     documents deleted at the source. Unlike the stats routes above, errors are
@@ -172,5 +177,6 @@ async def get_connector_source_refs(
             conn, verified_org_id, kb_slug, connector_id, after, limit
         )
     return ConnectorSourceRefsResponse(
-        source_refs=refs, next_after=refs[-1] if len(refs) == limit else None
+        source_refs=[StoredConnectorRef(**ref) for ref in refs],
+        next_after=refs[-1]["source_ref"] if len(refs) == limit else None,
     )

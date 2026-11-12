@@ -295,7 +295,9 @@ class NotionAdapter(BaseAdapter):
         # Every page id is either returned or confirmed gone, so the pinned
         # listing is complete; a search listing is complete unless max_pages
         # cut it off (a listing of exactly max_pages may have been cut, too).
-        self._record_listing(connector, complete=bool(page_ids) or len(pages) < max_pages)
+        self._record_listing(
+            connector, complete=bool(page_ids) or len(pages) < max_pages, reason="max_pages_reached"
+        )
 
         refs = [
             DocumentRef(

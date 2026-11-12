@@ -42,22 +42,27 @@ def _patched(refs: list[str]):
 
 
 def test_refs_are_read_for_the_verified_org_kb_and_connector(client) -> None:
-    conn, identity, tenant, query = _patched(["ref-a", "ref-b"])
+    rows = [
+        {"source_ref": "ref-a", "paths": ["docs/a.md"]},
+        {"source_ref": "ref-b", "paths": ["docs/b.md", "docs/b-old.md"]},
+    ]
+    conn, identity, tenant, query = _patched(rows)
     with identity as asserted, tenant, query as listed:
         response = _get(client, after="ref-0", limit=2)
 
     assert response.status_code == 200
-    assert response.json() == {"source_refs": ["ref-a", "ref-b"], "next_after": "ref-b"}
+    assert response.json() == {"source_refs": rows, "next_after": "ref-b"}
     assert asserted.await_args.kwargs == {"claimed_org_id": "org-1"}
     listed.assert_awaited_once_with(conn, "org-verified", "kb-a", "connector-1", "ref-0", 2)
 
 
 def test_short_page_ends_the_listing(client) -> None:
-    _conn, identity, tenant, query = _patched(["ref-a"])
+    rows = [{"source_ref": "ref-a", "paths": ["docs/a.md"]}]
+    _conn, identity, tenant, query = _patched(rows)
     with identity, tenant, query:
         response = _get(client, limit=2)
 
-    assert response.json() == {"source_refs": ["ref-a"], "next_after": None}
+    assert response.json() == {"source_refs": rows, "next_after": None}
 
 
 def test_store_error_is_not_answered_as_an_empty_store(client) -> None:
@@ -77,13 +82,13 @@ def test_limit_is_bounded(client) -> None:
 @pytest.mark.asyncio
 async def test_query_is_scoped_and_keyset_paginated() -> None:
     conn = MagicMock()
-    conn.fetch = AsyncMock(return_value=[{"source_ref": "ref-b"}])
+    conn.fetch = AsyncMock(return_value=[{"source_ref": "ref-b", "paths": ["docs/b.md"]}])
 
     refs = await pg_store.list_connector_source_refs(
         conn, "org-1", "kb-a", "connector-1", "ref-a", 10
     )
 
-    assert refs == ["ref-b"]
+    assert refs == [{"source_ref": "ref-b", "paths": ["docs/b.md"]}]
     sql, *args = conn.fetch.await_args.args
     assert args == ["org-1", "kb-a", "connector-1", "ref-a", 10]
     for clause in (
@@ -91,6 +96,8 @@ async def test_query_is_scoped_and_keyset_paginated() -> None:
         "kb_slug = $2",
         "extra::jsonb->>'source_connector_id' = $3",
         "extra::jsonb->>'source_ref' > $4",
+        "array_agg(DISTINCT path",
+        "GROUP BY 1",
         "ORDER BY 1",
         "LIMIT $5",
     ):

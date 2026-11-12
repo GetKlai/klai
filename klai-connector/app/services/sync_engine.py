@@ -320,7 +320,10 @@ class SyncEngine:
                         logger.info("No changes detected for connector %s, skipping sync", connector_id)
                         sync_run.status = SyncStatus.COMPLETED
                         sync_run.completed_at = datetime.now(UTC)
-                        sync_run.cursor_state = cursor_state
+                        # Carry synced_refs forward: this run becomes the next run's
+                        # baseline, and without them every file of the next commit
+                        # would count as new and be fetched again.
+                        sync_run.cursor_state = {**(cursor_state or {}), "synced_refs": sorted(prev_synced_refs)}
                         await session.commit()
                         await self._portal_client.report_sync_status(
                             connector_id=connector_id,
@@ -481,10 +484,26 @@ class SyncEngine:
                 # document it never saw look deleted. One failed document gates
                 # it as well, so a partial run never removes downstream state.
                 current_refs = {ref.source_ref or ref.path for ref in refs}
-                stored_refs: set[str] = set()
+                listed_paths = {ref.path for ref in refs}
+                stored_refs: dict[str, set[str]] = {}
                 stale_refs: list[str] = []
                 stale_delete_failed = 0
-                if listing_complete and not documents_failed:
+                held_back = ""
+                if not listing_complete:
+                    held_back = f"listing_incomplete:{adapter.listing_incomplete_reason(portal_config)}"
+                elif documents_failed:
+                    held_back = "documents_failed"
+                if held_back:
+                    # Visible on every run, so a connector whose cleanup never runs
+                    # (one document failing for good, a capped listing) can be alerted on.
+                    error_details.append(
+                        {
+                            "warning": "stale_cleanup_held_back",
+                            "reason": held_back,
+                            "documents_failed": documents_failed,
+                        }
+                    )
+                else:
                     try:
                         stored_refs = await self._ingest_client.list_connector_source_refs(
                             org_id=portal_config.zitadel_org_id,
@@ -500,7 +519,16 @@ class SyncEngine:
                             exc_info=True,
                             extra={"event": "stale_cleanup_store_unavailable", "connector_id": str(connector_id)},
                         )
-                    stale_refs = sorted(stored_refs - current_refs)
+                    # knowledge-ingest matches a row by path: an unchanged document
+                    # re-ingested under a new ref (branch switch, renamed repository,
+                    # edited base URL) keeps its old ref, and two same-named Drive
+                    # files share one path. A ref whose path is still listed is
+                    # therefore never gone, or a live document would be deleted.
+                    stale_refs = sorted(
+                        ref
+                        for ref, paths in stored_refs.items()
+                        if ref not in current_refs and not (paths & listed_paths)
+                    )
                 if stale_refs and not current_refs:
                     # An expired or narrowed token and a source that was emptied on
                     # purpose both list nothing, and only the first is common. The
@@ -533,6 +561,10 @@ class SyncEngine:
                             connector_id,
                             exc_info=True,
                             extra={"event": "stale_cleanup_confirm_failed", "connector_id": str(connector_id)},
+                        )
+                    if len(gone_refs) < len(stale_refs):
+                        error_details.append(
+                            {"warning": "stale_cleanup_kept_unconfirmed", "count": len(stale_refs) - len(gone_refs)}
                         )
                     for stale_ref in (ref for ref in stale_refs if ref in gone_refs):
                         try:
@@ -575,10 +607,12 @@ class SyncEngine:
                         "listed": len(current_refs),
                         "known": len(stored_refs),
                         "removed": stale_groups_deleted,
-                        "kept": len(stored_refs & current_refs),
+                        "kept": len(stored_refs.keys() & current_refs),
                         "missing_kept": len(stale_refs) - stale_groups_deleted,
                         "delete_failed": stale_delete_failed,
                         "refused_empty": stale_cleanup_refused,
+                        "held_back": held_back,
+                        "documents_failed": documents_failed,
                     },
                 )
 
@@ -679,6 +713,10 @@ class SyncEngine:
             if status == SyncStatus.COMPLETED and cursor_state is not None:
                 failed_refs = {e.get("file", "") for e in error_details}
                 discovered_refs = {r.source_ref or r.path for r in refs if (r.source_ref or r.path) not in failed_refs}
+                if stale_cleanup_refused:
+                    # The listing was refused as empty; keep the previous refs, or
+                    # every document would count as new once the token works again.
+                    discovered_refs = prev_synced_refs
                 cursor_state["synced_refs"] = sorted(discovered_refs)
             sync_run.cursor_state = cursor_state
             await session.commit()
