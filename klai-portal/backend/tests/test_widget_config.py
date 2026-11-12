@@ -225,9 +225,9 @@ async def test_the_widget_config_keeps_booking_url_as_the_default_routes(public)
 @pytest.mark.parametrize(("org_days", "expected"), [(14, 14), (None, 30)], ids=["org_override", "settings_default"])
 async def test_the_widget_config_states_the_effective_retention_term(public, org_days, expected, monkeypatch):
     """The pre-chat notice quotes this number, so it must be the term the purge applies."""
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "widget_messages_retention_days", 30)
+    # Set on the object the rule reads: another test re-imports app.core.config,
+    # after which a fresh import here would be a different settings object.
+    monkeypatch.setattr("app.services.widget_messages_retention.settings.widget_messages_retention_days", 30)
     body = await _delivered({}, public=public, org=FakeOrg(widget_messages_retention_days=org_days))
 
     assert body["retention_days"] == expected
