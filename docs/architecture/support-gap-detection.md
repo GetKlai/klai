@@ -340,9 +340,9 @@ Evaluate both missed and false merges on fixed examples in multiple input orders
 including unseen examples with opposite actions and different devices. Model
 agreement alone is not an accuracy reference.
 
-Not built as a screen (the endpoint `GET /api/app/gaps/by-taxonomy` exists in
-[app_gaps.py](../../klai-portal/backend/app/api/app_gaps.py) and no screen calls it):
-the overview groups these distinct needs under existing KB taxonomy topics.
+Not built (the endpoint `GET /api/app/gaps/by-taxonomy` that was meant to serve it
+was removed from [app_gaps.py](../../klai-portal/backend/app/api/app_gaps.py) on
+12 November 2026, as no screen called it): the overview groups these distinct needs under existing KB taxonomy topics.
 Topic membership never merges separate questions or adds their case counts
 together. Topics must belong to the same organization and KB; unclassified
 needs remain visible under “Not yet grouped”. Raw automatic retrieval signals

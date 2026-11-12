@@ -238,8 +238,8 @@ summarises both runs.
 To measure a retrieval-api change before it merges, start the checkout's retrieval-api beside the live one and point the
 portal one-off at it with `KNOWLEDGE_RETRIEVE_URL`. `deploy/scripts/retrieval-api-oneoff.sh` clones the live service's
 image, environment and networks, mounts the checkout's `retrieval_api` package over the image's, opens its Postgres pool
-read-only, skips the product event and the shadow write, and publishes no port. It also sets `COREFERENCE_MODEL`,
-`GRAPHITI_LLM_MODEL` and `SYNTHESIS_MODEL` to `klai-ingest` (the Vibe allowance, see above) and refuses an `--env` for
+read-only, skips the product event and the shadow write, and publishes no port. It also sets `COREFERENCE_MODEL`
+and `GRAPHITI_LLM_MODEL` to `klai-ingest` (the Vibe allowance, see above) and refuses an `--env` for
 them:
 
 ```bash

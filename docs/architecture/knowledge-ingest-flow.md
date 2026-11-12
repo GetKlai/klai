@@ -640,13 +640,13 @@ ingest does nothing per language; the chat language behaviour is described in
 
 ### 2.8 Settings and code that look active and are not
 
-- `GRAPHITI_LLM_RPS` in the compose file (`deploy/docker-compose.yml:2231`) is
-  read by nothing: there is no such setting. LLM pacing for enrichment, graph,
-  taxonomy and labelling is the one shared limiter, `litellm_klai_fast_rps` 0.6
-  and `litellm_klai_fast_burst` 10 (`config.py:339-340`,
-  `llm_throttle.py:73-90`). `GRAPHITI_EPISODE_DELAY` is read.
+- LLM pacing for enrichment, graph, taxonomy and labelling is the one shared
+  limiter, `litellm_klai_fast_rps` 0.6 and `litellm_klai_fast_burst` 10
+  (`config.py:339-340`, `llm_throttle.py:83-84`); there is no `graphiti_llm_rps`
+  setting and the compose file does not set one. `GRAPHITI_EPISODE_DELAY` is
+  read (`config.py:392`, `deploy/docker-compose.yml:2227`).
 - `knowledge.embedding_queue` is never inserted into; only deleted from
-  (`pg_store.py:732,880,985`). The dual-store outbox did not land
+  (`pg_store.py:732,882,995`). The dual-store outbox did not land
   (`GAP-SYNC-01`); consistency is checked by the nightly reconcile (7.2).
 - `extra.document_text_truncated`, written by the portal poller
   (`klai-portal/backend/app/services/kb_upload_poller.py:285`), is read by no
@@ -726,8 +726,8 @@ after its artifact was deleted removes what it wrote.
 | Crawled page gone | `adapters/crawler.py` stale purge (4.2) | same |
 | Reindex | `POST /knowledge/v1/artifacts/{id}/reindex` sets `pending` and defers `enrich_document_interactive` (`queueing_lock reindex:{org_id}:{id}`); it may reopen a closed head without successor and never a replaced version or a `deleting` row (`routes/kb_sources.py:243-325`, `pg_store.py:2204-2263`) | none |
 | Connector deleted | `connector_purge_task` to `purge_connector` (`connector_cleanup.py:150-360`): artifact ids captured, resource fences marked deleting, crawl jobs cancelled by resource key and the documents' enrichment and graph jobs by artifact id, Postgres artifacts and crawl rows deleted, graph episodes deleted, Qdrant points deleted by `source_connector_id`, orphaned image keys deleted from object storage, then a janitor pass; finally a callback to the portal (`portal_client.py:203-230`). It does not use `purge_documents` | Postgres, Qdrant, FalkorDB, object storage |
-| KB deleted | `DELETE /ingest/v1/kb` (`routes/ingest.py:1314-1334`): graph episodes of the KB, `qdrant_store.delete_kb`, `pg_store.delete_kb` (artifacts and their aux tables, `kb_config`, `crawl_jobs`, `crawled_pages`, `page_links`; `knowledge.entities` are organisation-wide and stay) | Postgres, Qdrant, FalkorDB |
-| Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:281-450`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:75-83,91-182`; one transaction that deletes the org's `page_links`, `crawled_pages`, `crawl_jobs`, `crawl_domains`, `kb_config`, `org_config`, `entities` and `artifacts` rows, the last with the rows that cascade from it) | Postgres, Qdrant, FalkorDB |
+| KB deleted | `DELETE /ingest/v1/kb` (`routes/ingest.py:1351-1376`): graph episodes of the KB, `qdrant_store.delete_kb`, the KB's images in object storage when an image store is configured (`ImageStore.delete_images(org_id, kb_slug)`, `klai-libs/image-storage/klai_image_storage/storage.py:176-205`), and last `pg_store.delete_kb` (artifacts and their aux tables including `embedding_queue`, `kb_config`, `crawl_jobs`, `crawled_pages`, `page_links` and the KB's `connector_resource_fences`; `pg_store.py:862-934`; `knowledge.entities` are organisation-wide and stay). The rows go last, so when an earlier store raises the portal keeps its KB and retries | Postgres, Qdrant, FalkorDB, object storage |
+| Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:285-468`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:72-182`; one transaction that deletes the org's `embedding_queue` rows (found through its artifacts), `page_links`, `crawled_pages`, `crawl_jobs`, `crawl_domains`, `kb_config`, `org_config`, `connector_resource_fences`, `graph_refresh_budget`, `entities` and `artifacts` rows, the last with the rows that cascade from it), then the step `_delete_kb_images`, which deletes everything under the organisation's `{org_id}/images/` prefix in object storage (`deprovisioning_steps.py:449-468`) | Postgres, Qdrant, FalkorDB, object storage |
 
 Scripts for documents deleted before `purge_documents` existed:
 `klai-knowledge-ingest/scripts/purge_deleted_documents.py` (reports closed-but-never-purged
