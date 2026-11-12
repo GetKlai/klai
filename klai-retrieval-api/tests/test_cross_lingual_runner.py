@@ -278,4 +278,5 @@ async def test_http_synthesize_answers_through_the_portal_partner_chat(monkeypat
     assert json.loads(seen[0].content) == {
         "messages": [{"role": "user", "content": "Hoe zet ik tweefactorauthenticatie aan?"}],
         "stream": False,
+        "knowledge": {"enabled": True},
     }

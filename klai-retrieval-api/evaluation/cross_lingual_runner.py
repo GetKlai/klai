@@ -102,7 +102,13 @@ async def _http_synthesize(
         resp = await client.post(
             f"{portal_url}/partner/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
-            json={"messages": [{"role": "user", "content": query}], "stream": False},
+            # A request without knowledge fields takes the general model route
+            # for a key that allows it, which answers without retrieval.
+            json={
+                "messages": [{"role": "user", "content": query}],
+                "stream": False,
+                "knowledge": {"enabled": True},
+            },
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
