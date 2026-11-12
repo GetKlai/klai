@@ -233,6 +233,14 @@ jobs:
       - name: backup single-run lock suite
         run: bash deploy/scripts/tests/backup-single-run.test.sh
 
+      # A nightly set must restore, not just exist: every artifact into a
+      # throwaway, proved by a fact, with the encrypted path run on a key made
+      # in the test (age is a package of the runner image's distribution).
+      - name: backup restore suite
+        run: |
+          sudo apt-get install -y age > /dev/null
+          bash deploy/scripts/tests/backup-restore.test.sh
+
       - name: portal-api deploy disk-guard suite
         run: bash deploy/scripts/tests/deploy-portal-api-disk-guard.test.sh
 
