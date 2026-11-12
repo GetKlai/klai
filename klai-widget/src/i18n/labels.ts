@@ -56,7 +56,6 @@ export interface WidgetLabels {
   handoffConnectedWith: string
   handoffNamePlaceholder: string
   rememberMe: string
-  clearStoredIdentity: string
   conversationHistory: string
   newConversation: string
   onlineStatus: string
@@ -138,7 +137,6 @@ const nl: WidgetLabels = {
   handoffConnectedWith: "Je praat met {name}.",
   handoffNamePlaceholder: "Je naam",
   rememberMe: "Onthoud mijn gegevens",
-  clearStoredIdentity: "Wis opgeslagen gegevens",
   conversationHistory: "Gesprekken",
   newConversation: "Nieuw gesprek",
   onlineStatus: "Online",
@@ -208,7 +206,6 @@ const en: WidgetLabels = {
   handoffConnectedWith: "You are talking to {name}.",
   handoffNamePlaceholder: "Your name",
   rememberMe: "Remember my details",
-  clearStoredIdentity: "Clear stored details",
   conversationHistory: "Conversations",
   newConversation: "New conversation",
   onlineStatus: "Online",

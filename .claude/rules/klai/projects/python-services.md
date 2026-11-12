@@ -23,3 +23,13 @@ paths:
 ## New field on existing request models
 - Always `Optional` with safe default — required fields break existing callers with 422.
 - Guard with explicit check when empty string is valid: `if body.field:`.
+
+
+## Alembic revision ids fit a varchar(32) (HIGH)
+
+`alembic_version.version_num` is a `varchar(32)`. A longer revision id passes
+every test and then fails at container start, when alembic records it: the
+service restarts in a loop until the deploy rolls back (klai-connector, twice,
+last on 2026-11-12 with a 37-character id). klai-connector checks the length in
+`tests/test_migration_revision_ids.py`; a service that gains migrations gets the
+same test.

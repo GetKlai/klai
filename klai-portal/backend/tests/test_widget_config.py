@@ -90,7 +90,6 @@ async def test_widget_config_of_a_deleted_org_is_not_found():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         with pytest.raises(HTTPException) as exc:
             await widget_config(id=widget.widget_id, request=_make_request("https://example.com"), db=db)
 
@@ -116,7 +115,6 @@ async def test_widget_config_happy_path():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -149,7 +147,6 @@ async def test_widget_config_delivers_footer_links_in_widget():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -172,7 +169,6 @@ async def test_widget_config_returns_page_context_enabled():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -209,7 +205,6 @@ async def _delivered(widget_config_data: dict, *, public: bool = False, org: Fak
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 30
         endpoint = public_bot_config if public else widget_config
         response = await endpoint(id=widget.widget_id, request=_make_request("https://example.com"), db=db)
     return json.loads(response.body.decode())
@@ -228,8 +223,11 @@ async def test_the_widget_config_keeps_booking_url_as_the_default_routes(public)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("public", [False, True], ids=["widget", "share_link"])
 @pytest.mark.parametrize(("org_days", "expected"), [(14, 14), (None, 30)], ids=["org_override", "settings_default"])
-async def test_the_widget_config_states_the_effective_retention_term(public, org_days, expected):
+async def test_the_widget_config_states_the_effective_retention_term(public, org_days, expected, monkeypatch):
     """The pre-chat notice quotes this number, so it must be the term the purge applies."""
+    # Set on the object the rule reads: another test re-imports app.core.config,
+    # after which a fresh import here would be a different settings object.
+    monkeypatch.setattr("app.services.widget_messages_retention.settings.widget_messages_retention_days", 30)
     body = await _delivered({}, public=public, org=FakeOrg(widget_messages_retention_days=org_days))
 
     assert body["retention_days"] == expected
@@ -298,7 +296,6 @@ async def test_public_bot_config_delivers_footer_links_in_widget():
         patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     body = json.loads(response.body.decode())
@@ -325,7 +322,6 @@ async def test_widget_config_truncates_conversation_starters_to_three():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -359,7 +355,6 @@ async def test_public_bot_config_truncates_conversation_starters_to_three():
         patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     assert json.loads(response.body.decode())["conversation_starters"] == ["one", "two", "three"]
@@ -387,7 +382,6 @@ async def test_widget_config_hubspot_handoff_offered_to_the_platform_tenant():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         mock_settings.platform_org_slug = "getklai"
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
@@ -426,7 +420,6 @@ async def test_widget_config_hubspot_handoff_refused_for_other_tenants():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         mock_settings.platform_org_slug = "getklai"
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
@@ -450,7 +443,6 @@ async def test_widget_config_passes_valid_client_session_id_to_token():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token") as generate_token,
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
 
         await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -473,7 +465,6 @@ async def test_widget_config_keeps_legacy_query_session_id_fallback():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token") as generate_token,
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
 
         await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -505,7 +496,6 @@ async def test_widget_config_unknown_widget_id():
         patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         with pytest.raises(Exception) as exc_info:
             await widget_config(id="wgt_does_not_exist", request=request, db=db)
 
@@ -525,7 +515,6 @@ async def test_widget_config_disallowed_origin():
         patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
     assert response.status_code == 403
@@ -563,7 +552,6 @@ async def test_widget_config_empty_allowed_origins_denied_by_default():
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
     assert response.status_code == 403
@@ -599,7 +587,6 @@ async def test_widget_config_empty_allowed_origins_allowed_when_allow_any_origin
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
     assert response.status_code == 200
@@ -689,7 +676,6 @@ async def test_public_bot_config_rejects_when_share_disabled():
         patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         with pytest.raises(Exception) as exc_info:
             await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
@@ -723,7 +709,6 @@ async def test_public_bot_config_returns_token_when_share_enabled():
         patch("app.api.partner_widget_config.generate_session_token", return_value="public.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
         response = await public_bot_config(id=widget.widget_id, request=_make_request(), db=db)
 
     assert response.status_code == 200

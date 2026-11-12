@@ -1,6 +1,10 @@
 """
 Operator-triggered KB rebuild task (SPEC-RAG-REBUILD-KB-001).
 
+Run it as ``python -m knowledge_ingest.rebuild_tasks --org <org> --kb <kb>``:
+that previews (counts, first documents, model calls) and writes nothing.
+``--execute`` writes and needs ``INGEST_OK=1``.
+
 Brings ALL existing artifacts in a KB up to the current pipeline by
 re-running chunking, enrichment, embedding, and Qdrant upsert for every
 active artifact.
@@ -29,11 +33,12 @@ Concurrency
 A bounded asyncio.Semaphore (default: 4) throttles concurrent per-artifact
 rebuilds to keep LiteLLM happy under the daily token budget.
 
-Queueing lock
--------------
-``queueing_lock=f"rebuild-kb-{org_id}-{kb_slug}"`` ensures concurrent
-rebuild tasks for the same KB are blocked (``AlreadyEnqueued`` raised at
-defer time — caller should surface this as a 409-equivalent).
+Guards
+------
+A write run needs ``INGEST_OK=1`` and holds the advisory lock of its knowledge
+base (``operations.kb_operation``), so a second run for the same KB is refused
+with ``OperationBusy``. Both live in ``_rebuild_kb_core``, which the inline
+function, the command line and the Procrastinate task all pass through.
 
 Source text
 -----------
@@ -64,6 +69,7 @@ import structlog
 
 from knowledge_ingest import queues
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.operations import guard_cli, kb_operation, require_ingest_ok
 
 logger = structlog.get_logger()
 
@@ -83,10 +89,9 @@ def register_rebuild_tasks(procrastinate_app: Any) -> None:
     """
     import procrastinate
 
-    # @MX:ANCHOR: public Procrastinate task — queueing_lock guarantees at most
-    # @MX:REASON: one concurrent rebuild per (org_id, kb_slug) pair; callers
-    #             in tests and the runbook both rely on AlreadyEnqueued being
-    #             raised on duplicate defer.
+    # @MX:ANCHOR: public Procrastinate task. Nothing in the service defers it;
+    # @MX:REASON: whoever does still passes through _rebuild_kb_core, which
+    #             refuses a run without INGEST_OK=1 and a second run on the same KB.
     @procrastinate_app.task(
         queue=queues.REBUILD_KB,
         retry=procrastinate.RetryStrategy(max_attempts=1),
@@ -104,24 +109,18 @@ def register_rebuild_tasks(procrastinate_app: Any) -> None:
         Returns ``{org_id, kb_slug, artifacts_processed, artifacts_skipped,
                    artifacts_failed, duration_ms}``.
         """
-        return await _rebuild_kb_core(org_id=org_id, kb_slug=kb_slug)
+        return await _rebuild_kb_core(org_id=org_id, kb_slug=kb_slug, execute=True)
 
     procrastinate_app.rebuild_kb = rebuild_kb  # type: ignore[attr-defined]
 
 
-async def rebuild_kb_inline(org_id: str, kb_slug: str) -> dict:
+async def rebuild_kb_inline(org_id: str, kb_slug: str, *, execute: bool = False) -> dict:
     """Inline variant for operator runbook use (no Procrastinate queue).
 
-    Calls the same core logic as the Procrastinate task synchronously.
-    Useful for docker exec one-liners where you want direct output.
-
-    Example::
-
-        import asyncio
-        from knowledge_ingest.rebuild_tasks import rebuild_kb_inline
-        asyncio.run(rebuild_kb_inline("<org_zitadel_id>", "<kb_slug>"))
+    Calls the same core logic as the Procrastinate task. Without ``execute`` it
+    only previews; with it the run needs ``INGEST_OK=1``.
     """
-    return await _rebuild_kb_core(org_id=org_id, kb_slug=kb_slug)
+    return await _rebuild_kb_core(org_id=org_id, kb_slug=kb_slug, execute=execute)
 
 
 async def _reconstruct_document_text(
@@ -218,6 +217,26 @@ async def _list_active_artifacts(org_id: str, kb_slug: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _chunk_document(document_text: str, content_type: str):
+    """Normalise and cut a document the way a rebuild does; no model call."""
+    from knowledge_ingest import chunker
+    from knowledge_ingest.content_profiles import child_chunk_chars
+    from knowledge_ingest.document_normalizer import normalize_document_for_chunking
+
+    document_text = normalize_document_for_chunking(document_text)
+    children, parents = chunker.chunk_markdown_with_parents(
+        document_text, child_size=child_chunk_chars(content_type)
+    )
+    return document_text, children, parents
+
+
+def _extra_of(artifact: dict) -> dict:
+    raw = artifact.get("extra")
+    if not raw:
+        return {}
+    return json.loads(raw) if isinstance(raw, str) else dict(raw)
+
+
 async def _rebuild_artifact(
     *,
     org_id: str,
@@ -236,10 +255,7 @@ async def _rebuild_artifact(
     async with semaphore:
         try:
             # Parse extra JSONB. asyncpg may return it as str or dict.
-            raw_extra = artifact.get("extra")
-            extra: dict = {}
-            if raw_extra:
-                extra = json.loads(raw_extra) if isinstance(raw_extra, str) else dict(raw_extra)
+            extra = _extra_of(artifact)
 
             document_text: str | None = extra.get("document_text")
             if not document_text:
@@ -282,12 +298,9 @@ async def _rebuild_artifact(
 
             # Step 1: Re-chunk with parent-child chunking (SPEC-RAG-PARENT-CHILD-001).
             from knowledge_ingest import chunker
-            from knowledge_ingest.content_profiles import child_chunk_chars
-            from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 
-            document_text = normalize_document_for_chunking(document_text)
-            child_chunks, parent_chunks_obj = chunker.chunk_markdown_with_parents(
-                document_text, child_size=child_chunk_chars(content_type)
+            document_text, child_chunks, parent_chunks_obj = _chunk_document(
+                document_text, content_type
             )
             child_texts = [c.text for c in child_chunks]
             # Each child knows its parent's index in parent_chunks_obj —
@@ -397,8 +410,55 @@ async def _rebuild_artifact(
             return "failed"
 
 
-async def _rebuild_kb_core(org_id: str, kb_slug: str) -> dict:
+_PREVIEW_DOCUMENTS = 10
+
+
+async def _preview(org_id: str, kb_slug: str) -> dict:
+    """Count what a rebuild would touch and show the first documents; writes nothing.
+
+    A model call is one summary per document plus one per chunk. Documents
+    without stored text are rebuilt from their Qdrant chunks, so their chunk
+    count is only known at run time and is left out of the estimate.
+    """
+    artifacts = await _list_active_artifacts(org_id=org_id, kb_slug=kb_slug)
+    first: list[dict] = []
+    with_text = 0
+    chunks = 0
+    for artifact in artifacts:
+        document_text = _extra_of(artifact).get("document_text")
+        if not document_text:
+            continue
+        with_text += 1
+        _, children, parents = _chunk_document(
+            document_text, artifact.get("content_type") or "unknown"
+        )
+        chunks += len(children)
+        if len(first) < _PREVIEW_DOCUMENTS:
+            first.append(
+                {"path": artifact.get("path"), "children": len(children), "parents": len(parents)}
+            )
+    return {
+        "org_id": org_id,
+        "kb_slug": kb_slug,
+        "dry_run": True,
+        "artifacts": len(artifacts),
+        "without_stored_text": len(artifacts) - with_text,
+        "chunks_with_stored_text": chunks,
+        "model_calls_estimate": with_text + chunks,
+        "first": first,
+    }
+
+
+async def _rebuild_kb_core(org_id: str, kb_slug: str, *, execute: bool) -> dict:
     """Core rebuild logic shared by the Procrastinate task and rebuild_kb_inline."""
+    if not execute:
+        return await _preview(org_id, kb_slug)
+    require_ingest_ok("rebuild_kb")
+    async with kb_operation(org_id, [kb_slug], execute=True):
+        return await _rebuild_kb_locked(org_id, kb_slug)
+
+
+async def _rebuild_kb_locked(org_id: str, kb_slug: str) -> dict:
     t_start = time.monotonic()
     logger.info("rebuild_kb_started", org_id=org_id, kb_slug=kb_slug)
 
@@ -443,3 +503,19 @@ async def _rebuild_kb_core(org_id: str, kb_slug: str) -> dict:
 
     logger.info("rebuild_kb_completed", **result)
     return result
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Preview or run a rebuild of one knowledge base")
+    parser.add_argument("--org", required=True, help="org_id (zitadel id)")
+    parser.add_argument("--kb", required=True, help="knowledge base slug")
+    parser.add_argument("--execute", action="store_true", help="rebuild; preview without it")
+    args = parser.parse_args()
+    guard_cli("rebuild_kb", args.execute)
+    print(asyncio.run(rebuild_kb_inline(args.org, args.kb, execute=args.execute)))
+
+
+if __name__ == "__main__":
+    main()

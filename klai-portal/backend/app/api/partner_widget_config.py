@@ -32,6 +32,7 @@ from app.services.widget_audit import (
     hash_audit_value,
 )
 from app.services.widget_auth import generate_session_token, origin_allowed
+from app.services.widget_messages_retention import effective_retention_days
 from app.services.widget_theme import _merge_css_variables
 
 logger = structlog.get_logger()
@@ -136,16 +137,6 @@ def _widget_booking_url(widget_config_data: dict[str, Any], *, org_id: int, widg
     """
     route = default_route(routes_from_config(widget_config_data, org_id=org_id, widget_id=widget_id))
     return _validated_http_url(route.booking_url if route else None)
-
-
-def _retention_days(org: PortalOrg) -> int:
-    """The term the purge applies to this org's widget messages, for the pre-chat notice.
-
-    Same precedence as the purge (services/widget_messages_retention.py): the
-    org override when set, else the global default.
-    """
-    override = org.widget_messages_retention_days
-    return override if override is not None else settings.widget_messages_retention_days
 
 
 def _widget_conversation_starters(widget_config_data: dict[str, Any]) -> list[str]:
@@ -421,7 +412,7 @@ async def widget_config(
         "handoff": {
             "hubspot": {"enabled": _hubspot_handoff_enabled_for_widget(org=org, widget_config_data=widget_config_data)}
         },
-        "retention_days": _retention_days(org),
+        "retention_days": effective_retention_days(org.widget_messages_retention_days),
     }
 
     return Response(
@@ -569,7 +560,7 @@ async def public_bot_config(
                 and _hubspot_handoff_enabled_for_widget(org=org, widget_config_data=widget_config_data)
             }
         },
-        "retention_days": _retention_days(org),
+        "retention_days": effective_retention_days(org.widget_messages_retention_days),
     }
     return Response(
         content=json.dumps(body),

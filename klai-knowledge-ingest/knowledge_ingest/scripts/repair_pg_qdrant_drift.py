@@ -41,6 +41,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue, PointIdsLis
 
 from knowledge_ingest import pg_store, qdrant_store
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
+from knowledge_ingest.operations import guard_cli, kb_operation
 
 
 async def _point_ids(artifact_id: str) -> list[str]:
@@ -170,12 +171,18 @@ async def main(artifact_ids: list[str], execute: bool) -> int:
             line["point_ids"] = point_ids
         if execute and action != "skip":
             try:
-                if action == "reindex":
-                    await _reindex(row)
-                elif action == "retire":
-                    await _retire(row)
-                else:
-                    await _delete_points(point_ids)
+                # Orphan points have no row, so no knowledge base: lock their org.
+                async with kb_operation(
+                    row["org_id"] if row else min(orgs),
+                    [row["kb_slug"]] if row else None,
+                    execute=True,
+                ):
+                    if action == "reindex":
+                        await _reindex(row)
+                    elif action == "retire":
+                        await _retire(row)
+                    else:
+                        await _delete_points(point_ids)
                 line["result"] = "done"
             except Exception as exc:
                 failures += 1
@@ -191,4 +198,5 @@ if __name__ == "__main__":
         "--execute", action="store_true", help="Apply the repairs (default: dry run)."
     )
     args = parser.parse_args()
+    guard_cli("repair_pg_qdrant_drift", args.execute)
     sys.exit(asyncio.run(main(args.artifact_ids, args.execute)))

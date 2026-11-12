@@ -53,6 +53,7 @@ import structlog
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
 from knowledge_ingest.derived_state import FAILED, product_state, queue_derived_work
+from knowledge_ingest.operations import guard_cli
 from knowledge_ingest.pg_store import _SENTINEL  # single source of truth -- do not re-literal
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -293,6 +294,7 @@ if __name__ == "__main__":
     setup_logging("knowledge-ingest")
 
     args = _parse_args()
+    guard_cli("requeue_failed_artifacts", args.execute)
     asyncio.run(
         main(
             dry_run=not args.execute,

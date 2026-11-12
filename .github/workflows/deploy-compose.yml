@@ -135,6 +135,10 @@ jobs:
           bash deploy/scripts/tests/backup-retention-partial-sets.test.sh
           bash deploy/scripts/tests/backup-bgsave-wait.test.sh
           bash deploy/scripts/tests/backup-single-run.test.sh
+          # backup-restore.sh is installed with the other scripts; its test
+          # needs age for the encrypted set.
+          sudo apt-get install -y age > /dev/null
+          bash deploy/scripts/tests/backup-restore.test.sh
 
       # Host and runner clocks both follow NTP; this marks which report on
       # core-01 was written by this run (see "Keep rollback report" below).
