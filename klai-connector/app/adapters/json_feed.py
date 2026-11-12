@@ -155,8 +155,6 @@ def _stable_batches(records: list[_RenderedRecord], max_records: int) -> list[li
 class JsonFeedAdapter(BaseAdapter):
     """Fetch and render one HTTPS JSON URL as structure-aware Markdown documents."""
 
-    stale_ref_cleanup_enabled = True
-
     def __init__(self) -> None:
         self._documents_by_connector: dict[str, dict[str, _RenderedDocument]] = {}
         self._metrics_by_connector: dict[str, dict[str, int]] = {}
@@ -280,6 +278,9 @@ class JsonFeedAdapter(BaseAdapter):
                     extra=document.extra,
                 )
             )
+        # The whole feed arrives and parses as one response, so a returned
+        # listing is the complete feed.
+        self._record_listing(connector, complete=True)
         return refs
 
     def get_sync_metrics(self, connector: Any) -> dict[str, int]:

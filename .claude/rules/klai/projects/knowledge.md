@@ -164,6 +164,18 @@ stores.
 auto-clean on the current code path (after the 2026-04-30 fix). Garage images
 remain a known gap — see SPEC-CONNECTOR-CLEANUP-001 follow-up notes.
 
+## Single-document delete: replaced keeps history, deleted is gone (HIGH)
+
+A replaced version (re-ingest of changed content) stays as a closed row linked by
+`superseded_by`. A deleted document must leave nothing: every single-document delete
+path calls `document_purge.purge_documents(conn, org_id, head_ids)`, which closes the
+active rows, walks `superseded_by` back to every version, deletes graph episodes and
+Qdrant points, then hard-deletes the rows (artifacts incl. `document_text`,
+`parent_chunks`, `artifact_images`, `embedding_queue`, `artifact_entities`,
+`derivations`, `crawled_pages`, `page_links`). Never add a delete path that only closes
+the row. The real-PostgreSQL proof is `tests/integration/test_document_purge_postgres.py`;
+a new delete path gets a case there.
+
 ## Connector-scoped async jobs require a resource key and fence (HIGH)
 
 Every Procrastinate job that can write connector-owned knowledge carries the
@@ -267,6 +279,19 @@ matching on `parent.database_id` alone, which is correct for both shapes.
 never key off `parent.type` — match on `parent.database_id`. When a Notion
 behaviour looks wrong, check the default `Notion-Version` of the installed
 client first: it moves with the SDK, not with our code.
+
+## Connector source deletions depend on a complete listing (HIGH)
+
+`sync_engine` deletes a stored ref that a listing no longer contains,
+but only when `adapter.listing_is_complete(connector)` is True for that run. An
+adapter that swallows an error per item, stops at a cap, or reads a change feed
+must answer False, or every document it did not see is deleted from the KB.
+
+**Rule:** In `list_documents`, let any error that is not a definite "gone" (Notion
+`object_not_found`, Drive/Graph 404) raise; call `self._record_listing(connector,
+complete=...)` on every return path, False whenever a cap or truncation could
+have cut the listing. Table and guards: `docs/architecture/knowledge-ingest-flow.md`
+"Source deletions".
 - Spot-check `raw_words` on a known-good page after any crawl config change.
 
 ## crawl4ai usage

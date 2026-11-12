@@ -22,7 +22,7 @@ import httpx
 import structlog
 from klai_image_storage import ImageStore, download_and_upload_crawl_images
 
-from knowledge_ingest import pg_store, qdrant_store
+from knowledge_ingest import document_purge, pg_store
 from knowledge_ingest.chunker import noise_counts
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import (
@@ -854,6 +854,45 @@ async def _apply_domain_rate_limit_effect_once(
             )
 
 
+async def _purge_stale_paths(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    connector_id: str,
+    stale_paths: list[str],
+) -> int:
+    """Delete this connector's documents for pages the site no longer has.
+
+    Also retries every page of this connector whose purge started on an
+    earlier crawl and did not finish: those rows are closed already, so they
+    no longer appear among the active stale paths. ``conn`` runs without an
+    outer transaction, so the close is committed before the stores are
+    cleaned, exactly as on the other delete paths, and a failure leaves the
+    page closed and marked for the next complete crawl. Returns the number of
+    pages purged.
+    """
+    pending = await pg_store.list_connector_paths_pending_purge(conn, org_id, kb_slug, connector_id)
+    purged = 0
+    for path in dict.fromkeys([*stale_paths, *pending]):
+        try:
+            heads = await pg_store.list_document_heads(
+                conn, org_id, path, kb_slug, connector_id=connector_id
+            )
+            await document_purge.purge_documents(conn, org_id, heads)
+        except Exception as exc:
+            logger.warning(
+                "crawl_connector_stale_purge_failed",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                connector_id=connector_id,
+                path=path,
+                error=str(exc),
+            )
+        else:
+            purged += 1
+    return purged
+
+
 async def run_crawl_job(
     *,
     connection_factory: ConnectionFactory,
@@ -1521,47 +1560,25 @@ async def run_crawl_job(
                                     retire_limit=retire_limit,
                                 )
                                 stale_paths = []
-                        if stale_paths:
-                            stale_paths_deleted: list[str] = []
-                            for path in stale_paths:
-                                try:
-                                    await qdrant_store.delete_document(org_id, kb_slug, path)
-                                except Exception as exc:
-                                    logger.warning(
-                                        "crawl_connector_stale_vector_delete_failed",
-                                        job_id=job_id,
-                                        connector_id=connector_id,
-                                        kb_slug=kb_slug,
-                                        path=path,
-                                        error=str(exc),
-                                    )
-                                else:
-                                    stale_paths_deleted.append(path)
-                            if stale_paths_deleted:
-                                retired_count = (
-                                    await pg_store.soft_delete_stale_connector_artifacts(
-                                        conn,
-                                        org_id=org_id,
-                                        kb_slug=kb_slug,
-                                        connector_id=connector_id,
-                                        stale_paths=stale_paths_deleted,
-                                    )
-                                )
-                                await conn.execute(
-                                    "UPDATE knowledge.crawl_jobs "
-                                    "SET pages_changed=pages_changed+$1 "
-                                    "WHERE id=$2 AND execution_generation=$3",
-                                    retired_count,
-                                    job_id,
-                                    execution_generation,
-                                )
-                                logger.info(
-                                    "crawl_connector_stale_artifacts_retired",
-                                    job_id=job_id,
-                                    connector_id=connector_id,
-                                    kb_slug=kb_slug,
-                                    retired_count=retired_count,
-                                )
+                        retired_count = await _purge_stale_paths(
+                            conn, org_id, kb_slug, connector_id, stale_paths
+                        )
+                        if retired_count:
+                            await conn.execute(
+                                "UPDATE knowledge.crawl_jobs "
+                                "SET pages_changed=pages_changed+$1 "
+                                "WHERE id=$2 AND execution_generation=$3",
+                                retired_count,
+                                job_id,
+                                execution_generation,
+                            )
+                            logger.info(
+                                "crawl_connector_stale_artifacts_retired",
+                                job_id=job_id,
+                                connector_id=connector_id,
+                                kb_slug=kb_slug,
+                                retired_count=retired_count,
+                            )
 
                 if terminal_status == "completed" and pages_done > 0:
                     await _enqueue_taxonomy_backfill_after_crawl(

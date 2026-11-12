@@ -1154,6 +1154,24 @@ async def _enrich_document(
         )
         qdrant_ms = int((time.monotonic() - t0) * 1000)
 
+        # A delete or replacement that landed between the active check above
+        # and the upsert has already cleaned this artifact's points, so the
+        # points just written would belong to no row and nothing would remove
+        # them. Parent chunks need no such check: their foreign key rejects an
+        # insert for a deleted row and cascades on a later delete.
+        async with tenant_scoped_connection(org_id) as conn:
+            still_active = await pg_store.artifact_is_active(conn, artifact_id)
+        if not still_active:
+            await qdrant_store.delete_artifacts(org_id, [artifact_id], [])
+            logger.info(
+                "enrichment_points_removed_artifact_inactive",
+                artifact_id=artifact_id,
+                kb_slug=kb_slug,
+                path=path,
+                org_id=org_id,
+            )
+            return False
+
         await _set_direct_upload_index_status(
             {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
             "synced",

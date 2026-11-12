@@ -145,15 +145,61 @@ matches what was last ingested (e.g., a bulk sync re-sending unchanged pages), t
 pipeline is skipped and the request returns `{"status": "skipped"}`. The hash is stored
 on every new artifact so subsequent runs can detect no-ops.
 
-**Page deletes** are still processed immediately — no debounce. Qdrant vectors and the
-artifact record are removed as soon as the webhook fires.
+**Page deletes** are still processed immediately — no debounce. The document is deleted
+for good as soon as the webhook fires (see "Replaced keeps history, deleted is gone" below).
 
 The `org_id` (the Zitadel organization ID) is read from the Gitea organization's
 *description* field. This is a naming convention: whenever a Klai org is provisioned, its
 Zitadel org ID is written into the Gitea org description so the webhook handler can
 resolve it without a separate lookup.
 
-On page delete: all Qdrant vectors for that document path are removed.
+### Replaced keeps history, deleted is gone
+
+A re-ingest of changed content **replaces** a document: the old `knowledge.artifacts`
+row is closed (`belief_time_end = now`), keeps its `document_text`, and is linked to the
+new row through `superseded_by`. That history stays.
+
+A **delete** removes the document and every earlier version of it from every store. All
+single-document delete paths go through one operation,
+`knowledge_ingest/document_purge.py::purge_documents`:
+
+| Delete path | Entry point |
+|---|---|
+| A user deletes an uploaded file | `DELETE /knowledge/v1/kb/{kb_slug}/uploads/{artifact_id}` |
+| A crawled page no longer exists | `adapters/crawler.py::_purge_stale_paths` after a complete crawl |
+| A docs page is removed (Gitea webhook) | `routes/ingest.py::_purge_removed_paths` |
+| A connector document is gone at the source | `DELETE /ingest/v1/connector/document` |
+| A personal item is deleted | `DELETE /knowledge/v1/personal/items/{artifact_id}` |
+| A Scribe transcript is deleted | `DELETE /ingest/v1/document?org_id=&path=scribe/<id>` (all KBs of the org) |
+
+The operation closes the active rows first and marks them `index_status = 'deleting'`
+(search stops returning them, enrichment and graph workers abort on a non-active
+artifact), walks `superseded_by` back to every version (the whole chain; the walk stops
+on a cycle instead of at a depth), deletes the graph episodes and the Qdrant points of all
+versions, and hard-deletes the rows last: `knowledge.artifacts` (including
+`document_text`), `parent_chunks` and `artifact_images` (cascade), `embedding_queue`,
+`artifact_entities`, `derivations`, and `crawled_pages` / `page_links` for paths no live
+row uses. If an external store refuses, the request fails and the rows stay closed and
+marked, so a repeated delete finishes the job; for crawled pages the next complete crawl
+of the connector retries every page of that connector still marked `deleting`. Every
+statement is bound to the caller's `org_id`. An enrichment job that writes points after
+its artifact was deleted or replaced removes them again.
+
+The transcript route accepts only `scribe/<transcription id>` paths and only the `scribe`
+caller service. The personal-item delete runs the user-bound identity assertion.
+
+Reindex (`POST /knowledge/v1/artifacts/{id}/reindex`) never reopens a replaced version
+(one with a successor, or one whose knowledge base and path already have an active row)
+nor a document whose delete has not finished. It still reopens a closed head with no
+successor and nothing live on its path, which is how the portal repairs an upload the
+drift repair retired. Documents deleted before this existed are reported (dry run) and,
+per approved run, purged by `klai-knowledge-ingest/scripts/purge_deleted_documents.py`;
+closed rows without `document_text` are reported separately and never purged, because
+the drift repair closes rows the same way. Object-storage images of deleted documents
+are not removed yet.
+
+Whole-connector, whole-KB and whole-organisation deletes were already hard deletes and are
+unchanged.
 
 ### 1.2 External sources via klai-connector
 
@@ -275,6 +321,76 @@ add-source wizard.
 All connector adapters call the same `POST /ingest/v1/document` endpoint that direct uploads
 use. A `source_ref` (`owner/repo:branch:path`) is used as a deduplication key so
 re-syncing the same content updates rather than duplicates.
+
+**Source deletions (klai-connector `sync_engine`).** After a complete listing the connector
+reads every `source_ref` knowledge-ingest stores for the connector
+(`GET /ingest/v1/connector/source-refs`, keyset-paginated, org + KB + connector scoped, rows
+of every version so a half-finished delete is retried) and diffs it against the listing. A
+stored ref the source no longer lists was deleted, trashed or unshared there and is removed
+through `DELETE /ingest/v1/connector/document` (all versions, vectors and graph episodes).
+The route returns each stored ref with its stored paths, and a ref is gone only when its
+path is not the path of any listed document either: knowledge-ingest matches a row by path,
+so an unchanged document re-ingested under a new ref (GitHub branch switch or renamed
+repository, edited Confluence base URL) keeps its old ref, and same-named Drive files share
+one path. A ref whose path is still listed is never deleted.
+Because the diff is against the store, a document deleted before any run noticed, or one
+whose earlier delete failed, is found again on the next run; `synced_refs` in
+`sync_runs.cursor_state` only serves new-document detection. If the store read fails,
+nothing is deleted in that run (`stale_cleanup_store_unavailable` warning). Before deleting,
+the adapter may confirm each candidate (`BaseAdapter.confirm_gone`, default: missing means
+gone). Notion search listings do: the search index lags, so each missing page is retrieved
+and deleted only on `object_not_found`, a trash flag, or a page now outside the configured
+database filter; any other answer or error keeps it. A document outside
+a narrowed connector filter (fewer databases, spaces, tables, a tighter `path_filter`, a
+smaller folder or file selection) counts as gone; one inside the filter never does.
+
+Deletion runs only after a listing the adapter vouches for as complete
+(`BaseAdapter.listing_is_complete`, default `False`), because a partial listing would make
+every document it never saw look deleted. The engine clears that flag before every listing
+(`forget_listing`), so a code path that records nothing can never inherit an earlier
+"complete". The guards:
+
+- a listing that raised (pagination error, rate limit after retries, timeout, a permission
+  error) fails the run and deletes nothing;
+- a listing cut short by a per-run cap or truncated by the source deletes nothing; the store
+  still holds what it did not see, so a later complete listing finds it;
+- one failed document in the run blocks every delete (and the run is `failed`);
+- an **empty** listing while the store holds refs is refused: an expired or narrowed token
+  and an emptied source look the same. The run completes with warning
+  `stale_cleanup_refused_empty` in `error_details` and a log event of the same name, and the
+  refusal repeats until the source lists documents again or the connector is removed;
+- a failed delete call does not fail the run; the ref is still stored, so the next run
+  retries it (`stale_cleanup_delete_failed` warning).
+
+Every run logs one `source_deletions` event with `listing_complete`, `listed`, `known`,
+`removed`, `kept`, `missing_kept`, `delete_failed`, `held_back` and `documents_failed`. When
+deletions are held back, `error_details` also carries `stale_cleanup_held_back` with the
+reason (`documents_failed`, or `listing_incomplete:<cap or mode>` such as
+`max_pages_reached`, `max_files_reached`, `incomplete_search`, `tree_truncated`,
+`page_listing_incomplete:<space>`, `change_feed`, `delta_mode`), so a connector whose cleanup
+never runs can be alerted on. Candidates an adapter declines to confirm are counted in
+`stale_cleanup_kept_unconfirmed`. There is no percentage cap: a complete
+listing that shrank is the source's own statement.
+
+| Connector | Listing per run | Deletes | Trashed / gone looks like |
+|---|---|---|---|
+| json_feed | whole feed | yes | record group no longer rendered |
+| notion (search) | all pages via search, filtered on `database_ids` | yes, unless `max_pages` (default 500) was reached | `in_trash`/`archived` flag, or absent from search |
+| notion (`page_ids`) | each page retrieved | yes | 404 `object_not_found`, or trash flag |
+| github | recursive git tree | yes, unless the tree is `truncated` | file absent from the tree |
+| confluence | pages with `status=current` per space | yes, unless a space or the space discovery hit its 100 cap or an item was not an object; pages of a space the listing did not return at all (lost permission or deleted space) are kept, in both modes, until the space leaves the config or the connector is removed | trashed/archived pages are not `current` |
+| airtable | every record of each table (and view) | yes | record absent |
+| google_drive (folder or file selection) | `files.list` with `trashed = false`, or `files.get` per file | yes, unless `max_files` (default 500) cut the listing or Drive answered `incompleteSearch` | excluded by the query, `trashed: true`, or 404 |
+| google_drive (whole drive) | change feed after the first run | **no**: incremental | — |
+| ms_docs (pinned items) | each item fetched | yes | 404 |
+| ms_docs (drive/site/folder) | Graph delta after the first run | **no**: incremental | — |
+| web_crawler | delegated to knowledge-ingest | own stale-page handling | — |
+
+The GitHub tree-SHA skip is not taken when `path_filter` changed, so a filter change takes
+effect without a new commit.
+
+The first complete sync of each connector after this change also removes documents that were
+deleted at the source before it, because the store still holds them.
 
 ### 1.3 Meeting transcripts via scribe-api
 

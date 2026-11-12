@@ -158,7 +158,8 @@ async def delete_personal_item(
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.delete(
             f"{settings.knowledge_ingest_url}/knowledge/v1/personal/items/{artifact_id}",
-            headers={"x-internal-secret": settings.knowledge_ingest_secret},
+            # knowledge-ingest asserts that user_id belongs to org_id before deleting.
+            headers={"x-internal-secret": settings.knowledge_ingest_secret, "X-Caller-Service": "portal-api"},
             params={
                 "org_id": org.zitadel_org_id,
                 "user_id": perms.user_id,

@@ -278,7 +278,7 @@ async def test_document_failure_marks_run_failed() -> None:
     assert sync_run.documents_total == 1
     assert sync_run.documents_ok == 0
     assert sync_run.documents_failed == 1
-    assert sync_run.error_details == [{"file": "/failing.md", "error": "ingest exploded"}]
+    assert [e for e in sync_run.error_details if "file" in e] == [{"file": "/failing.md", "error": "ingest exploded"}]
 
     portal_client.report_sync_status.assert_awaited_once()
     kwargs = portal_client.report_sync_status.await_args.kwargs
