@@ -398,22 +398,18 @@ class Settings(BaseSettings):
     graph_ann_enabled: bool = False
     graphiti_llm_model: str = "klai-ingest"
     # Episodes in flight at once; also the size of the worker's graph lane.
-    # One, and not for lack of LLM budget: graphiti-core requires episodes of
-    # a graph to be added one after another (Graphiti.add_episode docstring,
-    # 0.28.2), FalkorDB's vector index gave empty results under interleaved
-    # writes (SPEC-GRAPH-SCALE-001), and the FalkorDB death check blames the
-    # one episode in flight. In the week to 12 Nov 2026 a graph job ran 5.1
-    # min at the median, and from 05:00 to noon the service made ~290 calls
-    # an hour against the 2,160 the 0.6 rps limiter allowed: the graph's pace
-    # is set by FalkorDB and graphiti per episode, not by the LLM budget,
-    # and a faster limiter does not shorten that tail. The next step
-    # is 2 with one episode per organisation at a time; see
-    # docs/architecture/knowledge-ingest-flow.md 2.5 for what to watch.
+    # One: graphiti-core requires episodes of a graph to be added one after
+    # another (Graphiti.add_episode docstring, 0.28.2), FalkorDB's vector
+    # index gave empty results under interleaved writes
+    # (SPEC-GRAPH-SCALE-001), and the FalkorDB death check blames the one
+    # episode in flight. An episode's own pace is the shared limiter's: on
+    # 12 Nov 2026 two episodes made 86 calls in 151 s and 66 calls in 103 s,
+    # 0.57 and 0.64 calls a second against the 0.6 rps the limiter then
+    # allowed, and the week's median episode took 75 s. Raising
+    # litellm_klai_fast_rps therefore shortens every episode; a second
+    # episode in flight (one per organisation at a time) is the step after
+    # that, see docs/architecture/knowledge-ingest-flow.md 2.6.
     graphiti_max_concurrent: int = 1
-    # Pause after each episode before the next one starts. 10 s is 3% of the
-    # 5.1-minute median graph job and the only quiet gap FalkorDB gets between
-    # write-heavy episodes; not where the hours go, so it stays.
-    graphiti_episode_delay: float = 10.0
     # SPEC-GRAPH-SCALE-001 REQ-1 — pre-flight graph-build cost estimator
     # constants. The legacy flag-off constants remain calibrated to the one
     # real pre-ANN datapoint: Voys, 6,593,861 chars, 0 pre-existing edges ->
@@ -430,8 +426,12 @@ class Settings(BaseSettings):
     # full production pipeline, ANN enabled, inter-episode delay disabled,
     # first episode dropped as warm-up. Run A empty graph: mean 116.8 s/doc,
     # stdev 64.6, n=9. Run B 30,236-edge graph: mean 117.8 s/doc, stdev
-    # 48.8, n=9. Production delay is 10 s/doc, so a_ann =
-    # (116.8 + 10) / 3600 * 103.1 = 3.63 h/Mchar.
+    # 48.8, n=9. Production then paused 10 s after each episode, so a_ann =
+    # (116.8 + 10) / 3600 * 103.1 = 3.63 h/Mchar. Since 12 Nov 2026 that
+    # pause is gone and the limiter runs at 2 rps instead of the 0.6 rps of
+    # this measurement, so 3.63 overestimates a build; it stays until
+    # scripts/measure_graph_constants.py has been run again, because an
+    # estimate that refuses too early is the safe side.
     graph_build_hours_per_mchar_ann: float = 3.63
     # REQ-6's marginal graph-size delta was +1.0 s/doc at C0=11.63
     # Mchar-equivalent (30,236 / 2,600), giving b_ann = 0.0012 h/Mchar^2.

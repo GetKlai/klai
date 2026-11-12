@@ -20,7 +20,7 @@ production data (``FALKORDB_HOST`` env override). It spends real LLM budget
 Usage (operator one-shot, from inside the knowledge-ingest container):
 
     docker exec \
-      -e FALKORDB_HOST=<probe-container> -e GRAPHITI_EPISODE_DELAY=0 \
+      -e FALKORDB_HOST=<probe-container> \
       klai-core-knowledge-ingest-1 \
       python -m scripts.measure_graph_constants \
         --source-org <org_id> --big-graph <probe-graph-name> --docs 10
@@ -156,10 +156,8 @@ async def main() -> int:
     stdev_b = statistics.stdev(warm_b) if len(warm_b) > 1 else 0.0
     print(f"raw incl. warm-up: A={statistics.mean(times_a):.1f}s B={statistics.mean(times_b):.1f}s")
 
-    # a from run A (near-empty marginal cost), converted to hours/Mchar and
-    # including the production inter-episode delay the probe disabled.
-    per_doc_a_prod = mean_a + settings.graphiti_episode_delay
-    a_hours = per_doc_a_prod / 3600.0 * DOCS_PER_MCHAR
+    # a from run A (near-empty marginal cost), converted to hours/Mchar.
+    a_hours = mean_a / 3600.0 * DOCS_PER_MCHAR
     # b from the marginal-cost difference at C0.
     delta = mean_b - mean_a
     b_hours = (delta / 3600.0 * DOCS_PER_MCHAR) / (2.0 * c0) if c0 > 0 else 0.0
@@ -167,7 +165,7 @@ async def main() -> int:
     print(f"run A (empty):  mean={mean_a:.1f}s stdev={stdev_a:.1f}s n={len(warm_a)}")
     print(f"run B ({big_edges} edges): mean={mean_b:.1f}s stdev={stdev_b:.1f}s n={len(warm_b)}")
     print(f"delta per doc: {delta:+.1f}s (pooled stdev ~{max(stdev_a, stdev_b):.1f}s)")
-    print(f"derived a = {a_hours:.2f} h/Mchar (incl. {settings.graphiti_episode_delay}s delay)")
+    print(f"derived a = {a_hours:.2f} h/Mchar")
     print(f"derived b_ann = {b_hours:.4f} h/Mchar^2 at C0={c0:.1f}")
     return 0
 

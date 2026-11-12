@@ -1159,8 +1159,4 @@ async def ingest_episode(
                         error=str(exc),
                     )
 
-        # Delay INSIDE semaphore — small breathing room between episodes.
-        # Intra-episode rate limiting is handled by _RateLimitedTransport.
-        await asyncio.sleep(settings.graphiti_episode_delay)
-
     return episode_result

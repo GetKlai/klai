@@ -130,7 +130,8 @@ def test_graphiti_bulk_has_its_own_lane():
     """A graph job waiting for the episode semaphore must not hold an enrichment slot.
 
     In the LLM lane it did: enrichment (0.2 min of work) waited 132 min at the
-    median behind graph jobs of 5.1 min each (week to 12 Nov 2026).
+    median behind graph jobs holding a slot for 5.1 min each (week to
+    12 Nov 2026).
     """
     assert queues.GRAPH_QUEUES == [queues.GRAPHITI_BULK]
     assert queues.GRAPHITI_BULK not in queues.LLM_QUEUES

@@ -118,7 +118,8 @@ GRAPH_QUEUES: list[str] = [GRAPHITI_BULK]
 (``graphiti_max_concurrent``). In the LLM lane a graph job waiting for the
 episode semaphore held one of its four slots: in the week to 12 Nov 2026
 enrichment, 0.2 min of work per job, waited 132 min at the median behind graph
-jobs running 5.1 min each."""
+jobs that each held a slot for 5.1 min, most of it waiting for the semaphore
+(an episode itself took 75 s)."""
 
 MAINTENANCE_QUEUES: list[str] = [MAINTENANCE]
 """Recovery/control work with a dedicated worker slot."""

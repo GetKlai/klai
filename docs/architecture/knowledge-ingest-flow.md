@@ -552,9 +552,9 @@ The task (`enrichment_tasks.py:631-928`, `graph.py:971-1165`):
   and calls `graph.ingest_episode` per part: graphiti-core `add_episode` on
   FalkorDB (one graph per org through `driver.clone(org_id)`, `graph.py:528`), LLM `klai-ingest`
   (`graphiti_llm_model`), embeddings by TEI bge-m3, every HTTP call taking a
-  token from the shared limiter. `graphiti_max_concurrent` is 1 and
-  `graphiti_episode_delay` 10 s, and the jobs run in their own graph lane with
-  that many slots (pacing and what to watch: 2.6);
+  token from the shared limiter. `graphiti_max_concurrent` is 1, and the jobs
+  run in their own graph lane with that many slots (pacing and what to watch:
+  2.6);
 - `ingest_episode` makes three attempts with two waits between them: 65 s * 2^n
   on a rate limit, 30 s * 2^n on 503 or provider errors and 1 s * 2^n otherwise
   (`graph.py:408-423,1005-1009,1141-1152`); the task itself retries 8 times after the first
@@ -603,7 +603,8 @@ restarted with 1 to 60 s backoff (`queues.py`, `worker.py`):
 The graph lane exists because a graph job in the llm lane waited for the
 episode semaphore while holding one of the four slots: in the week to
 12 November 2026 enrichment (0.2 min of work per job) waited 132 min at the
-median behind graph jobs of 5.1 min each.
+median behind graph jobs that each held a slot for 5.1 min, most of it waiting
+for the semaphore.
 
 **Pacing.** Measured in the week to 12 November 2026: 66,942 calls on
 `klai-ingest`, 1,537 input and 114 output tokens per call, 0.64 s median and
@@ -620,11 +621,15 @@ limit or the llm lane can no longer keep the limiter fed. The daily budget of
 20 USD is about 106k calls at the measured size, so a normal day stays at 1 to
 4 USD and only a backlog of more than ~15 hours flat out reaches it.
 
-The graph stays at one episode at a time with 10 s between episodes:
-graphiti-core requires the episodes of a graph to be added one after another,
-the FalkorDB death check blames the one episode in flight, and from 05:00 to
-noon graph jobs ran at a 5.1-minute median while the limiter had room, so the
-graph tail is set per episode, not by the LLM budget. After a deploy, watch
+The graph stays at one episode at a time: graphiti-core requires the episodes
+of a graph to be added one after another, and the FalkorDB death check blames
+the one episode in flight. An episode's own pace is the limiter's: on
+12 November 2026 two episodes made 86 calls in 151 s and 66 calls in 103 s,
+0.57 and 0.64 calls a second against the 0.6 the limiter then allowed, and the
+week's 903 episodes took 75 s at the median, so graph extraction makes most of
+the night's calls and the higher rate shortens every episode. The fixed pause
+of 10 s after each episode is gone: it dated from before the shared limiter and
+paced LLM calls, which the limiter does. After a deploy, watch
 the queue wait of `enrich-bulk` (it should fall from 132 minutes median to
 minutes) and of `graphiti-bulk`, `graphiti_ingest_retry` with
 `retry_reason=rate_limited`, `enrichment_llm_error` (the alert at 30 per 15
@@ -763,8 +768,7 @@ ingest does nothing per language; the chat language behaviour is described in
 - LLM pacing for enrichment, graph, taxonomy and labelling is the one shared
   limiter, `litellm_klai_fast_rps` 2 and `litellm_klai_fast_burst` 10
   (`config.py`, `llm_throttle.py`); there is no `graphiti_llm_rps` setting and
-  the compose file does not set one. `GRAPHITI_EPISODE_DELAY` is read
-  (`deploy/docker-compose.yml:2227`).
+  the compose file does not set one.
 - `knowledge.embedding_queue` is never inserted into; only deleted from
   (`pg_store.py:732,882,995`). The dual-store outbox did not land
   (`GAP-SYNC-01`); consistency is checked by the nightly reconcile (7.2).

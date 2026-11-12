@@ -68,7 +68,6 @@ async def _ingest(graphiti: AsyncMock) -> str | None:
     ):
         mock_settings.graphiti_enabled = True
         mock_settings.graphiti_max_concurrent = 1
-        mock_settings.graphiti_episode_delay = 0
         return await graph_module.ingest_episode(
             artifact_id=_ARTIFACT_ID,
             document_text="Hello",
