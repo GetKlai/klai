@@ -353,6 +353,8 @@ At query time: the system retrieves the most recent non-superseded artifact (`su
 
 The same pattern applies to gap detection: gaps are never deleted, only linked to their resolving artifact (`resolving_artifact_id`).
 
+This history is for documents that are **replaced**. A document that is **deleted** (a removed upload, page, connector document, personal item or Scribe transcript) is gone: every version's artifact row and `document_text`, its parent chunks, image rows, vector points and graph episodes are removed by `knowledge_ingest/document_purge.py::purge_documents`, and a closed version cannot be reindexed back to life. See [knowledge-ingest-flow.md](knowledge-ingest-flow.md#replaced-keeps-history-deleted-is-gone).
+
 ---
 
 ### 3.5 Time dimensions

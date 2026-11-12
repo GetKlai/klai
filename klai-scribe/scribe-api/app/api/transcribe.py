@@ -6,7 +6,7 @@ Transcription API endpoints:
   GET  /v1/transcriptions                - list user's transcripts
   GET  /v1/transcriptions/{id}           - get single transcript
   PATCH /v1/transcriptions/{id}          - update name
-  DELETE /v1/transcriptions/{id}         - delete transcript + audio file
+  DELETE /v1/transcriptions/{id}         - delete transcript, audio file and knowledge copy
   POST /v1/transcriptions/{id}/summarize - AI summarization
   POST /v1/transcriptions/{id}/ingest    - ingest into knowledge base
 """
@@ -31,6 +31,7 @@ from app.core.database import get_db
 from app.models.transcription import Transcription
 from app.services import jobs, summarizer
 from app.services.audio_storage import delete_audio, save_audio
+from app.services.knowledge_adapter import delete_scribe_transcript
 
 logger = structlog.get_logger(__name__)
 
@@ -376,6 +377,18 @@ async def delete_transcription(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Transcript niet gevonden",
         )
+
+    # The knowledge copy goes first: if knowledge-ingest refuses, the
+    # transcript stays so the user can retry instead of leaving its text
+    # searchable in a knowledge base with nothing left to delete it from.
+    try:
+        await delete_scribe_transcript(caller.org_id, txn_id)
+    except httpx.HTTPError as exc:
+        logger.exception("transcript_knowledge_delete_failed", transcription_id=txn_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Transcript kon niet uit de kennisbank worden verwijderd",
+        ) from exc
 
     # Clean up audio file (legacy records that still have audio at time of delete)
     delete_audio(record.audio_path)

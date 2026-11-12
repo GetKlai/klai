@@ -541,23 +541,30 @@ async def delete_document(org_id: str, kb_slug: str, path: str) -> None:
     )
 
 
-async def delete_connector_document(
-    org_id: str,
-    kb_slug: str,
-    connector_id: str,
-    source_ref: str,
+async def delete_artifacts(
+    org_id: str, artifact_ids: list[str], paths: list[tuple[str, str]]
 ) -> None:
-    """Delete one connector document without touching sibling source refs."""
-    client = get_client()
-    await client.delete(
+    """Delete the points of these artifact versions within one organisation.
+
+    Points are matched on ``artifact_id`` and, for ``(kb_slug, path)`` pairs no
+    live document uses any more, on path as well: every writer stamps
+    ``artifact_id``, but path is what the older delete paths matched on, so
+    it keeps any point written without one from surviving its document.
+    """
+    by_path = [
+        Filter(
+            must=[
+                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
+                FieldCondition(key="path", match=MatchValue(value=path)),
+            ]
+        )
+        for kb_slug, path in paths
+    ]
+    await get_client().delete(
         COLLECTION,
         points_selector=Filter(
-            must=[
-                FieldCondition(key="org_id", match=MatchValue(value=org_id)),
-                FieldCondition(key="kb_slug", match=MatchValue(value=kb_slug)),
-                FieldCondition(key="source_connector_id", match=MatchValue(value=connector_id)),
-                FieldCondition(key="source_ref", match=MatchValue(value=source_ref)),
-            ]
+            must=[FieldCondition(key="org_id", match=MatchValue(value=org_id))],
+            should=[FieldCondition(key="artifact_id", match=MatchAny(any=artifact_ids)), *by_path],
         ),
     )
 

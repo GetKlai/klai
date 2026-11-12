@@ -1,7 +1,7 @@
 """
 Personal knowledge item routes:
   GET    /knowledge/v1/personal/items              — list personal artifacts
-  DELETE /knowledge/v1/personal/items/{artifact_id} — soft-delete a personal artifact
+  DELETE /knowledge/v1/personal/items/{artifact_id} — delete a personal artifact for good
 
 SPEC-TI-003-FOLLOWUP-001 AC-1: each handler opens a tenant_scoped_connection
 on the caller's org_id and threads the conn into every pg_store call so RLS
@@ -12,8 +12,9 @@ from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query
+from klai_kb_slugs import personal_kb_slug
 
-from knowledge_ingest import pg_store, qdrant_store
+from knowledge_ingest import document_purge, pg_store
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.models import ArtifactSummary, PersonalItemsResponse
 
@@ -61,7 +62,7 @@ async def delete_personal_item(
     org_id: str = Query(...),
     user_id: str = Query(...),
 ) -> dict:
-    """Soft-delete a personal knowledge artifact and remove its Qdrant vectors."""
+    """Delete a personal knowledge item and every earlier version of it from every store."""
     if not org_id or not user_id:
         raise HTTPException(status_code=400, detail="org_id and user_id are required")
 
@@ -71,10 +72,10 @@ async def delete_personal_item(
             raise HTTPException(status_code=404, detail="Artifact not found")
 
         path = artifact["path"]
-        await pg_store.soft_delete_artifact(conn, org_id, "personal", path)
-
-    # Qdrant is outside the tenant_scoped_connection -- it has its own auth.
-    await qdrant_store.delete_document(org_id, "personal", path)
+        # The rows live under the user's own personal KB slug; the literal
+        # "personal" this route used before matched no row and no point.
+        heads = await pg_store.list_document_heads(conn, org_id, path, personal_kb_slug(user_id))
+        await document_purge.purge_documents(conn, org_id, heads)
 
     logger.info(
         "personal_artifact_deleted",

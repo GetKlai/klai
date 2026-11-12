@@ -280,9 +280,10 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
         ),
         patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg,
         patch(
-            "knowledge_ingest.adapters.crawler.qdrant_store.delete_document",
+            "knowledge_ingest.adapters.crawler.document_purge.purge_documents",
             new_callable=AsyncMock,
-        ) as mock_delete_document,
+            return_value=(2, 1),
+        ) as mock_purge,
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
             new_callable=AsyncMock,
@@ -312,7 +313,7 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(
             return_value=["https://getklai.com/"],
         )
-        mock_pg.soft_delete_stale_connector_artifacts = AsyncMock(return_value=1)
+        mock_pg.list_document_heads = AsyncMock(return_value=["artifact-old"])
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
@@ -334,23 +335,15 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
         connector_id="conn-1",
         current_paths=["https://www.getklai.com/"],
     )
-    mock_delete_document.assert_awaited_once_with(
-        "org-1",
-        "klai-web-demo",
-        "https://getklai.com/",
+    mock_pg.list_document_heads.assert_awaited_once_with(
+        mock_conn, "org-1", "https://getklai.com/", "klai-web-demo"
     )
-    mock_pg.soft_delete_stale_connector_artifacts.assert_awaited_once_with(
-        mock_conn,
-        org_id="org-1",
-        kb_slug="klai-web-demo",
-        connector_id="conn-1",
-        stale_paths=["https://getklai.com/"],
-    )
+    mock_purge.assert_awaited_once_with(mock_conn, "org-1", ["artifact-old"])
 
 
 @pytest.mark.asyncio
-async def test_run_crawl_job_does_not_fail_when_stale_vector_delete_fails():
-    """Stale vector cleanup is best-effort and must not fail a completed crawl."""
+async def test_run_crawl_job_does_not_fail_when_stale_purge_fails():
+    """A stale page whose purge fails must not fail a completed crawl."""
     mock_conn = _make_mock_conn()
     mock_result = _make_crawl_result(url="https://www.getklai.com/")
 
@@ -364,10 +357,10 @@ async def test_run_crawl_job_does_not_fail_when_stale_vector_delete_fails():
         ) as mock_finish_execution,
         patch("knowledge_ingest.adapters.crawler.pg_store") as mock_pg,
         patch(
-            "knowledge_ingest.adapters.crawler.qdrant_store.delete_document",
+            "knowledge_ingest.adapters.crawler.document_purge.purge_documents",
             new_callable=AsyncMock,
             side_effect=TimeoutError("qdrant write timeout"),
-        ) as mock_delete_document,
+        ) as mock_purge,
         patch(
             "knowledge_ingest.adapters.crawler.crawl_site",
             new_callable=AsyncMock,
@@ -397,7 +390,7 @@ async def test_run_crawl_job_does_not_fail_when_stale_vector_delete_fails():
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(
             return_value=["https://getklai.com/"],
         )
-        mock_pg.soft_delete_stale_connector_artifacts = AsyncMock(return_value=0)
+        mock_pg.list_document_heads = AsyncMock(return_value=["artifact-old"])
 
         from knowledge_ingest.adapters.crawler import run_crawl_job
 
@@ -412,12 +405,7 @@ async def test_run_crawl_job_does_not_fail_when_stale_vector_delete_fails():
             connector_id="conn-1",
         )
 
-    mock_delete_document.assert_awaited_once_with(
-        "org-1",
-        "klai-web-demo",
-        "https://getklai.com/",
-    )
-    mock_pg.soft_delete_stale_connector_artifacts.assert_not_awaited()
+    mock_purge.assert_awaited_once_with(mock_conn, "org-1", ["artifact-old"])
     mock_finish_execution.assert_awaited_once()
     assert mock_finish_execution.await_args.args[:2] == (mock_conn, "job-1")
     assert mock_finish_execution.await_args.kwargs == {

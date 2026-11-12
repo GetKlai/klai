@@ -22,7 +22,7 @@ import httpx
 import structlog
 from klai_image_storage import ImageStore, download_and_upload_crawl_images
 
-from knowledge_ingest import pg_store, qdrant_store
+from knowledge_ingest import document_purge, pg_store
 from knowledge_ingest.chunker import noise_counts
 from knowledge_ingest.config import settings
 from knowledge_ingest.crawl4ai_client import (
@@ -854,6 +854,35 @@ async def _apply_domain_rate_limit_effect_once(
             )
 
 
+async def _purge_stale_paths(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str, stale_paths: list[str]
+) -> int:
+    """Delete the documents of pages the site no longer has, for good.
+
+    Each page runs in its own savepoint. When a store refuses the delete the
+    savepoint rolls the close back, so the page stays active and the next
+    complete crawl lists it as stale again; that is the retry. Returns the
+    number of pages purged.
+    """
+    purged = 0
+    for path in stale_paths:
+        try:
+            async with conn.transaction():
+                heads = await pg_store.list_document_heads(conn, org_id, path, kb_slug)
+                await document_purge.purge_documents(conn, org_id, heads)
+        except Exception as exc:
+            logger.warning(
+                "crawl_connector_stale_purge_failed",
+                org_id=org_id,
+                kb_slug=kb_slug,
+                path=path,
+                error=str(exc),
+            )
+        else:
+            purged += 1
+    return purged
+
+
 async def run_crawl_job(
     *,
     connection_factory: ConnectionFactory,
@@ -1522,31 +1551,10 @@ async def run_crawl_job(
                                 )
                                 stale_paths = []
                         if stale_paths:
-                            stale_paths_deleted: list[str] = []
-                            for path in stale_paths:
-                                try:
-                                    await qdrant_store.delete_document(org_id, kb_slug, path)
-                                except Exception as exc:
-                                    logger.warning(
-                                        "crawl_connector_stale_vector_delete_failed",
-                                        job_id=job_id,
-                                        connector_id=connector_id,
-                                        kb_slug=kb_slug,
-                                        path=path,
-                                        error=str(exc),
-                                    )
-                                else:
-                                    stale_paths_deleted.append(path)
-                            if stale_paths_deleted:
-                                retired_count = (
-                                    await pg_store.soft_delete_stale_connector_artifacts(
-                                        conn,
-                                        org_id=org_id,
-                                        kb_slug=kb_slug,
-                                        connector_id=connector_id,
-                                        stale_paths=stale_paths_deleted,
-                                    )
-                                )
+                            retired_count = await _purge_stale_paths(
+                                conn, org_id, kb_slug, stale_paths
+                            )
+                            if retired_count:
                                 await conn.execute(
                                     "UPDATE knowledge.crawl_jobs "
                                     "SET pages_changed=pages_changed+$1 "

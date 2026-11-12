@@ -145,15 +145,51 @@ matches what was last ingested (e.g., a bulk sync re-sending unchanged pages), t
 pipeline is skipped and the request returns `{"status": "skipped"}`. The hash is stored
 on every new artifact so subsequent runs can detect no-ops.
 
-**Page deletes** are still processed immediately — no debounce. Qdrant vectors and the
-artifact record are removed as soon as the webhook fires.
+**Page deletes** are still processed immediately — no debounce. The document is deleted
+for good as soon as the webhook fires (see "Replaced keeps history, deleted is gone" below).
 
 The `org_id` (the Zitadel organization ID) is read from the Gitea organization's
 *description* field. This is a naming convention: whenever a Klai org is provisioned, its
 Zitadel org ID is written into the Gitea org description so the webhook handler can
 resolve it without a separate lookup.
 
-On page delete: all Qdrant vectors for that document path are removed.
+### Replaced keeps history, deleted is gone
+
+A re-ingest of changed content **replaces** a document: the old `knowledge.artifacts`
+row is closed (`belief_time_end = now`), keeps its `document_text`, and is linked to the
+new row through `superseded_by`. That history stays.
+
+A **delete** removes the document and every earlier version of it from every store. All
+single-document delete paths go through one operation,
+`knowledge_ingest/document_purge.py::purge_documents`:
+
+| Delete path | Entry point |
+|---|---|
+| A user deletes an uploaded file | `DELETE /knowledge/v1/kb/{kb_slug}/uploads/{artifact_id}` |
+| A crawled page no longer exists | `adapters/crawler.py::_purge_stale_paths` after a complete crawl |
+| A docs page is removed (Gitea webhook) | `routes/ingest.py::_purge_removed_paths` |
+| A connector document is gone at the source | `DELETE /ingest/v1/connector/document` |
+| A personal item is deleted | `DELETE /knowledge/v1/personal/items/{artifact_id}` |
+| A Scribe transcript is deleted | `DELETE /ingest/v1/document?org_id=&path=scribe/<id>` (all KBs of the org) |
+
+The operation closes the active rows first (search stops returning them, enrichment and
+graph workers abort on a non-active artifact), walks `superseded_by` back to every
+version, deletes the graph episodes and the Qdrant points of all versions, and
+hard-deletes the rows last: `knowledge.artifacts` (including `document_text`),
+`parent_chunks` and `artifact_images` (cascade), `embedding_queue`, `artifact_entities`,
+`derivations`, and `crawled_pages` / `page_links` for paths no live row uses. If an
+external store refuses, the request fails and the rows stay closed, so a repeated delete
+finishes the job (the crawler instead rolls the page back to active and the next complete
+crawl retries it). Every statement is bound to the caller's `org_id`.
+
+A closed row cannot be re-activated: `POST /knowledge/v1/artifacts/{id}/reindex` answers
+404 for anything but the active version. Documents deleted before this existed are
+reported (dry run) and, per approved run, purged by
+`klai-knowledge-ingest/scripts/purge_deleted_documents.py`. Object-storage images of
+deleted documents are not removed yet.
+
+Whole-connector, whole-KB and whole-organisation deletes were already hard deletes and are
+unchanged.
 
 ### 1.2 External sources via klai-connector
 

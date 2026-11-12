@@ -128,6 +128,7 @@ async def test_delete_statement_is_org_scoped(monkeypatch: pytest.MonkeyPatch) -
     record = SimpleNamespace(audio_path=None, created_at=datetime.now(UTC))
     db = _FakeDB(value=record)
     monkeypatch.setattr("app.api.transcribe.delete_audio", lambda _path: None)
+    monkeypatch.setattr("app.api.transcribe.delete_scribe_transcript", AsyncMock())
 
     await delete_transcription(txn_id="txn-1", caller=caller, db=db)
 
