@@ -273,7 +273,7 @@ describe('add connector wizard characterization', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Test authentication' }))
 
-    expect(await screen.findByText(/Cookies didn't unlock/)).toBeTruthy()
+    expect(await screen.findByText(/still logged out with these cookies/)).toBeTruthy()
     expect(apiFetchMock).toHaveBeenCalledWith(
       '/api/app/knowledge-bases/handbook/connectors/auth-probe',
       {
