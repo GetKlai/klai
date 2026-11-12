@@ -117,6 +117,27 @@ async def _seed_documents(conn: asyncpg.Connection, org_id: str) -> None:
             {},
         ],
     )
+    # New extraction still running: its parts and the previous finished
+    # extraction are both current until it completes.
+    await _chain(
+        conn,
+        org_id,
+        "running",
+        [
+            {"graphiti_episode_ids": ["done-before"], "graphiti_episode_complete": True},
+            {"graphiti_episode_ids": ["partial-1"], "graphiti_episode_complete": False},
+        ],
+    )
+    # No text to extract is a finished outcome: nothing stands in.
+    await _chain(
+        conn,
+        org_id,
+        "no-text",
+        [
+            {"graphiti_episode_ids": ["before-empty"]},
+            {"graphiti_episode_id": "no-chunks", "graphiti_episode_ids": []},
+        ],
+    )
     # Removed document: no active row, so nothing of it is current.
     await _insert(conn, org_id, "removed", {"graphiti_episode_ids": ["removed-1"]})
     # A rename closes two rows into one new version: the nearest extracted
@@ -137,7 +158,7 @@ async def test_current_graph_content_is_the_newest_extraction_of_each_document(t
 
     current = await pg_store.get_current_graph_episode_uuids_for_org(conn, org_id)
 
-    assert current == {"new-1", "legacy-scalar", "nearest"}
+    assert current == {"new-1", "legacy-scalar", "nearest", "partial-1", "done-before"}
 
 
 async def test_the_sweep_keeps_every_episode_a_row_records(tenant) -> None:
@@ -156,4 +177,7 @@ async def test_the_sweep_keeps_every_episode_a_row_records(tenant) -> None:
         "removed-1",
         "nearest",
         "older",
+        "done-before",
+        "partial-1",
+        "before-empty",
     }

@@ -1218,34 +1218,39 @@ async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str)
     return {r["episode_uuid"] for r in rows}
 
 
-async def get_current_graph_episode_uuids_for_org(
-    conn: asyncpg.Connection, org_id: str
-) -> set[str]:
-    """The Graphiti episode uuids that are the CURRENT graph content of this org.
+async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[asyncpg.Record]:
+    """Every artifact row of the org with what the graph rules need to know about it.
 
-    Postgres keeps every version of a document; the graph holds the facts of
-    exactly one: its newest extraction. Walking back from the active row along
-    ``superseded_by``, the first row that was extracted decides. A row with
-    episodes was extracted; so was a row deliberately held out of the graph
-    (``skipped:<reason>``, today only ``navigation_page``), whose result is
-    "nothing", so the document then has no graph content. A row with neither
-    (extraction queued, failed, aborted or quarantined) is passed over and the
-    walk continues to the version before it. Removed documents (no active row)
-    have no current content.
-
-    This is the selection of ``scripts/prune_stale_graph.py``; the org-wide
-    sweep deliberately uses the broader ``get_alive_episode_uuids_for_org``.
-
-    depth < 100 bounds the walk, as in ``get_episode_ids_for_document_history``.
+    ``episode_ids`` are the real uuids the row records (sentinels dropped).
+    ``finished`` means the row's extraction reached a final outcome: written
+    completely (rows from before ``graphiti_episode_complete`` existed count as
+    complete), held out of the graph on purpose (``skipped:<reason>``, today
+    only ``navigation_page``), or no text to extract (``no-chunks``). A row that
+    is not finished has an extraction queued, running, failed, aborted or
+    quarantined. ``source_connector_id``/``source_ref`` and ``kb_slug``/``path``
+    identify the document when ``superseded_by`` does not link its versions.
     """
-    rows = await conn.fetch(
+    return await conn.fetch(
         """
-        WITH RECURSIVE recorded AS (
-            SELECT a.id,
-                   a.superseded_by,
-                   a.belief_time_end = $2 AS active,
-                   COALESCE(a.extra::jsonb->>'graphiti_episode_id' LIKE 'skipped:%', false)
-                       AS held_out,
+        SELECT id::text AS id,
+               superseded_by::text AS superseded_by,
+               belief_time_end = $2 AS active,
+               kb_slug,
+               path,
+               extra::jsonb->>'source_connector_id' AS source_connector_id,
+               extra::jsonb->>'source_ref' AS source_ref,
+               episode_ids,
+               COALESCE(
+                   extra::jsonb->>'graphiti_episode_id' LIKE 'skipped:%'
+                   OR extra::jsonb->>'graphiti_episode_id' = 'no-chunks',
+                   false
+               )
+               OR (
+                   cardinality(episode_ids) > 0
+                   AND COALESCE((extra::jsonb->>'graphiti_episode_complete')::boolean, true)
+               ) AS finished
+        FROM (
+            SELECT a.*,
                    ARRAY(
                        SELECT episode_id
                        FROM jsonb_array_elements_text(
@@ -1261,39 +1266,96 @@ async def get_current_graph_episode_uuids_for_org(
                    ) AS episode_ids
             FROM knowledge.artifacts AS a
             WHERE a.org_id = $1
-        ),
-        stored AS (
-            SELECT id, superseded_by, active, episode_ids,
-                   cardinality(episode_ids) > 0 OR held_out AS extracted
-            FROM recorded
-        ),
-        walk AS (
-            SELECT s.id AS document, s.id, s.episode_ids, s.extracted, 0 AS depth
-            FROM stored s
-            WHERE s.active
-
-            UNION ALL
-
-            SELECT w.document, p.id, p.episode_ids, p.extracted, w.depth + 1
-            FROM walk w
-            JOIN stored p ON p.superseded_by = w.id
-            WHERE NOT w.extracted AND w.depth < 100
-        ),
-        nearest AS (
-            SELECT episode_ids,
-                   depth,
-                   min(depth) FILTER (WHERE extracted) OVER (PARTITION BY document)
-                       AS extracted_depth
-            FROM walk
-        )
-        SELECT DISTINCT unnest(episode_ids) AS episode_uuid
-        FROM nearest
-        WHERE depth = extracted_depth
+        ) AS a
         """,
         org_id,
         _SENTINEL,
     )
-    return {r["episode_uuid"] for r in rows}
+
+
+def current_extractions(rows: list) -> dict[str, tuple[set[str], bool]]:
+    """Active row id -> (its current graph episodes, whether a finished extraction backs them).
+
+    The walk rule is described in ``get_current_graph_episode_uuids_for_org``.
+    """
+    predecessors: dict[str, list] = {}
+    for row in rows:
+        if row["superseded_by"]:
+            predecessors.setdefault(row["superseded_by"], []).append(row)
+    result: dict[str, tuple[set[str], bool]] = {}
+    for row in rows:
+        if not row["active"]:
+            continue
+        ids: set[str] = set()
+        finished = False
+        level = [row]
+        # depth 100 bounds the walk, as in get_episode_ids_for_document_history.
+        for _depth in range(100):
+            for version in level:
+                ids.update(version["episode_ids"])
+            finished = any(version["finished"] for version in level)
+            if finished or not level:
+                break
+            level = [older for version in level for older in predecessors.get(version["id"], [])]
+        result[row["id"]] = (ids, finished)
+    return result
+
+
+async def get_current_graph_episode_uuids_for_org(
+    conn: asyncpg.Connection, org_id: str
+) -> set[str]:
+    """The Graphiti episode uuids that are the CURRENT graph content of this org.
+
+    Postgres keeps every version of a document; the graph holds the facts of
+    one: its newest finished extraction. Walking back from the active row along
+    ``superseded_by``, every version's episodes are kept up to and including
+    the first finished one (``get_graph_rows_for_org``). So an active row whose
+    extraction is still running or failed keeps its own partial, resumable
+    episodes AND the previous finished extraction, which is only replaced once
+    the new one is complete; a version held out of the graph or without text
+    ends the walk with nothing, so the document has no graph content. Removed
+    documents (no active row) have none either.
+
+    This is the selection of ``scripts/prune_stale_graph.py``; the org-wide
+    sweep deliberately uses the broader ``get_alive_episode_uuids_for_org``.
+    """
+    extractions = current_extractions(await get_graph_rows_for_org(conn, org_id))
+    return {episode_id for ids, _ in extractions.values() for episode_id in ids}
+
+
+async def forget_replaced_episode_ids(
+    conn: asyncpg.Connection, org_id: str, artifact_id: str
+) -> None:
+    """Clear the recorded episode ids of every earlier version of this row.
+
+    Called right after those episodes were deleted from the graph, so a closed
+    row lists episodes only while they exist. Same walk as
+    ``get_episode_ids_for_document_history``, without the row itself.
+    """
+    await conn.execute(
+        """
+        WITH RECURSIVE history AS (
+            SELECT a.id, 0 AS depth
+            FROM knowledge.artifacts a
+            WHERE a.org_id = $1 AND a.id = $2::uuid
+
+            UNION ALL
+
+            SELECT p.id, h.depth + 1
+            FROM history h
+            JOIN knowledge.artifacts p ON p.superseded_by = h.id AND p.org_id = $1
+            WHERE h.depth < 100
+        )
+        UPDATE knowledge.artifacts
+        SET extra = extra::jsonb
+                    || '{"graphiti_episode_ids": [], "graphiti_episode_id": null}'::jsonb
+        WHERE org_id = $1
+          AND id IN (SELECT id FROM history WHERE depth > 0)
+          AND (extra::jsonb ? 'graphiti_episode_ids' OR extra::jsonb ? 'graphiti_episode_id')
+        """,
+        org_id,
+        artifact_id,
+    )
 
 
 async def get_active_image_hashes_for_kb(

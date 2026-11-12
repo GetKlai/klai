@@ -113,9 +113,7 @@ async def _refresh_stale_graph(
 
     graph_skip = graph_episode_skip_reason(indexable_content)
     if graph_skip:
-        stale_ids = await pg_store.get_episode_ids_for_document_history(conn, org_id, [artifact_id])
-        if stale_ids:
-            await graph_module.delete_kb_episodes(org_id, stale_ids)
+        await graph_module.retire_earlier_extractions(conn, org_id, artifact_id, keep=[])
         await pg_store.update_artifact_extra(
             conn,
             artifact_id,

@@ -15,11 +15,13 @@ into a failure instead of a skip.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.metadata
 import math
 import os
 import random
+import types
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -124,23 +126,64 @@ async def _fact(driver: Any, org_id: str, fact: str, embed: str, **times: dateti
     await edge.save(driver)
 
 
-@needs_falkordb
-async def test_expired_and_invalidated_facts_never_reach_the_caller(graph) -> None:
-    driver, org_id = graph
+async def _seed(driver: Any, org_id: str) -> set[str]:
+    """12 current facts, 4 that no longer hold; the 4 outrank the rest on both legs
+    (shorter text for full-text, the query's own vector for similarity)."""
     past = datetime.now(UTC) - timedelta(days=1)
     future = datetime.now(UTC) + timedelta(days=30)
-    # The stale facts outrank the current ones on both legs (shorter text for
-    # full-text, the query's own vector for similarity), so graphiti's first
-    # page of ten holds no current fact and the search has to widen.
-    current = [f"the {_QUERY} for berth {n} is in force for every container" for n in range(5)]
-    for fact in current:
+    current = {f"the {_QUERY} for berth {n} is in force for every container" for n in range(11)}
+    for fact in sorted(current):
         await _fact(driver, org_id, fact, embed=fact)
     ending = f"the {_QUERY} for the east quay is in force until next month"
     await _fact(driver, org_id, ending, embed=ending, invalid_at=future)
-    for n in range(12):
+    for n in range(2):
         await _fact(driver, org_id, f"{_QUERY} old {n}", embed=_QUERY, expired_at=past)
         await _fact(driver, org_id, f"{_QUERY} ended {n}", embed=_QUERY, invalid_at=past)
+    return current | {ending}
 
-    results = await graph_search.search(_QUERY, org_id, top_k=6)
 
-    assert {result["text"] for result in results} == {*current, ending}
+@needs_falkordb
+async def test_expired_facts_are_dropped_and_the_result_count_kept(graph) -> None:
+    driver, org_id = graph
+    current = await _seed(driver, org_id)
+
+    results = await graph_search.search(_QUERY, org_id, top_k=20)
+
+    texts = [result["text"] for result in results]
+    assert len(texts) == graph_search.DEFAULT_SEARCH_LIMIT
+    assert set(texts) <= current
+
+
+@needs_falkordb
+async def test_concurrent_searches_each_get_the_full_count(graph) -> None:
+    driver, org_id = graph
+    current = await _seed(driver, org_id)
+
+    answers = await asyncio.gather(
+        *(graph_search.search(_QUERY, org_id, top_k=top_k) for top_k in (20, 5, 20, 3, 20, 10))
+    )
+
+    assert [len(answer) for answer in answers] == [10, 5, 10, 3, 10, 10]
+    assert all({result["text"] for result in answer} <= current for answer in answers)
+
+
+@needs_falkordb
+async def test_a_search_past_its_timeout_still_returns_nothing(graph, monkeypatch) -> None:
+    driver, org_id = graph
+    await _seed(driver, org_id)
+    monkeypatch.setattr(graph_search.settings, "graph_search_timeout", 1e-6)
+
+    assert await graph_search.search(_QUERY, org_id, top_k=20) == []
+
+
+def test_a_naive_timestamp_counts_as_utc() -> None:
+    now = datetime.now(UTC)
+    naive_past = (now - timedelta(hours=1)).replace(tzinfo=None)
+    naive_future = (now + timedelta(hours=1)).replace(tzinfo=None)
+
+    edges = [
+        types.SimpleNamespace(expired_at=naive_past, invalid_at=None),
+        types.SimpleNamespace(expired_at=None, invalid_at=naive_future),
+    ]
+
+    assert graph_search._current_facts(edges) == [edges[1]]

@@ -49,10 +49,10 @@ from knowledge_ingest.enrichment_policy import (
 from knowledge_ingest.episode_text import MAX_TEXT_CHARS, split_episode_text
 from knowledge_ingest.graph import (
     EntityGraphData,
-    delete_kb_episodes,
     flush_entity_graph_data,
     ingest_episode,
     load_entity_graph_data,
+    retire_earlier_extractions,
 )
 
 __all__ = ["MAX_TEXT_CHARS"]
@@ -433,6 +433,12 @@ async def main(
             async with db_lock:
                 await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
 
+        async def _db_retire(artifact_id: str, keep: list[str]) -> None:
+            # Deletes the document's earlier extractions now that this one is
+            # final; it reads and writes the shared connection, so it holds the lock.
+            async with db_lock:
+                await retire_earlier_extractions(conn, org_id, artifact_id, keep=keep)
+
         counts = {"ok": 0, "err": 0}
         t_start = time.time()
         total_to_process = len(to_process)
@@ -464,6 +470,9 @@ async def main(
                         ),
                         artifact_id,
                     )
+                    # No text is a finished outcome too: the earlier versions'
+                    # facts no longer describe this document.
+                    await _db_retire(artifact_id, [])
                     return
 
                 full_text = "\n\n".join(chunks)
@@ -488,6 +497,7 @@ async def main(
                         ),
                         artifact_id,
                     )
+                    await _db_retire(artifact_id, [])
                     return
 
                 # No truncation branch any more: split_episode_text spreads a long
@@ -496,26 +506,22 @@ async def main(
                 raw_extra = row["extra"] or {}
                 extra = json.loads(raw_extra) if isinstance(raw_extra, str) else raw_extra
                 # An interrupted run of this extraction resumes after its last
-                # stored part; partial episodes of an older extraction are
-                # deleted so the rebuilt list holds no foreign ids.
+                # stored part. A new run keeps the row's earlier ids in front of
+                # its own (graphiti_episode_ids_from) until it completes, so a
+                # failed rebuild never leaves the document without facts.
                 episode_ids = resumable_episode_ids(extra)
-                foreign_ids = [
-                    episode_id
-                    for episode_id in extra.get("graphiti_episode_ids") or []
-                    if episode_id not in episode_ids
-                ]
                 start_patch = {
                     "graphiti_episode_part_count": len(episode_parts),
                     "graphiti_episode_complete": False,
                     "graphiti_episode_ids_version": GRAPHITI_EXTRACTION_VERSION,
                 }
-                if foreign_ids:
-                    start_patch["graphiti_episode_ids"] = episode_ids
-                    start_patch["graphiti_episode_id"] = episode_ids[0] if episode_ids else None
+                if not episode_ids:
+                    recorded = list(extra.get("graphiti_episode_ids") or [])
+                    start_patch["graphiti_episode_ids"] = recorded
+                    start_patch["graphiti_episode_ids_from"] = len(recorded)
+                    start_patch["graphiti_episode_id"] = recorded[0] if recorded else None
                 entity_graph_data = EntityGraphData()
                 try:
-                    if foreign_ids:
-                        await delete_kb_episodes(org_id, foreign_ids)
                     await _db_execute(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
@@ -549,12 +555,16 @@ async def main(
                         await flush_entity_graph_data(artifact_id, org_id, entity_graph_data)
                     except Exception:
                         log.exception("%s — entity graph data update failed", title)
+                    await _db_retire(artifact_id, episode_ids)
                     await _db_execute(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                         "WHERE id = $2::uuid",
                         json.dumps(
                             {
+                                "graphiti_episode_ids": episode_ids,
+                                "graphiti_episode_ids_from": 0,
+                                "graphiti_episode_id": episode_ids[0],
                                 "graphiti_episode_complete": True,
                                 "graphiti_model": settings.graphiti_llm_model,
                                 "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,

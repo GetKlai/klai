@@ -91,3 +91,18 @@ async def test_org_wide_sweep_removes_what_is_not_alive_with_its_facts(
     assert deleted == 1
     assert episodes == {"current"}
     assert edges == {"shared": ["current"]}
+
+
+async def test_an_entity_another_job_has_not_linked_yet_survives(graph_helpers: Contract) -> None:
+    """Graphiti saves an entity before the MENTIONS that link it; removing an
+    unrelated episode in between must not delete it."""
+    await seed_graph(graph_helpers, ["stale"], {"stale-fact": ["stale"]})
+    driver = graph_helpers.graphiti.driver.clone(database=graph_helpers.group_id)
+    await driver.execute_query(
+        "CREATE (:Entity {uuid: 'just-merged', group_id: $g})", g=graph_helpers.group_id
+    )
+
+    await graph_module.delete_kb_episodes(graph_helpers.group_id, ["stale"])
+
+    _, _, entities = await stored_graph(graph_helpers)
+    assert entities == {"just-merged"}

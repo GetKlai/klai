@@ -1,23 +1,29 @@
 """Count, and only with --execute remove, the graph content that no longer counts.
 
 Postgres keeps every version of a document; the graph should hold the facts
-of one: its newest extraction
-(``pg_store.get_current_graph_episode_uuids_for_org``). Before ingest replaced earlier
-extractions, one tenant's graph held 1,748 episodes of current versions next
-to 8,442 of replaced versions and 442 of removed documents, and 14,620 of its
-204,498 fact edges cited no episode that still existed. Retrieval searches
+of one: its newest finished extraction
+(``pg_store.get_current_graph_episode_uuids_for_org``). Before ingest replaced
+earlier extractions, one tenant's graph held 1,748 episodes of current versions
+next to 8,442 of replaced versions and 442 of removed documents, and 14,620 of
+its 204,498 fact edges cited no episode that still existed. Retrieval searches
 those edges, so the stale facts kept reaching answers.
 
 By default this only reads and prints counts. ``--execute`` removes the same
 selection through ``graph.delete_kb_episodes`` (bounded batches; an edge goes
-when no remaining episode backs it) and prints the counts again. It removes
-every episode that is not current graph content, and strips uuids of episodes that no longer
-exist from the edges citing them. It refuses to execute when that would leave
-a document that has graph content now without any.
+when no remaining episode backs it), deletes the edges that list no existing
+episode at all, and prints the counts again. An episode is removed only when it
+is not current graph content AND its document either has a finished current
+extraction or no active version at all. A document is its ``superseded_by``
+chain, its knowledge base and path, and its connector and source_ref together:
+rows closed before the link existed, or whose link was cleared on purpose, have
+no chain, and judging them alone would delete the only facts of a document
+whose new version is not extracted yet. Episodes younger than
+``graph.ORPHAN_GRACE`` are never removed. The script refuses to execute when a
+document that has graph content now would be left without any.
 
-This is the only path that removes replaced versions' episodes: the
-org-wide sweep after a connector purge keeps every episode any row records,
-so the owner approves this removal per run, after seeing the dry-run counts.
+This is the only path that removes replaced versions' episodes: the org-wide
+sweep after a connector purge keeps every episode any row records, so the
+owner approves this removal per run, after seeing the dry-run counts.
 
 Run it by hand only, one tenant per run (in a knowledge-ingest container):
 
@@ -30,8 +36,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from collections import defaultdict
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from knowledge_ingest import graph as graph_module
 from knowledge_ingest import pg_store
@@ -43,153 +49,142 @@ from knowledge_ingest.db import tenant_scoped_connection
 # ~120 ms on a synthetic 200k-edge graph, far inside the 5000 ms query timeout.
 _EDGE_PAGE = 20_000
 
-_ROWS_SQL = """
-SELECT a.id::text AS id,
-       a.superseded_by::text AS superseded_by,
-       a.belief_time_end = $2 AS active,
-       ARRAY(
-           SELECT episode_id
-           FROM jsonb_array_elements_text(
-               CASE
-                   WHEN a.extra::jsonb ? 'graphiti_episode_ids'
-                       THEN a.extra::jsonb->'graphiti_episode_ids'
-                   WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
-                       THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
-                   ELSE '[]'::jsonb
-               END
-           ) AS stored_episode(episode_id)
-           WHERE episode_id <> 'no-chunks' AND episode_id NOT LIKE 'skipped:%'
-       ) AS episode_ids
-FROM knowledge.artifacts AS a
-WHERE a.org_id = $1
-"""
-
-
-@dataclass(frozen=True)
-class Row:
-    id: str
-    superseded_by: str | None
-    active: bool
-    episode_ids: tuple[str, ...]
-
 
 @dataclass(frozen=True)
 class Snapshot:
-    rows: list[Row]
-    alive: set[str]
+    rows: list
     episodes: set[str]
+    old_episodes: set[str]
     edges: list[list[str]]
 
 
-async def _graph_state(org_id: str) -> tuple[set[str], list[list[str]]]:
+async def _edges(org_id: str) -> list[list[str]]:
     driver = graph_module._get_graphiti().driver.clone(org_id)
-    episodes = await graph_module.stored_episode_uuids(org_id)
     records, _, _ = await driver.execute_query(
         "MATCH ()-[r:RELATES_TO]->() RETURN max(id(r)) AS top"
     )
     top = records[0]["top"]
     edges: list[list[str]] = []
     for low in range(0, (top if top is not None else -1) + 1, _EDGE_PAGE):
+        # coalesce: collect() drops nulls, and an edge without an episodes
+        # property is exactly an edge no episode backs.
         records, _, _ = await driver.execute_query(
             "MATCH ()-[r:RELATES_TO]->() WHERE id(r) >= $low AND id(r) < $high "
-            "RETURN collect(r.episodes) AS episodes",
+            "RETURN collect(coalesce(r.episodes, [])) AS episodes",
             low=low,
             high=low + _EDGE_PAGE,
         )
-        edges.extend(list(cited or []) for cited in records[0]["episodes"])
-    return episodes, edges
+        edges.extend(list(cited) for cited in records[0]["episodes"])
+    return edges
 
 
 async def load_snapshot(org_id: str) -> Snapshot:
-    # Graph first, Postgres second: an extraction writes its episode to the
-    # graph before it records the uuid on its row, so this order keeps an
-    # episode written meanwhile from looking stale.
-    episodes, edges = await _graph_state(org_id)
+    # Edges, then episodes, then Postgres: an extraction writes its episode,
+    # then its edges, then records the uuid on its row. In this order an
+    # episode written meanwhile is either absent from the edge read (so its
+    # facts are never taken for unbacked) or recorded by the time Postgres is
+    # read; ORPHAN_GRACE covers a job that has not recorded it yet.
+    edges = await _edges(org_id)
+    cutoff = datetime.now(UTC) - graph_module.ORPHAN_GRACE
+    episodes = await graph_module.stored_episode_uuids(org_id)
+    old_episodes = await graph_module.stored_episode_uuids(org_id, older_than=cutoff)
     async with tenant_scoped_connection(org_id) as conn:
-        records = await conn.fetch(_ROWS_SQL, org_id, pg_store._SENTINEL)
-        alive = await pg_store.get_current_graph_episode_uuids_for_org(conn, org_id)
-    rows = [Row(r["id"], r["superseded_by"], r["active"], tuple(r["episode_ids"])) for r in records]
-    return Snapshot(rows=rows, alive=alive, episodes=episodes, edges=edges)
+        rows = await pg_store.get_graph_rows_for_org(conn, org_id)
+    return Snapshot(rows=rows, episodes=episodes, old_episodes=old_episodes, edges=edges)
 
 
-def selection(snapshot: Snapshot) -> set[str]:
-    """Every stored episode that is not alive, plus every missing uuid an edge still cites."""
+def _documents(rows: list) -> list[list]:
+    """Rows grouped per document: linked by superseded_by, kb+path, or connector+source_ref."""
+    parent = {row["id"]: row["id"] for row in rows}
+
+    def find(key: str) -> str:
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    def union(a: str, b: str) -> None:
+        parent[find(a)] = find(b)
+
+    first: dict[tuple, str] = {}
+    for row in rows:
+        if row["superseded_by"] in parent:
+            union(row["id"], row["superseded_by"])
+        keys = [("path", row["kb_slug"], row["path"])]
+        if row["source_connector_id"] and row["source_ref"]:
+            keys.append(("source", row["source_connector_id"], row["source_ref"]))
+        for key in keys:
+            if key in first:
+                union(row["id"], first[key])
+            else:
+                first[key] = row["id"]
+    groups: dict[str, list] = {}
+    for row in rows:
+        groups.setdefault(find(row["id"]), []).append(row)
+    return list(groups.values())
+
+
+@dataclass(frozen=True)
+class Plan:
+    selection: set[str]
+    counts: dict[str, int]
+    emptied: list[str]
+
+
+def plan(snapshot: Snapshot) -> Plan:
+    extractions = pg_store.current_extractions(snapshot.rows)
+    current = {episode_id for ids, _ in extractions.values() for episode_id in ids}
+    replaced: set[str] = set()
+    removed: set[str] = set()
+    protected: set[str] = set()
+    emptied: list[str] = []
+    for document in _documents(snapshot.rows):
+        ids = {episode_id for row in document for episode_id in row["episode_ids"]}
+        active = [extractions[row["id"]] for row in document if row["active"]]
+        if not active:
+            removed |= ids
+        elif all(finished for _, finished in active):
+            replaced |= ids
+            # Content now, none after, and not because the newest version was
+            # finished with nothing (held out of the graph, or no text).
+            keeps = {episode_id for kept, _ in active for episode_id in kept}
+            if ids & snapshot.episodes and not keeps & snapshot.episodes and keeps:
+                emptied.extend(row["id"] for row in document if row["active"])
+        else:
+            protected |= ids
+    stale = snapshot.old_episodes - current
     cited = {uuid for edge in snapshot.edges for uuid in edge}
-    return (snapshot.episodes - snapshot.alive) | (cited - snapshot.episodes)
+    selection = (stale - protected) | (cited - snapshot.episodes)
 
-
-def _histories(rows: list[Row]) -> dict[str, set[str]]:
-    """Active row id -> episode ids of that document's every version."""
-    by_id = {row.id: row for row in rows}
-    predecessors: dict[str, list[str]] = defaultdict(list)
-    for row in rows:
-        if row.superseded_by:
-            predecessors[row.superseded_by].append(row.id)
-    histories: dict[str, set[str]] = {}
-    for row in rows:
-        if not row.active:
-            continue
-        seen, todo, ids = {row.id}, [row.id], set()
-        while todo:
-            current = todo.pop()
-            ids.update(by_id[current].episode_ids)
-            for older in predecessors[current]:
-                if older not in seen:
-                    seen.add(older)
-                    todo.append(older)
-        histories[row.id] = ids
-    return histories
-
-
-def report(snapshot: Snapshot) -> tuple[dict[str, int], list[str]]:
-    """Counts of what the selection removes, and the documents it would empty."""
-    selected = selection(snapshot)
-    replaced, referenced = set(), set()
-    for row in snapshot.rows:
-        referenced.update(row.episode_ids)
-        if not row.active and row.superseded_by:
-            replaced.update(row.episode_ids)
-    stale = snapshot.episodes - snapshot.alive
     counts = {
         "episodes_in_graph": len(snapshot.episodes),
-        "episodes_alive_in_graph": len(snapshot.episodes & snapshot.alive),
-        "episodes_removed_replaced_version": len(stale & replaced),
-        "episodes_removed_removed_document": len((stale & referenced) - replaced),
-        "episodes_removed_no_row": len(stale - referenced),
+        "episodes_current": len(snapshot.episodes & current),
+        "episodes_removed_replaced_version": len(stale & replaced - protected),
+        "episodes_removed_removed_document": len(stale & removed - replaced - protected),
+        "episodes_removed_recorded_by_no_row": len(stale - replaced - removed - protected),
+        "episodes_kept_document_not_finished_extracting": len(stale & protected),
+        "episodes_kept_too_recent": len(snapshot.episodes - snapshot.old_episodes - current),
         "edges_in_graph": len(snapshot.edges),
         "edges_removed": 0,
+        "edges_removed_without_existing_episode": 0,
         "edges_kept_with_shorter_episode_list": 0,
         "edges_kept_unchanged": 0,
-        "edges_without_existing_episode": 0,
-        "edges_without_any_episode_left_alone": 0,
     }
-    for cited in snapshot.edges:
-        if not cited:
-            counts["edges_without_any_episode_left_alone"] += 1
-            counts["edges_kept_unchanged"] += 1
-            continue
-        if not any(uuid in snapshot.episodes for uuid in cited):
-            counts["edges_without_existing_episode"] += 1
-        removed = sum(uuid in selected for uuid in cited)
-        if removed == len(cited):
+    for edge in snapshot.edges:
+        if not any(uuid in snapshot.episodes for uuid in edge):
+            counts["edges_removed_without_existing_episode"] += 1
             counts["edges_removed"] += 1
-        elif removed:
+            continue
+        removed_here = sum(uuid in selection for uuid in edge)
+        if removed_here == len(edge):
+            counts["edges_removed"] += 1
+        elif removed_here:
             counts["edges_kept_with_shorter_episode_list"] += 1
         else:
             counts["edges_kept_unchanged"] += 1
     counts["edges_kept"] = counts["edges_in_graph"] - counts["edges_removed"]
-
-    emptied = [
-        document
-        for document, history in sorted(_histories(snapshot.rows).items())
-        # A document whose current extraction is a deliberate skip has no
-        # current content by design; it is never counted here.
-        if history & snapshot.alive
-        and history & snapshot.episodes
-        and not history & snapshot.episodes & snapshot.alive
-    ]
     counts["documents_left_without_episode"] = len(emptied)
-    return counts, emptied
+    return Plan(selection=selection, counts=counts, emptied=sorted(emptied))
 
 
 def _print(title: str, counts: dict[str, int]) -> None:
@@ -202,30 +197,28 @@ async def run(org_id: str, execute: bool) -> int:
     if not settings.graphiti_enabled:
         print("graphiti is disabled; nothing to do")
         return 1
-    snapshot = await load_snapshot(org_id)
-    counts, emptied = report(snapshot)
-    _print(f"org {org_id}: {'before' if execute else 'dry run'}", counts)
-    if emptied:
-        # By construction the rule keeps each document's newest extracted
-        # version. A document lands here when that version's row lists episode
-        # ids the graph does not hold while an older version's episodes are
-        # still there, so applying the rule would empty it.
+    before = plan(await load_snapshot(org_id))
+    _print(f"org {org_id}: {'before' if execute else 'dry run'}", before.counts)
+    if before.emptied:
+        # The current version's row lists episode ids the graph does not hold
+        # while an older version's episodes are still there, so the rule would
+        # remove the document's only graph content.
         print(
-            "REFUSING: the current-content rule (newest extraction per document) keeps "
-            "episode ids that are not in the graph for these documents, so pruning "
+            "REFUSING: the current-content rule (newest finished extraction per document) "
+            "keeps episode ids that are not in the graph for these documents, so pruning "
             "would remove their only graph content:"
         )
-        for document in emptied:
+        for document in before.emptied:
             print(f"  active artifact {document}")
         return 2
     if not execute:
         return 0
 
     async with tenant_scoped_connection(org_id) as conn:
-        alive_now = await pg_store.get_current_graph_episode_uuids_for_org(conn, org_id)
-    await graph_module.delete_kb_episodes(org_id, sorted(selection(snapshot) - alive_now))
-    after, _ = report(await load_snapshot(org_id))
-    _print(f"org {org_id}: after", after)
+        current_now = await pg_store.get_current_graph_episode_uuids_for_org(conn, org_id)
+    await graph_module.delete_kb_episodes(org_id, sorted(before.selection - current_now))
+    await graph_module.delete_unbacked_edges(org_id)
+    _print(f"org {org_id}: after", plan(await load_snapshot(org_id)).counts)
     return 0
 
 

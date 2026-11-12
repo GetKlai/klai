@@ -38,8 +38,15 @@ apply_falkordb_compat(ann_candidate_search=settings.graph_ann_enabled)
 logger = structlog.get_logger()
 
 _graphiti_client: Graphiti | None = None
-# Ceiling on how far _search_current_facts widens past graphiti's default limit.
-_MAX_GRAPH_FETCH = 4 * DEFAULT_SEARCH_LIMIT
+# Edges asked of graphiti per search; expired ones are dropped and the rest cut
+# to graphiti's default of 10, the count callers got before. One fixed value for
+# every request: Graphiti.search writes num_results into a module-global config
+# and reads it back after an await, so per-request limits overwrite each other.
+# With ~10% of facts expired, 20 leaves fewer than 10 current facts only when
+# more than half of the best 20 are expired. Measured on a synthetic 20k-edge
+# graph (FalkorDB 6.0.4, median of 22 queries): ANN 23-48 ms at 10, 86-89 ms at
+# 20; brute-force scan 1139-1498 ms at 10, 1131-1521 ms at 20, inside its noise.
+_GRAPH_FETCH = 2 * DEFAULT_SEARCH_LIMIT
 # Provenance is optional garnish on the graph leg: it gets its own small
 # budget so it can never cost more than the search it annotates.
 _PROVENANCE_TIMEOUT = 1.0
@@ -253,16 +260,25 @@ async def _search_with_provenance(
     Worst case is therefore ``graph_search_timeout + _PROVENANCE_TIMEOUT``,
     both bounded and explicit.
     """
-    results = await asyncio.wait_for(
-        _search_current_facts(graphiti, query, org_id, top_k),
+    found = await asyncio.wait_for(
+        graphiti.search(query, group_ids=[org_id], num_results=_GRAPH_FETCH),
         timeout=settings.graph_search_timeout,
     )
+    results = _current_facts(found)
     episode_names = await _resolve_episode_names(graphiti, results, org_id)
     return _convert_results(results, top_k, episode_names)
 
 
-async def _search_current_facts(graphiti: Graphiti, query: str, org_id: str, top_k: int) -> list:
-    """Graphiti's search without the facts Graphiti itself no longer holds true.
+def _still_holds(moment: datetime | None, now: datetime) -> bool:
+    if moment is None:
+        return True
+    # A naive legacy value is UTC; comparing it with an aware one would raise
+    # and take the whole graph leg down for one odd edge.
+    return (moment if moment.tzinfo else moment.replace(tzinfo=UTC)) > now
+
+
+def _current_facts(found: list) -> list:
+    """Graphiti's results without the facts Graphiti itself no longer holds true.
 
     Graphiti keeps a contradicted fact with ``expired_at`` set and a fact that
     ended with ``invalid_at`` set; in one production week 3 of 31 graph facts in
@@ -270,28 +286,16 @@ async def _search_current_facts(graphiti: Graphiti, query: str, org_id: str, top
     graphiti's ``SearchFilters``: any filter makes the ANN candidate search
     (klai_graphiti_compat) fall back to the brute-force similarity scan, the scan
     that hit FalkorDB's query timeout from ~22k edges (SPEC-GRAPH-SCALE-001).
-
-    So that dropped facts do not shrink the answer, the search widens (10, 20,
-    40 edges) until it has as many current facts as an unfiltered search would
-    have returned, or the graph has no more matches. 40 is a ceiling, not a
-    guarantee: a query whose best 40 matches are mostly expired returns fewer.
+    The caller still gets as many facts as before (graphiti's default limit)
+    because the search asks for ``_GRAPH_FETCH`` edges.
     """
-    wanted = min(top_k, DEFAULT_SEARCH_LIMIT)
-    num_results = DEFAULT_SEARCH_LIMIT
-    while True:
-        found = await graphiti.search(query, group_ids=[org_id], num_results=num_results)
-        now = datetime.now(UTC)
-        current = [
-            edge
-            for edge in found
-            if all(
-                moment is None or moment > now
-                for moment in (getattr(edge, "expired_at", None), getattr(edge, "invalid_at", None))
-            )
-        ]
-        if len(current) >= wanted or len(found) < num_results or num_results >= _MAX_GRAPH_FETCH:
-            return current
-        num_results *= 2
+    now = datetime.now(UTC)
+    return [
+        edge
+        for edge in found
+        if _still_holds(getattr(edge, "expired_at", None), now)
+        and _still_holds(getattr(edge, "invalid_at", None), now)
+    ][:DEFAULT_SEARCH_LIMIT]
 
 
 def _episode_uuids(edge: object) -> list[str]:

@@ -1015,10 +1015,7 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         # logged at error level and does not fail the ingest, whose supersede
         # is already committed; scripts/prune_stale_graph.py counts what is left.
         try:
-            stale_ids = await pg_store.get_episode_ids_for_document_history(
-                conn, req.org_id, [artifact_id]
-            )
-            await graph_module.delete_kb_episodes(req.org_id, stale_ids)
+            await graph_module.retire_earlier_extractions(conn, req.org_id, artifact_id, keep=[])
         except Exception:
             logger.exception(
                 "graphiti_skipped_page_episodes_delete_failed",
