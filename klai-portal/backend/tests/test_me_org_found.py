@@ -93,7 +93,7 @@ async def _call_me(perms: UserPermissions | None) -> MeResponse:
         mock_zitadel.get_userinfo = AsyncMock(
             return_value={"sub": "user-123", "email": "test@acme.example.com", "name": "Test User"}
         )
-        mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+        mock_zitadel.login_second_factors = AsyncMock(return_value=[])
         return await me(credentials=mock_credentials, db=mock_db)
 
 
@@ -134,7 +134,7 @@ class TestMeOrgFound:
             patch("app.api.me.set_tenant", new_callable=AsyncMock),
         ):
             mock_zitadel.get_userinfo = AsyncMock(return_value=userinfo)
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             response = await me(credentials=mock_credentials, db=mock_db)
 
@@ -176,7 +176,7 @@ class TestMeOrgFound:
             patch("app.api.me.set_tenant", new_callable=AsyncMock),
         ):
             mock_zitadel.get_userinfo = AsyncMock(return_value=userinfo)
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             response = await me(credentials=mock_credentials, db=mock_db)
 
@@ -206,7 +206,7 @@ class TestMeOrgFound:
             patch("app.api.me.resolve_user_permissions", new=AsyncMock(return_value=None)),
         ):
             mock_zitadel.get_userinfo = AsyncMock(return_value=userinfo)
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             response = await me(credentials=mock_credentials, db=mock_db)
 
@@ -250,7 +250,7 @@ class TestMeOrgFound:
             patch("app.api.me.set_tenant", new_callable=AsyncMock) as mock_set_tenant,
         ):
             mock_zitadel.get_userinfo = AsyncMock(return_value=userinfo)
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             await me(credentials=mock_credentials, db=mock_db)
 
@@ -280,7 +280,7 @@ class TestMeOrgFound:
             patch("app.api.me.set_tenant", new_callable=AsyncMock) as mock_set_tenant,
         ):
             mock_zitadel.get_userinfo = AsyncMock(return_value=userinfo)
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             await me(credentials=mock_credentials, db=mock_db)
 

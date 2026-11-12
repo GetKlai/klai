@@ -106,7 +106,7 @@ class TestSarExport:
         with patch("app.api.me.zitadel") as mock_zitadel:
             mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-xyz"})
             mock_zitadel.get_user_by_id = AsyncMock(return_value=_zitadel_user_response())
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             await sar_export(credentials=MagicMock(), db=db)
 
@@ -143,7 +143,7 @@ class TestSarExport:
         with patch("app.api.me.zitadel") as mock_zitadel:
             mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-123"})
             mock_zitadel.get_user_by_id = AsyncMock(return_value=_zitadel_user_response())
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             result = await sar_export(credentials=mock_credentials, db=db)
 
@@ -195,7 +195,7 @@ class TestSarExport:
         with patch("app.api.me.zitadel") as mock_zitadel:
             mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-456"})
             mock_zitadel.get_user_by_id = AsyncMock(return_value=_zitadel_user_response())
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=True)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=["totp"])
 
             result = await sar_export(credentials=mock_credentials, db=db)
 
@@ -227,7 +227,7 @@ class TestSarExport:
         with patch("app.api.me.zitadel") as mock_zitadel:
             mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-789"})
             mock_zitadel.get_user_by_id = AsyncMock(return_value=_zitadel_user_response())
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             result = await sar_export(credentials=mock_credentials, db=db)
 
@@ -281,7 +281,7 @@ class TestSarExport:
         with patch("app.api.me.zitadel") as mock_zitadel:
             mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-degrade"})
             mock_zitadel.get_user_by_id = AsyncMock(side_effect=Exception("Zitadel timeout"))
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             result = await sar_export(credentials=mock_credentials, db=db)
 
@@ -352,7 +352,7 @@ class TestSarExport:
         with patch("app.api.me.zitadel") as mock_zitadel:
             mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-audit"})
             mock_zitadel.get_user_by_id = AsyncMock(return_value=_zitadel_user_response())
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             await me_module.sar_export(credentials=MagicMock(), db=db)
 
@@ -397,7 +397,7 @@ class TestSarExport:
         with patch("app.api.me.zitadel") as mock_zitadel:
             mock_zitadel.get_userinfo = AsyncMock(return_value={"sub": "user-twenty"})
             mock_zitadel.get_user_by_id = AsyncMock(return_value=_zitadel_user_response())
-            mock_zitadel.has_any_mfa = AsyncMock(return_value=False)
+            mock_zitadel.login_second_factors = AsyncMock(return_value=[])
 
             result = await me_module.sar_export(credentials=MagicMock(), db=db)
 

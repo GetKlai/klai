@@ -1,0 +1,66 @@
+name: Zitadel login contract
+
+# Runs the portal's login and second-factor enrolment handlers, with the real
+# ZitadelClient, against the Zitadel image pinned in deploy/docker-compose.yml,
+# with klai-mailer (built from this checkout) as Zitadel's notification
+# provider, so the e-mail code travels the production mail path.
+# The portal's other auth tests mock Zitadel, so they prove the request shapes
+# the portal sends and the response fields it reads, not that Zitadel accepts
+# and returns them. This job is where a Zitadel bump or a changed request shape
+# meets the real provider before it ships.
+#
+# The image is read from the compose file at run time, so a pull request that
+# bumps the pin is tested against the new image.
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/docker-compose.yml'
+      - 'deploy/tests/zitadel-login-contract.sh'
+      - 'klai-portal/backend/app/services/zitadel.py'
+      - 'klai-portal/backend/app/api/auth.py'
+      - 'klai-portal/backend/app/services/email_otp_enrolment.py'
+      - 'klai-portal/backend/uv.lock'
+      - 'klai-portal/backend/tests/auth_test_helpers.py'
+      - 'klai-portal/backend/tests/helpers.py'
+      - 'klai-portal/backend/tests/conftest.py'
+      - 'klai-mailer/**'
+      - 'klai-portal/backend/tests/contract/test_zitadel_login_contract.py'
+      - '.github/workflows/zitadel-login-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/docker-compose.yml'
+      - 'deploy/tests/zitadel-login-contract.sh'
+      - 'klai-portal/backend/app/services/zitadel.py'
+      - 'klai-portal/backend/app/api/auth.py'
+      - 'klai-portal/backend/app/services/email_otp_enrolment.py'
+      - 'klai-portal/backend/uv.lock'
+      - 'klai-portal/backend/tests/auth_test_helpers.py'
+      - 'klai-portal/backend/tests/helpers.py'
+      - 'klai-portal/backend/tests/conftest.py'
+      - 'klai-mailer/**'
+      - 'klai-portal/backend/tests/contract/test_zitadel_login_contract.py'
+      - '.github/workflows/zitadel-login-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  login-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Login and enrolment against the pinned Zitadel
+        run: sh deploy/tests/zitadel-login-contract.sh
