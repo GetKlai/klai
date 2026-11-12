@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import types
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -477,3 +477,36 @@ async def test_rebuild_kb_summary_log_event(_common_patches):
     assert evt["artifacts_processed"] == 1
     assert evt["artifacts_skipped"] == 0
     assert evt["artifacts_failed"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["preview", "no_marker", "lock_busy"])
+async def test_a_rebuild_that_does_not_run_changes_no_document_state(_common_patches, refusal):
+    """A preview, a missing approval marker and a knowledge base another run
+    holds all stop before the first document: nothing is set to pending, so
+    nothing can be left pending, and no failure is recorded."""
+    from knowledge_ingest.operations import ApprovalRequired, OperationBusy
+    from knowledge_ingest.rebuild_tasks import _rebuild_kb_core
+
+    _common_patches["mock_list"].return_value = [_make_artifact("art-1", "doc.md", "Text")]
+
+    @asynccontextmanager
+    async def _busy(*_args, **_kwargs):
+        raise OperationBusy("another operation is running")
+        yield
+
+    with (
+        patch.dict(os.environ, {"INGEST_OK": "" if refusal == "no_marker" else "1"}),
+        patch("knowledge_ingest.rebuild_tasks.kb_operation", _busy)
+        if refusal == "lock_busy"
+        else nullcontext(),
+    ):
+        if refusal == "preview":
+            assert (await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=False))["dry_run"]
+        else:
+            with pytest.raises(ApprovalRequired if refusal == "no_marker" else OperationBusy):
+                await _rebuild_kb_core(org_id=_ORG, kb_slug=_KB, execute=True)
+
+    _common_patches["mock_state"].assert_not_awaited()
+    _common_patches["mock_finish"].assert_not_awaited()
+    _common_patches["mock_enrich"].assert_not_awaited()
