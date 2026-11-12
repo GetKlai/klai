@@ -338,9 +338,9 @@ De stappen H tot en met N en O1 tot en met O6 en J uit §7 zijn gedaan (§8), ne
 | Winst bij het zoeken telt pas als de antwoorden van begin tot eind gelezen zijn | Een beoordelend model noemt een passage over hetzelfde onderwerp snel een antwoord; twee keer gaf meer vinden geen beter antwoord |
 | Eerst klein bewijzen, dan groot meten: een onderdeel wordt los getest op een handvol gevallen waarvan de juiste uitkomst door lezen is vastgesteld, meerdere keren herhaald; daarna aan elkaar gekoppeld op een kleine set die elke route raakt; pas dan de hele meetlat | De eerste gekoppelde proef op achttien gevallen liet in vier minuten drie botsingen tussen onderdelen zien die een grote run alleen als een getal had getoond |
 | Een tweede lezer met schone blik beoordeelt alleen juistheid | De maker keurt zijn eigen werk te makkelijk goed |
-| Elke week tien tot twintig echte gesprekken lezen; elke nieuwe fout wordt een vast geval in de meetlat | Zo valt een daling binnen een week op |
+| Elke week tien tot twintig echte gesprekken lezen volgens de skill `chat-evolution`; elke nieuwe fout wordt een vast geval in de meetlat | Zo valt een daling binnen een week op |
 | Meetruns draaien op het Vibe-tegoed (`klai-judge`, `klai-ingest`), nooit op de sleutels van echte bezoekers | Een eerdere meting putte het gedeelde tegoed uit en gaf een bezoeker een foutmelding |
-| Echte gesprekken en de meetlat staan buiten deze repository; tests gebruiken verzonnen gevallen | De repository is publiek |
+| Echte gesprekken bestaan alleen in de database, zolang de bewaartermijn loopt; de testset van de meetlat bevat alleen nieuw geschreven gevallen (`meetlat check-cases` bewijst dat) en staat buiten deze repository; tests gebruiken verzonnen gevallen, zie [conversation-retention-and-learning.md](conversation-retention-and-learning.md) | De repository is publiek, en een kopie van een gesprek in de testset overleeft de bewaartermijn |
 | De E2E-organisatie (slug `e2e`, org 22) telt in geen enkele kwaliteitslezing of -telling mee; de alerts sluiten haar al op slug uit | De E2E-run van 21 oktober leverde 227 van de 236 interne beurten van die week, zodat een weeklezing zonder die uitsluiting het gedrag van een testscript meet |
 | Dit document en chat-system.md worden in dezelfde PR bijgewerkt als de code | De documenten liepen achter |
 

@@ -51,9 +51,20 @@ The following three modes are available; the default is `shadow`.
 
 ### Retention
 
-Under all three modes, no record derived from the literal content of
-a query persists longer than **7 days** in any operational store
-managed by Klai.
+Under all three modes, no telemetry record derived from the literal
+content of a query persists longer than **7 days** in any telemetry
+store managed by Klai.
+
+Conversations held through a chat widget the Tenant places on its own
+site are not telemetry: they are the service itself, and the telemetry
+mode does not govern them. Klai keeps the messages of such a
+conversation, the visitor's name and e-mail address when the Tenant's
+widget asks for them, and the explanation of the automatic quality
+verdict for the Tenant's **conversation retention period**. That period
+is **90 days** unless the Tenant agrees a different one between 1 and
+365 days with Klai. After it, only counts and labels remain (time,
+number of messages, language, outcome, quality verdict). The widget
+states the period to the visitor before the conversation starts.
 
 The 30-day operational-log retention applies only to logs that do not
 carry query content (e.g. Caddy access logs, container health, error

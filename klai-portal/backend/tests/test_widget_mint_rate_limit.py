@@ -99,6 +99,7 @@ def _mint_stubs() -> Any:
         patch("app.api.partner_widget_config.assert_platform_unlocked"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
+        mock_settings.widget_messages_retention_days = 7
         yield
 
 
@@ -225,6 +226,7 @@ async def test_widget_ceiling_429_logs_widget_limit():
         patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
+        mock_settings.widget_messages_retention_days = 7
         mock_get_redis.return_value = AsyncMock()
         # per-IP layer passes, per-widget ceiling rejects
         mock_rl.side_effect = [(True, 0), (False, 7)]
@@ -267,6 +269,7 @@ async def test_widget_config_429_when_client_limit_fires():
         patch("app.api.partner_widget_config.generate_session_token", return_value="tok"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
+        mock_settings.widget_messages_retention_days = 7
         mock_redis = AsyncMock()
         mock_get_redis.return_value = mock_redis
         # Simulate rate limit exceeded: allowed=False, retry_after=45
@@ -302,6 +305,7 @@ async def test_public_bot_config_429_when_rate_limit_fires():
         patch("app.api.partner_widget_config.generate_session_token", return_value="tok"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
+        mock_settings.widget_messages_retention_days = 7
         mock_redis = AsyncMock()
         mock_get_redis.return_value = mock_redis
         # Simulate rate limit exceeded (first layer checked: per client)
@@ -330,6 +334,7 @@ async def test_429_includes_retry_after_header():
         patch("app.api.partner_widget_config.set_tenant", new_callable=AsyncMock),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
+        mock_settings.widget_messages_retention_days = 7
         mock_redis = AsyncMock()
         mock_get_redis.return_value = mock_redis
         mock_rl.return_value = (False, 60)
@@ -363,6 +368,7 @@ async def test_widget_config_200_within_limit():
         patch("app.api.partner_widget_config.assert_platform_unlocked"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
+        mock_settings.widget_messages_retention_days = 7
         mock_redis = AsyncMock()
         mock_get_redis.return_value = mock_redis
         mock_rl.return_value = (True, 0)
@@ -396,6 +402,7 @@ async def test_rate_limit_keys_scope_widget_and_client():
         patch("app.api.partner_widget_config.assert_platform_unlocked"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
+        mock_settings.widget_messages_retention_days = 7
         mock_redis = AsyncMock()
         mock_get_redis.return_value = mock_redis
         mock_rl.return_value = (True, 0)
@@ -426,6 +433,7 @@ async def test_widget_ceiling_is_120_per_minute():
         patch("app.api.partner_widget_config.assert_platform_unlocked"),
     ):
         mock_settings.widget_jwt_secret = "test-secret"
+        mock_settings.widget_messages_retention_days = 7
         mock_redis = AsyncMock()
         mock_get_redis.return_value = mock_redis
         mock_rl.return_value = (True, 0)

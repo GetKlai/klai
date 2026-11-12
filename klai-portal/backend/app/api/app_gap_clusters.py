@@ -21,13 +21,7 @@ from app.core.profiles import Capability
 from app.models.gap_proposals import PortalGapProposal
 from app.models.portal import PortalOrg, PortalUser
 from app.services.gap_proposals import MAX_EXAMPLE_CHARS, PROPOSAL_MODEL, ProposalDraft, draft_proposal
-from app.services.knowledge_gap_report import (
-    GapView,
-    drop_kept_questions,
-    filter_clusters,
-    knowledge_gap_clusters,
-    mask,
-)
+from app.services.knowledge_gap_report import GapView, filter_clusters, knowledge_gap_clusters, mask
 
 router = APIRouter(
     prefix="/api/app",
@@ -423,9 +417,6 @@ async def decide_gap_cluster(
         )
         if not result.rowcount:  # type: ignore[attr-defined]
             raise _already_decided()
-    # A question is kept past the message retention only for a gap that is
-    # still open; a decided group is not, so its kept questions go with the decision.
-    await drop_kept_questions(db, perms.org_id, cluster_key=cluster_key)
     await db.commit()
     return GapDecisionOut(
         cluster_key=cluster_key,
