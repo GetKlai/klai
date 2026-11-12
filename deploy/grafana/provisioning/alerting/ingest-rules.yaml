@@ -105,11 +105,16 @@ groups:
       # dead-man's switch for nights where the worker never logs any
       # reconcile event.
       #
-      # State on 2026-10-23: this has fired every day for 30 days on the same
-      # 17 discrepancies (8 artifacts missing in Qdrant, 9 orphaned in Qdrant,
-      # out of 3,160 active artifacts), unchanged from run to run. The
-      # condition is real and stays an email; it does not page. Cleaning up the
-      # 17 rows is the way to make the alert go quiet.
+      # History: until October 2026 this fired every day on the same 17
+      # discrepancies (8 artifacts missing in Qdrant, 9 orphaned in Qdrant, out
+      # of 3,160 active artifacts). They have since been cleaned up: the run of
+      # 2026-11-12 reported 0 discrepancies on 3,258 active artifacts. The
+      # condition is real and stays an email; it does not page.
+      #
+      # Since 2026-11 the same event also carries the graph check: status covers
+      # both, and discrepancies_total (Qdrant) vs graph_lost_extractions (graph)
+      # tell them apart. One unrepaired graph loss keeps the alert firing every
+      # night until scripts/reextract_document_graph.py has been run for it.
       - uid: obs-001-pg-qdrant-divergence
         title: pg_qdrant_reconcile_failed
         condition: threshold
@@ -162,13 +167,16 @@ groups:
           service_group: ingest
           alert_type: consistency_reconcile
         annotations:
-          summary: 'PG/Qdrant reconciliation found inconsistent knowledge artifacts'
+          summary: 'PG/Qdrant/graph reconciliation found inconsistent knowledge artifacts'
           runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/pg-qdrant-reconcile.md'
           description: |
-            The nightly read-only PG/Qdrant reconciliation job logged
-            status=failed (drift found) or status=error (the job crashed).
+            The nightly read-only reconciliation job logged status=failed
+            (drift found) or status=error (the job crashed, or the graph
+            could not be read: graph_check=error).
             For failed: query the pg_qdrant_reconcile event for
-            missing_in_qdrant, orphaned_in_qdrant, and sample artifact keys.
+            missing_in_qdrant, orphaned_in_qdrant, graph_lost_extractions
+            (active documents whose finished graph extraction lost an
+            episode), and the sample artifact ids.
             For error: inspect the exception on the same event.
 
       # ── R18: pg_qdrant_reconcile_missing ───────────────────────────────

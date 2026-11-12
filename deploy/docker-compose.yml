@@ -2143,6 +2143,16 @@ services:
     logging: *log-rotation
     image: falkordb/falkordb:6.0.4
     restart: unless-stopped
+    # Persistence is the RDB snapshot only (save 3600 1 300 100 60 10000), written again
+    # on SIGTERM. Docker's default 10 s before SIGKILL left no margin: the background save
+    # of the 1.3 GB dump (~204k edges) took 7 s in 2026-11, and a kill mid-save loses every
+    # write since the last snapshot while Postgres already records those extractions as
+    # complete (290 of 10,922 recorded episode ids were found missing, clustered on
+    # restart days). 60 s covers a dump about eight times larger and stays below the
+    # `stop -t 120` that datastore-rollback.sh uses. Do not switch on `appendonly yes`
+    # casually: a Redis started with it and no AOF files ignores dump.rdb, so restoring a
+    # snapshot backup would come up as an empty graph.
+    stop_grace_period: 60s
     # SPEC-GRAPH-SCALE-001 REQ-2: the image bakes FALKORDB_ARGS="MAX_QUEUED_QUERIES 25
     # TIMEOUT 1000 RESULTSET_SIZE 10000" into its own Dockerfile (FalkorDB/FalkorDB#1826),
     # an undocumented 1 s read-query cap that graphiti's brute-force similarity scans

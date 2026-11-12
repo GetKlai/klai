@@ -1199,6 +1199,7 @@ async def get_graph_rows_for_org(conn: asyncpg.Connection, org_id: str) -> list[
         SELECT id::text AS id,
                superseded_by::text AS superseded_by,
                belief_time_end = $2 AND index_status <> $3 AS active,
+               created_at,
                kb_slug,
                path,
                extra::jsonb->>'source_connector_id' AS source_connector_id,

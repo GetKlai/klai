@@ -64,6 +64,22 @@ not report at all.
    - Missing in Qdrant: reindex/rebuild that KB or artifact from PG/source.
    - Orphaned in Qdrant: verify the PG row is truly superseded/deleted before
      deleting Qdrant points.
+   - `graph_lost_extractions` (per org in `graph_lost_by_org`, ids in
+     `graph_lost_sample`): active documents whose finished graph extraction
+     records an episode the graph does not hold. FalkorDB persists by RDB
+     snapshot only, so a crash or a kill during the shutdown save loses the
+     writes since the last snapshot while Postgres already says "complete";
+     the 60 s `stop_grace_period` on the `falkordb` service exists for that.
+     Rows created within 24 hours are left out (an extraction may still be
+     running). Repair one document with
+     `python -m scripts.reextract_document_graph --org <org> --artifact <id>`
+     (dry run first, then `--execute`). `graph_check=error` means the graph
+     could not be read: that is a job failure, not a count. One unrepaired
+     loss keeps the nightly run at `status=failed`, and this alert firing,
+     every night until the repair command has been run for it; the same
+     holds for the older PG/Qdrant discrepancies. `status` covers both
+     checks, so read `discrepancies_total` (Qdrant) and
+     `graph_lost_extractions` (graph) to see which one failed.
 
 Do not silence the alert by manually deleting rows without confirming source of
 truth. The full transactional outbox is tracked separately as `GAP-SYNC-01` H2.
