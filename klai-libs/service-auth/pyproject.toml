@@ -1,16 +1,15 @@
 [project]
 name = "klai-service-auth"
 version = "0.1.0"
-description = "OAuth 2.0 Client Credentials token client for Klai inter-service authentication (SPEC-SEC-SERVICE-AUTH-001)."
+description = "Receiver-side Zitadel claim parsing for Klai inter-service authentication (SPEC-SEC-SERVICE-AUTH-001)."
 requires-python = ">=3.12"
 readme = "README.md"
 license = { text = "Proprietary" }
 authors = [{ name = "Klai" }]
 
-# Runtime dependencies. Every embedding service already pins httpx + structlog.
+# httpx is for scripts/zitadel-create-service-account.py only; the package itself is stdlib.
 dependencies = [
     "httpx>=0.27",
-    "structlog>=25.0",
 ]
 
 [project.optional-dependencies]
