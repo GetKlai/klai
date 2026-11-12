@@ -90,7 +90,7 @@ def test_auth_probe_does_not_replay_a_sign_in_hosts_cookies_on_the_site(client: 
     cookies = [
         {"name": "site_session", "value": "v1", "domain": ".example.com"},
         {"name": "no_domain", "value": "v2"},
-        {"name": "idp_session", "value": "v3", "domain": "idp.other-example.com"},
+        {"name": "idp_session", "value": "v3", "domain": "idp.example.org"},
     ]
     with patch("knowledge_ingest.routes.crawl._probe_fetch", new=AsyncMock(side_effect=fetch)):
         client.post(
