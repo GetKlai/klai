@@ -195,18 +195,25 @@ def _build_upstream_headers(
     return headers
 
 
-def _docs_path_org(upstream_url: str) -> str | None:
-    """Return the org slug a docs-app ``/api/orgs/<slug>/...`` URL addresses.
+def _docs_path_stays_in(upstream_url: str, org_slug: str) -> bool:
+    """Whether a docs-app URL addresses no organisation other than ``org_slug``.
 
-    Reads the path as httpx sends it (dot segments resolved) and skips empty
-    segments, so ``orgs/<own>/../<other>`` and ``api//orgs`` resolve to the
-    organisation the upstream actually receives.
+    The organisation is read from ``/api/orgs/<slug>/...`` in the path as
+    httpx sends it (dot segments resolved), skipping empty segments, so
+    ``orgs/<own>/../<other>`` and ``api//orgs`` are judged by the organisation
+    the upstream receives. A dot that is still percent-encoded on the wire is
+    not resolved here but is by the upstream's URL parser, so the two would
+    read different paths; such a path is refused instead of interpreted. A
+    browser never encodes a dot, so no editor request carries one.
     """
-    segments = [s for s in httpx.URL(upstream_url).path.split("/") if s]
+    url = httpx.URL(upstream_url)
+    if b"%2e" in url.raw_path.partition(b"?")[0].lower():
+        return False
+    segments = [s for s in url.path.split("/") if s]
     # segments[0] is the docs-app basePath ("docs").
     if segments[1:3] == ["api", "orgs"] and len(segments) > 3:
-        return segments[3]
-    return None
+        return segments[3] == org_slug
+    return True
 
 
 def _filter_response_headers(upstream_headers: httpx.Headers) -> list[tuple[str, str]]:
@@ -310,7 +317,7 @@ async def _proxy(
 
     # A docs editor request may only address the organisation the session's
     # membership was verified for.
-    if service == "docs" and _docs_path_org(upstream_url) not in (None, decision.org_slug):
+    if service == "docs" and not _docs_path_stays_in(upstream_url, decision.org_slug):
         logger.info(
             "bff_proxy_verified",
             service=service,

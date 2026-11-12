@@ -332,6 +332,12 @@ class TestDocsPathOrganisation:
             "api/orgs/other-org/kbs/handbook/pages/intro",
             "api/orgs/acme/../other-org/kbs",
             "api//orgs/other-org/kbs",
+            # A dot segment that is still percent-encoded when it leaves the
+            # proxy is resolved by the upstream's URL parser, not here.
+            "api/orgs/acme/%2e%2e/other-org/kbs",
+            "api/orgs/acme/%2E%2E/other-org/kbs",
+            "x/%2e%2e/api/orgs/other-org/kbs",
+            "api/orgs/acme/.%2e/other-org/kbs",
         ],
     )
     async def test_docs_request_for_another_organisation_returns_403_without_upstream_call(
@@ -383,9 +389,8 @@ class TestDocsPathOrganisation:
 
         assert response.status_code == 200
         assert captured["url"] == "http://docs-app:3010/docs/api/orgs/acme/kbs/handbook/tree"
-        # docs-app identifies a proxied user from the session's Bearer token.
-        # It must not receive its own DOCS_INTERNAL_SECRET or an X-User-ID:
-        # that pair would switch it to the service-caller path.
+        # docs-app identifies a proxied user from the session's Bearer token,
+        # so the forwarded header set is exactly this one.
         assert captured["headers"] == {
             "Accept": "application/json",
             "Authorization": "Bearer real-portal-bearer-token",
