@@ -1,8 +1,10 @@
 # Explicit Version Pins
 
-This file documents public-repo external image pins for the core stack and dev stack, plus the rationale for each pin. **Every external image in `docker-compose.yml` and `docker-compose.dev.yml` is pinned to an explicit version tag.** No `:latest` on external services.
+This file documents why an image is held where it is and what to check before a bump. **It never states a version.** The compose files (`deploy/docker-compose.yml`, `deploy/docker-compose.override.yml`, `deploy/docker-compose.gpu.yml`, `docker-compose.dev.yml`) are the only place an image tag or digest lives, because Renovate bumps them and never edits this file; a version written here is wrong at the next bump. To see what is pinned, read the compose file or run `rg -n 'image:' deploy/docker-compose.yml`.
 
-Automated dependency updates are handled by Dependabot / Renovate. Upgrades follow `docs/runbooks/version-management.md`.
+Every external image in `docker-compose.yml` and `docker-compose.dev.yml` is pinned to an explicit version tag (`deploy/check-image-tags.sh`). No `:latest` on external services.
+
+`deploy/check-versions-doc.py` enforces the split in CI and pre-commit: every service named in a table below must exist in compose, and no backticked image reference may carry a tag or digest. Upgrades follow `docs/runbooks/version-management.md`.
 
 **Exception — internal CI-deployed services:** images under `ghcr.io/getklai/*` (portal-api, retrieval-api, knowledge-ingest, klai-connector, klai-mailer, klai-slack, klai-docs, klai-knowledge-mcp, scribe-api, caddy-hetzner) use `:latest` because GitHub Actions rebuild and re-push on every commit to `main` in their respective repos, AND — this is the part that makes the rolling tag safe — the pull and the recreate happen in one `compose-up.sh <service>` call, so a newer `:latest` never sits on the host waiting to be picked up by somebody else's deploy.
 
@@ -10,11 +12,11 @@ Each CI workflow also tags the build with `:${github.sha}` so rollbacks are poss
 
 `whisper-server` is the exception to the exception, and not for the reason this file claimed until 2026-08-17. It is not deployed anywhere — not automatically, and not by hand. `docs/architecture/scribe-transcription.md` calls it what it is: a public reference image for self-hosters who need a Whisper-compatible speech-to-text backend. Klai production has not run it since SPEC-VEXA-003 replaced it with the Vexa transcription workers, which serve the same host port and the same OpenAI-compatible path, so `WHISPER_SERVER_URL` never pointed at a whisper-server container to begin with. A green build here means the reference image is publishable — nothing more, and nothing was waiting on it.
 
-**Exception — local builds:** `klai/retrieval-api:local` is built on-host from source and not pullable from a registry. Its "version" is tracked by the git SHA recorded in docker-compose.yml comments.
+**Exception — local builds:** the `retrieval-api` service in `deploy/docker-compose.override.yml` is built on-host from source and not pullable from a registry. Its "version" is tracked by the git SHA recorded in the compose comments.
 
-`firecrawl-api` used to be in that list and no longer is. It was built on-host and tagged `ghcr.io/mendableai/firecrawl:latest`, a name nothing could pull, so the running service could not have been rebuilt from this repository if the host had lost the image. Since 2026-09-10 it is pinned to `ghcr.io/firecrawl/firecrawl:2.11.325`, upstream's own published release, so Renovate tracks it like every other image here. Bumping it means running the comparison recorded in the docker-compose.yml comment first: identical harness and env contract, and LibreChat's `POST /v2/scrape` answering with the same shape.
+`firecrawl-api` used to be built on-host under a name nothing could pull, so the running service could not have been rebuilt from this repository if the host had lost the image. Since 2026-09-10 it is pinned to upstream's own published release, so Renovate tracks it like every other image here. Bumping it means running the comparison recorded in the docker-compose.yml comment first: identical harness and env contract, and LibreChat's `POST /v2/scrape` answering with the same shape.
 
-**Exception — Vexa stack (upstream v0.13.1, 2026-09-23):** `vexaai/v012-admin-api`, `vexaai/v012-meeting-api`, `vexaai/v012-runtime` and the bot image `vexaai/vexa-bot` are on `v0.13.1` — pulled directly from Docker Hub (since v0.10.4 upstream publishes pre-built images). The 0.10 line (`admin-api`, `api-gateway`, `meeting-api`, `runtime-api`, `vexa-redis`) was removed in PR #914 after 0.12 was proven end to end; SPEC-VEXA-004 has the migration. Note the tag shape: the 0.10 line published `0.10.6.3.14`, the 0.12 line publishes ONLY the v-prefixed form — plain `0.12.22` is not on Docker Hub. `deploy/check-image-tags.sh` accepts either. The bot image is an env value rather than a compose service, so `compose up` never fetches it and docker-socket-proxy cannot either; the compose sync pulls it (`deploy/scripts/vexa-bot-prepull.sh`, before any file on core-01 is replaced) and `scripts/check-vexa12-deploy-preconditions.sh` checks the result. That pull is what lets Renovate automerge Vexa bumps. Upgrade cadence: track upstream stable tags; bump for material fixes (chunk-leak, OOM, security, browser/admission fixes). See `https://github.com/Vexa-ai/vexa/releases` for changelog.
+**Exception — Vexa stack:** `vexaai/v012-admin-api`, `vexaai/v012-meeting-api`, `vexaai/v012-runtime` and the bot image `vexaai/vexa-bot` share one upstream tag (the check in `deploy/check-version-pin-agreement.py` keeps the runtime and the bot together) — pulled directly from Docker Hub (since v0.10.4 upstream publishes pre-built images). The 0.10 line (`admin-api`, `api-gateway`, `meeting-api`, `runtime-api`, and its Redis) was removed in PR #914 after 0.12 was proven end to end; SPEC-VEXA-004 has the migration. Note the tag shape: the 0.10 line published `0.10.6.3.14`, the 0.12 line publishes ONLY the v-prefixed form — a plain `0.12.22` was not on Docker Hub. `deploy/check-image-tags.sh` accepts either. The bot image is an env value rather than a compose service, so `compose up` never fetches it and docker-socket-proxy cannot either; the compose sync pulls it (`deploy/scripts/vexa-bot-prepull.sh`, before any file on core-01 is replaced) and `scripts/check-vexa12-deploy-preconditions.sh` checks the result. That pull is what lets Renovate automerge Vexa bumps. Upgrade cadence: track upstream stable tags; bump for material fixes (chunk-leak, OOM, security, browser/admission fixes). See `https://github.com/Vexa-ai/vexa/releases` for changelog.
 
 GPU production image pins are intentionally not listed in this public repo because the live GPU compose, operator runbooks, host paths, and tunnel details belong in `GetKlai/klai-infra`.
 
@@ -24,62 +26,62 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 ### Database layer
 
-| Service | Image | Rationale |
-|---|---|---|
-| `postgres` | `pgvector/pgvector:0.8.6-pg18` | pgvector 0.8.6 on pg18 (bumped 2026-08-13, same Postgres major — data-compatible). PostgreSQL major version upgrades require dump/restore. pg18 is the current stable (since Sept 2025). Upgrade path: `pg_dumpall` → stop services → change image → delete volume → restore dump. |
-| `firecrawl-postgres` | `postgres:18.4-alpine` | Firecrawl-internal queue DB (NUQ schema). Pinned to match main postgres major. Data is transient (queue state), so cross-major migration is just a volume delete. |
-| `listmonk-db` | `postgres:18.6-alpine` | Dedicated database for listmonk campaigns, subscribers, templates, and admin users. Moved from 17 to 18 on 2026-10-22 by dump and restore into a new volume mounted at `/var/lib/postgresql` (the 18 image keeps PGDATA in `/var/lib/postgresql/18/docker`), rehearsed against listmonk v6.2.0. Upstream's compose file still ships 17; listmonk ran its install, upgrade and public pages on 18 without changes. |
-| `mongodb` | `mongo:8.0.32` | The 8.0 LTS line until the minors resume: since 2026-10-29 Renovate proposes one minor at a time and the compose sync raises the FCV after each 30-minute rollback window (`ds_settle`), so the next one starts. We ran the 8.2 minor release with FCV 8.0 until 2026-09-26; 8.3 would have required FCV 8.2 first and minors are supported only briefly, and Community has no binary downgrade, so the return to 8.0 was a mongodump/mongorestore into the new `mongodb-data-80` volume (all 43 databases and 30,953 documents compared equal on a copy first). LibreChat tenants depend on this. |
-| `redis` | `redis:8.10.0-alpine` | Bumped 2026-08-13: 8.8.1 was a security release on our 8.8.0 pin; 8.10.0 is current stable on the same major. Redis 8 (GA Aug 2025) ships Vector Sets + hash-field-TTL. |
-| `vexa-redis` | `redis:8.10.0-alpine` | Aligned with main redis major. Isolated network; bot state + pub/sub + transcription streams. |
-| `qdrant` | `qdrant/qdrant:v1.19.1` | Vector store for Klai Knowledge. Binary-incompatible on major bumps — pin explicitly. Bumped 2026-09-11. Read, not assumed: 1.19.1 was booted against a COPY of production's 1.19.0 storage before merging -- collection recovered, status green, 43,865 points, scroll with payload answered, zero errors or panics in the log. Two fixes in it matter to a host that has been OOM-killed — flush CoW segments before building a payload index, and repair Gridstore pages after an unsafe shutdown. Two behaviour changes checked against our code first: a scroll without `limit` no longer bypasses `max_query_limit` (all 19 of our scroll calls pass one), and empty dense vectors are now rejected rather than accepted (bge-m3 is always 1024-dim). |
-| `falkordb` | `falkordb/falkordb:v4.20.2` | Knowledge graph (Graphiti backend). v4.x has stable RediSearch + graph engine integration. |
+| Service | Rationale |
+|---|---|
+| `postgres` | pgvector on the current Postgres major. PostgreSQL major version upgrades require dump/restore. Upgrade path: `pg_dumpall` → stop services → change image → delete volume → restore dump. A pgvector minor on the same Postgres major is data-compatible. |
+| `firecrawl-postgres` | Firecrawl-internal queue DB (NUQ schema). Pinned to match main postgres major. Data is transient (queue state), so cross-major migration is just a volume delete. |
+| `listmonk-db` | Dedicated database for listmonk campaigns, subscribers, templates, and admin users. Moved from 17 to 18 on 2026-10-22 by dump and restore into a new volume mounted at `/var/lib/postgresql` (the 18 image keeps PGDATA in `/var/lib/postgresql/18/docker`), rehearsed against listmonk v6.2.0. Upstream's compose file still ships 17; listmonk ran its install, upgrade and public pages on 18 without changes. |
+| `mongodb` | Every LibreChat instance depends on it. Community has no binary downgrade, so a bump that raised the feature compatibility version (FCV) can only be undone by mongodump/mongorestore into a new volume (the volume name `mongodb-data-80` is a leftover of such a restore, not the version). Renovate proposes one minor at a time and the compose sync raises the FCV after each 30-minute rollback window (`ds_settle`), so the next one starts. Skipping a minor is not supported. |
+| `redis` | Redis 8 ships Vector Sets and hash-field TTL. Security releases within the major are bumped as soon as they land. |
+| `vexa12-redis` | Aligned with the main redis major. Isolated network; bot state + pub/sub + transcription streams. |
+| `qdrant` | Vector store for Klai Knowledge. Binary-incompatible on major bumps. Before a bump, boot the new version against a COPY of production storage and check that the collection recovers (status green, point count equal, scroll with payload answers, no panics), as was done for 1.19.1. Check the release notes for behaviour changes in query limits and vector validation against our call sites; the bge-m3 vectors are always 1024-dim. |
+| `falkordb` | Knowledge graph (Graphiti backend). Persistence is the RDB snapshot only; the data mount matters: a cosmetic mount caused total graph loss on 2026-04-19 when the container was recreated. Read the comments above the service in compose before changing persistence or the query timeout. |
 
 ### Auth + monitoring
 
-| Service | Image | Rationale |
-|---|---|---|
-| `zitadel` | `ghcr.io/zitadel/zitadel:v4.17.0` | OIDC IdP. Bumped 2026-08-13 for the 4.16.x security batch: 2× critical (unauthenticated account takeover via passkey enrollment; account pre-hijacking via forged external-IdP callback) + MFA-bypass + Actions sandbox escape, all patched ≤4.16.2. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
-| `victoriametrics` | `victoriametrics/victoria-metrics:v1.149.0` | Metrics TSDB. Bumped 2026-08-13 (includes the vmrestore path-traversal fix, CVE-2026-61625). |
-| `victorialogs` | `victoriametrics/victoria-logs:v1.51.0` | Log aggregation (replaces Loki). LogsQL syntax differs from LogQL. **Pinned back from v1.52.0 (2026-08-13): that image is scratch-based — no `/bin/sh`/`wget` — which breaks our authenticated CMD-SHELL healthcheck (container flips to unhealthy). Rework the healthcheck (sidecar probe or external-only monitoring) before bumping past v1.51.0.** |
-| `cadvisor` | `ghcr.io/google/cadvisor:v0.60.5` | Container metrics. Registry moved from `gcr.io` to `ghcr.io`; verify dashboards that depend on container start/creation timestamps after this bump. |
-| `alloy` | `grafana/alloy:v1.19.2` | Log and metric collection. Config format stable on minor bumps. 1.19.2 (2026-09-11) is bug fixes only. This row said 1.18.1 while compose ran 1.19.0, so it had drifted a release behind — the pin in compose is the one to trust. |
-| `grafana` | `grafana/grafana:13.1.3` | Dashboard UI. v12 → v13 had breaking dashboard JSON changes — verify dashboards after any major bump. |
-| `glitchtip-web`, `glitchtip-worker`, `glitchtip-migrate` | `glitchtip/glitchtip:6.2.6` | Error tracking. All three share the same image (different commands). |
+| Service | Rationale |
+|---|---|
+| `zitadel` | OIDC IdP. Security releases (account takeover, MFA bypass, Actions sandbox escape in the 4.16.x batch) are bumped promptly. [HIGH] Minor upgrades sometimes invalidate portal-api PAT — see `.claude/rules/klai/platform/zitadel.md`. Rotate PAT after each bump. |
+| `victoriametrics` | Metrics TSDB. Security fixes (e.g. the vmrestore path-traversal fix, CVE-2026-61625) are bumped promptly. |
+| `victorialogs` | Log aggregation (replaces Loki). LogsQL syntax differs from LogQL. **Held on the 1.51 line: v1.52.0 is scratch-based — no `/bin/sh`/`wget` — which breaks our authenticated CMD-SHELL healthcheck (container flips to unhealthy). Rework the healthcheck (sidecar probe or external-only monitoring) before bumping to 1.52 or later.** |
+| `cadvisor` | Container metrics. The registry moved from `gcr.io` to `ghcr.io`; verify dashboards that depend on container start/creation timestamps after a bump. |
+| `alloy` | Log and metric collection. Config format stable on minor bumps. |
+| `grafana` | Dashboard UI. v12 → v13 had breaking dashboard JSON changes — verify dashboards after any major bump. |
+| `glitchtip-web`, `glitchtip-worker`, `glitchtip-migrate` | Error tracking. All three share the same image (different commands). |
 
 ### Inference + AI
 
-| Service | Image | Rationale |
-|---|---|---|
-| `litellm` | `ghcr.io/berriai/litellm:v1.96.2` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). Re-assess monthly. Note: upstream discontinued the `-stable` tag suffix family — plain tags on non-prerelease GitHub releases are the stable line now (verified 2026-08-13). |
-| `ollama` | `ollama/ollama:0.32.9` | CPU fallback for LLM inference. |
-| `librechat` | `ghcr.io/danny-avila/librechat:v0.8.7` | LibreChat UI for all tenants. Compose-managed `librechat-getklai` and provisioning-managed tenant containers are pinned to the same image. Mounted v0.8.7 patches live under `deploy/librechat/patches/`; getklai keeps an identical canary copy under `deploy/librechat/getklai/patches/` until the separate compose service is folded back into provisioning. `@librechat/agents` switched its bundler to rolldown between v0.8.6 and v0.8.7, so `format.cjs`/`stream.cjs`/`search.cjs` were re-emitted wholesale — the three patches were hand-rebased onto the new bundle output (2026-08-13). The `share.js` DELETE-route status-code deviation was dropped in the rebase (kept upstream's stock shape; only the GET-handler `sanitizeShare()` call is Klai-specific). Every ported defensive guard now logs via `console.warn('[klai-patch] ...')` when it actually fires. The entrypoints also patch LibreChat Meili runtime paths to tenant-scoped indexes when tenant index envs are configured; verify this block against the image on every LibreChat upgrade. `@librechat/data-schemas` ALSO switched to rolldown between v0.8.6 and v0.8.7: the per-model files the Meili patch targeted (`dist/models/{message,convo,plugins/mongoMeili}.cjs`) were inlined into a single `dist/index.cjs` and `dist/models/` stopped existing — this caused the first v0.8.7 rollout (#874) to crashloop on the getklai canary with `required LibreChat Meili patch target is missing`, reverted as #875. The entrypoint's Meili patch (2026-08-13 retarget) is now version-aware: it tries the pre-rolldown per-model paths first, falls back to the bundled `dist/index.cjs`, and throws if neither shape is unambiguously present. `deploy/librechat/check-patch-drift.sh` enumerates every runtime patch target (the 5 manifest patches, the feedback route `/app/api/server/routes/messages.js`, and both Meili patch shapes) and fails the deploy-compose validate step if any target is missing from `$LIBRECHAT_IMAGE`. |
+| Service | Rationale |
+|---|---|
+| `litellm` | Pinned explicitly (moved from rolling `:main-stable` on 2026-04-19). Re-assess monthly. Upstream discontinued the `-stable` tag suffix family: plain tags on non-prerelease GitHub releases are the stable line now (verified 2026-08-13). The same version is pinned in `.github/workflows/litellm-tests.yml`; `deploy/check-version-pin-agreement.py` keeps them together. |
+| `ollama` | CPU fallback for LLM inference. |
+| `librechat-getklai` | LibreChat UI for all tenants. The compose service and the provisioning-managed tenant containers run the Klai-owned image built from `deploy/librechat/patches-source/`, pinned by digest (`deploy/check-klai-librechat-digest.sh`) because a tag was once overwritten with different content. On an upstream bump: `@librechat/agents` and `@librechat/data-schemas` switched to a rolldown bundle between v0.8.6 and v0.8.7, which inlined `dist/models/*` into `dist/index.cjs` and crashlooped the first rollout; the entrypoint's Meili patch tries both shapes and throws if neither is present, and `deploy/librechat/check-patch-drift.sh` fails the deploy-compose validate step if any runtime patch target is missing from the image. Re-verify both on every upgrade. |
 
 ### Document + search
 
-| Service | Image | Rationale |
-|---|---|---|
-| `meilisearch` | `getmeili/meilisearch:v1.53.0` | Search index for LibreChat conversations. **Data migration required on minor bumps** — v1.42.1 refused to boot directly on v1.45.2, and 1.45.2 -> 1.53.0 (2026-08-13) was likewise migrated via dump/import (baseline archived at /opt/klai/backups/meili-pre-1.53.0-*). Pin explicitly and keep `MEILI_DB_PATH=/meili_data`; v1.45.2 otherwise starts on `./data.ms` and ignores the mounted volume. |
-| `docling-serve` | `ghcr.io/docling-project/docling-serve:v1.30.0` | Document parsing (PDF, DOCX → structured). |
-| `searxng` | `searxng/searxng:2026.8.12-cdfdaa5a8` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
-| `gitea` | `gitea/gitea:28.2.0` | Self-hosted git for klai-docs. Bumped 2026-08-13: 1.27.1 patches CVE-2026-59774 (critical, unauthenticated file read → RCE) + CVE-2026-60004 (critical, RCE via diffpatch hooks); 1.27.0 patches the high SSRF + PAT-scope CVEs. 1.27.0 breaking changes (Actions reusable workflows, CSP script nonce) do not affect us — Gitea is git-hosting only here. Bumped to 1.27.3 on 2026-09-11: a security release with eighteen fixes, among them package token-scope access, attachment path enforcement, same-repository issue access, and fork pull-request trust boundaries. This row said 1.27.1 while compose ran 1.27.2; the compose pin is the one to trust. Bumped to 28.2.0 on 2026-10-22: upstream renumbered after 1.27 (v28.0.0 followed v1.27.3 on 2026-09-29, both on GitHub releases and Docker Hub), and 28.2.0 adds an x/net security fix and LFS OID validation on top of 28.1.0. 28.0.0's one breaking change is the egress filter for outbound git and webhook calls; it denied the knowledge-ingest webhooks until compose set `GITEA__webhook__ALLOWED_HOST_LIST: private` (see the comment there). Schema migrations 343 -> 358 run on start and are one-way: roll back by restoring the `gitea` database dump and the volume. |
-| `crawl4ai` | `ghcr.io/getklai/crawl4ai:0.9.5-local-261022-1031` | Klai-built image from upstream 0.9.5 (deploy/crawl4ai/Dockerfile, built on core-01, never pushed to a registry). History: 0.9.0 patched CVE-2026-57571 + CVE-2026-57572 (both critical, RCE-class) and CVE-2026-57573 (high SSRF on /crawl/stream); we moved to 0.9.2 on 2026-08-13 after adapting the knowledge-ingest client to the 0.9 untrusted-config model (#873 — DOM prep moved into the allowlisted wait_for predicate, js_code fields gone), to 0.9.3 on 2026-09-11, and to 0.9.4 on 2026-09-25 (security release: two SSRF fixes and the dict-wrapper untrusted-gate bypass, GHSA-5w5p-vcv6-mm3f; no request-contract change), and to 0.9.5 on 2026-10-22 (bundled Chromium 153 to 156, so the claimed Chrome major moved with it). 0.9.x enforces bearer auth on /crawl; knowledge-ingest and connector both carry the shared key. Hooks are ENABLED in compose since 2026-09-11: on 0.9.x a hook is a declarative action from a fixed server-authored set, not the exec'd Python that CVE-2026-57572 closed, and leaving the flag at its 0.8.x value silently dropped cookie injection from every authenticated crawl. EXACTLY ONE local patch remains: a request carrying hooks gets its own browser, because upstream attaches hooks to a pooled crawler and never detaches them. The body-visibility patch is gone — 0.9.3 ships `body_visibility_timeout` as a config field (our issue #2129), set per request in knowledge_ingest/crawl4ai_config.py. All three contracts are proven by deploy/tests/crawl4ai-cookie-contract.sh. |
-| `presidio` | analyzer `ghcr.io/getklai/presidio-analyzer@sha256:0605d1e9…` (2.2.364-klai.1), anonymizer upstream `ghcr.io/data-privacy-stack/presidio-anonymizer@sha256:e5670138…` (2.2.364) | Digest-pinned, so Renovate cannot follow it; `version-drift.yml` compares against the newest upstream tag. Moved from 2.2.362 on 2026-09-25 for 183 Trivy findings; detection only widened (UK/FR phone regions, wider email pattern, six IBAN countries). The analyzer is rebuilt by presidio-analyzer-image-build.yml on merge and pinned here in a follow-up. |
+| Service | Rationale |
+|---|---|
+| `meilisearch` | Search index for LibreChat conversations. **Data migration required on minor bumps**: an older version refused to boot directly on a newer one, and the last minors were migrated via dump/import with a baseline archived under /opt/klai/backups. Keep `MEILI_DB_PATH=/meili_data`; otherwise it starts on `./data.ms` and ignores the mounted volume. |
+| `docling-serve` | Document parsing (PDF, DOCX → structured). |
+| `searxng` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
+| `gitea` | Self-hosted git for klai-docs. Upstream renumbered from 1.27 to 28 in 2026-09; Gitea is git-hosting only here, so its Actions and CSP changes do not apply. v28 added an egress filter for outbound git and webhook calls that denied the knowledge-ingest webhooks until compose set `GITEA__webhook__ALLOWED_HOST_LIST: private` (see the comment there). Schema migrations run on start and are one-way: roll back by restoring the `gitea` database dump and the volume. |
+| `crawl4ai` | Klai-built image from upstream source (deploy/crawl4ai/Dockerfile, built on core-01, never pushed to a registry); the compose tag carries the upstream version and the build stamp. 0.9.x enforces bearer auth on /crawl; knowledge-ingest and connector both carry the shared key. Hooks are ENABLED in compose: on 0.9.x a hook is a declarative action from a fixed server-authored set, not the exec'd Python that CVE-2026-57572 closed, and leaving the flag at its 0.8.x value silently dropped cookie injection from every authenticated crawl. EXACTLY ONE local patch remains: a request carrying hooks gets its own browser, because upstream attaches hooks to a pooled crawler and never detaches them. `body_visibility_timeout` is upstream config, set per request in knowledge_ingest/crawl4ai_config.py. All three contracts are proven by deploy/tests/crawl4ai-cookie-contract.sh. |
+| `presidio-analyzer`, `presidio-anonymizer` | Both digest-pinned, so Renovate cannot follow them; `version-drift.yml` compares against the newest upstream tag. The analyzer is Klai's own image (`ghcr.io/getklai/presidio-analyzer`, upstream version plus a `-klai.N` suffix), rebuilt by presidio-analyzer-image-build.yml on merge and pinned in compose in a follow-up. The anonymizer is upstream's. `deploy/check-klai-presidio-digest.sh` enforces the digest form. |
 
 ### Ops
 
-| Service | Image | Rationale |
-|---|---|---|
-| `docker-socket-proxy` | `tecnativa/docker-socket-proxy:v0.5.0` | Limits portal-api to specific Docker API verbs (CONTAINERS, NETWORKS, POST, DELETE). Stable; rare releases. |
-| `runtime-api-socket-proxy`, `vexa12-transcription-proxy` | `alpine/socat:1.8.1.3` | Bridges the two deliberately narrow TCP capabilities: Vexa runtime's Unix Docker socket expectation, and bot-network STT traffic to the host tunnel. Keep current with Alpine socat releases because old tags carry many fixed base-package CVEs. |
-| `garage` | `dxflrs/garage:v2.3.0` | S3-compatible object storage. Config field names change between minor releases — re-verify `garage.toml` after each bump. See `.claude/rules/klai/platform/garage.md`. |
-| `listmonk` | `listmonk/listmonk:v6.2.0` | Self-hosted mailing platform at `mailing.getklai.com` for campaign templates, lists, and Twenty-selected audiences. Upgrade after checking listmonk release notes and database migrations. |
+| Service | Rationale |
+|---|---|
+| `docker-socket-proxy` | Limits portal-api to specific Docker API verbs (CONTAINERS, NETWORKS, POST, DELETE). Stable; rare releases. |
+| `runtime-api-socket-proxy`, `vexa12-transcription-proxy` | Bridges the two deliberately narrow TCP capabilities: Vexa runtime's Unix Docker socket expectation, and bot-network STT traffic to the host tunnel. Keep current with Alpine socat releases because old tags carry many fixed base-package CVEs. |
+| `garage` | S3-compatible object storage. Config field names change between minor releases — re-verify `garage.toml` after each bump. See `.claude/rules/klai/platform/garage.md`. |
+| `listmonk` | Self-hosted mailing platform at `mailing.getklai.com` for campaign templates, lists, and Twenty-selected audiences. Upgrade after checking listmonk release notes and database migrations. |
 
 ### Pinned with known upstream gap
 
-| Service | Image | Why stuck |
-|---|---|---|
-| `firecrawl-rabbitmq` | `rabbitmq:4.4.0-alpine` | Bumped from 3.13.7 on 2026-10-22. Firecrawl talks AMQP 0-9-1 through amqplib, which 4.x still serves; its durable queues are quorum queues and its per-listener queues are exclusive classic ones, so neither the removal of classic mirrored queues nor the `transient_nonexcl_queues` deprecation touches it, and its prefetch is per-consumer, not the denied `global_qos`. 4.3+ only upgrades in place from 4.2, which does not matter here: the container has no named volume and a new node name on every recreate, so the queue state is discarded by design. `deploy/tests/firecrawl-contract.sh` reads this pin from compose and passed against 4.4.0. |
+| Service | Why stuck |
+|---|---|
+| `firecrawl-rabbitmq` | Moved from 3.13 to the 4.x line on 2026-10-22. Firecrawl talks AMQP 0-9-1 through amqplib, which 4.x still serves; its durable queues are quorum queues and its per-listener queues are exclusive classic ones, so neither the removal of classic mirrored queues nor the `transient_nonexcl_queues` deprecation touches it, and its prefetch is per-consumer, not the denied `global_qos`. 4.3+ only upgrades in place from 4.2, which does not matter here: the container has no named volume and a new node name on every recreate, so the queue state is discarded by design. `deploy/tests/firecrawl-contract.sh` reads the pin from compose. |
 
 ---
 
@@ -88,13 +90,13 @@ GPU production image pins are intentionally not listed in this public repo becau
 Use the same versions as your deployed environment to catch version-related
 issues locally.
 
-| Service | Image | Notes |
-|---|---|---|
-| `postgres` | `pgvector/pgvector:0.8.6-pg18` | Same as prod. |
-| `redis` | `redis:8.10.0-alpine` | Aligned with prod (was `redis:alpine`). |
-| `mongodb` | `mongo:8.0.32` | Same as prod. |
-| `meilisearch` | `getmeili/meilisearch:v1.53.0` | Aligned with prod; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
-| `litellm` | `ghcr.io/berriai/litellm:v1.96.2` | Same as prod. |
+| Service | Notes |
+|---|---|
+| `postgres` | Same as the core stack. |
+| `redis` | Aligned with the core stack. |
+| `mongodb` | Same as the core stack. |
+| `meilisearch` | Aligned with the core stack; keep `MEILI_DB_PATH=/meili_data` in dev as well. |
+| `litellm` | Same as the core stack. |
 
 ---
 
@@ -111,7 +113,7 @@ issues locally.
 
 ### Python runtime
 
-`python:3.13-slim` across all internal services. See `docs/runbooks/version-management.md` §3.6 for the upgrade procedure (5 files must change in lock-step).
+The `python` slim base image, one Python minor across all internal services (the version lives in the Dockerfiles). See `docs/runbooks/version-management.md` §3.6 for the upgrade procedure (5 files must change in lock-step).
 
 ---
 
@@ -123,16 +125,13 @@ To audit drift between this file and a running server, run:
 ssh <server> "docker ps --format '{{.Names}}\t{{.Image}}' | sort"
 ```
 
-Every row must match an entry in this file. New services must be added here **before** they ship.
+Compare against the compose files, not against this document: it states no versions. A service that is held back or needs a pre-bump check gets a row here; `deploy/check-versions-doc.py` fails if a row names a service compose does not have.
 
 ---
 
 ## Automated CVE scanning
 
-Every image in this file is scanned weekly for CRITICAL/HIGH CVEs by `.github/workflows/scan-pinned-images.yml`. Findings land in the [Security tab → Code scanning](https://github.com/GetKlai/klai/security/code-scanning). Renovate opens PRs when newer upstream image tags exist; Trivy findings in third-party images that are already on the latest stable tag require upstream rebuilds, Klai-owned derived images, or documented temporary acceptance.
+Every pinned image in compose is scanned weekly for CRITICAL/HIGH CVEs by `.github/workflows/scan-pinned-images.yml`. Findings land in the [Security tab → Code scanning](https://github.com/GetKlai/klai/security/code-scanning). Renovate opens PRs when newer upstream image tags exist; Trivy findings in third-party images that are already on the latest stable tag require upstream rebuilds, Klai-owned derived images, or documented temporary acceptance.
 
 See `docs/runbooks/version-management.md` §9 for the full CVE detection stack.
 
----
-
-*Last repo pin sync: 2026-07-08 — external compose pins refreshed for patch/minor image updates. Meilisearch, LibreChat, Crawl4AI, RabbitMQ, Cal.com, Garage, Qdrant, Vaultwarden, and docker-socket-proxy intentionally left on existing pins because the latest available tag either requires a separate migration/compatibility check, is already current, or has no clean security-risk reduction.*
