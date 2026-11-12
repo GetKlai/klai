@@ -7,7 +7,7 @@
 
 ## faithfulness-baseline-low
 
-**Situation:** the alert `rag_eval_faithfulness_low` has fired. The `baseline` faithfulness RAGAS metric scored below 0.85 on TWO consecutive nightly runs for at least one suite. The retrieval stack is producing answers that the judge LLM thinks are not grounded in the retrieved chunks.
+**Situation:** the alert `rag_eval_faithfulness_low` has fired. The `baseline` faithfulness RAGAS metric scored below 0.80 on TWO consecutive nightly runs for at least one suite. The retrieval stack is producing answers that the judge LLM thinks are not grounded in the retrieved chunks.
 
 **This is a quality-regression detector, not an outage.** Chat keeps working; users just get worse answers. Triage during business hours unless a customer is escalating.
 
@@ -48,13 +48,13 @@ docker exec klai-core-postgres-1 psql -U klai -d klai -c "
   FROM knowledge.rag_eval_results
   WHERE variant = 'baseline'
     AND run_at >= NOW() - INTERVAL '24 hours'
-    AND (faithfulness < 0.85 OR faithfulness IS NULL)
+    AND (faithfulness < 0.80 OR faithfulness IS NULL)
   ORDER BY faithfulness ASC NULLS FIRST;
 "
 ```
 
 Common patterns:
-- **`null_count` is high**: judge or retrieval is failing. Check `meta.error` for `retrieval_failed:` or `judge_answer_failed`. Likely root cause: klai-fast / LiteLLM proxy down, OR retrieval-api down, OR `KLAI_RETRIEVAL_INTERNAL_SECRET` rotation broke auth.
+- **`null_count` is high**: judge or retrieval is failing. Check `meta.error` for `retrieval_failed:` or `judge_answer_failed`. Likely root cause: klai-fast / LiteLLM proxy down, OR retrieval-api down, OR `RETRIEVAL_INTERNAL_SECRET` rotation broke auth.
 - **Faithfulness dropped uniformly** (most queries from 0.9 → 0.7): the corpus changed underneath us. New ingest moved the baseline. Check `knowledge.artifacts` row count diff between the two days.
 - **A specific subset failed**: targeted regression. Look at the `query_id` prefix (`chat-easy-*`, `chat-vague-*`, `chat-synth-*`) — if all the easy-lookup canaries dropped, retrieval lost a key chunk.
 
@@ -84,7 +84,7 @@ This runs the same suite synchronously and prints per-query results. Cheaper tha
 
 ### Step 5 — Decide whether to escalate
 
-- If infra issue is fixed: do nothing, alert auto-resolves on the next 6h evaluation cycle once two consecutive `baseline` runs are above 0.85 again.
+- If infra issue is fixed: do nothing, alert auto-resolves on the next 6h evaluation cycle once two consecutive `baseline` runs are above 0.80 again.
 - If the corpus changed and the new baseline is the new normal: file a follow-up SPEC and lower the alert threshold to the new floor (in `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml`).
 - If a Tier-2/3 SPEC implementation is the cause (someone shipped a `variant` that became the default — should not happen): revert.
 
@@ -172,15 +172,15 @@ new baseline run has no canary failures.
 **UID:** `spec-rag-001-low-confidence-rate`
 **Severity:** HIGH
 
-**Situation:** More than 20% of retrieval responses for a given tenant have been classified `confidence_band=low` or `confidence_band=unknown` continuously for 5 minutes over the trailing 1-hour window. This is not a hard outage — chat keeps working — but the anti-hallucination injection (REQ-2) is likely firing on many queries, meaning users are being asked clarifying questions instead of receiving substantive answers. Triage during business hours unless customer escalation is active.
+**Situation:** More than 20% of retrieval responses for a given tenant have been classified `confidence_band=low` or `confidence_band=unknown` continuously for 5 minutes over the trailing 1-hour window. This is not a hard outage (chat keeps working), but the anti-hallucination injection (REQ-2) is likely marking many turns as low-relevance. The portal reads the band from the `/retrieve` response: a `low` or `unknown` band without direct evidence for the question sets the turn's `low_confidence` flag (`klai-portal/backend/app/services/retrieval_context.py:1017`), and a sub-question whose band is `low` or `unknown` gets a low-relevance note in its evidence block (`klai-portal/backend/app/services/knowledge_prompts.py:88`). How a turn uses the band is described in `docs/architecture/chat-system.md`. Triage during business hours unless customer escalation is active.
 
-**What `confidence_band` means:** the retrieval-api classifies each `/retrieve` response by `max(reranker_scores_top5)`:
+**What `confidence_band` means:** the retrieval-api classifies each `/retrieve` response by the maximum rank score over all served chunks that have a reranker score (`klai-retrieval-api/retrieval_api/api/ranking.py:18`; the value includes the page-context boost and the product demotion):
 - `high` when `>= 0.60` — retrieval found relevant content
-- `medium` when `>= 0.30` — retrieval found partial content
-- `low` when `< 0.30` — retrieval is effectively noise; anti-hallucination injection fires
+- `medium` when `>= 0.30` and `< 0.60`: retrieval found partial content
+- `low` when `< 0.30`: retrieval is effectively noise
 - `unknown` when the reranker is disabled, falls back, or the served list is empty
 
-A rate above 20% for 5+ minutes is anomalous — in normal operation most queries should resolve to `high` or `medium` for a well-indexed KB.
+The alert only evaluates orgs with at least 20 requests in the hour. A rate above 20% for 5+ minutes is anomalous: in normal operation most queries should resolve to `high` or `medium` for a well-indexed KB.
 
 **This is a quality-regression detector, not an outage.** Do not page on-call unless a customer SLA breach is confirmed.
 
@@ -204,8 +204,8 @@ service:retrieval-api AND confidence_band:low AND org_id:<ORG_ID> AND _time:[now
 ```
 
 Sample 5 queries from the results. For each, judge:
-- Does the Voys help-centre KB realistically contain an answer to this query?
-- Does the query use a third-party brand name (e.g. Salesforce, HubSpot, Zoom) that the brand-bridging rewrite (REQ-5) should have expanded?
+- Does the KB realistically contain an answer to this query?
+- Does the query use a third-party brand name that the KB writes differently? KB owners can add alias groups (`portal_knowledge_bases.aliases`), which retrieval-api uses to add a search leg.
 
 If the queries are genuinely not in scope for this KB (e.g. a new product area, an integration partner whose page was never ingested), the correct resolution is a **KB gap issue** filed against the relevant KB owner — not a threshold change.
 
@@ -223,7 +223,7 @@ Check the actual reranker score distribution on recent `retrieval_decision_recor
 service:retrieval-api AND _time:[now-1h, now) AND confidence_band:low AND org_id:<ORG_ID>
 ```
 
-Look at the `reranker_scores_top5` field values. If the distribution clusters around 0.28–0.32 (just below the `low` threshold of 0.30), the thresholds may be too aggressive.
+Look at the `reranker_scores_top5` field values (the top five reranker scores of a request; the band itself uses the maximum over all served chunks). If the distribution clusters around 0.28 to 0.32 (just below the `low` threshold of 0.30), the thresholds may be too aggressive.
 
 Also check whether there was a recent `confidence_band_high_threshold` or `confidence_band_low_threshold` config change in the retrieval-api environment:
 
@@ -259,21 +259,7 @@ If `confidence_band=unknown` is dominating (not `band=low`), the reranker has li
 docker exec klai-core-klai-retrieval-api-1 printenv | grep -i rerank
 ```
 
-**Resolution:** if retrieval-api or the reranker is degraded, follow the standard infrastructure incident runbook at `klai-infra/docs/runbooks/platform-recovery.md`. The alert auto-resolves once the reranker resumes producing valid scores and the 1h window clears.
-
----
-
-### Checking the anti-hallucination injection rate
-
-To confirm the injection is firing (and the model is being guided correctly on low-confidence queries), check the LiteLLM injection counter:
-
-```
-service:litellm AND _time:[now-1h, now)
-```
-
-Look for log events with the `litellm_low_confidence_injection_total` counter increment — these should correlate with the retrieval-api `confidence_band:low` events on the same `request_id`.
-
-If the injection rate is 0% but the low-confidence band rate is above 20%, there is a wiring gap between retrieval-api and the litellm hook — check that the `confidence_band` field is present in the `/retrieve` response and that the hook version is current.
+**Resolution:** if retrieval-api or the reranker is degraded, follow the standard infrastructure incident runbook at klai-infra/docs/runbooks/platform-recovery.md. The alert auto-resolves once the reranker resumes producing valid scores and the 1h window clears.
 
 ---
 

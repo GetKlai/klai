@@ -9,8 +9,8 @@ Klai bundles the tools your team needs to work with AI: a chat interface, a know
 | Package | Description |
 |---------|-------------|
 | [`klai-portal/`](klai-portal/) | Web portal — tenant management, knowledge base, transcription, research |
-| [`docs/`](docs/) | Documentation site |
-| [`deploy/`](deploy/) | Self-hosting stack — Docker Compose, Caddy, Zitadel, LiteLLM, LibreChat |
+| [`docs/`](docs/) | Architecture, runbooks and specifications as markdown (start at [`docs/architecture/README.md`](docs/architecture/README.md)) |
+| [`deploy/`](deploy/) | Self-hosting stack: Docker Compose, Caddy, Zitadel, LiteLLM, LibreChat, the knowledge services |
 
 ## Self-hosting
 
@@ -27,12 +27,16 @@ bash setup.sh
 
 ## Tech stack
 
-- **Portal backend:** Python 3.12, FastAPI, SQLAlchemy, PostgreSQL
+- **Portal backend:** Python 3.13, FastAPI, SQLAlchemy, PostgreSQL
 - **Portal frontend:** React 19, Vite, TanStack Router, Mantine, Tailwind CSS
-- **Auth:** Zitadel (OIDC)
-- **LLM proxy:** LiteLLM (OpenAI, Mistral, Ollama, and more)
-- **Chat:** LibreChat
+- **Other services:** Python 3.12 and FastAPI (knowledge ingest, retrieval, connectors, Scribe, mailer, Slack), Next.js (docs app)
+- **Auth:** Zitadel (OIDC), with a cookie-session backend in the portal
+- **LLM gateway:** LiteLLM in front of Mistral models; embeddings, reranking and transcription are self-hosted
+- **Knowledge:** Qdrant, FalkorDB (graph), PostgreSQL, Gitea
+- **Chat:** answered by the portal's partner endpoint; LibreChat is the chat interface for the internal chat
 - **Reverse proxy:** Caddy with automatic TLS
+
+How these fit together is described in [`docs/architecture/platform.md`](docs/architecture/platform.md); the index of all architecture documents is [`docs/architecture/README.md`](docs/architecture/README.md).
 
 ## Contributing
 

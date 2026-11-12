@@ -30,12 +30,17 @@ For GetKlai maintainers: every package referenced by the public compose file
 must be public before advertising this guide as unauthenticated self-hosting:
 
 - `caddy-hetzner`
+- `crawl4ai`
 - `klai-connector`
+- `klai-docker-authz`
 - `klai-docs`
 - `klai-knowledge-mcp`
 - `klai-mailer`
+- `klai-slack`
 - `knowledge-ingest`
+- `librechat`
 - `portal-api`
+- `presidio-analyzer`
 - `retrieval-api`
 - `scribe-api`
 
@@ -133,15 +138,40 @@ sudo bash scripts/harden-docker-user.sh
 
 ## What Gets Deployed
 
-| Service | Purpose |
-|---------|---------|
+`docker-compose.yml` is the source of truth for the services and their image
+versions. The groups below are what it defines; the architecture overview in
+[`docs/architecture/platform.md`](../docs/architecture/platform.md) has the
+full map. GPU-bound inference runs from a second file, `docker-compose.gpu.yml`
+(see the note after the table).
+
+| Group | Services | Purpose |
+|-------|----------|---------|
+| Edge | **Caddy** | Reverse proxy with wildcard TLS (Hetzner DNS) |
+| Identity | **Zitadel** | Identity provider (SSO, user management, OIDC) |
+| Product | **Portal API**, **klai-connector**, **scribe-api**, **docs-app**, **klai-knowledge-mcp**, **klai-mailer**, **klai-slack** | Portal backend and workspace provisioning, connector sync, transcription API, Klai Docs (Next.js), MCP server, transactional email via Zitadel notifications, Slack app |
+| Knowledge | **knowledge-ingest**, **retrieval-api**, **Qdrant**, **FalkorDB**, **Gitea**, **Garage**, **docling-serve**, **crawl4ai**, **SearXNG** | Ingestion, hybrid retrieval, vector store, knowledge graph, docs content repositories, S3 object storage, file conversion, crawling, web search |
+| AI | **LiteLLM**, **Presidio** (analyzer and anonymizer), **LibreChat** | Model gateway (Mistral API), PII masking, chat interface for end users (the portal provisions one LibreChat container per workspace) |
+| Meetings | **Vexa** services (`vexa12-*`) | Meeting bots and transcript collection |
+| Data stores | **PostgreSQL**, **MongoDB**, **Redis**, **Meilisearch** | Relational data, LibreChat storage, caching and sessions, LibreChat search |
+| Docker access | **docker-socket-proxy**, **klai-docker-authz** | Restricted access to the Docker API for provisioning and the meeting bots |
+| Observability | **Grafana**, **VictoriaMetrics**, **VictoriaLogs**, **Grafana Alloy**, **cAdvisor**, **GlitchTip** | Dashboards, metrics, logs, collection, error tracking |
+| Applications | **CRM**, **Umami**, **Fider**, **listmonk**, **Vaultwarden**, **Calnode** | Third-party applications the stack also hosts |
+
+Embeddings, the reranker, sparse vectors and speech-to-text run from
+`docker-compose.gpu.yml` on a separate GPU host that the main stack reaches
+over a tunnel. The speech-to-text service there is the Vexa transcription
+service (faster-whisper workers behind a balancer); the `whisper-server`
+reference image is published but is not part of this stack. Ollama is in the
+compose file but no LiteLLM model or fallback uses it.
+
+---------|---------|
 | **Zitadel** | Identity provider (SSO, user management, OIDC) |
 | **LiteLLM** | AI model proxy (Mistral API + Ollama fallback) |
 | **LibreChat** | Chat interface for end users |
-| **Portal API** | Tenant provisioning and management API |
+| **Portal API** | Workspace provisioning and management API |
 | **Caddy** | Reverse proxy with wildcard TLS (Hetzner DNS) |
 | **klai-mailer** | Transactional email via Zitadel HTTP notifications |
-| **klai-slack** | Klai in Slack: answers from the Partner API in a customer's Slack workspace |
+| **klai-slack** | Klai in Slack: answers from the Partner API in a client's Slack workspace |
 | **GlitchTip** | Frontend error tracking |
 | **Grafana** | Monitoring dashboards |
 | **VictoriaMetrics** | Metrics storage |
@@ -196,12 +226,12 @@ Structured logging is collected centrally:
 | Component | Purpose |
 |-----------|---------|
 | Grafana Alloy | Log collection from Docker containers |
-| VictoriaLogs | Log storage (30-day retention) |
+| VictoriaLogs | Log storage (30-day retention; a second instance keeps content-class lines for 7 days) |
 | Grafana | Dashboards and log exploration |
 
 Configuration files:
 - `deploy/alloy/config.alloy` — Alloy collection config
-- `deploy/grafana/provisioning/datasources/victorialogs.yaml` — Grafana datasource
+- `deploy/grafana/provisioning/datasources/datasources.yaml`: Grafana datasources
 - `deploy/grafana/provisioning/dashboards/logs.json` — Log explorer dashboard
 
 For cross-server log shipping:
