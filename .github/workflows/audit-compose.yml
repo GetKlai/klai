@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - 'deploy/docker-compose.yml'
+      - 'deploy/docker-compose.override.yml'
+      - 'deploy/docker-compose.gpu.yml'
+      - 'docker-compose.dev.yml'
+      - 'deploy/VERSIONS.md'
+      - 'deploy/check-versions-doc.py'
       - 'deploy/caddy/Caddyfile'
       - 'deploy/volume-mounts.yaml'
       - 'deploy/tests/**'
@@ -23,6 +28,11 @@ on:
     branches: [main]
     paths:
       - 'deploy/docker-compose.yml'
+      - 'deploy/docker-compose.override.yml'
+      - 'deploy/docker-compose.gpu.yml'
+      - 'docker-compose.dev.yml'
+      - 'deploy/VERSIONS.md'
+      - 'deploy/check-versions-doc.py'
       - 'deploy/caddy/Caddyfile'
       - 'deploy/volume-mounts.yaml'
       - 'deploy/tests/**'
@@ -54,6 +64,14 @@ jobs:
         run: |
           python3 deploy/check-version-pin-agreement.py --self-test
           python3 deploy/check-version-pin-agreement.py
+
+      # deploy/VERSIONS.md used to repeat every image tag. Renovate bumps
+      # compose and never that file, so about a dozen rows were wrong by
+      # 2026-11-12 and nothing noticed. The document now states no version;
+      # this fails a PR (Renovate's included, it touches compose) that names
+      # a service compose does not have or writes a tag or digest back in.
+      - name: Check VERSIONS.md names only services that exist in compose and states no version
+        run: python3 deploy/check-versions-doc.py
 
       - name: Install yq + jq
         env:

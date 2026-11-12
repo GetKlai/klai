@@ -1,5 +1,7 @@
 # Runbook: login-wall burst alert
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 **Alert**: `login_wall_burst`
 **Severity**: warning
 **Spec**: SPEC-INGEST-LOGIN-WALL-DETECT-001 (historical — SPEC removed in repo cleanup 2026-08-18)
@@ -60,8 +62,8 @@ If a single `org_id` accounts for > 80% of detections:
   2. **Stale crawl that already-walled pages were re-fetched**. Run the
      backfill CLI to clean them out:
      ```bash
-     ssh core-01 "docker exec klai-core-knowledge-ingest-1 \
-       python -m knowledge_ingest.backfill_tasks --org <slug> --kb <slug>"
+     docker exec klai-core-knowledge-ingest-1 \
+       python -m knowledge_ingest.backfill_tasks --org <slug> --kb <slug>
      ```
 
 ### Step 3 — Did a vendor change their auth model?

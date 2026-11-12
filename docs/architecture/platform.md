@@ -1,789 +1,289 @@
-# Klai Platform: Technical Decisions
+# Klai Platform: What Runs Today
 
-> Path A (LibreChat → LiteLLM hook) was removed on 21 October 2026; the text below describes it as history. The one-path description is [chat-system.md](chat-system.md).
+**Verified on 12 November 2026 against commit `3987ee2a9` of `main`, with the two later changes of 12 November (#2340, #2341) folded in and the anchors rechecked at `631b5a82f`.** This document describes the platform as it runs now: the services, how tenants are kept apart, the portal, how people and services authenticate, the models, the other product surfaces, how a change reaches production, and how the platform is observed and backed up. It says nothing about how the platform came to be; that is in [evolution.md](evolution.md) (Dutch), which also holds the decisions, the alternatives that were rejected and the plans that were never built.
 
-*Last updated: 2026-06-08 (doc-vs-code drift audit; prior: 2026-04-19). For the Knowledge product specification, see [klai-knowledge-architecture.md](../klai-knowledge-architecture.md). Type-B gaps (documented richer than built — e.g. the "Complexity Router") are flagged inline and tracked in [product-gaps-backlog.md](product-gaps-backlog.md).*
+Every statement carries an anchor (`path:line`). Anchors are relative to the repository root. Where a paragraph names a base directory, anchors in that paragraph are relative to it. The detail of the knowledge stack and the chat lives in its own documents, linked in section 6. This document is public: it describes service contracts and host roles, not Klai's live production topology (see [the infrastructure boundary](../contributing/infrastructure-boundary.md)). Host roles used here: `core-01` runs the main compose file, `gpu-01` runs the inference compose file, `public-01` runs the website and the status page and has no compose file in this repository.
 
-## Stack
+## 1. Service map
 
-| Layer | Choice | Why not alternatives |
+The compose files are the source of truth for what runs and for which image version. This document deliberately copies no image versions: a hand-kept version table drifts from the compose files within weeks, and several have. Versions are read from the files below, and pins are checked mechanically (`deploy/check-image-tags.sh:30-35` rejects mutable tags for third-party images, `deploy/check-version-pin-agreement.py` ties compose pins to the CI workflow pins). `deploy/VERSIONS.md` records the reason for individual pins.
+
+| Compose file | Host role | What it holds |
 |---|---|---|
-| Customer portal frontend | Vite + React SPA + Tailwind v4 | Authenticated app — no SSR needed; Voys-UI (Cleopatra) works directly |
-| Routing (portal) | TanStack Router (code-based) | Type-safe routes and search params; React Router v7 as backup for simple navigation |
-| Data fetching (portal) | TanStack Query | Dashboard + mutations need caching and retry; SWR as alternative for simpler use |
-| Customer portal backend | FastAPI (Python) | One language for all backend services; provisioning, billing, Scribe, later RAG |
-| Public API | Partner API on portal-api (`api.getklai.com/partner/v1/*`) | KB-grounded chat plus a separate OpenAI-compatible passthrough, `pk_live_...` Bearer auth, KB-scoped keys (SPEC-API-001) |
-| Embeddable widget | `klai-widget` — SolidJS + Vite, FlowiseChatEmbed fork | Served from portal origin; `<script data-widget-id="wgt_...">` one-tag embed (SPEC-WIDGET-001/002) |
-| HubSpot Help Desk app | `klai-hubspot/klai-email-support` | HubSpot Projects-lifecycle UI extension (`hs project deploy`); app card surfacing Klai-generated support-email drafts. POC — sandbox-targeted. |
-| Browser extension | `klai-shield-extension` | Platform-admin-only Chrome extension (Superdock shell) for Klai Shield — checks prompts in browser LLMs, wired to Klai auth/compliance/knowledge APIs. |
-| Knowledge publication | `klai-docs` (`docs-app`, Next.js) | KB reader + REST API + publication; editor lives in the portal. |
-| Billing | Moneybird (Unlimited plan) | Dutch accounting platform handles invoicing, VAT, SEPA direct debit, customer portal — replaces the previously planned custom Mollie module (see `klai-website/docs/moneybird-research.md`) |
-| Chat UI | LibreChat (no fork) | Custom UI only when LibreChat demonstrably blocks us |
-| Auth / Identity | Zitadel + Google/Microsoft IDPs | Native B2B multi-tenancy; social signup via Zitadel IDP intents (SPEC-AUTH-001); domain allowlist + join-request self-service (SPEC-AUTH-006) |
-| Model Proxy | LiteLLM OSS -> Enterprise | Start free, upgrade at first revenue for audit trail |
-| Model routing | `custom_router.py` (`token_router` callback) | A LiteLLM callback (not the native Complexity Router): a 3-signal heuristic — tool-call detection, user-message token threshold, ≥3 URLs — that may upgrade `klai-primary`→`klai-large`. `routing_strategy: simple-shuffle` for replica load-balancing. See GAP-ROUTE-01/02. |
-| Reverse proxy | Caddy (core-01) | Better LLM streaming than Traefik, lighter, easier to debug |
-| Infra (public-01) | Direct Docker on Hetzner CX42, compose in klai-infra | Website and Uptime Kuma only; Coolify was removed on 2026-09-25 (SPEC-INFRA-COOLIFY-EXIT-001) |
-| Infra (core-01) | Direct Docker on EX44 | Container lifecycle via custom provisioning service |
+| `deploy/docker-compose.yml` (project `klai-core`) | core-01 | The production stack and the self-hosting template (`deploy/docker-compose.yml:1`) |
+| `deploy/docker-compose.override.yml` | core-01 | One override: `retrieval-api` runs under the local tag that CI sets before `compose up` (`deploy/docker-compose.override.yml:1-4`) |
+| `deploy/docker-compose.gpu.yml` | gpu-01 | Embeddings, reranker, sparse vectors and transcription. Public CI only validates it (`.github/workflows/validate-gpu-compose.yml:40-49`) |
+| `docker-compose.dev.yml` | a developer machine | Local development: postgres, redis, mongodb, meilisearch, litellm |
 
-## Customer Portal
+The per-tenant LibreChat containers are in no compose file: portal-api creates them at provisioning time through the Docker socket proxy chain (`klai-portal/backend/app/services/provisioning/orchestrator.py:5,228-236`). Everything on the core host shares one reverse proxy, Caddy, which terminates TLS for the wildcard domain; "published" below means reachable through a route in `deploy/caddy/Caddyfile`. Services without a route are reachable only from other containers.
 
-Customers sign up (email, Google or Microsoft), log in via Zitadel, and land in the portal — a chat-first SPA with flat navigation:
+### Product services built from this repository
 
-- **Chat** — embedded LibreChat with knowledge scope bar
-- **Kennis** — KB editor (BlockNote) + source catalogue (Superdock-style unified wizard for file upload, web crawler, Google Drive, Notion, GitHub, …)
-- **Templates** — reusable prompt scaffolds, prepended to the system message in the LiteLLM pre-call hook (SPEC-CHAT-TEMPLATES-001)
-- **Regels** — guardrails (PII block/redact) applied in the LiteLLM pre-call hook (planned, SPEC-CHAT-GUARDRAILS-001)
-- **Team / MCP's / API keys / Chat widgets / Account** — admin surfaces
+All run on core-01 from `deploy/docker-compose.yml`. Images are built by the workflow of the same name in `.github/workflows/`.
 
-Billing (handled by Moneybird, see Stack table):
-- Monthly direct debit via Moneybird Payments (SEPA mandate at signup)
-- Self-service: update company name and VAT number
-- PDF invoices generated and delivered by Moneybird
-
-### Public API surface
-
-`api.getklai.com/partner/v1/*` exposes the platform to external developers (SPEC-API-001). Endpoints: `/chat/completions`, `/responses`, `/models`, `/feedback`, `/knowledge/append`, `/widget-config`. Bearer auth with `pk_live_<40-hex>` tokens, SHA-256 hashed in `partner_api_keys`. Every key carries a KB whitelist, per-key rate limit, and explicit permissions. `/chat/completions` is the canonical OpenAI-compatible chat path: requests with Klai knowledge extensions (`knowledge`, `knowledge_base_ids`, `page_context`, or web-search fields) use the knowledge-grounded RAG flow and require `chat`; plain OpenAI chat requests use the general passthrough and require `general_chat`. `/responses` is a stateless OpenAI Responses text adapter over the same general passthrough: it supports text input, `instructions`, text JSON formats, streaming text, and function tools, and rejects stateful/background/hosted-tool features with 400 instead of silently ignoring them. Klai knowledge extensions remain `/chat/completions` only. The general passthrough forwards only supported OpenAI fields and enforces a 128 KiB request body, `n=1`, bounded output tokens, estimated input tokens <= 16k, route RPM 10, and estimated TPM 60k. Models are `klai-primary`/`klai-fast`/`klai-large`; common OpenAI names (`gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`) are accepted as aliases that map to Klai (Mistral-backed) models, but `/models` advertises only the canonical `klai-*` ids. Portal forwards these general calls with `LITELLM_GENERAL_CHAT_KEY`, a dedicated LiteLLM virtual key that must be distinct from `LITELLM_MASTER_KEY` and must also carry budget/RPM/TPM limits.
-
-### Chat widgets
-
-Embeddable SolidJS bundle served from the portal origin (`/widget/klai-chat.js`). One-tag embed:
-
-```html
-<script src="https://my.getklai.com/widget/klai-chat.js" data-widget-id="wgt_..."></script>
-```
-
-**Auth flow (JWT-only, no browser-visible API key):**
-1. Widget calls public `GET /partner/v1/widget-config?id=wgt_...` with Origin header
-2. Server validates Origin against `widget_config.allowed_origins` (fail-closed, wildcard subdomains supported)
-3. Server returns config + HS256 JWT session token (1h TTL, signed with deployment-level `WIDGET_JWT_SECRET`)
-4. Widget uses `Authorization: Bearer <jwt>` for subsequent `/chat/completions` calls
-
-Widgets live in their own `widgets` table with RLS tenant scoping (SPEC-WIDGET-002 split them out from `partner_api_keys`). No per-widget secret is persisted; rotating `WIDGET_JWT_SECRET` invalidates all live sessions. Bundle budget: <200 kB gzipped (CI-enforced).
-
-### Prompt Templates (productfeature)
-
-**Templates are a product-feature for response styling, NOT a safety/guardrail layer.** Org-admins create reusable prompt-scaffolds (e.g. "Klantenservice", "Formeel"); users toggle 0+ active per chat session via `active_template_ids`. The LiteLLM pre-call hook fetches them from `/internal/templates/effective` (30 s cache) and prepends them to the system message before the KB-context block.
-
-- Scope: `"org"` (admin-only create/update) or `"personal"` (any user, creator-visible; admins see all).
-- Storage: `portal_templates` with RLS strict, `CHECK char_length(prompt_text) <= 8000`, `CHECK scope IN ('org','personal')`, `UNIQUE (org_id, slug)`.
-- Rate-limit: 10 req/s per org on CRUD via the shared Redis sliding-window (`templates_rl:{org_id}`).
-- Cache invalidation: every CRUD write + `active_template_ids` change triggers a fire-and-forget Redis DEL (single DEL for personal / self changes, SCAN+DEL for org-wide changes). Failure-mode TTL fallback is 30 s.
-- Hook fail-open: `/internal/templates/effective` timeout or 5xx logs `templates_degraded` and the chat continues without template injection.
-
-Implemented in **SPEC-CHAT-TEMPLATES-001**.
-
-### Guardrails — Rules (planned, separate SPEC)
-
-Guardrails (PII block/redact, keyword block/redact) are intentionally split from Templates into **SPEC-CHAT-GUARDRAILS-001**, which adds a dedicated `klai-pii` microservice (Presidio + GLiNER). Rules are strict guardrails applied to the user message; Templates are styling instructions prepended to the system prompt. Different product, different safety posture, different cache key (`templates:{org}:{user}` vs `guardrails:{org}:{user}`).
-
-### SSO self-service (SPEC-AUTH-006)
-
-- **Domain allowlist**: Org admins add email domains (e.g. `@voys.nl`). Users signing up with a matching domain auto-join.
-- **Join requests**: If no matching org exists, users submit a request with justification. Org admins get mailer notifications (`/internal/send` endpoint) and approve/reject in `/admin/join-requests`.
-- **Multi-org workspace selection**: Users in multiple orgs pick a workspace on login.
-- **Pending session token**: Short-lived token held between IDP callback and org selection.
-
-### User Groups & Lifecycle
-
-**Groups**
-- Groups provide organizational structure within orgs
-- Table `portal_groups`: id, org_id, name, description, created_at, created_by
-- Unique constraint: `(org_id, LOWER(name))` — case-insensitive per org
-- Group admins can manage members without org-level admin role
-
-**Group-Based Product Entitlements**
-- Products assigned at group level via `portal_group_products` table
-- Effective products = union of direct (per-user) + inherited (via group memberships)
-- JWT tokens enriched with effective products (~15 min expiry)
-
-**User Lifecycle**
-- Three states: `active` → `suspended` (reversible) → `offboarded` (destructive, non-reversible)
-- Suspension: revokes access, preservable for reactivation
-- Offboarding: cascading cleanup of memberships, product assignments
-
-**Per-user personal KB**
-- Every user gets a personal KB on signup (one shared `personal` KB per org in Gitea, user-scoped paths — see [klai-knowledge-architecture.md §10.2](klai-knowledge-architecture.md#102-personal-knowledge-hard-isolation-within-an-org))
-- Portal surfaces it with a "Mijn" badge; admins can delete any personal KB (admin override)
-- Isolation is enforced at the retrieval API layer, not in UI — external consumers (widget, Partner API) never query personal scope
-
-## Multi-tenancy model
-
-Per customer: own subdomain (`company.getklai.com`) with the full Klai application. Inside: Chat, Usage, Settings, Invoices. LibreChat runs as a feature within the application, not as the main page.
-
-Technical: one Zitadel Organization + one LibreChat container + one LiteLLM virtual key per customer. Wildcard DNS (`*.getklai.com`) + Caddy handles routing automatically.
-
-Creating a customer = automated via APIs (Zitadel + Docker + LiteLLM). No manual work.
-
-Architecture principle: tenant = isolation layer. Everything is stored and tracked per user, not per company. Data, usage, voice, history — everything belongs to the individual user.
-
-## Architecture separation: public vs. AI stack
-
-Two layers, two machines, never mixed:
-
-- public website/runtime services may be separated from the main application
-  stack.
-- the main application stack contains LiteLLM, LibreChat, the customer portal,
-  Partner API routes, widget assets, and product APIs.
-
-## Runtime Layout
-
-The public repository documents portable runtime shapes, not Klai's live
-production inventory.
-
-**Single-server self-hosting:**
-
-| Runtime group | Services |
-|---|---|
-| edge | Caddy and TLS automation |
-| identity | Zitadel and OIDC configuration |
-| application | portal, scribe-api, mailer, connector services |
-| chat and AI | LiteLLM, LibreChat, optional local inference |
-| knowledge | Qdrant, knowledge-ingest, retrieval-api, optional graph layer |
-| observability | metrics, logs, dashboards, and alerting templates |
-
-**Split production deployments:**
-
-Larger deployments may separate website, application, observability, and
-GPU-backed inference services. Live host inventory, provider choices, costs,
-addresses, SSH procedures, and production deployment topology are maintained in
-the private infra repository.
-
-**LiteLLM failover:** primary external model providers and optional local
-fallback models are configured via LiteLLM fallback configuration.
-
-**Dev environment (`dev.getklai.com`):** parallel stack on core-01 with its own isolated LibreChat + LiteLLM containers, own dev database, Caddy routes `/api/*` via a dedicated `route` block. Inter-service infra secrets are reused from prod (KB / connector CRUD work without duplicating SOPS). Runbook in [`docs/dev.md`](../dev.md).
-
-**Phase 3+ networking (when self-hosting AI):** core-01 (Hetzner HEL) and ai-01 (Nebius HEL) are in the same city — latency 5-15 ms RTT. Connected via WireGuard tunnel. LiteLLM calls vLLM via private WireGuard IP. Failover to Scaleway Paris (H100) or RunPod EU if Nebius goes down. Nebius SLA: 99.9%, has official OpenTofu provider.
-
-**Klai Knowledge (Phase 2 — deployed March 2026):** Qdrant on core-01 (`klai_knowledge` collection). Custom `knowledge-ingest` service replaces rag_api. `retrieval-api` serves hybrid RRF search. `bge-m3-sparse` sidecar handles sparse embeddings via FlagEmbedding. pgvector no longer used for vector search.
-
-## Branding
-
-No fork. Logo via Docker volume mount (`client/dist/assets/logo.svg`). Browser tab title via `client/dist/index.html`. LibreChat default colors and layout acceptable in Phase 0. Zitadel login screen fully branded via LabelPolicy.
-
-Adjusting colors and layout requires building from source — not a priority as long as the customer portal (custom React) is the primary branded environment.
-
-## LibreChat: technical details
-
-**Architecture model: silo per tenant.** One LibreChat container per customer. Benefits: full data isolation at storage level, per-customer `librechat.yaml` with own model settings, independent rollback per customer. Updates are not manual work: one Docker image for all containers, rolling restart via script (one command, not N manual actions).
-
-OIDC configuration is in `.env` (not in `librechat.yaml`). Zitadel integration via Authorization Code + PKCE. Roles are passed from Zitadel token to LibreChat for access control.
-
-**Database per tenant:** shared MongoDB server, separate database per tenant via `MONGO_URI` (e.g. `mongodb://mongo/tenant_abc`). Database-level isolation without a MongoDB container per customer. One MongoDB process, N databases — standard pattern for multi-tenant MongoDB deployments.
-
-**Meilisearch:** one shared instance with tenant-scoped LibreChat indexes
-(`{slug}_messages`, `{slug}_convos`). Do not rely on shared global
-`messages`/`convos` plus `userId` filtering: LibreChat startup sync and delete
-hooks mutate indexes by primary key, so global indexes are unsafe with
-Klai's silo-per-tenant MongoDB topology. As of 2026-06-06 only `getklai` is
-enabled as a canary with tenant-scoped indexes and a scoped Meili runtime key.
-Broad rollout still requires a migration/backfill for existing tenants.
-
-Resource per LibreChat container (without own Meilisearch): ~250-350 MB RAM idle. Core-01 (EX44, 64 GB) has room for 50+ tenants on a RAM basis.
-
-Usage reporting (token usage per user/company) does not exist natively in LibreChat. Built via the PostgreSQL transactions table in the customer portal. LibreChat 2026 roadmap includes an Admin Panel but it won't offer per-organization reporting.
-
-## Phases
-
-| Phase | Trigger | What's added | Status |
+| Service (compose line) | Source | Purpose | Published |
 |---|---|---|---|
-| 0 | Initial setup | Caddy + Zitadel + MongoDB + LiteLLM OSS + Mistral API + Ollama fallback + LibreChat + Alloy + VictoriaLogs | **Done** |
-| 1 | First paying customer | Customer portal live, Moneybird direct debit active, provisioning service, VictoriaMetrics + Grafana | **Done** (2026-03) |
-| 2 | Customers request documents | Klai Knowledge: knowledge-ingest + Qdrant + retrieval-api + bge-m3-sparse + LiteLLM hook (feature gate + gap detection) + klai-knowledge-mcp (personal + org KB writes) | **Done** (2026-03) — retrieval live, getklai tenant verified end-to-end |
-| 3 | Break-even self-hosting (~30K active users) | ai-01 GPU server, vLLM, Whisper (GPU) — model choice Qwen3-32B + Qwen3-8B | In progress |
-| 4 | First enterprise customer | SAML SSO per org, SCIM provisioning | Planned |
-| 5 | Audit logs or >5 admins needed | LiteLLM Enterprise | Planned |
+| portal-api (1053) | `klai-portal/backend` | Portal backend: sessions, workspaces, provisioning, Partner API, Shield API, meeting integration | Yes: the portal API, `/partner/*`, `/kb-images/*`, the MCP OAuth endpoints, `/static/*` (`deploy/caddy/Caddyfile:338,349,432,473,495`) |
+| portal frontend | `klai-portal/frontend` | Static files built by CI and served by Caddy, no container (`deploy/docker-compose.yml:195`) | Yes, as the catch-all with SPA fallback (`deploy/caddy/Caddyfile:554-565`) |
+| retrieval-api (1603) | `klai-retrieval-api` | Hybrid retrieval: `POST /retrieve`, `POST /chat`, taxonomy routes (`klai-retrieval-api/retrieval_api/api/retrieve.py:1412`, `klai-retrieval-api/retrieval_api/api/chat.py:24`) | No |
+| knowledge-ingest (2188) | `klai-knowledge-ingest` | Ingest, enrichment, graph extraction, crawl orchestration, job queue on Procrastinate | No |
+| klai-connector (2303) | `klai-connector` | Connector scheduler and source adapters | Yes, own host (`deploy/caddy/Caddyfile:245-254`) |
+| scribe-api (1794) | `klai-scribe/scribe-api` | Audio upload, transcription, summaries, hand-off to a knowledge base | No; reached through the portal proxy (`deploy/caddy/Caddyfile:524-531`) |
+| docs-app (1733) | `klai-docs` | Docs reader and editor, `basePath /docs`, port 3010 | Reader only; `/docs/api/*` answers 404 (`deploy/caddy/Caddyfile:507-518`) |
+| klai-knowledge-mcp (1764) | `klai-knowledge-mcp` | MCP server | Yes, own host (`deploy/caddy/Caddyfile:306-315`) |
+| klai-mailer (825) | `klai-mailer` | Zitadel notification provider and internal template sender | No |
+| klai-slack (937) | `klai-slack` | Slack app | Only `/slack/*` on the API host (`deploy/caddy/Caddyfile:373-378`) |
+| klai-docker-authz (801) | `klai-docker-authz` | Inspects container-create requests in front of the Docker socket proxy | No |
+| caddy (182) | `deploy/caddy` | Reverse proxy, built with a DNS-provider plugin and a rate-limit module for wildcard TLS (`deploy/caddy/Dockerfile:41-43`) | Is the edge |
 
-## Scribe (speech-to-text)
+`klai-libs/` holds thirteen shared Python libraries (chat prompts, citations, connector credentials, identity assertion, image storage, knowledge-base slugs, LLM safety and throttling, log utilities, retrieval telemetry, service auth, webhook replay, graph compatibility) that the service images install by relative path.
 
-Added early, already working in another stack. UI likely custom-built. Architecture principle: voice data is per user, not per company. No sharing between users.
+### Data stores
 
-**Deployment (updated 2026-08-17):** `scribe-api` runs on core-01 and reaches speech-to-text over the GPU SSH tunnel (`http://172.18.0.1:8000`). What answers there is the Vexa transcription stack — an nginx load balancer in front of two faster-whisper CUDA workers — not a `whisper-server` container: SPEC-VEXA-003 replaced it deliberately on the same port and the same OpenAI-compatible path, which is why `WHISPER_SERVER_URL` never had to change. GPU migration completed with SPEC-GPU-001/SPEC-DEVOPS-002. No env change needed when scaling to a larger GPU — just update the tunnel config.
+All on core-01. Each application database has its own network; the main Postgres instance is shared by the Klai services.
 
-**Whisper model (Phase 3+):** faster-whisper large-v3-turbo, INT8 quantization. ~2-2.5 GB weights, ~4-6 GB VRAM total. 6x faster than large-v3, multilingual (NL/DE/EN), less than 1-2% quality loss. Deployed on ai-01 alongside vLLM — ~34 GB VRAM free, no conflict. NVIDIA MPS with `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=20` prevents SM contention.
+| Service | Holds |
+|---|---|
+| postgres (232) | One instance, several databases: the portal (`klai`, with schemas `knowledge`, `docs`, `scribe` and `connector` next to the portal tables), `zitadel`, `litellm`, `glitchtip`, `gitea`, the Vexa database, `klai_slack` (`deploy/postgres/init.sql:4-45`; schemas: `klai-knowledge-ingest/alembic/versions/0001_baseline.py:52`, `klai-docs/migrations/001_docs_schema.sql:4`, `klai-scribe/scribe-api/alembic/env.py:49`, `klai-connector/alembic/versions/001_initial.py:25`) |
+| mongodb (210) | LibreChat users and conversations, one database per workspace |
+| redis (252) | Portal sessions and rate limits, LiteLLM budgets and router counters, mailer rate limit, retrieval-api, GlitchTip |
+| qdrant (2120) | One collection `klai_knowledge` with named vectors `vector_chunk`, `vector_questions`, `vector_sparse` (`klai-retrieval-api/retrieval_api/config.py:12`, `klai-retrieval-api/retrieval_api/services/search.py:1-4`) |
+| falkordb (2142) | The Graphiti knowledge graph; `GRAPHITI_ENABLED` is true on retrieval-api and knowledge-ingest (`deploy/docker-compose.yml:1627,2221`) |
+| meilisearch (292) | LibreChat conversation search, with workspace-scoped keys (`klai-portal/backend/app/services/provisioning/orchestrator.py:157,196-207`) |
+| garage (2276) | S3-compatible object storage: knowledge-base images, Scribe artifacts, Vexa recordings |
+| gitea (1684) | Git repositories behind the docs knowledge bases |
+| victoriametrics, victorialogs, victorialogs-content | Metrics, 30-day logs, 7-day content-class logs (section 9) |
+| listmonk-db, firecrawl-postgres, crm-postgres, umami-postgres, fider-postgres, crm-redis, vexa12-redis, firecrawl-rabbitmq | One store per third-party application |
 
-**Scaling trigger:** dedicated GPU (L4, ~€0.50/hr) when more than 5 concurrent audio streams or hard p99 SLO <500ms required. At that usage level there is also revenue to justify it.
+pgvector is in the Postgres image name only; the ingest code does not use it for vector search (no `pgvector` or `vector(` match in `klai-knowledge-ingest`).
 
-## GDPR / AVG Compliance
+### AI and inference
 
-**Subject Access Request (Art. 15)**
-- Self-service SAR export: `POST /api/me/sar-export`
-- Returns JSON with all personal data: identity, account, memberships, KB access, audit events, usage events, meetings
-- Graceful degradation if Zitadel fails (identity section becomes null)
-
-**Data Minimization (Art. 5(1)(c))**
-- Vexa recordings automatically deleted after successful transcription
-- Ephemeral storage in vexa-bot container (`/data/recordings/` — upstream main v0.10 path post SPEC-VEXA-003)
-- Background cleanup task: recordings >30 min old with `status="done"` and `recording_deleted=False`
-- Tracked via `VexaMeeting.recording_deleted` and `recording_deleted_at` columns
-
----
-
-## Privacy-first principle
-
-All data stays within the EU. No closed or proprietary AI APIs from non-EU companies (OpenAI, Anthropic, Google, etc.) — exclusively open source or open weight models. This is a core value, not a technical choice.
-
-**Managed vs self-hosted**: the principle applies to the model, not necessarily to the hosting. An open weight EU model offered by the original European company via API is consistent with this core value. The ambition is full self-hosting when cost-effective, but an EU-managed API based on open weight models is an acceptable intermediate step.
-
-## AI Models — Hosting Strategy
-
-> **Current production stack (2026-06-08).** LiteLLM serves **Mistral models exclusively**
-> today; the Qwen3 / H100 self-hosting content further below is the **Phase-3 plan**, not the
-> live stack. Live tier aliases (`deploy/litellm/config.yaml`):
->
-> | Alias | Backing model | Use |
-> |---|---|---|
-> | `klai-fast` | `mistral-small-2603` | High-volume, latency-sensitive (bypasses custom_router) |
-> | `klai-primary` | `mistral-small-2603` | Standard user-facing (routed via custom_router) |
-> | `klai-medium` | `mistral-medium-3.5` | Middle tier (also the LiteLLM fallback target) |
-> | `klai-large` | `mistral-large-2512` | Agentic / tool use / MCP |
-> | `klai-bge-m3` | BGE-M3 on TEI (gpu-01) | Embeddings |
->
-> The LiteLLM fallback is `klai-primary`/`klai-fast` → `klai-large`, **not** Ollama. See
-> [`.claude/rules/klai/platform/litellm.md`](../../.claude/rules/klai/platform/litellm.md).
-
-### Approach: start with API, evaluate self-hosting
-
-**Phase 0 — Managed API (Mistral)**
-LiteLLM points to the Mistral API. Mistral is a French company, EU infrastructure by default, open weight models, DPA available, no training on customer data. Costs are variable and low at early user numbers.
-
-Fallback: `klai-large` (Mistral Large), for `klai-primary` and `klai-fast` (`config.yaml` `fallbacks`); Large is cheaper than Medium on input and output. Nothing falls back to `klai-medium`; bulk background callers send `fallbacks: []` and stay on Small. Every Mistral deployment has a daily spend ceiling (`max_budget` in `config.yaml`); a spent ceiling fires the `litellm_budget_exhausted` alert. (Ollama is present in the compose `inference` network but is **not** wired as a model or fallback in `config.yaml`.)
-
-**Trigger for self-hosting**: when the fixed cost of a GPU server is lower than Mistral API costs. Break-even at ~1.2 billion tokens per month (~30,000 active users at normal business usage).
-
-**Model choice**: out of scope for now. Determined at the point when self-hosting is the right step and the model landscape is re-evaluated.
-
-**Server layout at self-hosting**: ai-01 (GPU server) is added only at the self-hosting trigger. Until then, no ai-01.
-
----
-
-## AI Models — Model Overview (reference for self-hosting phase)
-
-### Models evaluated
-
-| Model | Params | VRAM FP8 | Context | License | Advantages | Disadvantages | Status |
-|---|---|---|---|---|---|---|---|
-| **Qwen3-8B** | 8B | ~9 GB | 32K | Apache 2.0 | Fast, low power, cheap per token | Less suited for complex reasoning | **Chosen: fast model** |
-| **Qwen3-32B** | 32B | ~33 GB | 32K | Apache 2.0 | Best reasoning in class, 2,352 tok/s (confirmed), 119 languages | Context 32K is the limit for long documents | **Chosen: primary model** |
-| **Mistral Small 3.2** | 24B | ~28 GB | 128K | Apache 2.0 | 128K context, French company (EU), stable function calling | Weaker reasoning (46% vs 62%+ GPQA), slower than 8B | Standby: trigger = 32K context complaint |
-| **Magistral Small** | 24B | ~24 GB | 128K | Apache 2.0 | Reasoning specialist (RL-trained), 70.7% AIME2024 | Reasoning already covered by Qwen3-32B thinking mode | Not needed with current setup |
-| **Llama 3.3 70B FP8** | 70B | ~75 GB | 128K | Llama 3 | High quality, strong on NL/DE | Doesn't fit on H100 with usable KV cache (5 GB remaining = max 3-5 concurrent users) | Excluded: not viable |
-| **Llama 3.3 70B INT4** | 70B | ~45 GB | 128K | Llama 3 | Fits on H100, 10-20 concurrent users | Quality loss from quantization, no dual-model room | Excluded: prefer FP8 quality |
-| **Mistral Large 3** | 675B MoE | ~90 GB FP8 | 128K | Apache 2.0 | Frontier quality, open weights | Doesn't fit on 1 H100 (minimum 2x H100 needed) | Excluded: infrastructure too heavy |
-| **EuroLLM 22B** | 22B | ~11 GB | 32K | Apache 2.0 | All 24 EU languages, explicitly EU-trained | Less strong than Qwen3-32B on reasoning | Future: specialist for government/EU languages |
-| **DeepSeek V3.2** | 671B MoE | 10-16x H100 | 128K | MIT | Frontier quality | Requires 10-16x H100 — not realistic | Excluded: infrastructure requirements |
-| **Mixtral** | MoE | - | - | Apache 2.0 | Once strong for multilingual | Overtaken by Qwen3 and Mistral Small 3.2 | Excluded: outdated |
-| **Gemma 3** | various | - | - | Custom | Good performance | Google retains right to remotely stop deployment | Excluded: incompatible with privacy-first |
-| **LLaMA 4** | various | - | - | Custom | Multimodal, frontier quality | EU usage restricted in license (multimodal model) | Excluded: license restriction |
-| **GPT-NL** | unknown | n/a | - | Government | Dutch-trained, high NL quality | Weights not public, government pilot phase | Deferred: reconsider end 2026/2027 |
-| **Qwen2.5** | various | - | - | Apache 2.0 | Stable, widely used | Superseded by Qwen3 (April 2025), no longer current | Excluded: outdated |
-
-### Choice: Qwen3-32B + Qwen3-8B
-
-> **This section is the Phase-3 self-hosting plan, not the live stack** (see the
-> "Current production stack" callout above — production runs Mistral). The "LiteLLM
-> Complexity Router … 7 dimensions" referenced here is also not what exists today:
-> routing is a 3-signal heuristic in `custom_router.py` (GAP-ROUTE-01). Keep this as the
-> aspirational self-host design.
-
-Two models on one H100 80GB, routed via LiteLLM Complexity Router.
-
-**Complex: Qwen3-32B FP8** — reasoning, analysis, code, multi-step questions
-- VRAM: ~33 GB | Context: 32K | Throughput: 2,352 tok/s (confirmed benchmark)
-
-**Fast: Qwen3-8B FP8** — short questions, summarization, standard tasks
-- VRAM: ~9 GB | Significantly higher throughput, ~4x lower energy per token
-
-VRAM distribution: 42 GB weights, ~25-30 GB KV cache (after CUDA overhead). vLLM as two separate instances with `--gpu-memory-utilization` split (~0.55 + ~0.40).
-
-**Why dual-model and not one large model:**
-Research (OpenAI enterprise data, 2025) shows that 60-70% of AI queries are simple: short answers, standard formulations, quick tasks. Sending those to a 32B model wastes power, VRAM and money. The 8B is faster for those tasks and better for the customer experience. Only complex queries justify the heavier model.
-
-**Why Qwen3 over Mistral:**
-Mistral Small 3.2 scores 46% on GPQA Diamond, Qwen3-32B 62%+. That difference is noticeable in reasoning, analysis and code. The "European company" argument (Mistral is French) doesn't factor in: for Klai only where the AI runs matters, not who made the weights. Mistral Small 3.2 stays on standby if the 32K context limit becomes a practical problem.
-
-**Routing:** LiteLLM Complexity Router scores each query on 7 dimensions (code, reasoning markers, technical terms, token count, etc.) and routes in <1ms without an external API call. LibreChat always sends the full conversation history — context loss on model switch is not possible.
-
-**Concurrent users:** AI chat tools score 3-5% concurrent users at peak (vs. generic SaaS 2-3%). Confirmed by ChatGPT enterprise data: 4.5 sessions/day, 14 min/session, DAU/MAU 40-68%. At 1,000 registered users: 30-50 concurrent at peak. H100 with dual-model routing handles this comfortably.
-
-**Context 32K:** Sufficient for 80-90% of business tasks (emails, reports, contracts up to ~30 A4 pages). Phase 2 (RAG) structurally solves long documents. Trigger for Mistral switch: demonstrable customer complaints about document limits.
-
-**Scaling path:** Second H100 on growth. Multi-server with more specialized models when usage justifies it.
-
-GPT-NL: deliberately deferred. Government pilot phase, weights not public. Reconsider end 2026/2027.
-
-### Infrastructure cost per user
-
-Fixed infrastructure: ~€1,570/mo (H100 €1,500 + servers €70). H100 capacity with dual-model routing: 600-1,500 registered users comfortably.
-
-| Users | Infra/user/mo | Note |
+| Service | Host role | Purpose |
 |---|---|---|
-| 100 | €15.70 | Startup phase, infra dominates |
-| 250 | €6.28 | Early customers |
-| 500 | €3.14 | Approaching break-even |
-| 750 | €2.09 | Second H100 approaching |
-| 1,000 | €1.57 | First H100 full (comfortable) |
-| 1,500 | €1.05 | Second H100 needed, costs halve after |
+| litellm (383) | core-01 | The only LLM gateway. Config and hooks in `deploy/litellm/`; the admin UI is off (`deploy/docker-compose.yml:473`) |
+| presidio-analyzer (545), presidio-anonymizer (600) | core-01 | PII detection and masking on the internal `inference` network, no route |
+| docling-serve (1577) | core-01 | File to markdown; the caller is portal-api (`klai-portal/backend/app/core/config.py:259-262`) |
+| searxng (1591) | core-01 | Web search for portal-api, LiteLLM (`deploy/litellm/config.yaml:327`) and the workspace LibreChat |
+| crawl4ai (2374) | core-01 | Crawler used by knowledge-ingest (`deploy/docker-compose.yml:2329`) |
+| firecrawl-api (2463) | core-01 | Crawler used by the workspace LibreChat (`klai-portal/backend/app/services/provisioning/generators.py:338-339`) |
+| ollama (690) | core-01 | Runs, but no model alias or fallback in LiteLLM uses it (`deploy/litellm/config.yaml:363-366`) |
+| librechat-getklai (616) | core-01 | The one workspace LibreChat container kept in compose; Klai builds the image from upstream with patches (`deploy/librechat/Dockerfile.klai:23`) |
+| tei, infinity, bge-m3-sparse | gpu-01 | Dense embeddings (BGE-M3), reranker (`bge-reranker-v2-m3`), sparse embeddings (`deploy/docker-compose.gpu.yml:11,37,69`) |
+| transcription-worker-1, transcription-worker-2, transcription-api | gpu-01 | faster-whisper `large-v3-turbo` on CUDA, behind an nginx least-connections balancer with an OpenAI-compatible `/v1/audio/transcriptions` (`deploy/docker-compose.gpu.yml:110,146,181`) |
 
-These are purely infrastructure costs. Margin, development and support are on top.
+Every gpu-01 service binds to loopback and is reached from core-01 over a tunnel (`deploy/docker-compose.gpu.yml:3`). The tunnel and the host itself are operated from the private infrastructure repository. Consumers address the tunnel endpoint through configuration (`klai-retrieval-api/retrieval_api/config.py:15-17`, `klai-scribe/scribe-api/app/core/config.py:40`).
 
-## Knowledge System Design Principles
+### Identity, meetings, observability, applications, supporting
 
-> Research session 2026-03-25. Full empirics and source citations: [../research/knowledge-system-fundamentals.md](../research/knowledge-system-fundamentals.md)
-
-These principles are empirically derived from studying 8 independent knowledge systems built between 2001 and 2024. They directly shaped the Klai Knowledge architecture (Phase 2).
-
-### Five universal entity types
-
-Eight independent systems — from Wikipedia to enterprise knowledge graphs to recent AI-memory systems — converged on the same five categories without coordination:
-
-| # | Type | Examples |
+| Kind | Services (compose line) | Notes |
 |---|---|---|
-| 1 | People and organizations | User, company, customer, team |
-| 2 | Documents and messages | Email, manual, decision, Slack message |
-| 3 | Containers | Project, department, folder |
-| 4 | Events | Meeting, conversation, deployment |
-| 5 | Categories | "Billing", "Support", taxonomy labels |
+| Identity | zitadel (321) | Identity provider; own host through Caddy over h2c (`deploy/caddy/Caddyfile:121-134`) |
+| Meeting capture | vexa12-admin-api (1949), vexa12-runtime (1990), vexa12-meeting-api (2025), vexa12-redis (1899), vexa12-transcription-proxy (1923) | The Vexa stack. The meeting API listens only on the network shared with portal-api; the proxy forwards the bots' transcription calls to gpu-01 (`deploy/docker-compose.yml:1932-1934`) |
+| Docker access | docker-socket-proxy (719), docker-socket-proxy-ro (748), runtime-api-socket-proxy (1838) | The write proxy allows only containers and networks with create and delete, behind klai-docker-authz; the read-only proxy serves Alloy (`deploy/docker-compose.yml:709-718`, `deploy/alloy/config.alloy:15-27`) |
+| Observability | alloy (1463), grafana (1494), cadvisor (1436), glitchtip-web, glitchtip-worker, glitchtip-migrate (1247, 1281, 1306) | See section 9 |
+| Third-party applications | crm and crm-worker, umami, fider, listmonk, vaultwarden, calnode | CRM, web analytics, feedback board, newsletter, password manager, scheduling. Each has its own host in Caddy (`deploy/caddy/Caddyfile:207-216,568-649`) |
+| Supporting | rollback-canary (901) | Behind the profile `rollback-rehearsal`; used only by the rehearsal workflows (`deploy/docker-compose.yml:901-902`) |
 
-A sixth type — **Decision** — is added as the intentional layer: capturing *why* something was decided, not just what exists.
+Two other published hosts serve operations: a bearer-gated log-ingest endpoint that remote agents push to, and Grafana (`deploy/caddy/Caddyfile:103-119,152-190`). Caddy finally imports per-tenant site files from a shared volume; docs-app contains a writer for per-organisation docs host files (`klai-docs/lib/caddy.ts:13,24`) that nothing calls yet, and portal-api writes the LibreChat host files (`deploy/caddy/Caddyfile:659-666`).
 
-Six universal relationships cover all organizational knowledge: `created`, `owns`, `contains`, `linked_to`, `classified_as`, `member_of`.
+### Directories that are not services
 
-### Quality is determined at ingest, not retrieval
+`klai-widget` (the embeddable chat bundle, built inside the portal frontend workflow), `klai-shield-extension` (browser extension), `klai-hubspot` (HubSpot app), `deploy` (compose, Caddy, Alloy, Grafana provisioning, LiteLLM config, scripts), `rules` (ast-grep rules), `scripts` (repository guards and audits). `klai-infra` and `klai-website` are private repositories that appear as submodules (`.gitmodules`).
 
-The most consequential finding: adding contextual metadata at storage time reduces retrieval errors by 49% (Anthropic research). No retrieval technique compensates for a poor ingest. The moment something is ingested is the most important moment in the system.
+## 2. Tenancy and data
 
-**In Klai:** `knowledge-ingest` performs contextual enrichment (HyPE question generation, content profile metadata, source context) before storage — not as post-processing. See [knowledge-ingest-flow.md](knowledge-ingest-flow.md).
+**Identifying the org.** One Zitadel organisation per tenant is created at signup (`klai-portal/backend/app/api/signup.py:346,720`) and recorded in `portal_orgs` (integer `id`, string `zitadel_org_id`, `slug`). A user belongs to an org through `portal_users(zitadel_user_id, org_id)`; one user can have several rows (`klai-portal/backend/app/api/auth_bff.py:229-257`). Per request, `get_caller` resolves the org from the session's user and calls `set_tenant` (`klai-portal/backend/app/core/permissions.py:235-336`). The host must also match: `KlaiTenantHostMiddleware` compares the first label of the request host with the slug of the session's org and redirects (HTML) or answers 409 with a target (XHR) on a mismatch (`klai-portal/backend/app/middleware/tenant_host.py:1-60`).
 
-### Hybrid processing: 90% automatic, 10% human review
+**Row-level security in the portal database.** An `after_begin` listener runs at the start of every transaction and sets four transaction-local settings: `app.current_org_id`, `app.cross_org_admin`, `klai.changed_by_user_id` and `app.is_platform_admin` (`klai-portal/backend/app/core/database.py:35-39,73-113`). The values come from the session (`set_tenant`) and from context variables for the acting user (`klai-portal/backend/app/core/database.py:43-70`). Background work opens its own sessions with `tenant_scoped_session(org_id)`, and operations that must cross orgs use `cross_org_session()` (`klai-portal/backend/app/core/database.py:497,525`). The policy helper `_rls_current_org_id()` returns the org id, returns NULL when the cross-org flag is true, and raises an error when neither is set, so a query without tenant context fails instead of returning rows (`klai-portal/backend/alembic/versions/post_deploy_rls_raise_on_missing_context.sql:73-99`). That file applies the policies to the knowledge-base, group, group-access, tombstone, taxonomy, retrieval-gap, user-product, MCP-token, meeting, partner-key and widget tables (same file, `:118-319`); other `post_deploy_*.sql` files that use the helper add further tables, among them widget conversations and product updates. The tables added for the chat and gap work all take the strict category (category D in `.claude/rules/klai/projects/portal-security.md:94-105`: `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with `USING (_rls_current_org_id() IS NULL OR org_id = _rls_current_org_id())` and `WITH CHECK (org_id = _rls_current_org_id())`): `internal_chat_cases` (`klai-portal/backend/alembic/versions/post_deploy_f3a9c6e2b4d1_internal_chat_cases_rls.sql:20-31`), `internal_chat_turns` (`post_deploy_i5c6t7u8r9n0_internal_chat_turns_rls.sql:20-31`), `portal_support_cases` (`post_deploy_s1p2c3a4s5e6_support_cases_rls.sql:15-26`), `portal_gap_proposals` (`post_deploy_77d01eafb800_gap_proposals_rls.sql:22-33`), `portal_gap_kept_questions` (`post_deploy_c8e2f5a1d3b7_gap_kept_questions_rls.sql:25-36`), `answer_reviews` (`post_deploy_c2a7e9d4b1f6_answer_reviews_rls.sql:91-96`) and `kb_uploads`, which despite the name is a portal table (`post_deploy_85e5d0a7cb98_kb_uploads_rls.sql:16-27`). `portal_retrieval_gaps` has had the same policy since the raise-on-missing-context file (`post_deploy_rls_raise_on_missing_context.sql:163-165`). `portal_users` is the exception by design: the lookup that finds the user runs before the org is known (`klai-portal/backend/app/core/permissions.py:179-184`). A guard logs or raises when DML on a protected table touches zero rows (`klai-portal/backend/app/core/rls_guard.py:55-94`). RLS DDL lives in `post_deploy_*.sql` files that the deploy applies after the migrations (section 8).
 
-Fully automated extraction produces 20–45% errors on standard business documents. The hybrid approach: 90% of documents are processed automatically; only the 10–15% where the system itself has low confidence are flagged for human review. Near-human quality at 500× less effort.
+**Per-tenant resources.** Provisioning creates, in order, with a compensating action for each step (`klai-portal/backend/app/services/provisioning/orchestrator.py:309-689`): a Zitadel OIDC application for LibreChat, a LiteLLM team and key, a MongoDB user and database, a Meilisearch runtime key with `{slug}_messages` and `{slug}_convos` indexes (the same key and the same two index names for every new tenant, `klai-portal/backend/app/services/provisioning/orchestrator.py:195-224` and `generators.py:315-323`; provisioning does not switch `SEARCH` on, and the container entrypoint refuses to start with `SEARCH=true` unless both index names are set, `deploy/librechat/klai-entrypoint.sh:38-47`; the runbook for switching search on per tenant is `docs/runbooks/meili-tenant-search-rollout.md`), the LibreChat environment file with an internal-chat key, a personal docs repository in Gitea through docs-app, the portal knowledge bases (`org` and `personal-<user>`), the LibreChat container, a Caddy site block, the Caddy reload and the system groups (`klai-portal/backend/app/services/provisioning/orchestrator.py:617,632,646`). A failed run rolls the steps back in reverse order. Deprovisioning runs 21 steps in order with three attempts each, ending in a hard delete of the portal rows (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:993-1018`, `klai-portal/backend/app/services/provisioning/deprovisioning_orchestrator.py:161-162`).
 
-**In Klai:** evidence-tier scoring was removed after an inconclusive online shadow run:
-it changed retrieval order but had no paired answer-quality outcome. Full hybrid review
-remains a separate Phase 3 concept — it is not implemented by a shadow scorer.
+**Carrying the tenant into the other stores.** The key is the Zitadel org id string.
 
-### Three storage layers — each wins at something different
+| Store | Mechanism |
+|---|---|
+| Qdrant | Every point carries `org_id` in its payload and every retrieval filter starts with an `org_id` condition (`klai-retrieval-api/retrieval_api/services/search.py:131-139`) |
+| Graph | Each organisation is a Graphiti group: searches pass `group_ids=[org_id]` (`klai-retrieval-api/retrieval_api/services/graph_search.py:264`) |
+| Object storage | Knowledge-base images use the key `{org_id}/images/{kb_slug}/{sha256}.{ext}` (`klai-libs/image-storage/klai_image_storage/storage.py:100-107`); Scribe artifacts live under a prefix per slug (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:562`) |
+| MongoDB, Meilisearch | A database per workspace; indexes and keys scoped per workspace (`klai-portal/backend/app/services/provisioning/orchestrator.py:461-483`) |
+| Downstream calls | portal-api passes the Zitadel organisation id to knowledge-ingest and retrieval-api (`klai-portal/backend/app/services/knowledge_ingest_client.py:56,98`, `klai-portal/backend/app/services/retrieval_context.py:837,895-898`) |
 
-| Layer | Technology | Wins at |
+## 3. Portal
+
+The portal is a FastAPI backend (Python 3.13, `klai-portal/backend/Dockerfile:8,44`) and a React single-page app (React 19, Vite, TanStack Router and Query, Mantine, Tailwind; `klai-portal/frontend/package.json:36-108`) with Dutch and English messages through Paraglide (`klai-portal/frontend/vite.config.ts:5`). Besides the product it hosts the Partner API, the Shield API, the meeting integration and the proxy to scribe-api and docs-app. The other Klai services use Python 3.12, except `bge-m3-sparse` on 3.11 (the `FROM` line of each Dockerfile).
+
+### API surface
+
+Routers are registered in `klai-portal/backend/app/main.py:404-457`. Modules are in `klai-portal/backend/app/api/`.
+
+| Group | Modules | What they serve |
 |---|---|---|
-| Relational | PostgreSQL | Precise filtering: "all documents from team X, Jan–Mar" |
-| Vector | Qdrant (BGE-M3 dense + sparse) | Semantic similarity: finds relevant results even when exact words differ |
-| Graph | FalkorDB + Graphiti | Multi-hop relationships: "which decisions connect to this document?" |
+| auth | `auth`, `auth_bff`, `auth_password_policy`, `auth_join`, `auth_select`, `signup`, `me`, `me_mcp_tokens`, `mcp_oauth` | Login, session and logout, MFA enrolment, password reset, workspace choice and join requests, signup, the current user, organisation telemetry and PII settings, MCP token management, the OAuth server for MCP clients |
+| admin | `admin/` (users, products, settings, audit, join requests, retry provisioning, deprovision, platform unlocks, extensions, billing, platform pages, widget retention), `groups`, `knowledge_bases`, `admin_api_keys`, `admin_widgets`, `admin_slack` | Workspace administration and Klai platform administration under `/api/admin` and `/api/admin/platform` |
+| app | `app_*` (account, activity, assistant, chat, gap clusters, gaps, knowledge bases, knowledge sources, product updates, support cases, templates), `connectors`, `taxonomy`, `kb_images`, `knowledge`, `meetings`, `billing`, `mcp_servers`, `oauth`, `shield`, `proxy`, `vitals` | End-user features under `/api/app`, `/api/knowledge`, `/api/bots`, `/api/billing`; the BFF proxy `/api/scribe/*` and `/api/docs/*`; web-vitals and Prometheus metrics |
+| partner | `partner`, `partner_openai_compat`, `partner_feedback`, `partner_widget_config`, support sessions, HubSpot handoffs | `/partner/v1`: knowledge bases, `chat/completions`, `models`, `responses`, `feedback`, `knowledge`, `widget-config`, `public-bot-config`, `support-sessions` |
+| internal | `internal`, `internal_connectors`, `internal_support_cases`, `internal_slack` | Service-to-service routes under `/internal`: identity verification, permissions, connector status, retrieval log, onboarding, template resolution, Slack linking |
+| webhooks | `webhooks`, `meetings` | `/api/webhooks/moneybird`, `/api/webhooks/hubspot/custom-channel`, `/api/bots/internal/webhook` for Vexa (Caddy answers 404 for that last path from outside, `deploy/caddy/Caddyfile:413`) |
 
-All three are needed. The combination consistently outperforms any single approach. All three are now **live**: PostgreSQL, Qdrant, **and** FalkorDB+Graphiti — `GRAPHITI_ENABLED=true` on retrieval-api and knowledge-ingest, and the graph search leg participates in the RRF fusion (`retrieval_api/services/graph_search.py`).
+The module `orgs.py` under `/api/orgs` serves the telemetry level and the PII entity and allow-list settings of the organisation (`klai-portal/backend/app/api/orgs.py:68,120,222`).
 
-### Build order (followed by Klai)
+### Frontend areas
 
-1. Define entity types and relationships — the universal core
-2. Build taxonomy — categories as a hierarchy on top of the core
-3. Ingest with context — enrichment at storage time; human review only for low-confidence items
-4. Index taxonomy labels — integral to the search index, not post-processing
-5. Combine at retrieval — SQL for filters, vector for semantics, graph for connections
+Routes are in `klai-portal/frontend/src/routes/`. Public and onboarding pages: start, login, callback, logged-out, signup, password, verify, MFA setup, workspace selection, join request, provisioning, tenant-deleted, the widget host page. `/app` holds chat (an iframe of the tenant's LibreChat, `klai-portal/frontend/src/routes/app/chat.tsx:241`), knowledge, gaps, meetings and transcription, docs, integrations, account and instructions. `/admin` holds users, groups, profiles, API keys, widgets, Slack, MCP servers, billing, settings, join requests, danger zone and the platform area. `/app` and `/admin` use `useProtectedRoute` (unauthenticated users go to the start, MFA setup is forced when the org requires it); `/admin` needs at least `kb_manager` (`klai-portal/frontend/src/hooks/useProtectedRoute.ts:110-130`, `klai-portal/frontend/src/routes/admin/route.tsx:18-21`).
 
-**The classification at storage is primary. The retrieval technique is secondary.**
+### Roles and accounts
 
-### Knowledge graph: FalkorDB + Graphiti (live)
-
-FalkorDB is deployed on core-01 and **active in retrieval** (`GRAPHITI_ENABLED=true`); the graph search leg is RRF-merged with the Qdrant legs. Key decisions:
-
-- **FalkorDB** over Apache AGE: PostgreSQL major version upgrades break AGE — unacceptable for a long-lived system. Both are supported by Graphiti, migration minimal if ever needed.
-- **Graphiti** for extraction: entity resolution, deduplication, and temporality handled automatically.
-- **Temporal tracking at relationship level**: each edge has `valid_at`, `invalid_at`, `expired_at` — enables "what did the system know on date X?" Full details in the research doc.
-- **reference_time rule**: when ingesting a historical document, pass the document date as `reference_time`, not today's date.
-- **Density target**: ≥2 connections per node. Back-linking each entity to its source document achieves ~6 connections/node in production (HippoRAG2, independently verified).
-
-### Retrieval enrichment: HyPE, not Contextual Retrieval
-
-HyPE (Hypothetical Prompt Embeddings) and Contextual Retrieval solve different problems:
-
-- **Contextual Retrieval** — adds surrounding context to each chunk at storage time. Solves chunk boundary loss.
-- **HyPE** — generates hypothetical questions a chunk would answer. Solves the vocabulary gap between user queries and document language.
-
-Klai uses HyPE because vocabulary gap is the primary retrieval problem for business knowledge. HyPE questions are stored as a separate index in Qdrant and contribute to hybrid RRF retrieval scoring via Dual-Index Fusion.
-
----
-
-## RAG stack (Phase 2 — deployed March 2026)
-
-> **Deployed state:** Custom `knowledge-ingest` + `retrieval-api` + Qdrant. LibreChat `rag_api` (Track A) was never deployed — the custom approach was built directly. Haystack/LlamaIndex was removed; the custom services cover all orchestration needs.
-
-Two tracks were evaluated during planning; Track B was built directly.
-
-### Track A: LibreChat rag_api (evaluated, not deployed)
-
-LibreChat has a built-in RAG service (`rag_api`). Evaluated but not deployed. Downsides: LangChain lock-in (breaking changes), no Qdrant support, weak multi-tenant isolation (file_id, not tenant_id).
-
-### Track B: custom RAG services (deployed as knowledge-ingest + retrieval-api)
-
-Custom FastAPI services with full control. Haystack/LlamaIndex orchestration was removed — Qdrant + the ingest pipeline covered all orchestration needs directly.
-
-```
-Document parsing   docling-serve (MIT, IBM Research)
-Embeddings dense   BGE-M3 via HuggingFace TEI
-Embeddings sparse  BGE-M3 via FlagEmbedding sidecar (bge-m3-sparse, http://bge-m3-sparse:8001)
-Vector store       Qdrant on core-01 (klai_knowledge collection)
-Ingest service     knowledge-ingest (FastAPI, /ingest/v1/*)
-Retrieval service  retrieval-api (FastAPI, POST /retrieve, 3-leg RRF fusion)
-LiteLLM hook       KlaiKnowledgeHook (feature gate, user_id scoping, gap detection)
-MCP server         klai-knowledge-mcp (save_personal_knowledge, save_org_knowledge)
-```
-
-### Shared components (both tracks)
-
-**BGE-M3** (FlagOpen, MIT, 11.4k stars): only embedding model with MIT license + SOTA multilingual NL/DE + hybrid retrieval (dense + sparse). VRAM: 4-10 GB on H100 in production (due to CTranslate2 memory pools and batching). Via HuggingFace TEI as microservice.
-
-**Docling** (IBM Research, MIT, 54.7k stars): PDF/DOCX/XLSX/PPTX parsing with AI layout analysis and table recognition. Has its own FastAPI REST wrapper. Fully local, no external calls.
-
-**Exclusions:**
-- Jina-embeddings-v3: CC BY-NC 4.0 — prohibited for commercial SaaS use
-- PyMuPDF4LLM: AGPL-3.0 — requires open source publication of the full application for SaaS use
-- LangChain as own choice: high churn (breaking changes), higher overhead; acceptable as rag_api dependency, not as own architecture choice
-- pgvector for Track B: no namespace isolation, workarounds needed for multiple tenants
-
-## Deliberate exclusions (reconsider only at trigger)
-
-- LiteLLM Enterprise: only at first revenue (audit trail as product story)
-- Kubernetes: delay as long as possible
-- Custom chat UI: only after proof that LibreChat is a deal-breaker (the customer portal is custom React, that is a separate decision)
-- Zustand: React Context sufficient for auth/user state that rarely changes; add when demonstrable performance problems arise
-- Llama 3.3 70B FP8 on single H100: leaves only 5 GB KV cache, max 3-5 concurrent users — not viable
-- DeepSeek V3.2 (671B): requires 10-16x H100, not realistic
-- Mixtral: overtaken by Qwen3 and Mistral Small 3.2, not recommended for new setups
-- Mistral Small 3.2: on standby if Qwen3-32B hits context limits (128K vs 32K, same H100)
-- Gemma 3: Google retains right to remotely stop deployment — incompatible with privacy-first
-- LLaMA 4: EU usage restricted in license (multimodal model)
-
----
-
-## Backup
-
-Three data layers, one storage level: **Hetzner Object Storage** (S3-compatible, HEL datacenter, GDPR-compliant, €0.024/GB/month). Outbound traffic from Hetzner servers to Hetzner Object Storage in the same datacenter is free.
-
-### What gets backed up
-
-**MongoDB (chat history, conversations, uploads)**
-Most critical data. Unrecoverable if lost.
-- Tool: `mongodump --gzip` to Hetzner Object Storage
-- Frequency: nightly (daily at 02:00)
-- Retention: 30 days daily dumps, 12 months monthly snapshots
-- Restore per tenant: `mongorestore --db tenant_abc` — no other tenants affected
-
-**PostgreSQL (portal data, billing, provisioning, LiteLLM usage)**
-Invoice data and tenant registration live here.
-- Tool: `pg_dump` compressed to Object Storage
-- Frequency: nightly
-- Retention: 30 days
-
-**Tenant config files (.env, librechat.yaml per tenant)**
-Generated at provisioning, can be regenerated from PostgreSQL. Backing up costs nothing significant.
-- Tool: `tar.gz` of the config directory, to Object Storage
-- Frequency: at every provisioning action + nightly
-
-**Not backed up separately:**
-- LibreChat Docker images (always re-pullable)
-- Meilisearch indexes (rebuild only with a tenant-safe procedure; upstream LibreChat startup sync is not safe to run across all tenant silos against shared indexes)
-- VictoriaLogs/VictoriaMetrics data (monitoring is instrumental, not business-critical)
-
-### Backup cost estimate
-
-Estimates based on text data (chat history compresses heavily, gzip factor ~10x).
-
-| Situation | Raw MongoDB data | After gzip | Retention 30 days | Object Storage/mo |
-|---|---|---|---|---|
-| 10 tenants (start) | ~5 GB/mo | ~0.5 GB/dump | ~15 GB | <€1 |
-| 50 tenants | ~25 GB/mo | ~2.5 GB/dump | ~75 GB | ~€2 |
-| 200 tenants | ~100 GB/mo | ~10 GB/dump | ~300 GB | ~€7 |
-| 500 tenants | ~250 GB/mo | ~25 GB/dump | ~750 GB | ~€18 |
-
-PostgreSQL dumps are negligibly small (<5 GB total for hundreds of tenants).
-
-**Backup costs are < €20/month up to 500 tenants.** Never a factor in the cost picture — ai-01 dominates at €1,100-1,950/mo.
-
-### Tooling
-
-**Restic** (recommended): single binary, native S3 support, deduplication and encryption built in. Daily cronjob on core-01. Ref: [restic.net](https://restic.net)
-
-Hetzner Object Storage credentials via environment variables, SOPS/age encrypted — same approach as other secrets in the stack.
-
----
-
-## Observability & Logging
-
-### Structured Logging (structlog)
-
-- All Python services emit JSON to stdout via `structlog`
-- Standard fields: `timestamp` (ISO 8601), `level`, `service`, `logger`, `event`, context vars
-- FastAPI middleware auto-binds: `org_id`, `user_id`, `request_id`
-- `request_id` propagates Caddy → portal-api → downstream services (see `.claude/rules/klai/infra/observability.md`) — one `request_id:<uuid>` query shows the full chain in VictoriaLogs
-- Admin CRUD events carry `domain="api_key"` or `domain="widget"` (replaces the old `integration_type` field dropped by SPEC-WIDGET-002)
-- Product events emitted to `product_events` PostgreSQL table: `signup`, `billing.*`, `meeting.*`, `knowledge.uploaded`, `notebook.created/opened`, `source.added`, `knowledge.queried`, `widget.chat.started/completed`
-- Fallback: `LOG_FORMAT=console` for human-readable output
-- Logger naming: `logger = logging.getLogger(__name__)`
-
-### Collection & Storage
-
-- Grafana Alloy with `loki.source.docker` discovers containers on core-01
-- Labels: `service` (Docker label), `server`, `env=production`
-- VictoriaLogs storage with 30-day retention (`-retentionPeriod=30d`)
-- Grafana datasource provisioning: `deploy/grafana/provisioning/datasources/victorialogs.yaml`
-
-### Cross-Server Shipping
-
-- public-01 → core-01 via Alloy over HTTPS
-- Caddy reverse proxy: `https://logs-ingest.${DOMAIN}` with bearer token auth
-- Config: `deploy/alloy/config.alloy`
-
-### Dashboards
-
-- Provisioned log explorer: `deploy/grafana/provisioning/dashboards/logs.json`
-- Filters: service, server, level
-
----
-
-## Compatibility Review (2026-03-03)
-
-Independent research per component on standard integration and mutual compatibility.
-Legend: ✅ confirmed compatible | ⚠️ attention point | ❌ correction needed
-
----
-
-### Frontend: Vite + React + Tailwind v4 + TanStack
-
-**Tailwind v4 + @tailwindcss/vite**
-- ✅ Official first-party Vite plugin, replaces PostCSS setup. No tailwind.config.js needed.
-- ⚠️ v4 generates many CSS custom properties on `:root`. Can conflict with variables from external UI libraries. Mitigation: `prefix()` import. Ref: [GitHub #15754](https://github.com/tailwindlabs/tailwindcss/issues/15754)
-- Docs: [tailwindcss.com/docs](https://tailwindcss.com/docs)
-
-**TanStack Router + TanStack Query**
-- ✅ Standard combination. Router's loader API is explicitly designed for integration with Query for prefetched route state.
-- ⚠️ With code-based routing no extra Vite plugin needed (only with file-based). TypeScript issue with `moduleResolution: bundler` + `composite: true` — adjust in tsconfig.json. Ref: [GitHub #2178](https://github.com/TanStack/router/issues/2178)
-- Docs: [tanstack.com/router](https://tanstack.com/router/latest/docs/routing/code-based-routing)
-
-**Voys-UI "Cleopatra"**
-- ❌ No public npm package found. Voys GitHub has 6 public repos, no design system. Most likely internal/private library.
-- ⚠️ Unknown whether it is React-compatible and whether it conflicts with Tailwind v4 CSS custom properties or global styles. Must be verified internally before the portal frontend is built.
-
----
-
-### Auth: Zitadel + LibreChat + FastAPI + React SPA
-
-**Zitadel: Authorization Code + PKCE**
-- ✅ Standard recommended flow. Zitadel application type: "User Agent" with PKCE S256. LibreChat's `openid-client` handles PKCE automatically.
-- Docs: [zitadel.com/docs/guides/integrate/login/oidc/oauth-recommended-flows](https://zitadel.com/docs/guides/integrate/login/oidc/oauth-recommended-flows)
-
-**Zitadel: B2B Organizations**
-- ✅ One Organization per customer is the canonical Zitadel approach, explicitly documented. Org routing via primary domain scope.
-- Docs: [B2B solution scenario](https://zitadel.com/docs/guides/solution-scenarios/b2b)
-
-**FastAPI JWT validation**
-- ✅ Library available: `fastapi-zitadel-auth` (MIT, community). Validates via JWKS endpoint.
-- Ref: [pypi.org/project/fastapi-zitadel-auth](https://pypi.org/project/fastapi-zitadel-auth/)
-
-**React SPA tokens**
-- ✅ `@zitadel/react` (wrapper around `oidc-client-ts`) or `react-oidc-context`. Both handle PKCE, token exchange and silent renewal.
-- Docs: [zitadel.com/docs/examples/login/react](https://zitadel.com/docs/examples/login/react)
-
-**Zitadel custom claims/roles to LibreChat**
-- ✅ Supported via "Assert Roles on UserInfo" in project settings or via Zitadel Actions (JavaScript) for flat `groups` claim.
-- Docs: [zitadel.com/docs/apis/openidoauth/claims](https://zitadel.com/docs/apis/openidoauth/claims)
-
-**LibreChat OIDC: known issues (not Zitadel-specific)**
-- ⚠️ `OPENID_REUSE_TOKENS=true` breaks existing users. Do not use unless fresh deployment. [GitHub #9303](https://github.com/danny-avila/LibreChat/issues/9303)
-- ⚠️ Explicit setting required: `OPENID_USERNAME_CLAIM=preferred_username` otherwise LibreChat falls back to `given_name`. [GitHub #8672](https://github.com/danny-avila/LibreChat/issues/8672)
-- ⚠️ Logout does not call Zitadel end-session endpoint. Zitadel session remains active after LibreChat logout. Building a custom logout flow is then necessary.
-
----
-
-### LibreChat: Database and Provisioning
-
-**Database: MongoDB is required**
-- ❌ LibreChat requires MongoDB. There is no native PostgreSQL support.
-- ✅ Alternative: FerretDB as MongoDB-compatible API on top of PostgreSQL (core-01 already has PostgreSQL). Documented as working with LibreChat by the FerretDB community. Less battle-tested than real MongoDB.
-- ⚠️ Schema approach: one MongoDB database per tenant on a shared cluster (via MONGO_URI database name per container). No native multi-tenancy within one database instance.
-- Ref: [blog.ferretdb.io/replacing-mongodb-with-ferretdb-librechat](https://blog.ferretdb.io/replacing-mongodb-with-ferretdb-librechat/)
-
-**Provisioning API: not available**
-- ⚠️ LibreChat has no admin REST API for user management, OIDC configuration or model endpoints. Admin Panel is on the [2026 roadmap](https://www.librechat.ai/blog/2026-02-18_2026_roadmap).
-- Provisioning goes via: Docker API + templated `.env` and `librechat.yaml` per container. Scriptable but not via HTTP calls.
-
-**Token usage to PostgreSQL**
-- ⚠️ No built-in bridge. LibreChat stores transactions in MongoDB (Transactions collection). Export via: direct MongoDB query or [virtUOS/librechat_exporter](https://github.com/virtUOS/librechat_exporter) (Prometheus exporter). ETL from MongoDB to PostgreSQL for billing is custom work.
-- Docs: [librechat.ai/docs/configuration/token_usage](https://www.librechat.ai/docs/configuration/token_usage)
-
-**Meilisearch: current decision — shared service, getklai tenant-scoped canary**
-- One shared Meilisearch service is deployed for operational simplicity.
-- `getklai` canary uses tenant-scoped indexes (`getklai_messages`, `getklai_convos`) via `MEILI_MESSAGES_INDEX` and `MEILI_CONVOS_INDEX`.
-- LibreChat still expects the env var name `MEILI_MASTER_KEY`, but the getklai compose value is `GETKLAI_MEILI_API_KEY`, scoped to only `getklai_messages` and `getklai_convos`.
-- Provisioned tenants receive their own scoped Meili API key when generated; `SEARCH=true` is still not enabled automatically.
-- Do not enable multiple tenants against upstream global `messages`/`convos` indexes. `userId` filtering only scopes reads; it does not make startup sync cleanup or delete hooks tenant-safe.
-- Migration requirement before broad `SEARCH=true`: create tenant-scoped indexes, reset or backfill documents whose Mongo `_meiliIndex=true` was set by the old global-index sync, and verify document counts/key parity before enabling search. `MEILI_NO_SYNC=true` alone is not a migration. Rollout checklist: `docs/runbooks/meili-tenant-search-rollout.md`.
-
----
-
-### AI Routing: LibreChat + LiteLLM + vLLM
-
-**LibreChat + LiteLLM as OpenAI-compatible endpoint**
-- ✅ Standard documented pattern. Configuration in `librechat.yaml` under `endpoints.custom`.
-- Docs: [librechat.ai/docs/configuration/librechat_yaml/ai_endpoints/litellm](https://www.librechat.ai/docs/configuration/librechat_yaml/ai_endpoints/litellm)
-
-**LiteLLM Complexity Router**
-- ✅ Available in LiteLLM OSS from v1.74.9. Not explicitly Enterprise-only. Scoring on 7 dimensions, sub-millisecond, no external calls.
-- ⚠️ Relatively new feature, not yet extensively tested in production. Verify OSS status on upgrade.
-- Docs: [docs.litellm.ai/docs/proxy/auto_routing](https://docs.litellm.ai/docs/proxy/auto_routing)
-
-**LiteLLM to vLLM: configuration requirements**
-- ⚠️ Provider prefix must be `hosted_vllm/` (not `openai/`), otherwise routing errors.
-- ⚠️ `drop_params: true` required in litellm_settings — vLLM does not accept all OpenAI parameters.
-- Docs: [docs.litellm.ai/docs/providers/vllm](https://docs.litellm.ai/docs/providers/vllm)
-
-**vLLM: gpu-memory-utilization values were incorrect**
-- ❌ The values 0.41 + 0.12 were wrong. `--gpu-memory-utilization` is a ceiling on total VRAM per instance. At 0.41 * 80 GB = 32.8 GB ceiling for the 32B instance (while weights are already ~33 GB) virtually no room remains for KV cache — almost certainly OOM or crashing startup.
-- Correct approach: split so combined utilization < 1.0. Guideline: 32B instance ~0.55, 8B instance ~0.40, total ~76 GB (weights + KV cache).
-- Docs: [docs.vllm.ai/en/stable/configuration/optimization](https://docs.vllm.ai/en/stable/configuration/optimization/)
-
-**vLLM: two instances on one GPU**
-- ✅ Supported (vLLM FAQ confirms this explicitly), but is a workaround, not a first-class feature.
-- ⚠️ Requires sequential startup: first 32B, then 8B, then Whisper. Parallel startup triggers a memory accounting bug where the second instance sees the VRAM of the first as occupied. [GitHub #10643](https://github.com/vllm-project/vllm/issues/10643)
-
----
-
-### GPU Resource Management: H100 + MPS + Whisper
-
-**VRAM calculation**
-- ⚠️ The 38 GB KV cache is too optimistic. vLLM loads models first in full precision for quantization (peak usage up to 3x model size during startup). CTranslate2 (Whisper) reserves CUDA memory pools above the raw weights. Realistic: ~25-30 GB KV cache after CUDA overhead.
-
-**NVIDIA MPS setup**
-- ✅ MPS is the standard approach for GPU sharing between multiple processes.
-- ⚠️ Requires two system-level steps before CUDA processes start: GPU compute mode to EXCLUSIVE_PROCESS and start MPS daemon (`nvidia-cuda-mps-control -d`).
-- ⚠️ On H100 (Hopper): `CUDA_MPS_ENABLE_PER_CTX_DEVICE_MULTIPROCESSOR_PARTITIONING=1` alongside `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE`, otherwise SM limits may not be enforced per-context.
-- ⚠️ vLLM CUDAGraph + MPS can cause instability (illegal memory access). Workaround: `--enforce-eager` on the smaller instance.
-- Docs: [docs.nvidia.com/deploy/mps](https://docs.nvidia.com/deploy/mps/index.html)
-
-**faster-whisper on H100**
-- ✅ CTranslate2 (the Whisper runtime) supports CUDA GPU inference with `int8_float16` as recommended compute type.
-- ⚠️ Requires CUDA 12 + cuDNN 9. Version mismatch is the most common deployment problem.
-- ⚠️ Actual VRAM usage: ~6-10 GB (not 4-6 GB) due to CTranslate2 memory pools.
-
----
-
-### Per-Tenant Routing: Caddy + Wildcard DNS
-
-**"Caddy handles routing automatically" is an oversimplification**
-- ⚠️ Caddy does not automatically know about new containers. An explicit approach is needed.
-
-**Recommended approach: Tenant Router (FastAPI dispatcher)**
-- ✅ Caddy has a static config with one `*.getklai.com` block. A small FastAPI dispatcher reads the tenant registration (from existing DB) and proxies to the correct container via Docker network hostname.
-- Benefit: no Caddy Admin API calls on provisioning, no custom Caddy build for routing, easy to debug.
-
-**Wildcard TLS for *.getklai.com**
-- ⚠️ Requires a custom Caddy build (via `xcaddy`) with a DNS provider plugin for ACME DNS-01 challenge. Cloud86 (current DNS provider) has no Caddy plugin.
-- ✅ Recommended solution: migrate DNS to **Hetzner DNS** (free, already a customer). Caddy plugin available: `github.com/caddy-dns/hetzner`. Fully European (German), GDPR-compliant, no data outside EU.
-- Alternative EU providers with Caddy plugin: INWX (German, `caddy-dns/inwx`), OVH (French, `caddy-dns/ovh`), Bunny DNS (Slovenian, `caddy-dns/bunny`).
-- Docs: [caddyserver.com/docs/automatic-https](https://caddyserver.com/docs/automatic-https)
-
----
-
-### RAG Stack
-
-**LibreChat rag_api + HuggingFace TEI**
-- ✅ Confirmed supported. `EMBEDDINGS_PROVIDER=huggingfacetei` is a documented option.
-- ⚠️ Requires the non-lite image: `ghcr.io/danny-avila/librechat-rag-api-dev:latest`. The lite image does not support TEI embeddings.
-- ⚠️ `EMBEDDINGS_MODEL` must be the TEI service URL, not a model name.
-- ⚠️ Known regression (September 2025) in main branch — pin to a tested release. [GitHub #9862](https://github.com/danny-avila/LibreChat/issues/9862)
-- Docs: [librechat.ai/docs/configuration/rag_api](https://www.librechat.ai/docs/configuration/rag_api)
-
-**BGE-M3 VRAM via TEI**
-- ⚠️ 2 GB is too optimistic. Production with batching: 4-10 GB. Check TEI version for sparse/multi-vector support — that is precisely the added value of BGE-M3 over smaller models. [TEI GitHub #141](https://github.com/huggingface/text-embeddings-inference/issues/141)
-
-**Qdrant v1.16 (Track B)**
-- ✅ Tiered multitenancy is native and production-grade. Small tenants share a fallback shard, large tenants are automatically promoted to a dedicated shard.
-- ⚠️ Custom sharding must be configured at collection creation. Adding it later requires data migration.
-- Docs: [qdrant.tech/documentation/guides/multitenancy](https://qdrant.tech/documentation/guides/multitenancy/)
-
-**Docling-serve**
-- ✅ Official FastAPI/Uvicorn wrapper (`docling-serve`). Supports sync/async, API key auth, Docker images for CPU/CUDA. Production-ready.
-- Ref: [github.com/docling-project](https://github.com/docling-project)
-
-**Haystack 2.x or LlamaIndex + Qdrant**
-- ✅ Both fully compatible with Qdrant. Haystack via `qdrant-haystack` package, LlamaIndex via `llama-index-vector-stores-qdrant`. Both documented.
-- ⚠️ Haystack: `use_sparse_embeddings=True` must be explicitly set for BGE-M3 hybrid retrieval. Default is dense-only.
-
----
-
-### Monitoring: Grafana Alloy + VictoriaLogs/Metrics
-
-**Alloy + VictoriaLogs**
-- ✅ Compatible. VictoriaLogs has a Loki-compatible push endpoint, Alloy's `loki.write` component works with it.
-- Docs: [docs.victoriametrics.com/victoriametrics/data-ingestion/alloy](https://docs.victoriametrics.com/victoriametrics/data-ingestion/alloy/)
-
-**Alloy + VictoriaMetrics**
-- ✅ Compatible via standard Prometheus remote write protocol.
-
-**Grafana datasource: dedicated plugins required**
-- ❌ VictoriaLogs: generic Loki datasource does **not** work — LogsQL (VictoriaLogs) and LogQL (Loki) are incompatible. Plugin required: `victoriametrics-logs-datasource`.
-- ⚠️ VictoriaMetrics: generic Prometheus datasource mostly works. Plugin (`victoriametrics-metrics-datasource`) adds MetricsQL autocomplete and WITH templates — useful but not a hard requirement.
-- Install via env var: `GF_INSTALL_PLUGINS=victoriametrics-logs-datasource,victoriametrics-metrics-datasource`
-- Docs: [grafana.com/grafana/plugins/victoriametrics-logs-datasource](https://grafana.com/grafana/plugins/victoriametrics-logs-datasource/)
-
-**LiteLLM: per-tenant metrics via Prometheus**
-- ✅ LiteLLM exposes `/metrics` with spend, tokens and latency labeled per team, user, API key and model. Configurable via `prometheus_metrics_config`.
-- This provides a direct billing basis per tenant — no custom ETL needed for token usage.
-- Pre-built dashboard available: [Grafana Dashboard #24055](https://grafana.com/grafana/dashboards/24055-litellm/)
-- Docs: [docs.litellm.ai/docs/proxy/prometheus](https://docs.litellm.ai/docs/proxy/prometheus)
-
-**vLLM: per-instance metrics via Prometheus**
-- ✅ vLLM exposes `/metrics` with KV cache occupancy, queue depth, token throughput and latency.
-- Pre-built dashboard available: [Grafana Dashboard #23991](https://grafana.com/grafana/dashboards/23991-vllm/)
-- Docs: [docs.vllm.ai/en/latest/design/metrics](https://docs.vllm.ai/en/latest/design/metrics/)
-
-**Deployment pattern: Alloy per server + central monitor-01**
-- ✅ This is the standard documented pattern for small-to-medium setups.
-
----
-
-### Summary: critical actions
-
-*Last verified: 2026-06-06*
-
-| Status | Component | Action / Decision |
+| Axis | Values | Anchor |
 |---|---|---|
-| ✅ Done | LibreChat database | MongoDB as shared server, separate database per tenant via `MONGO_URI`. Silo model. |
-| ✅ Done | vLLM gpu-memory-utilization | Corrected: ~0.55 (32B) + ~0.40 (8B). Original (0.41 + 0.12) was incorrect. |
-| ✅ Done | Caddy wildcard TLS | `caddy-hetzner:latest` deployed. xcaddy + `github.com/caddy-dns/hetzner`. DNS on Hetzner DNS. |
-| ✅ Done | Meilisearch | Shared instance with tenant-scoped LibreChat search indexes. All ready tenants use `{slug}_messages` and `{slug}_convos` with scoped runtime keys; Mongo remains source of truth. |
-| ✅ Done | Grafana VictoriaLogs plugin | Required (`victoriametrics-logs-datasource`). LogsQL != LogQL, generic Loki does not work. |
-| ✅ Done | LibreChat provisioning | portal-api provisioning service live (Phase 1 complete). Template logic: `provisioning.py`. |
-| ✅ Done | LiteLLM `drop_params` | `drop_params: true` in `litellm/config.yaml`. |
-| ✅ Done | Qdrant | Deployed on core-01. `klai_knowledge` collection. Replaces pgvector for vector search. |
-| ✅ Done | knowledge-ingest | Custom ingest service deployed. Gitea webhook, document upload, crawl, personal items endpoints. |
-| ✅ Done | retrieval-api | Hybrid RRF retrieval (dense + question + sparse) deployed on core-01. `POST /retrieve`. |
-| ✅ Done | bge-m3-sparse | FlagEmbedding sparse sidecar deployed. BGE-M3 dense+sparse in production. |
-| ✅ Done | klai-knowledge-mcp | MCP write server deployed. Personal + org KB saves; indexed in Qdrant immediately. |
-| ✅ Done | LiteLLM knowledge hook | `KlaiKnowledgeHook` live with feature gate, user_id scoping, conversation history, gap detection. |
-| ⚠️ Partial | LibreChat OIDC | `OPENID_USERNAME_CLAIM=preferred_username` + `OPENID_REUSE_TOKENS=false` in provisioning.py ✅. Custom logout redirect to Zitadel end-session still missing. |
-| ⚠️ Open | Cleopatra/Voys-UI | Publicly available? React + Tailwind v4 compatible? Verify internally before portal build. |
-| 🔜 Phase 3+ | LiteLLM to vLLM prefix | `hosted_vllm/` prefix in LiteLLM config — applicable when ai-01 GPU server is live. |
-| 🔜 Phase 3+ | MPS system setup | cloud-init or systemd unit for: EXCLUSIVE_PROCESS mode + MPS daemon + Hopper env vars, before Docker starts. |
-| N/A | rag_api image | Not used — custom knowledge-ingest + retrieval-api built instead of LibreChat rag_api. |
+| Profile role (`portal_users.role`) | `personal` < `company` < `kb_manager` < `group_manager` < `admin`; default `company` | `klai-portal/backend/app/core/profiles.py:50-63` |
+| Capabilities | Connectors for everyone; external connectors, organisation knowledge bases, members, taxonomy, gaps, activity and organisation templates from `kb_manager` | `klai-portal/backend/app/core/profiles.py:31-38,92-112` |
+| Seat type | `chat` or `knowledge`, derived from the role | `klai-portal/backend/app/core/seats.py:42-110` |
+| Products | `chat` and `knowledge` from the seat; `scribe` and `docs` need a platform unlock and at least `company` | `klai-portal/backend/app/core/features.py:37-113` |
+| Platform unlocks | Per-organisation features such as `scribe`, `docs`, `partner_api`, `widgets`, `custom_mcps`, `slack`, set only by a platform admin | `klai-portal/backend/app/models/portal.py:120-133`, `klai-portal/backend/app/core/permissions.py:456-498` |
+| Platform admin | An admin of the organisation whose slug is the configured platform organisation | `klai-portal/backend/app/core/permissions.py:427-453` |
+| User status | `active`, `suspended`, `offboarded` | `klai-portal/backend/app/models/portal.py:215` |
 
-### Delta 2026-04 (Week 17)
+Only the `admin` role is granted `org:owner` in Zitadel; the other roles live in the portal database (`klai-portal/backend/app/api/admin/users.py:81-87`). Groups exist for organisation and knowledge-base access; they carry no product grants (`klai-portal/backend/app/api/groups.py:428-447`). Detail on roles, invitations and offboarding: [klai-portal/docs/admin-roles.md](../../klai-portal/docs/admin-roles.md).
 
-| Status | Component | Note |
+### Background loops
+
+All are asyncio tasks started in the portal lifespan (`klai-portal/backend/app/main.py:284-327`), plus a stuck-provisioning check at boot (`klai-portal/backend/app/main.py:76-90`).
+
+| Loop | Cadence | Does |
 |---|---|---|
-| ✅ Done | Partner API | `api.getklai.com/partner/v1/*` live (SPEC-API-001). `pk_live_...` Bearer auth, KB-scoped. |
-| ✅ Done | Chat widget | `klai-widget` bundle served from portal origin (SPEC-WIDGET-001). <200 kB gzipped. JWT session-token auth via `WIDGET_JWT_SECRET`, no browser-visible API key. Wildcard subdomain support in `allowed_origins`. |
-| ✅ Done | Domain split | `partner_api_keys` and `widgets` are two independent tables + admin routes (SPEC-WIDGET-002). `/api/integrations` hard-removed. Revoke concept gone from both domains. |
-| ✅ Done | Social signup | Google + Microsoft IDPs via Zitadel (SPEC-AUTH-001). Retries session creation on CQRS replication lag. |
-| ✅ Done | SSO self-service | Domain allowlist + join requests + multi-org workspace selection (SPEC-AUTH-006). |
-| ✅ Done | 401 storm fix | Singleflight on Zitadel userinfo + coalesced `signinSilent()` — eliminates parallel 401 → Zitadel → refresh cascade. |
-| ✅ Done | Prompt Templates | Applied in LiteLLM pre-call hook. CRUD under `/api/app/templates` (SPEC-CHAT-TEMPLATES-001). |
-| 📋 Planned | Guardrail Rules | PII block/redact + keyword block/redact via klai-pii microservice (SPEC-CHAT-GUARDRAILS-001). |
-| ✅ Done | Two-phase web crawler | BFS discovery + extraction split (SPEC-CRAWL-002). Cookie auth, canary + login-indicator guard, SimHash-LSH dedup for >200 pages (SPEC-CRAWL-003), Layer A/B/C quality status. |
-| ✅ Done | Google Drive OAuth connector | SPEC-KB-025a. First OAuth-based connector. |
-| ✅ Done | Source-aware retrieval | `source_aware_select` applies a bounded semantic-router preference plus per-source diversity (SPEC-KB-021). `source_label` Qdrant payload field enables Facet API. |
-| ✅ Done | KB editor reliability | Full-UUID page URLs, BlockNote JSON persistence, client-owned SHA + promise queue, 409 auto-retry (SPEC-DOCS-001). |
-| ✅ Done | Dev environment | Parallel stack on `dev.getklai.com` with isolated LibreChat + LiteLLM. |
-| ✅ Done | Graph retrieval re-enabled | `GRAPHITI_ENABLED=true` on both `knowledge-ingest` and `retrieval-api` now that LLM + reranker dependencies run on gpu-01. Graph search leg rejoins Qdrant 3-leg RRF fusion. |
-| ✅ Done | Billing | Moneybird (Unlimited plan) live — invoicing, VAT, SEPA direct debit. Custom Mollie module dropped. |
+| Meeting poller | 10 s | Vexa meeting status, join and processing timeouts (`klai-portal/backend/app/services/bot_poller.py:37`) |
+| Upload poller | 5 s, 3 h deadline per upload | Polls docling tasks and forwards the markdown to knowledge-ingest (`klai-portal/backend/app/services/kb_upload_poller.py:48,57`) |
+| Recording cleanup | 300 s | Deletes Vexa recordings of finished meetings older than 30 minutes (`klai-portal/backend/app/services/recording_cleanup.py:20-24`) |
+| Telemetry purge | 24 h | Removes shadow queries and retrieval gaps older than 7 days, kept questions after 28 days (`klai-portal/backend/app/services/telemetry_purge.py:50-51`) |
+| Widget message retention | 24 h | Deletes widget messages past the per-organisation or default 7 days (`klai-portal/backend/app/services/widget_messages_retention.py:54`) |
+| Widget outcome | 15 min | Labels conversations quiet for 60 minutes (`klai-portal/backend/app/services/widget_outcome.py:74`) |
+| Conversation judge | 30 min, only 01:00 to 06:00 UTC | LLM judge (`klai-judge`) on finished conversations (`klai-portal/backend/app/services/conversation_judge.py:64`) |
+| Support reanalysis | 60 s, debounced per organisation | Re-analyses support cases after a connector sync (`klai-portal/backend/app/services/gap_rescorer.py:362`) |
+| Mail listener | 60 s, only when a mailbox is configured | Meeting invitations (`klai-portal/backend/app/services/imap_listener.py:29-44`) |
+
+### Billing
+
+Billing runs through Moneybird. The portal shows the billing status and a link to the Moneybird invoice portal (`klai-portal/backend/app/api/billing.py:26-60`), and the Moneybird webhook sets the status to `cancelled` or `payment_failed`; the token is compared in constant time and an empty token is refused at startup (`klai-portal/backend/app/api/webhooks.py:151-185`, `klai-portal/backend/app/core/config.py:510-518`). Deprovisioning stops the subscription and archives the contact (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:670-700`). The portal does not create subscriptions or contacts: the creation methods have no caller, the switch to per-seat billing answers 501, and the breakdown pages are display only (`klai-portal/backend/app/api/admin/billing.py:74-223`). Seat changes are recorded in `portal_user_seat_history` by a database trigger (`klai-portal/backend/app/core/permissions.py:290-298`).
+
+## 4. Login and service authentication
+
+### Browser session
+
+The portal is a backend-for-frontend: the browser holds an opaque session cookie and never a Zitadel token. Details and endpoint reference: [klai-portal/docs/auth-flows.md](../../klai-portal/docs/auth-flows.md) and [klai-portal/docs/api-auth.md](../../klai-portal/docs/api-auth.md). Anchors below are relative to `klai-portal/backend/` (backend) or `klai-portal/frontend/` (frontend).
+
+1. The SPA asks `GET /api/auth/session`; a 401 `cookie_required` means no session (`frontend/src/lib/auth.tsx:70-101`, `backend/app/api/session_deps.py:16-24`).
+2. The SPA sends the browser to `/api/auth/oidc/start`. The backend stores `state`, a PKCE verifier and the return path in Redis for 600 s and redirects to Zitadel's authorize endpoint (`backend/app/api/auth_bff.py:151-178`, `backend/app/services/oidc_pending.py:24,60`).
+3. Zitadel sends the user to the portal's own login page. The page first tries silent completion with the `klai_sso` cookie (`POST /api/auth/sso-complete`); without a valid one it shows the form (`frontend/src/routes/login.tsx:42-88`, `backend/app/api/auth.py:1702-1750`).
+4. `POST /api/auth/login` finds the user, creates a Zitadel session with the password, and applies the org's MFA policy (`optional`, `recommended` or `required`). Bad credentials give a uniform 401 and a Zitadel outage gives 503 (`backend/app/api/auth.py:1409-1566`, `backend/app/models/portal.py:108`).
+5. A user with TOTP gets a pending state in Redis (300 s, five failures delete it) and completes with `POST /api/auth/totp-login` (`backend/app/api/auth.py:216,1569-1699`, `backend/app/core/config.py:81`).
+6. A user without a workspace whose verified email matches a workspace's primary domain is offered that workspace or can file a join request (`backend/app/api/auth_select.py:188`, `backend/app/models/portal.py:113-119`).
+7. The backend finalises the Zitadel auth request, sets the `klai_sso` cookie (encrypted, 90 days) and returns a callback URL checked against an allowlist of hosts (`backend/app/api/auth.py:545-689`, `backend/app/core/config.py:75-76`).
+8. The browser follows the callback to `GET /api/auth/oidc/callback`: the backend consumes `state`, exchanges the code with the verifier, verifies the ID token, resolves the org from `portal_users`, stores the session in Redis (encrypted JSON, 30 days) and sets two cookies, one HttpOnly session cookie and one readable CSRF cookie, both for the parent domain (`backend/app/api/auth_bff.py:186-326`, `backend/app/services/bff_session.py:210-246`, `backend/app/core/config.py:89-90`).
+9. On each request the session middleware loads the session, refreshes the access token shortly before it expires (one refresh at a time per session) and requires the `X-CSRF-Token` header to equal the session's token on unsafe methods, except on listed prefixes such as the login finishers, `/internal/`, `/partner/` and `/oauth/` (`backend/app/middleware/session.py:32-247`, `backend/app/services/bff_session.py:287-372`). Route handlers receive a bearer derived from the cookie; a bearer header from the client is not accepted (`backend/app/api/bearer.py:21-32`).
+10. Logout is `POST /api/auth/bff/logout`: the backend revokes the session and the refresh token, clears the cookies and returns the Zitadel end-session URL, which the SPA follows to `/logged-out` (`backend/app/api/auth_bff.py:105-143`, `frontend/src/lib/auth.tsx:127-155`).
+
+Social login (Google and Microsoft, instance-level identity providers) runs through Zitadel identity-provider intents (`backend/app/api/auth.py:1093-1102,2192-2671`). MFA enrolment endpoints exist for TOTP, passkey and email OTP (`backend/app/api/auth.py:1753-2142`). The portal fails to start when its required secrets, the Zitadel token probe or the RLS readiness checks are not in order (`backend/app/main.py:167-280`).
+
+### Other surfaces
+
+| Surface | Credential | Checked in | Workspace comes from |
+|---|---|---|---|
+| Portal SPA to portal-api | Session cookie and CSRF header | `klai-portal/backend/app/middleware/session.py:145-247` | `portal_users` by `sub` and the session organisation |
+| Portal proxy to scribe-api and docs-app | The session's access token as bearer, an internal secret, and verified-identity headers (client copies are stripped) | `klai-portal/backend/app/api/proxy.py:1-12,152-189` | The verified session identity |
+| Partner API (`/partner/v1/*`) | `Bearer pk_live_<40 hex>`, SHA-256 lookup in `partner_api_keys`; the organisation needs the `partner_api` unlock (`slack` for Slack keys) | `klai-portal/backend/app/api/partner_dependencies.py:248-297`, `klai-portal/backend/app/services/partner_keys.py:21-23` | The key row |
+| Widget on a client site | `GET /partner/v1/widget-config` checks the page origin against the widget's allowed origins and issues an HS256 JWT valid for one hour, signed with a key derived per workspace; later calls send the JWT; needs the `widgets` unlock | `klai-portal/backend/app/api/partner_widget_config.py:206-260`, `klai-portal/backend/app/services/widget_auth.py:35-170` | The JWT's widget and organisation claims |
+| Workspace LibreChat | A per-workspace internal-chat key against the portal's partner endpoint | `klai-portal/backend/app/services/provisioning/generators.py:36-38,325-334` | The key row |
+| Internal service calls (`/internal/*`) | `Authorization: Bearer <internal secret>` (some routes a second, narrower secret), constant-time comparison, per-IP rate limit, audit row | `klai-portal/backend/app/api/internal.py:307-345` | The route's path or body, then `set_tenant` |
+| Identity checks by other services | `POST /internal/identity/verify` and `/internal/mcp-token/verify` (plus a variant that verifies the workspace), called through `klai-libs/identity-assert` (60 s cache for positive answers only, refuses when the portal is unreachable) | `klai-portal/backend/app/api/internal.py:2116,2408,2800`, `klai-libs/identity-assert/klai_identity_assert/client.py:1-18` | Portal membership |
+| portal-api to knowledge-ingest and retrieval-api | `X-Internal-Secret`, a separate secret per target | `klai-portal/backend/app/services/knowledge_ingest_client.py:56`, `klai-portal/backend/app/services/retrieval_context.py:837` | The Zitadel organisation id |
+| docs-app | A Zitadel bearer verified against the issuer's published keys, or the internal secret with a user header; the organisation is resolved from the slug in the path and compared with the caller's organisation claim. The public reader needs no login and answers 404 for personal and private knowledge bases | `klai-docs/lib/auth.ts:13-20,34-85,111-131`, `klai-docs/app/(reader)/[...path]/page.tsx:116` | The organisation slug in the path |
+| MCP clients | The portal is the OAuth 2.1 authorization server: discovery, dynamic client registration, authorize, token. Tokens are listed and revoked under `/api/me/mcp-tokens`; klai-knowledge-mcp asks the portal to verify each caller's identity | `klai-portal/backend/app/api/mcp_oauth.py:1-12,110-486`, `klai-knowledge-mcp/main.py:1-15` | The token row |
+| Slack | Slack's signing secret on events; the link between workspace and organisation goes through internal routes; Slack then calls the Partner API with a managed key stored AES-256-GCM in klai-slack's own database | `klai-slack/app/main.py:75-92`, `klai-slack/app/crypto.py:1-23`, `klai-portal/backend/app/api/internal_slack.py:115-182` | The partner key |
+| Browser extension | `ks_live_` tokens (stored as SHA-256), obtained by exchanging a short-lived `ks_code_` | `klai-portal/backend/app/services/shield_tokens.py:9-37`, `klai-portal/backend/app/api/shield.py:309-596` | The token row |
+| Zitadel to klai-mailer; portal to klai-mailer | HMAC-signed `POST /notify`; `POST /internal/send` with a shared secret, recipient binding and a per-recipient rate limit | `klai-mailer/app/main.py:164,323-340` | Not applicable |
+| Moneybird webhook | Token in the body, constant-time comparison | `klai-portal/backend/app/api/webhooks.py:151-185` | The Moneybird contact |
+| LibreChat sign-in | A separate OIDC client per workspace; its login lands on the same portal login page and completes silently | `klai-portal/backend/app/services/provisioning/generators.py:264-303` | The workspace host |
+
+## 5. Models
+
+LiteLLM is the only gateway to language models (`deploy/litellm/config.yaml`). Every text-generation alias is a Mistral model reached through the Mistral API. Each chat alias has three deployments ranked by `order`: two API keys, and a third deployment on a second kind of key that serves as a bridge (`deploy/litellm/config.yaml:38-212`). The callback `klai_mistral_pool` keeps an alias on the lowest-ranked key that Mistral does not report as full (`deploy/litellm/klai_mistral_pool.py:1-7`). Every deployment has a daily spend ceiling that LiteLLM keeps in Redis across restarts (`deploy/litellm/config.yaml:14-31,342-353`), and a spent ceiling raises the `litellm_budget_exhausted` alert (`deploy/grafana/provisioning/alerting/litellm-rules.yaml:10`).
+
+| Alias | Model | Fallback | Used by |
+|---|---|---|---|
+| `klai-primary` | `mistral-small-2603` | `klai-large` | Chat answers: the Partner API, the workspace LibreChat, the widget and Slack; scribe-api synthesis; portal-api synthesis; retrieval-api synthesis |
+| `klai-fast` | `mistral-small-2603` | `klai-large` | Extraction and feedback triage in portal-api and scribe-api; coreference and graph calls in retrieval-api; interactive calls in knowledge-ingest |
+| `klai-large` | `mistral-large-2512` | none | Fallback target; tool-call and long-input routing |
+| `klai-medium` | `mistral-medium-3.5` | none | Answer grounding and retrieval paraphrase in portal-api; faithfulness checks in knowledge-ingest |
+| `klai-judge` | `mistral-vibe-cli-latest`, reasoning off | none, on purpose | Conversation judge and gap proposals in portal-api |
+| `klai-ingest` | `mistral-vibe-cli-fast` | none, on purpose | Enrichment, graph extraction, taxonomy and the retrieval-evaluation judge in knowledge-ingest |
+| `klai-bge-m3` | `bge-m3` on TEI at gpu-01 | none | Embeddings for evaluation |
+
+Anchors: aliases `deploy/litellm/config.yaml:38,76,105,137,268,300,319`; fallbacks `deploy/litellm/config.yaml:365`; callers `klai-portal/backend/app/core/config.py:306-326`, `klai-portal/backend/app/services/gap_proposals.py:27`, `klai-retrieval-api/retrieval_api/config.py:42,51,55`, `klai-knowledge-ingest/knowledge_ingest/config.py:345-350,390,433,552-554`, `klai-scribe/scribe-api/app/core/config.py:74-75`, `klai-slack/app/clients/partner.py:155`. Only the Partner API's OpenAI-compatible endpoint accepts `klai-primary`, `klai-fast` and `klai-large`, and maps `gpt-4o` and `gpt-4.1` to `klai-primary` and `gpt-4o-mini` and `gpt-4.1-mini` to `klai-fast` for clients that hard-code those names (`klai-portal/backend/app/api/partner_openai_compat.py:34-39`).
+
+**Routing.** The routing strategy is `simple-shuffle` (`deploy/litellm/config.yaml:340`). The callback `custom_router.token_router` re-routes only requests for `klai-primary`: tool-call history or a long last user message goes to `klai-large`, web-search content or a very long context goes to `klai-fast` (`deploy/litellm/custom_router.py:1-15,182-214`). The other callbacks, in order, are `klai_mistral_pool`, `custom_router.token_router`, `klai_pii_observe`, `klai_pii_enforce` and `klai_prompt_cache` (`deploy/litellm/config.yaml:385-400`). PII enforcement applies to every org by default (`deploy/docker-compose.yml:492,519`).
+
+**Self-hosted and external.** Embeddings (dense BGE-M3 on TEI, a sparse sidecar), the reranker (`bge-reranker-v2-m3` on Infinity) and transcription (faster-whisper) run on gpu-01. PII detection runs on core-01. Every generation alias is the external Mistral API (`deploy/litellm/config.yaml:38-300`, `deploy/docker-compose.gpu.yml:11-181`).
+
+**The privacy principle in configuration.** Data stays in the EU and no model call goes to a provider outside the EU. In configuration that means: the production model list contains Mistral deployments and the self-hosted BGE-M3 and nothing else; no alias has a deployment on another provider's API; LibreChat's own OpenAI, Google and Anthropic endpoints are disabled (`deploy/librechat/librechat.yaml:170-175`); and the tenant LibreChat's only model endpoint is "Klai AI", which points at the portal's partner endpoint and not at a provider (`deploy/librechat/librechat.yaml:176-195`). The local development config `dev/litellm-config.yaml:8-27` uses other providers' models and never runs in production. The principle applies to the model operator, not to hosting: an EU provider's API counts, and full self-hosting remains an option for when its cost makes sense (that decision is in [evolution.md](evolution.md)).
+
+## 6. Knowledge stack in one screen
+
+**Ingest.** Content arrives from connectors (klai-connector adapters for Airtable, Confluence, GitHub, Google Drive, a JSON feed, Microsoft documents and Notion), from crawls (crawl4ai), from uploads (docling converts files, portal-api forwards the markdown), from the docs knowledge bases (Gitea) and from the MCP and Scribe save paths. knowledge-ingest enriches with `klai-ingest`, chunks, embeds and writes to Qdrant and the graph on a Procrastinate queue. Detail: [knowledge-ingest-flow.md](knowledge-ingest-flow.md) and [knowledge-base-ingestion-and-retrieval-plan.md](knowledge-base-ingestion-and-retrieval-plan.md). Adapters: `klai-connector/app/adapters/`.
+
+**Stores.** One Qdrant collection with dense, question and sparse vectors per chunk and an `org_id` payload; FalkorDB for the graph; the `knowledge` schema in Postgres for artifacts and job state; Garage for images; Gitea for docs sources. See section 1 and [klai-knowledge-architecture.md](klai-knowledge-architecture.md).
+
+**Retrieval.** retrieval-api serves `POST /retrieve`: hybrid search over the vectors, a graph leg, a reranker on gpu-01, and scope and visibility filters (organisation, personal, private); `POST /chat` adds synthesis. Callers: portal-api (chat and internal routes), klai-knowledge-mcp and the nightly evaluation in knowledge-ingest (`klai-knowledge-ingest/knowledge_ingest/eval/retrieval_client.py:89`). Detail: [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md).
+
+**Chat.** There is one chat path: `POST /partner/v1/chat/completions` on portal-api, which retrieves, decides answer, clarify or refuse, and calls LiteLLM. The tenant LibreChat, the widget and Slack all use it. LibreChat remains the interface of the internal chat and sends its requests to that endpoint (`deploy/librechat/librechat.yaml:176-195`). Detail: [chat-system.md](chat-system.md) and, for the quality work, [chat-quality-history-and-plan.md](chat-quality-history-and-plan.md).
+
+## 7. Other product surfaces
+
+- **Widget.** An embeddable chat bundle (`klai-chat.js`, SolidJS, a gzip limit of 200 kB enforced in the build: `klai-widget/scripts/check-bundle-size.mjs:27`). A site embeds it with one script tag that loads `https://my.getklai.com/widget/klai-chat.js` with a `data-widget-id` attribute (`klai-portal/frontend/src/features/widgets/embed/snippet.ts:1`); a contract test keeps this document and the product snippet on the same URL (`rules/tests/test_widget_distribution_contract.py:57-59`). The portal frontend workflow builds it and ships it with the SPA (`.github/workflows/portal-frontend.yml:136-143`). It reaches the platform through `widget-config` and the Partner API, authenticated as in section 4. Code: `klai-widget/`; server side in `klai-portal/backend/app/api/partner_widget_config.py`.
+- **Partner API.** OpenAI-compatible chat and responses endpoints, knowledge, feedback, models and support sessions under `/partner/v1`, with per-org keys and the `partner_api` unlock. Code: `klai-portal/backend/app/api/partner*.py`.
+- **Slack.** A FastAPI app with Bolt mounted on `/slack/*`: events, the `/klai` command, interactivity, install and OAuth redirect. It answers through the Partner API with `klai-primary` and keeps its own database role and encrypted tokens (`klai-slack/app/main.py:75-92`, `klai-slack/app/clients/partner.py:140-197`). Code: `klai-slack/`.
+- **Browser extension.** A Chrome extension (manifest v3) with a side panel; it logs in through the portal's extension endpoints and calls `/api/shield/config`, `/check`, `/log` and `/query`. The portal builds the downloadable zip from its own copy of the extension (`klai-portal/backend/app/api/shield.py:52-53,223`, `klai-shield-extension/src/background/service-worker.js:131-314`). Two MCP tools expose the compliance check to platform admins (`klai-knowledge-mcp/main.py:1713,1742`). Code: `klai-shield-extension/`, `klai-portal/backend/app/api/shield.py`.
+- **HubSpot app.** A HubSpot Projects app with a help-desk card and a function that calls the Partner API (`support-sessions` and `chat/completions`). It is uploaded by hand to a HubSpot sandbox account and has no production deployment (`klai-hubspot/README.md`, `klai-hubspot/klai-email-support/src/app/functions/NewFunction.js:452,484,602`). Code: `klai-hubspot/`.
+- **Scribe and meeting transcription.** Two paths. Uploaded audio goes to scribe-api, which normalises it, queues a row in the `scribe` schema, calls the OpenAI-compatible transcription endpoint with `transcription_tier=deferred`, and summarises with `klai-fast` and `klai-primary` (`klai-scribe/scribe-api/app/api/transcribe.py:158-477`, `klai-scribe/scribe-api/app/services/providers.py:126-200`, `klai-scribe/scribe-api/app/services/summarizer.py:29,173`). Meetings are joined by bots of the Vexa stack, controlled by portal-api (`klai-portal/backend/app/services/vexa.py:101`, `klai-portal/backend/app/services/bot_poller.py`). Both paths use the transcription workers on gpu-01. Recordings are deleted after transcription (section 3). A data subject can export their data with `POST /api/me/sar-export` (`klai-portal/backend/app/api/me.py:532`). Contract and contributor model: [scribe-transcription.md](scribe-transcription.md). Code: `klai-scribe/scribe-api/`.
+- **Docs app.** A Next.js reader and editor for the docs knowledge bases, with Gitea as the content store, under `basePath /docs` on port 3010 (`klai-docs/next.config.ts:5`). Its editor API is not published; portal users reach it through the portal proxy. Code: `klai-docs/`.
+- **MCP server.** A streamable-HTTP MCP server at `/mcp` with ten tools: save to personal or organisation knowledge, list, read, create and update docs pages, search knowledge, and the two compliance tools (`klai-knowledge-mcp/main.py:891,960,1028,1058,1115,1195,1350,1546,1728,1757`). Tenant LibreChat containers reach it inside the network (`deploy/librechat/librechat.yaml:140-143`); external MCP clients reach it through its own host and the portal's OAuth endpoints. Code: `klai-knowledge-mcp/`.
+- **Mailer.** Receives Zitadel's signed notifications, wraps the message texts in one HTML theme and sends them over SMTP; portal-api uses `POST /internal/send` for its own templates, with the recipient's language from `/internal/user-language` (`klai-mailer/app/main.py:164,323`, `klai-mailer/app/portal_client.py:22-45`). Code: `klai-mailer/`.
+
+## 8. Deployment
+
+Public artifacts are built and tested in this repository; production deployment is operated from private infrastructure automation, and the host-level inputs (server setup, the secret store, the tunnel to gpu-01) are outside this repository. What follows is the contract between a merge and running containers, using the workflow and script names in this repository (`.github/workflows/`, `deploy/scripts/`).
+
+1. **Gates on the pull request.** Per-area workflows test each service, and repository guards run on every change: `quality.yml`, `audit-compose.yml`, `env-scope-guard.yml`, `public-tenant-data.yml`, `semgrep.yml`, `measurement-contract.yml`. Deploy jobs only run on `main`.
+2. **Build.** A push to `main` that touches a service builds its image, tags it with the git sha and `latest`, pushes it to GHCR and scans it (for example `.github/workflows/knowledge-ingest.yml:227-229`).
+3. **Deploy by exact sha.** The workflow runs `deploy/scripts/deploy-with-rollback.sh <service> <image@sha> --probe <health url>` on the host. It deploys the sha, never the registry's `latest` (`deploy/scripts/deploy-with-rollback.sh:1-30`). It pulls, recreates the service through `deploy/scripts/compose-up.sh`, and waits for an HTTP 2xx on the health URL for up to 60 s.
+4. **Proof.** For services with an error watch, `deploy/scripts/post-deploy-error-watch.sh` compares error lines in the logs after the deploy with the window before it and fails on more than ten lines and more than twice the earlier rate (`deploy/scripts/post-deploy-error-watch.sh:1-40`).
+5. **Automatic rollback.** A failed probe or error watch restores the previous image (exit codes distinguish rolled back from rollback failed). The rollback report is stored as an artifact and feeds `ci-failure-notice.yml`, which keeps one issue per failing workflow on `main`.
+6. **The portal as the special case.** `deploy/scripts/deploy-portal-api.sh` first runs the Alembic migrations and the `post_deploy_*.sql` files (the RLS policies) from the new image, then swaps the container through the same rollback script. Rollback is image-only and never downgrades the database; destructive migrations are blocked in pull requests by `scripts/check-expand-contract.py` (`deploy/scripts/deploy-portal-api.sh:1-24,123-157`, `.github/workflows/portal-api.yml:123-131`). The portal frontend is built by `portal-frontend.yml` (widget first), synced to the host and served by Caddy (`.github/workflows/portal-frontend.yml:169-170`).
+7. **Compose and configuration sync.** `deploy-compose.yml` runs on changes to the compose files, the Caddyfile, Alloy, SearXNG, LibreChat entry points and Grafana provisioning. It validates the pins and the pullability of every image, then in one session replaces the compose files, installs the scripts and systemd units, syncs Grafana provisioning, recreates every service whose declaration changed (`deploy/scripts/compose-env-drift-recreate.sh`; LiteLLM is excluded on purpose) and runs the gates. A data store whose image changes is first snapshotted and restored into a shadow copy of the new version, and cut over only when the shadow passes (`deploy/scripts/datastore-rollback.sh`). Each gate is wrapped so that a red gate restores the previous files and recreates (`deploy/scripts/compose-rollback.sh:1-35`, `.github/workflows/deploy-compose.yml:145-525`). One run at a time, queued and not cancelled (`.github/workflows/deploy-compose.yml:49-51`). LiteLLM hooks and config go out through `litellm-hook-deploy.yml`; the LibreChat and Presidio images are built by `librechat-image-build.yml` and `presidio-analyzer-image-build.yml` and pinned by digest.
+8. **After a deploy.** `e2e-prod-tenant.yml` runs against a production test tenant. When it ends red on `main`, `auto-rollback.yml` finds the last green run, runs one confirmation E2E, and only if that is red as well replays the deploy ledger backwards with `deploy/scripts/rollback-since.sh` (`.github/workflows/auto-rollback.yml:1-35,145-160`).
+9. **Rehearsals.** `rollback-rehearsal.yml` deploys a good and a bad version of `rollback-canary` every Monday and asserts that the bad one is rolled back (`deploy/scripts/rollback-rehearsal-assert.sh:1-25`); the Grafana rule `rollback_rehearsal_missing` fires after eight days of silence. `datastore-restore-rehearsal.yml` runs on the 1st and 15th and restores the newest deploy snapshot of every data store into a throwaway container without network access, requiring the restored facts to equal the baseline (`deploy/scripts/datastore-restore-rehearsal.sh:1-30`).
+10. **Versions.** Renovate runs self-hosted and merges updates automatically after a three-day release age (`renovate.json5:13,86,102`); `version-drift.yml` checks daily for stuck update pull requests and locally built images, and `scan-pinned-images.yml` scans the pinned images weekly.
+
+Not in this repository: the host `.env` and the encrypted secrets (the inventory of who reads which variable is `deploy/SECRETS_MATRIX.md`), the Docker daemon configuration (`deploy/docker/daemon.json`) and the firewall hardening script (`deploy/scripts/harden-docker-user.sh`) are templates, applied on the host.
+
+## 9. Observability and backup
+
+**Logs.** Alloy discovers containers through the read-only Docker proxy, labels each line with `container`, `service` and `host`, extracts the level, and routes by `retention_class`: lines of class `content` go to the 7-day VictoriaLogs instance, everything else to the 30-day instance (`deploy/alloy/config.alloy:15-103,168-222`, `deploy/docker-compose.yml:1332,1356,1408`). It also reads three host log files written by the probes below. Caddy sets `X-Request-ID` when it is missing and writes a JSON access log with the `token` query parameter removed (`deploy/caddy/Caddyfile:19-51`). Remote hosts push logs through the bearer-gated ingest endpoint (`deploy/caddy/Caddyfile:103-119`).
+
+**Metrics.** Alloy collects node metrics, cAdvisor, and the `/metrics` endpoints of retrieval-api and portal-api, and writes to VictoriaMetrics (`deploy/alloy/config.alloy:225-291`).
+
+**Dashboards and data sources.** Grafana provisions its data sources (VictoriaMetrics, both VictoriaLogs instances and the portal database through a read-only role) and dashboards for logs, containers and nodes, health, the ingest pipeline, retrieval quality, privacy, product, business, provisioning and proxy denials (`deploy/grafana/provisioning/datasources/datasources.yaml`, `deploy/grafana/provisioning/datasources/portal-postgres.yaml`, `deploy/grafana/provisioning/dashboards/`). Product events are rows in `product_events` in the portal database (`klai-portal/backend/app/models/events.py:10-11`).
+
+**Alerting.** Alert rules are YAML files per area in `deploy/grafana/provisioning/alerting/` (Caddy, ingest, LiteLLM, Mistral API, persistence, auto-rollback, portal auth and MFA, privacy, mail chain, meetings, widget probe and more), routed by `policies.yaml` to the contact points in `contact-points.yaml`; `alerting-check.yml` validates them in CI. Host timers run the probes that feed the rules: persistence every 10 minutes, the Mistral key probe every 2 minutes, the widget probe every 30 minutes, an orphan audit weekly and a Docker cleanup daily (`deploy/systemd/`). Errors from the applications go to GlitchTip, which is Sentry-compatible (`deploy/docker-compose.yml:1247`).
+
+**Backup.** `deploy/scripts/backup.sh` is the single nightly backup script (the schedule is a host setting). In order it dumps the main Postgres instance, Gitea, MongoDB, the Redis instances, Meilisearch, Qdrant, FalkorDB, Garage (metadata and blobs), the Postgres databases of the third-party applications, and the Scribe audio and research upload volumes. Each artifact is encrypted with age to two recipients and copied to an off-host storage box (`deploy/scripts/backup.sh:756-795,876-896`). A failed step does not stop the later steps (`deploy/scripts/backup.sh:200`) and the result is pushed to the status page. Locally the newest seven completed day-sets are kept, and pruning only happens after a night without failed steps (`deploy/scripts/backup.sh:48,797-831`). VictoriaMetrics and both VictoriaLogs instances are deliberately not backed up. `deploy/volume-mounts.yaml` lists every volume with its backup class, and `scripts/audit-compose-volumes.sh` enforces that every mount has an entry.
+
+**Restore rehearsal.** The deploy snapshots, which are taken only when a data store's image changes, are restored into throwaway containers twice a month (section 8, step 9).
+
+## 10. Where the rest is
+
+- How the platform came to be, the decisions with their reasons, the plans that were never built and what no longer exists: [evolution.md](evolution.md) (Dutch).
+- Ingest: [knowledge-ingest-flow.md](knowledge-ingest-flow.md). Retrieval: [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md). Chat: [chat-system.md](chat-system.md). Knowledge model and target design: [klai-knowledge-architecture.md](klai-knowledge-architecture.md).
+- Transcription contract: [scribe-transcription.md](scribe-transcription.md). Open gaps between design and code: [product-gaps-backlog.md](product-gaps-backlog.md).
+- Pinned versions and the reason for each pin: `deploy/VERSIONS.md`. Secrets per service: `deploy/SECRETS_MATRIX.md`. Self-hosting: [deploy/README.md](../../deploy/README.md).
+- Runbooks: `docs/runbooks/`. Local development: `GETTING_STARTED.md`. The public and private boundary: [infrastructure-boundary.md](../contributing/infrastructure-boundary.md).

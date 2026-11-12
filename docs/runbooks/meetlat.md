@@ -1,5 +1,7 @@
 # Running a meetlat round
 
+> Server paths are relative to the deploy directory on core-01 (`<deploy-dir>`, the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 The chat quality measuring stick (`docs/architecture/chat-quality-history-and-plan.md`, sections 6 and 8) is one CLI,
 `klai-portal/backend/scripts/meetlat.py`. It holds no case data: the case file, the rows it produces and the overlay
 live outside the repository, in the output directory of a throwaway portal-api clone.
@@ -10,7 +12,7 @@ live outside the repository, in the output directory of a throwaway portal-api c
   there ([Measure the retrieval](#measure-the-retrieval)).
 
 A case is one JSON object per line: `cid` (first 8 characters of a conversation id), `turn` (index of the user turn),
-`class` (`weigering`, `antwoord_kb`, `dekkend_antwoord`, `antwoord_algemeen_gelabeld` or `weigering_feiten`) and,
+`class` (internal: `weigering`, `antwoord_kb`, `dekkend_antwoord`, `antwoord_algemeen_gelabeld` or `weigering_feiten`; widget: `antwoord`, `vraag`, `niet_gevonden`, `doorverwijzing` or `afsluiting`) and,
 for `dekkend_antwoord`, optionally `variants` (regexes that must all appear in the answer, default `android` and
 `iphone|ios`). `run` reads only `cid` and `turn`.
 
@@ -44,7 +46,7 @@ the chat aliases as well, for the keys a one-off is handed. A round runs only on
 virtual key `klai-measurement`, whose model list is `klai-judge` and `klai-ingest` and which has its own budget of 20 USD
 a day. Both one-off scripts put it in place of every `LITELLM_*KEY` variable in the clone's environment, matched in any
 case (`LITELLM_MASTER_KEY` and `LITELLM_GENERAL_CHAT_KEY` in portal-api, `LITELLM_API_KEY` in retrieval-api), and they
-refuse to start when `/opt/klai/state/litellm/measurement-key` is missing, empty, or holds a key the live service uses.
+refuse to start when `state/litellm/measurement-key` in the deploy directory is missing, empty, or holds a key the live service uses.
 Before cloning, they send one request to `klai-primary` with that key and stop unless LiteLLM's key check refuses it
 (`key_model_access_denied`), so a wider key put in the file by hand cannot run a round. The tenants' own LiteLLM keys
 stay out of a portal one-off: it does not mount `/librechat`, where each tenant's `.env` holds one (the old path of
@@ -58,8 +60,8 @@ The key exists once and survives deploys. To create it, or to replace it after t
 its hash), run on core-01:
 
 ```bash
-sudo /opt/klai/scripts/litellm-measurement-key.sh           # idempotent; writes the file, owner klai, mode 600
-sudo /opt/klai/scripts/litellm-measurement-key.sh --verify  # klai-primary refused by the key check, klai-ingest 200
+sudo scripts/litellm-measurement-key.sh           # idempotent; writes the file, owner klai, mode 600
+sudo scripts/litellm-measurement-key.sh --verify  # klai-primary refused by the key check, klai-ingest 200
 ```
 
 `--verify` passes only when `klai-primary` fails on LiteLLM's own `key_model_access_denied` (401/403). A 402 or 429
@@ -74,7 +76,7 @@ tenant and reaches Mistral unmasked.
 
 ## Run a round
 
-1. Build the overlay in the output directory of the one-off (here `/opt/klai/oneoff/meetlat`, mounted as `/out`). It
+1. Build the overlay in the output directory of the one-off (here `<deploy-dir>/oneoff/meetlat`, mounted as `/out`). It
    needs complete `app/` and `klai_chat_prompts/` packages of the candidate, plus the scripts, so the tool matches the
    code it measures:
 
@@ -82,19 +84,19 @@ tenant and reaches Mistral unmasked.
    stage=$(mktemp -d)
    git -C <checkout> archive <candidate-ref> klai-portal/backend/app klai-portal/backend/scripts \
      klai-libs/chat-prompts/klai_chat_prompts | tar -x -C "$stage"
-   mkdir -p /opt/klai/oneoff/meetlat/ov-candidate
+   mkdir -p <deploy-dir>/oneoff/meetlat/ov-candidate
    mv "$stage"/klai-portal/backend/app "$stage"/klai-portal/backend/scripts \
-     "$stage"/klai-libs/chat-prompts/klai_chat_prompts /opt/klai/oneoff/meetlat/ov-candidate/
+     "$stage"/klai-libs/chat-prompts/klai_chat_prompts <deploy-dir>/oneoff/meetlat/ov-candidate/
    ```
 
-   Put the case file next to it as `/opt/klai/oneoff/meetlat/cases.jsonl`. The container user must be able to read both.
+   Put the case file next to it as `<deploy-dir>/oneoff/meetlat/cases.jsonl`. The container user must be able to read both.
 
 2. Start a retrieval-api one-off for the round (the checkout's code, or `main`'s when only the portal changes; the
    command is in [Measure the retrieval](#measure-the-retrieval)), then run through the portal one-off, with the
    overlay first on `PYTHONPATH`, the backend root after it and `KNOWLEDGE_RETRIEVE_URL` on the retrieval-api one-off:
 
    ```bash
-   deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
+   deploy/scripts/portal-api-oneoff.sh --out <deploy-dir>/oneoff/meetlat -- \
      env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend KNOWLEDGE_RETRIEVE_URL=http://<one-off-name>:8040 \
      python /out/ov-candidate/scripts/meetlat.py run --surface internal --org <org-slug> \
        --cases /out/cases.jsonl --out /out/round-candidate-1.jsonl --overlay /out/ov-candidate
@@ -106,11 +108,11 @@ tenant and reaches Mistral unmasked.
    A widget round replays as one widget, through the route itself (a preview session token, the answer held), so the
    widget's own settings and articles apply and nothing is recorded. Its cases carry their own conversation: `id`,
    `messages` (the visitor's turns and the earlier replies, ending in the turn to replay) and `expect` (`antwoord`,
-   `vraag`, `niet_gevonden` or `doorverwijzing`). `--widget` names a JSON file with `wgt_id`, `org_id`, `kb_ids`,
+   `vraag`, `niet_gevonden`, `doorverwijzing` or `afsluiting`). `--widget` names a JSON file with `wgt_id`, `org_id`, `kb_ids`,
    `slug` and `origin`, kept next to the cases, outside the repository:
 
    ```bash
-   deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
+   deploy/scripts/portal-api-oneoff.sh --out <deploy-dir>/oneoff/meetlat -- \
      env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend KNOWLEDGE_RETRIEVE_URL=http://<one-off-name>:8040 \
      python /out/ov-candidate/scripts/meetlat.py run --surface widget --org <org-slug> --widget /out/widget.json \
        --cases /out/widget-cases.jsonl --out /out/widget-candidate-1.jsonl --overlay /out/ov-candidate
@@ -165,7 +167,7 @@ record are skipped, the case memory stays in the process, and the grounding chec
 ## Compare rounds
 
 ```bash
-deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
+deploy/scripts/portal-api-oneoff.sh --out <deploy-dir>/oneoff/meetlat -- \
   env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend \
   python /out/ov-candidate/scripts/meetlat.py compare --cases /out/cases.jsonl \
     /out/round-main-1.jsonl /out/round-candidate-1.jsonl
@@ -228,7 +230,7 @@ them:
 git -C <checkout> archive <candidate-ref> klai-retrieval-api/retrieval_api | tar -x -C "$stage"
 deploy/scripts/retrieval-api-oneoff.sh --name ra-depth60 --code "$stage"/klai-retrieval-api \
   --env RERANKER_CANDIDATES=60 --env GRAPHITI_ENABLED=false
-deploy/scripts/portal-api-oneoff.sh --out /opt/klai/oneoff/meetlat -- \
+deploy/scripts/portal-api-oneoff.sh --out <deploy-dir>/oneoff/meetlat -- \
   env PYTHONPATH=/out/ov-candidate:/repo/klai-portal/backend KNOWLEDGE_RETRIEVE_URL=http://ra-depth60:8040 \
   python /out/ov-candidate/scripts/meetlat.py retrieval --surface widget --org <org-slug> --widget /out/widget.json \
     --cases /out/cases.jsonl --out /out/retrieval-depth60.jsonl --overlay /out/ov-candidate
