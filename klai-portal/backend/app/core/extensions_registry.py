@@ -36,12 +36,12 @@ KNOWN_FEATURES: frozenset[str] = frozenset(
         "docs",
         # SPEC-CHAT-QUALITY-LOOP-001 REQ-5: per-org opt-in for the nightly
         # LLM-as-judge pass on LibreChat conversations. Default off; Klai
-        # staff turn it on per tenant here, not in code (Voys is the pilot).
+        # staff turn it on per tenant here, not in code (one pilot tenant first).
         "librechat_quality_judge",
         # SPEC-KNOWLEDGE-ACTIVITY-001 §4.4: per-tenant opt-in for the
         # knowledge-side activity view (answer reviews + snapshots). Default
         # off; Klai staff turn it on per tenant via platform-unlocks, never in
-        # code (Voys and Klai first).
+        # code (a pilot tenant and Klai first).
         "knowledge_activity",
         # Gaps screen under Kennis: separate switch, default off, because the
         # screen is unfinished; Klai staff turn it on per tenant.

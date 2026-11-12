@@ -76,3 +76,22 @@ def test_extension_login_return_to_hides_absolute_chrome_redirect():
 
     assert return_to.startswith("/api/app/shield/extension/login?redirect_uri_b64=")
     assert "://" not in urllib.parse.unquote(return_to)
+
+
+def test_downloadable_extension_is_identical_to_the_extension_source():
+    """The download is built from the portal's copy; klai-shield-extension/ is the source of truth.
+
+    The image build cannot see the source directory without a Dockerfile change, so the two
+    copies are kept equal by this test: change the extension in both places.
+    """
+    from pathlib import Path
+
+    from app.api.shield import _EXTENSION_DIR
+
+    source_dir = Path(__file__).resolve().parents[3] / "klai-shield-extension"
+    assert source_dir.is_dir()
+
+    def files(root: Path) -> dict[str, bytes]:
+        return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+    assert files(_EXTENSION_DIR) == files(source_dir)

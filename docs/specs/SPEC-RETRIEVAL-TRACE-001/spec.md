@@ -318,7 +318,7 @@ The handler stays readable during migration: wrap existing blocks, do not extrac
 
 ## Internal References
 
-Note on `related`: `SPEC-PRIVACY-QUERY-SHADOW-001` has no spec directory under `.moai/specs/` anymore — it was implemented and archived. Its requirements survive as code comments in `retrieve.py` and `metrics.py`; treat those as the authoritative reference.
+Note on `related`: `SPEC-PRIVACY-QUERY-SHADOW-001` has no spec directory under `docs/specs/` anymore — it was implemented and archived. Its requirements survive as code comments in `retrieve.py` and `metrics.py`; treat those as the authoritative reference.
 
 - [Knowledge Retrieval Flow](../../../docs/architecture/knowledge-retrieval-flow.md)
 - [Low-confidence band and abstain, history and outcomes (plan §6, 7 and 8 May 2026)](../../../docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md)

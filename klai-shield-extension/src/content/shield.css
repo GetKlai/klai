@@ -43,11 +43,11 @@ body.klai-shield-loaded #superdock-shield-card {
 }
 
 #klai-shield-badge.klai-badge-off {
-  color: #7b7770;
+  color: #6e6b65;
 }
 
 #klai-shield-badge.klai-badge-off .klai-mark {
-  color: #b9b6ad;
+  color: #97938a;
 }
 
 #klai-shield-badge span {
@@ -106,12 +106,12 @@ body.klai-shield-loaded #superdock-shield-card {
 }
 
 .klai-card-muted {
-  color: #7b7770;
+  color: #6e6b65;
 }
 
 .klai-card-hint {
   border-top: 1px solid #e8e6de;
-  color: #7b7770;
+  color: #6e6b65;
   font-size: 11px;
   line-height: 1.4;
   margin-top: 10px;
@@ -276,7 +276,7 @@ body.klai-shield-loaded #superdock-shield-card {
 }
 
 .klai-r-light.yellow {
-  background: #d89113;
+  background: #c9830c;
 }
 
 .klai-r-light.orange {
@@ -310,7 +310,7 @@ body.klai-shield-loaded #superdock-shield-card {
 }
 
 .klai-r-section-label {
-  color: #7b7770;
+  color: #6e6b65;
   font-size: 11px;
   font-weight: 780;
   margin-bottom: 7px;
@@ -355,7 +355,7 @@ body.klai-shield-loaded #superdock-shield-card {
 }
 
 .klai-r-none {
-  color: #7b7770;
+  color: #6e6b65;
 }
 
 .klai-r-warning {
@@ -385,7 +385,7 @@ body.klai-shield-loaded #superdock-shield-card {
 }
 
 .klai-r-warning-top span {
-  color: #7b7770;
+  color: #6e6b65;
   font-size: 11px;
   white-space: nowrap;
 }
@@ -467,7 +467,7 @@ body.klai-shield-loaded #superdock-shield-card {
 }
 
 .klai-mp-context {
-  color: #7b7770;
+  color: #6e6b65;
   font-size: 11px;
   font-weight: 700;
 }
@@ -509,7 +509,7 @@ body.klai-shield-loaded #superdock-shield-card {
 .klai-mp-status {
   min-width: 0;
   overflow: hidden;
-  color: #7b7770;
+  color: #6e6b65;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -530,7 +530,7 @@ body.klai-shield-loaded #superdock-shield-card {
 .klai-mp-send:disabled {
   border-color: #e8e6de;
   background: #f1f0ea;
-  color: #7b7770;
+  color: #6e6b65;
   cursor: wait;
 }
 

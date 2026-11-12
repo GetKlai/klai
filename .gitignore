@@ -113,7 +113,6 @@ logs/
 # ===========================================
 # Backups
 # ===========================================
-.moai-backups/
 *.backup/
 *-backup/
 *_backup_*/
@@ -186,9 +185,6 @@ secret-*.*
 # Local-Only Files (never sync via git pull)
 # ===========================================
 .context/
-.moai/status_line.sh
-.moai/memory/
-.moai/worktrees/
 
 # ===========================================
 # Node.js (for docs/Nextra)
@@ -213,7 +209,7 @@ dist-ssr/
 .netlify/
 .firebase/
 
-# User Custom Patterns (preserved by moai update)
+# User Custom Patterns
 *.sops
 *.sops.*
 .sops.yaml
