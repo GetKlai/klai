@@ -162,13 +162,16 @@ groups:
           service_group: ingest
           alert_type: consistency_reconcile
         annotations:
-          summary: 'PG/Qdrant reconciliation found inconsistent knowledge artifacts'
+          summary: 'PG/Qdrant/graph reconciliation found inconsistent knowledge artifacts'
           runbook_url: 'https://github.com/GetKlai/klai/blob/main/docs/runbooks/pg-qdrant-reconcile.md'
           description: |
-            The nightly read-only PG/Qdrant reconciliation job logged
-            status=failed (drift found) or status=error (the job crashed).
+            The nightly read-only reconciliation job logged status=failed
+            (drift found) or status=error (the job crashed, or the graph
+            could not be read: graph_check=error).
             For failed: query the pg_qdrant_reconcile event for
-            missing_in_qdrant, orphaned_in_qdrant, and sample artifact keys.
+            missing_in_qdrant, orphaned_in_qdrant, graph_lost_extractions
+            (active documents whose finished graph extraction lost an
+            episode), and the sample artifact ids.
             For error: inspect the exception on the same event.
 
       # ── R18: pg_qdrant_reconcile_missing ───────────────────────────────

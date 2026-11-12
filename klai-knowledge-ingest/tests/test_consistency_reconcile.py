@@ -40,6 +40,19 @@ def _install_procrastinate_stub() -> None:
 
 _install_procrastinate_stub()
 
+_NO_GRAPH_LOSS = {"graph_lost_extractions": 0, "graph_lost_by_org": {}, "graph_lost_sample": []}
+
+
+@pytest.fixture(autouse=True)
+def graph_check():
+    """The graph check runs against real stores in tests/graph_contract; here it is a stub."""
+    with patch(
+        "knowledge_ingest.consistency_reconcile.lost_graph_extractions",
+        new_callable=AsyncMock,
+        return_value=_NO_GRAPH_LOSS,
+    ) as check:
+        yield check
+
 
 class _FakeApp:
     def __init__(self) -> None:
@@ -302,6 +315,48 @@ async def test_reconcile_pg_qdrant_ignores_recently_touched_artifacts():
     assert result["status"] == "ok"
     assert result["orphaned_in_qdrant"] == 0
     assert result["discrepancies_total"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("graph_outcome", "expected_status"),
+    [({**_NO_GRAPH_LOSS, "graph_lost_extractions": 1}, "failed"), (ConnectionError(), "error")],
+    ids=["lost-extraction", "graph-unreachable"],
+)
+async def test_graph_loss_and_an_unreadable_graph_reach_the_alerted_status(
+    graph_check, graph_outcome, expected_status
+):
+    if isinstance(graph_outcome, Exception):
+        graph_check.side_effect = graph_outcome
+    else:
+        graph_check.return_value = graph_outcome
+    artifact = {
+        "org_id": "org-1",
+        "kb_slug": "kb",
+        "path": "present.md",
+        "artifact_id": "art-present",
+        "index_status": "synced",
+    }
+    env = _patched_reconcile_env(
+        pg_artifacts=[artifact],
+        recent_artifacts=[],
+        qdrant_counts=Counter({ArtifactKey("org-1", "kb", "present.md", "art-present"): 1}),
+    )
+    with (
+        env[0],
+        env[1],
+        env[2],
+        env[3],
+        patch("knowledge_ingest.consistency_reconcile.settings.graphiti_enabled", True),
+        patch("knowledge_ingest.consistency_reconcile.logger") as mock_logger,
+    ):
+        result = await reconcile_pg_qdrant()
+
+    assert result["status"] == expected_status
+    assert mock_logger.info.call_args.kwargs["status"] == expected_status
+    assert graph_check.await_args.args[1] == {"org-1"}
+    if expected_status == "error":
+        assert "graph_lost_extractions" not in result
 
 
 @pytest.mark.asyncio
