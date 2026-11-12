@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
+import httpx
 import structlog
 
 from app.core.config import settings
@@ -42,26 +43,56 @@ def _extract_zitadel_user_state(user_response: dict) -> str:
     return state
 
 
+async def _identity_state(zitadel_user_id: str) -> str | None:
+    """The identity's Zitadel state, or None when Zitadel no longer has the user."""
+    try:
+        return _extract_zitadel_user_state(await zitadel.get_user_by_id(zitadel_user_id))
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
+        _slog.warning("zitadel_identity_missing", zitadel_user_id=zitadel_user_id)
+        return None
+
+
 async def sync_identity_login(zitadel_user_id: str) -> None:
-    """Let the identity sign in exactly when one of its memberships is active.
+    """Let the identity sign in exactly when one of its committed memberships is active.
 
     Call after the ``portal_users`` change is committed. One identity serves
-    every organisation the person belongs to, so suspending or offboarding one
-    membership deactivates it only when no other membership is active, and
-    reactivating a membership reactivates it. Zitadel refuses ``_deactivate``
-    on an inactive user and ``_reactivate`` on one that is not inactive with a
-    failed precondition (internal/command/user.go: Errors.User.AlreadyInactive,
-    Errors.User.NotInactive), so the call follows the identity's current
-    state. An initial identity cannot be deactivated
+    every organisation the person belongs to, so suspending, offboarding or
+    removing one membership deactivates it only when no other membership is
+    active, and reactivating a membership reactivates it. Zitadel refuses
+    ``_deactivate`` on an inactive user and ``_reactivate`` on one that is not
+    inactive with a failed precondition (internal/command/user.go:
+    Errors.User.AlreadyInactive, Errors.User.NotInactive), so the call follows
+    the identity's current state. An initial identity cannot be deactivated
     (Errors.User.CantDeactivateInitial) and cannot sign in either (see
-    ``ZitadelClient.invite_user``), so it is left as it is.
+    ``ZitadelClient.invite_user``), so it is left as it is, as is an identity
+    Zitadel no longer has.
     """
     has_active_membership = (await get_user_global_membership_state(zitadel_user_id)).active_count > 0
-    state = _extract_zitadel_user_state(await zitadel.get_user_by_id(zitadel_user_id))
+    state = await _identity_state(zitadel_user_id)
+    if state is None:
+        return
     if not has_active_membership and state not in (_INACTIVE_STATE, _BROKEN_IMPORT_STATE):
         await zitadel.lock_user(zitadel_user_id=zitadel_user_id, org_id=settings.zitadel_portal_org_id)
     elif has_active_membership and state == _INACTIVE_STATE:
         await zitadel.unlock_user(zitadel_user_id=zitadel_user_id, org_id=settings.zitadel_portal_org_id)
+
+
+async def reactivate_identity_if_inactive(zitadel_user_id: str) -> bool:
+    """Reactivate the identity for a membership that is being restored; True when it did.
+
+    Used before the restored membership is committed, so it cannot count
+    memberships the way ``sync_identity_login`` does. The identity stays
+    active while another membership is active, and Zitadel refuses
+    ``_reactivate`` on it, so only an inactive identity is reactivated. A
+    caller that rolls back undoes exactly this reactivation and nothing another
+    organisation still relies on.
+    """
+    if await _identity_state(zitadel_user_id) != _INACTIVE_STATE:
+        return False
+    await zitadel.unlock_user(zitadel_user_id=zitadel_user_id, org_id=settings.zitadel_portal_org_id)
+    return True
 
 
 async def recover_existing_zitadel_identity_for_invite(

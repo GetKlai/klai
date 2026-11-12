@@ -284,15 +284,13 @@ async def register_client(request: Request) -> JSONResponse:
 
 
 async def _resolve_user_org(db: Any, zitadel_user_id: str) -> tuple[PortalUser, PortalOrg] | None:
-    """Look up the (PortalUser, PortalOrg) for a session's zitadel_user_id."""
+    """The (PortalUser, PortalOrg) of the session's first active membership; tokens are only issued for one."""
     result = await db.execute(
         select(PortalUser, PortalOrg)
         .join(PortalOrg, PortalOrg.id == PortalUser.org_id)
         .where(PortalUser.zitadel_user_id == zitadel_user_id)
-        .limit(1)
     )
-    row = result.one_or_none()
-    return (row[0], row[1]) if row else None
+    return next(((user, org) for user, org in result.all() if user.status == "active"), None)
 
 
 @router.get("/oauth/authorize")

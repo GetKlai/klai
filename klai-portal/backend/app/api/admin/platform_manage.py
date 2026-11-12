@@ -54,6 +54,7 @@ from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 from app.services.zitadel_identity_recovery import (
     ZitadelIdentityRecoveryError,
     email_hash_for_log,
+    reactivate_identity_if_inactive,
     recover_existing_zitadel_identity_for_invite,
     sync_identity_login,
 )
@@ -753,7 +754,6 @@ async def platform_invite(
     for the target org.
     """
     org = await _load_org_or_404(org_id)
-    from app.core.config import settings  # local import avoids cycle
 
     # 1. Create or reuse the Zitadel user (single portal org), no auto-mail.
     zitadel_user_id, zitadel_user_created = await _create_or_reuse_platform_invite_zitadel_user(
@@ -825,11 +825,7 @@ async def platform_invite(
                 user_row = existing_membership
                 reactivated_offboarded = True
             await create_default_personal_kb(zitadel_user_id, org_id, db)
-            if reactivated_offboarded:
-                await zitadel.unlock_user(
-                    zitadel_user_id=zitadel_user_id,
-                    org_id=settings.zitadel_portal_org_id,
-                )
+            if reactivated_offboarded and await reactivate_identity_if_inactive(zitadel_user_id):
                 reactivated_zitadel_user = True
             await db.commit()
     except HTTPException:

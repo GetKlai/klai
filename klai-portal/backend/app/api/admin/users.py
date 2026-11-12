@@ -52,6 +52,7 @@ from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 from app.services.zitadel_identity_recovery import (
     ZitadelIdentityRecoveryError,
     email_hash_for_log,
+    reactivate_identity_if_inactive,
     recover_existing_zitadel_identity_for_invite,
     sync_identity_login,
 )
@@ -345,8 +346,8 @@ async def _persist_invited_user_and_send_code(
         await create_default_personal_kb(zitadel_user_id, org.id, db)
         if reactivated_membership is not None:
             failure_step = "zitadel_reactivate"
-            await zitadel.unlock_user(zitadel_user_id, settings.zitadel_portal_org_id)
-            reactivated_zitadel_user = True
+            if await reactivate_identity_if_inactive(zitadel_user_id):
+                reactivated_zitadel_user = True
         failure_step = "invite_mail"
         try:
             await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
@@ -953,8 +954,7 @@ async def resend_invite(
             user.status = "active"
             await create_default_personal_kb(zitadel_user_id, perms.org_id, db)
             failure_step = "zitadel_reactivate"
-            await zitadel.unlock_user(zitadel_user_id, settings.zitadel_portal_org_id)
-            reactivated_zitadel_user = True
+            reactivated_zitadel_user = await reactivate_identity_if_inactive(zitadel_user_id)
             failure_step = "invite_mail"
         await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
         if reactivating_offboarded:
@@ -1039,6 +1039,8 @@ async def remove_user(
     await db.delete(user)
     await db.commit()
     fire_role_change_notification(zitadel_user_id)
+    if not delete_global_identity:
+        await _sync_identity_login_or_502(zitadel_user_id, perms, "removed")
 
     message = "User deleted." if delete_global_identity else "User removed from organization."
     return MessageResponse(message=message)
@@ -1050,7 +1052,7 @@ async def _sync_identity_login_or_502(zitadel_user_id: str, perms: UserPermissio
     The ``portal_users`` change stays committed when the identity provider
     fails: the portal already refuses a membership that is not active, and
     the audit row plus the 502 tell the admin that the identity still has to
-    follow.
+    follow. Repeating suspend, reactivate or offboard runs the sync again.
     """
     try:
         await sync_identity_login(zitadel_user_id)
@@ -1066,7 +1068,7 @@ async def _sync_identity_login_or_502(zitadel_user_id: str, perms: UserPermissio
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"User is {new_status} in this organisation, but their sign-in account could not be updated.",
+            detail="The change in this organisation is saved, but the sign-in account could not be updated.",
         ) from exc
 
 
@@ -1087,6 +1089,8 @@ async def suspend_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status in ("suspended", "offboarded"):
+        # Repeating the action repairs an identity a provider failure left out of step.
+        await _sync_identity_login_or_502(zitadel_user_id, perms, user.status)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"User has status '{user.status}' and cannot be suspended",
@@ -1122,6 +1126,7 @@ async def reactivate_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status != "suspended":
+        await _sync_identity_login_or_502(zitadel_user_id, perms, user.status)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"User has status '{user.status}' and cannot be reactivated",
@@ -1234,6 +1239,7 @@ async def offboard_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status == "offboarded":
+        await _sync_identity_login_or_502(zitadel_user_id, perms, "offboarded")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User has already been offboarded")
 
     # REQ-2.5 — fetch the preview and verify the body covers every KB it
@@ -1602,4 +1608,5 @@ async def leave_workspace(
     await db.commit()
     logger.info("leave_workspace: user=%s left org=%d", perms.user_id, perms.org_id)
     emit_event("user.left_workspace", org_id=perms.org_id, user_id=perms.user_id)
+    await _sync_identity_login_or_502(perms.user_id, perms, "removed")
     return MessageResponse(message="You have left the workspace.")

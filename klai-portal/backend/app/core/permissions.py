@@ -268,21 +268,7 @@ async def _resolve_caller_with_options(
             },
         )
 
-    # REQ-12 (Finding A-6, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): a suspended
-    # or offboarded membership may NOT keep using a valid bearer token. The
-    # identity stays valid while another membership is active, so this check,
-    # not the identity provider, ends access to this organisation. 403 (not
-    # 401) so the client distinguishes "your token is fine, your account is
-    # paused" from "your token is invalid": no token-refresh loop.
-    # @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
-    if perms.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error_code": f"user_{perms.status}",
-                "message": "User account is not active in this organisation. Contact the organisation admin.",
-            },
-        )
+    refuse_inactive_membership(perms)
 
     await set_tenant(db, perms.org_id)
 
@@ -301,6 +287,26 @@ async def _resolve_caller_with_options(
 
     structlog.contextvars.bind_contextvars(org_id=str(perms.org_id), user_id=zitadel_user_id)
     return perms
+
+
+# REQ-12 (Finding A-6, SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): a suspended or
+# offboarded membership may NOT keep using a valid bearer token. The identity
+# stays valid while another membership is active, so the portal's own checks
+# end access to this organisation: this one for portal routes and the internal
+# permissions route, ZitadelClient._require_chat_membership and
+# resolve_librechat_user for the organisation's chat. 403 (not 401) so the
+# client distinguishes "your token is fine, your account is paused" from "your
+# token is invalid": no token-refresh loop.
+# @MX:SPEC SPEC-SEC-CROSS-TENANT-FOLLOWUP-001 REQ-12
+def refuse_inactive_membership(perms: UserPermissions) -> None:
+    if perms.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": f"user_{perms.status}",
+                "message": "User account is not active in this organisation. Contact the organisation admin.",
+            },
+        )
 
 
 def _session_org_id(request: Request) -> int | None:
@@ -508,6 +514,7 @@ __all__ = [
     "get_caller",
     "get_caller_at_least",
     "has_role_at_least",
+    "refuse_inactive_membership",
     "require_capability",
     "require_platform_admin",
     "require_platform_unlocked",

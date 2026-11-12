@@ -44,6 +44,10 @@ os.environ.setdefault("DEBUG", "false")
 os.environ.setdefault("FRONTEND_URL", "")
 os.environ.setdefault("MOCK_BILLING", "false")
 os.environ.setdefault("ZITADEL_PAT", "test-pat")
+# The config default is the production identity provider. Forced rather than
+# defaulted, so neither a missed mock nor a developer's shell variable lets a
+# test reach a live Zitadel: `.invalid` never resolves (RFC 6761).
+os.environ["ZITADEL_BASE_URL"] = "https://zitadel.invalid"
 os.environ.setdefault("SSO_COOKIE_KEY", "R1c1-s96uO9Yz7k1E0kN6qz52gzd9PwNbAeZaks_PIc=")
 os.environ.setdefault("PORTAL_SECRETS_KEY", "0" * 64)  # 64-char hex; test placeholder only
 os.environ.setdefault("ENCRYPTION_KEY", "1" * 64)  # 64-char hex; test placeholder only

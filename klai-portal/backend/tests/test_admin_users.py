@@ -682,11 +682,13 @@ async def test_invite_user_reactivates_offboarded_workspace_member() -> None:
             new=AsyncMock(),
         ) as create_personal_kb,
         patch("app.api.admin.users._sync_zitadel_role_grant", new=AsyncMock()) as sync_role,
+        patch(
+            "app.api.admin.users.reactivate_identity_if_inactive", new=AsyncMock(side_effect=_record_unlock)
+        ) as reactivate_identity,
     ):
         mock_zitadel.invite_user = AsyncMock(side_effect=_http_error(409))
         mock_zitadel.find_user_id_by_email = AsyncMock(return_value="returning-user")
         mock_zitadel.grant_user_role = AsyncMock()
-        mock_zitadel.unlock_user = AsyncMock(side_effect=_record_unlock)
         mock_zitadel.send_invite_code = AsyncMock(side_effect=_record_send_invite)
         mock_zitadel.deactivate_user = AsyncMock()
         mock_zitadel.remove_user = AsyncMock()
@@ -702,7 +704,7 @@ async def test_invite_user_reactivates_offboarded_workspace_member() -> None:
     assert call_order == ["unlock", "send_invite", "commit"]
     mock_db.add.assert_not_called()
     create_personal_kb.assert_awaited_once_with("returning-user", 101, mock_db)
-    mock_zitadel.unlock_user.assert_awaited_once()
+    reactivate_identity.assert_awaited_once_with("returning-user")
     mock_zitadel.send_invite_code.assert_awaited_once_with("returning-user", url_template=ANY)
     mock_zitadel.deactivate_user.assert_not_awaited()
     sync_role.assert_awaited_once_with("returning-user", old_role="admin", new_role="company")
@@ -740,8 +742,8 @@ async def test_resend_invite_reactivates_offboarded_workspace_member() -> None:
             "app.services.default_knowledge_bases.create_default_personal_kb",
             new=AsyncMock(),
         ) as create_personal_kb,
+        patch("app.api.admin.users.reactivate_identity_if_inactive", new=AsyncMock(side_effect=_record_unlock)),
     ):
-        mock_zitadel.unlock_user = AsyncMock(side_effect=_record_unlock)
         mock_zitadel.send_invite_code = AsyncMock(side_effect=_record_send_invite)
         mock_zitadel.deactivate_user = AsyncMock()
 
@@ -898,11 +900,13 @@ async def test_remove_user_keeps_global_identity_when_other_memberships_exist() 
         ),
         patch("app.api.admin.users.zitadel") as mock_zitadel,
         patch("app.api.admin.users.fire_role_change_notification") as notify,
+        patch("app.api.admin.users.sync_identity_login", new=AsyncMock()) as sync_identity,
     ):
         mock_zitadel.remove_user = AsyncMock()
         response = await remove_user(zitadel_user_id="user-U", perms=perms, db=mock_db)
 
     mock_zitadel.remove_user.assert_not_awaited()
+    sync_identity.assert_awaited_once_with("user-U")
     mock_db.delete.assert_awaited_once_with(target_user)
     mock_db.commit.assert_awaited_once()
     notify.assert_called_once_with("user-U")
@@ -936,11 +940,13 @@ async def test_remove_user_deletes_global_identity_for_last_membership() -> None
         ),
         patch("app.api.admin.users.zitadel") as mock_zitadel,
         patch("app.api.admin.users.fire_role_change_notification"),
+        patch("app.api.admin.users.sync_identity_login", new=AsyncMock()) as sync_identity,
     ):
         mock_zitadel.remove_user = AsyncMock()
         response = await remove_user(zitadel_user_id="user-U", perms=perms, db=mock_db)
 
     mock_zitadel.remove_user.assert_awaited_once()
+    sync_identity.assert_not_awaited()
     assert response.message == "User deleted."
 
 

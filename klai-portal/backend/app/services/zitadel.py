@@ -531,13 +531,55 @@ class ZitadelClient:
 
         Returns the ``callbackUrl`` the browser should be redirected to.
         Requires the service account to have the ``IAM_LOGIN_CLIENT`` role.
+        Every sign-in the portal completes passes here, so this is where a
+        sign-in to an organisation's chat application is held to an active
+        membership of that organisation (``_require_chat_membership``).
         """
+        await self._require_chat_membership(auth_request_id, session_id, session_token)
         resp = await self._http.post(
             f"/v2/oidc/auth_requests/{auth_request_id}",
             json={"session": {"sessionId": session_id, "sessionToken": session_token}},
         )
         resp.raise_for_status()
         return resp.json()["callbackUrl"]
+
+    async def _require_chat_membership(self, auth_request_id: str, session_id: str, session_token: str) -> None:
+        """403 unless the session's user is an active member of the organisation whose chat client asks.
+
+        ``GET /v2/oidc/auth_requests/{id}`` names the OIDC client the request
+        is for (``authRequest.clientId``, permission ``session.read``, part of
+        ``IAM_LOGIN_CLIENT``). Provisioning stores each organisation's chat
+        client in ``portal_orgs.zitadel_librechat_client_id``; a client that is
+        no organisation's chat (the portal itself) needs no membership here.
+        """
+        from fastapi import HTTPException, status
+        from sqlalchemy import select
+
+        from app.core.database import AsyncSessionLocal
+        from app.models.portal import PortalOrg, PortalUser
+
+        resp = await self._http.get(f"/v2/oidc/auth_requests/{auth_request_id}")
+        resp.raise_for_status()
+        client_id = resp.json()["authRequest"]["clientId"]
+        if client_id == settings.zitadel_portal_client_id:
+            return
+        # portal_orgs has no row-level policy and portal_users is Cat-A, so a
+        # fresh session without tenant context reads both by key.
+        async with AsyncSessionLocal() as db:
+            org_id = (
+                await db.execute(select(PortalOrg.id).where(PortalOrg.zitadel_librechat_client_id == client_id))
+            ).scalar_one_or_none()
+        if org_id is None:
+            return
+        user_id = (await self.get_session_details(session_id, session_token))["zitadel_user_id"]
+        async with AsyncSessionLocal() as db:
+            membership_status = (
+                await db.execute(
+                    select(PortalUser.status).where(PortalUser.org_id == org_id, PortalUser.zitadel_user_id == user_id)
+                )
+            ).scalar_one_or_none()
+        if membership_status != "active":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="no_active_membership")
 
     async def set_password_with_code(
         self,
