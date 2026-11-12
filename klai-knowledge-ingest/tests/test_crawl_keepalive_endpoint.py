@@ -112,7 +112,12 @@ class TestCrawlKeepaliveEndpoint:
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
         assert resp.status_code == 200
-        assert resp.json() == {"ok": True, "reason": None}
+        assert resp.json() == {
+            "ok": True,
+            "reason": None,
+            "login_required": False,
+            "reminted": False,
+        }
 
     def test_root_redirect_to_language_path_then_ok(self) -> None:
         """The production failure mode: root 302s to /en on the same host,
@@ -143,7 +148,12 @@ class TestCrawlKeepaliveEndpoint:
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
         assert resp.status_code == 200
-        assert resp.json() == {"ok": True, "reason": None}
+        assert resp.json() == {
+            "ok": True,
+            "reason": None,
+            "login_required": False,
+            "reminted": False,
+        }
 
     def test_redirect_to_login_page_returns_ok_false_with_reason(self) -> None:
         """A same-host redirect the probe follows can still land on a login
@@ -183,7 +193,7 @@ class TestCrawlKeepaliveEndpoint:
         assert body["ok"] is False
         # Both the redirect target ("/login") and the landed page's own body
         # ("please log in to continue") are independently walled signals.
-        assert body["reason"] == "redirect_to_login, end_of_body_login_marker"
+        assert body["reason"] == "login_required:redirect_to_login, end_of_body_login_marker"
 
     def test_https_to_http_downgrade_is_not_followed(self) -> None:
         """A same-host redirect from https to http must not be followed --
@@ -284,7 +294,7 @@ class TestCrawlKeepaliveEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is False
-        assert body["reason"] == "redirect_to_login"
+        assert body["reason"] == "login_required:redirect_to_login"
 
     def test_embedded_login_gate_needs_link_href_preserved(self) -> None:
         """embedded_login_gate matches markdown link syntax
@@ -320,7 +330,7 @@ class TestCrawlKeepaliveEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is False
-        assert body["reason"] == "embedded_login_gate"
+        assert body["reason"] == "login_required:embedded_login_gate"
 
     def test_footer_boilerplate_does_not_trip_end_of_body_marker(self) -> None:
         """A sitewide footer link ("please log in") must not make every page
@@ -353,7 +363,12 @@ class TestCrawlKeepaliveEndpoint:
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
         assert resp.status_code == 200
-        assert resp.json() == {"ok": True, "reason": None}
+        assert resp.json() == {
+            "ok": True,
+            "reason": None,
+            "login_required": False,
+            "reminted": False,
+        }
 
     def test_allows_five_redirects_then_the_final_request(self) -> None:
         """Exactly 5 followed same-host redirects plus a final 200 must
@@ -380,7 +395,12 @@ class TestCrawlKeepaliveEndpoint:
             ) as probe_mock,
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
-        assert resp.json() == {"ok": True, "reason": None}
+        assert resp.json() == {
+            "ok": True,
+            "reason": None,
+            "login_required": False,
+            "reminted": False,
+        }
         assert probe_mock.await_count == 6
 
     def test_more_than_five_redirects_fails(self) -> None:
@@ -465,7 +485,12 @@ class TestCrawlKeepaliveEndpoint:
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
         assert resp.status_code == 200
-        assert resp.json() == {"ok": False, "reason": "cookie_load_failed"}
+        assert resp.json() == {
+            "ok": False,
+            "reason": "cookie_load_failed",
+            "login_required": False,
+            "reminted": False,
+        }
 
     def test_no_saved_credentials_returns_ok_false(self) -> None:
         """Empty cookie list (connector has no saved credentials) -> ok=False."""
@@ -480,7 +505,12 @@ class TestCrawlKeepaliveEndpoint:
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
         assert resp.status_code == 200
-        assert resp.json() == {"ok": False, "reason": "no_saved_credentials"}
+        assert resp.json() == {
+            "ok": False,
+            "reason": "no_saved_credentials",
+            "login_required": False,
+            "reminted": False,
+        }
 
     def test_pinned_fetch_error_returns_ok_false_no_500(self) -> None:
         """The pinned fetch raising (e.g. connection error) -> ok=False, no 500."""
@@ -505,7 +535,12 @@ class TestCrawlKeepaliveEndpoint:
         ):
             resp = client.post("/ingest/v1/crawl/keep-alive", json=_post())
         assert resp.status_code == 200
-        assert resp.json() == {"ok": False, "reason": "fetch_failed"}
+        assert resp.json() == {
+            "ok": False,
+            "reason": "fetch_failed",
+            "login_required": False,
+            "reminted": False,
+        }
 
 
 class TestKeepaliveStoresRefreshedSessionCookies:
@@ -563,7 +598,7 @@ class TestKeepaliveStoresRefreshedSessionCookies:
             with_cookies=_probe(200, text=self._ARTICLE, set_cookies=["sid=issued; Path=/"]),
             anonymous=_probe(200, text=self._GATE),
         )
-        assert body == {"ok": True, "reason": None}
+        assert body == {"ok": True, "reason": None, "login_required": False, "reminted": False}
         assert fetch_calls == [{"sid": "pasted-value"}, None]
         store.assert_awaited_once()
         kwargs = store.await_args.kwargs
@@ -575,7 +610,7 @@ class TestKeepaliveStoresRefreshedSessionCookies:
             with_cookies=_probe(200, text=self._ARTICLE, set_cookies=["sid=anonymous; Path=/"]),
             anonymous=_probe(200, text=self._ARTICLE),
         )
-        assert body == {"ok": True, "reason": None}
+        assert body == {"ok": True, "reason": None, "login_required": False, "reminted": False}
         store.assert_not_awaited()
 
     def test_logged_out_probe_never_overwrites_the_stored_session(self) -> None:

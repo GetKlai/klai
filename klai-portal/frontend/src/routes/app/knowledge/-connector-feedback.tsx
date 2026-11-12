@@ -21,6 +21,26 @@ import type { AuthProbeResult, PreviewClassification } from './-connector-types'
  * Shared by add-connector and edit-connector flows.
  */
 export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
+  return (
+    <div className="space-y-2">
+      <AuthProbeVerdict result={result} />
+      {result.renewal && (
+        // Proven on the real site when the cookies are tested: a sign-in with
+        // only the sign-in host's cookies. Without it the login lasts until the
+        // site ends its own session.
+        <Alert variant={result.renewal.can_renew ? 'success' : 'warning'} size="sm">
+          <span>
+            {result.renewal.can_renew
+              ? m.admin_connectors_webcrawler_auth_renewal_yes()
+              : m.admin_connectors_webcrawler_auth_renewal_no({ reason: result.renewal.reason ?? '' })}
+          </span>
+        </Alert>
+      )}
+    </div>
+  )
+}
+
+function AuthProbeVerdict({ result }: { result: AuthProbeResult }) {
   if (result.classification === 'auth_ok') {
     return (
       <Alert variant="success" size="sm">

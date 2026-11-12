@@ -33,8 +33,10 @@ function LoginPage() {
   // True while checking for an existing portal SSO session
   const [checkingSSO, setCheckingSSO] = useState(!!authRequestId)
 
-  // TOTP challenge state - shown after a successful password check
-  const [totpStep, setTotpStep] = useState(false)
+  // Second-factor step shown after a successful password check: an
+  // authenticator code, or a code Zitadel mailed for this login. A user with
+  // both is asked for the authenticator code only.
+  const [secondStep, setSecondStep] = useState<'totp' | 'otp_email' | null>(null)
   const [tempToken, setTempToken] = useState<string | null>(null)
   const [totpCode, setTotpCode] = useState('')
 
@@ -135,7 +137,7 @@ function LoginPage() {
       const resp = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, auth_request_id: authRequestId }),
+        body: JSON.stringify({ email, password, auth_request_id: authRequestId, accepts_email_code: true }),
       })
 
       if (!resp.ok) {
@@ -152,9 +154,9 @@ function LoginPage() {
 
       const data = await resp.json()
 
-      if (data.status === 'totp_required') {
+      if (data.status === 'totp_required' || data.status === 'otp_email_required') {
         setTempToken(data.temp_token)
-        setTotpStep(true)
+        setSecondStep(data.status === 'totp_required' ? 'totp' : 'otp_email')
         return
       }
 
@@ -220,6 +222,10 @@ function LoginPage() {
     }
   }
 
+  // Zitadel's e-mail codes are 8 digits (OTPEmail secret generator default
+  // in cmd/defaults.yaml, v4.20.1); authenticator codes are 6.
+  const codeLength = secondStep === 'otp_email' ? 8 : 6
+
   const leftContent = (
     <>
       <h1 className="text-3xl lg:text-4xl font-semibold leading-[1.15] tracking-tight">
@@ -251,15 +257,15 @@ function LoginPage() {
 
   return (
     <AuthPageLayout leftContent={leftContent} showLocale>
-      {totpStep ? (
-        /* TOTP challenge step */
+      {secondStep ? (
+        /* Second-factor step */
         <>
           <div className="space-y-1.5">
             <h2 className="text-2xl font-semibold tracking-tight text-gray-900">
               {m.totp_heading()}
             </h2>
             <p className="text-sm text-gray-600">
-              {m.totp_subheading()}
+              {secondStep === 'otp_email' ? m.totp_subheading_email() : m.totp_subheading()}
             </p>
           </div>
 
@@ -269,7 +275,7 @@ function LoginPage() {
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                maxLength={6}
+                maxLength={codeLength}
                 value={totpCode}
                 onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
                 required
@@ -283,7 +289,7 @@ function LoginPage() {
               <p className="rounded-lg bg-[var(--color-destructive-bg)] px-3 py-2 text-sm text-[var(--color-destructive-text)]">{error}</p>
             )}
 
-            <Button type="submit" size="lg" className="w-full gap-3" disabled={loading || totpCode.length !== 6}>
+            <Button type="submit" size="lg" className="w-full gap-3" disabled={loading || totpCode.length !== codeLength}>
               {loading ? m.totp_submit_loading() : m.totp_submit()}
               {!loading && <ArrowRight size={16} />}
             </Button>
@@ -291,7 +297,7 @@ function LoginPage() {
 
           <p className="text-center text-xs text-gray-600">
             <button
-              onClick={() => { setTotpStep(false); setTotpCode(''); setError(null) }}
+              onClick={() => { setSecondStep(null); setTotpCode(''); setError(null) }}
               className="text-[var(--color-rl-accent-dark)] hover:underline"
             >
               {m.totp_back()}

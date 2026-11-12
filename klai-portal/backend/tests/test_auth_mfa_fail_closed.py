@@ -37,7 +37,7 @@ from app.api.auth import login
 # (re-exported from auth_test_helpers). No import needed here.
 
 # ---------------------------------------------------------------------------
-# Scenario 1 — mfa_policy=required + has_any_mfa 500 → 503 (REQ-1.1, 1.3, 1.4, 1.5, 4.1, 4.2)
+# Scenario 1 — mfa_policy=required + factor lookup 500 → 503 (REQ-1.1, 1.3, 1.4, 1.5, 4.1, 4.2)
 # ---------------------------------------------------------------------------
 
 
@@ -109,19 +109,18 @@ async def test_find_user_by_email_500_returns_503(respx_zitadel: respx.MockRoute
 
 
 # ---------------------------------------------------------------------------
-# Scenario 3 — mfa_policy=optional + has_any_mfa 500 → 200 documented fail-open
-# (REQ-3.1, 3.6 — short-circuit means has_any_mfa is not called under optional)
+# Scenario 3 — mfa_policy=optional + no verifiable factor → 200, no event
+# (REQ-3.1, 3.6 — the factors are read once, as under every policy)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_optional_has_any_mfa_500_proceeds_no_event(respx_zitadel: respx.MockRouter) -> None:
+async def test_optional_policy_without_a_factor_logs_in_without_an_event(respx_zitadel: respx.MockRouter) -> None:
     respx_zitadel.post("/v2/users").mock(
         return_value=httpx.Response(
             200, json={"result": [{"userId": "uid-opt", "details": {"resourceOwner": "zorg-opt"}}]}
         )
     )
-    # has_totp + has_any_mfa share this URL. Return 200 so has_totp succeeds with no enrolment.
     auth_methods = respx_zitadel.get("/v2/users/uid-opt/authentication_methods").mock(
         return_value=httpx.Response(200, json={"authMethodTypes": []})
     )
@@ -138,11 +137,7 @@ async def test_optional_has_any_mfa_500_proceeds_no_event(respx_zitadel: respx.M
         result = await login(body=_make_login_body(), response=response, request=make_request(), db=db)
 
     assert result is not None
-    # Under mfa_policy="optional" the `if mfa_policy == "required":` guard
-    # short-circuits has_any_mfa, so the call is never attempted and no
-    # mfa_check_failed event is emitted (acceptance.md Scenario 3 clarification).
     assert _mfa_events(captured) == []
-    # has_totp is the only call to /authentication_methods (one call, returns 200)
     assert auth_methods.call_count == 1
 
 
@@ -209,6 +204,7 @@ async def test_happy_path_optional_no_mfa_sets_cookie(respx_zitadel: respx.MockR
     assert result.status == "ok"
     response.set_cookie.assert_called_once()  # session cookie minted by _finalize_and_set_cookie
     assert _mfa_events(captured) == []
+    assert _capture_events(captured, "mfa_setup_required") == []  # set-up is only demanded under required
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +236,7 @@ async def test_required_no_mfa_allows_setup_bootstrap(respx_zitadel: respx.MockR
 
     assert result.status == "ok"
     response.set_cookie.assert_called_once()
-    assert auth_methods.call_count == 2  # has_totp UI probe + required-policy has_any_mfa check
+    assert auth_methods.call_count == 1
     assert _mfa_events(captured) == []
 
     setup_events = _capture_events(captured, "mfa_setup_required")
@@ -362,7 +358,7 @@ async def test_portal_user_lookup_raises_proceeds_documented_fail_open(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 8 — has_any_mfa RequestError → 503 (REQ-1.2, 5.2(a)-variant)
+# Scenario 8 — factor lookup RequestError → 503 (REQ-1.2, 5.2(a)-variant)
 # ---------------------------------------------------------------------------
 
 
@@ -454,7 +450,7 @@ async def test_portal_user_orphan_org_proceeds_documented_fail_open(
 
 @pytest.mark.asyncio
 async def test_required_has_any_mfa_generic_exception_returns_503(respx_zitadel: respx.MockRouter) -> None:
-    """REQ-1.6 — any non-httpx exception during has_any_mfa still fail-closes."""
+    """REQ-1.6 — any non-httpx exception during the factor lookup still fail-closes."""
     respx_zitadel.post("/v2/users").mock(
         return_value=httpx.Response(
             200, json={"result": [{"userId": "uid-req", "details": {"resourceOwner": "zorg-req"}}]}
@@ -462,7 +458,7 @@ async def test_required_has_any_mfa_generic_exception_returns_503(respx_zitadel:
     )
     # Bypass respx by patching the client method directly with a non-httpx exception.
     respx_zitadel.get("/v2/users/uid-req/authentication_methods").mock(
-        return_value=httpx.Response(200, json={"authMethodTypes": []})  # has_totp succeeds
+        return_value=httpx.Response(200, json={"authMethodTypes": []})
     )
     respx_zitadel.post("/v2/sessions").mock(return_value=httpx.Response(200, json=_session_ok()))
 
@@ -478,7 +474,7 @@ async def test_required_has_any_mfa_generic_exception_returns_503(respx_zitadel:
         capture_logs() as captured,
         audit_patch,
         emit_patch,
-        patch.object(zitadel_singleton, "has_any_mfa", AsyncMock(side_effect=RuntimeError("kernel panic"))),
+        patch.object(zitadel_singleton, "login_second_factors", AsyncMock(side_effect=RuntimeError("kernel panic"))),
     ):
         with pytest.raises(HTTPException) as exc:
             await login(body=_make_login_body(), response=response, request=make_request(), db=db)
@@ -543,7 +539,6 @@ async def test_recommended_policy_behaves_like_optional(respx_zitadel: respx.Moc
     auth_methods = respx_zitadel.get("/v2/users/uid-rec/authentication_methods").mock(
         return_value=httpx.Response(200, json={"authMethodTypes": []})
     )
-    # has_any_mfa would fail if called — proves recommended skips it.
     respx_zitadel.post("/v2/sessions").mock(return_value=httpx.Response(200, json=_session_ok()))
     respx_zitadel.post(url__regex=r"/v2/oidc/auth_requests/.+").mock(
         return_value=httpx.Response(200, json={"callbackUrl": "https://chat.getklai.com/cb"})
@@ -558,6 +553,5 @@ async def test_recommended_policy_behaves_like_optional(respx_zitadel: respx.Moc
 
     assert result.status == "ok"
     response.set_cookie.assert_called_once()
-    # has_totp called once (probes UI flag); has_any_mfa NOT called under recommended.
     assert auth_methods.call_count == 1
     assert _mfa_events(captured) == []

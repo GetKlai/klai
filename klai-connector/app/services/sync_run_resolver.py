@@ -40,6 +40,7 @@ from app.services.crawl_sync_status import (
     is_terminal_remote_crawl_status,
     remote_crawl_documents_changed,
     remote_crawl_failure_error,
+    remote_crawl_failure_status,
 )
 from app.services.portal_client import PortalClient
 
@@ -212,11 +213,11 @@ class SyncRunResolver:
             error_details: list[dict[str, Any]] | None = None
             quality_status: str | None = "healthy"
         else:
-            new_status = SyncStatus.FAILED
+            remote_error = remote_crawl_failure_error(live)
+            new_status = remote_crawl_failure_status(remote_error)
             documents_total = pages_total
             documents_ok = pages_done
             documents_failed = max(0, pages_total - pages_done)
-            remote_error = remote_crawl_failure_error(live)
             error_details = [
                 {
                     "error": remote_error,

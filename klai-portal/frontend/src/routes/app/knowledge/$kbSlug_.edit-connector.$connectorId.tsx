@@ -204,6 +204,9 @@ function EditConnectorPage() {
   // Cookies live as structured {name, value} rows - same shape as the
   // backend persists and the cron-sync consumes. No parser layer.
   const [wcCookieRows, setWcCookieRows] = useState<CookieRow[]>([])
+  // Hosts the site signs in through besides the base host. Saved with the
+  // config; the config is replaced whole on save, so it is always sent.
+  const [wcAuthChainHosts, setWcAuthChainHosts] = useState<string[]>([])
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   // SPEC D-2: auth probe for the edit wizard
@@ -275,8 +278,9 @@ function EditConnectorPage() {
       const cfg = connector.config as {
         base_url?: string; path_prefix?: string; max_pages?: number; content_selector?: string
         cookies?: unknown[]; login_indicator_selector?: string; discovery_seed_url?: string
-        test_url?: string
+        test_url?: string; auth_chain_hosts?: string[]
       }
+      setWcAuthChainHosts(cfg.auth_chain_hosts ?? [])
       // Remember any stored discovery seed so a re-save that doesn't re-run the
       // preview does not silently drop it.
       setSavedDiscoverySeedUrl(String(cfg.discovery_seed_url ?? ''))
@@ -467,6 +471,9 @@ function EditConnectorPage() {
         if (ag?.login_indicator_selector) config.login_indicator_selector = ag.login_indicator_selector
         // Replacement cookies are the only secret values sent from the client.
         // Saved credentials stay server-side and are referenced only by connector id.
+        // Left out when empty: the backend default is the empty list, and the
+        // config is replaced whole, so omitting is how a stale host is dropped.
+        if (requiresLogin === true && wcAuthChainHosts.length > 0) config.auth_chain_hosts = wcAuthChainHosts
         if (requiresLogin === true && wcAuthMode === 'replace') {
           const cookies = buildCrawlerCookies(wcCookieRows, webcrawlerConfig.base_url)
           if (cookies) config.cookies = cookies
@@ -859,7 +866,14 @@ function EditConnectorPage() {
               {/* Step 3: Auth setup - REQ-2 auth-probe */}
               {wcStep === 'auth-setup' && (
                 <CrawlerAuthSetupStep
+                  kbSlug={kbSlug}
                   baseUrl={webcrawlerConfig.base_url}
+                  authChainHosts={wcAuthChainHosts}
+                  // Union, not replace: a stored host the check did not see this
+                  // time still holds cookies, and dropping it would 422 the save.
+                  onAuthChainHostsDetected={(hosts) =>
+                    setWcAuthChainHosts((prev) => [...new Set([...prev, ...hosts])])
+                  }
                   testUrl={wcEffectiveTestUrl}
                   onTestUrlChange={(url) => {
                     setWcTestUrl(url)
