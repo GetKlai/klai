@@ -579,12 +579,16 @@ every queue constant is in exactly one lane
 shutdown gets 20 s of the 90 s compose grace (`worker.py:94`,
 `deploy/docker-compose.yml:2188`), and a worker is stalled after 120 s without
 heartbeat. `recover_zombie_jobs` runs at start and every minute
-(`zombie_recovery.py`); a zombie whose `queueing_lock` is already held by a
-todo job with the same task and arguments is aborted, because that job does the
-same work. When the waiting job does other work (another batch of the same
-document), the zombie ends `failed`, its product records
+(`zombie_recovery.py`). A zombie whose `queueing_lock` is held by another
+live job is aborted when that job builds the same product of the same artifact:
+every lock of these tasks names the artifact, and such a job either redoes the
+zombie's work (a capacity re-queue, an old-shape job) or exists because that
+work finished (the next batch of a large document is deferred only after the
+previous batch wrote). Otherwise the zombie ends `failed`, its product records
 `failed (stuck_job_not_covered)` and `zombie_work_not_covered` is logged at
-error level.
+error level. A job cancelled by a worker shutdown or a user abort is always
+retried, whatever its attempt count (`enrichment_tasks._GiveUpRetry`), so a
+cancellation on the last attempt cannot leave the document pending.
 
 **Derived work belongs to the document version.** Enrichment and graph jobs
 carry only `artifact_id`; a new sync or crawl run never cancels or fences them,
@@ -609,8 +613,16 @@ state per product (`enrichment`, `graph`) in `knowledge.artifacts.extra`
 `done`, `not_applicable` with a reason, or `failed` with a reason. They live in
 `extra` and not in columns because every reader already loads `extra`, the
 fields old rows are judged by are there too, and nothing queries by state on a
-hot path. `set_product_state` writes only to the current version, so an
-abandoned job leaves no state. `product_state` is the one reader (graph refresh,
+hot path. `set_product_state` is the one writer. It writes only to the
+current version, so an abandoned job leaves no state, and only legal moves:
+to `pending` from any state (queueing is always deliberate: a new version, a
+reindex, a graph refresh, an operator re-queue or rebuild), and from `pending`
+or no state to `done`, `failed` or `not_applicable`. Anything else (`failed` to
+`done`, `done` to `failed`) is refused and logged as
+`derived_state_transition_refused`. The conditions sit on the row the UPDATE
+writes, so a replacement committing meanwhile keeps the write off the old
+version and of two concurrent identical failures only one logs. `product_state`
+is the one reader (graph refresh,
 current graph content, the nightly graph check, `reextract_document_graph`, the
 source list the portal shows); for rows from before the state existed it derives
 one from the old fields (`skipped:<reason>`, `no-chunks`,
@@ -623,21 +635,33 @@ Queueing is part of the write: `queue_derived_work` records `pending`, then
 defers. When the defer fails after the version row is committed, the document
 records `failed (queue_unavailable)` and the request raises; failing the
 request alone is not enough, because its retry finds the content unchanged and
-queues nothing.
+queues nothing. Ingest marks the raw text `synced` before it queues anything
+and tries every product before it raises, so no product is left without a
+state. For a reindex the failure also ends the `pending` `index_status`, and
+the upload shows failed.
 
 A move to `failed` logs `derived_product_failed` once, at error level, with
 `artifact_id`, `org_id`, `kb_slug`, `product` and `reason`; the alert of the
 same name fires on any such event in 10 minutes
 ([derived-product-failed.md](../runbooks/derived-product-failed.md)). Nothing
 scans for failed or missing work or queues it again: a failed document stays
-failed until its source is synced again or someone re-queues it by hand.
+failed until its source is synced again or someone re-queues it by hand. Graph
+refresh holds a document whose graph failed for a reason a new job would repeat
+(`no_stored_text`, or `quarantined` for the current writer build) and returns
+`held:<reason>`, so an unchanged re-sync does not queue it and alert again;
+exhausted retries keep their 7-day cool-off.
 
 `index_status` describes only the version's raw text in the vector index, the
 same for every source: `pending` while it is written or rewritten by a
-reindex, `synced`, `failed` when that write failed (the stale-pending reaper
-also sets it), `deleting`. It says nothing about enrichment or the graph; the
-portal's source list shows an upload as pending or failed from its enrichment
-state.
+reindex, `synced`, `failed` when that write failed, `deleting`. It says
+nothing about enrichment or the graph; the portal's source list shows an upload
+as failed when its text or enrichment failed, else pending when either is
+pending. Its "N pages failed" figure for a connector counts active versions
+whose text or enrichment failed (read through `product_state`); a failed graph
+extraction leaves the page searchable and is not counted there. The
+stale-pending reaper can still find one case: a version whose ingest request
+died between creating the row and finishing the raw write; it marks it failed
+and logs `stale_pending_artifacts_failed`, which has its own alert.
 
 ### 2.7 Periodic tasks
 
@@ -646,7 +670,7 @@ All in UTC, Procrastinate `@periodic`:
 | Schedule | Task | Queue | What it does |
 |---|---|---|---|
 | every minute | `recover_stalled_jobs_periodic` | maintenance | retries jobs whose worker heartbeat expired (`zombie_recovery.py:125-139`) |
-| `*/15 * * * *` | `reap_stale_pending_artifacts_periodic` | ingest-kb | marks artifacts `pending` for over 30 minutes with no runnable job as failed, at most 500 per run (`stale_pending_artifact_reaper.py:25-27,52-66`) |
+| `*/15 * * * *` | `reap_stale_pending_artifacts_periodic` | ingest-kb | marks versions whose raw write never finished (`pending` for over 30 minutes with no runnable job) as failed, at most 500 per run (`stale_pending_artifact_reaper.py`) |
 | `17 * * * *` | `sweep_unclassified_kbs_periodic` | maintenance | queues one taxonomy backfill per KB that still has chunks without label or taxonomy (`taxonomy_tasks.py:34,88-102`) |
 | `0 2 * * *` | `evaluate_retrieval_quality_periodic_chat` and `_knowledge_org` | rag-eval | one evaluation run per suite (`eval/ragas_runner.py:604-706`) |
 | `30 2 * * *` | `evaluate_ingest_gap_canary_periodic` | rag-eval | probe queries derived from sources (at most 10, 5 minute budget) (`eval/ragas_runner.py:44-48,394-430,651-665`) |

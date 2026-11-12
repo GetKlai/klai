@@ -904,6 +904,25 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
     # already attached at create_artifact time.
     await pg_store.update_artifact_extra(conn, artifact_id, extra_payload)
 
+    # The raw chunks are in Qdrant now, for every kind of source: the version's
+    # text is searchable. What enrichment and the graph make of it is recorded
+    # per product (derived_state), not here. Set before anything is queued, so
+    # a queue failure below cannot leave it saying pending.
+    updated = await pg_store.set_artifact_ingest_status(conn, artifact_id, req.org_id, "synced")
+    if updated is None:
+        logger.error(
+            "artifact_ingest_status_update_missing",
+            artifact_id=artifact_id,
+            org_id=req.org_id,
+            status="synced",
+        )
+        raise RuntimeError(f"artifact {artifact_id} was not updated to index_status=synced")
+
+    # A product whose job cannot be queued records failed (queue_unavailable)
+    # and the request raises, but only once every product has been tried: the
+    # first error is kept and raised at the end.
+    queue_error: Exception | None = None
+
     # Enqueue enrichment as async Procrastinate task (non-blocking).
     # SPEC-INGEST-CONTENT-PG-001: task takes only artifact_id; all other
     # fields are loaded from PostgreSQL at execution time. Closes the
@@ -933,28 +952,18 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
             if is_direct_file_upload
             else proc_app.enrich_document_bulk  # type: ignore[attr-defined]
         )
-        await queue_derived_work(
-            conn,
-            artifact_id,
-            "enrichment",
-            task_fn.configure(
-                queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}:{artifact_id}",
-            ),
-            artifact_id=artifact_id,
-        )
-
-    # The raw chunks are in Qdrant now, for every kind of source: the version's
-    # text is searchable. What enrichment and the graph make of it is recorded
-    # per product (derived_state), not here.
-    updated = await pg_store.set_artifact_ingest_status(conn, artifact_id, req.org_id, "synced")
-    if updated is None:
-        logger.error(
-            "artifact_ingest_status_update_missing",
-            artifact_id=artifact_id,
-            org_id=req.org_id,
-            status="synced",
-        )
-        raise RuntimeError(f"artifact {artifact_id} was not updated to index_status=synced")
+        try:
+            await queue_derived_work(
+                conn,
+                artifact_id,
+                "enrichment",
+                task_fn.configure(
+                    queueing_lock=f"{req.org_id}:{req.kb_slug}:{req.path}:{artifact_id}",
+                ),
+                artifact_id=artifact_id,
+            )
+        except Exception as exc:
+            queue_error = exc
 
     # Graphiti episode ingest — queued via Procrastinate on graphiti-bulk (lowest priority).
     # The worker drains: ingest-kb → enrich-interactive → enrich-bulk → graphiti-bulk.
@@ -1005,24 +1014,29 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         # writing this one. Without it a single tenant had 8,442 episodes of
         # replaced versions next to 1,748 current ones, and those facts kept
         # reaching answers.
-        await queue_derived_work(
-            conn,
-            artifact_id,
-            "graph",
-            proc_app.ingest_graphiti_episode.configure(  # type: ignore[attr-defined]
-                lock=f"graphiti:{artifact_id}",
-                queueing_lock=f"graphiti:{artifact_id}",
-            ),
-            artifact_id=artifact_id,
-            org_id=req.org_id,
-            content_type=req.content_type,
-            belief_time_start=kf["belief_time_start"],
-            kb_slug=req.kb_slug,
-            path=req.path,
-            replace_stale=True,
-        )
+        try:
+            await queue_derived_work(
+                conn,
+                artifact_id,
+                "graph",
+                proc_app.ingest_graphiti_episode.configure(  # type: ignore[attr-defined]
+                    lock=f"graphiti:{artifact_id}",
+                    queueing_lock=f"graphiti:{artifact_id}",
+                ),
+                artifact_id=artifact_id,
+                org_id=req.org_id,
+                content_type=req.content_type,
+                belief_time_start=kf["belief_time_start"],
+                kb_slug=req.kb_slug,
+                path=req.path,
+                replace_stale=True,
+            )
+        except Exception as exc:
+            queue_error = queue_error or exc
     else:
         await set_product_state(conn, artifact_id, "graph", NOT_APPLICABLE, "graph_disabled")
+    if queue_error is not None:
+        raise queue_error
 
     ingest_ms = int((time.monotonic() - t_ingest) * 1000)
     logger.info(

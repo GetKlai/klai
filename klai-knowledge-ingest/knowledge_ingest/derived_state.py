@@ -14,8 +14,9 @@ each, the row records exactly one state in ``extra``:
 ``product_state`` is the one reader. Rows written before these keys existed
 are derived from the fields they have, and say ``unknown`` where those fields
 cannot tell, never ``done`` by default. ``set_product_state`` is the one
-writer; a transition to ``failed`` logs ``derived_product_failed`` once at
-error level, which the ``derived_product_failed`` alert fires on. Nothing
+writer and enforces the legal transitions; a transition to ``failed`` logs
+``derived_product_failed`` once at error level, which the
+``derived_product_failed`` alert fires on. Nothing
 scans for incomplete documents or queues their work again: the document says
 what happened, and a person acts.
 
@@ -98,8 +99,7 @@ def product_state(
     return _legacy_enrichment_state(extra, index_status)
 
 
-def state_patch(product: Product, state: str, reason: str | None = None) -> dict[str, Any]:
-    """The ``extra`` keys that record a state, for writers that merge ``extra`` anyway."""
+def _state_patch(product: Product, state: str, reason: str | None) -> dict[str, Any]:
     return {
         f"{product}_state": state,
         f"{product}_reason": reason,
@@ -114,48 +114,103 @@ async def set_product_state(
     state: str,
     reason: str | None = None,
 ) -> bool:
-    """Record ``state`` for ``product`` on the artifact, if it is still the current version.
+    """Move ``product`` of the current version to ``state``, if that move is legal.
 
-    A replaced or deleted version gets no state: its work stopped because the
-    document moved on, which is not a failure. A transition to ``failed`` (not
-    a repeat of the same failure) logs ``derived_product_failed`` at error level
-    with ids only. Returns whether the row was current.
+    Legal moves:
+
+    - to ``pending`` from any state: work is (re)queued, which is always a
+      deliberate act (a new version, a reindex, a graph refresh, an operator
+      re-queue or rebuild);
+    - from ``pending``, or from no recorded state (rows and jobs from before
+      the state existed), to ``done``, ``failed`` or ``not_applicable``.
+
+    Everything else is refused and logged, so a late or stray write cannot turn
+    ``failed`` into ``done`` or ``done`` into ``failed``, and a repeated
+    outcome changes nothing and logs nothing. A replaced or deleted version is never
+    written: its work stopped because the document moved on.
+
+    The conditions are checked on the row the UPDATE writes, in one statement,
+    so a replacement committing meanwhile or a concurrent writer is seen: of
+    two concurrent failures only the first moves the row out of pending, and
+    only that one logs ``derived_product_failed`` (error level, ids only).
+
+    Returns whether the row now holds ``state``.
     """
     from knowledge_ingest.pg_store import _SENTINEL, PURGE_PENDING
 
     row = await conn.fetchrow(
         """
-        WITH before AS (
-            SELECT id, extra::jsonb->>($3 || '_state') AS state,
-                   extra::jsonb->>($3 || '_reason') AS reason
-            FROM knowledge.artifacts
-            WHERE id = $1::uuid AND belief_time_end = $4 AND index_status <> $5
-        )
         UPDATE knowledge.artifacts AS a
-        SET extra = COALESCE(a.extra::jsonb, '{}'::jsonb) || $2::jsonb
-        FROM before
-        WHERE a.id = before.id
-        RETURNING a.org_id, a.kb_slug, before.state AS previous_state,
-                  before.reason AS previous_reason
+        SET extra = COALESCE(a.extra, '{}'::jsonb) || $2::jsonb
+        WHERE a.id = $1::uuid AND a.belief_time_end = $4 AND a.index_status <> $5
+          AND ($6::text = 'pending' OR COALESCE(a.extra->>($3 || '_state'), 'pending') = 'pending')
+        RETURNING a.org_id, a.kb_slug
         """,
         artifact_id,
-        json.dumps(state_patch(product, state, reason)),
+        json.dumps(_state_patch(product, state, reason)),
+        product,
+        _SENTINEL,
+        PURGE_PENDING,
+        state,
+    )
+    if row is not None:
+        if state == FAILED:
+            logger.error(
+                "derived_product_failed",
+                artifact_id=artifact_id,
+                org_id=row["org_id"],
+                kb_slug=row["kb_slug"],
+                product=product,
+                reason=reason,
+            )
+        return True
+    held = await conn.fetchrow(
+        """
+        SELECT extra->>($2 || '_state') AS state, extra->>($2 || '_reason') AS reason
+        FROM knowledge.artifacts
+        WHERE id = $1::uuid AND belief_time_end = $3 AND index_status <> $4
+        """,
+        artifact_id,
         product,
         _SENTINEL,
         PURGE_PENDING,
     )
-    if row is None:
+    if held is None:
         return False
-    if state == FAILED and (row["previous_state"], row["previous_reason"]) != (FAILED, reason):
-        logger.error(
-            "derived_product_failed",
-            artifact_id=artifact_id,
-            org_id=row["org_id"],
-            kb_slug=row["kb_slug"],
-            product=product,
-            reason=reason,
+    if (held["state"], held["reason"]) == (state, reason):
+        return True
+    logger.warning(
+        "derived_state_transition_refused",
+        artifact_id=artifact_id,
+        product=product,
+        held=held["state"],
+        held_reason=held["reason"],
+        to=state,
+        to_reason=reason,
+    )
+    return False
+
+
+async def record_outcome(
+    conn: asyncpg.Connection,
+    artifact_id: str,
+    product: Product,
+    state: str,
+    reason: str | None = None,
+) -> bool:
+    """``set_product_state`` for the end of the work, plus what it means for the text.
+
+    A reindex leaves ``index_status`` pending while enrichment rewrites the
+    version's points, so the enrichment outcome also ends that.
+    """
+    from knowledge_ingest import pg_store
+
+    current = await set_product_state(conn, artifact_id, product, state, reason)
+    if current and product == "enrichment":
+        await pg_store.finish_pending_index_status(
+            conn, artifact_id, FAILED if state == FAILED else "synced"
         )
-    return True
+    return current
 
 
 async def queue_derived_work(
@@ -165,14 +220,15 @@ async def queue_derived_work(
     configured_task: Any,
     /,
     **job_args: Any,
-) -> None:
+) -> bool:
     """Queue a product's job; the document records pending, or failed if queueing fails.
 
     Pending is written first, so a job that runs at once cannot have its
-    ``done`` overwritten. When the defer raises, the row is already committed
+    outcome overwritten. When the defer raises, the row is already committed
     and a retry of this request would find the content unchanged and queue
     nothing, so a failed request alone would lose the work silently: the
-    document records failed (queue_unavailable, alerted) and the request fails.
+    document records failed (queue_unavailable, alerted) and the error is
+    raised. Returns False when a job for this version was already waiting.
     """
     from procrastinate.exceptions import AlreadyEnqueued
 
@@ -182,6 +238,8 @@ async def queue_derived_work(
     except AlreadyEnqueued:
         # A job for this exact version is waiting already and covers it.
         logger.info("derived_work_already_queued", artifact_id=artifact_id, product=product)
+        return False
     except Exception:
-        await set_product_state(conn, artifact_id, product, FAILED, "queue_unavailable")
+        await record_outcome(conn, artifact_id, product, FAILED, "queue_unavailable")
         raise
+    return True

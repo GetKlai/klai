@@ -41,7 +41,7 @@ from knowledge_ingest import pg_store
 from knowledge_ingest.build_estimate import estimate_graph_build
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
-from knowledge_ingest.derived_state import DONE, NOT_APPLICABLE, state_patch
+from knowledge_ingest.derived_state import DONE, NOT_APPLICABLE, PENDING, set_product_state
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
     graph_episode_skip_reason,
@@ -442,6 +442,13 @@ async def main(
             async with db_lock:
                 await retire_earlier_extractions(conn, org_id, artifact_id, keep=keep)
 
+        async def _db_outcome(artifact_id: str, state: str, reason: str | None = None) -> None:
+            # A backfill run is a deliberate re-run of the extraction: it
+            # reopens the document's graph state, then records the outcome.
+            async with db_lock:
+                await set_product_state(conn, artifact_id, "graph", PENDING)
+                await set_product_state(conn, artifact_id, "graph", state, reason)
+
         counts = {"ok": 0, "err": 0}
         t_start = time.time()
         total_to_process = len(to_process)
@@ -465,14 +472,10 @@ async def main(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                         "WHERE id = $2::uuid",
-                        json.dumps(
-                            {
-                                "graphiti_episode_ids": [],
-                                **state_patch("graph", NOT_APPLICABLE, "no_text"),
-                            }
-                        ),
+                        json.dumps({"graphiti_episode_ids": []}),
                         artifact_id,
                     )
+                    await _db_outcome(artifact_id, NOT_APPLICABLE, "no_text")
                     # No text is a finished outcome too: the earlier versions'
                     # facts no longer describe this document.
                     await _db_retire(artifact_id, [])
@@ -492,14 +495,10 @@ async def main(
                         "UPDATE knowledge.artifacts "
                         "SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb "
                         "WHERE id = $2::uuid",
-                        json.dumps(
-                            {
-                                "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
-                                **state_patch("graph", NOT_APPLICABLE, skip_reason),
-                            }
-                        ),
+                        json.dumps({"graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION}),
                         artifact_id,
                     )
+                    await _db_outcome(artifact_id, NOT_APPLICABLE, skip_reason)
                     await _db_retire(artifact_id, [])
                     return
 
@@ -571,11 +570,11 @@ async def main(
                                 "graphiti_episode_complete": True,
                                 "graphiti_model": settings.graphiti_llm_model,
                                 "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
-                                **state_patch("graph", DONE),
                             }
                         ),
                         artifact_id,
                     )
+                    await _db_outcome(artifact_id, DONE)
                 except TimeoutError:
                     counts["err"] += 1
                     log.error(

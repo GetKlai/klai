@@ -97,18 +97,20 @@ def _common_patches():
     mock_pg.insert_parent_chunks = AsyncMock(return_value=[1])
 
     mock_enrich = AsyncMock()
+    mock_finish = AsyncMock()
 
     with (
         patch(
             "knowledge_ingest.rebuild_tasks._list_active_artifacts",
             new_callable=AsyncMock,
         ) as mock_list,
+        patch("knowledge_ingest.derived_state.set_product_state", AsyncMock()) as mock_state,
         # Patch the lazy import targets so they resolve to our mocks.
         patch.dict(
             sys.modules,
             {
                 "knowledge_ingest.enrichment_tasks": types.SimpleNamespace(
-                    _enrich_document=mock_enrich
+                    _enrich_document=mock_enrich, _finish=mock_finish
                 ),
                 "knowledge_ingest.chunker": mock_chunker,
                 "knowledge_ingest.pg_store": mock_pg,
@@ -118,6 +120,8 @@ def _common_patches():
         yield {
             "mock_list": mock_list,
             "mock_enrich": mock_enrich,
+            "mock_finish": mock_finish,
+            "mock_state": mock_state,
             "mock_chunker": mock_chunker,
             "mock_pg": mock_pg,
             "chunks": chunks,
@@ -345,6 +349,12 @@ async def test_rebuild_counts_an_artifact_whose_chunks_were_not_written_as_faile
 
     assert result["artifacts_processed"] == 0
     assert result["artifacts_failed"] == 1
+    # The parents were deleted: the document must not keep saying done.
+    _common_patches["mock_state"].assert_awaited_once()
+    assert _common_patches["mock_state"].await_args.args[1:] == ("art-1", "enrichment", "pending")
+    _common_patches["mock_finish"].assert_awaited_once_with(
+        "enrichment", "art-1", "failed", "rebuild_failed"
+    )
 
 
 # ---------------------------------------------------------------------------

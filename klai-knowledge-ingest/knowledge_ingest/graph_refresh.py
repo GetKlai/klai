@@ -63,8 +63,9 @@ async def maybe_refresh_stale_graph(
     the cool-off and the daily cap, which exist to bound automatic refreshes.
 
     Returns ``"queued"``, ``"already_queued"``, ``"skipped:<reason>"``,
-    ``"deferred:<reason>"``, or ``None`` when the graph is current or
-    graphiti is disabled. Never raises:
+    ``"deferred:<reason>"``, ``"held:<reason>"`` (failed, and re-queuing
+    cannot succeed), or ``None`` when the graph is current or graphiti is
+    disabled. Never raises:
     the refresh is opportunistic — the caller's contract (content-unchanged
     skip, upload reindex) must not fail on a FalkorDB or queue hiccup, matching
     how the ingest route swallows its other graph operations ("a stranded
@@ -96,6 +97,16 @@ async def maybe_refresh_stale_graph(
         return None
 
 
+def _cannot_succeed(state: ProductState, extra: dict) -> bool:
+    from knowledge_ingest.falkordb_probe import graph_writer_build
+
+    if state == ProductState(FAILED, "no_stored_text"):
+        return True
+    return state == ProductState(FAILED, "quarantined") and (
+        extra.get("graphiti_quarantine_build") == graph_writer_build()
+    )
+
+
 async def _refresh_stale_graph(
     conn: asyncpg.Connection,
     *,
@@ -124,8 +135,12 @@ async def _refresh_stale_graph(
                 "graphiti_episode_complete": True,
                 "graphiti_episode_id": None,
                 "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
-                **derived_state.state_patch("graph", NOT_APPLICABLE, graph_skip),
             },
+        )
+        # The newer extraction rules re-decide this version: reopen, then record.
+        await derived_state.set_product_state(conn, artifact_id, "graph", PENDING)
+        await derived_state.set_product_state(
+            conn, artifact_id, "graph", NOT_APPLICABLE, graph_skip
         )
         logger.info(
             "graph_refresh_skipped",
@@ -137,9 +152,24 @@ async def _refresh_stale_graph(
         )
         return f"skipped:{graph_skip}"
 
+    state = derived_state.product_state(extra, "graph")
+    if not user_requested and _cannot_succeed(state, extra):
+        # The document already says failed for this reason, and a new job
+        # would fail the same way and alert again. Only new content (a new
+        # version), a new writer build releasing a quarantine, or a reindex
+        # by a person queues it again.
+        logger.info(
+            "graph_refresh_held",
+            artifact_id=artifact_id,
+            org_id=org_id,
+            kb_slug=kb_slug,
+            path=path,
+            reason=state.reason,
+        )
+        return f"held:{state.reason}"
+
     if not user_requested:
         deferred = None
-        state = derived_state.product_state(extra, "graph")
         failed_at = extra.get("graph_state_at") or extra.get("graphiti_exhausted_at")
         if (
             state == ProductState(FAILED, "retries_exhausted")
@@ -166,8 +196,9 @@ async def _refresh_stale_graph(
 
     proc_app = enrichment_tasks.get_app()
     # Pending before the defer, so a job that runs at once cannot have its
-    # ``done`` overwritten; put back as it was when no job could be queued,
-    # because the previous extraction then still stands.
+    # outcome overwritten. When no job could be queued the keys this function
+    # just changed are put back as they were, because the previous extraction
+    # still stands: the one write of the state outside set_product_state.
     await derived_state.set_product_state(conn, artifact_id, "graph", PENDING)
     try:
         # ``queueing_lock`` dedups only while the earlier job is still todo;

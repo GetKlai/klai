@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -443,12 +443,15 @@ async def test_already_enqueued_does_not_propagate():
 @pytest.mark.asyncio
 async def test_a_queue_outage_after_the_row_is_written_fails_the_request_and_the_document():
     """The version row is committed before the defer. A retry of the request
-    would find the content unchanged and queue nothing, so the document itself
-    must say its enrichment failed, and the caller must see the request fail."""
+    would find the content unchanged and queue nothing, so every product that
+    could not be queued must say failed, the raw text must say searchable, and
+    only then does the caller see the request fail."""
     from knowledge_ingest.models import IngestRequest
     from knowledge_ingest.routes.ingest import ingest_document
 
-    mock_app, _, _ = _make_mock_app(side_effect=ConnectionError("queue unreachable"))
+    outage = ConnectionError("queue unreachable")
+    mock_app, _, _ = _make_mock_app(side_effect=outage)
+    mock_app.graphiti_configured.defer_async.side_effect = outage
     req = IngestRequest(
         org_id="org-1",
         kb_slug="my-kb",
@@ -459,13 +462,16 @@ async def test_a_queue_outage_after_the_row_is_written_fails_the_request_and_the
     )
 
     with patch("knowledge_ingest.derived_state.set_product_state", AsyncMock()) as record:
-        async with _base_patches(mock_app):
+        async with _base_patches(mock_app, graphiti_enabled=True) as calls:
             with pytest.raises(ConnectionError):
                 await ingest_document(_make_mock_conn(), req)
 
+    calls.set_ingest_status.assert_awaited_once_with(ANY, "art-test", "org-1", "synced")
     assert [c.args[1:] for c in record.await_args_list] == [
         ("art-test", "enrichment", "pending"),
         ("art-test", "enrichment", "failed", "queue_unavailable"),
+        ("art-test", "graph", "pending"),
+        ("art-test", "graph", "failed", "queue_unavailable"),
     ]
 
 

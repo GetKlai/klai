@@ -20,6 +20,8 @@ import asyncpg
 import structlog
 from klai_kb_slugs import personal_kb_slug
 
+from knowledge_ingest.derived_state import FAILED, PENDING, ProductState, product_state
+
 logger = structlog.get_logger()
 
 _SENTINEL = 253402300800  # 9999-12-31 — sentinel value for "still active"
@@ -1963,22 +1965,40 @@ async def count_sources_per_kb(
     return {row["kb_slug"]: int(row["sources_count"] or 0) for row in rows}
 
 
+# The extra keys the enrichment reader (derived_state.product_state) reads.
+_ENRICHMENT_FIELDS_SQL = """
+            jsonb_build_object(
+                'enrichment_state', a.extra->'enrichment_state',
+                'enrichment_reason', a.extra->'enrichment_reason',
+                'enrichment_state_at', a.extra->'enrichment_state_at',
+                'llm_enrichment_skipped', a.extra->'llm_enrichment_skipped',
+                'source_connector_id', a.extra->'source_connector_id'
+            ) AS enrichment_fields"""
+
+
+def _enrichment_state(row: asyncpg.Record) -> tuple[ProductState, dict]:
+    fields = row["enrichment_fields"]
+    fields = json.loads(fields) if isinstance(fields, str) else (fields or {})
+    return product_state(fields, "enrichment", index_status=row["index_status"]), fields
+
+
 def _upload_status(row: asyncpg.Record) -> dict:
     """The status the portal shows for an upload: its text, then its enrichment.
 
     ``index_status`` says whether the version's text is searchable; the portal's
     badge has always meant "processed", so an enrichment that is still pending
-    or has failed shows as such (``derived_state``). The time is the later of
-    the two transitions, which is what the badge measures "stuck" against.
+    or has failed shows as such (``derived_state``). A failure of either wins
+    over pending: a reindex whose job could not be queued must show failed,
+    not waiting. The time is that of the transition shown.
     """
-    from knowledge_ingest.derived_state import FAILED, PENDING, product_state
-
-    fields = row["enrichment_fields"]
-    fields = json.loads(fields) if isinstance(fields, str) else (fields or {})
-    enrichment = product_state(fields, "enrichment")
+    enrichment, fields = _enrichment_state(row)
     status, changed_at = row["index_status"], row["index_status_changed_at"]
-    if status not in (PENDING, FAILED) and enrichment.state in (PENDING, FAILED):
-        status, changed_at = enrichment.state, fields.get("enrichment_state_at") or changed_at
+    for shown in (FAILED, PENDING):
+        if status == shown:
+            break
+        if enrichment.state == shown:
+            status, changed_at = shown, fields.get("enrichment_state_at") or changed_at
+            break
     return {
         "index_status": status,
         "index_status_changed_at": int(changed_at) if changed_at is not None else None,
@@ -1993,8 +2013,12 @@ async def list_kb_sources(
     Returns ``{"connectors": [...], "uploads": [...]}`` where:
       - connectors: one row per distinct ``source_connector_id`` found in
         artifacts.extra, with aggregate items_count + items_failed_count
-        (active artifacts whose text failed to index, or whose enrichment or
-        graph state is failed) + chunks_count
+        + chunks_count. ``items_failed_count`` is the portal's "N pages
+        failed": active versions whose text failed to index or whose
+        enrichment failed (``derived_state.product_state``), the pages search
+        serves without, or with less than, their processed text. A failed
+        graph extraction is not counted: the page is fully searchable, and
+        that failure is the ``derived_product_failed`` alert's.
       - uploads: one row per artifact whose ``source_connector_id`` is null
         (direct file/url/text/image uploads), with chunks_count
 
@@ -2002,44 +2026,44 @@ async def list_kb_sources(
     sync status, and last_sync_at from the portal-side ``connectors`` table.
     Knowledge-ingest does NOT know connector display metadata.
     """
-    # Connectors: one row per source_connector_id, with aggregate counts.
-    # items_count and items_failed_count both use COUNT(DISTINCT a.id [FILTER]) —
-    # the LEFT JOIN to parent_chunks fans out one row per chunk, so a plain
-    # COUNT(*) FILTER would overcount artifacts with >1 chunk. COUNT(DISTINCT)
-    # collapses the fanout back to one count per artifact regardless of how
-    # many chunk rows the join produced for it.
+    # Connectors: one row per active version, aggregated per source_connector_id
+    # here, because whether a version's enrichment failed is the reader's call
+    # (legacy rows included), not a SQL filter's.
     connector_rows = await conn.fetch(
         """
         SELECT
             a.extra::jsonb->>'source_connector_id' AS connector_id,
-            COUNT(DISTINCT a.id) AS items_count,
-            COUNT(DISTINCT a.id) FILTER (
-                WHERE a.index_status = 'failed'
-                   OR a.extra::jsonb->>'enrichment_state' = 'failed'
-                   OR a.extra::jsonb->>'graph_state' = 'failed'
-            ) AS items_failed_count,
-            COUNT(pc.id) AS chunks_count
+            a.index_status AS index_status,
+            (SELECT COUNT(*) FROM knowledge.parent_chunks pc
+             WHERE pc.artifact_id = a.id) AS chunks_count,"""  # noqa: S608 -- constant SQL
+        + _ENRICHMENT_FIELDS_SQL
+        + """
         FROM knowledge.artifacts a
-        LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
         WHERE a.org_id = $1
           AND a.kb_slug = $2
           AND a.belief_time_end = $3
           AND a.extra::jsonb->>'source_connector_id' IS NOT NULL
-        GROUP BY a.extra::jsonb->>'source_connector_id'
         """,
         org_id,
         kb_slug,
         _SENTINEL,
     )
-    connectors = [
-        {
-            "connector_id": row["connector_id"],
-            "items_count": int(row["items_count"] or 0),
-            "items_failed_count": int(row["items_failed_count"] or 0),
-            "chunks_count": int(row["chunks_count"] or 0),
-        }
-        for row in connector_rows
-    ]
+    by_connector: dict[str, dict] = {}
+    for row in connector_rows:
+        entry = by_connector.setdefault(
+            row["connector_id"],
+            {
+                "connector_id": row["connector_id"],
+                "items_count": 0,
+                "items_failed_count": 0,
+                "chunks_count": 0,
+            },
+        )
+        entry["items_count"] += 1
+        entry["chunks_count"] += int(row["chunks_count"] or 0)
+        if row["index_status"] == FAILED or _enrichment_state(row)[0].state == FAILED:
+            entry["items_failed_count"] += 1
+    connectors = list(by_connector.values())
 
     # Direct uploads: one row per artifact without source_connector_id
     upload_rows = await conn.fetch(
@@ -2059,13 +2083,9 @@ async def list_kb_sources(
             a.created_at AS created_at,
             COUNT(pc.id) AS chunks_count,
             a.index_status AS index_status,
-            a.index_status_changed_at AS index_status_changed_at,
-            jsonb_build_object(
-                'enrichment_state', a.extra::jsonb->'enrichment_state',
-                'enrichment_reason', a.extra::jsonb->'enrichment_reason',
-                'enrichment_state_at', a.extra::jsonb->'enrichment_state_at',
-                'llm_enrichment_skipped', a.extra::jsonb->'llm_enrichment_skipped'
-            ) AS enrichment_fields
+            a.index_status_changed_at AS index_status_changed_at,"""
+        + _ENRICHMENT_FIELDS_SQL
+        + """
         FROM knowledge.artifacts a
         LEFT JOIN knowledge.parent_chunks pc ON pc.artifact_id = a.id
         WHERE a.org_id = $1

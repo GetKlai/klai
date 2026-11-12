@@ -439,17 +439,9 @@ class _DerivedWorkFailed(RuntimeError):
 async def _finish(
     product: derived_state.Product, artifact_id: str, state: str, reason: str | None = None
 ) -> None:
-    """Record the product's final state on the document version, if it is still current.
-
-    For enrichment the version's ``index_status`` leaves ``pending`` too: a
-    reindex sets it while the job rewrites the version's points.
-    """
+    """Record the product's final state on the document version, if it is still current."""
     async with cross_org_admin_connection() as conn:
-        current = await derived_state.set_product_state(conn, artifact_id, product, state, reason)
-        if current and product == "enrichment":
-            await pg_store.finish_pending_index_status(
-                conn, artifact_id, "failed" if state == FAILED else "synced"
-            )
+        await derived_state.record_outcome(conn, artifact_id, product, state, reason)
 
 
 async def _give_up(product: derived_state.Product, artifact_id: str, reason: str) -> NoReturn:
@@ -534,7 +526,16 @@ def _register_tasks(procrastinate_app: Any) -> None:
     import procrastinate
 
     class _GiveUpRetry(procrastinate.BaseRetryStrategy):
-        """``inner``, except that a recorded or quarantined failure fails for good."""
+        """``inner``, except for the two ways a job ends without trying the work.
+
+        A recorded or quarantined failure fails for good. A job cancelled from
+        outside (a worker shutting down, a user abort; ``CancelledError``) did
+        not fail at all, so it is always retried, whatever its attempt count:
+        otherwise a cancellation on the last attempt would end the job
+        ``aborted`` with no retry left and the document pending for ever. The
+        retried job then does the work, or abandons it when its version or
+        connector has gone.
+        """
 
         def __init__(self, inner: Any) -> None:
             self.inner = inner
@@ -542,6 +543,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
         def get_retry_decision(self, *, exception: BaseException, job: Any) -> Any:
             if isinstance(exception, GraphitiEpisodeQuarantined | _DerivedWorkFailed):
                 return None
+            if isinstance(exception, asyncio.CancelledError):
+                return procrastinate.RetryDecision(retry_in={"seconds": 0})
             return self.inner.get_retry_decision(exception=exception, job=job)
 
     # Backoff rationale: enrichment failures in production are dominated by
@@ -707,8 +710,10 @@ def _register_tasks(procrastinate_app: Any) -> None:
             same_build = artifact["extra"].get("graphiti_quarantine_build") == build
             if artifact["extra"].get("graphiti_quarantined_at"):
                 if same_build:
-                    # graph_refresh and re-syncs enqueue it again; the document
-                    # already says failed (quarantined), so this logs nothing new.
+                    # Reached only by a deliberate re-queue (a reindex): graph
+                    # refresh does not queue a document quarantined for this
+                    # build. The re-queue reopened the state, so this failure
+                    # is recorded and alerted again.
                     await _give_up("graph", artifact_id, "quarantined")
                 await pg_store.update_artifact_extra(
                     conn,
@@ -907,7 +912,6 @@ def _register_tasks(procrastinate_app: Any) -> None:
             final: dict[str, Any] = {
                 "graphiti_episode_complete": True,
                 "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
-                **derived_state.state_patch("graph", DONE),
             }
             if replace_stale:
                 # Only now, with every part written, does this extraction
@@ -926,6 +930,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     "graphiti_stale_episodes_replaced", artifact_id=artifact_id, org_id=org_id
                 )
             await pg_store.update_artifact_extra(conn, artifact_id, final)
+            await derived_state.set_product_state(conn, artifact_id, "graph", DONE)
 
     procrastinate_app.ingest_graphiti_episode = ingest_graphiti_episode  # type: ignore[attr-defined]
 

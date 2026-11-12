@@ -356,3 +356,281 @@ async def test_a_replaced_version_never_records_a_failure(jobs) -> None:
     assert written is False
     assert await _state(jobs.conn, artifact, "graph") == ProductState("unknown")
     assert not [e for e in logs if e["event"] == "derived_product_failed"]
+
+
+# --- a cancelled job is retried, whatever its attempt count ------------------
+
+
+@pytest.mark.parametrize("how", ["worker_shutdown", "user_abort"])
+async def test_a_job_cancelled_on_its_last_attempt_runs_again(jobs, monkeypatch, how) -> None:
+    """A cancellation is not a failure: on the last attempt it would otherwise
+    end the job aborted with no retry left and the document pending for ever."""
+    import asyncio
+
+    from procrastinate.testing import InMemoryConnector
+
+    artifact = await jobs.insert({"document_text": "Text."}, active=True)
+    await set_product_state(jobs.conn, artifact, "enrichment", "pending")
+    started = asyncio.Event()
+
+    async def _hang(*_args, **_kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(enrichment_tasks, "_load_and_enrich", _hang)
+    connector = InMemoryConnector()
+    app = jobs.procrastinate.App(connector=connector)
+    enrichment_tasks._register_tasks(app)
+    async with app.open_async():
+        job_id = await app.enrich_document_bulk.defer_async(artifact_id=artifact)
+        connector.jobs[job_id]["attempts"] = enrichment_tasks._BULK_MAX_ATTEMPTS
+        worker = asyncio.create_task(
+            app.run_worker_async(
+                queues=["enrich-bulk"],
+                install_signal_handlers=False,
+                shutdown_graceful_timeout=0,
+                abort_job_polling_interval=0.05,
+            )
+        )
+        await asyncio.wait_for(started.wait(), 5)
+        if how == "user_abort":
+            await app.job_manager.cancel_job_by_id_async(job_id, abort=True)
+            for _ in range(100):
+                if connector.jobs[job_id]["status"] != "doing":
+                    break
+                await asyncio.sleep(0.05)
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+
+    assert connector.jobs[job_id]["status"] == "todo"
+    assert await _state(jobs.conn, artifact, "enrichment") == ProductState("pending")
+
+
+# --- the one writer: legal transitions, one atomic step ----------------------
+
+
+async def test_a_late_write_cannot_turn_failed_into_done_or_done_into_failed(jobs) -> None:
+    failed = await jobs.insert({}, active=True, path="failed")
+    done = await jobs.insert({}, active=True, path="done")
+    for artifact, outcome in ((failed, ("failed", "quarantined")), (done, ("done", None))):
+        await set_product_state(jobs.conn, artifact, "graph", "pending")
+        await set_product_state(jobs.conn, artifact, "graph", *outcome)
+
+    with structlog.testing.capture_logs() as logs:
+        assert not await set_product_state(jobs.conn, failed, "graph", "done")
+        assert not await set_product_state(jobs.conn, done, "graph", "failed", "retries_exhausted")
+
+    assert await _state(jobs.conn, failed, "graph") == ProductState("failed", "quarantined")
+    assert await _state(jobs.conn, done, "graph") == ProductState("done")
+    assert [e["event"] for e in logs] == ["derived_state_transition_refused"] * 2
+    # Re-queuing is the deliberate way out of failed.
+    assert await set_product_state(jobs.conn, failed, "graph", "pending")
+
+
+async def _write_behind_a_lock(artifact: str, change: str, writes: int) -> list[bool]:
+    """Hold the row, start ``writes`` concurrent failures, apply ``change``, release."""
+    import asyncio
+
+    import asyncpg
+
+    from tests.graph_contract.conftest import _PG_DSN
+
+    holder = await asyncpg.connect(_PG_DSN)
+    writers = [await asyncpg.connect(_PG_DSN) for _ in range(writes)]
+    try:
+        tx = holder.transaction()
+        await tx.start()
+        await holder.execute("SELECT 1 FROM knowledge.artifacts WHERE id = $1 FOR UPDATE", artifact)
+        pending = [
+            asyncio.create_task(set_product_state(w, artifact, "graph", "failed", "quarantined"))
+            for w in writers
+        ]
+        await asyncio.sleep(0.3)  # every writer is now waiting on the row lock
+        await holder.execute(change, artifact)
+        await tx.commit()
+        return list(await asyncio.gather(*pending))
+    finally:
+        for c in (holder, *writers):
+            await c.close()
+
+
+async def test_two_concurrent_failures_alert_once(jobs) -> None:
+    artifact = await jobs.insert({}, active=True)
+
+    with structlog.testing.capture_logs() as logs:
+        await _write_behind_a_lock(artifact, "SELECT $1::uuid", writes=2)
+
+    assert len([e for e in logs if e["event"] == "derived_product_failed"]) == 1
+
+
+async def test_a_replacement_committing_first_keeps_the_write_off_the_old_version(jobs) -> None:
+    artifact = await jobs.insert({}, active=True)
+
+    with structlog.testing.capture_logs() as logs:
+        written = await _write_behind_a_lock(
+            artifact, "UPDATE knowledge.artifacts SET belief_time_end = 2 WHERE id = $1", 1
+        )
+
+    assert written == [False]
+    assert await _state(jobs.conn, artifact, "graph") == ProductState("unknown")
+    assert not [e for e in logs if e["event"] == "derived_product_failed"]
+
+
+# --- graph refresh does not re-queue what cannot succeed ---------------------
+
+
+@pytest.mark.parametrize(
+    ("reason", "build", "expected"),
+    [
+        ("no_stored_text", "older", "held:no_stored_text"),
+        ("quarantined", "current", "held:quarantined"),
+        ("quarantined", "older", "queued"),
+    ],
+)
+async def test_an_unchanged_resync_does_not_requeue_a_failure_that_would_repeat(
+    graph_helpers, jobs, monkeypatch, reason, build, expected
+) -> None:
+    from knowledge_ingest import graph_refresh
+    from knowledge_ingest.falkordb_probe import graph_writer_build
+
+    extra = {"graphiti_quarantine_build": graph_writer_build() if build == "current" else "old"}
+    artifact = await jobs.insert(extra, active=True)
+    await set_product_state(jobs.conn, artifact, "graph", "pending")
+    await set_product_state(jobs.conn, artifact, "graph", "failed", reason)
+    stored = json.loads(
+        await jobs.conn.fetchval(
+            "SELECT extra::text FROM knowledge.artifacts WHERE id = $1", artifact
+        )
+    )
+    task = SimpleNamespace(defer_async=AsyncMock())
+    monkeypatch.setattr(
+        enrichment_tasks,
+        "get_app",
+        lambda: SimpleNamespace(
+            ingest_graphiti_episode=SimpleNamespace(configure=lambda **_kw: task)
+        ),
+    )
+    monkeypatch.setattr(
+        graph_refresh.pg_store, "reserve_graph_refresh_slot", AsyncMock(return_value=True)
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        result = await graph_refresh.maybe_refresh_stale_graph(
+            jobs.conn,
+            artifact_id=artifact,
+            extra=stored,
+            org_id=graph_helpers.group_id,
+            kb_slug="docs",
+            path="page",
+            content_type="kb_article",
+            belief_time_start=1,
+            indexable_content="A sentence about the product. Another sentence about it.",
+        )
+
+    assert result == expected
+    assert task.defer_async.await_count == (expected == "queued")
+    held = expected.startswith("held")
+    assert await _state(jobs.conn, artifact, "graph") == (
+        ProductState("failed", reason) if held else ProductState("pending")
+    )
+    assert not [e for e in logs if e["event"] == "derived_product_failed"]
+
+
+# --- what the sources list and the operator tools read -----------------------
+
+
+async def test_a_reindex_whose_job_cannot_be_queued_shows_the_upload_failed(jobs) -> None:
+    from knowledge_ingest import pg_store
+    from knowledge_ingest.derived_state import queue_derived_work
+
+    artifact = await jobs.insert({"document_text": "Text."}, active=True)
+    # What reindex_upload sets before it queues.
+    await jobs.conn.execute(
+        "UPDATE knowledge.artifacts SET index_status = 'pending' WHERE id = $1", artifact
+    )
+    task = SimpleNamespace(defer_async=AsyncMock(side_effect=ConnectionError("queue down")))
+
+    with pytest.raises(ConnectionError):
+        await queue_derived_work(jobs.conn, artifact, "enrichment", task, artifact_id=artifact)
+
+    org_id = await jobs.conn.fetchval("SELECT current_setting('app.current_org_id')")
+    (upload,) = (await pg_store.list_kb_sources(jobs.conn, org_id, "docs"))["uploads"]
+    assert upload["index_status"] == "failed"
+
+
+async def test_pages_failed_counts_text_and_enrichment_failures_through_the_reader(jobs) -> None:
+    from knowledge_ingest import pg_store
+
+    async def _version(ref: str, index_status: str = "synced", **extra) -> str:
+        artifact = await jobs.insert(extra, active=True, path=ref, source_ref=ref)
+        await jobs.conn.execute(
+            "UPDATE knowledge.artifacts SET index_status = $2 WHERE id = $1", artifact, index_status
+        )
+        return artifact
+
+    await _version("raw-write-failed", "failed")
+    await _version("enrichment-failed", enrichment_state="failed", enrichment_reason="x")
+    await _version("graph-failed", graph_state="failed", graph_reason="quarantined")
+    await _version("legacy-quarantine", graphiti_quarantined_at=1, graphiti_episode_ids=[])
+    await _version("done", enrichment_state="done", graph_state="done")
+    org_id = await jobs.conn.fetchval("SELECT current_setting('app.current_org_id')")
+
+    (connector,) = (await pg_store.list_kb_sources(jobs.conn, org_id, "docs"))["connectors"]
+
+    assert (connector["items_count"], connector["items_failed_count"]) == (5, 2)
+
+
+async def test_the_requeue_script_selects_what_the_reader_calls_failed(jobs) -> None:
+    from knowledge_ingest.scripts import requeue_failed_artifacts as script
+
+    async def _version(index_status: str, **extra) -> str:
+        artifact = await jobs.insert(extra, active=True, path=str(uuid.uuid4()))
+        await jobs.conn.execute(
+            "UPDATE knowledge.artifacts SET index_status = $2 WHERE id = $1", artifact, index_status
+        )
+        return artifact
+
+    enrichment_failed = await _version("synced", enrichment_state="failed")
+    await _version("failed", enrichment_state="done")  # a failed raw write
+    legacy_upload = await _version("failed")
+    await _version("failed", source_connector_id="connector-1")  # legacy: no trace
+    org_id = await jobs.conn.fetchval("SELECT current_setting('app.current_org_id')")
+
+    selected = await script._select_failed_artifacts(
+        jobs.conn, org_id=org_id, kb_slug="docs", limit=10
+    )
+
+    assert {row["artifact_id"] for row in selected} == {enrichment_failed, legacy_upload}
+
+
+async def test_a_rebuild_that_fails_after_deleting_the_parents_says_failed(
+    jobs, monkeypatch
+) -> None:
+    import asyncio
+
+    from knowledge_ingest import rebuild_tasks
+
+    artifact = await jobs.insert({"document_text": "# Title\n\nSome text."}, active=True)
+    await set_product_state(jobs.conn, artifact, "enrichment", "pending")
+    await set_product_state(jobs.conn, artifact, "enrichment", "done")
+
+    @asynccontextmanager
+    async def _conn(*_args):
+        yield jobs.conn
+
+    monkeypatch.setattr(rebuild_tasks, "tenant_scoped_connection", _conn)
+    monkeypatch.setattr(
+        enrichment_tasks, "_enrich_document", AsyncMock(side_effect=ConnectionError("down"))
+    )
+    row = dict(
+        await jobs.conn.fetchrow("SELECT * FROM knowledge.artifacts WHERE id = $1", artifact)
+    )
+
+    result = await rebuild_tasks._rebuild_artifact(
+        org_id=row["org_id"], kb_slug="docs", artifact=row, semaphore=asyncio.Semaphore(1)
+    )
+
+    assert result == "failed"
+    assert await _state(jobs.conn, artifact, "enrichment") == ProductState(
+        "failed", "rebuild_failed"
+    )

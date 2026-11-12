@@ -454,12 +454,15 @@ class TestListKbSourcesConnectorFailedCount:
         from the DB row through ConnectorAggregate to the JSON response."""
         conn = _make_mock_conn()
 
-        connector_row = {
-            "connector_id": "conn-z",
-            "items_count": 5,
-            "items_failed_count": 2,
-            "chunks_count": 30,
-        }
+        connector_rows = [
+            {
+                "connector_id": "conn-z",
+                "index_status": "failed" if number < 2 else "synced",
+                "enrichment_fields": {"source_connector_id": "conn-z"},
+                "chunks_count": 6,
+            }
+            for number in range(5)
+        ]
         # list_kb_sources makes two fetch calls: connectors then uploads.
         call_count = 0
 
@@ -467,7 +470,7 @@ class TestListKbSourcesConnectorFailedCount:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return [connector_row]
+                return connector_rows
             return []
 
         conn.fetch = AsyncMock(side_effect=_side_effect)

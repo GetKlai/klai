@@ -39,15 +39,13 @@ STALLED_WORKER_TIMEOUT_SECONDS = 120.0
 # The unique index procrastinate's own ``procrastinate_retry_job_v2`` UPDATE
 # can violate: a newer job already sits in ``todo`` with the same
 # ``queueing_lock`` as the zombie being retried, so the zombie cannot go back
-# to ``todo``. Whether that newer job covers the zombie's work is checked, not
-# assumed: an enrichment batch job of a large document shares its lock with
-# the document's other batches.
+# to ``todo``.
 QUEUEING_LOCK_UNIQUE_CONSTRAINT = "procrastinate_jobs_queueing_lock_idx_v1"
 
-# Arguments that say when or how often a job waits, not what it does.
-_SCHEDULING_ARGS = ("llm_deferred_since",)
-
-# The document product a zombie task builds, for recording that it was lost.
+# The document product a task builds. Every queueing lock of these tasks names
+# the artifact (``{org}:{kb}:{path}:{artifact}``, ``reindex:{org}:{artifact}``,
+# ``requeue:{artifact}``, ``graphiti:{artifact}``), so a job holding a zombie's
+# lock works on the same document version.
 _PRODUCT_OF_TASK = {
     "enrich_document_interactive": "enrichment",
     "enrich_document_bulk": "enrichment",
@@ -55,30 +53,43 @@ _PRODUCT_OF_TASK = {
 }
 
 
-def _work(task_name: str, task_kwargs: dict) -> tuple[str, dict]:
-    return task_name, {k: v for k, v in task_kwargs.items() if k not in _SCHEDULING_ARGS}
+def _product_work(job: Any) -> tuple[str, Any] | None:
+    product = _PRODUCT_OF_TASK.get(job.task_name.rsplit(".", 1)[-1])
+    return (product, job.task_kwargs.get("artifact_id")) if product else None
 
 
 async def _queued_twin_covers(proc_app: Any, job: Any, queueing_lock: str | None) -> bool:
-    """Whether the todo job holding the zombie's queueing lock does the same work."""
-    twins = await proc_app.job_manager.list_jobs_async(queueing_lock=queueing_lock, status="todo")
+    """Whether the live job holding the zombie's queueing lock covers its work.
+
+    For a document product it does when it builds the same product of the same
+    artifact, whatever its other arguments: every such job reloads the version
+    from Postgres, and it either redoes the zombie's work (a capacity re-queue,
+    the same batch, an old-shape job with ``resource_key``) or exists only
+    because that work finished (the next batch of a large document is deferred
+    after the previous batch wrote its chunks). Any other task keeps its
+    earlier rule: the lock holder covers it.
+    """
+    work = _product_work(job)
+    if work is None:
+        return True
+    twins = await proc_app.job_manager.list_jobs_async(queueing_lock=queueing_lock)
     return any(
-        _work(twin.task_name, twin.task_kwargs) == _work(job.task_name, job.task_kwargs)
+        twin.id != job.id and twin.status in ("todo", "doing") and _product_work(twin) == work
         for twin in twins
     )
 
 
 async def _record_lost_work(job: Any) -> None:
     """A zombie whose work nothing covers: the document says failed."""
-    product = _PRODUCT_OF_TASK.get(job.task_name.rsplit(".", 1)[-1])
-    artifact_id = job.task_kwargs.get("artifact_id")
-    if product is None or not artifact_id:
+    work = _product_work(job)
+    if work is None or not work[1]:
         return
+    product, artifact_id = work
     from knowledge_ingest.db import cross_org_admin_connection
-    from knowledge_ingest.derived_state import FAILED, set_product_state
+    from knowledge_ingest.derived_state import FAILED, record_outcome
 
     async with cross_org_admin_connection() as conn:
-        await set_product_state(conn, artifact_id, product, FAILED, "stuck_job_not_covered")
+        await record_outcome(conn, artifact_id, product, FAILED, "stuck_job_not_covered")
 
 
 async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:

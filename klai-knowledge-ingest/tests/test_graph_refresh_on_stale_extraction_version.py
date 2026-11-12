@@ -175,9 +175,6 @@ async def test_unchanged_navigation_page_replaces_history_with_current_skip_mark
             "graphiti_episode_complete": True,
             "graphiti_episode_id": None,
             "graphiti_extraction_version": 2,
-            "graph_state": "not_applicable",
-            "graph_reason": "navigation_page",
-            "graph_state_at": ANY,
         },
     )
     app.ingest_graphiti_episode.defer_async.assert_not_awaited()
@@ -363,9 +360,6 @@ async def test_replacement_run_retires_history_only_after_the_new_extraction(
         {
             "graphiti_episode_complete": True,
             "graphiti_extraction_version": 2,
-            "graph_state": "done",
-            "graph_reason": None,
-            "graph_state_at": ANY,
             "graphiti_episode_ids": ["episode-new"],
             "graphiti_episode_ids_from": 0,
             "graphiti_episode_id": "episode-new",
@@ -384,9 +378,6 @@ async def test_normal_graph_run_stamps_current_extraction_version(graphiti_task)
         {
             "graphiti_episode_complete": True,
             "graphiti_extraction_version": 2,
-            "graph_state": "done",
-            "graph_reason": None,
-            "graph_state_at": ANY,
         },
     )
 
@@ -571,7 +562,6 @@ async def test_resumed_replacement_keeps_its_parts_when_it_retires_the_rest(grap
 async def test_exhausted_graph_job_waits_out_the_cool_off_but_a_change_extracts_at_once(
     graphiti_task,
 ) -> None:
-    from knowledge_ingest.derived_state import state_patch
     from tests.test_renamed_connector_page_supersedes_by_source_ref import (
         _ingest_patches,
         _make_conn,
@@ -580,7 +570,13 @@ async def test_exhausted_graph_job_waits_out_the_cool_off_but_a_change_extracts_
     row = _ArtifactRow({})
 
     async def _record(product, _artifact_id, state, reason=None):
-        row.extra.update(state_patch(product, state, reason))
+        row.extra.update(
+            {
+                f"{product}_state": state,
+                f"{product}_reason": reason,
+                f"{product}_state_at": int(time.time()),
+            }
+        )
 
     with (
         patch.object(enrichment_tasks, "_finish", _record),

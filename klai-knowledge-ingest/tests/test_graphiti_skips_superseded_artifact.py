@@ -204,9 +204,6 @@ async def test_short_document_creates_one_episode_and_records_both_id_keys(graph
     assert pg_store.update_artifact_extra.await_args_list[-1].args[2] == {
         "graphiti_episode_complete": True,
         "graphiti_extraction_version": 2,
-        "graph_state": "done",
-        "graph_reason": None,
-        "graph_state_at": ANY,
     }
     graph_module.flush_entity_graph_data.assert_awaited_once()
 

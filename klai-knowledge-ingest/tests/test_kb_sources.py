@@ -126,14 +126,15 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
     conn = MagicMock()
     conn.fetch = AsyncMock(
         side_effect=[
-            # Query 1 — connectors
+            # Query 1 — connectors: one row per active version
             [
                 {
                     "connector_id": "conn-x",
-                    "items_count": 5,
-                    "items_failed_count": 0,
-                    "chunks_count": 23,
-                },
+                    "index_status": "synced",
+                    "enrichment_fields": {"source_connector_id": "conn-x"},
+                    "chunks_count": chunks,
+                }
+                for chunks in (3, 20)
             ],
             # Query 2 — uploads
             [
@@ -158,7 +159,7 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
     assert result["connectors"] == [
         {
             "connector_id": "conn-x",
-            "items_count": 5,
+            "items_count": 2,
             "items_failed_count": 0,
             "chunks_count": 23,
         },
@@ -190,21 +191,27 @@ async def test_list_kb_sources_groups_connectors_and_uploads() -> None:
 
 @pytest.mark.asyncio
 async def test_list_kb_sources_connector_items_failed_count() -> None:
-    """A connector with 2 failed + 3 synced active artifacts reports
-    items_failed_count == 2 (out of items_count == 5)."""
+    """ "N pages failed" counts versions whose text or enrichment failed; a
+    failed graph extraction leaves the page searchable and is not counted."""
+
+    def _version(index_status: str, **fields) -> dict:
+        return {
+            "connector_id": "conn-y",
+            "index_status": index_status,
+            "enrichment_fields": {"source_connector_id": "conn-y", **fields},
+            "chunks_count": 6,
+        }
+
     conn = MagicMock()
     conn.fetch = AsyncMock(
         side_effect=[
-            # Query 1 — connectors: DB already aggregated 2 failed of 5 items.
             [
-                {
-                    "connector_id": "conn-y",
-                    "items_count": 5,
-                    "items_failed_count": 2,
-                    "chunks_count": 30,
-                },
+                _version("failed"),
+                _version("synced", enrichment_state="failed", enrichment_reason="no_stored_text"),
+                _version("synced", enrichment_state="done"),
+                _version("synced"),  # graph failed: not in the fields the count reads
+                _version("synced", enrichment_state="pending"),
             ],
-            # Query 2 — uploads (none)
             [],
         ]
     )
@@ -219,33 +226,6 @@ async def test_list_kb_sources_connector_items_failed_count() -> None:
             "chunks_count": 30,
         },
     ]
-
-
-@pytest.mark.asyncio
-async def test_list_kb_sources_connector_query_avoids_join_fanout_on_failed_count() -> None:
-    """items_failed_count must be COUNT(DISTINCT a.id) FILTER(...), not a plain
-    COUNT(*) FILTER(...).
-
-    The connector query LEFT JOINs knowledge.parent_chunks onto artifacts, so a
-    single failed artifact with N parent_chunks produces N joined rows. A plain
-    ``COUNT(*) FILTER (WHERE a.index_status = 'failed')`` would count that one
-    failed artifact N times. ``COUNT(DISTINCT a.id) FILTER (...)`` collapses the
-    join fanout back to one count per distinct artifact — mirroring the
-    pre-existing items_count column, which uses the same DISTINCT pattern for
-    the same reason.
-    """
-    conn = MagicMock()
-    conn.fetch = AsyncMock(side_effect=[[], []])
-
-    await pg_store.list_kb_sources(conn, "org-1", "kb-a")
-
-    connector_sql = conn.fetch.await_args_list[0].args[0]
-    assert "COUNT(DISTINCT a.id) FILTER ( WHERE a.index_status = 'failed'" in (
-        " ".join(connector_sql.split())
-    )
-    # Structural guard: no un-guarded COUNT(*) FILTER on index_status, which
-    # would double-count artifacts with more than one parent_chunk row.
-    assert "COUNT(*) FILTER" not in connector_sql
 
 
 @pytest.mark.asyncio
@@ -384,3 +364,13 @@ async def test_list_chunks_for_artifact_passes_tenant_id_to_count() -> None:
     assert fetch_args[2] == "org-X"
     assert fetchval_args[1] == "art-1"
     assert fetchval_args[2] == "org-X"
+
+
+def test_an_upload_whose_enrichment_failed_shows_failed_even_while_its_text_says_pending() -> None:
+    row = {
+        "index_status": "pending",
+        "index_status_changed_at": 1,
+        "enrichment_fields": {"enrichment_state": "failed", "enrichment_state_at": 2},
+    }
+
+    assert pg_store._upload_status(row) == {"index_status": "failed", "index_status_changed_at": 2}

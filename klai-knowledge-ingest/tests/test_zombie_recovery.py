@@ -56,7 +56,12 @@ def _make_proc_app(stalled_jobs: list[SimpleNamespace]) -> MagicMock:
     # test says otherwise.
     proc_app.job_manager.list_jobs_async = AsyncMock(
         side_effect=lambda **_kw: [
-            SimpleNamespace(task_name=job.task_name, task_kwargs=dict(job.task_kwargs))
+            SimpleNamespace(
+                id=-job.id,
+                task_name=job.task_name,
+                task_kwargs=dict(job.task_kwargs),
+                status="todo",
+            )
             for job in stalled_jobs
         ]
     )
@@ -249,42 +254,3 @@ async def test_failed_finish_of_superseded_zombie_does_not_stop_the_pass():
     assert proc_app.job_manager.retry_job_by_id_async.await_count == 2
     failed = [e for e in captured if e.get("event") == "procrastinate_zombie_finish_failed"]
     assert [e["job_id"] for e in failed] == [500]
-
-
-@pytest.mark.asyncio
-async def test_a_queued_twin_that_does_other_work_does_not_finish_the_zombie_quietly():
-    """A batch job of a large document shares its queueing lock with the
-    document's other batches: the queued twin enriches from offset 400, the
-    zombie's batch at 200 would be lost. The zombie ends failed and the
-    document says so, instead of being aborted on the assumption."""
-    from unittest.mock import ANY, patch
-
-    job = _job(310, "enrich-bulk", "enrich_document_bulk", artifact_id="a-310", batch_offset=200)
-    proc_app = _make_proc_app([job])
-    proc_app.job_manager.list_jobs_async = AsyncMock(
-        return_value=[
-            SimpleNamespace(
-                task_name="enrich_document_bulk",
-                task_kwargs={"artifact_id": "a-310", "batch_offset": 400},
-            )
-        ]
-    )
-    proc_app.job_manager.retry_job_by_id_async = AsyncMock(
-        side_effect=UniqueViolation(
-            constraint_name=QUEUEING_LOCK_UNIQUE_CONSTRAINT, queueing_lock="org:kb:p:a-310"
-        )
-    )
-
-    with (
-        patch("knowledge_ingest.derived_state.set_product_state", AsyncMock()) as record,
-        structlog.testing.capture_logs() as captured,
-    ):
-        await recover_zombie_jobs(proc_app)
-
-    finish = proc_app.job_manager.finish_job_by_id_async.await_args.kwargs
-    assert finish["job_id"] == 310
-    assert str(finish["status"].value) == "failed"
-    record.assert_awaited_once_with(ANY, "a-310", "enrichment", "failed", "stuck_job_not_covered")
-    assert [e["log_level"] for e in captured if e["event"] == "zombie_work_not_covered"] == [
-        "error"
-    ]
