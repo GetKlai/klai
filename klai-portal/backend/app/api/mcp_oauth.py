@@ -283,14 +283,23 @@ async def register_client(request: Request) -> JSONResponse:
 # ─── /oauth/authorize (consent UI) ─────────────────────────────────────────
 
 
-async def _resolve_user_org(db: Any, zitadel_user_id: str) -> tuple[PortalUser, PortalOrg] | None:
-    """The (PortalUser, PortalOrg) of the session's first active membership; tokens are only issued for one."""
+async def _resolve_user_org(db: Any, session: SessionContext) -> tuple[PortalUser, PortalOrg] | None:
+    """The session's own membership and organisation, only while that membership is active.
+
+    A token is issued for the organisation the person signed in to, never for
+    another organisation they also belong to.
+    """
     result = await db.execute(
         select(PortalUser, PortalOrg)
         .join(PortalOrg, PortalOrg.id == PortalUser.org_id)
-        .where(PortalUser.zitadel_user_id == zitadel_user_id)
+        .where(
+            PortalUser.zitadel_user_id == session.zitadel_user_id,
+            PortalUser.org_id == session.org_id,
+            PortalUser.status == "active",
+        )
     )
-    return next(((user, org) for user, org in result.all() if user.status == "active"), None)
+    row = result.one_or_none()
+    return (row[0], row[1]) if row else None
 
 
 @router.get("/oauth/authorize")
@@ -356,17 +365,18 @@ async def authorize_get(
         application_type = client.application_type
         client_created_at = client.created_at
 
-    # REQ-21: redirect to login if no session.
+    # REQ-21: without a session, start the portal sign-in, which returns to
+    # this consent request afterwards. The query is re-encoded so the URLs it
+    # carries never appear as a literal "://" in the return target.
     if session is None:
-        return_to = f"{request.url.path}?{request.url.query}"
-        login_url = f"/login?return_to={urlencode({'r': return_to})[2:]}"
-        return RedirectResponse(login_url, status_code=302)
+        return_to = f"{request.url.path}?{urlencode(request.query_params.multi_items())}"
+        return RedirectResponse(f"/api/auth/oidc/start?{urlencode({'return_to': return_to})}", status_code=302)
 
     # Resolve user-email + org-name for the consent page UI.
     async with cross_org_session() as db:
-        user_org = await _resolve_user_org(db, session.zitadel_user_id)
+        user_org = await _resolve_user_org(db, session)
         if user_org is None:
-            return _oauth_error("login_required", "session has no portal user", 401)
+            return _oauth_error("login_required", "session has no active membership", 401)
         user, org = user_org
         user_email = user.email or session.zitadel_user_id
         org_name = org.name
@@ -456,9 +466,9 @@ async def authorize_post(
     # rollback expires the instance even with expire_on_commit=False on the
     # sessionmaker. Extract the int ids inside the block.
     async with cross_org_session() as db:
-        user_org = await _resolve_user_org(db, session.zitadel_user_id)
+        user_org = await _resolve_user_org(db, session)
         if user_org is None:
-            return _oauth_error("login_required", "session has no portal user", 401)
+            return _oauth_error("login_required", "session has no active membership", 401)
         user, org = user_org
         user_id = user.id
         org_id = org.id

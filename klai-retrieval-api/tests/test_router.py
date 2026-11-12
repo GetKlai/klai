@@ -1,4 +1,3 @@
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -97,7 +96,6 @@ class TestRouteToSources:
             }
 
         decision = await route_to_sources(
-            "hoe configureer ik mitel voip",
             query_vector=[1.0, 0.0],
             org_id="org-1",
             source_label_catalog=CATALOG[:3],
@@ -119,7 +117,6 @@ class TestRouteToSources:
 
         # Query close to Mitel; semantic similarity is the only routing signal.
         decision = await route_to_sources(
-            "hoe werkt een pbx systeem",
             query_vector=[0.95, 0.1, 0.05],
             org_id="org-1",
             source_label_catalog=CATALOG,
@@ -128,28 +125,6 @@ class TestRouteToSources:
         assert decision.layer_used == "semantic"
         assert decision.selected_source_labels is not None
         assert "help.example.org" in decision.selected_source_labels
-
-    @pytest.mark.asyncio
-    @pytest.mark.asyncio
-    async def test_layer3_timeout_failopen(self):
-        async def slow_llm(query, catalog):
-            await asyncio.sleep(2.0)  # exceeds 500ms timeout
-            return ["should-not-reach"]
-
-        async def no_centroids(catalog, org_id):
-            return {}  # force layer 2 to produce no result
-
-        decision = await route_to_sources(
-            "vage vraag zonder keywords",
-            query_vector=[0.33, 0.33, 0.34],
-            org_id="org-1",
-            source_label_catalog=CATALOG,
-            llm_fallback=True,
-            llm_fn=slow_llm,
-            compute_centroid_fn=no_centroids,
-        )
-        assert decision.selected_source_labels is None  # fail-open
-        assert decision.layer_used in ("llm", "none")
 
     @pytest.mark.asyncio
     async def test_centroid_cache_hit(self):
@@ -162,13 +137,13 @@ class TestRouteToSources:
 
         # First call: cache miss
         await route_to_sources(
-            "query1", [0.9, 0.1], "org-cache", CATALOG[:2], compute_centroid_fn=counting_compute
+            [0.9, 0.1], "org-cache", CATALOG[:2], compute_centroid_fn=counting_compute
         )
         assert call_count == 1
 
         # Second call: cache hit (same org)
         decision = await route_to_sources(
-            "query2", [0.9, 0.1], "org-cache", CATALOG[:2], compute_centroid_fn=counting_compute
+            [0.9, 0.1], "org-cache", CATALOG[:2], compute_centroid_fn=counting_compute
         )
         assert call_count == 1  # not called again
         assert decision.cache_hit is True
@@ -184,7 +159,6 @@ class TestRouteToSources:
             }
 
         decision = await route_to_sources(
-            "hele generieke vraag",
             query_vector=[0.5, 0.5],
             org_id="org-1",
             source_label_catalog=CATALOG[:4],
@@ -243,7 +217,6 @@ class TestSourceCatalogScope:
         catalog = [KBEntry(source_label="notion", name="Notion")]
         for org_id in ("org-1", "org-2", "org-3"):
             await route_to_sources(
-                "query",
                 [1.0, 0.0],
                 org_id,
                 catalog,

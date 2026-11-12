@@ -95,3 +95,47 @@ def test_downloadable_extension_is_identical_to_the_extension_source():
         return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
 
     assert files(_EXTENSION_DIR) == files(source_dir)
+
+
+@pytest.mark.asyncio
+async def test_shield_query_returns_the_evidence_pack_sources_of_the_retrieve_response(monkeypatch):
+    import httpx
+    import respx
+
+    from app.api import shield
+    from app.api.shield import ShieldQueryRequest, shield_query
+
+    monkeypatch.setattr(shield.settings, "knowledge_retrieve_url", "http://retrieval.example.com")
+    chunk = {"chunk_id": "c1", "text": "Leave is requested in the portal.", "score": 0.9}
+    source = {
+        "source_id": "S1",
+        "title": "Requesting leave",
+        "source_url": "https://docs.example.com/leave",
+        "artifact_id": None,
+        "source_label": None,
+        "evidence_ids": ["E1"],
+        "relevance_score": 0.9,
+    }
+    # The shape of retrieval-api's RetrieveResponse (klai-retrieval-api/retrieval_api/models.py).
+    retrieve_response = {
+        "query_resolved": "how do I request leave",
+        "retrieval_bypassed": False,
+        "chunks": [chunk],
+        "metadata": {"candidates_retrieved": 1, "reranked_to": 1, "retrieval_ms": 3.0},
+        "confidence_band": "high",
+        "evidence_pack": {
+            "items": [{"evidence_id": "E1", **chunk}],
+            "sources": [source],
+            "no_citable_reason": None,
+        },
+        "sub_results": None,
+    }
+    auth = SimpleNamespace(org_id=101, org=SimpleNamespace(zitadel_org_id="org-zitadel"), user_id="uid-admin")
+
+    with respx.mock:
+        respx.post("http://retrieval.example.com/retrieve").mock(
+            return_value=httpx.Response(200, json=retrieve_response)
+        )
+        result = await shield_query(ShieldQueryRequest(query="how do I request leave"), auth=auth)
+
+    assert result == {"chunks": [chunk], "sources": [source], "retrieval_available": True}

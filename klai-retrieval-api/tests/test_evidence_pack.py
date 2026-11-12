@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from retrieval_api.services.evidence_pack import (
-    build_evidence_pack,
-    evidence_pack_items_as_chunks,
-    evidence_pack_sources_payload,
-)
+from retrieval_api.services.evidence_pack import build_evidence_pack
 
 
 def test_evidence_pack_selects_citable_sources_before_generation():
@@ -32,9 +28,7 @@ def test_evidence_pack_selects_citable_sources_before_generation():
 
     assert [source.title for source in pack.sources] == ["Invite and remove people"]
     assert [item.chunk_id for item in pack.items] == ["invite-1"]
-    assert evidence_pack_sources_payload(pack)[0]["url"] == (
-        "https://getklai.com/docs/admin/invite-remove-people"
-    )
+    assert pack.sources[0].source_url == "https://getklai.com/docs/admin/invite-remove-people"
 
 
 def test_evidence_pack_dedupes_sources_by_canonical_url():
@@ -79,27 +73,7 @@ def test_evidence_pack_refuses_uncitable_chunks_instead_of_fallback_sources():
     assert pack.no_citable_reason == "no_citable_sources"
 
 
-def test_evidence_pack_refuses_low_relevance_citable_sources():
-    pack = build_evidence_pack(
-        [
-            {
-                "chunk_id": "add-sources",
-                "title": "Add sources",
-                "text": "Connect Google Drive as a knowledge source.",
-                "source_url": "https://getklai.com/docs/knowledge/add-sources",
-                "score": 0.8,
-                "reranker_score": 0.12,
-            }
-        ],
-        min_relevance_score=0.3,
-    )
-
-    assert pack.items == []
-    assert pack.sources == []
-    assert pack.no_citable_reason == "below_relevance_threshold"
-
-
-def test_evidence_pack_keeps_low_score_sources_when_threshold_not_requested():
+def test_evidence_pack_keeps_low_score_sources():
     pack = build_evidence_pack(
         [
             {
@@ -201,10 +175,8 @@ def test_evidence_pack_preserves_heading_metadata_for_prompt_context():
         ]
     )
 
-    chunks = evidence_pack_items_as_chunks(pack)
-
-    assert chunks[0]["heading_path"] == "Admin > People"
-    assert chunks[0]["text"].startswith("3. Enter")
+    assert pack.items[0].heading_path == "Admin > People"
+    assert pack.items[0].text.startswith("3. Enter")
 
 
 # ─── 2026-05-27: uploaded-document chunks must reach the citations panel ───
@@ -291,14 +263,10 @@ def test_evidence_pack_includes_uploaded_documents_without_source_url():
     chunk_ids = {item.chunk_id for item in pack.items}
     assert chunk_ids == {"cv-chunk-1", "cv-chunk-2", "homepage-1"}
 
-    # The CV source (no URL) still surfaces via evidence_pack_sources_payload:
-    payload = evidence_pack_sources_payload(pack)
-    cv_entry = next(p for p in payload if p["title"] == "CV_Alex_Example.pdf")
-    assert cv_entry["url"] is None
-    assert cv_entry["artifact_id"] == "853797a1-3a22-4d90-872e-6a917d996c9a"
-    # Both source rows are surfaced — the URL-less one is no longer
-    # dropped by the payload helper.
-    assert len(payload) == 2
+    # The CV source has no URL and is addressed by its artifact.
+    cv_source = next(source for source in pack.sources if source.title == "CV_Alex_Example.pdf")
+    assert cv_source.source_url is None
+    assert cv_source.artifact_id == "853797a1-3a22-4d90-872e-6a917d996c9a"
 
 
 def test_evidence_pack_prefers_original_filename_for_file_sha_upload_title():
@@ -320,7 +288,6 @@ def test_evidence_pack_prefers_original_filename_for_file_sha_upload_title():
     )
 
     assert pack.sources[0].title == "CV_Alex_Example.pdf"
-    assert evidence_pack_sources_payload(pack)[0]["title"] == "CV_Alex_Example.pdf"
 
 
 def test_evidence_pack_groups_upload_chunks_by_artifact_id():

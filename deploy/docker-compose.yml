@@ -1617,7 +1617,7 @@ services:
       # Empty by default so OpenAI-compatible TEI uses its loaded snapshot
       # without warning about BAAI/bge-m3 vs snapshot-path model IDs.
       TEI_MODEL: ${TEI_MODEL:-}
-      TEI_RERANKER_URL: http://172.18.0.1:7998
+      INFINITY_RERANKER_URL: http://172.18.0.1:7998
       LITELLM_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       FALKORDB_HOST: falkordb
