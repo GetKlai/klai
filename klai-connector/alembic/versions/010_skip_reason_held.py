@@ -6,7 +6,7 @@ The sync counts such a document under this skip reason, so the CHECK that
 pins skip_reasons keys to ``PersistSkipReason`` gains the new key
 (procedure in 009_sync_runs_skip_reasons.py).
 
-Revision ID: 010_skip_reason_shrunken_version_held
+Revision ID: 010_skip_reason_held
 Revises: 009_sync_runs_skip_reasons
 Create Date: 2026-11-12
 """
@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "010_skip_reason_shrunken_version_held"
+revision: str = "010_skip_reason_held"
 down_revision: str | None = "009_sync_runs_skip_reasons"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
