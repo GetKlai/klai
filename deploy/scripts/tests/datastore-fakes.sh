@@ -31,6 +31,15 @@
 # fake/corrupt_snapshot (a snapshot taken now does not read back),
 # fake/stop_fails (docker compose stop exits 1), fake/pg_dump_fails, fake/fcv_fails
 # (setFeatureCompatibilityVersion answers an error).
+#
+# backup-restore.sh (backup-restore.test.sh): psql -f - replays a pg_dumpall-shaped
+# dump (COPY blocks) into fake/db/<container>/<db>/<schema.table> and counts it
+# back; fake/pg_replay_fails makes the replay exit 3, fake/pg_drops_row restores
+# one row less per table. mongorestore --archive reads "db.collection n" lines
+# and reports them as mongorestore 100.x does (fake/mongo_short counts one
+# document less afterwards). A store started with --import-snapshot or
+# --snapshot <file>:<name> starts from that file in /in. tar -xzf - extracts
+# into fake/vol_fs/<volume>.
 
 ds_fakes_install() {
   local bin="$1"
@@ -57,6 +66,25 @@ pgnorm() {
   mkdir -p "$F/pgdir/$1" && mv "$F/db/$1" "$F/pgdir/$1/$k" && ln -s "$F/pgdir/$1/$k" "$F/db/$1"
 }
 pgenv() { local m; m="$(pgmajor "$1")"; echo "PG_MAJOR=$m"; if (( m >= 18 )); then echo "PGDATA=/var/lib/postgresql/$m/docker"; else echo "PGDATA=/var/lib/postgresql/data"; fi; }
+
+# psql -f - on a throwaway: a dump replayed, or the count queries read back.
+psql_file() {
+  local t="$1" db="" a args=" $* "; shift
+  while (( $# )); do [[ "$1" == -d ]] && db="$2"; shift; done
+  if [[ "$args" == *" -At "* ]]; then
+    while IFS= read -r a; do
+      a="${a#select \'}"; a="${a%%\'*}"
+      echo "$a $(cat "$F/db/$t/$db/${a//\"/}" 2>/dev/null)"
+    done
+    return
+  fi
+  [[ ! -e "$F/pg_replay_fails" ]] || { echo "psql: error: replay failed" >&2; exit 3; }
+  awk -v root="$F/db/$t" -v short="$([[ -e "$F/pg_drops_row" ]] && echo 1)" '
+    inb && /^\\\.$/ { inb = 0; if (short && n > 0) n--; print n > (root "/" db "/" t); next }
+    inb { n++; next }
+    /^\\connect / { db = $2; system("mkdir -p " root "/" db); next }
+    /^COPY / { inb = 1; t = $2; gsub(/"/, "", t); n = 0 }'
+}
 
 in_store() {
   local t="$1" db="" sql="" a; shift
@@ -103,7 +131,17 @@ in_store() {
         done
         ! live "$t" || rm -f "$F/probe_red"
       fi ;;
+    mongorestore)
+      local colls="" dbs="" n
+      while read -r a n; do
+        [[ -n "$a" && "$a" != synthetic-data:* ]] || continue
+        echo "finished restoring \`$a\` ($n documents, 0 failures)" >&2
+        [[ ! -e "$F/mongo_short" ]] || n=$((n - 1))
+        colls+="$a:$n "; dbs+="${a%%.*}"$'\n'
+      done
+      put "$t" fcv 8.0; put "$t" colls "$colls"; put "$t" dbs "$(sort -u <<< "$dbs" | paste -sd' ' -)" ;;
     psql)
+      if [[ " $* " == *" -f - "* ]]; then psql_file "$t" "$@"; return; fi
       while (( $# )); do case "$1" in -d) db="$2" ;; -c|-Atc) sql="$2" ;; esac; shift; done
       case "$sql" in
         "")
@@ -239,6 +277,8 @@ run() {
         mv "$a" "$F/pgdir/$vf/$(pgkey "${!#}")" ;;
       *"tar -cf"*)
         if [[ -e "$F/corrupt_snapshot" ]]; then echo CORRUPT > "$dir/volume.tar"; else cp "$F/eng/$vf" "$dir/volume.tar"; fi ;;
+      *"tar -xzf -"*) mkdir -p "$F/vol_fs/$vol"; tar -xzf - -C "$F/vol_fs/$vol" ;;
+      *"find /restore"*) find "$F/vol_fs/$vol" ! -type d | wc -l ;;
       *"tar -xf"*) if [[ -n "$vf" ]]; then cp "$dir/volume.tar" "$F/eng/$vf"; rm -f "$F/probe_red"; else cp "$dir/volume.tar" "$F/vol/$vol"; fi ;;
       *appendonlydir*) cp "$dir/dump.rdb" "$F/eng/$vf"; rm -f "$F/probe_red" ;;
       *"cp /in/dump.rdb"*) cp "$dir/dump.rdb" "$F/vol/$vol" ;;
@@ -252,6 +292,9 @@ run() {
     # A fresh Postgres cluster knows only the superuser it was initialised with.
     [[ -z "$pguser" ]] || echo "$pguser" > "$F/roles_$name"
     if [[ -n "$vol" && -e "$F/vol/$vol" ]]; then cp "$F/vol/$vol" "$F/eng/$name"; else : > "$F/eng/$name"; fi
+    for a in "$@"; do
+      case "$a" in /in/*) [[ ! -f "$dir/$(basename "${a%%:*}")" ]] || cat "$dir/$(basename "${a%%:*}")" >> "$F/eng/$name" ;; esac
+    done
     echo "$img" > "$F/running/$name"
     echo ctr-id
   fi
