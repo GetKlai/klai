@@ -53,11 +53,6 @@ export interface ChatState {
   broadMode: boolean;
 }
 
-// Stored identity is wiped after this many milliseconds. The visitor's
-// next visit starts blank and re-prompts. Chosen at 30 days to match
-// the industry convention used by Intercom/Drift for the same opt-in.
-const IDENTITY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
 interface PersistedConversation {
   id: string;
   messages: Message[];
@@ -98,13 +93,12 @@ interface PersistedWidgetStateV3 {
   version: 3;
   activeConversationId: string;
   // Visitor identity is only persisted when the visitor explicitly
-  // opted in via the "Remember me" checkbox. The TTL is enforced on
-  // read so an expired entry surfaces as blank without an extra wipe
-  // pass.
+  // opted in via the "Remember me" checkbox. It has no expiry: it lives
+  // on the visitor's own device and stays until they clear it there
+  // ("Clear stored details") or untick the box.
   identity: {
     name: string;
     email: string;
-    savedAt: number;
   } | null;
   conversations: PersistedConversation[];
 }
@@ -229,24 +223,16 @@ function normalizeConversation(value: Partial<PersistedConversation>): Persisted
   };
 }
 
-function normalizeIdentity(
-  raw: unknown,
-  now: number,
-): PersistedWidgetStateV3["identity"] {
+function normalizeIdentity(raw: unknown): PersistedWidgetStateV3["identity"] {
   if (!raw || typeof raw !== "object") return null;
   const candidate = raw as {
     name?: unknown;
     email?: unknown;
-    savedAt?: unknown;
   };
-  const savedAt = Number(candidate.savedAt ?? 0);
-  if (!savedAt || !Number.isFinite(savedAt)) return null;
-  if (savedAt > now) return null; // future timestamp = corrupted entry
-  if (now - savedAt > IDENTITY_TTL_MS) return null; // expired → wipe on next persist
   const name = typeof candidate.name === "string" ? candidate.name.slice(0, 120) : "";
   const email = typeof candidate.email === "string" ? candidate.email.slice(0, 254) : "";
   if (!name && !email) return null;
-  return { name, email, savedAt };
+  return { name, email };
 }
 
 function loadPersistedState(widgetId: string, fallbackConversationId: string): PersistedWidgetStateV3 | null {
@@ -256,7 +242,6 @@ function loadPersistedState(widgetId: string, fallbackConversationId: string): P
     const parsed = JSON.parse(raw) as Partial<
       PersistedWidgetStateV1 | PersistedWidgetStateV2 | PersistedWidgetStateV3
     >;
-    const now = Date.now();
 
     if (parsed.version === 3) {
       const conversations = Array.isArray(parsed.conversations)
@@ -270,7 +255,7 @@ function loadPersistedState(widgetId: string, fallbackConversationId: string): P
         activeConversationId: isValidSessionId(parsed.activeConversationId)
           ? parsed.activeConversationId
           : fallbackConversationId,
-        identity: normalizeIdentity(parsed.identity, now),
+        identity: normalizeIdentity(parsed.identity),
         conversations,
       };
     }
@@ -374,7 +359,6 @@ function persistState(status = chatState.conversationStatus): void {
         ? {
             name: chatState.visitorName,
             email: chatState.visitorEmail,
-            savedAt: Date.now(),
           }
         : null;
     const payload: PersistedWidgetStateV3 = {
@@ -440,8 +424,8 @@ export function initStore(
     visitorName: persisted?.identity?.name ?? "",
     visitorEmail: persisted?.identity?.email ?? "",
     // If a persisted identity survived the load (= visitor previously
-    // opted in AND the entry is still within TTL), the checkbox stays
-    // checked on next visit. Otherwise default off.
+    // opted in), the checkbox stays checked on next visit. Otherwise
+    // default off.
     rememberIdentity: persisted?.identity != null,
     conversationStatus: conversation.status,
     conversations: conversationList(),
