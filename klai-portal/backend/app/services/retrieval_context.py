@@ -1111,6 +1111,11 @@ def _register_gap(t: _Turn, found: _Found) -> None:
     # Classification runs on the chunks the search returned (post
     # safety-filter); registration is fire-and-forget and non-raising — see
     # _schedule_gap_event.
+    if t.profile.kb_scope == "personal":
+        # Only the employee's own notes were searched: a miss there says nothing
+        # about the organisation's knowledge base, and the question text is theirs.
+        # A "both" turn is recorded: the organisation's knowledge bases were searched.
+        return
     _schedule_gap_event(
         org_id=t.org_id,
         zitadel_org_id=t.zitadel_org_id,
