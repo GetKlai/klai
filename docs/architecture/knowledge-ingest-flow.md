@@ -741,10 +741,20 @@ whose text or enrichment failed (read through `product_state`); a failed graph
 extraction leaves the page searchable and is not counted there. The
 stale-pending reaper can still find one case: a version whose ingest request
 died between creating the row and finishing the raw write; it marks it failed
-and logs `stale_pending_artifacts_failed`, which has its own alert. Each
-product of that version still `pending` (a queued graph job keeps the graph
-pending) becomes `failed (ingest_interrupted)` through `set_product_state`, so
-`derived_product_failed` fires per product; an outcome already recorded stays.
+and logs `stale_pending_artifacts_failed`, which has its own alert. The
+same run looks at the products, whatever `index_status` says: a product of a
+current version that has been `pending` for over 30 minutes (its own
+`_state_at`), with no queued or running job of that product and no operation
+holding its knowledge base (`operations.operation_running`; a rebuild works
+without a job per version, and 2,000 chunk calls at 2 per second already take
+17 minutes for one document), becomes `failed (interrupted)` through
+`set_product_state`, so `derived_product_failed` fires per product. That covers
+a request that died before the text was written and one that died after it but
+before the product was queued. `index_status` is only failed where it is still
+`pending`; an outcome already recorded is never selected. The query reads every
+current version each run, linear in current documents (3,265 on production in
+November 2026); a partial index on the pending states is the upgrade when that
+scan shows up in query time.
 
 ### 2.7 Periodic tasks
 
@@ -753,7 +763,7 @@ All in UTC, Procrastinate `@periodic`:
 | Schedule | Task | Queue | What it does |
 |---|---|---|---|
 | every minute | `recover_stalled_jobs_periodic` | maintenance | retries jobs whose worker heartbeat expired (`zombie_recovery.py:125-139`) |
-| `*/15 * * * *` | `reap_stale_pending_artifacts_periodic` | ingest-kb | marks versions whose raw write never finished (`pending` for over 30 minutes with no runnable job) as failed, and their still-pending products `failed (ingest_interrupted)`, at most 500 per run (`stale_pending_artifact_reaper.py`) |
+| `*/15 * * * *` | `reap_stale_pending_artifacts_periodic` | ingest-kb | marks versions whose raw write never finished (`pending` for over 30 minutes with no runnable job) as failed, and every product pending for over 30 minutes without a job or an operation `failed (interrupted)`, at most 500 of each per run (`stale_pending_artifact_reaper.py`) |
 | `17 * * * *` | `sweep_unclassified_kbs_periodic` | maintenance | queues one taxonomy backfill per KB that still has chunks without label or taxonomy (`taxonomy_tasks.py:34,88-102`) |
 | `0 2 * * *` | `evaluate_retrieval_quality_periodic_chat` and `_knowledge_org` | rag-eval | one evaluation run per suite (`eval/ragas_runner.py:604-706`) |
 | `30 2 * * *` | `evaluate_ingest_gap_canary_periodic` | rag-eval | probe queries derived from sources (at most 10, 5 minute budget) (`eval/ragas_runner.py:44-48,394-430,651-665`) |

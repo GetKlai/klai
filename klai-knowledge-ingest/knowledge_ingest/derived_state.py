@@ -115,7 +115,7 @@ def born_pending() -> dict[str, Any]:
 
     Written in the INSERT itself, so no row the service writes ever exists
     without a state; an ingest that dies before its outcome leaves pending,
-    which the stale-pending reaper turns into ``failed (ingest_interrupted)``.
+    which the stale-pending reaper turns into ``failed (interrupted)``.
     """
     return {
         key: value
