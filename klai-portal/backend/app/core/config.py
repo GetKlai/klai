@@ -417,10 +417,13 @@ class Settings(BaseSettings):
     widget_jwt_secret: str = ""  # PORTAL_API_WIDGET_JWT_SECRET
 
     # REQ-8 (SPEC-SEC-CROSS-TENANT-FOLLOWUP-001): widget_messages retention.
-    # Rows older than this many days are deleted daily by the background loop.
-    # Lowered from 90 to 7 (SPEC-CHAT-QUALITY-LOOP-001 open item #2, decided
-    # 2026-09-11): global, all tenants, no per-org override exists today.
-    widget_messages_retention_days: int = 7  # PORTAL_API_WIDGET_MESSAGES_RETENTION_DAYS
+    # Rows older than this many days are deleted daily by the background loop,
+    # which also clears the visitor details and judge reasoning past the term.
+    # 90 days since 2026-11-12 (was 7 from 2026-09-11): long enough to replay a
+    # failure against a new version and check the nightly judge afterwards.
+    # portal_orgs.widget_messages_retention_days overrides it per org.
+    # Rule: docs/architecture/conversation-retention-and-learning.md.
+    widget_messages_retention_days: int = 90  # PORTAL_API_WIDGET_MESSAGES_RETENTION_DAYS
 
     # Conversations quiet for at least this many minutes get an outcome
     # label ('resolved' / 'escalated' / 'abandoned' / 'unknown') by the

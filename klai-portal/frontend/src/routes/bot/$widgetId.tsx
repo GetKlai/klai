@@ -31,6 +31,7 @@ interface PublicConfig {
   show_sources?: boolean
   show_meta?: boolean
   collect_user_info?: boolean
+  retention_days?: number
   page_context_enabled?: boolean
   // The default contact route's booking link, and the toggle that decides
   // whether a booking opens in a panel or as a link.
@@ -99,6 +100,7 @@ function PublicBotPage() {
       showSources={cfg.show_sources}
       showMeta={cfg.show_meta}
       collectUserInfo={cfg.collect_user_info}
+      retentionDays={cfg.retention_days}
       pageContextEnabled={cfg.page_context_enabled}
       appointmentsEnabled={cfg.appointments?.enabled}
       appointmentsBookingUrl={cfg.booking_url ?? cfg.appointments?.booking_url}
