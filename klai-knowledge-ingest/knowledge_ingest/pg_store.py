@@ -1237,7 +1237,7 @@ async def get_alive_episode_uuids_for_org(conn: asyncpg.Connection, org_id: str)
             SELECT w.document, p.id, p.episode_ids, w.depth + 1
             FROM walk w
             JOIN stored p ON p.superseded_by = w.id
-            WHERE cardinality(w.episode_ids) = 0 AND w.depth < 100
+            WHERE w.depth < 100
         ),
         nearest AS (
             SELECT episode_ids,

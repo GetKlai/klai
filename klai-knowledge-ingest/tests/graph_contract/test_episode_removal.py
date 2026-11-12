@@ -28,6 +28,24 @@ async def test_removed_episodes_take_the_facts_only_they_back(graph_helpers: Con
     assert entities == {"shared-source", "shared-target", "only-kept-source", "only-kept-target"}
 
 
+async def test_a_replaced_fact_goes_while_the_current_version_still_names_its_entities(
+    graph_helpers: Contract,
+) -> None:
+    """The usual case after a re-extraction: same entities, the old statement about them."""
+    await seed_graph(graph_helpers, ["old", "new"], {"old-fact": ["old"]})
+    driver = graph_helpers.graphiti.driver.clone(database=graph_helpers.group_id)
+    await driver.execute_query(
+        "MATCH (e:Episodic {uuid: 'new'}), (n:Entity) CREATE (e)-[:MENTIONS]->(n)"
+    )
+
+    await graph_module.delete_kb_episodes(graph_helpers.group_id, ["old"])
+
+    episodes, edges, entities = await stored_graph(graph_helpers)
+    assert episodes == {"new"}
+    assert edges == {}
+    assert entities == {"old-fact-source", "old-fact-target"}
+
+
 async def test_an_edge_cited_by_episodes_in_different_batches_goes(
     graph_helpers: Contract, monkeypatch: pytest.MonkeyPatch
 ) -> None:

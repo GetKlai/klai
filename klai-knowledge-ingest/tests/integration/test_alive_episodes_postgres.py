@@ -108,7 +108,17 @@ async def test_only_the_newest_extracted_version_of_each_document_is_alive(tenan
     )
     # Removed document: no active row, so nothing of it is alive.
     await _insert(conn, org_id, "removed", {"graphiti_episode_ids": ["removed-1"]})
+    # A rename closes two rows into one new version: the nearest extracted
+    # predecessor stands in, not the older extraction behind the other one.
+    merged = await _insert(conn, org_id, "merged", {}, active=True)
+    await _insert(
+        conn, org_id, "merged-old-path", {"graphiti_episode_ids": ["nearest"]}, superseded_by=merged
+    )
+    unextracted = await _insert(conn, org_id, "merged-unextracted", {}, superseded_by=merged)
+    await _insert(
+        conn, org_id, "merged-older", {"graphiti_episode_ids": ["older"]}, superseded_by=unextracted
+    )
 
     alive = await pg_store.get_alive_episode_uuids_for_org(conn, org_id)
 
-    assert alive == {"new-1", "stand-in", "legacy-scalar"}
+    assert alive == {"new-1", "stand-in", "legacy-scalar", "nearest"}
