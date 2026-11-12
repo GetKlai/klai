@@ -110,6 +110,11 @@ groups:
       # out of 3,160 active artifacts), unchanged from run to run. The
       # condition is real and stays an email; it does not page. Cleaning up the
       # 17 rows is the way to make the alert go quiet.
+      #
+      # Since 2026-11 the same event also carries the graph check: status covers
+      # both, and discrepancies_total (Qdrant) vs graph_lost_extractions (graph)
+      # tell them apart. One unrepaired graph loss keeps the alert firing every
+      # night until scripts/reextract_document_graph.py has been run for it.
       - uid: obs-001-pg-qdrant-divergence
         title: pg_qdrant_reconcile_failed
         condition: threshold

@@ -14,8 +14,14 @@ and queues the normal graph job through ``graph_refresh`` as a user-requested
 refresh (no daily cap, no cool-off). The new extraction retires the earlier
 ones when it completes, like any other.
 
-It refuses a row that is not active, and a finished row whose recorded
-episodes all exist. Run it by hand only (in a knowledge-ingest container):
+It only touches what it is for: an active row whose extraction is marked
+finished, with stored text, and with at least one recorded episode missing from
+the graph. It refuses anything else, an unfinished row in particular: there an
+extraction is queued, running, failed or quarantined, which is the job's own
+state, and rewriting the row could drop a part the job is appending. The
+repair is all-or-nothing: when the job is not queued, the row is put back
+exactly as it was, so the nightly check keeps reporting the loss.
+Run it by hand only (in a knowledge-ingest container):
 
     docker exec klai-core-knowledge-ingest-1 \\
         python -m scripts.reextract_document_graph --org <zitadel_org_id> \\
@@ -38,42 +44,49 @@ from knowledge_ingest.scripts.requeue_failed_artifacts import _procrastinate_app
 
 async def run(org_id: str, artifact_id: str, execute: bool) -> int:
     async with tenant_scoped_connection(org_id) as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT belief_time_end = $3 AND index_status <> $4 AS active,
-                   kb_slug, path, content_type, belief_time_start, extra::text AS extra
-            FROM knowledge.artifacts
-            WHERE org_id = $1 AND id = $2::uuid
-            """,
-            org_id,
-            artifact_id,
-            pg_store._SENTINEL,
-            pg_store.PURGE_PENDING,
+        graph_row = next(
+            (
+                row
+                for row in await pg_store.get_graph_rows_for_org(conn, org_id)
+                if row["id"] == artifact_id
+            ),
+            None,
         )
-        if row is None:
+        if graph_row is None:
             print(f"artifact {artifact_id} not found in org {org_id}")
             return 2
-        extra = json.loads(row["extra"])
-        recorded = [
-            episode_id
-            for episode_id in extra.get("graphiti_episode_ids")
-            or [extra.get("graphiti_episode_id")]
-            if episode_id and episode_id != "no-chunks" and not episode_id.startswith("skipped:")
-        ]
+        row = await conn.fetchrow(
+            "SELECT content_type, belief_time_start, extra::text AS extra "
+            "FROM knowledge.artifacts WHERE org_id = $1 AND id = $2::uuid",
+            org_id,
+            artifact_id,
+        )
+        original = row["extra"]
+        extra = json.loads(original)
+        recorded = list(graph_row["episode_ids"])
         stored = await graph_module.stored_episode_uuids(org_id)
         existing = [episode_id for episode_id in recorded if episode_id in stored]
-        complete = extra.get("graphiti_episode_complete") is not False
+        missing = [episode_id for episode_id in recorded if episode_id not in stored]
         print(f"artifact {artifact_id} in org {org_id}")
-        print(f"  active: {row['active']}")
+        print(f"  active: {graph_row['active']}")
         print(f"  extraction_version: {extra.get('graphiti_extraction_version')}")
-        print(f"  complete: {complete}")
+        print(f"  finished: {graph_row['finished']}")
         print(f"  recorded_episode_ids: {recorded}")
-        print(f"  missing_in_graph: {[e for e in recorded if e not in stored]}")
-        if not row["active"]:
-            print("REFUSING: the row is not active; only a current version is re-extracted")
-            return 2
-        if complete and len(existing) == len(recorded):
-            print("REFUSING: every recorded episode is in the graph; nothing was lost")
+        print(f"  missing_in_graph: {missing}")
+        refusal = None
+        if not graph_row["active"]:
+            refusal = "the row is not active; only a current version is re-extracted"
+        elif not graph_row["finished"]:
+            refusal = (
+                "the extraction is not finished (queued, running, failed or quarantined); "
+                "that is the graph job's own state, not a lost write"
+            )
+        elif not missing:
+            refusal = "every recorded episode is in the graph; nothing was lost"
+        elif not extra.get("document_text"):
+            refusal = "the row has no stored document_text, so the graph job could not run"
+        if refusal:
+            print(f"REFUSING: {refusal}")
             return 2
         if not execute:
             return 0
@@ -95,17 +108,29 @@ async def run(org_id: str, artifact_id: str, execute: bool) -> int:
                 artifact_id=artifact_id,
                 extra={**extra, **patch},
                 org_id=org_id,
-                kb_slug=row["kb_slug"],
-                path=row["path"],
+                kb_slug=graph_row["kb_slug"],
+                path=graph_row["path"],
                 content_type=row["content_type"],
                 belief_time_start=row["belief_time_start"],
-                indexable_content=extra.get("document_text") or "",
+                indexable_content=extra["document_text"],
                 user_requested=True,
             )
-    print(f"  graph_refresh: {result}")
-    if result in ("queued", "already_queued") or (result or "").startswith("skipped:"):
-        return 0
-    print("FAILED to queue the graph job; the row is marked not extracted, run again")
+        print(f"  graph_refresh: {result}")
+        # "skipped:<reason>": the text is now held out of the graph, and
+        # graph_refresh has already finished the row that way (its earlier
+        # extractions retired, the skip marker written), so there is nothing to
+        # put back and nothing lost left to report.
+        if result in ("queued", "already_queued") or (result or "").startswith("skipped:"):
+            return 0
+        # No job: an unfinished row without one would hide the loss from the
+        # nightly check, which skips unfinished rows. Put it back as it was.
+        await conn.execute(
+            "UPDATE knowledge.artifacts SET extra = $3::jsonb WHERE org_id = $1 AND id = $2::uuid",
+            org_id,
+            artifact_id,
+            original,
+        )
+    print("FAILED to queue the graph job; the row is back as it was, the loss stays reported")
     return 1
 
 

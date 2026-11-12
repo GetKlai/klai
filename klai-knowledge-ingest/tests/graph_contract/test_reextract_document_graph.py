@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from knowledge_ingest import enrichment_tasks, pg_store
+from knowledge_ingest import consistency_reconcile, enrichment_tasks, pg_store
 from scripts import reextract_document_graph
 from tests.graph_contract.conftest import Contract, seed_graph, stored_graph
 
@@ -105,18 +105,71 @@ async def test_execute_marks_the_row_not_extracted_and_queues_one_job(
     assert script.defer.await_args.kwargs["replace_stale"] is True
 
 
-@pytest.mark.parametrize("case", ["closed", "all-present"])
-async def test_refuses_a_closed_row_or_one_whose_episodes_all_exist(
-    graph_helpers: Contract, script, case: str
+_TEXT = {"document_text": "Text of the current version."}
+_REFUSED = {
+    "closed": (
+        {**_TEXT, "graphiti_episode_ids": ["lost"], "graphiti_episode_complete": True},
+        False,
+    ),
+    "all-present": (
+        {**_TEXT, "graphiti_episode_ids": ["kept"], "graphiti_episode_complete": True},
+        True,
+    ),
+    # An extraction is queued, running, failed or quarantined here: the job's own state.
+    "unfinished": (
+        {**_TEXT, "graphiti_episode_ids": ["lost"], "graphiti_episode_complete": False},
+        True,
+    ),
+    # The job aborts without text and would leave the row unfinished with no job.
+    "no-text": ({"graphiti_episode_ids": ["lost"], "graphiti_episode_complete": True}, True),
+    # The list is authoritative when its key exists, even empty: nothing is recorded.
+    "empty-list-wins": (
+        {
+            **_TEXT,
+            "graphiti_episode_ids": [],
+            "graphiti_episode_id": "lost",
+            "graphiti_episode_complete": True,
+        },
+        True,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_REFUSED))
+async def test_refuses_what_is_not_a_lost_finished_extraction(
+    graph_helpers: Contract, script, case: str, capsys: pytest.CaptureFixture
 ) -> None:
     await seed_graph(graph_helpers, ["kept"], {"kept-fact": ["kept"]})
-    extra = {"graphiti_episode_ids": ["kept" if case == "all-present" else "lost"]}
-    artifact = await script.insert(
-        {**extra, "graphiti_episode_complete": True}, active=case == "all-present"
-    )
-    before = await _extra(script.conn, artifact)
+    extra, active = _REFUSED[case]
+    artifact = await script.insert(extra, active=active)
+    before = await _raw_extra(script.conn, artifact)
 
     assert await reextract_document_graph.run(graph_helpers.group_id, artifact, execute=True) == 2
 
-    assert await _extra(script.conn, artifact) == before
+    assert await _raw_extra(script.conn, artifact) == before
     script.defer.assert_not_awaited()
+    if case == "empty-list-wins":
+        # The same reading as the graph job and the nightly check: nothing recorded.
+        assert "recorded_episode_ids: []" in capsys.readouterr().out
+
+
+async def _raw_extra(conn, artifact_id: str) -> str:
+    return await conn.fetchval(
+        "SELECT extra::text FROM knowledge.artifacts WHERE id = $1", artifact_id
+    )
+
+
+async def test_a_failed_queue_puts_the_row_back_so_the_loss_stays_visible(
+    graph_helpers: Contract, script
+) -> None:
+    active, _ = await _lost_document(graph_helpers, script.insert)
+    before = await _raw_extra(script.conn, active)
+    script.defer.side_effect = ConnectionError("queue unavailable")
+
+    assert await reextract_document_graph.run(graph_helpers.group_id, active, execute=True) == 1
+
+    assert await _raw_extra(script.conn, active) == before
+    report = await consistency_reconcile.lost_graph_extractions(
+        script.conn, {graph_helpers.group_id}
+    )
+    assert report["graph_lost_extractions"] == 1
