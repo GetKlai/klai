@@ -272,5 +272,19 @@ The former per-user and per-group product assignment endpoints
 `/api/admin/products/summary`, `/api/admin/groups/{id}/products`) answer
 410 Gone (`products.py:138-153`; `klai-portal/backend/app/api/groups.py:435-447`).
 
+Three internal routes have no caller in this repository. The check was a text search
+for each path in all services, the compose files and the deploy workflows, and, for
+the last 30 days up to 12 November 2026, a count in portal-api's audit log, which
+records every internal request that succeeded (`internal.py:216-303`):
+
+| Route | Registered at | What the code says it is for | Requests in the last 30 days |
+|---|---|---|---|
+| `GET /internal/users/{zitadel_user_id}/products` | `internal.py:435` | The docstring names an identity-provider Action that adds the user's products to the access token. No Action is defined in this repository; Actions live in the identity provider's own configuration, which is operated from private infrastructure and cannot be read here | none |
+| `GET /internal/templates/effective` | `internal.py:1970` | The reader the LiteLLM hook used for prompt templates (`klai-portal/backend/app/services/prompt_templates.py:3-4`); the hook left the repository on 21 October 2026 and the internal chat reads the same templates in process | one, dated 13 October 2026 |
+| `POST /internal/v1/orgs/{org_id}/page-saved` | `internal.py:1127` | Called by the docs app after a page is saved, to schedule the gap re-scorer (docstring). The docs app has no such call | none |
+
+The audit log does not record which service called, so the single request to
+`/internal/templates/effective` has no named caller.
+
 The user lifecycle endpoints (invite, suspend, reactivate, offboard, delete)
 are listed in [admin-roles.md](admin-roles.md).

@@ -56,3 +56,22 @@ Do not publish:
 When a public document needs to mention production deployment, describe the
 contract instead: public artifacts are built and tested here; Klai production
 deployment is operated from private infrastructure automation.
+
+## How Public Runbooks Write Commands
+
+A runbook gives every command as it runs on the host that executes it, so an
+operator pastes it into a shell there. How an operator reaches that host (login
+command, key, jump host, tunnel) is in the private `klai-infra` runbooks, and a
+public runbook does not repeat it.
+
+- A step that runs on a server says on which role it runs ("on core-01",
+  "on gpu-01"). The role names are the only host names a runbook uses.
+- Paths on a server are relative to the deploy directory, the directory on that
+  host that holds the `docker-compose.yml`. A runbook that needs the directory
+  by name writes `<deploy-dir>` (`<gpu-deploy-dir>` for gpu-01) and starts the
+  block with `cd <deploy-dir>`.
+- A command that is split between your machine and the host says so in words
+  ("on your machine", "on core-01") and shows each part on its own.
+- Self-hosting guides address the reader's own server with the placeholders
+  above (`deploy@example-host`).
+

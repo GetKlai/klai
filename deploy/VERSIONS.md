@@ -61,7 +61,7 @@ GPU production image pins are intentionally not listed in this public repo becau
 
 | Service | Rationale |
 |---|---|
-| `meilisearch` | Search index for LibreChat conversations. **Data migration required on minor bumps**: an older version refused to boot directly on a newer one, and the last minors were migrated via dump/import with a baseline archived under /opt/klai/backups. Keep `MEILI_DB_PATH=/meili_data`; otherwise it starts on `./data.ms` and ignores the mounted volume. |
+| `meilisearch` | Search index for LibreChat conversations. **Data migration required on minor bumps**: an older version refused to boot directly on a newer one, and the last minors were migrated via dump/import with a baseline archived under `backups/` in the deploy directory. Keep `MEILI_DB_PATH=/meili_data`; otherwise it starts on `./data.ms` and ignores the mounted volume. |
 | `docling-serve` | Document parsing (PDF, DOCX → structured). |
 | `searxng` | Meta-search aggregator for LibreChat web mode. Date-based versioning. |
 | `gitea` | Self-hosted git for klai-docs. Upstream renumbered from 1.27 to 28 in 2026-09; Gitea is git-hosting only here, so its Actions and CSP changes do not apply. v28 added an egress filter for outbound git and webhook calls that denied the knowledge-ingest webhooks until compose set `GITEA__webhook__ALLOWED_HOST_LIST: private` (see the comment there). Schema migrations run on start and are one-way: roll back by restoring the `gitea` database dump and the volume. |
@@ -119,10 +119,10 @@ The `python` slim base image, one Python minor across all internal services (the
 
 ## Verification
 
-To audit drift between this file and a running server, run:
+To audit drift between this file and a running server, run on core-01:
 
 ```bash
-ssh <server> "docker ps --format '{{.Names}}\t{{.Image}}' | sort"
+docker ps --format '{{.Names}}\t{{.Image}}' | sort
 ```
 
 Compare against the compose files, not against this document: it states no versions. A service that is held back or needs a pre-bump check gets a row here; `deploy/check-versions-doc.py` fails if a row names a service compose does not have.

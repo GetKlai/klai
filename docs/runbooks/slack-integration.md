@@ -1,5 +1,7 @@
 # Runbook: Klai in Slack (klai-slack)
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 Spec: `docs/specs/SPEC-SLACK-001/spec.md`. Service: `klai-slack/`. Slack calls
 `https://api.getklai.com/slack/*`, Caddy forwards it to `klai-slack:8000`, and
 klai-slack answers through the Partner API of portal-api with one managed
@@ -25,7 +27,7 @@ klai-slack answers through the Partner API of portal-api with one managed
 
 ## 2. SOPS entries (names only, values never in this repo)
 
-File: `klai-infra/core-01/.env.sops` (the one file `sync-env.yml` pushes to `/opt/klai/.env`). Edit it with the procedure in
+File: `klai-infra/core-01/.env.sops` (the one file `sync-env.yml` pushes to `.env` in the deploy directory). Edit it with the procedure in
 `klai-infra/docs/runbooks/sops-edit-via-core01.md`, then decrypt again and
 compare the key set.
 
@@ -41,7 +43,7 @@ compare the key set.
 both directions; do not add a second secret. `deploy/SECRETS_MATRIX.md` lists
 each variable and the service that reads it.
 
-Compose interpolates these at `compose-up.sh` time from `/opt/klai/.env`, so the
+Compose interpolates these at `compose-up.sh` time from `.env` in the deploy directory, so the
 keys must be merged into the live env (`sync-env.yml` / `deploy/deploy.sh
 klai-slack`) before the container starts. A missing or empty value is a startup
 failure, by design.
@@ -60,8 +62,7 @@ failure, by design.
    the existing production volume create the role and database once, reading the
    password from the live env instead of typing it:
    ```bash
-   ssh core-01
-   set -a; source /opt/klai/.env; set +a
+   set -a; source .env; set +a
    docker exec -i klai-core-postgres-1 \
      psql -U klai -d klai -v ON_ERROR_STOP=1 -v pw="$KLAI_SLACK_DB_PASSWORD" <<'SQL'
    CREATE ROLE klai_slack LOGIN PASSWORD :'pw';
@@ -79,9 +80,9 @@ failure, by design.
    off until the repository variable `KLAI_SLACK_DEPLOY=true` exists. For the
    first run do it by hand on core-01:
    ```bash
-   source /opt/klai/.env
+   source .env
    docker pull ghcr.io/getklai/klai-slack:latest
-   /opt/klai/scripts/compose-up.sh klai-slack
+   scripts/compose-up.sh klai-slack
    ```
    The entrypoint runs `alembic upgrade head` before uvicorn; a migration error
    stops the container.

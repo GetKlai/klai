@@ -1,5 +1,7 @@
 # Runbook: Operator-Triggered KB Rebuild (`rebuild_kb`)
 
+> Commands are given as they run on core-01, from the deploy directory (the one holding `docker-compose.yml`). See [How public runbooks write commands](../contributing/infrastructure-boundary.md#how-public-runbooks-write-commands).
+
 **SPEC:** SPEC-RAG-REBUILD-KB-001  
 **Service:** `klai-knowledge-ingest`  
 **Queue:** `rebuild-kb` (LLM lane)  
@@ -69,16 +71,16 @@ Before triggering the rebuild:
    `knowledge.parent_chunks` — this table is created by migration `015_parent_chunks.sql`.
    Check on core-01:
    ```bash
-   ssh core-01 "docker exec klai-core-postgres-1 sh -c \
-     'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \
-     \"SELECT to_regclass('\''knowledge.parent_chunks'\'');\"'"
+   docker exec klai-core-postgres-1 sh -c \
+     'psql -U $POSTGRES_USER -d $POSTGRES_DB -c \
+     "SELECT to_regclass('\''knowledge.parent_chunks'\'');"'
    ```
    Expected: non-null result. If NULL, the migration has not run — do not proceed.
 
 2. **Confirm knowledge-ingest is on the expected image.**
    ```bash
-   ssh core-01 "docker exec klai-core-knowledge-ingest-1 python -c \
-     'from knowledge_ingest.rebuild_tasks import rebuild_kb_inline; print(rebuild_kb_inline.__name__)'"
+   docker exec klai-core-knowledge-ingest-1 python -c \
+     'from knowledge_ingest.rebuild_tasks import rebuild_kb_inline; print(rebuild_kb_inline.__name__)'
    ```
    Expected output: `rebuild_kb_inline`. If ImportError, the container is running an old image.
 
@@ -86,9 +88,9 @@ Before triggering the rebuild:
    A pre-existing `enrich-bulk` backlog will contend with the rebuild LLM calls.
    Check how many jobs are pending:
    ```bash
-   ssh core-01 "docker exec klai-core-postgres-1 sh -c \
-     'psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \
-     \"SELECT queue, status, count(*) FROM procrastinate_jobs GROUP BY 1,2 ORDER BY 1,2;\"'"
+   docker exec klai-core-postgres-1 sh -c \
+     'psql -U $POSTGRES_USER -d $POSTGRES_DB -c \
+     "SELECT queue, status, count(*) FROM procrastinate_jobs GROUP BY 1,2 ORDER BY 1,2;"'
    ```
 
 4. **Look at the cost.** See the cost section below.
@@ -100,11 +102,8 @@ Before triggering the rebuild:
 ### Inline (visible progress)
 
 ```bash
-ssh core-01 "docker exec klai-core-knowledge-ingest-1 \
-  python -c 'import asyncio; \
-             from knowledge_ingest.rebuild_tasks import rebuild_kb_inline; \
-             result = asyncio.run(rebuild_kb_inline(\"<org_zitadel_id>\", \"<kb_slug>\")); \
-             print(result)'"
+docker exec klai-core-knowledge-ingest-1 \
+  python -c 'import asyncio; from knowledge_ingest.rebuild_tasks import rebuild_kb_inline; result = asyncio.run(rebuild_kb_inline("<org_zitadel_id>", "<kb_slug>")); print(result)'
 ```
 
 Replace `<org_zitadel_id>` with the Zitadel organisation ID (found in portal-api logs or the `portal_orgs` table) and `<kb_slug>` with the KB slug.
