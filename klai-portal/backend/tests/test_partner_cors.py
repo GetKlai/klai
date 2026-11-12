@@ -107,7 +107,6 @@ async def test_partner_cors_widget_origin_no_credentials() -> None:
         patch("app.api.partner_widget_config.generate_session_token", return_value="fake.jwt.token"),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 
@@ -178,7 +177,6 @@ async def test_partner_cors_blocks_unlisted_origin() -> None:
         patch("app.api.partner_widget_config.check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)),
     ):
         mock_settings.widget_jwt_secret = "shared-secret"
-        mock_settings.widget_messages_retention_days = 7
 
         response = await widget_config(id=widget.widget_id, request=request, db=db)
 

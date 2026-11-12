@@ -67,7 +67,7 @@ limit answers 429 with `Retry-After` (`partner_dependencies.py:311-320`).
 ### Widget
 
 `GET /partner/v1/widget-config?id=<widget_id>`
-(`klai-portal/backend/app/api/partner_widget_config.py:216`) looks up the
+(`klai-portal/backend/app/api/partner_widget_config.py:207`) looks up the
 widget, checks the browser's `Origin` against the widget's `allowed_origins`
 to decide which sites may embed it, and returns the configuration with a
 session token. The token is an HS256 JWT valid for one hour, carrying

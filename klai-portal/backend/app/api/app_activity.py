@@ -39,6 +39,7 @@ from app.services.gap_events import REVIEW_CALLER_CLIENT_ID, record_gap_event
 from app.services.hubspot_tickets import HubSpotTicketError, HubSpotTickets
 from app.services.secrets import portal_secrets
 from app.services.ticket_content import ReviewNote, TranscriptTurn, build_ticket_content, ticket_subject
+from app.services.widget_messages_retention import effective_retention_days
 
 logger = logging.getLogger(__name__)
 
@@ -1475,7 +1476,7 @@ async def _ticket_text(db: AsyncSession, conversation: Any, perms: UserPermissio
         await db.execute(text(_TICKET_REVIEWS_SQL), {"conversation_id": conversation.id, "org_id": perms.org_id})
     ).all()
     org = (await db.execute(text(_RETENTION_DAYS_SQL), {"org_id": perms.org_id})).first()
-    retention_days = (org.widget_messages_retention_days if org else None) or settings.widget_messages_retention_days
+    retention_days = effective_retention_days(org.widget_messages_retention_days if org else None)
     # The purge deletes per message by created_at (widget_messages_retention),
     # so the transcript starts disappearing when its first message expires.
     first_created = messages[0].created_at if messages else conversation.started_at
