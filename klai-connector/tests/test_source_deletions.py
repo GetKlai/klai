@@ -387,7 +387,11 @@ async def test_changed_path_filter_is_synced_even_without_a_new_commit() -> None
 # -- Notion (real notion-client, transport faked) ---------------------------------
 
 
-def _notion_page(page_id: str, *, database_id: str = "db-a", **flags: Any) -> dict[str, Any]:
+DB_A = "aaaaaaaa-0000-4000-8000-000000000001"
+DB_B = "bbbbbbbb-0000-4000-8000-000000000002"
+
+
+def _notion_page(page_id: str, *, database_id: str = DB_A, **flags: Any) -> dict[str, Any]:
     return {
         "object": "page",
         "id": page_id,
@@ -425,6 +429,8 @@ def _search(pages: list[dict[str, Any]], retrieve: dict[str, Any] | None = None)
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/search":
             return httpx.Response(200, json={"results": pages, "has_more": False, "next_cursor": None})
+        if request.url.path.startswith("/v1/databases/"):
+            return httpx.Response(200, json={"object": "database"})
         found = by_id.get(request.url.path.rsplit("/", 1)[-1])
         if found is None:
             return _notion_error(404, "object_not_found")
@@ -476,7 +482,7 @@ async def test_notion_page_missing_from_search_but_still_in_scope_is_kept(monkey
     adapter = _notion_adapter(monkeypatch, _search([_notion_page("page-live")], {"page-lagging": lagging}))
 
     _run_, ingest = await _sync(
-        adapter, _notion_config(database_ids=["db-a"]), _previous(["page-live", "page-lagging"])
+        adapter, _notion_config(database_ids=[DB_A]), _previous(["page-live", "page-lagging"])
     )
 
     ingest.delete_connector_document.assert_not_awaited()
@@ -496,10 +502,10 @@ async def test_notion_page_missing_from_search_and_now_trashed_is_removed(monkey
 async def test_notion_page_missing_from_search_and_outside_the_filter_is_removed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    moved = _notion_page("page-x", database_id="db-b")
+    moved = _notion_page("page-x", database_id=DB_B)
     adapter = _notion_adapter(monkeypatch, _search([_notion_page("page-live")], {"page-x": moved}))
 
-    _run_, ingest = await _sync(adapter, _notion_config(database_ids=["db-a"]), _previous(["page-live", "page-x"]))
+    _run_, ingest = await _sync(adapter, _notion_config(database_ids=[DB_A]), _previous(["page-live", "page-x"]))
 
     _assert_single_scoped_delete(ingest, "page-x")
 
@@ -591,10 +597,10 @@ async def test_notion_pinned_page_with_a_transient_error_fails_the_listing(monke
 async def test_notion_database_filter_removes_pages_outside_it_and_keeps_pages_inside(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pages = [_notion_page("page-in", database_id="db-a"), _notion_page("page-out", database_id="db-b")]
+    pages = [_notion_page("page-in", database_id=DB_A), _notion_page("page-out", database_id=DB_B)]
     adapter = _notion_adapter(monkeypatch, _search(pages))
 
-    _run_, ingest = await _sync(adapter, _notion_config(database_ids=["db-a"]), _previous(["page-in", "page-out"]))
+    _run_, ingest = await _sync(adapter, _notion_config(database_ids=[DB_A]), _previous(["page-in", "page-out"]))
 
     _assert_single_scoped_delete(ingest, "page-out")
 

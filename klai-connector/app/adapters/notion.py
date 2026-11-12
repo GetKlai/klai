@@ -14,7 +14,9 @@ and has built-in rate limiting with exponential backoff.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
+from uuid import UUID
 
 import httpx
 from notion_client import APIErrorCode, APIResponseError, Client
@@ -39,6 +41,26 @@ _SKIP_BLOCK_TYPES = frozenset({"child_page", "child_database"})
 # The URLs are Notion-hosted S3 presigned URLs that expire in ~1h and
 # produce garbage when chunked. Captions are useful; URLs are not.
 _MEDIA_BLOCK_TYPES = frozenset({"image", "video", "file", "pdf"})
+
+
+# A Notion ID as it appears in a link or in the API: 32 hex digits, dashed or
+# not. It must end the path, so the view ID in a link's query string is not taken.
+_NOTION_ID = re.compile(
+    r"([0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12})(?:[/?#]|$)", re.IGNORECASE
+)
+
+
+def _database_id(entry: str) -> str:
+    """Return the database ID in a filter entry in the dashed form the API reports.
+
+    The filter compares against parent.database_id, which Notion returns dashed.
+    An entry is whatever was pasted into the portal: a link, or an ID with or
+    without dashes.
+    """
+    match = _NOTION_ID.search(entry.strip())
+    if not match:
+        raise ValueError(f"Notion database filter entry {entry!r} holds no database ID.")
+    return str(UUID(match.group(1)))
 
 
 def _is_trashed(page: dict[str, Any]) -> bool:
@@ -78,14 +100,15 @@ class NotionAdapter(BaseAdapter):
             access_token (required): Notion integration token.
             page_ids (optional): List of specific Notion page IDs to sync.
                 When set, only these pages are synced — search is skipped entirely.
-            database_ids (optional): List of Notion database IDs. When set,
-                only pages whose parent references one of these databases are
-                synced. Applied as a post-fetch filter on parent.database_id
+            database_ids (optional): List of Notion database IDs or links. When
+                set, only pages whose parent references one of these databases
+                are synced. Applied as a post-fetch filter on parent.database_id
                 (works for both the pre- and post-2025-09-03 API parent shapes).
             max_pages (optional): Safety limit on total pages synced. Default 500.
 
         Raises:
-            ValueError: If access_token is missing.
+            ValueError: If access_token is missing, or a database_ids entry
+                holds no Notion ID.
         """
         config: dict[str, Any] = connector.config
         access_token = config.get("access_token")
@@ -97,7 +120,7 @@ class NotionAdapter(BaseAdapter):
         return {
             "access_token": access_token,
             "page_ids": config.get("page_ids", []),
-            "database_ids": config.get("database_ids", []),
+            "database_ids": [_database_id(entry) for entry in config.get("database_ids", [])],
             "max_pages": config.get("max_pages", 500),
         }
 
@@ -148,6 +171,23 @@ class NotionAdapter(BaseAdapter):
                 continue
             pages.append(page)
         return pages
+
+    @staticmethod
+    def _require_databases(client: RateLimitedNotionClient, database_ids: list[str]) -> None:
+        """Fail the listing when a filtered database cannot be read.
+
+        The filter matches pages on parent.database_id, so an ID that belongs to
+        a page, or to a database not shared with the integration, matches nothing
+        and the sync would complete at zero documents. Notion's error names the ID.
+
+        Runs synchronously — call via asyncio.to_thread.
+        """
+        for database_id in database_ids:
+            client._execute_with_retry(  # noqa: SLF001
+                f"retrieve database {database_id}",
+                client.notion.databases.retrieve,
+                database_id=database_id,
+            )
 
     @staticmethod
     def _search_all_pages(
@@ -289,6 +329,7 @@ class NotionAdapter(BaseAdapter):
                 "Listing all Notion pages (connector=%s, database_filter=%s)",
                 connector_id, bool(database_ids),
             )
+            await asyncio.to_thread(self._require_databases, client, database_ids)
             pages = await asyncio.to_thread(
                 self._search_all_pages, client, max_pages, database_ids or None
             )

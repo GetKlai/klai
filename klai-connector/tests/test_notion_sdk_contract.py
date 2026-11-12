@@ -7,9 +7,12 @@ client, so only a real Client can see the next bump. Nothing here patches the SD
 """
 
 from importlib.metadata import version
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import httpx
-from notion_client import Client
+import pytest
+from notion_client import APIResponseError, Client
 from notion_sync.client import RateLimitedNotionClient
 
 from app.adapters.notion import NotionAdapter
@@ -48,3 +51,39 @@ def test_2025_09_03_row_passes_the_database_filter_through_the_real_sdk() -> Non
     notion = Client(auth="secret_contract_test", client=httpx.Client(transport=transport))
     pages = NotionAdapter._search_all_pages(RateLimitedNotionClient(notion), 500, ["db1"])
     assert pages == [row], _drift(str(notion.client.headers["Notion-Version"]))
+
+
+DATABASE_ID = "11111111-2222-3333-4444-55555555aaaa"
+ROW = {"object": "page", "id": "row-1", "parent": {"type": "data_source_id", "database_id": DATABASE_ID}}
+
+
+async def _list(database_ids: list[str]) -> list[str]:
+    """List through the real SDK against a workspace holding one database with one row."""
+
+    def notion(request: httpx.Request) -> httpx.Response:
+        if (request.method, request.url.path) == ("POST", "/v1/search"):
+            return httpx.Response(200, json={"results": [ROW], "has_more": False, "next_cursor": None})
+        if (request.method, request.url.path) == ("GET", f"/v1/databases/{DATABASE_ID}"):
+            return httpx.Response(200, json={"object": "database", "id": DATABASE_ID})
+        return httpx.Response(
+            404, json={"object": "error", "status": 404, "code": "object_not_found", "message": "Could not find it."}
+        )
+
+    transport = httpx.MockTransport(notion)
+    client = RateLimitedNotionClient(Client(auth="secret_contract_test", client=httpx.Client(transport=transport)))
+    connector = SimpleNamespace(id="c1", config={"access_token": "secret_contract_test", "database_ids": database_ids})
+    with patch.object(NotionAdapter, "_build_sync_client", return_value=client):
+        return [ref.ref for ref in await NotionAdapter(MagicMock()).list_documents(connector)]
+
+
+async def test_database_filter_that_names_no_readable_database_fails_the_sync() -> None:
+    # Production, 2026-11: the filter held the link of the page around an inline database. It matched
+    # no row, and 19 runs completed at zero documents while the database held one.
+    page_link = "https://www.notion.so/example/Legal-test-99999999888877776666555544443333"
+    with pytest.raises(APIResponseError):
+        await _list([page_link])
+
+
+async def test_database_link_filters_on_the_database_it_points_to() -> None:
+    database_link = f"https://www.notion.so/example/{DATABASE_ID.replace('-', '')}?v=99999999888877776666555544443333"
+    assert await _list([database_link]) == ["row-1"]
