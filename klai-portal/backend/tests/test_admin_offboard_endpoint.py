@@ -160,8 +160,6 @@ class TestOffboardEndpointHappyPath:
             _scalar_lookup(org),
             membership_delete,
         ]
-        mock_zitadel = AsyncMock()
-
         preview = OffboardPreview(
             org_kbs_solely_owned=[
                 OffboardPreviewKb(kb_id=7, slug="team-kb", name="Team KB", owner_type="org", role_count=1),
@@ -183,11 +181,9 @@ class TestOffboardEndpointHappyPath:
                 AsyncMock(return_value=(2, 3)),
             ) as mock_revoke,
             patch("app.api.admin.users.forget_internal_cases", AsyncMock(return_value=1)) as mock_forget,
-            patch("app.api.admin.users.zitadel", mock_zitadel),
-            patch("app.api.admin.users.settings") as mock_settings,
+            patch("app.api.admin.users.sync_identity_login", AsyncMock()) as mock_sync,
             patch("app.api.admin.users.log_event", AsyncMock()) as mock_log,
         ):
-            mock_settings.zitadel_portal_org_id = "zitadel-portal-org-id"
             await offboard_user(
                 zitadel_user_id="uid-leaving",
                 body=OffboardRequest(
@@ -209,8 +205,8 @@ class TestOffboardEndpointHappyPath:
         # User status flipped + commit.
         assert user.status == "offboarded"
         db.commit.assert_awaited_once()
-        # Zitadel deactivate called AFTER commit.
-        mock_zitadel.deactivate_user.assert_awaited_once_with("uid-leaving", "zitadel-portal-org-id")
+        # The identity follows the remaining memberships, AFTER commit.
+        mock_sync.assert_awaited_once_with("uid-leaving")
         # user.offboarded audit event includes the new metrics.
         offboard_calls = [c for c in mock_log.await_args_list if c.kwargs.get("action") == "user.offboarded"]
         assert len(offboard_calls) == 1
@@ -249,7 +245,7 @@ class TestOffboardEndpointFailureRollsBack:
                 AsyncMock(side_effect=RuntimeError("docs-app down")),
             ),
             patch("app.api.admin.users.revoke_user_credentials", AsyncMock()) as mock_revoke,
-            patch("app.api.admin.users.zitadel", AsyncMock()) as mock_zitadel,
+            patch("app.api.admin.users.sync_identity_login", AsyncMock()) as mock_sync,
         ):
             with pytest.raises(RuntimeError):
                 await offboard_user(
@@ -263,7 +259,7 @@ class TestOffboardEndpointFailureRollsBack:
 
         # Nothing past apply_dispositions ran.
         mock_revoke.assert_not_awaited()
-        mock_zitadel.deactivate_user.assert_not_awaited()
+        mock_sync.assert_not_awaited()
 
 
 class TestDeleteUserEndpoint:

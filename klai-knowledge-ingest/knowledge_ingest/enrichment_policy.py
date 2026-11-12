@@ -13,7 +13,7 @@ _DEFAULT_HARD_MAX_CHUNKS = 2000
 
 # Version 1 is the implicit, never-stamped legacy ruleset from before #1148.
 # Version 2 is the subject-facts, navigation-page skip, cross-language entity
-# naming ruleset used for the 2026-08-22 Voys rebuild. Bump this whenever the
+# naming ruleset used for the 2026-08-22 rebuild of a support knowledge base. Bump this whenever the
 # extraction prompt in graph.py or the skip rules below change semantically.
 GRAPHITI_EXTRACTION_VERSION = 2
 
@@ -68,24 +68,24 @@ _NAV_MIN_LINKS = 8
 #
 # Per link rather than an absolute floor: a big index carries more incidental
 # text than a small one purely by being big, so a fixed threshold lets the
-# largest — and worst — index pages through. Measured on the Voys corpus
-# (2026-08-22):
+# largest — and worst — index pages through. Measured on a support knowledge
+# base's crawled corpus (2026-08-22):
 #
 #   example.com/nl/phone-software    90 links     252 prose      2.8 per link
-#   help.voys.nl/                        34 links     130 prose      3.8 per link
+#   example.com/help/                    34 links     130 prose      3.8 per link
 #   example.com/nl/crm-software     211 links     972 prose      4.6 per link
-#   voys.nl/algemene-voorwaarden/       125 links    1231 prose      9.8 per link
-#   help.voys.nl/integraties             12 links     323 prose     26.9 per link
-#   help.voys.nl/aan-de-slag              6 links    3573 prose    595.5 per link
-#   help.voys.nl/yealink-dect-functies   32 links   19654 prose    614.2 per link
+#   example.com/terms/                  125 links    1231 prose      9.8 per link
+#   example.com/help/integrations        12 links     323 prose     26.9 per link
+#   example.com/help/getting-started      6 links    3573 prose    595.5 per link
+#   example.com/help/handset-features    32 links   19654 prose    614.2 per link
 #
 # Index pages sit under 10, real articles over 500 — two orders of magnitude
 # apart. 40 sits in the empty middle with a 15x margin to the nearest article,
 # which is the margin worth having: a false positive silently removes a real
 # document from the graph, and nobody would notice.
 #
-# Neither link count nor sentence count survives on its own. yealink-dect-
-# functies carries as many links as the index page, so counting links throws
+# Neither link count nor sentence count survives on its own. A handset-features
+# article carries as many links as the index page, so counting links throws
 # out one of the richest documents in the corpus. Counting sentence
 # punctuation breaks the other way: a list written "* [Article](url)." scores
 # one sentence per link and slips through, while a language whose sentences do
@@ -127,9 +127,9 @@ def graph_episode_skip_reason(document_text: str | None) -> str | None:
     pages, category listings, tables of contents. They hold no facts about the
     world, only facts about the documentation, so extraction can only produce
     the meta-statements ``_EXTRACTION_INSTRUCTIONS`` rule 1 forbids
-    (GetKlai/klai#1148). Replaying ``https://help.voys.nl/`` through extraction
-    on 2026-08-22 returned nothing but "Een van de documentatieartikelen voor
-    Freedom is getiteld 'Statistieken'" and eleven siblings.
+    (GetKlai/klai#1148). Replaying a help-centre index page through extraction
+    on 2026-08-22 returned nothing but statements of the form "One of the
+    documentation articles for <product> is titled <title>" and eleven siblings.
 
     Skipping them is cheaper than teaching a prompt to reject them one edge at
     a time, and it is not free to get wrong in either direction: each episode

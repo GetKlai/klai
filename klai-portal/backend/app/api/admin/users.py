@@ -52,7 +52,9 @@ from app.services.zitadel import _sync_zitadel_role_grant, zitadel
 from app.services.zitadel_identity_recovery import (
     ZitadelIdentityRecoveryError,
     email_hash_for_log,
+    reactivate_identity_if_inactive,
     recover_existing_zitadel_identity_for_invite,
+    sync_identity_login,
 )
 
 logger = logging.getLogger(__name__)
@@ -344,8 +346,8 @@ async def _persist_invited_user_and_send_code(
         await create_default_personal_kb(zitadel_user_id, org.id, db)
         if reactivated_membership is not None:
             failure_step = "zitadel_reactivate"
-            await zitadel.unlock_user(zitadel_user_id, settings.zitadel_portal_org_id)
-            reactivated_zitadel_user = True
+            if await reactivate_identity_if_inactive(zitadel_user_id):
+                reactivated_zitadel_user = True
         failure_step = "invite_mail"
         try:
             await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
@@ -952,8 +954,7 @@ async def resend_invite(
             user.status = "active"
             await create_default_personal_kb(zitadel_user_id, perms.org_id, db)
             failure_step = "zitadel_reactivate"
-            await zitadel.unlock_user(zitadel_user_id, settings.zitadel_portal_org_id)
-            reactivated_zitadel_user = True
+            reactivated_zitadel_user = await reactivate_identity_if_inactive(zitadel_user_id)
             failure_step = "invite_mail"
         await zitadel.send_invite_code(zitadel_user_id, url_template=invite_url_template)
         if reactivating_offboarded:
@@ -987,6 +988,52 @@ async def resend_invite(
         reactivated_offboarded=reactivating_offboarded,
     )
     return MessageResponse(message="Invitation resent.")
+
+
+# Registered before DELETE /users/{zitadel_user_id}: the router dispatches to the
+# first matching route, and that one would otherwise answer /users/me.
+@router.delete("/users/me", response_model=MessageResponse)
+async def leave_workspace(
+    perms: UserPermissions = Depends(get_caller),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """C6.3: Leave the workspace (self-removal). Refuses if caller is last admin.
+    C6.7: Refuses if this would leave the workspace with zero users (last-member case).
+    """
+    if perms.role == ProfileRole.ADMIN:
+        # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
+        await _lock_org_for_role_change(db, perms.org_id)
+
+        admin_count = await db.scalar(
+            select(func.count())
+            .select_from(PortalUser)
+            .where(
+                PortalUser.org_id == perms.org_id,
+                PortalUser.role == "admin",
+            )
+        )
+        if (admin_count or 0) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Promote another admin or delete the workspace before leaving.",
+            )
+
+    # Re-fetch the caller's PortalUser ORM-object for db.delete. UserPermissions
+    # is a snapshot, not the ORM row.
+    caller_row_result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == perms.user_id,
+            PortalUser.org_id == perms.org_id,
+        )
+    )
+    caller_user = caller_row_result.scalar_one()
+    await forget_internal_cases(db, org_id=perms.org_id, user_id=perms.user_id)
+    await db.delete(caller_user)
+    await db.commit()
+    logger.info("leave_workspace: user=%s left org=%d", perms.user_id, perms.org_id)
+    emit_event("user.left_workspace", org_id=perms.org_id, user_id=perms.user_id)
+    await _sync_identity_login_or_502(perms.user_id, perms, "removed")
+    return MessageResponse(message="You have left the workspace.")
 
 
 @router.delete("/users/{zitadel_user_id}", response_model=MessageResponse)
@@ -1038,9 +1085,37 @@ async def remove_user(
     await db.delete(user)
     await db.commit()
     fire_role_change_notification(zitadel_user_id)
+    if not delete_global_identity:
+        await _sync_identity_login_or_502(zitadel_user_id, perms, "removed")
 
     message = "User deleted." if delete_global_identity else "User removed from organization."
     return MessageResponse(message=message)
+
+
+async def _sync_identity_login_or_502(zitadel_user_id: str, perms: UserPermissions, new_status: str) -> None:
+    """Bring the sign-in identity in line with the committed membership change.
+
+    The ``portal_users`` change stays committed when the identity provider
+    fails: the portal already refuses a membership that is not active, and
+    the audit row plus the 502 tell the admin that the identity still has to
+    follow. Repeating suspend, reactivate or offboard runs the sync again.
+    """
+    try:
+        await sync_identity_login(zitadel_user_id)
+    except Exception as exc:
+        _slog.exception("user_identity_sync_failed", zitadel_user_id=zitadel_user_id, org_id=perms.org_id)
+        await log_event(
+            org_id=perms.org_id,
+            actor=perms.user_id,
+            action="user.identity_sync_failed",
+            resource_type="user",
+            resource_id=zitadel_user_id,
+            details={"status": new_status, "error": str(exc)[:200]},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The change in this organisation is saved, but the sign-in account could not be updated.",
+        ) from exc
 
 
 @router.post("/users/{zitadel_user_id}/suspend", response_model=MessageResponse)
@@ -1060,6 +1135,8 @@ async def suspend_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status in ("suspended", "offboarded"):
+        # Repeating the action repairs an identity a provider failure left out of step.
+        await _sync_identity_login_or_502(zitadel_user_id, perms, user.status)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"User has status '{user.status}' and cannot be suspended",
@@ -1074,6 +1151,7 @@ async def suspend_user(
         resource_id=zitadel_user_id,
     )
     await db.commit()
+    await _sync_identity_login_or_502(zitadel_user_id, perms, "suspended")
     return MessageResponse(message=f"User {zitadel_user_id} suspended.")
 
 
@@ -1094,6 +1172,7 @@ async def reactivate_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status != "suspended":
+        await _sync_identity_login_or_502(zitadel_user_id, perms, user.status)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"User has status '{user.status}' and cannot be reactivated",
@@ -1101,6 +1180,7 @@ async def reactivate_user(
 
     user.status = "active"
     await db.commit()
+    await _sync_identity_login_or_502(zitadel_user_id, perms, "active")
     return MessageResponse(message=f"User {zitadel_user_id} reactivated.")
 
 
@@ -1185,13 +1265,13 @@ async def offboard_user(
       4. Delete tenant-scoped group memberships (existing SEC-TENANT-001 logic).
       5. Flip user.status to 'offboarded' + emit user.offboarded audit.
       6. Commit DB transaction.
-      7. After-commit: Zitadel deactivate + GitHub remove.
+      7. After-commit: GitHub remove, then the Zitadel identity is
+         deactivated only when no other membership is still active.
 
     Failure in steps 1-5 raises and rolls back the entire transaction —
-    the user stays ``active`` and KBs are unchanged. Failure in step 7
-    leaves the user ``offboarded`` in our DB but Zitadel/GitHub
-    out-of-sync; this is the same fail-open behaviour the endpoint had
-    before this SPEC and is fine for now (the cleanup-runbook lists it).
+    the user stays ``active`` and KBs are unchanged. A Zitadel failure in
+    step 7 leaves the user ``offboarded`` here, writes a
+    ``user.identity_sync_failed`` audit row and answers 502.
     """
     body = body or OffboardRequest()
 
@@ -1205,6 +1285,7 @@ async def offboard_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.status == "offboarded":
+        await _sync_identity_login_or_502(zitadel_user_id, perms, "offboarded")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User has already been offboarded")
 
     # REQ-2.5 — fetch the preview and verify the body covers every KB it
@@ -1298,14 +1379,11 @@ async def offboard_user(
     )
     await db.commit()
 
-    # Post-commit external side-effects. Failures here leave us in the
-    # documented "DB-side offboarded, IdP-side still active" state — same
-    # behaviour as before this SPEC.
-    await zitadel.deactivate_user(zitadel_user_id, settings.zitadel_portal_org_id)
     if user.github_username:
         await remove_github_org_member(user.github_username)
     else:
         logger.info("GitHub offboarding skipped for %s: no github_username linked", zitadel_user_id)
+    await _sync_identity_login_or_502(zitadel_user_id, perms, "offboarded")
     return MessageResponse(message=f"User {zitadel_user_id} offboarded.")
 
 
@@ -1534,46 +1612,3 @@ async def demote_admin(
     # rationale. Fire-and-forget cross-service hop.
     fire_role_change_notification(zitadel_user_id)
     return MessageResponse(message=f"User {zitadel_user_id} demoted to company.")
-
-
-@router.delete("/users/me", response_model=MessageResponse)
-async def leave_workspace(
-    perms: UserPermissions = Depends(get_caller),
-    db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
-    """C6.3: Leave the workspace (self-removal). Refuses if caller is last admin.
-    C6.7: Refuses if this would leave the workspace with zero users (last-member case).
-    """
-    if perms.role == ProfileRole.ADMIN:
-        # Serialise concurrent role changes for this org (see _lock_org_for_role_change).
-        await _lock_org_for_role_change(db, perms.org_id)
-
-        admin_count = await db.scalar(
-            select(func.count())
-            .select_from(PortalUser)
-            .where(
-                PortalUser.org_id == perms.org_id,
-                PortalUser.role == "admin",
-            )
-        )
-        if (admin_count or 0) <= 1:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Promote another admin or delete the workspace before leaving.",
-            )
-
-    # Re-fetch the caller's PortalUser ORM-object for db.delete. UserPermissions
-    # is a snapshot, not the ORM row.
-    caller_row_result = await db.execute(
-        select(PortalUser).where(
-            PortalUser.zitadel_user_id == perms.user_id,
-            PortalUser.org_id == perms.org_id,
-        )
-    )
-    caller_user = caller_row_result.scalar_one()
-    await forget_internal_cases(db, org_id=perms.org_id, user_id=perms.user_id)
-    await db.delete(caller_user)
-    await db.commit()
-    logger.info("leave_workspace: user=%s left org=%d", perms.user_id, perms.org_id)
-    emit_event("user.left_workspace", org_id=perms.org_id, user_id=perms.user_id)
-    return MessageResponse(message="You have left the workspace.")

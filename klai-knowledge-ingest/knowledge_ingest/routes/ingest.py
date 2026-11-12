@@ -46,6 +46,7 @@ from knowledge_ingest.clustering import classify_by_centroid, load_centroids
 from knowledge_ingest.config import settings
 from knowledge_ingest.content_labeler import generate_content_label
 from knowledge_ingest.content_profiles import child_chunk_chars
+from knowledge_ingest.content_retention import retention
 from knowledge_ingest.db import tenant_scoped_connection
 from knowledge_ingest.derived_state import (
     NOT_APPLICABLE,
@@ -70,6 +71,7 @@ from knowledge_ingest.models import (
     UpdateKBVisibilityRequest,
 )
 from knowledge_ingest.portal_client import fetch_taxonomy_nodes
+from knowledge_ingest.reason_codes import PersistSkipReason
 from knowledge_ingest.source_profiles import (
     SourceKnowledgeProfile,
     resolve_source_knowledge_profile,
@@ -367,13 +369,73 @@ async def _graphiti_background(
         )
 
 
-async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
+# Per-document hold for automated sources (crawls and connector syncs, told
+# apart by ``source_connector_id``; uploads, transcripts, docs and MCP writes
+# carry none). Production history (2026-11-12): of 9,465 replacements, 102
+# kept under half of the stored version's words. Such a version replaces the
+# stored one only when the same version arrives again at least 12 hours
+# later, so one bad night never overwrites knowledge on first sight.
+_HOLD_BELOW_RETAINED = 0.5
+_HOLD_SECONDS = 12 * 3600
+# The second sighting has to follow the first within 36 hours, i.e. on the
+# next nightly run. A degraded render that returns days later, with good
+# versions in between, starts over instead of counting as confirmed.
+_HOLD_EXPIRES_SECONDS = 36 * 3600
+
+
+async def _hold_shrunken_version(
+    conn: asyncpg.Connection,
+    req: IngestRequest,
+    active_artifact: dict,
+    indexable_content: str,
+    content_hash: str,
+) -> dict | None:
+    """Return the held answer, or None when the new version may replace the stored one."""
+    stored_text = active_artifact["extra"].get("document_text")
+    if not stored_text:
+        return None
+    retained, _ = retention(stored_text, indexable_content)
+    if retained >= _HOLD_BELOW_RETAINED:
+        return None
+    candidate = active_artifact["extra"].get("held_candidate") or {}
+    now = int(time.time())
+    log_fields = {
+        "org_id": req.org_id,
+        "kb_slug": req.kb_slug,
+        "path": req.path,
+        "artifact_id": active_artifact["id"],
+        "retained": round(retained, 3),
+    }
+    same_candidate = candidate.get("content_hash") == content_hash
+    seen_for = now - int(candidate["first_seen"]) if same_candidate else None
+    if seen_for is None or seen_for > _HOLD_EXPIRES_SECONDS:
+        # The candidate is recorded on the stored version so the next sighting
+        # can be told apart from a new one; nothing else of that row changes.
+        await pg_store.update_artifact_extra(
+            conn,
+            active_artifact["id"],
+            {"held_candidate": {"content_hash": content_hash, "first_seen": now}},
+        )
+        logger.info("ingest_shrunken_version_held", **log_fields)
+    elif seen_for >= _HOLD_SECONDS:
+        logger.info("ingest_shrunken_version_accepted", **log_fields)
+        return None
+    return {"status": "held", "reason": PersistSkipReason.SHRUNKEN_VERSION_HELD.value, "chunks": 0}
+
+
+async def ingest_document(
+    conn: asyncpg.Connection, req: IngestRequest, *, accept_shrink: bool = False
+) -> dict:
     """Core ingest pipeline: chunk -> embed -> upsert.
 
     SPEC-TI-003-FOLLOWUP-001 AC-1: ``conn`` carries the RLS GUC for
     ``req.org_id``. All pg_store / kb_config / org_config calls below run on
     this same connection. Callers must wrap this function in
     ``tenant_scoped_connection(req.org_id)``.
+
+    A connector or crawl version that keeps under half of the stored text is
+    held (``status: "held"``) unless ``accept_shrink`` says a person accepted
+    the change for this run.
     """
     t_ingest = time.monotonic()
     had_nul = "\x00" in req.content or "\x00" in req.path
@@ -450,6 +512,13 @@ async def ingest_document(conn: asyncpg.Connection, req: IngestRequest) -> dict:
         if graph_refresh is not None:
             result["graph_refresh"] = graph_refresh
         return result
+
+    if req.source_connector_id and not accept_shrink and active_artifact is not None:
+        held = await _hold_shrunken_version(
+            conn, req, active_artifact, indexable_content, content_hash
+        )
+        if held is not None:
+            return held
 
     # Determine chunks: skip_chunking uses pre-provided chunks or content as single chunk
     parent_chunk_ids: list[int | None] | None = None

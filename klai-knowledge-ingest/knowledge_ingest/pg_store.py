@@ -1652,6 +1652,33 @@ async def get_crawled_page_hashes(
     return {row["url"]: (row["raw_html_hash"], row["content_hash"]) for row in rows}
 
 
+async def get_active_document_texts(
+    conn: asyncpg.Connection,
+    org_id: str,
+    kb_slug: str,
+    paths: list[str],
+) -> dict[str, str]:
+    """Return {path: document_text} of the active version of each path (single query).
+
+    ``document_text`` is what ingest_document stored for that version.
+    ``crawled_pages.raw_markdown`` is not used: a noise skip overwrites it
+    without replacing the active version. Rows without a stored text
+    (written before ``document_text`` existed) are left out.
+    """
+    if not paths:
+        return {}
+    rows = await conn.fetch(
+        "SELECT path, extra::jsonb->>'document_text' AS document_text FROM knowledge.artifacts "
+        "WHERE org_id = $1 AND kb_slug = $2 AND path = ANY($3::text[]) "
+        "AND belief_time_end = $4 AND extra::jsonb->>'document_text' IS NOT NULL",
+        org_id,
+        kb_slug,
+        paths,
+        _SENTINEL,
+    )
+    return {row["path"]: row["document_text"] for row in rows}
+
+
 async def has_active_connector_artifact_for_url(
     conn: asyncpg.Connection,
     org_id: str,

@@ -550,7 +550,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
     # Backoff rationale: enrichment failures in production are dominated by
     # LiteLLM 429s during bulk crawls. Immediate retries (the previous
     # default: wait=0) burn every attempt inside the same rate-limit window
-    # — the intermedia.com artifact failed 3x in 20 seconds and went
+    # — an artifact from a crawled site failed 3x in 20 seconds and went
     # permanent-failed. exponential_wait waits
     # ``exponential_wait ** (attempts + 1)`` seconds between attempts, so
     # retries land after the rate-limit window has moved on.

@@ -14,10 +14,10 @@ from klai_kb_slugs import personal_kb_slug
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _load_org_or_500, require_product
+from app.api.dependencies import _load_org_or_500
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.permissions import UserPermissions, get_caller
+from app.core.permissions import UserPermissions, get_caller, require_product
 from app.services.access import get_accessible_kb_slugs
 
 logger = structlog.get_logger()

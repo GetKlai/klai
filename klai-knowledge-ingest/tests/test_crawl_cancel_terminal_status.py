@@ -124,6 +124,7 @@ async def test_cancelled_mid_crawl_reports_status_cancelled_not_failed() -> None
             ],
         )
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
 
         await run_crawl_job(
@@ -174,6 +175,7 @@ async def test_cancellation_skips_discovery_seed_retry() -> None:
             ],
         )
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
 
         await run_crawl_job(
@@ -233,6 +235,7 @@ async def test_no_cancellation_reason_code_still_reports_completed() -> None:
             ],
         )
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
 
         await run_crawl_job(

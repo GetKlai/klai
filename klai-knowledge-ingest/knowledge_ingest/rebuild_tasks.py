@@ -345,7 +345,7 @@ async def _rebuild_artifact(
             # ``parents`` + ``parent_index_per_child`` here is what lights up
             # the parent-child retrieval expansion in retrieval-api. Before
             # this fix the rebuild path called ``_enrich_document`` without
-            # them, so every Voys child chunk had ``parent_chunk_id=None``
+            # them, so every child chunk had ``parent_chunk_id=None``
             # and parent expansion silently degraded to chunk-text-only.
             from procrastinate.exceptions import JobAborted
 

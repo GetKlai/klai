@@ -244,3 +244,39 @@ async def test_run_writes_report_and_summary(tmp_path):
     body = json.loads(output_file.read_text())
     assert body["summary"]["overall"]["total_scored"] == 2
     assert body["summary"]["overall"]["correct"] == 2
+
+
+# -- HTTP synthesis: the portal chat path customers use ----------------------
+
+
+@pytest.mark.asyncio
+async def test_http_synthesize_answers_through_the_portal_partner_chat(monkeypatch):
+    import httpx
+
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Antwoord."}}]})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        runner.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(answer), **kwargs),
+    )
+
+    text = await runner._http_synthesize(
+        "Hoe zet ik tweefactorauthenticatie aan?",
+        portal_url="https://portal.example.com",
+        api_key="pk_test_example",
+    )
+
+    assert text == "Antwoord."
+    assert str(seen[0].url) == "https://portal.example.com/partner/v1/chat/completions"
+    assert seen[0].headers["Authorization"] == "Bearer pk_test_example"
+    assert json.loads(seen[0].content) == {
+        "messages": [{"role": "user", "content": "Hoe zet ik tweefactorauthenticatie aan?"}],
+        "stream": False,
+        "knowledge": {"enabled": True},
+    }

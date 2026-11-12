@@ -240,6 +240,7 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
         ),
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
         mock_pg.upsert_crawled_page = AsyncMock()
@@ -305,6 +306,7 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
         patch("knowledge_ingest.routes.ingest.ingest_document", side_effect=_fake_ingest),
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
         mock_pg.upsert_crawled_page = AsyncMock()
@@ -383,6 +385,7 @@ async def test_run_crawl_job_does_not_fail_when_stale_purge_fails():
         patch("knowledge_ingest.routes.ingest.ingest_document", side_effect=_fake_ingest),
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
         mock_pg.upsert_crawled_page = AsyncMock()

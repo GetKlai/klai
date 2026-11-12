@@ -102,7 +102,7 @@ backlog of hundreds of enrich-bulk/graphiti-bulk jobs cannot starve a
 single user-requested reindex for hours — procrastinate fetches oldest
 todo across a worker's queue set with no per-queue fairness, so sharing
 a lane with bulk queues made "drains first" a lie in practice
-(intermedia.com incident, 2026-08-14)."""
+(crawl-backlog incident, 2026-08-14)."""
 
 LLM_QUEUES: list[str] = [
     ENRICH_BULK,

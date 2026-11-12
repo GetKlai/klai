@@ -280,8 +280,8 @@ Portal/connector files may be touched only if the chosen generation storage live
 ## References
 
 - `.claude/rules/klai/projects/knowledge.md` — connector-delete cleanup, in-flight jobs, worker lanes.
-- `.moai/specs/SPEC-CONNECTOR-DELETE-RACE-001/` — original observed race and targeted mitigation.
-- `.moai/specs/SPEC-CONNECTOR-CLEANUP-001/` — connector cleanup architecture and cross-store cleanup context.
+- `docs/specs/SPEC-CONNECTOR-DELETE-RACE-001/` — original observed race and targeted mitigation.
+- `docs/specs/SPEC-CONNECTOR-CLEANUP-001/` — connector cleanup architecture and cross-store cleanup context.
 - `klai-knowledge-ingest/knowledge_ingest/queues.py` — `IO_QUEUES` / `LLM_QUEUES`.
 - `klai-knowledge-ingest/knowledge_ingest/worker.py` — lane workers.
 - `klai-knowledge-ingest/knowledge_ingest/enrichment_tasks.py` — enrichment and Graphiti tasks.

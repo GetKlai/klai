@@ -197,5 +197,5 @@ SEARCH_KNOWLEDGE_SPEC = ActionSpec(
         ],
         "integration": "cross-tenant isolation is owned by retrieval-api tests",
     },
-    docs={"spec": ".moai/specs/SPEC-ACTION-CONTRACT-001/spec.md"},
+    docs={"spec": "docs/specs/SPEC-ACTION-CONTRACT-001/spec.md"},
 )
