@@ -187,6 +187,7 @@ async def test_run_crawl_job_populates_link_fields_on_every_page():
         patch.object(link_graph, "get_incoming_count", new=_get_incoming_count_from_graph(graph)),
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
         mock_pg.upsert_page_links = AsyncMock()
@@ -297,6 +298,7 @@ async def test_run_crawl_job_no_post_crawl_link_counts_call():
         patch.object(link_graph, "get_incoming_count", new_callable=AsyncMock, return_value=0),
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.upsert_crawled_page = AsyncMock()
         mock_pg.upsert_page_links = AsyncMock()

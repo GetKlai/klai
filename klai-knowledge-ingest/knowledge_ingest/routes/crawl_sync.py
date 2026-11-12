@@ -97,6 +97,10 @@ class CrawlSyncRequest(BaseModel):
     # Hosts the site signs in through; the crawl's pre-flight signs a lapsed
     # session in again through them (see keep_session).
     auth_chain_hosts: list[str] = Field(default_factory=list)
+    # One-shot: a person accepts that this run's pages lost content because
+    # the site really changed, so the run audit and the per-document hold let
+    # it write (adapters/crawler.py _judge_run_before_write).
+    accept_content_regression: bool = False
 
 
 class CrawlSyncResponse(BaseModel):
@@ -296,6 +300,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         canary_url=req.canary_url,
         canary_fingerprint=req.canary_fingerprint,
         auth_chain_hosts=req.auth_chain_hosts,
+        accept_content_regression=req.accept_content_regression,
     )
 
     logger.info(
