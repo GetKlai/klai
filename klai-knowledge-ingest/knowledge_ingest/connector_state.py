@@ -11,9 +11,13 @@ with portal-api). A small process-local cache keeps the query off the hot
 path: a single-instance worker enriching N chunks for the same connector
 runs the lookup once per cache window.
 
-Fail-closed: any DB error or "row not found" returns ``False`` so the
-enrichment task aborts. We would rather miss an enrichment than write a
-chunk that becomes orphan data.
+"Row not found" returns ``False``, so the job is abandoned rather than writing
+data for a connector that is gone. A database error raises, so the job fails
+and is retried instead of being recorded as done.
+
+The run fence (``connector_resource_fences``, one generation per connector) is
+for crawl runs only: a newer crawl of the same connector stops the older crawl.
+Enrichment and graph jobs belong to a document version and never consult it.
 """
 
 from __future__ import annotations
@@ -167,7 +171,8 @@ async def connector_is_active(connector_id: str | None) -> bool:
         path is exercised only by chunks that DO have source_connector_id)
       - connector_id is unknown to portal_connectors (deleted, hard-purged)
       - state is anything other than 'active' (e.g. 'deleting')
-      - any database error (fail-closed)
+
+    Raises when the lookup itself fails.
     """
     if not connector_id:
         return False
@@ -179,9 +184,8 @@ async def connector_is_active(connector_id: str | None) -> bool:
 async def get_connector_state(connector_id: str) -> str | None:
     """Return the ``state`` value from ``portal_connectors`` or None.
 
-    None means: row not found, or query failed. Caller decides what to do
-    with that — the typical caller (``connector_is_active``) treats it as
-    "not active".
+    None means the row is not found; a failed query raises. The typical
+    caller (``connector_is_active``) treats None as "not active".
 
     Cached for ``_CACHE_TTL_SECONDS`` per connector_id to keep enrichment
     tasks off the DB hot path.
@@ -191,26 +195,20 @@ async def get_connector_state(connector_id: str) -> str | None:
     if cached is not None and cached[1] > now:
         return cached[0]
 
-    try:
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT state FROM portal_connectors WHERE id = $1::uuid",
-                connector_id,
-            )
-        state: str | None = row["state"] if row is not None else None
-    except Exception:
-        # Fail-closed. Log so we notice if the DB is down causing mass
-        # enrichment-aborts, but never raise: the caller is an enrichment
-        # task and must remain idempotent + safe.
-        logger.exception(
-            "connector_state_lookup_failed",
-            connector_id=connector_id,
+    # A failed lookup raises. Returning "not active" here made a database
+    # hiccup end every enrichment and graph job it touched as if the connector
+    # were gone, and the queue recorded those jobs as succeeded; raising lets
+    # the job fail and be retried instead.
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT state FROM portal_connectors WHERE id = $1::uuid",
+            connector_id,
         )
-        return None
+    state: str | None = row["state"] if row is not None else None
 
-    # Only cache definite answers (state present), not lookup failures.
-    # Otherwise a transient DB hiccup poisons the cache for 5 seconds.
+    # Only cache a connector that exists: a deleted one stays deleted, and an
+    # unknown id is rare enough to look up again.
     if state is not None:
         _state_cache[connector_id] = (state, now + _CACHE_TTL_SECONDS)
     return state

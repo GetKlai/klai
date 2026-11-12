@@ -1,13 +1,21 @@
-"""Connector-scoped Procrastinate job ownership helpers."""
+"""Procrastinate job ownership helpers.
+
+A crawl run is identified by its connector resource key
+(``connector:{org}:{kb}:{connector}:{generation}``): a newer crawl run of the
+same connector cancels the older run's crawl job. Enrichment and graph jobs
+belong to one document version (their ``artifact_id``), so they are cancelled
+by artifact id, and only when that document or its connector is deleted.
+"""
 
 from dataclasses import dataclass
 from typing import Any
 
 import structlog
 
-from knowledge_ingest.queues import CRAWL_JOBS, ENRICH_BULK, GRAPHITI_BULK
+from knowledge_ingest.queues import CRAWL_JOBS, ENRICH_BULK, ENRICH_INTERACTIVE, GRAPHITI_BULK
 
-CONNECTOR_WRITER_QUEUES = (CRAWL_JOBS, ENRICH_BULK, GRAPHITI_BULK)
+CONNECTOR_WRITER_QUEUES = (CRAWL_JOBS,)
+DOCUMENT_JOB_QUEUES = (ENRICH_INTERACTIVE, ENRICH_BULK, GRAPHITI_BULK)
 RESOURCE_JOB_STATUSES = ("todo", "doing", "cancelled", "aborted", "failed", "succeeded")
 
 logger = structlog.get_logger()
@@ -86,8 +94,41 @@ async def cancel_jobs_by_resource_key(
     resource_key: str,
     queues: tuple[str, ...] = CONNECTOR_WRITER_QUEUES,
 ) -> ResourceJobCancellation:
-    """Request cancellation without deleting the auditable job rows."""
+    """Request cancellation of one crawl run's live jobs, keeping the job rows."""
     job_ids = await list_live_jobs_by_resource_key(pool, resource_key, queues)
+    return await _cancel_jobs(proc_app, job_ids, resource_key=resource_key)
+
+
+async def cancel_jobs_by_artifact_ids(
+    proc_app: Any,
+    pool: Any,
+    artifact_ids: list[str],
+    queues: tuple[str, ...] = DOCUMENT_JOB_QUEUES,
+) -> ResourceJobCancellation:
+    """Request cancellation of the live enrichment/graph jobs of these document versions.
+
+    Jobs queued before 2026-11 also carry a ``resource_key``; they carry the
+    ``artifact_id`` too, so this finds them as well.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id
+              FROM procrastinate_jobs
+             WHERE queue_name = ANY($1::text[])
+               AND status IN ('todo', 'doing')
+               AND args->>'artifact_id' = ANY($2::text[])
+            """,
+            list(queues),
+            artifact_ids,
+        )
+    return await _cancel_jobs(
+        proc_app, [int(row["id"]) for row in rows], artifacts=len(artifact_ids)
+    )
+
+
+async def _cancel_jobs(proc_app: Any, job_ids: list[int], **log: Any) -> ResourceJobCancellation:
+    """Request cancellation (abort=True, delete_job=False) without deleting the job rows."""
     cancelled = 0
     failed = 0
     for job_id in job_ids:
@@ -104,15 +145,12 @@ async def cancel_jobs_by_resource_key(
         except Exception:
             failed += 1
             logger.warning(
-                "connector_resource_job_cancel_failed",
-                resource_key=resource_key,
-                job_id=job_id,
-                exc_info=True,
+                "connector_resource_job_cancel_failed", job_id=job_id, exc_info=True, **log
             )
     report = ResourceJobCancellation(len(job_ids), cancelled, failed)
     logger.info(
         "connector_resource_jobs_cancel_requested",
-        resource_key=resource_key,
+        **log,
         jobs_found=report.jobs_found,
         jobs_cancelled=report.jobs_cancelled,
         jobs_failed_to_cancel=report.jobs_failed_to_cancel,

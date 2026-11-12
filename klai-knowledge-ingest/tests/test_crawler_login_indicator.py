@@ -306,7 +306,6 @@ class TestRunCrawlJobAuthWall:
             login_indicator_selector=None,
             authenticated_context=True,
             connector_id=None,
-            resource_key=None,
         )
 
         terminal_updates = [

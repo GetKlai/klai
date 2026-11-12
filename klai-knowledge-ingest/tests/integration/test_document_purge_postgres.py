@@ -18,6 +18,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -876,21 +877,29 @@ async def test_enrichment_removes_points_written_after_its_artifact_was_deleted(
     status = AsyncMock()
     monkeypatch.setattr(enrichment_tasks, "_set_direct_upload_index_status", status)
 
-    result = await enrichment_tasks._enrich_document(
-        org_id=org_id,
-        kb_slug="kb",
-        path="late.md",
-        document_text="body",
-        chunks=["body"],
-        title="T",
-        artifact_id=doc[0],
-        user_id=None,
-        extra_payload={"document_summary": "s", "document_language": "en"},
-        synthesis_depth=2,
+    class _Abandoned(Exception):
+        """Stands in for procrastinate.exceptions.JobAborted (procrastinate needs libpq)."""
+
+    monkeypatch.setitem(
+        sys.modules, "procrastinate.exceptions", SimpleNamespace(JobAborted=_Abandoned)
     )
 
+    # The job ends abandoned (aborted), not as if it had done the work.
+    with pytest.raises(_Abandoned):
+        await enrichment_tasks._enrich_document(
+            org_id=org_id,
+            kb_slug="kb",
+            path="late.md",
+            document_text="body",
+            chunks=["body"],
+            title="T",
+            artifact_id=doc[0],
+            user_id=None,
+            extra_payload={"document_summary": "s", "document_language": "en"},
+            synthesis_depth=2,
+        )
+
     assert written == [doc[0]]
-    assert result is False
     assert stores.qdrant.deletes(_payload(org_id, "kb", "late.md", doc[0]))
     # The last delete is the one the job issued after its own upsert.
     assert _filter_matches(stores.qdrant.filters[-1], {"org_id": org_id, "artifact_id": doc[0]})

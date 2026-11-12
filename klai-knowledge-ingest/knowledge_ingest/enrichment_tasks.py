@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, NoReturn
 
 import structlog
 
@@ -175,9 +175,7 @@ def init_app(connector: Any) -> Any:
     return _procrastinate_app
 
 
-async def _load_and_enrich(
-    artifact_id: str, resource_key: str | None = None, batch_offset: int = 0
-) -> None:
+async def _load_and_enrich(artifact_id: str, batch_offset: int = 0) -> None:
     """SPEC-INGEST-CONTENT-PG-001 (audit finding 1): single entry point for
     both enrichment task variants.
 
@@ -189,9 +187,8 @@ async def _load_and_enrich(
     vectors while the worker still processed an older content snapshot
     frozen in the task args.
 
-    If the artifact has been deleted between enqueue and dequeue (typically
-    by the connector purge orchestrator), the function returns silently —
-    same soft-skip semantics as ``ingest_graphiti_episode`` uses.
+    If the artifact has been deleted or replaced between enqueue and dequeue,
+    the job is abandoned (``_abandon``), as ``ingest_graphiti_episode`` does.
 
     A document with more chunks than ``enrichment_batch_size`` is enriched in
     batches, one task per batch (``batch_offset`` is the first chunk of this
@@ -204,10 +201,9 @@ async def _load_and_enrich(
     async with cross_org_admin_connection() as admin_conn:
         artifact = await pg_store.read_artifact_for_enrichment(admin_conn, artifact_id)
     if artifact is None:
-        logger.info("enrichment_aborted_artifact_missing", artifact_id=artifact_id)
-        return
+        _abandon("enrichment_aborted_artifact_missing", artifact_id=artifact_id)
     if artifact["belief_time_end"] != pg_store._SENTINEL:
-        logger.info(
+        _abandon(
             "enrichment_aborted_artifact_superseded",
             artifact_id=artifact_id,
             org_id=artifact["org_id"],
@@ -215,12 +211,8 @@ async def _load_and_enrich(
             path=artifact["path"],
             belief_time_end=artifact["belief_time_end"],
         )
-        return
 
     extra: dict = artifact["extra"] or {}
-    resource_key = resource_key or extra.get("resource_key")
-    if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=False):
-        return
     document_text: str = extra.get("document_text", "") or ""
     prechunked_skip = enrichment_skip_reason(
         chunk_count=int(extra.get("docling_chunk_count") or 0),
@@ -279,9 +271,7 @@ async def _load_and_enrich(
     if batch_offset or await qdrant_store.has_chunks_from(
         artifact["org_id"], artifact["kb_slug"], artifact["path"], artifact_id, batch_size
     ):
-        await _enrich_next_batch(
-            artifact, extra, document_text, title, resource_key, batch_offset, batch_size
-        )
+        await _enrich_next_batch(artifact, extra, document_text, title, batch_offset, batch_size)
         return
     parents_serialised: list[dict] = [
         {
@@ -310,7 +300,6 @@ async def _load_and_enrich(
         parents=parents_serialised,
         parent_index_per_child=parent_index_per_child,
         heading_path_per_child=heading_path_per_child,
-        resource_key=resource_key,
     )
 
 
@@ -319,7 +308,6 @@ async def _enrich_next_batch(
     extra: dict,
     document_text: str,
     title: str,
-    resource_key: str | None,
     offset: int,
     size: int,
 ) -> None:
@@ -358,7 +346,6 @@ async def _enrich_next_batch(
         synthesis_depth=artifact["synthesis_depth"],
         content_type=artifact["content_type"] or "unknown",
         heading_path_per_child=[pl.get("heading_path", "") for pl in batch],
-        resource_key=resource_key,
         existing_parent_chunk_ids=[pl.get("parent_chunk_id") for pl in batch],
         chunk_offset=offset,
     )
@@ -380,7 +367,6 @@ async def _enrich_next_batch(
             .defer_async(
                 artifact_id=artifact_id,
                 batch_offset=next_offset,
-                **({"resource_key": resource_key} if resource_key else {}),
             )
         )
     except AlreadyEnqueued:
@@ -396,26 +382,27 @@ async def _enrich_next_batch(
     )
 
 
-async def _resource_fence_blocks(
-    resource_key: str | None, *, artifact_id: str, fresh: bool
-) -> bool:
-    if not resource_key:
-        return False
-    from knowledge_ingest.connector_state import (
-        FenceState,
-        check_connector_resource_fence,
-    )
+def _abandon(event: str, **fields: Any) -> NoReturn:
+    """End a derived job whose document version is no longer current.
 
-    state = await check_connector_resource_fence(resource_key, fresh=fresh)
-    if state is FenceState.ACTIVE:
-        return False
-    logger.warning(
-        "connector_resource_job_skipped",
-        artifact_id=artifact_id,
-        resource_key=resource_key,
-        fence_state=state.value,
-    )
-    return True
+    Raises procrastinate's ``JobAborted``, so the job ends ``aborted`` (never
+    retried) instead of ``succeeded``: the queue and the log tell "abandoned"
+    apart from "did the work". Only for a version that is replaced or deleted,
+    or a connector that is being deleted or is gone. A check that cannot be
+    made raises its own error and the job is retried.
+    """
+    from procrastinate.exceptions import JobAborted
+
+    logger.info(event, outcome="abandoned", **fields)
+    raise JobAborted(event)
+
+
+async def _abandon_if_connector_inactive(connector_id: str | None, **fields: Any) -> None:
+    """Abandon the job when the document's connector is being deleted or is gone."""
+    from knowledge_ingest.connector_state import connector_is_active
+
+    if connector_id and not await connector_is_active(connector_id):
+        _abandon("derived_job_aborted_connector_inactive", connector_id=connector_id, **fields)
 
 
 class _EnrichmentDeferred(LLMCapacityUnavailable):
@@ -575,7 +562,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
     async def enrich_document_bulk(
         context: Any,
         artifact_id: str,
-        resource_key: str | None = None,
+        # Ignored; jobs queued before 2026-11 still pass it. Drop after one release.
+        resource_key: str | None = None,  # noqa: ARG001
         llm_deferred_since: int | None = None,
         batch_offset: int = 0,
     ) -> None:
@@ -586,7 +574,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
         batch position of a large document).
         """
         try:
-            await _load_and_enrich(artifact_id, resource_key, batch_offset)
+            await _load_and_enrich(artifact_id, batch_offset)
         except _EnrichmentDeferred as exc:
             await _defer_after_llm_capacity(
                 enrich_document_bulk,
@@ -594,7 +582,6 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 exc,
                 llm_deferred_since,
                 artifact_id=artifact_id,
-                resource_key=resource_key,
                 batch_offset=batch_offset,
             )
 
@@ -638,7 +625,8 @@ def _register_tasks(procrastinate_app: Any) -> None:
         kb_slug: str = "",
         path: str = "",
         replace_stale: bool = False,
-        resource_key: str | None = None,
+        # Ignored; jobs queued before 2026-11 still pass it. Drop after one release.
+        resource_key: str | None = None,  # noqa: ARG001
     ) -> None:
         """Ingest a document into the Graphiti knowledge graph.
 
@@ -665,19 +653,14 @@ def _register_tasks(procrastinate_app: Any) -> None:
         async with tenant_scoped_connection(org_id) as conn:
             artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
             if artifact is None and not await pg_store.artifact_exists(conn, artifact_id):
-                logger.info(
-                    "graphiti_aborted_artifact_missing",
-                    artifact_id=artifact_id,
-                    org_id=org_id,
+                _abandon(
+                    "graphiti_aborted_artifact_missing", artifact_id=artifact_id, org_id=org_id
                 )
-                return
             if artifact is None:
-                logger.info(
-                    "graphiti_aborted_artifact_superseded",
-                    artifact_id=artifact_id,
-                    org_id=org_id,
+                _abandon(
+                    "graphiti_aborted_artifact_superseded", artifact_id=artifact_id, org_id=org_id
                 )
-                return
+            connector_id = artifact["extra"].get("source_connector_id")
             document_text = artifact["extra"].get("document_text", "") or ""
             if not document_text:
                 logger.info(
@@ -713,8 +696,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 )
             prior_deaths = int(artifact["extra"].get("graphiti_falkordb_deaths") or 0)
             prior_deaths = prior_deaths if same_build else 0
-            if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=False):
-                return
+            await _abandon_if_connector_inactive(connector_id, artifact_id=artifact_id)
             from knowledge_ingest import graph as graph_module
 
             done_ids = resumable_episode_ids(artifact["extra"])
@@ -787,21 +769,19 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     # Page deletion can land while an earlier part is spending
                     # minutes in Graphiti; never regrow later parts afterward.
                     if not await pg_store.artifact_exists(conn, artifact_id):
-                        logger.info(
+                        _abandon(
                             "graphiti_aborted_artifact_missing",
                             artifact_id=artifact_id,
                             org_id=org_id,
                         )
-                        return
                     if not await pg_store.artifact_is_active(conn, artifact_id):
-                        logger.info(
+                        _abandon(
                             "graphiti_aborted_artifact_superseded",
                             artifact_id=artifact_id,
                             org_id=org_id,
                         )
-                        return
-                if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
-                    return
+                # The connector was checked before the first part and is
+                # checked after every part (below), so no extra check here.
                 try:
                     episode_id = await graph_module.ingest_episode(
                         artifact_id=artifact_id,
@@ -867,9 +847,14 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         f"{part_index + 1} of {len(episode_parts)}"
                     )
                 episode_ids.append(episode_id)
-                if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
+                try:
+                    await _abandon_if_connector_inactive(connector_id, artifact_id=artifact_id)
+                except BaseException:
+                    # Abandoned, or the state could not be read: either way
+                    # this part must not outlive the job as an unrecorded
+                    # episode. A retry extracts it again.
                     await graph_module.delete_kb_episodes(org_id, [episode_id])
-                    return
+                    raise
                 # A worker retry starts with a fresh Python list, so the SQL
                 # append must retain IDs written before a mid-loop worker kill.
                 await pg_store.append_graphiti_episode_id(conn, artifact_id, episode_id)
@@ -877,20 +862,16 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     # Deletion may finish while Graphiti is extracting this
                     # part; the delete path could not have seen its new UUID.
                     await graph_module.delete_kb_episodes(org_id, [episode_id])
-                    logger.info(
-                        "graphiti_aborted_artifact_missing",
-                        artifact_id=artifact_id,
-                        org_id=org_id,
+                    _abandon(
+                        "graphiti_aborted_artifact_missing", artifact_id=artifact_id, org_id=org_id
                     )
-                    return
                 if not await pg_store.artifact_is_active(conn, artifact_id):
                     await graph_module.delete_kb_episodes(org_id, [episode_id])
-                    logger.info(
+                    _abandon(
                         "graphiti_aborted_artifact_superseded",
                         artifact_id=artifact_id,
                         org_id=org_id,
                     )
-                    return
 
             try:
                 await graph_module.flush_entity_graph_data(
@@ -900,8 +881,6 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 )
             except Exception:
                 logger.exception("entity_graph_data_failed", artifact_id=artifact_id)
-            if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
-                return
             final: dict[str, Any] = {
                 "graphiti_episode_complete": True,
                 "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
@@ -942,7 +921,6 @@ async def _enrich_document(
     parents: list[dict] | None = None,
     parent_index_per_child: list[int | None] | None = None,
     heading_path_per_child: list[str] | None = None,
-    resource_key: str | None = None,
     existing_parent_chunk_ids: list[int | None] | None = None,
     chunk_offset: int | None = None,
 ) -> bool:
@@ -963,18 +941,9 @@ async def _enrich_document(
     # any chunk we enrich here would be re-written to Qdrant after the
     # purge orchestrator's qdrant cleanup ran.
     source_connector_id = extra_payload.get("source_connector_id") if extra_payload else None
-    if source_connector_id:
-        from knowledge_ingest.connector_state import connector_is_active
-
-        if not await connector_is_active(source_connector_id):
-            logger.info(
-                "enrichment_aborted_connector_inactive",
-                connector_id=source_connector_id,
-                artifact_id=artifact_id,
-                kb_slug=kb_slug,
-                path=path,
-            )
-            return False
+    await _abandon_if_connector_inactive(
+        source_connector_id, artifact_id=artifact_id, kb_slug=kb_slug, path=path
+    )
     t_total = time.monotonic()
     logger.info(
         "enrichment_started",
@@ -1099,14 +1068,13 @@ async def _enrich_document(
         # insert_parent_chunks see the RLS GUC for this org.
         async with tenant_scoped_connection(org_id) as conn:
             if not await pg_store.artifact_is_active(conn, artifact_id):
-                logger.info(
+                _abandon(
                     "enrichment_aborted_artifact_superseded",
                     artifact_id=artifact_id,
                     kb_slug=kb_slug,
                     path=path,
                     org_id=org_id,
                 )
-                return False
 
             extra_payload["visibility"] = await kb_config.get_kb_visibility(conn, org_id, kb_slug)
 
@@ -1130,10 +1098,7 @@ async def _enrich_document(
                     if parent_idx is not None and 0 <= parent_idx < len(inserted_ids):
                         parent_chunk_ids[i] = inserted_ids[parent_idx]
 
-        # Step 4: Upsert enriched chunks to Qdrant. This checkpoint is fresh;
-        # the earlier pre-LLM check may be served from the <=5s cache.
-        if await _resource_fence_blocks(resource_key, artifact_id=artifact_id, fresh=True):
-            return False
+        # Step 4: Upsert enriched chunks to Qdrant.
         t0 = time.monotonic()
         await qdrant_store.upsert_enriched_chunks(
             org_id=org_id,
@@ -1163,14 +1128,13 @@ async def _enrich_document(
             still_active = await pg_store.artifact_is_active(conn, artifact_id)
         if not still_active:
             await qdrant_store.delete_artifacts(org_id, [artifact_id], [])
-            logger.info(
+            _abandon(
                 "enrichment_points_removed_artifact_inactive",
                 artifact_id=artifact_id,
                 kb_slug=kb_slug,
                 path=path,
                 org_id=org_id,
             )
-            return False
 
         await _set_direct_upload_index_status(
             {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
@@ -1230,7 +1194,11 @@ async def _enrich_document(
             )
         raise  # Procrastinate retry handles this
 
-    except Exception:
+    except Exception as exc:
+        from procrastinate.exceptions import JobAborted
+
+        if isinstance(exc, JobAborted):
+            raise  # an abandoned job (_abandon), not an infrastructure failure
         # Non-enrichment failures (embedding, Qdrant, network): log and swallow.
         # Raw vectors remain in Qdrant — document is still searchable with
         # basic embeddings.  These are infrastructure issues, not data quality

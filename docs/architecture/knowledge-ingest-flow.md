@@ -631,6 +631,15 @@ queues run in parallel and interactive jobs are short).
 Procrastinate task on the `graphiti-bulk` queue defers the document to Graphiti/FalkorDB
 as an "episode". The main request doesn't wait for this and doesn't fail if it errors.
 
+**The unit of work is the document version.** Both jobs carry only the
+`artifact_id`, not the sync or crawl run that queued them, so a new run of the
+same connector never cancels or skips them; the newer run skips unchanged
+pages and would not queue that work again. A job stops only when its version
+is replaced or deleted, or its connector is being deleted or is gone; it then
+ends `aborted` with `outcome=abandoned` in the log. A job that cannot do its
+work, or cannot tell whether it may write, raises and is retried, and ends
+`failed` when retries run out.
+
 ### Phase 2: Async enrichment (Procrastinate worker)
 
 The enrichment worker picks up tasks from the queue and runs the following for each
@@ -1003,10 +1012,12 @@ state and enqueues a procrastinate task on the dedicated `connector-purge`
 queue; the orchestrator runs the steps in order:
 
 1. **Snapshot** the artifact-id set (one SELECT for repeatable cascading).
-2. **Cancel** any pending `enrich_document_bulk` and `ingest_graphiti_episode`
-   jobs scoped to the connector. New work that sneaks in after this step is
-   blocked by an existence guard at the top of the enrichment task that
-   re-checks `portal_connectors.state` before doing real work.
+2. **Cancel** the connector's crawl jobs (by resource key) and the live
+   enrichment and graph jobs of its documents (by `artifact_id`). A job that
+   slips past this stops on its own: every enrichment and graph job checks
+   that its artifact is still active and `portal_connectors.state` is still
+   `active` before expensive work and before each write, and is abandoned
+   (`aborted`) otherwise.
 3. **Snapshot** orphan S3 image keys (refcount across the rest of the org).
 4. **Delete** `knowledge.artifacts` (CASCADE clears `artifact_images`,
    `artifact_entities`, `derivations`).

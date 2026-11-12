@@ -52,6 +52,7 @@ from knowledge_ingest.connector_state import (
     get_current_connector_resource_key,
 )
 from knowledge_ingest.db import get_pool, tenant_scoped_connection
+from knowledge_ingest.queues import CRAWL_JOBS
 from knowledge_ingest.resource_jobs import cancel_jobs_by_resource_key, connector_resource_key
 from knowledge_ingest.routes.crawl import _probe_fetch, _ProbeResponse
 from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
@@ -252,7 +253,12 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         old_resource_key = await get_current_connector_resource_key(conn, resource_key)
         await activate_connector_resource(conn, resource_key)
     if old_resource_key and old_resource_key != resource_key:
-        await cancel_jobs_by_resource_key(proc_app, pool, old_resource_key)
+        # The new run replaces the old run's crawl job only. The enrichment and
+        # graph jobs the old run queued belong to document versions that are
+        # still current, and the new run skips unchanged pages without queueing
+        # them again: cancelling them lost 353 enrichment and 387 graph jobs out
+        # of ~11,300 on production.
+        await cancel_jobs_by_resource_key(proc_app, pool, old_resource_key, queues=(CRAWL_JOBS,))
     await proc_app.run_crawl.defer_async(  # type: ignore[attr-defined]
         job_id=job_id,
         org_id=req.org_id,
