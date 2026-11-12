@@ -442,6 +442,39 @@ async def test_a_crawl_after_a_missed_keepalive_signs_in_again_before_it_starts(
 
 
 @pytest.mark.asyncio
+async def test_a_crawl_does_not_start_on_a_renewed_session_that_was_not_stored() -> None:
+    clock = Clock()
+    site = FakeSite(clock)
+    vault = Vault(site.browser_login())
+    rows = _JobRows()
+    store = vault.store
+    racing = False
+
+    async def store_after_another_writer(**kwargs: Any) -> bool:
+        # A keep-alive tick or a cookie save lands between the pre-flight's
+        # read and its write, so the pre-flight's first write loses.
+        nonlocal racing
+        if racing:
+            racing = False
+            vault.version += 1
+        return await store(**kwargs)
+
+    vault.store = store_after_another_writer  # type: ignore[method-assign]
+    with _world(site, clock, vault):
+        for step in range(47):
+            clock.now = T0 + step * 1800
+            await _tick()
+        clock.now = T0 + 24 * HOUR + 600
+        racing = True
+        may_crawl = await _preflight(rows)
+
+    assert may_crawl is True
+    # The crawl reads its cookies from the store, so that is where the
+    # renewed session has to be.
+    assert site._logged_in(site.content_sessions[vault.value("wiki_session")])
+
+
+@pytest.mark.asyncio
 async def test_a_lapsed_sign_in_session_asks_for_one_new_login_and_keeps_the_cookies() -> None:
     clock = Clock()
     site = FakeSite(clock)

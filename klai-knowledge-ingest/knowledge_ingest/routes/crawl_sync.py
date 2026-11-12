@@ -925,6 +925,7 @@ async def keep_session(
     org_id: str,
     url: str,
     auth_chain_hosts: list[str],
+    _second_attempt: bool = False,
 ) -> CrawlKeepAliveResponse:
     """Keep a connector's stored session alive, and sign it in again when it lapsed.
 
@@ -1007,7 +1008,14 @@ async def keep_session(
             if renewal_failure is not None:
                 reason = f"login_required:{renewal_failure}"
     except Exception as exc:
-        logger.warning("crawl_keepalive_fetch_failed", connector_id=cid, url=url, error=str(exc))
+        # Only the type: an httpx error on a hop of the sign-in walk can carry
+        # that hop's URL, and with it the OAuth code or state.
+        logger.warning(
+            "crawl_keepalive_fetch_failed",
+            connector_id=cid,
+            url=url,
+            error_type=type(exc).__name__,
+        )
         return CrawlKeepAliveResponse(ok=False, reason="fetch_failed")
 
     if reminted:
@@ -1022,6 +1030,20 @@ async def keep_session(
             stored.payload["cookies"], jar, take, [jar.base_host, *chain_hosts]
         )
         persisted = await _store_jar(connector_id, stored, jar)
+    if reminted and not persisted:
+        # The crawl reads its cookies from the store, so a session that was
+        # renewed but lost its write (a keep-alive tick or a cookie save got
+        # there first) is not one the crawl will have. Judge once more on
+        # what is stored now.
+        if _second_attempt:
+            return CrawlKeepAliveResponse(ok=False, reason="renewed_session_not_stored")
+        return await keep_session(
+            connector_id=connector_id,
+            org_id=org_id,
+            url=url,
+            auth_chain_hosts=auth_chain_hosts,
+            _second_attempt=True,
+        )
     # Expiry is judged on what is stored now: the jar when it was written,
     # otherwise the stored cookies as they were read.
     _log_expiring_cookies(
