@@ -688,7 +688,7 @@ services:
   # ─── Ollama (CPU fallback) ────────────────────────────────────────────────
   ollama:
     logging: *log-rotation
-    image: ollama/ollama:0.40.15
+    image: ollama/ollama:0.40.16
     restart: unless-stopped
     volumes:
       - /opt/klai/ollama/models:/root/.ollama
