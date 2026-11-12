@@ -129,7 +129,10 @@ posts each document to ingest.
   `CronTrigger.from_crontab` per connector (`:97`). Only connectors of
   org-scoped KBs are returned (`klai-portal/backend/app/api/internal.py:642-690`).
   The scheduler is created without a timezone (`klai-connector/app/services/scheduler.py:42`) and the
-  compose service sets no `TZ`, so cron times follow the container's local zone.
+  compose service sets no `TZ` (`deploy/docker-compose.yml:2303-2373`; the Dockerfile sets none either), so APScheduler 3.11.3 falls back to the
+  container's local zone (`apscheduler/schedulers/base.py:905`, `CronTrigger.from_crontab` takes the scheduler's zone). The base image
+  `python:3.12-slim` has `/etc/localtime` pointing at `Etc/UTC` (checked in a local copy of the image on 12 November 2026), so the cron
+  expressions of connectors are read as UTC.
   The operator view is in [connector-schedules.md](../runbooks/connector-schedules.md).
 - **Start.** A scheduled firing and the portal's on-demand call
   (`POST /connectors/{id}/sync`, `klai-connector/app/routes/sync.py:70`, 202)
@@ -262,6 +265,25 @@ about four speaker turns and at most 400 tokens, `skip_chunking=true`,
 `whisper_server_url` in scribe's configuration (`klai-scribe/scribe-api/app/core/config.py:10-40`)
 and points at the transcription service of 6.2.  MCP saves use `kb_slug=personal-<verified user>` for personal
 knowledge and `org` for the organisation's (`klai-knowledge-mcp/main.py:915-925`).
+
+Saving a Scribe transcript into knowledge is a separate request, not a step of
+transcription: the route takes the target `kb_slug` in its body and loads only a
+transcription owned by the caller (`klai-scribe/scribe-api/app/api/transcribe.py:460-502`),
+`ingest_scribe_transcript` has no other caller than that route, and the portal
+frontend's transcription screens contain no call to it and no knowledge-base
+picker (`klai-portal/frontend/src/routes/app/transcribe/`). Checked on
+12 November 2026; the logs of scribe-api carry no request paths, so how often the
+route is used cannot be counted from them.
+
+E-mail and pasted correspondence are not ingest sources. No route of 1.1 reads a
+mailbox or takes an e-mail file type. The portal's IMAP listener polls one mailbox
+for calendar invites that schedule meeting bots, and reads nothing else from the
+mail (`klai-portal/backend/app/services/imap_listener.py:1-6`). Correspondence
+pasted into a chat is recognised by marker lines such as header blocks and
+forward markers and changes how that chat turn is answered
+(`klai-portal/backend/app/services/pasted_correspondence.py:1-30`); the e-mail
+threads of a HubSpot support connector go to the portal's support cases
+(see above), not to ingest.
 
 ### Source deletions
 
@@ -791,6 +813,23 @@ decisions taken from them are in the knowledge-base log.
 
 What runs nightly (UTC): the suites `chat` and `knowledge_org` at 02:00, the
 ingest-gap canary at 02:30 and the reconcile at 03:30 (2.7).
+
+What the ingest-gap canary checks: whether the gap detector still sees the
+difference between knowledge that is present and knowledge that is missing.
+It asks portal-api for the org-owned knowledge bases of ready orgs that have
+full telemetry and the `knowledge_gaps` feature unlocked
+(`GET /internal/ingest-gap-eval/scopes`, `klai-portal/backend/app/api/internal.py:2676-2699`), picks
+at most 10 stored chunks that carry source-derived questions and no `user_id`, round-robin over those
+knowledge bases and rotated by the day (`eval/ragas_runner.py:394-470`), and
+posts them to `POST /internal/ingest-gap-eval/{org}/{kb}` (`internal.py:2702-2760`).
+There portal-api runs each question twice through the support-case analysis: once with the
+source chunk as the only retrieved passage, which has to diagnose `covered` or `findability`, and once with
+nothing retrieved. A second run that diagnoses `missing` is recorded as `detected_missing`; one that still
+claims the answer is present is `withheld_claimed_present`; the rest are `unscorable` or `failed`. Any `failed`
+or `withheld_claimed_present` makes the run `failed`, and an `unscorable` result or no scored result makes it
+`inconclusive` (`klai-portal/backend/app/services/ingest_gap_evaluation.py:10-11,53-115`).
+The rows go to `knowledge.rag_eval_results` under the suite `ingest_gap_canary`
+with hashes and ids and no text (`ragas_runner.py:376-391`, variant `source_derived_v1`).
 
 ### 7.2 Reconcile and taxonomy jobs
 
