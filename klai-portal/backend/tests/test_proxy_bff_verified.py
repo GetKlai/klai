@@ -310,6 +310,94 @@ class TestProxyVerifyBeforeForward:
 
 
 # ---------------------------------------------------------------------------
+# Docs editor API: the organisation in the path is the session's organisation
+# ---------------------------------------------------------------------------
+
+
+def _allow_acme(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api import proxy as proxy_mod
+    from app.services.identity_verifier import VerifyDecision
+
+    async def _fake_verify(**_kw: Any) -> VerifyDecision:
+        return VerifyDecision.allow(user_id="u-zitadel-1", org_id="o-zitadel-acme", org_slug="acme", evidence="jwt")
+
+    monkeypatch.setattr(proxy_mod, "verify_bff_session_identity", _fake_verify)
+
+
+class TestDocsPathOrganisation:
+    @pytest.mark.parametrize(
+        "rest",
+        [
+            "api/orgs/other-org/kbs",
+            "api/orgs/other-org/kbs/handbook/pages/intro",
+            "api/orgs/acme/../other-org/kbs",
+            "api//orgs/other-org/kbs",
+        ],
+    )
+    async def test_docs_request_for_another_organisation_returns_403_without_upstream_call(
+        self, monkeypatch: pytest.MonkeyPatch, rest: str
+    ) -> None:
+        from app.api import proxy as proxy_mod
+
+        _allow_acme(monkeypatch)
+
+        class _Tripwire:
+            def build_request(self, **_kw: Any) -> Any:
+                raise AssertionError("upstream MUST NOT be contacted for another organisation")
+
+        monkeypatch.setattr(proxy_mod, "_get_client", lambda: _Tripwire())
+
+        response = await proxy_mod._proxy(
+            service="docs", rest=rest, request=_request(), session=_session(), db=AsyncMock()
+        )
+
+        assert response.status_code == 403
+
+    async def test_docs_request_for_own_organisation_forwards_unchanged_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.api import proxy as proxy_mod
+        from app.core.config import settings
+
+        _allow_acme(monkeypatch)
+        captured: dict[str, Any] = {}
+
+        class _StubClient:
+            def build_request(self, *, method: str, url: str, headers: dict[str, str], content: bytes) -> Any:
+                captured["url"] = url
+                captured["headers"] = headers
+                return SimpleNamespace()
+
+            async def send(self, _req: Any, *, stream: bool) -> Any:
+                return _FakeUpstreamResponse()
+
+        monkeypatch.setattr(proxy_mod, "_get_client", lambda: _StubClient())
+
+        response = await proxy_mod._proxy(
+            service="docs",
+            rest="api/orgs/acme/kbs/handbook/tree",
+            request=_request(headers={"Accept": "application/json", "X-User-ID": "someone-else"}),
+            session=_session(),
+            db=AsyncMock(),
+        )
+
+        assert response.status_code == 200
+        assert captured["url"] == "http://docs-app:3010/docs/api/orgs/acme/kbs/handbook/tree"
+        # docs-app identifies a proxied user from the session's Bearer token.
+        # It must not receive its own DOCS_INTERNAL_SECRET or an X-User-ID:
+        # that pair would switch it to the service-caller path.
+        assert captured["headers"] == {
+            "Accept": "application/json",
+            "Authorization": "Bearer real-portal-bearer-token",
+            "X-Internal-Secret": settings.internal_secret,
+            "X-Klai-Verified-User-Id": "u-zitadel-1",
+            "X-Klai-Verified-Org-Id": "o-zitadel-acme",
+            "X-Klai-Verified-Org-Slug": "acme",
+        }
+        assert settings.internal_secret != settings.docs_internal_secret
+
+
+# ---------------------------------------------------------------------------
 # Inbound X-Klai-Verified-* stripping (REQ-2.3)
 # ---------------------------------------------------------------------------
 

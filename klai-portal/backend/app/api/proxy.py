@@ -82,6 +82,11 @@ _SECRET_HEADER_BLOCKLIST: Final[frozenset[str]] = frozenset(
         "x-klai-internal-secret",
         "x-retrieval-api-internal-secret",
         "x-scribe-api-internal-secret",
+        # Identity headers that docs-app trusts from its service callers. The
+        # acting user and organisation of a proxied request come only from the
+        # verified session, never from the client.
+        "x-user-id",
+        "x-org-id",
     }
 )
 
@@ -190,6 +195,20 @@ def _build_upstream_headers(
     return headers
 
 
+def _docs_path_org(upstream_url: str) -> str | None:
+    """Return the org slug a docs-app ``/api/orgs/<slug>/...`` URL addresses.
+
+    Reads the path as httpx sends it (dot segments resolved) and skips empty
+    segments, so ``orgs/<own>/../<other>`` and ``api//orgs`` resolve to the
+    organisation the upstream actually receives.
+    """
+    segments = [s for s in httpx.URL(upstream_url).path.split("/") if s]
+    # segments[0] is the docs-app basePath ("docs").
+    if segments[1:3] == ["api", "orgs"] and len(segments) > 3:
+        return segments[3]
+    return None
+
+
 def _filter_response_headers(upstream_headers: httpx.Headers) -> list[tuple[str, str]]:
     """Select upstream response headers that are safe to forward to the client."""
     return [(k, v) for k, v in upstream_headers.items() if k.lower() not in _RESPONSE_DROP]
@@ -288,6 +307,23 @@ async def _proxy(
     upstream_url = f"{base_url}{path}"
     if query:
         upstream_url = f"{upstream_url}?{query}"
+
+    # A docs editor request may only address the organisation the session's
+    # membership was verified for.
+    if service == "docs" and _docs_path_org(upstream_url) not in (None, decision.org_slug):
+        logger.info(
+            "bff_proxy_verified",
+            service=service,
+            method=request.method,
+            path=path,
+            verified=False,
+            reason="org_mismatch",
+            verify_latency_ms=verify_latency_ms,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": "identity_verification_failed", "reason": "org_mismatch"},
+        )
 
     headers = _build_upstream_headers(
         request,
