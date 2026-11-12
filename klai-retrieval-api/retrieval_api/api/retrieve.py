@@ -364,8 +364,19 @@ async def _retrieve_sub_queries(
     )
 
 
-async def _label_graph_results(graph_results: list[dict], req: RetrieveRequest) -> None:
-    """Attach the citation fields a graph edge cannot know about itself.
+async def _label_graph_results(graph_results: list[dict], req: RetrieveRequest) -> list[dict]:
+    """The graph facts whose document lies in the request's scope, labelled for citation.
+
+    The graph is partitioned by organisation alone; an edge carries no
+    knowledge base, visibility or owner. Filtering inside the graph search is
+    not an option either: any Graphiti filter sends the candidate search to the
+    brute-force scan (SPEC-GRAPH-SCALE-001). So the scope is decided here, by
+    the document a fact points at: it is kept only when that document resolves
+    through ``search._scope_filter``, the filter the vector legs search with. A
+    fact without a pointer, or whose pointer resolves to nothing in scope, is
+    dropped for every request, an organisation-wide one included, because
+    nothing then shows it did not come from a private or personal document.
+    A failed lookup drops the facts it could not place.
 
     A graph edge carries a fact and a pointer to the document it came from,
     but no title or URL, so ``evidence_pack._title()`` would fall through to
@@ -384,8 +395,7 @@ async def _label_graph_results(graph_results: list[dict], req: RetrieveRequest) 
     from the same document into ONE source, because ``chunk_source_key`` keys
     on the URL before falling back to ``artifact:<id>``.
 
-    Mutates in place. Fail-open: an unresolved edge keeps whatever identity it
-    already had, so a failed lookup never costs a result.
+    Labels the kept facts in place.
     """
     documents = [
         (r["graph_kb_slug"], r["graph_path"])
@@ -394,13 +404,14 @@ async def _label_graph_results(graph_results: list[dict], req: RetrieveRequest) 
     ]
     artifact_ids = [r.get("artifact_id") for r in graph_results if r.get("artifact_id")]
     if not documents and not artifact_ids:
-        return
+        return []
 
     by_document, by_artifact = await asyncio.gather(
         search.fetch_document_display_metadata(documents, req),
         search.fetch_artifact_display_metadata(artifact_ids, req),
     )
 
+    in_scope = []
     for result in graph_results:
         key = (result.get("graph_kb_slug"), result.get("graph_path"))
         meta = (
@@ -413,6 +424,8 @@ async def _label_graph_results(graph_results: list[dict], req: RetrieveRequest) 
                 result[field] = meta[field]
         if meta.get("artifact_id"):
             result["artifact_id"] = meta["artifact_id"]
+        in_scope.append(result)
+    return in_scope
 
 
 @dataclass
@@ -870,11 +883,12 @@ async def _run_search(state: RetrievalPipelineState) -> None:
     if graph_task is not None and t_graph is not None:
         try:
             async with state.trace.step("graph_search", started_at=t_graph) as graph_step:
-                graph_results = await graph_task
+                found = await graph_task
+                graph_results = await _label_graph_results(found, req) if found else []
                 state.graph_results_count = len(graph_results)
-                graph_step.meta("candidates_returned", state.graph_results_count)
+                graph_step.meta("candidates_returned", len(found))
+                graph_step.meta("in_scope", state.graph_results_count)
                 if graph_results:
-                    await _label_graph_results(graph_results, req)
                     state.graph_candidate_ids = {r["chunk_id"] for r in graph_results}
                     state.raw_results = _rrf_merge(state.raw_results, graph_results)
             state.graph_search_ms = graph_step.duration_ms

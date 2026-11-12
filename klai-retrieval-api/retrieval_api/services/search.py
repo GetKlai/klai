@@ -667,7 +667,8 @@ async def fetch_document_display_metadata(
     it dedups on.
 
     Same shape as ``fetch_artifact_display_metadata``: tenant-scoped through
-    ``_scope_filter``, one bounded lookup per document, fail-open per entry.
+    ``_scope_filter``, one bounded lookup per document; a document that does
+    not resolve is absent from the result and its graph facts are not served.
     """
     unique = sorted({(kb, p) for kb, p in documents if kb and p})
     if not unique:
@@ -710,7 +711,9 @@ async def fetch_artifact_display_metadata(
     keep private chunks out of a scope must also keep their titles out of a
     source list.
 
-    Fail-open: an unresolved artifact costs a label, never the graph result.
+    The caller serves a graph fact only when its artifact resolves here, so
+    an artifact outside the request's scope, or a failed lookup, withholds
+    the fact rather than its label alone.
     """
     unique_ids = sorted({aid for aid in artifact_ids if aid})
     if not unique_ids:
