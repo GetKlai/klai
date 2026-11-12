@@ -1,7 +1,6 @@
 # klai-chat-prompts
 
-Single source of truth for the grounded chat system prompt used by both
-`klai-retrieval-api` (`/synthesize` endpoint) and
+Single source of truth for the grounded chat system prompt used by
 `klai-portal/backend` (`partner_chat` service).
 
 Owned by SPEC-RAG-MULTILINGUAL-CHAT-001.
