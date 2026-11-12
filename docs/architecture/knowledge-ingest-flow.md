@@ -214,8 +214,10 @@ What the crawler does:
   changed and at least half of them lost content. On production history
   (2026-11-12) this flags 4 of 116 runs, all logged out. The connector shows
   the reason as a failed sync. `accept_content_regression` on
-  `POST /ingest/v1/crawl/sync` is a person's one-shot acceptance of a real site
-  change: the run writes and no page of it is held. Template-cluster walls
+  `POST /ingest/v1/crawl/sync` is a person's acceptance of a real site change:
+  the run writes and no page of it is held. klai-connector sends it while the
+  connector config holds `accept_content_regression_until` with a date of today
+  or later, so the acceptance expires by itself. Template-cluster walls
   only show per page during the ingest; they still only set the job status.
 - **Link graph before ingest.** `_build_link_graph` runs before the per-page
   ingest (`adapters/crawler.py:1273,1305`) so link data exists when pages are

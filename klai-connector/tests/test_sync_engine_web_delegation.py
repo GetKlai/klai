@@ -247,7 +247,7 @@ class TestCrawlSyncClientContract:
                 "canary_fingerprint": "deadbeef12345678",
                 "login_indicator_selector": "#login-form",
                 "auth_chain_hosts": ["login.example.org"],
-                "accept_content_regression": True,
+                "accept_content_regression_until": datetime.now(UTC).date().isoformat(),
             },
         )
 

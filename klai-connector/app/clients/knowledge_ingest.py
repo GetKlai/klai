@@ -1,5 +1,6 @@
 """Async httpx client for the knowledge-ingest /ingest/v1/document endpoint."""
 
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
@@ -335,7 +336,11 @@ class CrawlSyncClient:
             "login_indicator": config.get("login_indicator_selector"),
             "discovery_seed_url": config.get("discovery_seed_url"),
             "auth_chain_hosts": list(config.get("auth_chain_hosts") or []),
-            "accept_content_regression": bool(config.get("accept_content_regression")),
+            # An operator accepts a real site change by setting a date on the
+            # connector; after that day the check is back on by itself, so a
+            # forgotten setting cannot switch it off for good.
+            "accept_content_regression": str(config.get("accept_content_regression_until") or "")
+            >= datetime.now(UTC).date().isoformat(),
         }
         resp = await self._client.post(
             "/ingest/v1/crawl/sync",
