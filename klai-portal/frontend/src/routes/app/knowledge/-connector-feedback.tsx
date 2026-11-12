@@ -40,19 +40,8 @@ function renewalMessage(reason: string | null, savedMode: boolean): string {
     case 'no_cookies_for':
       return `${m.admin_connectors_webcrawler_auth_renewal_no_cookies({ host })} ${action}`
     case 'sign_in_required_at':
-      return `${m.admin_connectors_webcrawler_auth_renewal_sign_in_required({ host })} ${action}`
     case 'keepalive_cannot_read_session_at':
-      return `${m.admin_connectors_webcrawler_auth_renewal_keepalive({ host })} ${action}`
-    case 'callback_rejected':
-      return m.admin_connectors_webcrawler_auth_renewal_callback_rejected()
-    case 'still_logged_out':
-      return m.admin_connectors_webcrawler_auth_renewal_still_logged_out()
-    case 'no_login_link':
-      return m.admin_connectors_webcrawler_auth_renewal_no_login_link()
-    case 'redirect_left_host':
-      return m.admin_connectors_webcrawler_auth_renewal_redirect_left_host({ host })
-    case 'too_many_redirects':
-      return m.admin_connectors_webcrawler_auth_renewal_too_many_redirects()
+      return `${m.admin_connectors_webcrawler_auth_renewal_sign_in_required({ host })} ${action}`
     default:
       return m.admin_connectors_webcrawler_auth_renewal_no()
   }
