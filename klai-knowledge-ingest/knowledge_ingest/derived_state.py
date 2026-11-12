@@ -124,12 +124,18 @@ def born_pending() -> dict[str, Any]:
     }
 
 
+STATE_KEYS: frozenset[str] = frozenset(born_pending())
+"""The ``extra`` keys this module owns; no caller-supplied metadata may carry them."""
+
+
 async def set_product_state(
     conn: asyncpg.Connection,
     artifact_id: str,
     product: Product,
     state: str,
     reason: str | None = None,
+    *,
+    pending_since: int | None = None,
 ) -> bool:
     """Move ``product`` of the current version to ``state``, if that move is legal.
 
@@ -151,6 +157,11 @@ async def set_product_state(
     two concurrent failures only the first moves the row out of pending, and
     only that one logs ``derived_product_failed`` (error level, ids only).
 
+    ``pending_since`` narrows the move to the wait the caller saw: the write
+    lands only while the product's ``_state_at`` is still that value. The
+    stale-pending reaper passes it, so work queued again between its read and
+    its write keeps its new pending instead of being failed.
+
     Returns whether the row now holds ``state``.
     """
     from knowledge_ingest.pg_store import _SENTINEL, PURGE_PENDING
@@ -161,6 +172,7 @@ async def set_product_state(
         SET extra = COALESCE(a.extra, '{}'::jsonb) || $2::jsonb
         WHERE a.id = $1::uuid AND a.belief_time_end = $4 AND a.index_status <> $5
           AND ($6::text = 'pending' OR COALESCE(a.extra->>($3 || '_state'), 'pending') = 'pending')
+          AND ($7::bigint IS NULL OR (a.extra->>($3 || '_state_at'))::bigint = $7)
         RETURNING a.org_id, a.kb_slug
         """,
         artifact_id,
@@ -169,6 +181,7 @@ async def set_product_state(
         _SENTINEL,
         PURGE_PENDING,
         state,
+        pending_since,
     )
     if row is not None:
         if state == FAILED:

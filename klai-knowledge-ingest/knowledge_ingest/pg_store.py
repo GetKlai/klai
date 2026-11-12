@@ -2502,7 +2502,7 @@ async def stale_pending_products(
     """
     rows = await conn.fetch(
         """
-        SELECT artifact_id, org_id, kb_slug, product
+        SELECT artifact_id, org_id, kb_slug, product, pending_since
         FROM (
             SELECT a.id::text AS artifact_id, a.org_id, a.kb_slug, p.product,
                    (a.extra->>(p.product || '_state_at'))::bigint AS pending_since

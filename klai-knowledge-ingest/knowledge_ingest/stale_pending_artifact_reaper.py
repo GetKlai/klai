@@ -65,7 +65,15 @@ async def reap_stale_pending_artifacts(
         ]
         for product in interrupted:
             await set_product_state(
-                conn, product["artifact_id"], product["product"], FAILED, "interrupted"
+                conn,
+                product["artifact_id"],
+                product["product"],
+                FAILED,
+                "interrupted",
+                # Only the wait that was read: work queued again since then
+                # has a new pending, and failing that would get its job's
+                # outcome refused.
+                pending_since=product["pending_since"],
             )
     if rows:
         logger.warning(

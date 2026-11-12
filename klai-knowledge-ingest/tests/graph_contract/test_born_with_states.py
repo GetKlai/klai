@@ -197,3 +197,25 @@ async def test_a_knowledge_base_under_an_operation_keeps_its_versions_waiting(
         await rebuild.close()
 
     assert await store.state(artifact, "enrichment") == ProductState("pending")
+
+
+async def test_a_product_queued_again_while_the_reaper_runs_keeps_waiting(
+    store,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """Between the reaper's read and its write a reindex queues the work again.
+
+    Its ``failed`` must not land on the new wait: the job's later ``done``
+    would be refused.
+    """
+    artifact = await _synced(store, "page")
+    await _waiting_since(store, artifact, enrichment=_LONG_AGO)
+
+    async def _queued_again_meanwhile(conn, org_id: str, kb_slug: str) -> bool:
+        await set_product_state(conn, artifact, "enrichment", "pending")
+        return False
+
+    monkeypatch.setattr(stale_pending_artifact_reaper, "operation_running", _queued_again_meanwhile)
+    await _reap(store, monkeypatch)
+
+    assert await store.state(artifact, "enrichment") == ProductState("pending")
