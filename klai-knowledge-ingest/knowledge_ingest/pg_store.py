@@ -370,14 +370,24 @@ async def get_personal_artifact(
     org_id: str,
     user_id: str,
 ) -> dict | None:
-    """Get a single active personal artifact, or None if not found / wrong user."""
+    """Get a deletable personal artifact, or None if not found / wrong user."""
+    # Deletable means newest version of its document with no other live row
+    # on its path: the active version, or a document whose delete closed it
+    # but failed before the purge finished, so a retried delete finds it. A
+    # replaced version never matches.
     row = await conn.fetchrow(
         """
         SELECT id, path
-        FROM knowledge.artifacts
+        FROM knowledge.artifacts a
         WHERE id = $1 AND org_id = $2 AND user_id = $3
           AND kb_slug = $4
-          AND belief_time_end = $5
+          AND a.superseded_by IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM knowledge.artifacts live
+              WHERE live.org_id = a.org_id AND live.kb_slug = a.kb_slug
+                AND live.path = a.path AND live.belief_time_end = $5
+                AND live.id <> a.id
+          )
         """,
         artifact_id,
         org_id,
@@ -464,6 +474,27 @@ async def set_superseded_by(
     )
 
 
+# Every row reachable backwards along ``superseded_by`` from the rows in $2:
+# the given versions plus every version they replaced, bound to the caller's
+# organisation ($1) at every step. The walk has no depth limit, because a
+# hard delete has to reach the oldest version (one document in production has
+# 43). UNION, not UNION ALL, discards a row already visited, so a corrupt
+# cycle ends the recursion instead of hanging it.
+_HISTORY_CTE = """
+WITH RECURSIVE history AS (
+    SELECT a.id
+    FROM knowledge.artifacts a
+    WHERE a.org_id = $1 AND a.id = ANY($2::uuid[])
+
+    UNION
+
+    SELECT p.id
+    FROM history h
+    JOIN knowledge.artifacts p ON p.superseded_by = h.id AND p.org_id = $1
+)
+"""
+
+
 async def get_episode_ids_for_document_history(
     conn: asyncpg.Connection,
     org_id: str,
@@ -489,28 +520,14 @@ async def get_episode_ids_for_document_history(
     all (a navigation page, #1148). Neither is an episode uuid, and renaming
     one would match nothing.
 
-    depth < 100 bounds the walk. ``superseded_by`` points forward in time so a
-    cycle should be impossible, but an unbounded recursive CTE that meets one
-    hangs the ingest request. Truncating here costs completeness, never
-    correctness: a missed ancestor keeps its current name and the backfill
-    still reaches it.
+    The walk follows the whole chain and stops on a cycle (see
+    ``_HISTORY_CTE``).
     """
     if not artifact_ids:
         return []
     rows = await conn.fetch(
-        """
-        WITH RECURSIVE history AS (
-            SELECT a.id, 0 AS depth
-            FROM knowledge.artifacts a
-            WHERE a.org_id = $1 AND a.id = ANY($2::uuid[])
-
-            UNION ALL
-
-            SELECT p.id, h.depth + 1
-            FROM history h
-            JOIN knowledge.artifacts p ON p.superseded_by = h.id AND p.org_id = $1
-            WHERE h.depth < 100
-        )
+        _HISTORY_CTE  # noqa: S608 -- constant SQL; values are bound parameters
+        + """
         SELECT DISTINCT stored_episode.episode_id
         FROM knowledge.artifacts a
         CROSS JOIN LATERAL jsonb_array_elements_text(
@@ -531,35 +548,6 @@ async def get_episode_ids_for_document_history(
         artifact_ids,
     )
     return [str(row["episode_id"]) for row in rows]
-
-
-async def soft_delete_connector_artifacts_by_source_ref(
-    conn: asyncpg.Connection,
-    org_id: str,
-    kb_slug: str,
-    connector_id: str,
-    source_ref: str,
-) -> int:
-    """Close active versions of one connector document before external cleanup."""
-    rows = await conn.fetch(
-        """
-        UPDATE knowledge.artifacts
-        SET belief_time_end = $5
-        WHERE org_id = $1
-          AND kb_slug = $2
-          AND extra::jsonb->>'source_connector_id' = $3
-          AND extra::jsonb->>'source_ref' = $4
-          AND belief_time_end = $6
-        RETURNING id
-        """,
-        org_id,
-        kb_slug,
-        connector_id,
-        source_ref,
-        int(time.time()),
-        _SENTINEL,
-    )
-    return len(rows)
 
 
 async def list_connector_artifact_ids_by_source_ref(
@@ -587,112 +575,198 @@ async def list_connector_artifact_ids_by_source_ref(
     return [str(row["id"]) for row in rows]
 
 
-async def delete_connector_artifacts_by_source_ref(
+async def list_document_heads(
     conn: asyncpg.Connection,
     org_id: str,
-    kb_slug: str,
-    connector_id: str,
-    source_ref: str,
-) -> int:
-    """Hard-delete every PostgreSQL row owned by one connector source_ref."""
-    params = (org_id, kb_slug, connector_id, source_ref)
+    path: str,
+    kb_slug: str | None,
+    connector_id: str | None = None,
+) -> list[str]:
+    """Return the newest row of every document stored under ``path``.
 
+    A head is a row nothing has replaced (``superseded_by IS NULL``): the
+    active version, or the last version of a document that was closed without
+    a successor and not yet purged. Earlier versions hang off it through
+    ``superseded_by`` and are reached by :func:`list_document_history`.
+    ``kb_slug=None`` searches every knowledge base of the organisation, which a
+    caller needs when it does not know where the document was added (scribe).
+    ``connector_id`` limits the heads to that connector's documents.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT id::text AS id
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND path = $2
+          AND ($3::text IS NULL OR kb_slug = $3)
+          AND ($4::text IS NULL OR extra->>'source_connector_id' = $4)
+          AND superseded_by IS NULL
+        """,
+        org_id,
+        path,
+        kb_slug,
+        connector_id,
+    )
+    return [str(row["id"]) for row in rows]
+
+
+# index_status of a row whose delete has started but not finished. It marks
+# the row as a purge to retry (the crawler picks these up again) and keeps
+# reindex from reopening a half-cleaned document.
+PURGE_PENDING = "deleting"
+
+
+async def close_artifacts(conn: asyncpg.Connection, org_id: str, artifact_ids: list[str]) -> None:
+    """Close these rows and mark them as being purged.
+
+    Closing stops search and the enrichment and graph workers from using the
+    active rows. The marker is set on every given row, closed or not, so a
+    retry of a half-failed delete is recognisable as such.
+    """
+    await conn.execute(
+        """
+        UPDATE knowledge.artifacts
+        SET belief_time_end = CASE WHEN belief_time_end = $4 THEN $3 ELSE belief_time_end END,
+            index_status = $5,
+            index_status_changed_at = $3
+        WHERE org_id = $1
+          AND id = ANY($2::uuid[])
+        """,
+        org_id,
+        artifact_ids,
+        int(time.time()),
+        _SENTINEL,
+        PURGE_PENDING,
+    )
+
+
+async def list_connector_paths_pending_purge(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str, connector_id: str
+) -> list[str]:
+    """Return the paths of this connector's documents whose purge did not finish."""
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT path
+        FROM knowledge.artifacts
+        WHERE org_id = $1
+          AND kb_slug = $2
+          AND extra->>'source_connector_id' = $3
+          AND superseded_by IS NULL
+          AND index_status = $4
+        ORDER BY path
+        """,
+        org_id,
+        kb_slug,
+        connector_id,
+        PURGE_PENDING,
+    )
+    return [str(row["path"]) for row in rows]
+
+
+async def list_document_history(
+    conn: asyncpg.Connection,
+    org_id: str,
+    artifact_ids: list[str],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Return every version of these documents and the paths only they still use.
+
+    The ids cover the given rows and every version they replaced. The
+    ``(kb_slug, path)`` pairs are the paths of those versions that no active
+    row holds: per-path state (vector points, crawled_pages, page_links) may
+    be removed for those, while a path a live document has since taken over
+    must be left alone.
+    """
+    rows = await conn.fetch(
+        _HISTORY_CTE  # noqa: S608 -- constant SQL; values are bound parameters
+        + """
+        SELECT a.id::text AS id, a.kb_slug, a.path,
+               NOT EXISTS (
+                   SELECT 1 FROM knowledge.artifacts live
+                   WHERE live.org_id = $1
+                     AND live.kb_slug = a.kb_slug
+                     AND live.path = a.path
+                     AND live.belief_time_end = $3
+               ) AS path_unused
+        FROM knowledge.artifacts a
+        WHERE a.org_id = $1 AND a.id IN (SELECT id FROM history)
+        """,
+        org_id,
+        artifact_ids,
+        _SENTINEL,
+    )
+    ids = [str(row["id"]) for row in rows]
+    paths = sorted({(row["kb_slug"], row["path"]) for row in rows if row["path_unused"]})
+    return ids, paths
+
+
+async def delete_artifacts(
+    conn: asyncpg.Connection,
+    org_id: str,
+    artifact_ids: list[str],
+    paths: list[tuple[str, str]],
+) -> int:
+    """Hard-delete these artifact rows and every PostgreSQL row derived from them.
+
+    ``parent_chunks`` and ``artifact_images`` follow through ON DELETE
+    CASCADE. ``paths`` are the ``(kb_slug, path)`` pairs no live row uses any
+    more (see :func:`list_document_history`); their crawl metadata goes too.
+    Tables without an ``org_id`` column are only touched for ids this
+    organisation owns, so a foreign id in ``artifact_ids`` matches nothing.
+    """
+    kb_slugs = [kb_slug for kb_slug, _ in paths]
+    urls = [path for _, path in paths]
     async with conn.transaction():
-        await conn.execute(
-            """
-            UPDATE knowledge.artifacts SET superseded_by = NULL
-            WHERE superseded_by IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
-            """,
-            *params,
+        owned = await conn.fetch(
+            "SELECT id FROM knowledge.artifacts WHERE org_id = $1 AND id = ANY($2::uuid[])",
+            org_id,
+            artifact_ids,
         )
+        owned_ids = [row["id"] for row in owned]
         await conn.execute(
-            """
-            DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
-            """,
-            *params,
+            "UPDATE knowledge.artifacts SET superseded_by = NULL "
+            "WHERE org_id = $1 AND superseded_by = ANY($2::uuid[])",
+            org_id,
+            owned_ids,
         )
-        await conn.execute(
-            """
-            DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
-            """,
-            *params,
-        )
-        await conn.execute(
-            """
-            DELETE FROM knowledge.derivations
-            WHERE child_id IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            ) OR parent_id IN (
-                SELECT id FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
-            """,
-            *params,
-        )
+        for statement in (
+            "DELETE FROM knowledge.embedding_queue WHERE artifact_id = ANY($1::uuid[])",
+            "DELETE FROM knowledge.artifact_entities WHERE artifact_id = ANY($1::uuid[])",
+            "DELETE FROM knowledge.derivations "
+            "WHERE child_id = ANY($1::uuid[]) OR parent_id = ANY($1::uuid[])",
+        ):
+            await conn.execute(statement, owned_ids)
         await conn.execute(
             """
             DELETE FROM knowledge.crawled_pages
-            WHERE org_id = $1 AND kb_slug = $2 AND url IN (
-                SELECT path FROM knowledge.artifacts
-                WHERE org_id = $1 AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
-            )
+            WHERE org_id = $1
+              AND (kb_slug, url) IN (SELECT * FROM unnest($2::text[], $3::text[]))
             """,
-            *params,
+            org_id,
+            kb_slugs,
+            urls,
         )
         await conn.execute(
             """
             DELETE FROM knowledge.page_links
-            WHERE org_id = $1 AND kb_slug = $2 AND (
-                from_url IN (
-                    SELECT path FROM knowledge.artifacts
-                    WHERE org_id = $1 AND kb_slug = $2
-                      AND extra::jsonb->>'source_connector_id' = $3
-                      AND extra::jsonb->>'source_ref' = $4
-                ) OR to_url IN (
-                    SELECT path FROM knowledge.artifacts
-                    WHERE org_id = $1 AND kb_slug = $2
-                      AND extra::jsonb->>'source_connector_id' = $3
-                      AND extra::jsonb->>'source_ref' = $4
-                )
-            )
+            WHERE org_id = $1
+              AND ((kb_slug, from_url) IN (SELECT * FROM unnest($2::text[], $3::text[]))
+                OR (kb_slug, to_url) IN (SELECT * FROM unnest($2::text[], $3::text[])))
             """,
-            *params,
+            org_id,
+            kb_slugs,
+            urls,
         )
         result = await conn.fetchval(
             """
             WITH deleted AS (
                 DELETE FROM knowledge.artifacts
-                WHERE org_id = $1
-                  AND kb_slug = $2
-                  AND extra::jsonb->>'source_connector_id' = $3
-                  AND extra::jsonb->>'source_ref' = $4
+                WHERE org_id = $1 AND id = ANY($2::uuid[])
                 RETURNING id
             )
             SELECT COUNT(*) FROM deleted
             """,
-            *params,
+            org_id,
+            artifact_ids,
         )
     return int(result or 0)
 
@@ -757,118 +831,6 @@ async def count_active_connector_artifact_paths(
         _SENTINEL,
     )
     return count or 0
-
-
-async def soft_delete_stale_connector_artifacts(
-    conn: asyncpg.Connection,
-    org_id: str,
-    kb_slug: str,
-    connector_id: str,
-    stale_paths: list[str],
-) -> int:
-    """Retire active connector artifacts for stale paths and scrub crawl metadata."""
-    if not stale_paths:
-        return 0
-
-    now = int(time.time())
-    async with conn.transaction():
-        await conn.execute(
-            """UPDATE knowledge.artifacts SET superseded_by = NULL
-               WHERE superseded_by IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               )""",
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               )""",
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               )""",
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.derivations WHERE child_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               ) OR parent_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2
-                   AND path = ANY($4::text[])
-                   AND extra IS NOT NULL
-                   AND extra::jsonb->>'source_connector_id' = $3
-               )""",
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.crawled_pages
-               WHERE org_id = $1 AND kb_slug = $2 AND url = ANY($3::text[])""",
-            org_id,
-            kb_slug,
-            stale_paths,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.page_links
-               WHERE org_id = $1 AND kb_slug = $2
-                 AND (from_url = ANY($3::text[]) OR to_url = ANY($3::text[]))""",
-            org_id,
-            kb_slug,
-            stale_paths,
-        )
-        result = await conn.fetchval(
-            """
-            WITH retired AS (
-              UPDATE knowledge.artifacts
-              SET belief_time_end = $5
-              WHERE org_id = $1
-                AND kb_slug = $2
-                AND path = ANY($4::text[])
-                AND belief_time_end = $6
-                AND extra IS NOT NULL
-                AND extra::jsonb->>'source_connector_id' = $3
-              RETURNING id
-            )
-            SELECT COUNT(*) FROM retired
-            """,
-            org_id,
-            kb_slug,
-            connector_id,
-            stale_paths,
-            now,
-            _SENTINEL,
-        )
-    return int(result or 0)
 
 
 async def get_episode_ids(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> list[str]:
@@ -1586,88 +1548,6 @@ async def upsert_page_links(
     )
 
 
-async def get_page_episode_ids(
-    conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
-) -> list[str]:
-    """Return Graphiti episode UUIDs for artifacts matching a specific page path.
-
-    Like get_episode_ids() but scoped to a single page. Used during page deletion
-    to clean up Graphiti graph nodes before soft-deleting the artifact.
-    """
-    rows = await conn.fetch(
-        """SELECT DISTINCT stored_episode.episode_id
-           FROM knowledge.artifacts AS a
-           CROSS JOIN LATERAL jsonb_array_elements_text(
-               CASE
-                   WHEN a.extra::jsonb ? 'graphiti_episode_ids'
-                       THEN a.extra::jsonb->'graphiti_episode_ids'
-                   WHEN a.extra::jsonb->>'graphiti_episode_id' IS NOT NULL
-                       THEN jsonb_build_array(a.extra::jsonb->>'graphiti_episode_id')
-                   ELSE '[]'::jsonb
-               END
-           ) AS stored_episode(episode_id)
-           WHERE a.org_id = $1 AND a.kb_slug = $2 AND a.path = $3
-             AND stored_episode.episode_id <> 'no-chunks'""",
-        org_id,
-        kb_slug,
-        path,
-    )
-    return [r["episode_id"] for r in rows if r["episode_id"] != "no-chunks"]
-
-
-async def cleanup_page_metadata(
-    conn: asyncpg.Connection, org_id: str, kb_slug: str, path: str
-) -> None:
-    """Hard-delete metadata records (derivations, artifact_entities, embedding_queue)
-    for all artifacts matching this page path.
-
-    Must be called BEFORE soft_delete_artifact to avoid FK issues.
-    Follows the same pattern as delete_kb() but scoped to a single page.
-    """
-    async with conn.transaction():
-        # Nullify self-references first to avoid FK violations
-        await conn.execute(
-            """UPDATE knowledge.artifacts SET superseded_by = NULL
-               WHERE superseded_by IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               )""",
-            org_id,
-            kb_slug,
-            path,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.embedding_queue WHERE artifact_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               )""",
-            org_id,
-            kb_slug,
-            path,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.artifact_entities WHERE artifact_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               )""",
-            org_id,
-            kb_slug,
-            path,
-        )
-        await conn.execute(
-            """DELETE FROM knowledge.derivations WHERE child_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               ) OR parent_id IN (
-                 SELECT id FROM knowledge.artifacts
-                 WHERE org_id = $1 AND kb_slug = $2 AND path = $3
-               )""",
-            org_id,
-            kb_slug,
-            path,
-        )
-
-
 async def update_artifact_extra(
     conn: asyncpg.Connection, artifact_id: str, extra_patch: dict
 ) -> None:
@@ -2177,65 +2057,57 @@ async def set_artifact_index_status(
     artifact_id: str,
     org_id: str,
     status: str,
+    *,
+    reopen: bool = False,
 ) -> dict | None:
     """Update index_status on a direct-upload artifact scoped to org_id.
 
     Returns a dict with ``{"artifact_id": str, "path": str}`` when the
-    artifact was found and updated, or ``None`` when it does not exist /
-    belongs to a different org.
+    artifact was found and updated, or ``None`` when it does not exist,
+    belongs to a different org, or is not eligible.
+
+    Without ``reopen`` only the active version is eligible. With ``reopen``
+    (the user's reindex action) a closed head is reopened as well: the
+    portal shows an upload whose artifact was closed without a successor
+    (for example by the drift repair) as not synced and offers reindex to
+    repair it. A REPLACED version is never reopened: it has a successor, or
+    another row is active for the same knowledge base and path. Neither is a
+    row whose delete has started (``PURGE_PENDING``); repeating the delete
+    finishes it instead.
     """
-    async with conn.transaction():
-        artifact = await conn.fetchrow(
-            """
-            SELECT id, kb_slug, path, belief_time_end
-            FROM knowledge.artifacts
-            WHERE id = $1::uuid
-              AND org_id = $2
-              AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
-            """,
-            artifact_id,
-            org_id,
-        )
-        if artifact is None:
-            return None
-
-        if artifact["belief_time_end"] != _SENTINEL:
-            now = int(time.time())
-            await conn.execute(
-                """
-                UPDATE knowledge.artifacts
-                SET belief_time_end = $1
-                WHERE org_id = $2
-                  AND kb_slug = $3
-                  AND path = $4
-                  AND belief_time_end = $5
-                  AND id <> $6::uuid
-                """,
-                now,
-                org_id,
-                artifact["kb_slug"],
-                artifact["path"],
-                _SENTINEL,
-                artifact_id,
-            )
-
-        row = await conn.fetchrow(
-            """
-            UPDATE knowledge.artifacts
-            SET index_status = $1,
-                index_status_changed_at = $5,
-                belief_time_end = $2
-            WHERE id = $3::uuid
-              AND org_id = $4
-              AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
-            RETURNING id::text AS artifact_id, path
-            """,
-            status,
-            _SENTINEL,
-            artifact_id,
-            org_id,
-            int(time.time()),
-        )
+    row = await conn.fetchrow(
+        """
+        UPDATE knowledge.artifacts a
+        SET index_status = $1,
+            index_status_changed_at = $5,
+            belief_time_end = $2
+        WHERE a.id = $3::uuid
+          AND a.org_id = $4
+          AND (a.extra IS NULL OR a.extra::jsonb->>'source_connector_id' IS NULL)
+          AND (
+              a.belief_time_end = $2
+              OR (
+                  $6::bool
+                  AND a.superseded_by IS NULL
+                  AND a.index_status <> $7
+                  AND NOT EXISTS (
+                      SELECT 1 FROM knowledge.artifacts live
+                      WHERE live.org_id = a.org_id AND live.kb_slug = a.kb_slug
+                        AND live.path = a.path AND live.belief_time_end = $2
+                        AND live.id <> a.id
+                  )
+              )
+          )
+        RETURNING a.id::text AS artifact_id, a.path
+        """,
+        status,
+        _SENTINEL,
+        artifact_id,
+        org_id,
+        int(time.time()),
+        reopen,
+        PURGE_PENDING,
+    )
     if row is None:
         return None
     return {"artifact_id": row["artifact_id"], "path": row["path"]}
@@ -2378,7 +2250,8 @@ async def get_kb_upload_artifact(
     """Fetch a single direct-upload artifact for ownership / existence check.
 
     Returns a dict with ``{"artifact_id": str, "path": str, "user_id": str | None}``
-    or ``None`` when the artifact does not exist or is not a direct upload.
+    or ``None`` when the artifact does not exist, is not a direct upload, or
+    is not deletable (see :func:`get_personal_artifact`).
     """
     row = await conn.fetchrow(
         """
@@ -2386,11 +2259,17 @@ async def get_kb_upload_artifact(
             id::text AS artifact_id,
             path,
             user_id
-        FROM knowledge.artifacts
+        FROM knowledge.artifacts a
         WHERE id = $1::uuid
           AND org_id = $2
           AND kb_slug = $3
-          AND belief_time_end = $4
+          AND a.superseded_by IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM knowledge.artifacts live
+              WHERE live.org_id = a.org_id AND live.kb_slug = a.kb_slug
+                AND live.path = a.path AND live.belief_time_end = $4
+                AND live.id <> a.id
+          )
           AND (extra IS NULL OR extra::jsonb->>'source_connector_id' IS NULL)
         """,
         artifact_id,

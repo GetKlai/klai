@@ -423,29 +423,6 @@ async def test_has_active_connector_artifact_for_url_checks_source_url():
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_stale_connector_artifacts_scrubs_registry_and_links():
-    """Stale connector cleanup retires artifacts and removes crawl metadata."""
-    conn = _make_conn()
-    conn.fetchval = AsyncMock(return_value=2)
-
-    deleted = await pg_store.soft_delete_stale_connector_artifacts(
-        conn,
-        org_id="org",
-        kb_slug="kb",
-        connector_id="conn-1",
-        stale_paths=["https://getklai.com/", "https://getklai.com/contact"],
-    )
-
-    assert deleted == 2
-    executed_sql = "\n".join(call.args[0] for call in conn.execute.await_args_list)
-    final_sql = conn.fetchval.call_args[0][0]
-    assert "DELETE FROM knowledge.crawled_pages" in executed_sql
-    assert "DELETE FROM knowledge.page_links" in executed_sql
-    assert "source_connector_id" in final_sql
-    assert "belief_time_end = $6" in final_sql
-
-
-@pytest.mark.asyncio
 async def test_mark_stale_pending_artifacts_failed_requires_no_runnable_job():
     """The stale-pending janitor must not fail rows that still have enrich work."""
     conn = _make_conn()
@@ -677,32 +654,6 @@ async def test_connector_deletion_selects_all_episode_ids():
 
 
 @pytest.mark.asyncio
-async def test_page_deletion_selects_all_episode_ids():
-    conn = _make_conn()
-    conn.fetch = AsyncMock(return_value=[{"episode_id": "ep-1"}, {"episode_id": "ep-2"}])
-
-    result = await pg_store.get_page_episode_ids(conn, "org1", "support", "guide.md")
-
-    assert result == ["ep-1", "ep-2"]
-    sql = conn.fetch.call_args[0][0]
-    assert "graphiti_episode_ids" in sql
-    assert "jsonb_array_elements_text" in sql
-
-
-@pytest.mark.asyncio
-async def test_page_deletion_falls_back_to_legacy_scalar_episode_id():
-    conn = _make_conn()
-    conn.fetch = AsyncMock(return_value=[{"episode_id": "legacy-episode"}])
-
-    result = await pg_store.get_page_episode_ids(conn, "org1", "support", "legacy.md")
-
-    assert result == ["legacy-episode"]
-    sql = conn.fetch.call_args[0][0]
-    assert "graphiti_episode_id" in sql
-    assert "jsonb_build_array" in sql
-
-
-@pytest.mark.asyncio
 async def test_org_orphan_sweep_keeps_all_referenced_episode_ids():
     conn = _make_conn()
     conn.fetch = AsyncMock(return_value=[{"episode_uuid": "ep-1"}, {"episode_uuid": "ep-2"}])
@@ -717,36 +668,15 @@ async def test_org_orphan_sweep_keeps_all_referenced_episode_ids():
 
 
 @pytest.mark.asyncio
-async def test_connector_source_ref_cleanup_queries_are_fully_tenant_scoped() -> None:
+async def test_connector_source_ref_lookup_is_fully_tenant_scoped() -> None:
     conn = _make_conn()
     conn.fetch = AsyncMock(return_value=[])
-    conn.fetchval = AsyncMock(return_value=0)
 
-    await pg_store.soft_delete_connector_artifacts_by_source_ref(
-        conn, "org-1", "prices", "connector-1", "json-feed:connector-1:group-a"
-    )
     await pg_store.list_connector_artifact_ids_by_source_ref(
         conn, "org-1", "prices", "connector-1", "json-feed:connector-1:group-a"
     )
-    await pg_store.delete_connector_artifacts_by_source_ref(
-        conn, "org-1", "prices", "connector-1", "json-feed:connector-1:group-a"
-    )
 
-    calls = [
-        *conn.fetch.await_args_list,
-        *conn.execute.await_args_list,
-        *conn.fetchval.await_args_list,
-    ]
-    assert calls
-    for call in calls:
-        sql, *params = call.args
-        assert "org_id" in sql
-        assert "kb_slug" in sql
-        assert "source_connector_id" in sql
-        assert "source_ref" in sql
-        assert params[:4] == [
-            "org-1",
-            "prices",
-            "connector-1",
-            "json-feed:connector-1:group-a",
-        ]
+    sql, *params = conn.fetch.await_args.args
+    for column in ("org_id", "kb_slug", "source_connector_id", "source_ref"):
+        assert column in sql
+    assert params == ["org-1", "prices", "connector-1", "json-feed:connector-1:group-a"]

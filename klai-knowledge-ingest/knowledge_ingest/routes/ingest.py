@@ -25,12 +25,13 @@ import asyncpg
 import httpx
 import structlog
 import yaml
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from klai_kb_slugs import episode_name, personal_kb_slug
 
 from knowledge_ingest import (
     cheap_layer,
     chunker,
+    document_purge,
     embedder,
     kb_config,
     org_config,
@@ -1239,65 +1240,34 @@ async def gitea_webhook(request: Request) -> dict:
             except Exception as exc:
                 logger.warning("ingest_failed", path=path, error=str(exc))
 
-    # Delete removed files — immediate, no debounce needed
-    # Order: Qdrant → fetch episode IDs → Graphiti → PG metadata → PG soft-delete
-    # Each step has its own try/except so partial failures don't block subsequent steps.
     if removed:
-        async with tenant_scoped_connection(org_id) as conn:
-            for path in removed:
-                try:
-                    await qdrant_store.delete_document(org_id, kb_slug, path)
-                except Exception as exc:
-                    logger.warning(
-                        "page_qdrant_delete_failed",
-                        org_id=org_id,
-                        kb_slug=kb_slug,
-                        path=path,
-                        error=str(exc),
-                    )
-
-                # Graphiti cleanup: fetch episode IDs before soft-delete (reads extra field)
-                if settings.graphiti_enabled:
-                    try:
-                        episode_ids = await pg_store.get_page_episode_ids(
-                            conn, org_id, kb_slug, path
-                        )
-                        if episode_ids:
-                            await graph_module.delete_kb_episodes(org_id, episode_ids)
-                    except Exception as exc:
-                        logger.warning(
-                            "page_graph_cleanup_failed",
-                            org_id=org_id,
-                            kb_slug=kb_slug,
-                            path=path,
-                            error=str(exc),
-                        )
-
-                # Metadata cleanup: derivations, artifact_entities, embedding_queue
-                try:
-                    await pg_store.cleanup_page_metadata(conn, org_id, kb_slug, path)
-                except Exception as exc:
-                    logger.warning(
-                        "page_metadata_cleanup_failed",
-                        org_id=org_id,
-                        kb_slug=kb_slug,
-                        path=path,
-                        error=str(exc),
-                    )
-
-                try:
-                    await pg_store.soft_delete_artifact(conn, org_id, kb_slug, path)
-                    deleted += 1
-                except Exception as exc:
-                    logger.warning(
-                        "page_soft_delete_failed",
-                        org_id=org_id,
-                        kb_slug=kb_slug,
-                        path=path,
-                        error=str(exc),
-                    )
+        deleted = await _purge_removed_paths(org_id, kb_slug, sorted(removed))
 
     return {"status": "ok", "queued": queued, "deleted": deleted, "org_slug": org_slug}
+
+
+async def _purge_removed_paths(org_id: str, kb_slug: str, paths: list[str]) -> int:
+    """Delete every document stored under the removed docs paths, for good.
+
+    Each path is tried even when an earlier one fails, then the request fails
+    so the push is reported as not processed. A failed path stays closed in
+    PostgreSQL and is found again by a redelivered webhook.
+    """
+    deleted = 0
+    failed: list[str] = []
+    async with tenant_scoped_connection(org_id) as conn:
+        for path in paths:
+            try:
+                heads = await pg_store.list_document_heads(conn, org_id, path, kb_slug)
+                await document_purge.purge_documents(conn, org_id, heads)
+            except Exception:
+                logger.exception("page_delete_failed", org_id=org_id, kb_slug=kb_slug, path=path)
+                failed.append(path)
+            else:
+                deleted += 1
+    if failed:
+        raise HTTPException(status_code=502, detail=f"delete failed for {len(failed)} path(s)")
+    return deleted
 
 
 async def _get_org_id(gitea_org_name: str) -> str | None:
@@ -1425,33 +1395,16 @@ async def delete_connector_document_route(
     connector_id: str,
     source_ref: str,
 ) -> dict:
-    """Delete one connector artifact and its vectors and graph episodes."""
+    """Delete one connector document, every version of it, from every store."""
     _verify_internal_secret(request)
     verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
 
     async with tenant_scoped_connection(verified_org_id) as conn:
-        # Close active rows first. Enrichment and Graphiti workers both abort
-        # when an artifact is no longer active, preventing cleanup races from
-        # recreating external state while this request is in progress.
-        await pg_store.soft_delete_connector_artifacts_by_source_ref(
-            conn, verified_org_id, kb_slug, connector_id, source_ref
-        )
         artifact_ids = await pg_store.list_connector_artifact_ids_by_source_ref(
             conn, verified_org_id, kb_slug, connector_id, source_ref
         )
-        episode_ids = await pg_store.get_episode_ids_for_document_history(
+        artifacts_deleted, episodes_deleted = await document_purge.purge_documents(
             conn, verified_org_id, artifact_ids
-        )
-
-        # PostgreSQL remains the retry ledger until both external stores are
-        # confirmed clean. If either call fails, the endpoint raises and a
-        # later sync can recover the same artifact/episode identifiers.
-        await graph_module.delete_kb_episodes(verified_org_id, episode_ids)
-        await qdrant_store.delete_connector_document(
-            verified_org_id, kb_slug, connector_id, source_ref
-        )
-        artifacts_deleted = await pg_store.delete_connector_artifacts_by_source_ref(
-            conn, verified_org_id, kb_slug, connector_id, source_ref
         )
 
     logger.info(
@@ -1461,12 +1414,50 @@ async def delete_connector_document_route(
         connector_id=connector_id,
         source_ref=source_ref,
         artifacts_deleted=artifacts_deleted,
-        episodes_deleted=len(episode_ids),
+        episodes_deleted=episodes_deleted,
     )
     return {
         "status": "ok",
         "artifacts_deleted": artifacts_deleted,
-        "episodes_deleted": len(episode_ids),
+        "episodes_deleted": episodes_deleted,
+    }
+
+
+@router.delete("/ingest/v1/document")
+async def delete_document_route(
+    request: Request,
+    org_id: str,
+    path: str = Query(pattern=r"^scribe/[A-Za-z0-9_-]+$"),
+) -> dict:
+    """Delete a scribe transcript from every knowledge base of the org it was added to.
+
+    Scribe ingests a transcript under ``scribe/<transcription id>`` and does
+    not record which knowledge bases it went into, so the delete is by path
+    across the organisation. The route serves that one caller only: other
+    paths and other services are refused.
+    """
+    _verify_internal_secret(request)
+    if request.headers.get("x-caller-service") != "scribe":
+        raise HTTPException(status_code=403, detail="only scribe deletes transcripts")
+    verified_org_id = await assert_caller_identity_tenant_only(request, claimed_org_id=org_id)
+
+    async with tenant_scoped_connection(verified_org_id) as conn:
+        heads = await pg_store.list_document_heads(conn, verified_org_id, path, None)
+        artifacts_deleted, episodes_deleted = await document_purge.purge_documents(
+            conn, verified_org_id, heads
+        )
+
+    logger.info(
+        "document_deleted",
+        org_id=verified_org_id,
+        path=path,
+        artifacts_deleted=artifacts_deleted,
+        episodes_deleted=episodes_deleted,
+    )
+    return {
+        "status": "ok",
+        "artifacts_deleted": artifacts_deleted,
+        "episodes_deleted": episodes_deleted,
     }
 
 

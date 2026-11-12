@@ -236,8 +236,8 @@ def test_webhook_delete_is_immediate(webhook_client):
     body = json.dumps(delete_payload).encode()
     sig = _sign(body, WEBHOOK_SECRET)
 
-    mock_delete = AsyncMock(return_value=None)
-    mock_soft_delete = AsyncMock(return_value=None)
+    mock_heads = AsyncMock(return_value=["artifact-1"])
+    mock_purge = AsyncMock(return_value=(1, 0))
 
     with (
         patch(
@@ -245,14 +245,8 @@ def test_webhook_delete_is_immediate(webhook_client):
             new_callable=AsyncMock,
             return_value="zitadel-org-123",
         ),
-        patch(
-            "knowledge_ingest.qdrant_store.delete_document",
-            mock_delete,
-        ),
-        patch(
-            "knowledge_ingest.pg_store.soft_delete_artifact",
-            mock_soft_delete,
-        ),
+        patch("knowledge_ingest.pg_store.list_document_heads", mock_heads),
+        patch("knowledge_ingest.document_purge.purge_documents", mock_purge),
     ):
         resp = client.post(
             "/ingest/v1/webhook/gitea",
@@ -262,14 +256,10 @@ def test_webhook_delete_is_immediate(webhook_client):
 
     assert resp.status_code == 200
     assert resp.json()["deleted"] == 1
-    # SPEC-TI-003-FOLLOWUP-001: pg_store.soft_delete_artifact now takes
-    # ``conn`` as its first argument. qdrant_store.delete_document is
-    # unchanged (no PG connection required). Use ``ANY`` for the conn
-    # so the assertion stays focused on the tenant scoping arguments.
     from unittest.mock import ANY
 
-    mock_delete.assert_called_once_with("zitadel-org-123", "my-kb", "docs/old.md")
-    mock_soft_delete.assert_called_once_with(ANY, "zitadel-org-123", "my-kb", "docs/old.md")
+    mock_heads.assert_called_once_with(ANY, "zitadel-org-123", "docs/old.md", "my-kb")
+    mock_purge.assert_called_once_with(ANY, "zitadel-org-123", ["artifact-1"])
 
 
 @pytest.mark.asyncio

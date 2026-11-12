@@ -145,15 +145,61 @@ matches what was last ingested (e.g., a bulk sync re-sending unchanged pages), t
 pipeline is skipped and the request returns `{"status": "skipped"}`. The hash is stored
 on every new artifact so subsequent runs can detect no-ops.
 
-**Page deletes** are still processed immediately — no debounce. Qdrant vectors and the
-artifact record are removed as soon as the webhook fires.
+**Page deletes** are still processed immediately — no debounce. The document is deleted
+for good as soon as the webhook fires (see "Replaced keeps history, deleted is gone" below).
 
 The `org_id` (the Zitadel organization ID) is read from the Gitea organization's
 *description* field. This is a naming convention: whenever a Klai org is provisioned, its
 Zitadel org ID is written into the Gitea org description so the webhook handler can
 resolve it without a separate lookup.
 
-On page delete: all Qdrant vectors for that document path are removed.
+### Replaced keeps history, deleted is gone
+
+A re-ingest of changed content **replaces** a document: the old `knowledge.artifacts`
+row is closed (`belief_time_end = now`), keeps its `document_text`, and is linked to the
+new row through `superseded_by`. That history stays.
+
+A **delete** removes the document and every earlier version of it from every store. All
+single-document delete paths go through one operation,
+`knowledge_ingest/document_purge.py::purge_documents`:
+
+| Delete path | Entry point |
+|---|---|
+| A user deletes an uploaded file | `DELETE /knowledge/v1/kb/{kb_slug}/uploads/{artifact_id}` |
+| A crawled page no longer exists | `adapters/crawler.py::_purge_stale_paths` after a complete crawl |
+| A docs page is removed (Gitea webhook) | `routes/ingest.py::_purge_removed_paths` |
+| A connector document is gone at the source | `DELETE /ingest/v1/connector/document` |
+| A personal item is deleted | `DELETE /knowledge/v1/personal/items/{artifact_id}` |
+| A Scribe transcript is deleted | `DELETE /ingest/v1/document?org_id=&path=scribe/<id>` (all KBs of the org) |
+
+The operation closes the active rows first and marks them `index_status = 'deleting'`
+(search stops returning them, enrichment and graph workers abort on a non-active
+artifact), walks `superseded_by` back to every version (the whole chain; the walk stops
+on a cycle instead of at a depth), deletes the graph episodes and the Qdrant points of all
+versions, and hard-deletes the rows last: `knowledge.artifacts` (including
+`document_text`), `parent_chunks` and `artifact_images` (cascade), `embedding_queue`,
+`artifact_entities`, `derivations`, and `crawled_pages` / `page_links` for paths no live
+row uses. If an external store refuses, the request fails and the rows stay closed and
+marked, so a repeated delete finishes the job; for crawled pages the next complete crawl
+of the connector retries every page of that connector still marked `deleting`. Every
+statement is bound to the caller's `org_id`. An enrichment job that writes points after
+its artifact was deleted or replaced removes them again.
+
+The transcript route accepts only `scribe/<transcription id>` paths and only the `scribe`
+caller service. The personal-item delete runs the user-bound identity assertion.
+
+Reindex (`POST /knowledge/v1/artifacts/{id}/reindex`) never reopens a replaced version
+(one with a successor, or one whose knowledge base and path already have an active row)
+nor a document whose delete has not finished. It still reopens a closed head with no
+successor and nothing live on its path, which is how the portal repairs an upload the
+drift repair retired. Documents deleted before this existed are reported (dry run) and,
+per approved run, purged by `klai-knowledge-ingest/scripts/purge_deleted_documents.py`;
+closed rows without `document_text` are reported separately and never purged, because
+the drift repair closes rows the same way. Object-storage images of deleted documents
+are not removed yet.
+
+Whole-connector, whole-KB and whole-organisation deletes were already hard deletes and are
+unchanged.
 
 ### 1.2 External sources via klai-connector
 
