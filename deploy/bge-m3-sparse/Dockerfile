@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Apply security patches to base image OS packages. Built on gpu-01 rather
 # than in CI, so nothing else would ever catch a stale OS package here.

@@ -2,7 +2,7 @@
 # mirrors the repo layout under /repo so the path dep
 # `../klai-libs/connector-credentials` resolves WITHIN the workspace.
 
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # uv from the official distroless image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
