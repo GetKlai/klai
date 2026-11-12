@@ -104,6 +104,17 @@ does not fire.
 and need to see the literal text of failing queries. Don't forget to
 flip back when done.
 
+## Chat widget conversations are not telemetry
+
+A conversation a visitor has through your chat widget is the service
+itself, so the telemetry mode does not decide how long it is kept. Its
+messages, the visitor's name and e-mail address (when your widget asks
+for them) and the explanation of the automatic quality verdict are kept
+for your conversation retention period: 90 days by default, or a period
+between 1 and 365 days that Klai sets for you on request. After that
+only counts and labels remain. The rule per kind of data is in
+[docs/architecture/conversation-retention-and-learning.md](../architecture/conversation-retention-and-learning.md).
+
 ## What is *never* recorded — under any mode
 
 - Authentication credentials, tokens, OAuth refresh tokens

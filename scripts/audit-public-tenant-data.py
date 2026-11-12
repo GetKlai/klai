@@ -10,9 +10,13 @@ done at ``git push``, so a check that runs afterwards can only report it.
 
 What it looks for:
 
-1. A Markdown table whose header names tenants, organisations or customers, with
-   a digit anywhere in a data cell of an ADDED row. That is the artefact that
-   leaked: a name and a count on the same row.
+1. A Markdown table whose header row (the table line above the separator row)
+   names tenants, organisations or customers, with a digit anywhere in an ADDED
+   data row. That is the artefact that leaked: a name and a count on the same
+   row. A table whose header does not name them is not judged by this rule,
+   whatever its cells say: runbook and architecture tables mention "tenant" in
+   ordinary cells and carry step numbers and ports, and were reported row by
+   row until 2026-11-12.
 2. A LibreChat database name (``librechat-<slug>``) that does not already appear
    on the default branch. Those names are per-customer by construction.
 3. A customer name and a count in the same sentence. Folded into rule 4 on
@@ -32,9 +36,13 @@ What it looks for:
    a customer host under a top-level domain missing from that set passes rule 5
    (rule 4 still catches it once its name is on the list).
 
-Only added rows are reported, but the surrounding context is read, because a
-row appended to a table whose header is untouched would otherwise be invisible.
-That is why the caller passes a diff WITH context.
+Only added rows are reported, but the header is looked up wherever it is. First
+in the hunk's context lines, which is why the caller passes a diff WITH context.
+A long table's header lies above the hunk, so it is then read from the file as
+the diff leaves it: the blob named on the diff's ``index`` line (present for a
+staged diff and for any commit range), or the working-tree file when its hash
+matches that blob (a diff against the working tree). When neither can be read,
+the row is reported as per-tenant and the finding says the header was unknown.
 
 It never prints the offending text. A finding names the file, the line and the
 kind — echoing the row would copy the customer data into a CI log, and workflow
@@ -59,6 +67,7 @@ push, and pull-request or issue bodies before they are sent.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import subprocess
@@ -125,6 +134,34 @@ def _is_separator(line: str) -> bool:
     return bool(cells) and all(_SEPARATOR_CELL.match(cell) for cell in cells if cell)
 
 
+def _tenant_table(lines: list[str], i: int, first_line_no: int) -> bool | None:
+    """Whether lines[i] is a data row under a header that names tenants.
+
+    Walks up to the separator row; the header is the line above it. None
+    when the walk runs off the top of ``lines`` while the file goes on above it.
+    """
+    for j in range(i - 1, -1, -1):
+        if not _TABLE_LINE.match(lines[j]):
+            return False
+        if _is_separator(lines[j]):
+            if j == 0:
+                break
+            return bool(_TENANT_WORD.search(lines[j - 1]))
+    return None if first_line_no > 1 else False
+
+
+@functools.cache
+def _post_image(blob: str, path: str) -> list[str] | None:
+    """The file as the diff leaves it: the blob on its ``index`` line, else the working-tree file with that hash."""
+    shown = subprocess.run(["git", "cat-file", "blob", blob], capture_output=True, check=False)
+    if shown.returncode == 0:
+        return shown.stdout.decode("utf-8", "replace").splitlines()
+    on_disk = subprocess.run(["git", "hash-object", "--", path], capture_output=True, text=True, check=False)
+    if on_disk.returncode == 0 and on_disk.stdout.startswith(blob):
+        return Path(path).read_text("utf-8", "replace").splitlines()
+    return None
+
+
 def _names_pattern(names: list[str]) -> re.Pattern[str] | None:
     if not names:
         return None
@@ -189,25 +226,30 @@ def check(diff: str, names: list[str] | None = None) -> list[str]:
     customer = _names_pattern(names or [])
     allowed = _allowed_domains()
     path = ""
+    blob = ""
     line_no = 0
-    in_tenant_table = False
+    hunk: list[str] = []  # the post-image lines of the current hunk
+    hunk_start = 1
     exempt = False
 
     for raw in diff.splitlines():
+        if raw.startswith("diff "):
+            blob = ""
+            continue
+        if raw.startswith("index ") and ".." in raw:
+            blob = raw.split()[1].split("..")[1]
+            continue
         if raw.startswith("+++ b/"):
             path = raw[6:]
             exempt = path == _EXEMPT
-            # Table state may not survive a file boundary: a header at the end of
-            # one file would otherwise condemn an innocent numeric row in the next.
-            in_tenant_table = False
-            line_no = 0
+            hunk, line_no = [], 0
             continue
         if raw.startswith("@@"):
             match = re.search(r"\+(\d+)", raw)
-            line_no = int(match.group(1)) - 1 if match else 0
-            in_tenant_table = False
+            hunk_start = int(match.group(1)) if match else 1
+            hunk, line_no = [], hunk_start - 1
             continue
-        if raw.startswith(("---", "diff ")):
+        if raw.startswith("---"):
             continue
 
         added = raw.startswith("+")
@@ -216,27 +258,30 @@ def check(diff: str, names: list[str] | None = None) -> list[str]:
             continue  # a removed line is not in the result
         body = raw[1:]
         line_no += 1
-        if exempt:
+        hunk.append(body)
+        if exempt or not added:
             continue
 
-        if added:
-            problems.extend(_line_findings(path, line_no, body, customer, allowed))
-            # Before the table logic: a database name on a header line is still one.
-            for match in _LIBRECHAT_DB.finditer(body):
-                if match.group(1) not in known:
-                    problems.append(f"{path}:{line_no}: a customer database name that is new here")
+        problems.extend(_line_findings(path, line_no, body, customer, allowed))
+        for match in _LIBRECHAT_DB.finditer(body):
+            if match.group(1) not in known:
+                problems.append(f"{path}:{line_no}: a customer database name that is new here")
 
-        if not _TABLE_LINE.match(body):
-            in_tenant_table = False
+        if not _TABLE_LINE.match(body) or _is_separator(body) or not _DIGIT.search(body):
             continue
-        if _TENANT_WORD.search(body):
-            # Context counts here on purpose: a row appended under an untouched
-            # header is exactly the case a diff without context cannot see.
-            in_tenant_table = True
-            continue
-        if _is_separator(body):
-            continue
-        if in_tenant_table and added and any(_DIGIT.search(cell) for cell in _cells(body)):
+        # Context lines count: a row appended under an untouched header is exactly
+        # the case a diff without context cannot see. A header above the hunk is
+        # read from the post-image of the file.
+        per_tenant = _tenant_table(hunk, len(hunk) - 1, hunk_start)
+        if per_tenant is None and blob:
+            post = _post_image(blob, path)
+            per_tenant = _tenant_table(post, line_no - 1, 1) if post else None
+        if per_tenant is None:
+            problems.append(
+                f"{path}:{line_no}: a per-tenant row carrying numbers "
+                "(header outside the diff, file unreadable: treated as per-tenant)"
+            )
+        elif per_tenant:
             problems.append(f"{path}:{line_no}: a per-tenant row carrying numbers")
 
     return list(dict.fromkeys(problems))

@@ -12,12 +12,11 @@ Routes:
       or Graphiti is disabled.
 
   POST /internal/v1/orgs/{org_id}/wipe-postgres
-    -- Hard-delete all rows carrying org_id from every knowledge.* table.
-      Idempotent. Tables without an org_id column are intentionally NOT
-      wiped here (artifact_entities, artifact_images, derivations,
-      embedding_queue, rag_eval_results -- they are either cascade-deleted
-      as children of artifacts/entities, or are shared lookup / eval tables
-      with no tenant ownership column).
+    -- Hard-delete all rows of the org from every knowledge.* table.
+      Idempotent. Child tables without an org_id column are reached
+      through their parent: artifact_entities, artifact_images,
+      derivations and parent_chunks by cascade, embedding_queue through
+      the org's artifact ids. rag_eval_results has no tenant ownership.
 
 SPEC-INFRA-TENANT-DELETE-001 Phase 7.
 SPEC-INFRA-TENANT-DELETE-002 G3.
@@ -58,14 +57,12 @@ class WipePostgresResponse(BaseModel):
 # ``artifacts`` is listed last: it has a self-referencing FK
 # (superseded_by -> artifacts.id, NO ACTION) so we null that column for the
 # org before deleting. Its child tables (artifact_entities, artifact_images,
-# derivations) are all CASCADE-deleted automatically.
+# derivations, parent_chunks) are all CASCADE-deleted automatically, and
+# crawl_job_frontier follows crawl_jobs the same way.
 #
-# Tables intentionally excluded (no org_id column):
-#   - artifact_entities  -> CASCADE child of artifacts + entities
-#   - artifact_images    -> CASCADE child of artifacts
-#   - derivations        -> CASCADE child of artifacts
-#   - embedding_queue    -> no FK to artifacts, no org_id; shared infra table
-#   - rag_eval_results   -> eval/analytics table, no tenant ownership column
+# embedding_queue has neither org_id nor a foreign key to artifacts, so its
+# rows are found through the org's artifact ids and must go before them.
+# rag_eval_results is an eval table without a tenant ownership column.
 # ---------------------------------------------------------------------------
 # Pre-formed DELETE statements indexed by table-name. Avoiding an f-string
 # inside the wipe loop keeps three semgrep "asyncpg-sqli" / "raw-query"
@@ -73,12 +70,22 @@ class WipePostgresResponse(BaseModel):
 # user input. The mapping is the single source of truth: any future column-
 # scoping change can update the SQL here without touching call sites.
 _LEAF_TABLE_DELETES: tuple[tuple[str, str], ...] = (
+    (
+        "embedding_queue",
+        "DELETE FROM knowledge.embedding_queue WHERE artifact_id IN "
+        "(SELECT id FROM knowledge.artifacts WHERE org_id = $1)",
+    ),
     ("page_links", "DELETE FROM knowledge.page_links WHERE org_id = $1"),
     ("crawled_pages", "DELETE FROM knowledge.crawled_pages WHERE org_id = $1"),
     ("crawl_jobs", "DELETE FROM knowledge.crawl_jobs WHERE org_id = $1"),
     ("crawl_domains", "DELETE FROM knowledge.crawl_domains WHERE org_id = $1"),
     ("kb_config", "DELETE FROM knowledge.kb_config WHERE org_id = $1"),
     ("org_config", "DELETE FROM knowledge.org_config WHERE org_id = $1"),
+    (
+        "connector_resource_fences",
+        "DELETE FROM knowledge.connector_resource_fences WHERE org_id = $1",
+    ),
+    ("graph_refresh_budget", "DELETE FROM knowledge.graph_refresh_budget WHERE org_id = $1"),
     ("entities", "DELETE FROM knowledge.entities WHERE org_id = $1"),
 )
 
@@ -154,18 +161,10 @@ async def wipe_org_postgres(org_id: str) -> WipePostgresResponse:
     respectively). Idempotent: successive calls return
     ``rows_deleted[table] = 0`` for all tables after the first successful wipe.
 
-    Tables wiped (in FK-safe order):
-      knowledge.page_links, knowledge.crawled_pages, knowledge.crawl_jobs,
-      knowledge.crawl_domains, knowledge.kb_config, knowledge.org_config,
-      knowledge.entities (CASCADE removes artifact_entities rows),
-      knowledge.artifacts (CASCADE removes artifact_entities, artifact_images,
-      and derivations rows).
-
-    Tables intentionally excluded (no org_id column):
-      artifact_entities, artifact_images, derivations -- cascade-deleted as
-      children of artifacts or entities.
-      embedding_queue, rag_eval_results -- shared infra / eval tables with no
-      tenant ownership column; their lifecycle is not org-scoped.
+    Tables wiped (in FK-safe order): ``_LEAF_TABLE_DELETES``, then
+    knowledge.artifacts (CASCADE removes artifact_entities, artifact_images,
+    derivations and parent_chunks rows). rag_eval_results is not
+    org-scoped.
 
     Authentication: ``X-Internal-Secret`` header, enforced by
     ``InternalSecretMiddleware`` at the app layer -- no inline check here.

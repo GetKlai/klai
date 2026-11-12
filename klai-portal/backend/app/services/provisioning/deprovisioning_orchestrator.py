@@ -4,7 +4,7 @@ Entry point: `deprovision_tenant(org_id, deprovisioner_user_id, deprovisioner_ty
 Called as a FastAPI BackgroundTask by both the owner-self-service and platform-admin
 DELETE endpoints.
 
-Failure strategy: fail-loud with Camp 1 light retries. Each of the 21 steps is
+Failure strategy: fail-loud with Camp 1 light retries. Each of the 22 steps is
 idempotent and gets 3 attempts with exponential back-off (1 s, 2 s, 4 s). On
 final step failure the status transitions to `failed_deprovisioning` and
 `last_failure` JSONB is populated. The admin retry endpoint can restart the
@@ -71,7 +71,7 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 class _DeprovisionState:
     """Resource handles loaded at the start of the deprovisioning run.
 
-    All fields needed by the 21 step functions are resolved once in `_load_state`
+    All fields needed by the step functions are resolved once in `_load_state`
     before any step runs. This avoids mid-sequence DB reads and keeps each step
     self-contained.
 

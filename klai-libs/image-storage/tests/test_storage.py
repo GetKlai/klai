@@ -158,3 +158,54 @@ class TestImageUploadResult:
         r = ImageUploadResult(object_key="k", deduplicated=True)
         assert r.object_key == "k"
         assert r.deduplicated is True
+
+
+class TestDeleteImages:
+    """Every image of an org or of one knowledge base goes; nothing outside that prefix."""
+
+    @staticmethod
+    def _bucket(store: ImageStore, keys: set[str], errors: list[str] | None = None) -> set[str]:
+        from types import SimpleNamespace
+
+        def _list(_bucket: str, prefix: str, recursive: bool) -> list[SimpleNamespace]:
+            assert recursive
+            return [SimpleNamespace(object_name=k) for k in sorted(keys) if k.startswith(prefix)]
+
+        def _remove(_bucket: str, objs: list[SimpleNamespace]) -> object:
+            if not errors:
+                for o in objs:
+                    keys.discard(o.name)
+            return iter(errors or ())
+
+        client = MagicMock()
+        client.list_objects = MagicMock(side_effect=_list)
+        client.remove_objects = MagicMock(side_effect=_remove)
+        store._client = client  # type: ignore[attr-defined]
+        return keys
+
+    async def test_org_delete_removes_every_knowledge_base_and_no_other_org(self, fresh_store: ImageStore) -> None:
+        keys = self._bucket(
+            fresh_store,
+            {"42/images/kb-a/1.png", "42/images/kb-b/2.png", "420/images/kb-a/1.png"},
+        )
+
+        assert await fresh_store.delete_images("42") == 2
+        assert keys == {"420/images/kb-a/1.png"}
+        assert await fresh_store.delete_images("42") == 0
+
+    async def test_storage_errors_are_raised_not_counted(self, fresh_store: ImageStore) -> None:
+        keys = self._bucket(fresh_store, {"42/images/kb-a/1.png"}, errors=["AccessDenied"])
+
+        with pytest.raises(RuntimeError, match="1 of 1 images"):
+            await fresh_store.delete_images("42", "kb-a")
+        assert keys == {"42/images/kb-a/1.png"}
+
+    @pytest.mark.parametrize(("org_id", "kb_slug"), [("", None), ("42", ""), ("42/x", None), ("42", "a/b")])
+    async def test_a_segment_that_would_widen_the_prefix_is_refused(
+        self, fresh_store: ImageStore, org_id: str, kb_slug: str | None
+    ) -> None:
+        keys = self._bucket(fresh_store, {"42/images/kb-a/1.png"})
+
+        with pytest.raises(ValueError, match="invalid image prefix segment"):
+            await fresh_store.delete_images(org_id, kb_slug)
+        assert keys == {"42/images/kb-a/1.png"}

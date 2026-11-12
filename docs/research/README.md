@@ -159,6 +159,18 @@ Concrete code changes to implement evidence-weighted scoring in Klai.
 
 ---
 
+### Conversation retention
+
+How long other chat and evaluation products keep the text of a conversation, and what remains after the term.
+
+| Document | Scope | Language |
+|---|---|---|
+| [Conversation retention in other systems](conversation-retention-other-systems.md) | Retention terms of Intercom Fin, Ada, Microsoft Copilot Studio, Zendesk, Langfuse and LangSmith from their own documentation (12 November 2026; three statements re-read in the source), three recurring patterns, and what regulators ask. | NL |
+
+**Key finding:** the shortest default found is thirty days; products that learn from conversations keep raw conversations short and a chosen test set long. The rule Klai derived from it is in [conversation-retention-and-learning.md](../architecture/conversation-retention-and-learning.md).
+
+---
+
 ## Reading order
 
 For someone new to this research:
