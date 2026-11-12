@@ -1,8 +1,15 @@
 """Periodic cleanup for artifacts stuck in pending.
 
-This is a final safety net. Normal enrichment must still set
-``index_status`` to ``synced`` or ``failed`` itself; this janitor only handles
-old pending rows that no longer have a runnable Procrastinate enrichment job.
+``index_status`` says whether a version's raw text is in the vector index. It
+is ``pending`` only while an ingest request writes that text, and during a
+reindex until the enrichment job records its outcome. What this janitor can
+still find is a version whose ingest request died between creating the row
+and finishing the raw write (process killed, vector store error after the
+row was created): its text never became searchable, so ``failed`` is true.
+A reindex whose enrichment job is lost does not reach it, because every way
+such a job ends records the outcome (``derived_state.record_outcome``). Each
+run that marks rows logs ``stale_pending_artifacts_failed`` at warning level,
+which the ``knowledge_ingest_stale_pending_reaper_fired`` alert watches.
 """
 
 from __future__ import annotations

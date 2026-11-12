@@ -343,7 +343,12 @@ async def _rebuild_artifact(
             # delete; _enrich_document opens its own tsc internally.
             from knowledge_ingest import pg_store as _pg_store
 
+            # The rebuild redoes the enrichment: the document says pending
+            # until it ends, and failed when it does not, like a job would.
+            from knowledge_ingest.derived_state import FAILED, PENDING, set_product_state
+
             async with tenant_scoped_connection(org_id) as conn:
+                await set_product_state(conn, artifact_id, "enrichment", PENDING)
                 await _pg_store.delete_parent_chunks_for_artifact(conn, artifact_id)
 
             # Steps 2-3: enrichment + TEI/sparse embedding + Qdrant
@@ -355,28 +360,32 @@ async def _rebuild_artifact(
             # this fix the rebuild path called ``_enrich_document`` without
             # them, so every child chunk had ``parent_chunk_id=None``
             # and parent expansion silently degraded to chunk-text-only.
-            from knowledge_ingest.enrichment_tasks import _enrich_document
+            from procrastinate.exceptions import JobAborted
 
-            written = await _enrich_document(
-                org_id=org_id,
-                kb_slug=kb_slug,
-                path=path,
-                document_text=document_text,
-                chunks=child_texts,
-                title=title,
-                artifact_id=artifact_id,
-                user_id=user_id,
-                extra_payload=extra_payload,
-                synthesis_depth=synthesis_depth,
-                content_type=content_type,
-                parents=parents_serialised,
-                parent_index_per_child=parent_index_per_child,
-                heading_path_per_child=heading_path_per_child,
-            )
-            # _enrich_document logs and swallows infra failures, returning
-            # False; without this check the artifact counted as processed.
-            if not written:
-                raise RuntimeError("enrichment wrote no chunks to Qdrant")
+            from knowledge_ingest.enrichment_tasks import _enrich_document, _finish
+
+            try:
+                await _enrich_document(
+                    org_id=org_id,
+                    kb_slug=kb_slug,
+                    path=path,
+                    document_text=document_text,
+                    chunks=child_texts,
+                    title=title,
+                    artifact_id=artifact_id,
+                    user_id=user_id,
+                    extra_payload=extra_payload,
+                    synthesis_depth=synthesis_depth,
+                    content_type=content_type,
+                    parents=parents_serialised,
+                    parent_index_per_child=parent_index_per_child,
+                    heading_path_per_child=heading_path_per_child,
+                )
+            except JobAborted:
+                raise  # the version or its connector went away: no state
+            except Exception:
+                await _finish("enrichment", artifact_id, FAILED, "rebuild_failed")
+                raise
 
             logger.info(
                 "rebuild_artifact_processed",

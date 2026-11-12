@@ -105,4 +105,6 @@ def test_the_backfill_applies_the_same_rule():
     assert "graph_episode_skip_reason" in source, (
         "backfill bypasses the navigation-page rule -- a rebuild reintroduces every index page"
     )
-    assert "skipped:" in source, "a skipped page must be marked, or resume keeps re-picking it"
+    assert "_db_outcome(artifact_id, NOT_APPLICABLE, skip_reason)" in source, (
+        "a skipped page must be marked, or resume keeps re-picking it"
+    )

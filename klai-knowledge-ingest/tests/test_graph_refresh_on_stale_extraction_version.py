@@ -83,7 +83,7 @@ def _mock_conn() -> MagicMock:
 
 @asynccontextmanager
 async def _tenant_connection(_org_id: str):
-    yield SimpleNamespace()
+    yield SimpleNamespace(fetchrow=AsyncMock(return_value=None), execute=AsyncMock())
 
 
 async def _ingest_unchanged(
@@ -173,7 +173,7 @@ async def test_unchanged_navigation_page_replaces_history_with_current_skip_mark
             "graphiti_episode_ids": [],
             "graphiti_episode_part_count": 0,
             "graphiti_episode_complete": True,
-            "graphiti_episode_id": "skipped:navigation_page",
+            "graphiti_episode_id": None,
             "graphiti_extraction_version": 2,
         },
     )
@@ -375,7 +375,10 @@ async def test_normal_graph_run_stamps_current_extraction_version(graphiti_task)
     assert store.update_artifact_extra.await_args_list[-1] == call(
         ANY,
         _ARTIFACT_ID,
-        {"graphiti_episode_complete": True, "graphiti_extraction_version": 2},
+        {
+            "graphiti_episode_complete": True,
+            "graphiti_extraction_version": 2,
+        },
     )
 
 
@@ -565,13 +568,28 @@ async def test_exhausted_graph_job_waits_out_the_cool_off_but_a_change_extracts_
     )
 
     row = _ArtifactRow({})
-    with pytest.raises(RuntimeError):
+
+    async def _record(product, _artifact_id, state, reason=None):
+        row.extra.update(
+            {
+                f"{product}_state": state,
+                f"{product}_reason": reason,
+                f"{product}_state_at": int(time.time()),
+            }
+        )
+
+    with (
+        patch.object(enrichment_tasks, "_finish", _record),
+        pytest.raises(RuntimeError),
+    ):
         await _run_two_part_job(
             graphiti_task,
             row,
             ["episode-1", None],
             attempts=enrichment_tasks._GRAPHITI_MAX_ATTEMPTS,
         )
+    assert row.extra["graph_state"] == "failed"
+    assert row.extra["graph_reason"] == "retries_exhausted"
     unchanged = _request()
     app = _ProcApp()
 
@@ -580,7 +598,7 @@ async def test_exhausted_graph_job_waits_out_the_cool_off_but_a_change_extracts_
     assert result["graph_refresh"] == "deferred:cool_off"
     app.ingest_graphiti_episode.defer_async.assert_not_awaited()
 
-    cooled_off = {**row.extra, "graphiti_exhausted_at": int(time.time()) - 8 * 86_400}
+    cooled_off = {**row.extra, "graph_state_at": int(time.time()) - 8 * 86_400}
     result = await _ingest_unchanged(unchanged, extra=cooled_off, app=app)
 
     assert result["graph_refresh"] == "queued"

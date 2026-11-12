@@ -207,7 +207,7 @@ characters (see [kb-file-upload.md](kb-file-upload.md)).
 |---------|-------|-----|
 | `rebuild_artifact_failed` with `EnrichmentError` | LiteLLM rate limit or model unavailable | Wait, re-run |
 | `rebuild_artifact_failed` with `UndefinedTableError` | `knowledge.parent_chunks` table missing | Apply migration 015, re-run |
-| `rebuild_artifact_failed` with "enrichment wrote no chunks to Qdrant" | the embedding service or Qdrant failed for that artifact (logged as `enrichment_infra_failed`) | Check the services, re-run |
+| `rebuild_artifact_failed` with a connection or HTTP error from the embedding service or Qdrant | that service failed for the artifact; the error is raised, not swallowed | Check the services, re-run |
 | All artifacts skipped | neither `extra.document_text` nor Qdrant chunks | See "Where the text comes from" above |
 
 ---

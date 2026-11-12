@@ -38,6 +38,7 @@ import sys
 from knowledge_ingest import graph as graph_module
 from knowledge_ingest import pg_store
 from knowledge_ingest.db import tenant_scoped_connection
+from knowledge_ingest.derived_state import DONE
 from knowledge_ingest.graph_refresh import maybe_refresh_stale_graph
 from knowledge_ingest.operations import guard_cli, kb_operation
 from knowledge_ingest.scripts.requeue_failed_artifacts import _procrastinate_app
@@ -71,16 +72,16 @@ async def run(org_id: str, artifact_id: str, execute: bool) -> int:
         print(f"artifact {artifact_id} in org {org_id}")
         print(f"  active: {graph_row['active']}")
         print(f"  extraction_version: {extra.get('graphiti_extraction_version')}")
-        print(f"  finished: {graph_row['finished']}")
+        print(f"  graph_state: {graph_row['graph_state'].state}")
         print(f"  recorded_episode_ids: {recorded}")
         print(f"  missing_in_graph: {missing}")
         refusal = None
         if not graph_row["active"]:
             refusal = "the row is not active; only a current version is re-extracted"
-        elif not graph_row["finished"]:
+        elif graph_row["graph_state"].state != DONE:
             refusal = (
-                "the extraction is not finished (queued, running, failed or quarantined); "
-                "that is the graph job's own state, not a lost write"
+                f"the graph state is {graph_row['graph_state'].state}, not done (queued, "
+                "running, failed or held out); that is the graph job's own state, not a lost write"
             )
         elif not missing:
             refusal = "every recorded episode is in the graph; nothing was lost"

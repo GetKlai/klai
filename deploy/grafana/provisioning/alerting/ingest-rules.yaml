@@ -9,6 +9,8 @@
 #   R18  pg_qdrant_reconcile_missing  HIGH   no reconcile event in 36h
 #        procrastinate_worker_lane_died HIGH a worker lane exited and is
 #                                            being restarted
+#        derived_product_failed       HIGH   a document version's enrichment
+#                                            or graph extraction ended failed
 #
 # Field shape verified against production VictoriaLogs (2026-04-22):
 #   service:knowledge-ingest         → klai-core-knowledge-ingest-1
@@ -323,3 +325,74 @@ groups:
               3. Repeated events for one lane mean the restart does not
                  hold; check procrastinate_worker_lane_restarting and the
                  queue depth in procrastinate_jobs.
+
+      # ── derived_product_failed ─────────────────────────────────────────
+      # A document version's enrichment or graph extraction ended failed:
+      # retries spent, LLM capacity window spent, no stored text, quarantined,
+      # queueing failed, or a stuck job whose work no queued job covers.
+      # set_product_state logs the event once per transition to failed, so
+      # every event is one document that needs a person; nothing re-queues it.
+      - uid: ingest-derived-product-failed
+        title: derived_product_failed
+        condition: threshold
+        data:
+          - refId: query
+            datasourceUid: victorialogs
+            queryType: stats
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: query
+              datasource:
+                type: victoriametrics-logs-datasource
+                uid: victorialogs
+              expr: 'service:knowledge-ingest AND event:derived_product_failed | stats count() as n'
+              queryType: stats
+          - refId: count
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: count
+              type: reduce
+              reducer: last
+              expression: query
+          - refId: threshold
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: threshold
+              type: threshold
+              expression: count
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  reducer: { params: [], type: last }
+                  type: query
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        keepFiringFor: 30m
+        isPaused: false
+        labels:
+          severity: high
+          spec: SPEC-OBS-001
+          service_group: ingest
+          alert_type: derived_product_failed
+        annotations:
+          summary: 'A document version ended without its enrichment or graph extraction'
+          description: |
+            A document's enrichment or graph extraction ended failed. Its raw
+            text stays searchable; the failed product is missing until the
+            document is synced again or re-queued by hand.
+
+            Triage:
+              1. VictoriaLogs: service:knowledge-ingest AND event:derived_product_failed | sort by (_time) desc | limit 50
+              2. Group by product and reason; one reason across many
+                 documents is an outage, a single document is that document.
+              3. Follow the runbook section for the reason.
+          runbook_url: 'docs/runbooks/derived-product-failed.md'

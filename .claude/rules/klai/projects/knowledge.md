@@ -200,6 +200,37 @@ the work or could not tell whether it may write (a failed artifact or
 connector lookup included), in which case it raises, is retried, and ends
 `failed` when retries run out. Never return early without having done the work.
 
+The document version says how each product ended, through
+`derived_state.set_product_state` (keys `enrichment_state` / `graph_state`,
+`_reason`, `_state_at` in `artifacts.extra`): `pending` when queued, `done`,
+`not_applicable` with a reason (policy skip, navigation page, switched off), or
+`failed` with a reason. Work that was needed and not done is `failed` and the
+job ends `failed`; an abandoned job sets nothing. A cancelled job (worker
+shutdown, user abort) is always retried, whatever its attempt count, so it never
+ends with the document pending. `set_product_state` is the only writer and
+enforces the legal moves in one UPDATE on the current row: to `pending` from
+anything (queueing is the deliberate act), and from `pending` or no state to
+`done`, `failed` or `not_applicable`; everything else is refused and logged
+(`derived_state_transition_refused`). Write outcomes through it, never by
+merging state keys into `extra`. Every reader goes through
+`derived_state.product_state`, which derives the state of rows written before
+it existed and says `unknown` where the old fields cannot tell, never `done`.
+Queue through `derived_state.queue_derived_work`: a defer that fails after the
+row is committed marks the product `failed (queue_unavailable)` and the
+request raises, because a retry of the request finds the content unchanged and
+queues nothing; ingest first marks the raw text `synced` and tries every
+product. The move to `failed` logs `derived_product_failed` once at
+error level (alert of the same name, runbook `docs/runbooks/derived-product-failed.md`);
+graph refresh holds a document that failed for a reason a new job would repeat
+(`no_stored_text`, `quarantined` for the current writer build), so a re-sync
+does not alert again. A stuck job is covered by a live job holding its queueing
+lock when that job builds the same product of the same artifact.
+Nothing scans for or re-queues failed or missing work; re-queueing is a manual,
+approved run. `index_status` means only whether the version's raw text is in
+the vector index (`pending` while written or rewritten by a reindex, `synced`,
+`failed` when that write failed, `deleting`),
+for every source alike; it says nothing about enrichment or the graph.
+
 Every writer checks the artifact is active and its connector is active before
 expensive work and again before each irreversible write (Qdrant upsert, each
 graph part); a part written after the document stopped being current is

@@ -33,6 +33,7 @@ import structlog
 from knowledge_ingest import (
     cheap_layer,
     chunker,
+    derived_state,
     embedder,
     enrichment,
     kb_config,
@@ -43,6 +44,7 @@ from knowledge_ingest import (
 )
 from knowledge_ingest.content_profiles import child_chunk_chars, get_profile
 from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
+from knowledge_ingest.derived_state import DONE, FAILED, NOT_APPLICABLE
 from knowledge_ingest.document_normalizer import normalize_document_for_chunking
 from knowledge_ingest.enrichment_policy import (
     GRAPHITI_EXTRACTION_VERSION,
@@ -76,6 +78,11 @@ _GRAPHITI_MAX_ATTEMPTS = 8
 # 23 October 2026 the guilty document crashed it on every attempt, so the
 # second strike costs one more 99-105 s reload instead of seven hours of them.
 _FALKORDB_DEATHS_BEFORE_QUARANTINE = 2
+
+# Enrichment retries: the interactive lane keeps the user's wait under a minute
+# (waits 3, 9, 27 s), the bulk lane rides out a 429 burst (4, 16, 64, 256 s).
+_INTERACTIVE_MAX_ATTEMPTS = 4
+_BULK_MAX_ATTEMPTS = 5
 
 
 class GraphitiEpisodeQuarantined(RuntimeError):
@@ -230,20 +237,13 @@ async def _load_and_enrich(artifact_id: str, batch_offset: int = 0) -> None:
             reason=prechunked_skip,
             docling_chunk_count=extra.get("docling_chunk_count"),
         )
-        await _set_direct_upload_index_status(artifact, "synced")
+        await _finish("enrichment", artifact_id, NOT_APPLICABLE, prechunked_skip)
         return
     if not document_text:
         # Pre-SPEC-INGEST-CONTENT-PG-001 artifact rows may have no
         # document_text on extra. Without a body we cannot enrich; the
         # rebuild_kb path is the right tool to repair these legacy rows.
-        logger.info(
-            "enrichment_aborted_no_document_text",
-            artifact_id=artifact_id,
-            kb_slug=artifact["kb_slug"],
-            path=artifact["path"],
-        )
-        await _set_direct_upload_index_status(artifact, "failed")
-        return
+        await _give_up("enrichment", artifact_id, "no_stored_text")
 
     title: str = extra.get("title") or ""
     document_text = normalize_document_for_chunking(document_text)
@@ -265,7 +265,7 @@ async def _load_and_enrich(artifact_id: str, batch_offset: int = 0) -> None:
             reason=derived_skip,
             chunks=len(chunks_text),
         )
-        await _set_direct_upload_index_status(artifact, "synced")
+        await _finish("enrichment", artifact_id, NOT_APPLICABLE, derived_skip)
         return
     # Route on the points that are indexed, not on a re-chunk of the stored
     # text: a pre-chunked connector document would otherwise re-chunk to fewer
@@ -335,8 +335,9 @@ async def _enrich_next_batch(
             path=path,
             batch_offset=offset,
         )
+        await _finish("enrichment", artifact_id, DONE)
         return
-    written = await _enrich_document(
+    await _enrich_document(
         org_id=org_id,
         kb_slug=kb_slug,
         path=path,
@@ -354,10 +355,10 @@ async def _enrich_next_batch(
     )
     next_offset = offset + size
     if not (
-        written
-        and len(batch) == size
+        len(batch) == size
         and await qdrant_store.has_chunks_from(org_id, kb_slug, path, artifact_id, next_offset)
     ):
+        await _finish("enrichment", artifact_id, DONE)
         return
     from procrastinate.exceptions import AlreadyEnqueued
 
@@ -414,35 +415,64 @@ async def _abandon_if_connector_inactive(
         _abandon("derived_job_aborted_connector_inactive", connector_id=connector_id, **fields)
 
 
-class _WriteCheckFailed(Exception):
-    """The check that decides about a vector write could not be made.
+async def _still_current_for_write(org_id: str, artifact_id: str, connector_id: str | None) -> bool:
+    """Fresh: is the artifact the active version and its connector active?
 
-    Raised instead of the lookup error so ``_enrich_document``'s handler for
-    infrastructure failures does not swallow it: the job must fail and be
-    retried, not end as done with stale or unchecked points.
+    A lookup error propagates: the job fails and is retried.
+    """
+    from knowledge_ingest.connector_state import connector_is_active
+
+    async with tenant_scoped_connection(org_id) as conn:
+        if not await pg_store.artifact_is_active(conn, artifact_id):
+            return False
+    return not connector_id or await connector_is_active(connector_id, fresh=True)
+
+
+class _DerivedWorkFailed(RuntimeError):
+    """The work was needed for a current document and cannot be done; no retry helps.
+
+    Raised after the document records ``failed``; the task's retry strategy
+    gives up on it, so the job ends failed.
     """
 
 
-async def _still_current_for_write(org_id: str, artifact_id: str, connector_id: str | None) -> bool:
-    """Fresh: is the artifact the active version and its connector active?"""
-    from knowledge_ingest.connector_state import connector_is_active
+async def _finish(
+    product: derived_state.Product, artifact_id: str, state: str, reason: str | None = None
+) -> None:
+    """Record the product's final state on the document version, if it is still current."""
+    async with cross_org_admin_connection() as conn:
+        await derived_state.record_outcome(conn, artifact_id, product, state, reason)
 
-    try:
-        async with tenant_scoped_connection(org_id) as conn:
-            if not await pg_store.artifact_is_active(conn, artifact_id):
-                return False
-        return not connector_id or await connector_is_active(connector_id, fresh=True)
-    except Exception as exc:
-        raise _WriteCheckFailed(f"cannot tell whether artifact {artifact_id} is current") from exc
+
+async def _give_up(product: derived_state.Product, artifact_id: str, reason: str) -> NoReturn:
+    """The document says failed, and the job ends failed without a retry."""
+    await _finish(product, artifact_id, FAILED, reason)
+    raise _DerivedWorkFailed(f"{product} of {artifact_id}: {reason}")
+
+
+async def _fail_if_last_attempt(
+    product: derived_state.Product,
+    artifact_id: str,
+    exc: BaseException,
+    context: Any,
+    max_attempts: int,
+) -> None:
+    """On the last run procrastinate makes, a failure means the document gets no product.
+
+    Earlier runs leave the state pending: they are retried. Abandoned jobs
+    (``JobAborted``) and jobs that already recorded their failure are not
+    failures here.
+    """
+    from procrastinate.exceptions import JobAborted
+
+    if isinstance(exc, JobAborted | _DerivedWorkFailed | GraphitiEpisodeQuarantined):
+        return
+    if context is not None and context.job.attempts >= max_attempts:
+        await _finish(product, artifact_id, FAILED, "retries_exhausted")
 
 
 class _EnrichmentDeferred(LLMCapacityUnavailable):
-    """Capacity failure in _enrich_document, carrying what marking the artifact
-    failed needs once the deferral window is spent."""
-
-    def __init__(self, message: str, artifact: dict) -> None:
-        super().__init__(message)
-        self.artifact = artifact
+    """Capacity failure in _enrich_document; the task re-queues the job."""
 
 
 async def _defer_after_llm_capacity(
@@ -457,9 +487,8 @@ async def _defer_after_llm_capacity(
     A fresh job instead of a procrastinate retry, because the deferral window
     has to survive in the job arguments and the new job keeps the full normal
     retry budget for the ordinary failures it may meet once capacity is back.
-    The artifact stays pending: the new job is what the stale-pending reaper
-    looks for. Once the window is spent the artifact is failed here and the
-    job returns, so procrastinate's retries do not run it again.
+    The document stays pending while it waits. Once the window is spent the
+    document records failed and the job ends failed without a retry.
     """
     since = llm_deferred_since or int(time.time())
     if deferral_window_spent(since):
@@ -470,11 +499,7 @@ async def _defer_after_llm_capacity(
             window_hours=DEFERRAL_WINDOW_SECONDS // 3600,
             error=str(exc),
         )
-        # A later batch of a large document is not the document: it stays as
-        # searchable as batch 1 left it.
-        if not task_kwargs.get("batch_offset"):
-            await _set_direct_upload_index_status(exc.artifact, "failed")
-        return
+        await _give_up("enrichment", task_kwargs["artifact_id"], "llm_capacity_exhausted")
     from procrastinate.exceptions import AlreadyEnqueued
 
     delay = deferral_delay_seconds()
@@ -496,58 +521,31 @@ async def _defer_after_llm_capacity(
     )
 
 
-class ArtifactIndexStatusUpdateError(RuntimeError):
-    """Raised when a direct-upload artifact cannot leave pending state."""
-
-
-def _has_source_connector(artifact: dict) -> bool:
-    source_connector_id = artifact.get("source_connector_id")
-    if source_connector_id:
-        return True
-    extra = artifact.get("extra")
-    if isinstance(extra, dict):
-        return bool(extra.get("source_connector_id"))
-    return False
-
-
-async def _set_direct_upload_index_status(artifact: dict, status: str) -> None:
-    """Finish a direct-upload reindex status so the Sources UI cannot hang."""
-    artifact_id = str(artifact.get("artifact_id") or "")
-    org_id = str(artifact.get("org_id") or "")
-    if _has_source_connector(artifact):
-        return
-    if not artifact_id or not org_id:
-        raise ArtifactIndexStatusUpdateError(
-            "missing artifact_id or org_id for index_status update"
-        )
-    try:
-        async with tenant_scoped_connection(org_id) as conn:
-            updated = await pg_store.set_artifact_index_status(conn, artifact_id, org_id, status)
-    except Exception as exc:
-        logger.exception(
-            "artifact_index_status_update_failed",
-            artifact_id=artifact_id,
-            org_id=org_id,
-            status=status,
-        )
-        raise ArtifactIndexStatusUpdateError(
-            f"failed to set index_status={status} for artifact {artifact_id}"
-        ) from exc
-    if updated is None:
-        logger.error(
-            "artifact_index_status_update_missing",
-            artifact_id=artifact_id,
-            org_id=org_id,
-            status=status,
-        )
-        raise ArtifactIndexStatusUpdateError(
-            f"artifact {artifact_id} was not updated to index_status={status}"
-        )
-
-
 def _register_tasks(procrastinate_app: Any) -> None:
     """Register task functions on the given App instance."""
     import procrastinate
+
+    class _GiveUpRetry(procrastinate.BaseRetryStrategy):
+        """``inner``, except for the two ways a job ends without trying the work.
+
+        A recorded or quarantined failure fails for good. A job cancelled from
+        outside (a worker shutting down, a user abort; ``CancelledError``) did
+        not fail at all, so it is always retried, whatever its attempt count:
+        otherwise a cancellation on the last attempt would end the job
+        ``aborted`` with no retry left and the document pending for ever. The
+        retried job then does the work, or abandons it when its version or
+        connector has gone.
+        """
+
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+
+        def get_retry_decision(self, *, exception: BaseException, job: Any) -> Any:
+            if isinstance(exception, GraphitiEpisodeQuarantined | _DerivedWorkFailed):
+                return None
+            if isinstance(exception, asyncio.CancelledError):
+                return procrastinate.RetryDecision(retry_in={"seconds": 0})
+            return self.inner.get_retry_decision(exception=exception, job=job)
 
     # Backoff rationale: enrichment failures in production are dominated by
     # LiteLLM 429s during bulk crawls. Immediate retries (the previous
@@ -561,7 +559,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
         queue=queues.ENRICH_INTERACTIVE,
         # Waits 3s, 9s, 27s — user is watching, keep worst-case added latency
         # under a minute while still escaping a per-minute rate-limit window.
-        retry=procrastinate.RetryStrategy(max_attempts=4, exponential_wait=3),
+        retry=_GiveUpRetry(
+            procrastinate.RetryStrategy(max_attempts=_INTERACTIVE_MAX_ATTEMPTS, exponential_wait=3)
+        ),
         pass_context=True,
     )
     async def enrich_document_interactive(
@@ -582,12 +582,19 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 llm_deferred_since,
                 artifact_id=artifact_id,
             )
+        except Exception as exc:
+            await _fail_if_last_attempt(
+                "enrichment", artifact_id, exc, context, _INTERACTIVE_MAX_ATTEMPTS
+            )
+            raise
 
     @procrastinate_app.task(
         queue=queues.ENRICH_BULK,
         # Waits 4s, 16s, 64s, 256s (~5.7 min total) — nobody is watching bulk
         # jobs, so ride out the whole 429 burst a concurrent crawl produces.
-        retry=procrastinate.RetryStrategy(max_attempts=5, exponential_wait=4),
+        retry=_GiveUpRetry(
+            procrastinate.RetryStrategy(max_attempts=_BULK_MAX_ATTEMPTS, exponential_wait=4)
+        ),
         pass_context=True,
     )
     async def enrich_document_bulk(
@@ -615,21 +622,13 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 artifact_id=artifact_id,
                 batch_offset=batch_offset,
             )
+        except Exception as exc:
+            await _fail_if_last_attempt("enrichment", artifact_id, exc, context, _BULK_MAX_ATTEMPTS)
+            raise
 
     # Expose task functions via app attributes for use in ingest.py
     procrastinate_app.enrich_document_interactive = enrich_document_interactive  # type: ignore[attr-defined]
     procrastinate_app.enrich_document_bulk = enrich_document_bulk  # type: ignore[attr-defined]
-
-    class _QuarantineAwareRetry(procrastinate.BaseRetryStrategy):
-        """The graphiti retry, except that a quarantined episode fails for good."""
-
-        def __init__(self, inner: Any) -> None:
-            self.inner = inner
-
-        def get_retry_decision(self, *, exception: BaseException, job: Any) -> Any:
-            if isinstance(exception, GraphitiEpisodeQuarantined):
-                return None
-            return self.inner.get_retry_decision(exception=exception, job=job)
 
     @procrastinate_app.task(
         queue=queues.GRAPHITI_BULK,
@@ -641,12 +640,22 @@ def _register_tasks(procrastinate_app: Any) -> None:
         # rate-limiting instead of a quiet klai-medium success. A bounded but
         # generous lifetime re-queues the episode instead of dropping it the
         # moment graph.py's own inner retry gives up.
-        retry=_QuarantineAwareRetry(
+        retry=_GiveUpRetry(
             procrastinate.RetryStrategy(max_attempts=_GRAPHITI_MAX_ATTEMPTS, exponential_wait=4)
         ),
         pass_context=True,
     )
-    async def ingest_graphiti_episode(
+    async def ingest_graphiti_episode(context: Any = None, **job_args: Any) -> None:
+        """Extract the document's graph (``_extract_graph``); see it for the contract."""
+        try:
+            await _extract_graph(context, **job_args)
+        except Exception as exc:
+            await _fail_if_last_attempt(
+                "graph", job_args["artifact_id"], exc, context, _GRAPHITI_MAX_ATTEMPTS
+            )
+            raise
+
+    async def _extract_graph(
         context: Any = None,
         *,
         artifact_id: str,
@@ -694,25 +703,18 @@ def _register_tasks(procrastinate_app: Any) -> None:
             connector_id = artifact["extra"].get("source_connector_id")
             document_text = artifact["extra"].get("document_text", "") or ""
             if not document_text:
-                logger.info(
-                    "graphiti_aborted_no_document_text",
-                    artifact_id=artifact_id,
-                    org_id=org_id,
-                )
-                return
+                await _give_up("graph", artifact_id, "no_stored_text")
             # Deaths and quarantine count only for the build that caused them;
             # a new version of the document is a new artifact and starts clean.
             build = graph_writer_build()
             same_build = artifact["extra"].get("graphiti_quarantine_build") == build
             if artifact["extra"].get("graphiti_quarantined_at"):
                 if same_build:
-                    # graph_refresh and re-syncs enqueue it again.
-                    logger.info(
-                        "graphiti_aborted_quarantined",
-                        artifact_id=artifact_id,
-                        org_id=org_id,
-                    )
-                    return
+                    # Reached only by a deliberate re-queue (a reindex): graph
+                    # refresh does not queue a document quarantined for this
+                    # build. The re-queue reopened the state, so this failure
+                    # is recorded and alerted again.
+                    await _give_up("graph", artifact_id, "quarantined")
                 await pg_store.update_artifact_extra(
                     conn,
                     artifact_id,
@@ -845,6 +847,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         falkordb_deaths=deaths,
                         reason="falkordb_died_during_episode",
                     )
+                    await _finish("graph", artifact_id, FAILED, "quarantined")
                     raise GraphitiEpisodeQuarantined(
                         f"FalkorDB died {deaths} times while writing this document's episode"
                     ) from exc
@@ -853,17 +856,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     event, exhausted = _graphiti_episode_failure_event(
                         attempt, _GRAPHITI_MAX_ATTEMPTS
                     )
-                    if exhausted:
-                        # graph_refresh.py holds an unchanged re-sync back for
-                        # a cool-off from this moment instead of starting a
-                        # new ~24h retry cycle right away. The version stays
-                        # stale, so the document is retried after the cool-off
-                        # and resumes after the parts stored so far.
-                        await pg_store.update_artifact_extra(
-                            conn,
-                            artifact_id,
-                            {"graphiti_exhausted_at": int(time.time())},
-                        )
+                    # On the last attempt the task records failed
+                    # (retries_exhausted); graph_refresh.py holds an unchanged
+                    # re-sync back for a cool-off from that moment.
                     (logger.error if exhausted else logger.warning)(
                         event,
                         artifact_id=artifact_id,
@@ -935,6 +930,7 @@ def _register_tasks(procrastinate_app: Any) -> None:
                     "graphiti_stale_episodes_replaced", artifact_id=artifact_id, org_id=org_id
                 )
             await pg_store.update_artifact_extra(conn, artifact_id, final)
+            await derived_state.set_product_state(conn, artifact_id, "graph", DONE)
 
     procrastinate_app.ingest_graphiti_episode = ingest_graphiti_episode  # type: ignore[attr-defined]
 
@@ -956,13 +952,13 @@ async def _enrich_document(
     heading_path_per_child: list[str] | None = None,
     existing_parent_chunk_ids: list[int | None] | None = None,
     chunk_offset: int | None = None,
-) -> bool:
+) -> None:
     """
     Core enrichment logic shared by both task variants.
     Uses content-type profiles for HyPE decisions and context strategy.
-    Errors are logged but do not raise -- raw vectors remain in Qdrant.
+    Errors raise, so the job is retried; the raw vectors stay in Qdrant.
 
-    Returns True when the enriched chunks were written. ``chunks`` is one batch
+    ``chunks`` is one batch
     of a larger document when ``chunk_offset`` is set (the position of its first
     chunk); ``existing_parent_chunk_ids`` then carries the parents the base
     ingest already stored, which are kept as they are.
@@ -1168,10 +1164,8 @@ async def _enrich_document(
                 org_id=org_id,
             )
 
-        await _set_direct_upload_index_status(
-            {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-            "synced",
-        )
+        if chunk_offset is None:
+            await _finish("enrichment", artifact_id, DONE)
 
         total_ms = int((time.monotonic() - t_total) * 1000)
         enriched_count = sum(1 for ec in enriched_chunks if ec.context_prefix)
@@ -1194,21 +1188,15 @@ async def _enrich_document(
             qdrant_ms=qdrant_ms,
             total_ms=total_ms,
         )
-        return True
 
     except enrichment.EnrichmentError as exc:
         if is_llm_capacity_error(exc):
             # The task re-queues the job for later (_defer_after_llm_capacity);
             # the artifact is not failed and this is not an error.
-            raise _EnrichmentDeferred(
-                str(exc),
-                {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-            ) from exc
+            raise _EnrichmentDeferred(str(exc)) from exc
         # Fail-loudly (SPEC-KB-021): LLM enrichment failure must propagate so
-        # Procrastinate retries the job.  Raw chunks from Phase 1 stay in Qdrant
-        # as a temporary fallback; they will be overwritten on successful retry.
-        # After max_attempts the job lands in permanent-failed state — visible in
-        # logs and the Procrastinate dashboard.
+        # Procrastinate retries the job. Raw chunks from Phase 1 stay in Qdrant
+        # meanwhile; after the last attempt the document records failed.
         total_ms = int((time.monotonic() - t_total) * 1000)
         logger.exception(
             "enrichment_failed_will_retry",
@@ -1219,35 +1207,4 @@ async def _enrich_document(
             artifact_id=artifact_id,
             total_ms=total_ms,
         )
-        if not chunk_offset:
-            await _set_direct_upload_index_status(
-                {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-                "failed",
-            )
         raise  # Procrastinate retry handles this
-
-    except Exception as exc:
-        from procrastinate.exceptions import JobAborted
-
-        if isinstance(exc, JobAborted | _WriteCheckFailed):
-            raise  # abandoned, or the write check could not be made: not swallowed
-        # Non-enrichment failures (embedding, Qdrant, network): log and swallow.
-        # Raw vectors remain in Qdrant — document is still searchable with
-        # basic embeddings.  These are infrastructure issues, not data quality
-        # issues, so retrying the enrichment LLM call would not help.
-        total_ms = int((time.monotonic() - t_total) * 1000)
-        logger.exception(
-            "enrichment_infra_failed",
-            kb_slug=kb_slug,
-            path=path,
-            org_id=org_id,
-            artifact_id=artifact_id,
-            chunk_offset=chunk_offset,
-            total_ms=total_ms,
-        )
-        if not chunk_offset:
-            await _set_direct_upload_index_status(
-                {"artifact_id": artifact_id, "org_id": org_id, "extra": extra_payload},
-                "failed",
-            )
-    return False

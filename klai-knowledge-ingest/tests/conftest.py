@@ -77,6 +77,7 @@ def _install_procrastinate_stub() -> None:
     exceptions_mod = types.ModuleType("procrastinate.exceptions")
     exceptions_mod.AlreadyEnqueued = _AlreadyEnqueued  # type: ignore[attr-defined]
     exceptions_mod.UniqueViolation = _UniqueViolation  # type: ignore[attr-defined]
+    exceptions_mod.JobAborted = type("JobAborted", (Exception,), {})  # type: ignore[attr-defined]
 
     pkg = types.ModuleType("procrastinate")
     pkg.exceptions = exceptions_mod  # type: ignore[attr-defined]
@@ -109,6 +110,7 @@ def _install_procrastinate_stub() -> None:
 
     class _Status(enum.Enum):
         ABORTED = "aborted"
+        FAILED = "failed"
 
     jobs_mod = types.ModuleType("procrastinate.jobs")
     jobs_mod.Status = _Status  # type: ignore[attr-defined]

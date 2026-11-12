@@ -190,3 +190,131 @@ async def test_connector_delete_cancels_every_job_of_its_documents_and_nothing_e
         purged, "cancelled"
     )
     assert await _status(pool, kept) == "todo"
+
+
+# -- a stuck job whose queueing lock another job holds ------------------------
+
+
+async def _stuck_job_and_twin(app, pool, task: str, lock: str, stuck: dict, twin: dict) -> int:
+    """A job left ``doing`` by a dead worker, and a later job holding its lock."""
+    queue_name = f"zombie-{uuid.uuid4().hex[:8]}"
+    stuck_id = await app.configure_task(task, queue=queue_name, queueing_lock=lock).defer_async(
+        **stuck
+    )
+    worker_id = await app.job_manager.register_worker()
+    await app.job_manager.fetch_job(queues=[queue_name], worker_id=worker_id)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE procrastinate_workers SET last_heartbeat = now() - interval '1 hour' "
+            "WHERE id = $1",
+            worker_id,
+        )
+    await app.configure_task(
+        twin.pop("task", task), queue=queue_name, queueing_lock=lock
+    ).defer_async(**twin)
+    return stuck_id
+
+
+async def _current_version(conn, org_id: str) -> str:
+    artifact_id = str(uuid.uuid4())
+    await conn.execute(
+        """
+        INSERT INTO knowledge.artifacts (
+            id, org_id, provenance_type, assertion_mode, belief_time_start,
+            belief_time_end, created_at, kb_slug, path, extra
+        ) VALUES ($1, $2, 'observed', 'factual', 1, 253402300800, 1, 'docs', $3,
+                  '{"enrichment_state": "pending"}'::jsonb)
+        """,
+        artifact_id,
+        org_id,
+        f"page-{artifact_id}",
+    )
+    return artifact_id
+
+
+async def _enrichment_state(conn, artifact_id: str) -> tuple[str, str | None]:
+    row = await conn.fetchrow(
+        "SELECT extra->>'enrichment_state' AS s, extra->>'enrichment_reason' AS r "
+        "FROM knowledge.artifacts WHERE id = $1",
+        artifact_id,
+    )
+    return row["s"], row["r"]
+
+
+@pytest.mark.parametrize(
+    "twin",
+    [
+        {"batch_offset": 200},  # the next batch: deferred only after this one wrote
+        {"batch_offset": 0, "llm_deferred_since": 1},  # the capacity re-queue of this job
+        {"resource_key": "connector:org:docs:c:run-a"},  # an old-shape job
+    ],
+    ids=["next-batch", "capacity-requeue", "old-shape"],
+)
+async def test_a_stuck_job_covered_by_its_lock_holder_ends_aborted_and_alerts_nothing(
+    queue, monkeypatch, twin
+) -> None:
+    import structlog
+
+    from knowledge_ingest import db
+    from knowledge_ingest.zombie_recovery import recover_zombie_jobs
+
+    app, pool, conn, org_id = queue
+    artifact = await _current_version(conn, org_id)
+
+    @asynccontextmanager
+    async def _admin():
+        yield conn
+
+    monkeypatch.setattr(db, "cross_org_admin_connection", _admin)
+    lock = f"{org_id}:docs:page:{artifact}"
+    stuck = await _stuck_job_and_twin(
+        app,
+        pool,
+        "enrich_document_bulk",
+        lock,
+        {"artifact_id": artifact, "batch_offset": 0},
+        {"artifact_id": artifact, **twin},
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await recover_zombie_jobs(app)
+
+    assert await _status(pool, stuck) == "aborted"
+    assert await _enrichment_state(conn, artifact) == ("pending", None)
+    assert not [e for e in logs if e["log_level"] == "error"]
+
+
+async def test_a_stuck_job_whose_lock_holder_builds_something_else_fails_the_document(
+    queue, monkeypatch
+) -> None:
+    import structlog
+
+    from knowledge_ingest import db
+    from knowledge_ingest.zombie_recovery import recover_zombie_jobs
+
+    app, pool, conn, org_id = queue
+    artifact = await _current_version(conn, org_id)
+
+    @asynccontextmanager
+    async def _admin():
+        yield conn
+
+    monkeypatch.setattr(db, "cross_org_admin_connection", _admin)
+    stuck = await _stuck_job_and_twin(
+        app,
+        pool,
+        "enrich_document_bulk",
+        f"shared-{artifact}",
+        {"artifact_id": artifact},
+        {"artifact_id": str(uuid.uuid4())},
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await recover_zombie_jobs(app)
+
+    assert await _status(pool, stuck) == "failed"
+    assert await _enrichment_state(conn, artifact) == ("failed", "stuck_job_not_covered")
+    assert [e["event"] for e in logs if e["log_level"] == "error"] == [
+        "derived_product_failed",
+        "zombie_work_not_covered",
+    ]

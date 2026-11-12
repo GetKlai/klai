@@ -114,12 +114,12 @@ groups:
                  indefinitely.
 
       # ── R2: stale-pending-artifact reaper fired ───────────────────────
-      # The reaper (stale_pending_artifact_reaper.py) is a final safety
-      # net: normal enrichment should always set index_status to synced or
-      # failed itself. Baseline is zero fires; if the reaper catches
-      # anything, upstream enrichment is leaving artifacts stuck in
-      # `pending` — a single occurrence in the 30m window is worth paging
-      # on, same reasoning as the pg_qdrant_reconcile_failed rule (R17) in
+      # The reaper (stale_pending_artifact_reaper.py) catches a version
+      # whose ingest request died before its raw text was written:
+      # index_status is pending only during that write and during a
+      # reindex until enrichment records its outcome. Baseline is zero
+      # fires; a single occurrence in the 30m window is worth paging on,
+      # same reasoning as the pg_qdrant_reconcile_failed rule (R17) in
       # ingest-rules.yaml.
       - uid: spec-llm-002-reaper-fired
         title: knowledge_ingest_stale_pending_reaper_fired
@@ -175,26 +175,23 @@ groups:
           summary: 'knowledge-ingest stale-pending-artifact reaper failed one or more artifacts'
           description: |
             `stale_pending_artifact_reaper.py::reap_stale_pending_artifacts`
-            logged `stale_pending_artifacts_failed` — it force-failed one
-            or more knowledge artifacts that had been stuck in `pending`
-            for over 30 minutes with no runnable Procrastinate enrichment
-            job. This is a vangnet, not the normal path: normal enrichment
-            sets `index_status` to `synced` or `failed` itself.
-
-            A reaper fire means something upstream stopped an enrichment
-            job from ever completing or being retried — a crashed worker,
-            a Procrastinate job that silently dropped, or an enrichment
-            call that hung past the job's own timeout without raising.
+            logged `stale_pending_artifacts_failed` — it marked failed one
+            or more document versions whose `index_status` had been
+            `pending` for over 30 minutes with no runnable enrichment job.
+            `index_status` is the version's raw text in the vector index,
+            so this means an ingest request died between creating the row
+            and writing the raw chunks (process killed, vector store error).
+            Enrichment and graph outcomes are not this alert's: they raise
+            `derived_product_failed`.
 
             Triage:
               1. service:knowledge-ingest AND event:stale_pending_artifacts_failed | sort by(_time) desc | limit 20
               2. The log line includes `count`, `cutoff_created_at`, and
                  an `artifacts` list — identify the org_id / kb_id / path
                  of each failed artifact.
-              3. Check whether the enrichment_llm_error burst rule
-                 (spec-llm-001-enrich-429-burst) also fired around the
-                 same window — a 429 storm can starve jobs long enough to
-                 go stale.
-              4. Failed artifacts are NOT automatically retried; re-trigger
-                 enrichment for the affected paths once the root cause is
-                 fixed.
+              3. Look for ingest request errors for the same paths around
+                 the row's created_at (vector store or Postgres errors, a
+                 container restart).
+              4. Failed versions are NOT automatically retried; a new sync of
+                 the source document writes a new version once the root cause
+                 is fixed.

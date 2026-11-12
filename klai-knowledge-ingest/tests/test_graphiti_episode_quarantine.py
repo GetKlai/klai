@@ -155,7 +155,7 @@ class _CapturingApp:
 
 @asynccontextmanager
 async def _fake_conn(org_id):
-    yield SimpleNamespace()
+    yield SimpleNamespace(fetchrow=AsyncMock(return_value=None), execute=AsyncMock())
 
 
 class _Artifact:
@@ -230,9 +230,11 @@ async def test_job_that_kills_falkordb_twice_is_quarantined_and_not_requeued(app
     assert quarantined[0]["kb_slug"] == _KB_SLUG
     assert artifact.extra["graphiti_quarantined_at"]
 
-    # graph_refresh or a re-sync enqueueing it again must not reach FalkorDB.
+    # graph_refresh or a re-sync enqueueing it again must not reach FalkorDB,
+    # and that job ends failed (the document already says quarantined).
     killer.reset_mock()
-    await _run_job(task, artifact, killer, attempts=0)
+    with pytest.raises(enrichment_tasks._DerivedWorkFailed):
+        await _run_job(task, artifact, killer, attempts=0)
     killer.assert_not_awaited()
 
 

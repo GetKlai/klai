@@ -256,10 +256,9 @@ async def test_load_and_enrich_skips_when_artifact_missing():
 
 @pytest.mark.asyncio
 async def test_load_and_enrich_skips_when_document_text_missing():
-    """Legacy artifact rows without document_text are not enrichable
-    via this path; rebuild_kb is the right tool. Soft-skip with a log
-    event, no exception.
-    """
+    """Legacy artifact rows without document_text are not enrichable via this
+    path (rebuild_kb is the tool): the document says failed and the job ends
+    failed without a retry."""
     fake_artifact = {
         "artifact_id": "11111111-2222-3333-4444-555555555555",
         "org_id": "org1",
@@ -285,16 +284,19 @@ async def test_load_and_enrich_skips_when_document_text_missing():
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
         patch(
-            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            "knowledge_ingest.enrichment_tasks._finish",
             new_callable=AsyncMock,
         ) as mock_status,
     ):
-        from knowledge_ingest.enrichment_tasks import _load_and_enrich
+        from knowledge_ingest.enrichment_tasks import _DerivedWorkFailed, _load_and_enrich
 
-        await _load_and_enrich("11111111-2222-3333-4444-555555555555")
+        with pytest.raises(_DerivedWorkFailed):
+            await _load_and_enrich("11111111-2222-3333-4444-555555555555")
 
     mock_enrich.assert_not_called()
-    mock_status.assert_awaited_once_with(fake_artifact, "failed")
+    mock_status.assert_awaited_once_with(
+        "enrichment", "11111111-2222-3333-4444-555555555555", "failed", "no_stored_text"
+    )
 
 
 @pytest.mark.asyncio
@@ -329,7 +331,7 @@ async def test_load_and_enrich_skips_docling_artifact_above_hard_ceiling():
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
         patch(
-            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            "knowledge_ingest.enrichment_tasks._finish",
             new_callable=AsyncMock,
         ) as mock_status,
     ):
@@ -338,7 +340,11 @@ async def test_load_and_enrich_skips_docling_artifact_above_hard_ceiling():
         await _load_and_enrich("11111111-2222-3333-4444-555555555555")
 
     mock_enrich.assert_not_called()
-    mock_status.assert_awaited_once_with(fake_artifact, "synced")
+    assert mock_status.await_args.args[:3] == (
+        "enrichment",
+        "11111111-2222-3333-4444-555555555555",
+        "not_applicable",
+    )
 
 
 @pytest.mark.asyncio
@@ -374,7 +380,7 @@ async def test_load_and_enrich_reindexes_small_truncated_docling_artifact():
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
         patch(
-            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            "knowledge_ingest.enrichment_tasks._finish",
             new_callable=AsyncMock,
         ) as mock_status,
     ):
@@ -384,65 +390,6 @@ async def test_load_and_enrich_reindexes_small_truncated_docling_artifact():
 
     mock_enrich.assert_awaited_once()
     mock_status.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_set_direct_upload_index_status_raises_when_update_returns_none():
-    """A worker may not report succeeded while a direct upload stays pending."""
-    conn = _make_mock_conn()
-    with (
-        patch(
-            "knowledge_ingest.enrichment_tasks.tenant_scoped_connection",
-            return_value=_AsyncContext(conn),
-        ),
-        patch(
-            "knowledge_ingest.enrichment_tasks.pg_store.set_artifact_index_status",
-            new_callable=AsyncMock,
-            return_value=None,
-        ) as mock_set_status,
-    ):
-        from knowledge_ingest.enrichment_tasks import (
-            ArtifactIndexStatusUpdateError,
-            _set_direct_upload_index_status,
-        )
-
-        with pytest.raises(ArtifactIndexStatusUpdateError):
-            await _set_direct_upload_index_status(
-                {
-                    "artifact_id": "11111111-2222-3333-4444-555555555555",
-                    "org_id": "org1",
-                    "extra": {"source_type": "docs"},
-                },
-                "synced",
-            )
-
-    mock_set_status.assert_awaited_once_with(
-        conn,
-        "11111111-2222-3333-4444-555555555555",
-        "org1",
-        "synced",
-    )
-
-
-@pytest.mark.asyncio
-async def test_set_direct_upload_index_status_skips_connector_artifacts():
-    """Connector artifacts do not use upload index_status rows."""
-    with patch(
-        "knowledge_ingest.enrichment_tasks.pg_store.set_artifact_index_status",
-        new_callable=AsyncMock,
-    ) as mock_set_status:
-        from knowledge_ingest.enrichment_tasks import _set_direct_upload_index_status
-
-        await _set_direct_upload_index_status(
-            {
-                "artifact_id": "11111111-2222-3333-4444-555555555555",
-                "org_id": "org1",
-                "extra": {"source_connector_id": "conn-1"},
-            },
-            "synced",
-        )
-
-    mock_set_status.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -564,7 +511,7 @@ async def test_enrich_document_skips_qdrant_write_when_artifact_superseded():
             new_callable=AsyncMock,
         ) as mock_upsert,
         patch(
-            "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
+            "knowledge_ingest.enrichment_tasks._finish",
             new_callable=AsyncMock,
         ) as mock_status,
         pytest.raises(JobAborted),

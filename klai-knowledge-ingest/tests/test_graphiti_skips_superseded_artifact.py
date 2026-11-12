@@ -77,7 +77,7 @@ def graphiti_task() -> object:
 @asynccontextmanager
 async def _fake_conn(org_id):
     assert org_id == _ORG_ID
-    yield SimpleNamespace()
+    yield SimpleNamespace(fetchrow=AsyncMock(return_value=None), execute=AsyncMock())
 
 
 async def _run(

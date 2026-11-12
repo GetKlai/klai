@@ -23,8 +23,9 @@ Usage (inside the running container):
 
 Selection: active artifacts (``belief_time_end = _SENTINEL`` -- the same
 "still current" marker every other active-artifact query in ``pg_store.py``
-uses) with ``index_status = 'failed'``, oldest ``created_at`` first,
-optionally scoped by ``--org`` / ``--kb``.
+uses) whose enrichment failed according to ``derived_state.product_state``
+(legacy rows included), oldest ``created_at`` first, optionally scoped by
+``--org`` / ``--kb``.
 
 Enqueue: defers ``enrich_document_bulk`` -- the exact task normal bulk
 ingest defers (see ``knowledge_ingest/routes/ingest.py``) -- with
@@ -34,16 +35,16 @@ deliberately distinct from normal ingest's
 collide with (or silently no-op against) a legitimate concurrent re-ingest
 of the same document.
 
-This script does NOT touch ``index_status`` itself. ``enrich_document_bulk``
-(via ``_load_and_enrich`` / ``_set_direct_upload_index_status`` in
-``enrichment_tasks.py``) is the sole owner of that field and sets it to
-``synced`` or ``failed`` once the retry completes.
+The script moves each document's enrichment back to pending
+(``queue_derived_work``); ``enrich_document_bulk`` records ``done`` or
+``failed`` once the job completes.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +52,7 @@ import structlog
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
+from knowledge_ingest.derived_state import FAILED, product_state, queue_derived_work
 from knowledge_ingest.operations import guard_cli
 from knowledge_ingest.pg_store import _SENTINEL  # single source of truth -- do not re-literal
 
@@ -72,7 +74,12 @@ async def _select_failed_artifacts(
     kb_slug: str | None,
     limit: int,
 ) -> list[dict]:
-    """Select active, failed artifacts oldest-``created_at``-first.
+    """Select active versions whose enrichment failed, oldest-``created_at``-first.
+
+    Whether it failed is ``derived_state.product_state``'s answer, legacy rows
+    included; the SQL only narrows the rows the reader has to look at. A row
+    whose ``index_status`` is failed but whose enrichment is done had its raw
+    write fail, which a new enrichment does not repair, so it is not selected.
 
     ``belief_time_end = _SENTINEL`` restricts to the currently-active
     belief-time row per artifact -- a superseded/soft-deleted row must
@@ -90,9 +97,12 @@ async def _select_failed_artifacts(
             a.org_id AS org_id,
             a.kb_slug AS kb_slug,
             a.path AS path,
-            a.created_at AS created_at
+            a.created_at AS created_at,
+            a.index_status AS index_status,
+            a.extra::jsonb AS extra
         FROM knowledge.artifacts a
-        WHERE a.index_status = 'failed'
+        WHERE (a.extra::jsonb->>'enrichment_state' = 'failed'
+               OR (a.extra::jsonb->>'enrichment_state' IS NULL AND a.index_status = 'failed'))
           AND a.belief_time_end = $1
           AND ($2::text IS NULL OR a.org_id = $2)
           AND ($3::text IS NULL OR a.kb_slug = $3)
@@ -108,9 +118,16 @@ async def _select_failed_artifacts(
             "kb_slug": row["kb_slug"],
             "path": row["path"],
             "created_at": row["created_at"],
+            "index_status": row["index_status"],
         }
         for row in rows
+        if product_state(_extra(row["extra"]), "enrichment", index_status=row["index_status"]).state
+        == FAILED
     ]
+
+
+def _extra(value: Any) -> dict:
+    return json.loads(value) if isinstance(value, str) else (value or {})
 
 
 @asynccontextmanager
@@ -155,24 +172,39 @@ def _print_dry_run_summary(artifacts: list[dict]) -> None:
 async def _requeue(artifacts: list[dict]) -> tuple[int, int]:
     """Defer ``enrich_document_bulk`` for every artifact.
 
-    Returns ``(enqueued, skipped_already_enqueued)``. ``AlreadyEnqueued`` is
-    expected (concurrent requeue run, or a live job already covers the
-    artifact) and must not abort the remaining batch.
+    Through ``queue_derived_work``: the document's enrichment goes back to
+    pending, the one legal way out of failed, and a queue that fails marks it
+    failed again and stops the run. Returns ``(enqueued,
+    skipped_already_enqueued)``; an artifact a live job already covers is
+    skipped and must not abort the remaining batch.
     """
-    from procrastinate.exceptions import AlreadyEnqueued
-
     total = len(artifacts)
     enqueued = 0
     skipped = 0
-    async with _procrastinate_app() as proc_app:
+    async with _procrastinate_app() as proc_app, cross_org_admin_connection() as conn:
         for idx, artifact in enumerate(artifacts, start=1):
             artifact_id = artifact["artifact_id"]
-            try:
-                await proc_app.enrich_document_bulk.configure(  # type: ignore[attr-defined]
+            if artifact["index_status"] == "failed":
+                # A row from before the enrichment state kept its enrichment
+                # failure in index_status. Back to pending, as a reindex does,
+                # so the job's outcome moves it on.
+                await conn.execute(
+                    "UPDATE knowledge.artifacts SET index_status = 'pending', "
+                    "index_status_changed_at = extract(epoch from now())::bigint "
+                    "WHERE id = $1::uuid AND index_status = 'failed'",
+                    artifact_id,
+                )
+            if await queue_derived_work(
+                conn,
+                artifact_id,
+                "enrichment",
+                proc_app.enrich_document_bulk.configure(  # type: ignore[attr-defined]
                     queueing_lock=f"requeue:{artifact_id}",
-                ).defer_async(artifact_id=artifact_id)
+                ),
+                artifact_id=artifact_id,
+            ):
                 enqueued += 1
-            except AlreadyEnqueued:
+            else:
                 skipped += 1
                 logger.info(
                     "requeue_failed_artifact_already_enqueued",
