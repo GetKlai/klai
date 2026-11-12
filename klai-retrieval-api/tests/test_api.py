@@ -741,7 +741,7 @@ class TestGraphMetadata:
             "chunk_id": "graph:edge-1",
             "text": "Graph edge fact",
             "score": 0.9,
-            "artifact_id": None,
+            "artifact_id": "artifact-abc",
             "content_type": "graph_edge",
             "context_prefix": None,
             "scope": "org",
@@ -774,6 +774,11 @@ class TestGraphMetadata:
                 "retrieval_api.api.retrieve.graph_search.search",
                 new_callable=AsyncMock,
                 return_value=[graph_chunk],
+            ),
+            patch(
+                "retrieval_api.api.retrieve.search.fetch_artifact_display_metadata",
+                new_callable=AsyncMock,
+                return_value={"artifact-abc": {"title": "Graph source"}},
             ),
             patch(
                 "retrieval_api.api.retrieve.step_latency_seconds.labels",

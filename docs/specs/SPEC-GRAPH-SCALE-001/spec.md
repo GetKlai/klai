@@ -1,9 +1,9 @@
 ---
 id: SPEC-GRAPH-SCALE-001
-version: "0.1.0"
-status: draft (research complete, implementation not started)
+version: "0.1.7"
+status: 'implemented and in production (REQ-1 and REQ-2 in PR #1234, REQ-3 spike report #1257, REQ-4 #1263, REQ-5 rollout #1275 with hardening #1278, REQ-6 measured constants #1287); `GRAPH_ANN_ENABLED=true` in the deploy compose for knowledge-ingest and retrieval-api'
 created: 2026-08-26
-updated: 2026-08-26
+updated: 2026-09-01
 author: Claude (Fable), commissioned by Mark Vletter
 priority: high
 related:

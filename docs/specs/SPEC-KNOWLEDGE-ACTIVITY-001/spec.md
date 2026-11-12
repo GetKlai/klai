@@ -1,9 +1,9 @@
 ---
 id: SPEC-KNOWLEDGE-ACTIVITY-001
-version: "0.3.1"
-status: fase 0 t/m 3 gebouwd; fase 0 en 1 live (PR #1434, #1441), fase 2 en 3 in één PR; unlock `knowledge_activity` per tenant door Klai-staff
+version: "0.4.0"
+status: 'fase 0 t/m 3 gebouwd; fase 0 en 1 live (PR #1434, #1441), fase 2 en 3 in één PR; het scherm Kennisgaten van fase 2 is op 11 november 2026 vervangen door de gegroepeerde lijst (PR #2321, zie de notitie onder HISTORY); unlock `knowledge_activity` per tenant door Klai-staff'
 created: 2026-09-15
-updated: 2026-09-17
+updated: 2026-11-11
 author: Claude (Fable 5.1), commissioned by Mark Vletter
 priority: high
 tenant_scope: platform-wide — elke tenant met de `widgets`-unlock; Voys is de eerste die het echt gebruikt
@@ -13,7 +13,7 @@ related:
     gatendashboard "verstopt" zit — dit plan is dat opvolgpunt)
   - SPEC-VOYS-HELPBOT-001 (REQ-1 gap-events vanaf het widget-pad, REQ-3
     thumbs, REQ-5 outcome-heuristiek, REQ-7 broad-mode-toestemming)
-  - SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 / docs/knowledge-retrieval-low-confidence-abstain-2026-05-08.md
+  - SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 / docs/architecture/knowledge-base-ingestion-and-retrieval-plan.md §6 (7 en 8 mei 2026)
     (de `confidence_band`-drempels 0,60 / 0,30 die §4.1 overneemt)
   - SPEC-PRIVACY-QUERY-SHADOW-001 (telemetry-gating op `query_text`, die de
     handmatige gaten uit §4.5 erven)
@@ -69,6 +69,8 @@ de slag moet.
 | Retentie | `widget_messages_retention_days = 7` (`app/core/config.py:384`), sweep in `widget_messages_retention.py` | Gesprekken verdwijnen na 7 dagen; `conversation_quality_judgments.reasoning` wordt dan geleegd, de rest van de rij blijft. | Alles wat dit plan bewaart moet diezelfde purge overleven (§4.2). |
 | Taal | `widget_conversations.language_detected` | Per gesprek de gedetecteerde taal (`String(8)`). | Niet op gaten, niet in filters. |
 | App-navigatie | `routes/app/-app-tools.ts`, `components/layout/Sidebar.tsx` | Menu-items per product (chat, instructions, transcribe, knowledge, docs). De sidebar ondersteunt al `children` per item, getoond zodra het pad met het item begint (`Sidebar.tsx:133`). | Geen item voor gaten of activiteit. |
+
+> De rij Kennisgaten beschrijft de stand van 15 september 2026. Ze is op 11 november 2026 vervangen door de gegroepeerde lijst (PR #2321); de huidige beschrijving staat in knowledge-gap-to-article.md §2.
 
 # 2. Besluiten uit de feedbackronde (15 sep 2026)
 
