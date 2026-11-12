@@ -206,6 +206,7 @@ class SyncEngine:
         # counter and the formula stay aligned because every increment is
         # accompanied by a ``continue`` that skips the success branch.
         skip_reasons: dict[str, int] = {}
+        held_refs: set[str] = set()
         bytes_processed = 0
         error_details: list[dict[str, Any]] = []
 
@@ -458,6 +459,7 @@ class SyncEngine:
                             # Held by knowledge-ingest: neither ingested nor failed.
                             held = PersistSkipReason.SHRUNKEN_VERSION_HELD.value
                             skip_reasons[held] = skip_reasons.get(held, 0) + 1
+                            held_refs.add(ref_key)
                             continue
                         documents_ok += 1
                         documents_changed += int(changed)
@@ -725,7 +727,11 @@ class SyncEngine:
             # knowledge-ingest stores, not against this list.
             if status == SyncStatus.COMPLETED and cursor_state is not None:
                 failed_refs = {e.get("file", "") for e in error_details}
-                discovered_refs = {r.source_ref or r.path for r in refs if (r.source_ref or r.path) not in failed_refs}
+                # A held document is left out as well: the hold ends only when the
+                # same version is seen again, so the next run must offer it again.
+                discovered_refs = {
+                    r.source_ref or r.path for r in refs if (r.source_ref or r.path) not in failed_refs | held_refs
+                }
                 if stale_cleanup_refused:
                     # The listing was refused as empty; keep the previous refs, or
                     # every document would count as new once the token works again.

@@ -426,3 +426,6 @@ async def test_held_shrunken_version_counts_as_skip_not_ok_or_failed() -> None:
     assert sync_run.skip_reasons == {PersistSkipReason.SHRUNKEN_VERSION_HELD.value: 1}
     assert (sync_run.documents_ok, sync_run.documents_failed) == (0, 0)
     assert sync_run.status == SyncStatus.COMPLETED
+    # The hold only ends when the same version is seen again, so the next sync
+    # must offer the document again: it may not be recorded as synced.
+    assert "/shrunk.md" not in sync_run.cursor_state["synced_refs"]
