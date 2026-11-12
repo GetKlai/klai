@@ -66,6 +66,7 @@ import structlog
 
 from knowledge_ingest import document_purge
 from knowledge_ingest.db import close_pool, cross_org_admin_connection, tenant_scoped_connection
+from knowledge_ingest.operations import guard_cli, kb_operation
 from knowledge_ingest.pg_store import PURGE_PENDING
 
 logger = structlog.get_logger()
@@ -258,16 +259,19 @@ async def purge(org_id: str, head_ids: list[str]) -> tuple[int, int]:
 
 async def run(org_id: str | None, execute: bool) -> int:
     try:
-        connection = tenant_scoped_connection(org_id) if org_id else cross_org_admin_connection()
-        async with connection as conn:
-            report = await collect(conn, org_id)
-        print(render(report))
-        if not execute:
-            return 0
-        assert org_id is not None  # main() refuses --execute without --org
-        purged, failed = await purge(org_id, report.deleted_heads.get(org_id, []))
-        print(f"purged {purged} deleted documents, {failed} failed")
-        return 1 if failed else 0
+        async with kb_operation(org_id, None, execute=execute):
+            connection = (
+                tenant_scoped_connection(org_id) if org_id else cross_org_admin_connection()
+            )
+            async with connection as conn:
+                report = await collect(conn, org_id)
+            print(render(report))
+            if not execute:
+                return 0
+            assert org_id is not None  # main() refuses --execute without --org
+            purged, failed = await purge(org_id, report.deleted_heads.get(org_id, []))
+            print(f"purged {purged} deleted documents, {failed} failed")
+            return 1 if failed else 0
     finally:
         await close_pool()
 
@@ -285,6 +289,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.execute and not args.org:
         parser.error("--execute purges one organisation per approved run: pass --org")
+    guard_cli("purge_deleted_documents", args.execute)
     return asyncio.run(run(args.org, args.execute))
 
 

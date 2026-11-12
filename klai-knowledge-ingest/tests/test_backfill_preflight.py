@@ -92,7 +92,7 @@ async def test_corpus_above_threshold_refuses_and_never_ingests():
             return_value=_NEAR_CEILING_EDGE_COUNT,
         ),
     ):
-        result = await backfill.main(org_id="org-1")
+        result = await backfill.main(execute=True, org_id="org-1")
 
     assert result != 0, "a refused build must exit non-zero"
     ingest_episode.assert_not_awaited()
@@ -117,7 +117,7 @@ async def test_force_overrides_the_refusal_and_logs_the_override(caplog):
         ),
         caplog.at_level(logging.WARNING, logger="backfill"),
     ):
-        result = await backfill.main(org_id="org-1", force=True)
+        result = await backfill.main(execute=True, org_id="org-1", force=True)
 
     assert result == 0
     ingest_episode.assert_awaited()
@@ -145,7 +145,7 @@ async def test_below_threshold_proceeds_without_a_force_flag():
         patch("knowledge_ingest.backfill.ingest_episode", ingest_episode),
         patch("knowledge_ingest.backfill._get_current_edge_count", return_value=0),
     ):
-        result = await backfill.main(org_id="org-1")
+        result = await backfill.main(execute=True, org_id="org-1")
 
     assert result == 0
     ingest_episode.assert_awaited()
@@ -177,7 +177,7 @@ async def test_ann_enabled_with_indexes_allows_edge_ceiling_scenario_without_for
         ),
         patch("knowledge_ingest.backfill._graph_ann_indexes_operational", return_value=True),
     ):
-        result = await backfill.main(org_id="org-1")
+        result = await backfill.main(execute=True, org_id="org-1")
 
     assert result == 0
     ingest_episode.assert_awaited()
@@ -211,7 +211,7 @@ async def test_ann_enabled_without_indexes_uses_scan_estimate_and_refuses(caplog
         patch("knowledge_ingest.backfill._graph_ann_indexes_operational", return_value=False),
         caplog.at_level(logging.WARNING, logger="backfill"),
     ):
-        result = await backfill.main(org_id="org-1")
+        result = await backfill.main(execute=True, org_id="org-1")
 
     assert result != 0
     ingest_episode.assert_not_awaited()
@@ -240,7 +240,7 @@ async def test_falkordb_count_failure_refuses_by_default():
             side_effect=RuntimeError("connection refused"),
         ),
     ):
-        result = await backfill.main(org_id="org-1")
+        result = await backfill.main(execute=True, org_id="org-1")
 
     assert result != 0
     ingest_episode.assert_not_awaited()
@@ -265,7 +265,7 @@ async def test_force_overrides_a_falkordb_count_failure_too(caplog):
         ),
         caplog.at_level(logging.WARNING, logger="backfill"),
     ):
-        result = await backfill.main(org_id="org-1", force=True)
+        result = await backfill.main(execute=True, org_id="org-1", force=True)
 
     assert result == 0
     ingest_episode.assert_awaited()

@@ -6,7 +6,7 @@ re-indexes all existing artifacts through the enrichment pipeline, then reports
 a switchover command.
 
 Usage:
-    python -m knowledge_ingest.scripts.migrate_collection [--dry-run] [--batch-size N]
+    python -m knowledge_ingest.scripts.migrate_collection [--execute] [--batch-size N]
 
 After validation, switch the active collection:
     Set QDRANT_COLLECTION=klai_knowledge_v2 in /opt/klai/.env and restart knowledge-ingest.
@@ -22,6 +22,7 @@ import asyncpg
 from knowledge_ingest import embedder, enrichment, qdrant_store
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import _parse_dsn
+from knowledge_ingest.operations import guard_cli, kb_operation
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -174,14 +175,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Migrate Qdrant collection to v2 with named vectors"
     )
-    parser.add_argument("--dry-run", action="store_true", help="List artifacts without migrating")
+    parser.add_argument("--execute", action="store_true", help="Migrate; list without it")
     parser.add_argument(
         "--batch-size", type=int, default=10, help="Concurrent enrichment batch size"
     )
     args = parser.parse_args()
 
+    guard_cli("migrate_collection", args.execute)
+
+    async def run() -> None:
+        # Spans every org, so it holds the all-orgs key.
+        async with kb_operation(None, None, execute=args.execute):
+            await migrate(dry_run=not args.execute, batch_size=args.batch_size)
+
     try:
-        asyncio.run(migrate(dry_run=args.dry_run, batch_size=args.batch_size))
+        asyncio.run(run())
     except KeyboardInterrupt:
         logger.info("Migration interrupted.")
         sys.exit(1)

@@ -250,9 +250,13 @@ base (read-only; this is the dry run), then repair:
 ```bash
 docker exec klai-core-knowledge-ingest-1 \
     python -m knowledge_ingest.scripts.sparse_backfill --org <org_id>
-docker exec klai-core-knowledge-ingest-1 \
+INGEST_OK=1 docker exec -e INGEST_OK=1 klai-core-knowledge-ingest-1 \
     python -m knowledge_ingest.scripts.sparse_backfill --org <org_id> --execute
 ```
+
+`--execute` is refused (exit 2) without `INGEST_OK=1`, set only after the
+owner's yes for that run, and holds a lock per knowledge base, so a second run
+on the same one is refused.
 
 The table lists, per knowledge base, the chunks, those with and without a
 sparse vector, and those with a context sentence and with questions. `--execute`

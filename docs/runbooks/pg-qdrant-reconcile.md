@@ -73,7 +73,7 @@ not report at all.
      Rows created within 24 hours are left out (an extraction may still be
      running). Repair one document with
      `python -m scripts.reextract_document_graph --org <org> --artifact <id>`
-     (dry run first, then `--execute`). `graph_check=error` means the graph
+     (dry run first, then `--execute`, which needs `INGEST_OK=1`). `graph_check=error` means the graph
      could not be read: that is a job failure, not a count. One unrepaired
      loss keeps the nightly run at `status=failed`, and this alert firing,
      every night until the repair command has been run for it; the same
