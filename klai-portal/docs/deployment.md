@@ -11,16 +11,18 @@ appear in this repository. For the platform as a whole, see
 
 Workflow: [`.github/workflows/portal-api.yml`](../../.github/workflows/portal-api.yml),
 named "Build and push portal-api". It runs on every push to `main` that
-touches the backend, the workflow itself, `deploy/scripts/deploy-portal-api.sh`
-or `deploy/docker-compose.yml` (`portal-api.yml:3-24`), and it can be called
+touches the backend, the shared libraries `klai-libs/chat-prompts`, `klai-libs/citations`,
+`klai-libs/connector-credentials` and `klai-libs/kb-slugs`, the workflow itself,
+`deploy/scripts/deploy-portal-api.sh`, `deploy/docker-compose.yml` or
+`scripts/check-vexa12-deploy-preconditions.sh` (`portal-api.yml:3-24`), and it can be called
 from other workflows.
 
 | Job | What it does |
 |---|---|
 | `quality` | ruff lint and format, code guards, pyright, `pip-audit`, Alembic integrity and post-deploy guards, expand-then-contract check, pytest |
 | `rls-policy-smoke-test` | Applies every `post_deploy_*.sql` to a throwaway PostgreSQL and checks the row-level-security policies (`portal-api.yml:128`) |
-| `zitadel-password-policy-drift` | Checks that the production password policy matches what the portal enforces (`portal-api.yml:392`) |
-| `build-push` | Builds `klai-portal/backend/Dockerfile` and pushes `ghcr.io/getklai/portal-api:<git sha>`, plus `latest` on `main` (`portal-api.yml:455-490`) |
+| `zitadel-password-policy-drift` | On a push to `main` only: checks that the production password policy matches what the portal enforces (`portal-api.yml:392`) |
+| `build-push` | Builds `klai-portal/backend/Dockerfile` and pushes `ghcr.io/getklai/portal-api:<git sha>` and `latest`, only on a push to `main` (`portal-api.yml:455-490`) |
 | `scan` | Trivy scan of the image; a high or critical finding stops the deploy (`portal-api.yml:492-541`) |
 | `deploy` | On `main` only, after every gate: rolls the image out to production, one run at a time (`portal-api.yml:543-560`) |
 

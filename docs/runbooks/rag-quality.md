@@ -54,7 +54,7 @@ docker exec klai-core-postgres-1 psql -U klai -d klai -c "
 ```
 
 Common patterns:
-- **`null_count` is high**: judge or retrieval is failing. Check `meta.error` for `retrieval_failed:` or `judge_answer_failed`. Likely root cause: klai-fast / LiteLLM proxy down, OR retrieval-api down, OR `RETRIEVAL_INTERNAL_SECRET` rotation broke auth.
+- **`null_count` is high**: judge or retrieval is failing. Check `meta.error` for `retrieval_failed:` or `judge_answer_failed`. Likely root cause: the judge aliases `klai-ingest` or `klai-medium` (budget spent, or LiteLLM proxy down; `klai-ingest` has no fallback and its own budget, `deploy/litellm/config.yaml:283-299`, `klai-knowledge-ingest/knowledge_ingest/config.py:551-553`), OR retrieval-api down, OR `RETRIEVAL_INTERNAL_SECRET` rotation broke auth.
 - **Faithfulness dropped uniformly** (most queries from 0.9 → 0.7): the corpus changed underneath us. New ingest moved the baseline. Check `knowledge.artifacts` row count diff between the two days.
 - **A specific subset failed**: targeted regression. Look at the `query_id` prefix (`chat-easy-*`, `chat-vague-*`, `chat-synth-*`) — if all the easy-lookup canaries dropped, retrieval lost a key chunk.
 
@@ -62,7 +62,7 @@ Common patterns:
 
 ```bash
 # Retrieval-api health
-docker logs --tail 50 klai-core-klai-retrieval-api-1 2>&1 | grep -iE "error|warn" | head -20
+docker logs --tail 50 klai-core-retrieval-api-1 2>&1 | grep -iE "error|warn" | head -20
 
 # LiteLLM proxy health (judge LLM path)
 docker logs --tail 50 klai-core-litellm-1 2>&1 | grep -iE "error|429|503|unauthorized" | head -20
@@ -84,7 +84,7 @@ This runs the same suite synchronously and prints per-query results. Cheaper tha
 
 ### Step 5 — Decide whether to escalate
 
-- If infra issue is fixed: do nothing, alert auto-resolves on the next 6h evaluation cycle once two consecutive `baseline` runs are above 0.80 again.
+- If infra issue is fixed: do nothing, alert auto-resolves on the next 6h evaluation cycle once the last two nightly `baseline` runs are no longer both below 0.80 (`deploy/grafana/provisioning/alerting/rag-eval-rules.yaml:23-65`).
 - If the corpus changed and the new baseline is the new normal: file a follow-up SPEC and lower the alert threshold to the new floor (in `deploy/grafana/provisioning/alerting/rag-eval-rules.yaml`).
 - If a Tier-2/3 SPEC implementation is the cause (someone shipped a `variant` that became the default — should not happen): revert.
 
@@ -141,7 +141,7 @@ the same query.
 
 ```bash
 # Retrieval-api recent errors
-docker logs --tail 100 klai-core-klai-retrieval-api-1 2>&1 | grep -iE "error|warn|qdrant|rerank" | head -30
+docker logs --tail 100 klai-core-retrieval-api-1 2>&1 | grep -iE "error|warn|qdrant|rerank" | head -30
 
 # knowledge-ingest eval logs
 docker logs --tail 200 klai-core-knowledge-ingest-1 2>&1 | grep -E "rag_eval_|canary" | head -50
@@ -172,7 +172,7 @@ new baseline run has no canary failures.
 **UID:** `spec-rag-001-low-confidence-rate`
 **Severity:** HIGH
 
-**Situation:** More than 20% of retrieval responses for a given tenant have been classified `confidence_band=low` or `confidence_band=unknown` continuously for 5 minutes over the trailing 1-hour window. This is not a hard outage (chat keeps working), but the anti-hallucination injection (REQ-2) is likely marking many turns as low-relevance. The portal reads the band from the `/retrieve` response: a `low` or `unknown` band without direct evidence for the question sets the turn's `low_confidence` flag (`klai-portal/backend/app/services/retrieval_context.py:1017`), and a sub-question whose band is `low` or `unknown` gets a low-relevance note in its evidence block (`klai-portal/backend/app/services/knowledge_prompts.py:88`). How a turn uses the band is described in `docs/architecture/chat-system.md`. Triage during business hours unless customer escalation is active.
+**Situation:** More than 20% of retrieval responses for a given tenant have been classified `confidence_band=low` or `confidence_band=unknown` continuously for 5 minutes over the trailing 1-hour window. This is not a hard outage (chat keeps working). The portal reads the band from the `/retrieve` response: a `low` or `unknown` band without direct evidence for the question sets the turn's `low_confidence` flag (`klai-portal/backend/app/services/retrieval_context.py:1017`), and a sub-question whose band is `low` or `unknown` gets a low-relevance note in its evidence block (`klai-portal/backend/app/services/knowledge_prompts.py:88`). How a turn uses the band is described in `docs/architecture/chat-system.md`. Triage during business hours unless customer escalation is active.
 
 **What `confidence_band` means:** the retrieval-api classifies each `/retrieve` response by the maximum rank score over all served chunks that have a reranker score (`klai-retrieval-api/retrieval_api/api/ranking.py:18`; the value includes the page-context boost and the product demotion):
 - `high` when `>= 0.60` — retrieval found relevant content
@@ -228,7 +228,7 @@ Look at the `reranker_scores_top5` field values (the top five reranker scores of
 Also check whether there was a recent `confidence_band_high_threshold` or `confidence_band_low_threshold` config change in the retrieval-api environment:
 
 ```bash
-ssh core-01 "docker exec klai-core-klai-retrieval-api-1 printenv | grep -i confidence"
+ssh core-01 "docker exec klai-core-retrieval-api-1 printenv | grep -i confidence"
 ```
 
 **Resolution:** if the thresholds are mistimed, adjust `CONFIDENCE_BAND_HIGH_THRESHOLD` and `CONFIDENCE_BAND_LOW_THRESHOLD` env vars in `deploy/docker-compose.yml` (retrieval-api environment block) and redeploy via `compose-up.sh`. The defaults are `0.60` and `0.30` per SPEC-RAG-LOW-CONFIDENCE-ABSTAIN-001 REQ-1. Any change below `0.20` for the low threshold or above `0.50` for the high threshold requires SPEC sign-off.
@@ -239,7 +239,7 @@ ssh core-01 "docker exec klai-core-klai-retrieval-api-1 printenv | grep -i confi
 
 **Most likely cause when the alert fires suddenly across all tenants and the low-confidence rate jumps to 80–100% (i.e. the reranker is returning noise or zeroes uniformly).**
 
-Check the Grafana `Reranker latency` and `Reranker fallback rate` panels on the `klai-health` dashboard.
+The reranker runs on the GPU host, not as a core-01 container. When a rerank call fails, retrieval-api logs `Reranker call failed, falling back to Qdrant scores` (`klai-retrieval-api/retrieval_api/services/reranker.py:60`) and serves the Qdrant scores; the `unknown` band in `retrieval_confidence_band_total` shows how often that leaves a response without a reranker score.
 
 Also check retrieval-api container health directly:
 
@@ -247,16 +247,13 @@ Also check retrieval-api container health directly:
 ssh core-01
 
 # Retrieval-api recent errors
-docker logs --tail 50 klai-core-klai-retrieval-api-1 2>&1 | grep -iE "error|warn|rerank|timeout" | head -20
-
-# Reranker service (if separate)
-docker logs --tail 50 klai-core-klai-reranker-1 2>&1 | grep -iE "error|warn" | head -20 2>/dev/null || echo "No separate reranker container"
+docker logs --tail 50 klai-core-retrieval-api-1 2>&1 | grep -iE "error|warn|rerank|timeout" | head -20
 ```
 
 If `confidence_band=unknown` is dominating (not `band=low`), the reranker has likely fallen back or is disabled. Check:
 
 ```bash
-docker exec klai-core-klai-retrieval-api-1 printenv | grep -i rerank
+docker exec klai-core-retrieval-api-1 printenv | grep -i rerank
 ```
 
 **Resolution:** if retrieval-api or the reranker is degraded, follow the standard infrastructure incident runbook at klai-infra/docs/runbooks/platform-recovery.md. The alert auto-resolves once the reranker resumes producing valid scores and the 1h window clears.

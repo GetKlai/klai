@@ -42,8 +42,9 @@ searchable as soon as the synchronous part has written its raw points (dense
 and sparse vectors, no model call). The asynchronous part replaces those points
 with enriched ones and adds the graph extraction.
 
-Every route except `/health` needs the internal secret header
-(`middleware/auth.py:25-37`). Org and user identity are asserted per route; a
+Every route except `/health` and the Gitea webhook needs the internal secret
+header (`middleware/auth.py:22-37`); the webhook checks an HMAC signature
+instead (1.2, `routes/ingest.py:1138-1152`). Org and user identity are asserted per route; a
 personal knowledge base (`personal-<user>`) needs a matching `user_id`
 (`routes/ingest.py:1083-1131`). All tenant tables in the `knowledge` schema are
 row-level secured (`klai-knowledge-ingest/alembic/versions/0002_rls_knowledge_schema.py:36-58`), and
@@ -179,7 +180,7 @@ What the crawler does:
   (`crawl4ai_client.py:137`) and a deterministic frontier with depth
   (`crawl4ai_client.py:1737-1800`). One crawl4ai request per URL, one request
   per second per host by default (`host_pacing.py:1-10`,
-  `routes/crawl_sync.py:257`); congestion halves the rate down to 0.2 per second
+  `routes/crawl_sync.py:268`); congestion halves the rate down to 0.2 per second
   and clean crawls raise it again (`domain_rate_limit_control.py:80`,
   `config.py:144-176`). A host circuit breaker stops fetching a failing host
   (`host_circuit_breaker.py`). `host_pacing.py:27-60` refuses to start with more
@@ -380,11 +381,11 @@ The child size is `chunk_tokens_max * 4` characters
 | `content_type` | Child chars | Question vectors (HyPE) | Context strategy |
 |---|---|---|---|
 | `kb_article` | 1000 | when `synthesis_depth <= 1` | `first_n` |
-| `email_thread` | 1000 | when `synthesis_depth <= 1` | |
-| `pdf_document` | 1200 | always | |
+| `email_thread` | 1000 | when `synthesis_depth <= 1` | `most_recent` |
+| `pdf_document` | 1200 | always | `front_matter` |
 | `meeting_transcript` | 1200 | always | `rolling_window` |
 | `1on1_transcript` | 1000 | always | `rolling_window` |
-| `unknown` and any name that is not a profile | 1000 | never | |
+| `unknown` and any name that is not a profile | 1000 | never | `first_n` |
 
 The context strategies (`first_n`, `rolling_window`, `front_matter`,
 `most_recent`) select the passage of the document handed to the model, and are
@@ -450,8 +451,12 @@ aborts when it is gone, superseded or its connector inactive.
   re-defers the job for up to 3 days and the artifact stays `pending`
   (`llm_capacity.py:50-90`, `enrichment_tasks.py:420-465`). Any other exception
   (embedding service, Qdrant, database) is logged as `enrichment_infra_failed`
-  and swallowed: the status becomes `failed` and the raw points remain
-  searchable (`enrichment_tasks.py:1191-1213`). A batch that fails permanently
+  and swallowed, and the raw points remain searchable. The status becomes
+  `failed` only when the first batch (`chunk_offset` 0) fails and the artifact
+  has no source connector (uploads, docs editor, MCP); the same holds for the
+  `EnrichmentError` path before Procrastinate retries. A connector or crawl
+  document stays `synced`, and so does an artifact whose later batch fails
+  (`enrichment_tasks.py:485-500,1203-1253`). A batch that fails permanently
   stops the chain; earlier chunks keep their context, later ones stay raw.
 
 **The cheap layer.** Part of what a chunk stores follows from its text and the
@@ -460,8 +465,9 @@ line, the anchor line, the `product` label, `text_fingerprint` (a MinHash used
 by retrieval to collapse lookalikes), the vectors of the embedded text and
 `cheap_layer_version` (`cheap_layer.py:1-45`; anchor rules version 2,
 `:40`; anchor limits `anchor_filter.py:27-34,53-59`). Ingest and enrichment
-both compute it through `cheap_layer.cheap_fields`
-(`routes/ingest.py:883`, `enrichment_tasks.py:1056`), and `kb_patch` (5.2)
+both compute it through `cheap_layer.cheap_fields` (`cheap_layer.py:128-140`;
+called from `routes/ingest.py:883` and, through `cheap_layer.apply_to_enriched_chunks`,
+from `enrichment_tasks.py:1058`), and `kb_patch` (5.2)
 recomputes it for points whose version is out of date. Aliases and product
 rules are read from `portal_knowledge_bases` with a 60 s cache
 (`kb_config.py:134-215`). The `source_label` of a chunk is the crawl domain, the
@@ -477,6 +483,9 @@ crawler (`adapters/crawler.py:664`) and the connector
 `knowledge.artifact_images` (`routes/ingest.py:787-806`). The portal serves them
 at `/kb-images/<key>` after checking the session's organisation
 (`deploy/caddy/Caddyfile:325-345`, `klai-libs/image-storage/klai_image_storage/kb_image.py:213`).
+The key format and the `/kb-images/` prefix are invariants: the URLs are stored in
+`extra.image_urls` and ingest parses the key back out of them (`routes/ingest.py:303-319,786-795`),
+so changing either breaks every image URL stored before the change.
 
 ### 2.5 Graph extraction
 
@@ -496,9 +505,9 @@ The task (`enrichment_tasks.py:631-928`, `graph.py:971-1165`):
   (`graphiti_llm_model`), embeddings by TEI bge-m3, every HTTP call taking a
   token from the shared limiter. `graphiti_max_concurrent` is 1 and
   `graphiti_episode_delay` 10 s;
-- retries inside `ingest_episode` three times, waiting 65 s * 2^n on a rate
-  limit, 30 s * 2^n on 503 or provider errors and 1 s * 2^n otherwise
-  (`graph.py:408-423,1005`); the task itself retries 8 times after the first
+- `ingest_episode` makes three attempts with two waits between them: 65 s * 2^n
+  on a rate limit, 30 s * 2^n on 503 or provider errors and 1 s * 2^n otherwise
+  (`graph.py:408-423,1005-1009,1141-1152`); the task itself retries 8 times after the first
   run with exponential wait 4, about 24 hours in total
   (`enrichment_tasks.py:60-72`);
 - a FalkorDB that dies twice during one document's extraction quarantines that
@@ -566,7 +575,7 @@ All in UTC, Procrastinate `@periodic`:
 | `*/15 * * * *` | `reap_stale_pending_artifacts_periodic` | ingest-kb | marks artifacts `pending` for over 30 minutes with no runnable job as failed, at most 500 per run (`stale_pending_artifact_reaper.py:25-27,52-66`) |
 | `17 * * * *` | `sweep_unclassified_kbs_periodic` | maintenance | queues one taxonomy backfill per KB that still has chunks without label or taxonomy (`taxonomy_tasks.py:34,88-102`) |
 | `0 2 * * *` | `evaluate_retrieval_quality_periodic_chat` and `_knowledge_org` | rag-eval | one evaluation run per suite (`eval/ragas_runner.py:604-706`) |
-| `30 2 * * *` | `evaluate_ingest_gap_canary_periodic` | rag-eval | probe queries derived from sources (at most 10, 5 minute budget) (`eval/ragas_runner.py:20-25,394-430,651-665`) |
+| `30 2 * * *` | `evaluate_ingest_gap_canary_periodic` | rag-eval | probe queries derived from sources (at most 10, 5 minute budget) (`eval/ragas_runner.py:44-48,394-430,651-665`) |
 | `30 3 * * *` | `reconcile_pg_qdrant_periodic` | maintenance | read-only diff of active artifacts against Qdrant artifact ids and, with the graph on, of recorded graph episodes against the graph (7.2) |
 
 Not periodic: rebuild, patch, sparse backfill, purge scripts.
@@ -667,7 +676,7 @@ after its artifact was deleted removes what it wrote.
 | Reindex | `POST /knowledge/v1/artifacts/{id}/reindex` sets `pending` and defers `enrich_document_interactive` (`queueing_lock reindex:{org_id}:{id}`); it may reopen a closed head without successor and never a replaced version or a `deleting` row (`routes/kb_sources.py:243-325`, `pg_store.py:2204-2263`) | none |
 | Connector deleted | `connector_purge_task` to `purge_connector` (`connector_cleanup.py:150-360`): artifact ids captured, resource fences marked deleting, crawl, enrichment and graph jobs cancelled by resource key, Postgres artifacts and crawl rows deleted, graph episodes deleted, Qdrant points deleted by `source_connector_id`, orphaned image keys deleted from object storage, then a janitor pass; finally a callback to the portal (`portal_client.py:203-230`). It does not use `purge_documents` | Postgres, Qdrant, FalkorDB, object storage |
 | KB deleted | `DELETE /ingest/v1/kb` (`routes/ingest.py:1314-1334`): graph episodes of the KB, `qdrant_store.delete_kb`, `pg_store.delete_kb` (artifacts and their aux tables, `kb_config`, `crawl_jobs`, `crawled_pages`, `page_links`; `knowledge.entities` are organisation-wide and stay) | Postgres, Qdrant, FalkorDB |
-| Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:281-450`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:91-182`, one transaction for all `knowledge.*` rows of the org) | Postgres, Qdrant, FalkorDB |
+| Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:281-450`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:75-83,91-182`; one transaction that deletes the org's `page_links`, `crawled_pages`, `crawl_jobs`, `crawl_domains`, `kb_config`, `org_config`, `entities` and `artifacts` rows, the last with the rows that cascade from it) | Postgres, Qdrant, FalkorDB |
 
 Scripts for documents deleted before `purge_documents` existed:
 `klai-knowledge-ingest/scripts/purge_deleted_documents.py` (reports closed-but-never-purged
@@ -716,14 +725,16 @@ the way to run it. In code there is no dry run, no flag and no `queueing_lock`
 |---|---|---|---|
 | `kb_patch` | `python -m knowledge_ingest.scripts.kb_patch --org [--kb] [--only aliases\|products] [--execute]` | recomputes the cheap layer (2.3) for points whose `cheap_layer_version` differs; batches of 200; no model call | dry run by default; `--execute` is refused unless `INGEST_OK=1` (`klai-knowledge-ingest/knowledge_ingest/scripts/kb_patch.py:285-291`) |
 | `sparse_backfill` | `python -m knowledge_ingest.scripts.sparse_backfill --org [--kb] [--execute]` | adds missing `vector_sparse` only | dry run by default |
-| `requeue_failed_artifacts` | `--dry-run` or `--execute [--org --kb --limit]` | re-defers `enrich_document_bulk` for active `failed` artifacts, from chunk 0 | dry run by default |
+| `requeue_failed_artifacts` | `--dry-run` or `--execute [--org --kb --limit]` | re-defers `enrich_document_bulk` for active artifacts with `index_status = 'failed'`, from chunk 0, oldest first (`klai-knowledge-ingest/knowledge_ingest/scripts/requeue_failed_artifacts.py:24-27,64-80`); it does not find a connector document or a later batch that failed, because those never get `failed` (2.3) | dry run by default |
 | `repair_pg_qdrant_drift` | `<artifact_id>... [--execute]` | per artifact: reindex, retire, delete points or skip, decided from the current state | dry run by default |
 | `reextract_document_graph` | `python -m scripts.reextract_document_graph --org --artifact [--execute]` in a knowledge-ingest container (`klai-knowledge-ingest/scripts/reextract_document_graph.py:24-28`) | repairs one document whose finished graph extraction lost episodes: keeps the surviving episode ids, marks the extraction not complete with version 0 and queues the normal graph job as a user-requested refresh, without the daily cap or cool-off (`:97-117`; `graph_refresh.py:61-62`) | dry run by default; refuses (exit 2) a document that is not found, not active, not finished, has no missing episode or no stored `document_text` (`:55-90`); when no job is queued the row is written back exactly as it was and the command exits 1 (`:123-134`); nothing runs it automatically |
 | graph `backfill` | `python -m knowledge_ingest.backfill --org-id [--kb-slug] [--limit]` | builds graph episodes for existing artifacts (`backfill.py:1-30`) | flags only |
 | `backfill_crawl_source_identity` | `--apply` | fills `source_domain` and `source_label` | dry run unless `--apply` |
 | login-wall tasks | `backfill_detect_login_walls_task`, `recover_purged_pages_task` | scan crawled pages and purge login stubs | operator-triggered |
 | `purge_deleted_documents`, `prune_stale_graph` | see the delete section | | dry run by default |
-| `migrate_collection` | one-time script, the earlier collection layout to the current one | | `--dry-run` |
+| `migrate_collection` | one-time script, the earlier collection layout to the current one | | runs for real unless `--dry-run` is passed, which only lists the artifacts |
+
+`migrate_collection` has no default dry run: `--dry-run` is a switch that only lists artifacts (`klai-knowledge-ingest/knowledge_ingest/scripts/migrate_collection.py:177`).
 
 Only `kb_patch` checks `INGEST_OK` inside the code. The reconcile
 (`consistency_reconcile.py`) is read-only and nightly (7.2).

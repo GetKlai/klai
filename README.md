@@ -2,13 +2,13 @@
 
 Open-source AI platform — self-hostable, multi-tenant, production-ready.
 
-Klai bundles the tools your team needs to work with AI: a chat interface, a knowledge base, transcription, and document research — all in one platform you control.
+Klai bundles the tools your team needs to work with AI: a chat interface, a knowledge base, and transcription, all in one platform you control.
 
 ## What's included
 
 | Package | Description |
 |---------|-------------|
-| [`klai-portal/`](klai-portal/) | Web portal — tenant management, knowledge base, transcription, research |
+| [`klai-portal/`](klai-portal/) | Web portal: tenant management, knowledge base, transcription |
 | [`docs/`](docs/) | Architecture, runbooks and specifications as markdown (start at [`docs/architecture/README.md`](docs/architecture/README.md)) |
 | [`deploy/`](deploy/) | Self-hosting stack: Docker Compose, Caddy, Zitadel, LiteLLM, LibreChat, the knowledge services |
 

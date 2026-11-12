@@ -60,16 +60,20 @@ Step 6 then creates the portal's own default knowledge bases, the organisation K
 
 ## Internal ingest/retrieval API
 
-All endpoints are internal Docker network only and are not exposed via Caddy. Callers authenticate with `X-Internal-Secret`; portal-api uses a separate secret for each target ([api-auth.md](api-auth.md)).
+All endpoints are internal Docker network only and are not exposed via Caddy. Callers authenticate with `X-Internal-Secret`, except for the Gitea webhook, which carries an HMAC signature in `X-Gitea-Signature` instead (`klai-knowledge-ingest/knowledge_ingest/middleware/auth.py:22-27`, `klai-knowledge-ingest/knowledge_ingest/routes/ingest.py:1138-1152`); portal-api uses a separate secret for each target ([api-auth.md](api-auth.md)).
 
 | Endpoint | Purpose |
 |----------|---------|
 | `POST http://knowledge-ingest:8000/ingest/v1/document` | Ingest a document directly |
 | `POST http://knowledge-ingest:8000/ingest/v1/webhook/gitea` | Gitea push webhook (auto-registered on KB creation) |
 | `POST http://knowledge-ingest:8000/ingest/v1/crawl` | Crawl a URL and ingest the content |
-| `POST http://retrieval-api:8000/retrieve` | Retrieve relevant chunks; called by the portal chat path (`klai-portal/backend/app/services/retrieval_context.py:892-900`) |
+| `POST http://retrieval-api:8040/retrieve` | Retrieve relevant chunks; called by the portal chat path (`klai-portal/backend/app/services/retrieval_context.py:892-900`) |
 
-portal-api calls knowledge-ingest through `klai-portal/backend/app/services/knowledge_ingest_client.py` and retrieval-api through `KNOWLEDGE_RETRIEVE_URL`.
+portal-api calls knowledge-ingest through `klai-portal/backend/app/services/knowledge_ingest_client.py` and retrieval-api through `KNOWLEDGE_RETRIEVE_URL`, which points at port 8040 (`deploy/docker-compose.yml:1785`).
+
+### Knowledge-base preference
+
+The chat bar stores the employee's knowledge-base choice with `PATCH /api/app/account/kb-preference` (`klai-portal/backend/app/api/app_account.py:783`); `GET` on the same path reads it (`:216`). Both answer `kb_retrieval_enabled`, `kb_personal_enabled`, `kb_slugs_filter`, `kb_narrow`, `kb_pref_version` and `active_template_ids`. `kb_slugs_filter` is tri-state: `null` is every organisation KB, `[]` is none, a list is a subset, and an empty list is kept as an empty list. Every submitted slug must belong to the caller's organisation, otherwise the answer is 400 with the unknown slugs. Template ids are checked against the organisation, de-duplicated, and an empty list is stored as `null`. Each successful save increments `kb_pref_version`. `kb_retrieval_enabled` is the master switch: when it is false the internal chat does not search (`klai-portal/backend/app/services/chat_profile.py:92`).
 
 ---
 

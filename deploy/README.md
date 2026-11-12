@@ -164,32 +164,6 @@ service (faster-whisper workers behind a balancer); the `whisper-server`
 reference image is published but is not part of this stack. Ollama is in the
 compose file but no LiteLLM model or fallback uses it.
 
----------|---------|
-| **Zitadel** | Identity provider (SSO, user management, OIDC) |
-| **LiteLLM** | AI model proxy (Mistral API + Ollama fallback) |
-| **LibreChat** | Chat interface for end users |
-| **Portal API** | Workspace provisioning and management API |
-| **Caddy** | Reverse proxy with wildcard TLS (Hetzner DNS) |
-| **klai-mailer** | Transactional email via Zitadel HTTP notifications |
-| **klai-slack** | Klai in Slack: answers from the Partner API in a client's Slack workspace |
-| **GlitchTip** | Frontend error tracking |
-| **Grafana** | Monitoring dashboards |
-| **VictoriaMetrics** | Metrics storage |
-| **VictoriaLogs** | Log aggregation |
-| **Grafana Alloy** | Metrics and log collection agent |
-| **Qdrant** | Vector database for Knowledge module |
-| **knowledge-ingest** | RAG ingestion and retrieval pipeline |
-| **klai-knowledge-mcp** | MCP server for saving to personal knowledge base |
-| **Gitea** | Knowledge base content store (internal) |
-| **docs-app** | Klai Docs (Next.js) |
-| **SearXNG** | Self-hosted web search engine |
-| **Whisper Server** | Speech-to-text transcription |
-| **scribe-api** | Transcription API |
-| **PostgreSQL** | Primary relational database |
-| **MongoDB** | LibreChat conversation storage |
-| **Redis** | Caching and session storage |
-| **Meilisearch** | Full-text search for LibreChat |
-
 ---
 
 ## Configuration
@@ -250,10 +224,12 @@ cd /opt/klai
 git pull                          # if deployed from monorepo
 docker compose pull               # pull latest images
 docker compose up -d              # restart changed services
-
-# Run any new migrations if needed:
-docker exec -i klai-core-postgres-1 psql -U klai -d klai < postgres/migrations/001_knowledge_schema.sql
 ```
+
+Database migrations need no separate step: knowledge-ingest runs
+`alembic upgrade head` when it starts (`klai-knowledge-ingest/entrypoint.sh:9-10`),
+and the portal migrations run during the portal-api deploy
+(`deploy/scripts/deploy-portal-api.sh`).
 
 Before major updates, take a backup first:
 

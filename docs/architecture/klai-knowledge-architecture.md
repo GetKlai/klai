@@ -27,7 +27,7 @@ Everything reaches knowledge-ingest through `POST /ingest/v1/document` (`klai-kn
 
 ### 1.2 An answer out, in brief
 
-`POST /retrieve` on `retrieval-api` (`klai-retrieval-api/retrieval_api/api/retrieve.py:1412`) verifies the caller's identity, rewrites a follow-up question into a self-contained one when the caller did not (`coreference_model` `klai-fast`, 3 second timeout, :703), embeds the query as dense and sparse vectors (:750), searches Qdrant with the legs `vector_chunk`, `vector_questions` and `vector_sparse` fused by reciprocal rank fusion over 60 candidates (:833, `config.py:21`), merges the graph leg (section 6), reranks with `bge-reranker-v2-m3` (:904, `services/reranker.py:50`) and returns `top_k` chunks (default 8) with at most two per source label (`config.py:59`). The full pipeline is [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md).
+`POST /retrieve` on `retrieval-api` (`klai-retrieval-api/retrieval_api/api/retrieve.py:1412`) verifies the caller's identity, rewrites a follow-up question into a self-contained one when the caller did not (`coreference_model` `klai-fast`, 3 second timeout, :703), embeds the query as dense and sparse vectors (:750), searches Qdrant with the legs `vector_chunk`, `vector_questions` and `vector_sparse` fused by reciprocal rank fusion over 60 candidates (:833, `config.py:21`), merges the graph leg (section 6), reranks with `bge-reranker-v2-m3` (:904, `services/reranker.py:50`) and returns `top_k` chunks (default 8) with at most two per source label first and the remaining slots filled from the other candidates (`config.py:59`, `services/diversity.py:24,98-105`). The full pipeline is [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md).
 
 ## 2. The knowledge model as stored
 
@@ -65,7 +65,7 @@ Facts a reader needs when relying on these fields:
 
 - `valid_from` and `valid_until` exist on a point once the enriched path has written it. A point written only by the plain path has neither field until enrichment rewrites it (`qdrant_store.py:316` to `:322` holds the plain payload). The temporal filter in retrieval (`klai-retrieval-api/retrieval_api/services/search.py:91`) reads both the `valid_from`/`valid_until` pair and the older `valid_at`/`invalid_at` pair.
 - `belief_time_end` is never null. The ingest parser does not read `belief_time_end` from frontmatter (`routes/ingest.py:285` to `:296`), so each new row starts at the sentinel; a null in a page's frontmatter is accepted by the docs app and then ignored at ingest.
-- `assertion_mode`, `provenance_type`, `confidence` and `source_note` are returned as response metadata (`search.py:559`, `retrieval_api/models.py:152`). They do not change ranking: the evidence-tier scoring was removed on 20 August 2026 (commit `2ce085277`, `klai-retrieval-api/tests/test_retired_retrieval_experiments.py:12`).
+- Only `assertion_mode` is returned as response metadata (`klai-retrieval-api/retrieval_api/services/search.py:559`, `klai-retrieval-api/retrieval_api/models.py:152`); `provenance_type`, `confidence` and `source_note` stay in the Qdrant payload and are not in the response. None of them changes ranking: the evidence-tier scoring was removed on 20 August 2026 (commit `2ce085277`, `klai-retrieval-api/tests/test_retired_retrieval_experiments.py:12`).
 - There is no `chunk_type` field; the per-chunk classification was removed on 8 June 2026.
 
 ### 2.3 The three axes
@@ -192,7 +192,7 @@ All services below are defined in `deploy/docker-compose.yml`.
 | Ingest | `knowledge-ingest` (:2188), `docling-serve` (:1577), `crawl4ai` (:2374) | document parsing with the docling hybrid chunker; Crawl4AI for web crawling |
 | Retrieval | `retrieval-api` (:1603) | one `/retrieve`; see [knowledge-retrieval-flow.md](knowledge-retrieval-flow.md) |
 | Vectors | `qdrant` (:2120), image `qdrant/qdrant:v1.20.0` | dense `vector_chunk`, dense `vector_questions` (HyPE), sparse `vector_sparse` |
-| Embeddings and reranker | BGE-M3 dense through the alias `klai-bge-m3` (`deploy/litellm/config.yaml:319`); a sparse sidecar (`SPARSE_SIDECAR_URL`); the reranker `TEI_RERANKER_URL` | the host that serves them is set by compose environment, see [platform.md](platform.md) |
+| Embeddings and reranker | BGE-M3 dense through the alias `klai-bge-m3` (`deploy/litellm/config.yaml:319`); a sparse sidecar (`SPARSE_SIDECAR_URL`); the reranker at `infinity_reranker_url` (`klai-retrieval-api/retrieval_api/config.py:16`; compose sets `TEI_RERANKER_URL`, which no code reads) | the host that serves them is set by compose environment, see [platform.md](platform.md) |
 | Graph | `falkordb` (:2142), image `falkordb/falkordb:6.0.4`, Graphiti | section 6 |
 | Relational | `postgres` (:232) | schemas `knowledge`, `docs`, `public` (portal) |
 | LLM routing | `litellm` (:383) | aliases `klai-fast`, `klai-primary`, `klai-medium`, `klai-large` for chat; `klai-ingest` for enrichment and taxonomy classification; `klai-judge` for the judging calls of the gap flow; both background aliases map to Mistral models (`config.yaml:268`, `:300`) |

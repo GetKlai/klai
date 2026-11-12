@@ -117,7 +117,7 @@ The designed loop: users ask, low-confidence answers and support conversations b
 ### GAP-ROUTE-02: the medium tier in routing  ·  M  ·  NOT BUILT
 
 - **Design.** Routing across all four tiers by complexity.
-- **Today.** The router assigns `klai-large`, `klai-fast` or leaves `klai-primary`; `klai-medium` is reached only as a fallback or by an explicit request (`custom_router.py:182` to `:214`).
+- **Today.** The router assigns `klai-large`, `klai-fast` or leaves `klai-primary`; `klai-medium` is reached only by an explicit request, since no router fallback points at it (`deploy/litellm/config.yaml:365`) (`custom_router.py:182` to `:214`).
 
 ### GAP-ROUTE-03: a model tie-breaker in source routing  ·  M  ·  NOT BUILT
 

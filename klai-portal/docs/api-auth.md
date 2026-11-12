@@ -120,8 +120,7 @@ The public reader needs no login and returns 404 for personal KBs and KBs with
 Provisioning writes each tenant's LibreChat environment with its own Zitadel
 OIDC client (`OPENID_*`) for user login, and with `KLAI_CHAT_API_KEY` and
 `KLAI_CHAT_BASE_URL` pointing at portal-api's partner API
-(`klai-portal/backend/app/services/provisioning/generators.py:36-38`,
-`:264-334`). The key is the tenant's internal-chat key, minted during
+(`klai-portal/backend/app/services/provisioning/generators.py:36-38,333-334`). The key is the tenant's internal-chat key, minted during
 provisioning (`klai-portal/backend/app/services/internal_chat_keys.py:41`).
 Chat turns from LibreChat therefore arrive at `/partner/v1/chat/completions`
 like any partner call, and the `internal_chat` permission routes them to the
@@ -169,7 +168,7 @@ the extension with a one-time `ks_code_` code
 code for a `ks_live_` token (`shield.py:348`). Tokens are stored as SHA-256
 hashes (`klai-portal/backend/app/services/shield_tokens.py:9-37`) and checked
 on `/api/shield/*` by `get_shield_auth`, which requires an unrevoked,
-unexpired token whose user is active in the platform org.
+unexpired token whose user is an active admin in the platform org (`klai-portal/backend/app/api/shield.py:187-196`).
 
 ## Endpoint reference: `/api/auth/*`
 

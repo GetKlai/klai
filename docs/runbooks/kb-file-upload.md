@@ -121,14 +121,23 @@ is internal-only (no Caddy route), so external probes are not useful.
 
 ### kb_uploads stuck in `processing` forever
 
-Two causes:
+The poller ends a row by itself in these cases (`klai-portal/backend/app/services/kb_upload_poller.py`):
 
-1. **docling-serve restarted and lost the task.** `task_id` no longer
-   resolves; poller logs `docling result fetch failed`. Solution:
-   manual UPDATE to `failed` so the user can re-upload, then ask the
-   user to re-submit.
-2. **Poller stopped.** Check `kb_upload_poller_started` log on
-   portal-api startup. Restart portal-api if missing.
+- A row that docling keeps reporting as not finished is failed with
+  `processing_deadline_exceeded` after 3 hours (`:57`), logged as
+  `kb_upload_processing_deadline_exceeded` (`:62-90`).
+- A failed status call to docling-serve fails the row with `docling_unreachable`
+  (`:126-131`).
+- A failed result fetch after docling reported success logs
+  `kb_upload_result_fetch_failed` and fails the row with `extraction_failed`
+  (`:155-165`).
+- An `ingesting` row whose result is gone fails with `docling_result_not_found`
+  (`:196-201`, next section).
+
+A row that stays in `processing` or `ingesting` past those limits means the
+**poller stopped**. Check the `kb_upload_poller_started` log on portal-api
+startup and restart portal-api if it is missing. Only for a row the poller cannot
+see, mark it `failed` by hand so the user can re-upload.
 
 Manual recovery query:
 
@@ -219,7 +228,14 @@ enriched. It keeps its raw chunks and its artifact extra carries:
 If a batch fails permanently the chain stops there: chunks before it carry
 their context, chunks after it stay raw (still dense and sparse). Requeue the
 artifact with `knowledge_ingest.scripts.requeue_failed_artifacts`; that starts
-over at chunk 0.
+over at chunk 0. The script selects active artifacts with `index_status = 'failed'`
+(`klai-knowledge-ingest/knowledge_ingest/scripts/requeue_failed_artifacts.py:24-27,64-80`),
+and a failed enrichment only sets that status for an upload without a source
+connector whose first batch failed (`klai-knowledge-ingest/knowledge_ingest/enrichment_tasks.py:485-500,1233-1253`).
+A later batch that failed, or a connector document, stays `synced` and is not
+found by the script. For an upload whose later batch failed, the reindex route
+re-enqueues enrichment (`POST /knowledge/v1/artifacts/{id}/reindex`,
+`klai-knowledge-ingest/knowledge_ingest/routes/kb_sources.py:243-300`).
 
 ### Chunks without a sparse vector
 

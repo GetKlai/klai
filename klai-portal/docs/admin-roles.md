@@ -122,9 +122,10 @@ with `partner_api`, `scribe` and `widgets` (`models/portal.py:28`). Only
 `scribe` and `docs` become products; the others gate features through
 `require_platform_unlocked` or, for partner keys, `assert_platform_unlocked`
 (`permissions.py:479-498`). Only platform admins change unlocks, through
-`/api/admin/orgs/{slug}/platform-unlocks` and `/api/admin/extensions`
-(`klai-portal/backend/app/api/admin/platform_unlocks.py:89`, `:115`;
-`klai-portal/backend/app/api/admin/extensions.py:77`).
+`PATCH /api/admin/orgs/{slug}/platform-unlocks`
+(`klai-portal/backend/app/api/admin/platform_unlocks.py:115`); a tenant admin reads
+the state of their own organisation at `GET /api/admin/extensions`
+(`klai-portal/backend/app/api/admin/extensions.py:77`).
 
 Products are not assigned per user or per group; those endpoints answer 410
 Gone (see [api-auth.md](api-auth.md)).
@@ -196,7 +197,7 @@ notification mail (`klai-portal/backend/app/api/admin/join_requests.py:63`,
 ## Lifecycle
 
 `portal_users.status` is `active`, `suspended` or `offboarded`, enforced by a
-check constraint (`models/portal.py:216`). All endpoints below require
+check constraint (`models/portal.py:215`). All endpoints below require
 `admin` and are scoped to the caller's organisation.
 
 | Method | Path | Effect |
@@ -210,11 +211,10 @@ check constraint (`models/portal.py:216`). All endpoints below require
 | DELETE | `/api/admin/users/{id}` | Delete without decisions (`users.py:992-1043`) |
 | PATCH | `/api/admin/users/{id}/role` | Change role; refuses to change the last admin (`users.py:763-856`) |
 | POST | `/api/admin/users/{id}/promote-admin`, `/demote-admin` | Demotion sets `company` and refuses to leave zero admins (`users.py:1423`, `:1481`) |
-| DELETE | `/api/admin/users/me` | Leave the workspace; refused for the last admin and the last member (`users.py:1539`) |
 
 **Suspend** sets the portal status to `suspended`. `get_caller` answers 403
 `user_suspended` for a suspended user on every request
-(`permissions.py:276-283`), so the session stops working while memberships,
+(`permissions.py:276-285`), so the session stops working while memberships,
 products and data stay as they were. Reactivation restores access.
 
 **Offboard** runs in one database transaction: it requires a decision
@@ -229,7 +229,7 @@ through a new invitation, which reactivates the row.
 **Delete** removes the `portal_users` row. The Zitadel identity is removed only
 when the person has no membership in another workspace; platform-admin
 identities cannot be deleted from a tenant (`users.py:1012-1043`). An admin
-cannot delete themselves this way and uses leave-workspace instead.
+cannot delete themselves this way.
 
 Deleting a whole workspace is a separate flow: `DELETE /api/admin/org/me` for
 its admin and the platform endpoints under `/api/admin/orgs/{slug}/`
