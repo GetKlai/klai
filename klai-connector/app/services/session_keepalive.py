@@ -109,7 +109,6 @@ class SessionKeepAlive:
                 connector_id=str(item.connector_id),
                 org_id=item.org_id,
                 url=url,
-                auth_chain_hosts=list(config.config.get("auth_chain_hosts") or []),
             )
         except Exception:
             logger.warning(
