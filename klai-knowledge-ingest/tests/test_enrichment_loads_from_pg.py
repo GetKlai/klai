@@ -46,6 +46,17 @@ def _install_procrastinate_stub() -> None:
 _install_procrastinate_stub()
 
 
+# procrastinate's own JobAborted (``real_procrastinate``), so an abandoned job is
+# asserted to be what the worker records as ``aborted`` and does not retry.
+JobAborted: type[BaseException]
+
+
+@pytest.fixture(autouse=True)
+def _job_aborted(real_procrastinate):
+    global JobAborted
+    JobAborted = real_procrastinate.exceptions.JobAborted
+
+
 def _make_mock_conn() -> MagicMock:
     conn = MagicMock()
     conn.execute = AsyncMock(return_value=None)
@@ -229,12 +240,18 @@ async def test_load_and_enrich_skips_when_artifact_missing():
         patch(
             "knowledge_ingest.enrichment_tasks._enrich_document", new_callable=AsyncMock
         ) as mock_enrich,
+        patch(
+            "knowledge_ingest.enrichment_tasks.qdrant_store.delete_points_of_artifact",
+            new_callable=AsyncMock,
+        ) as remove_points,
     ):
         from knowledge_ingest.enrichment_tasks import _load_and_enrich
 
-        await _load_and_enrich("00000000-0000-0000-0000-000000000000")
+        with pytest.raises(JobAborted):
+            await _load_and_enrich("00000000-0000-0000-0000-000000000000")
 
     mock_enrich.assert_not_called()
+    remove_points.assert_awaited_once_with("00000000-0000-0000-0000-000000000000")
 
 
 @pytest.mark.asyncio
@@ -550,6 +567,7 @@ async def test_enrich_document_skips_qdrant_write_when_artifact_superseded():
             "knowledge_ingest.enrichment_tasks._set_direct_upload_index_status",
             new_callable=AsyncMock,
         ) as mock_status,
+        pytest.raises(JobAborted),
     ):
         await _enrich_document(
             org_id="org-1",
@@ -611,7 +629,8 @@ async def test_load_and_enrich_skips_superseded_artifact():
     ):
         from knowledge_ingest.enrichment_tasks import _load_and_enrich
 
-        await _load_and_enrich("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        with pytest.raises(JobAborted):
+            await _load_and_enrich("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
     enrich.assert_not_awaited()
 
@@ -621,15 +640,14 @@ async def test_load_and_enrich_skips_superseded_artifact():
 # ---------------------------------------------------------------------------
 
 
-def test_task_variants_only_carry_artifact_id_resource_key_and_batch_position():
-    """Content stays in PostgreSQL; the ownership fence and the position of a
-    large document's next batch are the only other args."""
+def test_task_variants_only_carry_artifact_id_and_batch_position():
+    """Content stays in PostgreSQL; the position of a large document's next
+    batch is the only other arg. No run key: the work belongs to the document."""
     import inspect
 
     from knowledge_ingest import enrichment_tasks
 
     sig = inspect.signature(enrichment_tasks._load_and_enrich)
     params = list(sig.parameters.values())
-    assert [param.name for param in params] == ["artifact_id", "resource_key", "batch_offset"]
-    assert params[1].default is None
-    assert params[2].default == 0
+    assert [param.name for param in params] == ["artifact_id", "batch_offset"]
+    assert params[1].default == 0

@@ -836,7 +836,7 @@ async def test_history_walk_ends_on_a_cycle() -> None:
 
 @pytest.mark.asyncio
 async def test_enrichment_removes_points_written_after_its_artifact_was_deleted(
-    stores, monkeypatch
+    stores, monkeypatch, real_procrastinate
 ) -> None:
     from knowledge_ingest import document_purge, enrichment_tasks
     from knowledge_ingest.enrichment import EnrichedChunk
@@ -876,21 +876,22 @@ async def test_enrichment_removes_points_written_after_its_artifact_was_deleted(
     status = AsyncMock()
     monkeypatch.setattr(enrichment_tasks, "_set_direct_upload_index_status", status)
 
-    result = await enrichment_tasks._enrich_document(
-        org_id=org_id,
-        kb_slug="kb",
-        path="late.md",
-        document_text="body",
-        chunks=["body"],
-        title="T",
-        artifact_id=doc[0],
-        user_id=None,
-        extra_payload={"document_summary": "s", "document_language": "en"},
-        synthesis_depth=2,
-    )
+    # The job ends abandoned (aborted), not as if it had done the work.
+    with pytest.raises(real_procrastinate.exceptions.JobAborted):
+        await enrichment_tasks._enrich_document(
+            org_id=org_id,
+            kb_slug="kb",
+            path="late.md",
+            document_text="body",
+            chunks=["body"],
+            title="T",
+            artifact_id=doc[0],
+            user_id=None,
+            extra_payload={"document_summary": "s", "document_language": "en"},
+            synthesis_depth=2,
+        )
 
     assert written == [doc[0]]
-    assert result is False
     assert stores.qdrant.deletes(_payload(org_id, "kb", "late.md", doc[0]))
     # The last delete is the one the job issued after its own upsert.
     assert _filter_matches(stores.qdrant.filters[-1], {"org_id": org_id, "artifact_id": doc[0]})
