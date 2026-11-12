@@ -2224,7 +2224,6 @@ services:
       # appears. Indexes are created + recall-verified per tenant by
       # `docker exec klai-core-knowledge-ingest-1 python -m scripts.verify_graph_ann`.
       GRAPH_ANN_ENABLED: "true"
-      GRAPHITI_EPISODE_DELAY: ${GRAPHITI_EPISODE_DELAY:-10.0}
       PORTAL_URL: http://portal-api:8010
       PORTAL_INTERNAL_TOKEN: ${PORTAL_API_INTERNAL_SECRET}
       # SPEC-RAG-EVAL-001 — RAGAS evaluation harness calls /retrieve on

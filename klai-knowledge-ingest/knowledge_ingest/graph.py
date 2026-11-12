@@ -54,8 +54,9 @@ from knowledge_ingest.llm_throttle import (
 
 logger = structlog.get_logger()
 
-# Rate-limit Graphiti episodes: each add_episode() makes ~5 LLM calls internally.
-# Concurrency controlled by GRAPHITI_MAX_CONCURRENT env var (default: 1).
+# Episodes in flight in this process: settings.graphiti_max_concurrent (see
+# config.py for why it is 1). The worker's graph lane has the same number of
+# slots; the semaphore also bounds the backfill script.
 _episode_semaphore: asyncio.Semaphore | None = None
 
 
@@ -1157,9 +1158,5 @@ async def ingest_episode(
                         attempts=max_attempts,
                         error=str(exc),
                     )
-
-        # Delay INSIDE semaphore — small breathing room between episodes.
-        # Intra-episode rate limiting is handled by _RateLimitedTransport.
-        await asyncio.sleep(settings.graphiti_episode_delay)
 
     return episode_result

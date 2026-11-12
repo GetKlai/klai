@@ -389,12 +389,12 @@ class TestDocsPathOrganisation:
 
         assert response.status_code == 200
         assert captured["url"] == "http://docs-app:3010/docs/api/orgs/acme/kbs/handbook/tree"
-        # docs-app identifies a proxied user from the session's Bearer token,
-        # so the forwarded header set is exactly this one.
+        # docs-app identifies a proxied user from the identity the portal
+        # verified, which it accepts only with the secret it holds itself.
         assert captured["headers"] == {
             "Accept": "application/json",
             "Authorization": "Bearer real-portal-bearer-token",
-            "X-Internal-Secret": settings.internal_secret,
+            "X-Internal-Secret": settings.docs_internal_secret,
             "X-Klai-Verified-User-Id": "u-zitadel-1",
             "X-Klai-Verified-Org-Id": "o-zitadel-acme",
             "X-Klai-Verified-Org-Slug": "acme",

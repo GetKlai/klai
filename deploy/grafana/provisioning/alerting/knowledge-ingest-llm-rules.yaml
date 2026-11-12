@@ -94,10 +94,11 @@ groups:
 
             The client-side token bucket in
             `knowledge_ingest/llm_throttle.py` (`shared_klai_fast_limiter`)
-            is meant to keep enrichment traffic under the `klai-fast`
-            alias budget (45 rpm / 45k tpm, shared with klai-primary).
-            The pacing rate is controlled by the `LITELLM_KLAI_FAST_RPS`
-            env var (`Settings.litellm_klai_fast_rps`, default 0.6).
+            keeps all background LLM traffic under the `klai-ingest`
+            alias limits (900 rpm / 450k tpm). The pacing rate is
+            controlled by the `LITELLM_KLAI_FAST_RPS` env var
+            (`Settings.litellm_klai_fast_rps`, default 2.0, sized at ~61%
+            of the tpm limit; see the comment next to it in config.py).
 
             Triage:
               1. service:knowledge-ingest AND event:enrichment_llm_error | sort by(_time) desc | limit 20

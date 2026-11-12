@@ -94,8 +94,8 @@ interface PersistedWidgetStateV3 {
   activeConversationId: string;
   // Visitor identity is only persisted when the visitor explicitly
   // opted in via the "Remember me" checkbox. It has no expiry: it lives
-  // on the visitor's own device and stays until they clear it there
-  // ("Clear stored details") or untick the box.
+  // on the visitor's own device and stays until they untick the box or
+  // skip the pre-chat step, which clears it.
   identity: {
     name: string;
     email: string;

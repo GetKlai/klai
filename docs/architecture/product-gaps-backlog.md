@@ -132,7 +132,7 @@ The designed loop: users ask, low-confidence answers and support conversations b
 ### GAP-ANSWER-01: a hand-off flag in the grounded answer  ·  S  ·  NOT BUILT
 
 - **Design.** Every AI answer cites sources and the response format carries `{answer, sources: [{title, url, excerpt}], handoff}`, where `handoff` is true when retrieval confidence is below a threshold or the user asks for a person. When nothing is found, the answer says so.
-- **Today.** Sources are returned. A field named `handoff` was not found in `klai-portal/backend/app/services/retrieval_context.py` or in `klai-retrieval-api/retrieval_api`. The nearest feature is the ticket a reviewer files from a conversation (`create_ticket`, `app_activity.py:1567`, [SPEC-KNOWLEDGE-ESCALATION-001](../specs/SPEC-KNOWLEDGE-ESCALATION-001/spec.md)).
+- **Today.** Sources are returned. A field named `handoff` was not found in `klai-portal/backend/app/services/retrieval_context.py` or in `klai-retrieval-api/retrieval_api`. The nearest feature is the ticket a reviewer files from a conversation (`create_ticket`, `app_activity.py:1568`, [SPEC-KNOWLEDGE-ESCALATION-001](../specs/SPEC-KNOWLEDGE-ESCALATION-001/spec.md)).
 
 ## Open: tenancy, privacy and visibility
 

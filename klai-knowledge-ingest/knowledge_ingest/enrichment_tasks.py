@@ -670,9 +670,9 @@ def _register_tasks(procrastinate_app: Any) -> None:
     ) -> None:
         """Ingest a document into the Graphiti knowledge graph.
 
-        Runs on the graphiti-bulk queue, which the worker drains AFTER enrich-bulk.
-        This ensures enrichment LLM calls complete before Graphiti starts, preventing
-        both from competing on the same 1 req/s upstream rate limit simultaneously.
+        Runs on the graphiti-bulk queue in the worker's own graph lane, so a
+        graph job waiting its turn never holds an enrichment slot; both share
+        the one LLM limiter (``llm_throttle``).
 
         SPEC-CONNECTOR-DELETE-LIFECYCLE-001 REQ-07: artifact-existence guard.
         If the artifact has been deleted between enqueue and dequeue (e.g. by
@@ -1007,13 +1007,15 @@ async def _enrich_document(
         connector_type_val = (extra_payload or {}).get("connector_type", "")
         source_domain_val = (extra_payload or {}).get("source_domain", "")
 
-        # SPEC-RAG-CONTEXTUAL-001: generate one document summary per artifact
-        # (Anthropic-pattern). Cached in extra_payload so a re-ingest of the
-        # same artifact reuses it. The chunk-enrichment prompt then feeds
-        # the summary instead of the full document body — ~8x reduction in
-        # per-chunk input tokens for a 20-chunk document.
-        document_summary_val = (extra_payload or {}).get("document_summary", "")
-        document_language_val = (extra_payload or {}).get("document_language") or None
+        # SPEC-RAG-CONTEXTUAL-001: the chunk prompts carry a short document
+        # summary instead of the document body (~8x fewer input tokens per
+        # chunk for a 20-chunk document). The summary is an input of this
+        # version, like its text: it is stored on the version's own row before
+        # the chunk calls, so a retry, every later batch and a rebuild of the
+        # version read it back instead of paying for it again. A new version
+        # is a new row and computes its own.
+        document_summary_val = extra_payload.get("document_summary", "")
+        document_language_val = extra_payload.get("document_language") or None
         if not document_summary_val and document_text:
             from knowledge_ingest import contextual
 
@@ -1024,12 +1026,14 @@ async def _enrich_document(
                 title=title,
                 language=document_language_val,
             )
-            # Persist on extra_payload so callers (qdrant_store) can store it
-            # on the artifact row for cache hits on re-ingest.
-            if extra_payload is None:
-                extra_payload = {}
-            extra_payload["document_summary"] = document_summary_val
-            extra_payload["document_language"] = document_language_val
+            summary_patch = {
+                "document_summary": document_summary_val,
+                "document_language": document_language_val,
+            }
+            if document_summary_val:
+                async with tenant_scoped_connection(org_id) as conn:
+                    await pg_store.update_artifact_extra(conn, artifact_id, summary_patch)
+            extra_payload.update(summary_patch)
 
         t0 = time.monotonic()
         enriched_chunks = await enrichment.enrich_chunks(
