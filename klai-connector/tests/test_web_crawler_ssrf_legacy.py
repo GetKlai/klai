@@ -74,6 +74,21 @@ class TestValidateWebCrawlerConfigStrict:
             )
         assert "discovery_seed_url" in str(excinfo.value)
 
+    def test_sign_in_host_rejected_even_if_base_url_is_fine(self) -> None:
+        # The keep-alive and the crawl pre-flight fetch every sign-in host.
+        with (
+            patch(
+                "klai_image_storage.url_guard._resolve_blocking",
+                return_value=("93.184.216.34",),
+            ),
+            pytest.raises(PersistedUrlRejectedError) as excinfo,
+        ):
+            validate_web_crawler_config_strict(
+                {"base_url": "https://example.com/", "auth_chain_hosts": ["10.0.0.5"]},
+                connector_id="abc",
+            )
+        assert "auth_chain_hosts" in str(excinfo.value)
+
     def test_rfc1918_literal_rejected(self) -> None:
         with pytest.raises(PersistedUrlRejectedError):
             validate_web_crawler_config_strict(

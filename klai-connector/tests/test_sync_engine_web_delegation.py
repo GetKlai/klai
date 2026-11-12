@@ -246,6 +246,7 @@ class TestCrawlSyncClientContract:
                 "canary_url": "https://help.example.com/index",
                 "canary_fingerprint": "deadbeef12345678",
                 "login_indicator_selector": "#login-form",
+                "auth_chain_hosts": ["login.example.org"],
             },
         )
 
@@ -263,6 +264,7 @@ class TestCrawlSyncClientContract:
         assert body["canary_url"] == "https://help.example.com/index"
         assert body["canary_fingerprint"] == "deadbeef12345678"
         assert body["login_indicator"] == "#login-form"
+        assert body["auth_chain_hosts"] == ["login.example.org"]
         assert captured["headers"]["x-internal-secret"] == "s3cr3t"
 
         await client.aclose()

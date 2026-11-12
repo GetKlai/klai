@@ -212,11 +212,14 @@ class SyncRunResolver:
             error_details: list[dict[str, Any]] | None = None
             quality_status: str | None = "healthy"
         else:
-            new_status = SyncStatus.FAILED
+            remote_error = remote_crawl_failure_error(live)
+            # knowledge-ingest could not sign the site in again before the
+            # crawl: only the owner can fix it by logging in again, which is
+            # what AUTH_ERROR tells the portal.
+            new_status = SyncStatus.AUTH_ERROR if remote_error.startswith("login_required:") else SyncStatus.FAILED
             documents_total = pages_total
             documents_ok = pages_done
             documents_failed = max(0, pages_total - pages_done)
-            remote_error = remote_crawl_failure_error(live)
             error_details = [
                 {
                     "error": remote_error,
