@@ -308,6 +308,68 @@ class TestEmptyResults:
         assert mock_gap.call_args.kwargs.get("gap_type") == "hard"
 
 
+class TestPersonalScopeIsNoOrganisationGap:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("scope", "fired"), [("personal", 0), ("both", 1), ("org", 1)])
+    async def test_empty_personal_search_files_no_gap(
+        self, scope: Literal["org", "personal", "both"], fired: int
+    ) -> None:
+        """A miss in the user's own notes says nothing about the organisation's knowledge."""
+        from main import search_knowledge
+
+        ctx = _librechat_ctx()
+
+        with (
+            patch(
+                "main._asserter.verify",
+                new_callable=AsyncMock,
+                return_value=allow_verify_result(),
+            ),
+            patch(
+                "httpx.AsyncClient.post",
+                new_callable=AsyncMock,
+                return_value=_make_retrieve_response([]),
+            ),
+            patch("main.fire_retrieval_log"),
+            patch("main.fire_gap_event") as mock_gap,
+        ):
+            await search_knowledge(query="q", ctx=ctx, scope=scope)
+
+        assert mock_gap.call_count == fired
+
+
+class TestRoleNarrowedSearchIsNoOrganisationGap:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("role", "fired"), [("personal", 0), ("company", 1), ("unknown", 1)])
+    async def test_default_search_by_personal_role_files_no_gap(
+        self, role: str, fired: int
+    ) -> None:
+        """retrieval-api narrows a personal-role caller's default search to the
+        personal knowledge base, so an empty result is no organisation gap."""
+        from main import search_knowledge
+
+        with (
+            patch("main._identify_request", new_callable=AsyncMock) as mock_identify,
+            patch(
+                "httpx.AsyncClient.post",
+                new_callable=AsyncMock,
+                return_value=_make_retrieve_response([]),
+            ),
+            patch("main.fire_retrieval_log"),
+            patch("main.fire_gap_event") as mock_gap,
+        ):
+            identity = MagicMock()
+            identity.user_id = "user1"
+            identity.org_id = "org1"
+            identity.client_id = None
+            identity.effective_role = role
+            mock_identify.return_value = identity
+
+            await search_knowledge(query="q", ctx=_librechat_ctx())
+
+        assert mock_gap.call_count == fired
+
+
 class TestTelemetryFailureSwallowed:
     @pytest.mark.asyncio
     async def test_telemetry_post_failure_does_not_break_tool(self) -> None:

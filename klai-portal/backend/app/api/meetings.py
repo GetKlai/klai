@@ -19,10 +19,10 @@ from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import _load_org_or_500, require_product
+from app.api.dependencies import _load_org_or_500
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.permissions import UserPermissions, get_caller
+from app.core.permissions import UserPermissions, get_caller, require_product
 from app.models.groups import PortalGroup
 from app.models.meetings import VexaMeeting
 from app.services.access import (

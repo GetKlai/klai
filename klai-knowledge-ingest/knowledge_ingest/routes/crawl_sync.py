@@ -97,6 +97,10 @@ class CrawlSyncRequest(BaseModel):
     # Hosts the site signs in through; the crawl's pre-flight signs a lapsed
     # session in again through them (see keep_session).
     auth_chain_hosts: list[str] = Field(default_factory=list)
+    # One-shot: a person accepts that this run's pages lost content because
+    # the site really changed, so the run audit and the per-document hold let
+    # it write (adapters/crawler.py _judge_run_before_write).
+    accept_content_regression: bool = False
 
 
 class CrawlSyncResponse(BaseModel):
@@ -296,6 +300,7 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         canary_url=req.canary_url,
         canary_fingerprint=req.canary_fingerprint,
         auth_chain_hosts=req.auth_chain_hosts,
+        accept_content_regression=req.accept_content_regression,
     )
 
     logger.info(
@@ -990,8 +995,6 @@ async def keep_session(
     jar = CookieJar(stored.payload["cookies"], validated.hostname)
     chain_hosts = _chain_hosts(auth_chain_hosts, jar.base_host)
     own = {(jar.base_host, urlparse(url).port or 443)}
-    result: _ProbeResponse | None = None
-    final = url
     sign_in_alive: dict[str, bool | None] = {}
     renewal_failure: str | None = None
     reminted = False
@@ -1110,7 +1113,6 @@ async def prove_renewal(url: str, cookies: list[dict], auth_chain_hosts: list[st
     never stores its renewed cookies, and that session then lapses two hours
     later. Nothing is stored; no cookie value is logged.
     """
-    failure: str | None
     try:
         validated = await validate_url_pinned(url)
         base = validated.hostname.lower()

@@ -94,6 +94,9 @@ async def retrieve_chunks(
         "user_id": user_zitadel_id,
         "conversation_history": [],
         "kb_slugs": kb_slugs,
+        # A replayed evaluation question is not a question of the tenant: retrieval-api
+        # then records no knowledge.queried event and no shadow-store row for it.
+        "purpose": "background",
     }
 
     t0 = time.monotonic()

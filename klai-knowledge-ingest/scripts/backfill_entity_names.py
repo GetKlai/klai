@@ -10,7 +10,7 @@ on first ingest), this script:
 Usage (in a knowledge-ingest container):
 
     docker exec klai-core-knowledge-ingest-1 \
-        python -m scripts.backfill_entity_names --org-id <org_id> [--kb-slug <slug>] [--dry-run]
+        python -m scripts.backfill_entity_names --org-id <org_id> [--kb-slug <slug>] [--execute]
 
 Without --kb-slug, all KBs of the org are backfilled.
 
@@ -32,6 +32,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from knowledge_ingest import qdrant_store
 from knowledge_ingest.config import settings
+from knowledge_ingest.operations import guard_cli, kb_operation
 from knowledge_ingest.qdrant_store import COLLECTION
 
 logger = structlog.get_logger()
@@ -212,14 +213,19 @@ def main() -> int:
     parser.add_argument("--org-id", required=True, help="Org ID to backfill.")
     parser.add_argument("--kb-slug", default=None, help="Optional: limit to a single KB.")
     parser.add_argument(
-        "--dry-run",
+        "--execute",
         action="store_true",
-        help="List artifacts that would be touched without writing to Qdrant.",
+        help="Write to Qdrant; without it only list the artifacts that would be touched.",
     )
     args = parser.parse_args()
-
-    asyncio.run(run_backfill(args.org_id, args.kb_slug, args.dry_run))
+    guard_cli("backfill_entity_names", args.execute)
+    asyncio.run(_run_locked(args.org_id, args.kb_slug, args.execute))
     return 0
+
+
+async def _run_locked(org_id: str, kb_slug: str | None, execute: bool) -> None:
+    async with kb_operation(org_id, [kb_slug] if kb_slug else None, execute=execute):
+        await run_backfill(org_id, kb_slug, dry_run=not execute)
 
 
 if __name__ == "__main__":

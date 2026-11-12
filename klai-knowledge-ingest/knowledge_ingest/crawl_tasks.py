@@ -108,6 +108,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         canary_fingerprint: str | None = None,
         discovery_seed_url: str | None = None,
         auth_chain_hosts: list[str] | None = None,
+        accept_content_regression: bool = False,
     ) -> None:
         if connector_id and not await preflight_session(
             job_id=job_id,
@@ -160,6 +161,7 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
             canary_fingerprint=canary_fingerprint,
             connector_id=connector_id,
             resource_key=resource_key,
+            accept_content_regression=accept_content_regression,
         )
 
     procrastinate_app.run_crawl = run_crawl  # type: ignore[attr-defined]

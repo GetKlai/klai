@@ -42,7 +42,7 @@ async def test_kb_slugs_restrict_the_query():
         patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=_admin(conn)),
         patch("knowledge_ingest.backfill.AsyncQdrantClient"),
     ):
-        await backfill.main(org_id="org-1", kb_slugs=["support", "sip"])
+        await backfill.main(execute=True, org_id="org-1", kb_slugs=["support", "sip"])
 
     sql, *values = conn.fetch.call_args[0]
     assert "kb_slug = ANY" in sql, "the run is not restricted to the requested knowledge bases"
@@ -57,7 +57,7 @@ async def test_no_kb_slugs_means_the_whole_tenant():
         patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=_admin(conn)),
         patch("knowledge_ingest.backfill.AsyncQdrantClient"),
     ):
-        await backfill.main(org_id="org-1")
+        await backfill.main(execute=True, org_id="org-1")
 
     sql = conn.fetch.call_args[0][0]
     # kb_slug is still SELECTed as a column; what must be absent is the filter.
@@ -86,7 +86,7 @@ async def test_an_unknown_knowledge_base_aborts_instead_of_doing_nothing():
         patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=_admin(conn)),
         patch("knowledge_ingest.backfill.AsyncQdrantClient"),
     ):
-        await backfill.main(org_id="org-1", kb_slugs=["suport"])
+        await backfill.main(execute=True, org_id="org-1", kb_slugs=["suport"])
 
     # One call only: the known-slug lookup. It never reached the artifact query.
     assert conn.fetch.await_count == 1, "a misspelled knowledge base still started a run"
@@ -100,6 +100,6 @@ async def test_known_knowledge_bases_proceed():
         patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=_admin(conn)),
         patch("knowledge_ingest.backfill.AsyncQdrantClient"),
     ):
-        await backfill.main(org_id="org-1", kb_slugs=["support"])
+        await backfill.main(execute=True, org_id="org-1", kb_slugs=["support"])
 
     assert conn.fetch.await_count == 2, "a valid knowledge base did not reach the artifact query"

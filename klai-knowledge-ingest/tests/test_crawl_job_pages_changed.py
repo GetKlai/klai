@@ -74,6 +74,7 @@ async def test_crawl_counts_ingested_pages_and_retired_stale_pages_but_not_uncha
 
     pg = MagicMock()
     pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    pg.get_active_document_texts = AsyncMock(return_value={})
     pg.get_crawled_page_stored = AsyncMock(return_value=None)
     pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     pg.upsert_crawled_page = AsyncMock()

@@ -101,6 +101,7 @@ async def test_stale_reconcile_skipped_when_any_page_timed_out():
 
     mock_pg = MagicMock()
     mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    mock_pg.get_active_document_texts = AsyncMock(return_value={})
     mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
     mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     mock_pg.upsert_crawled_page = AsyncMock()
@@ -156,6 +157,7 @@ async def test_stale_reconcile_still_runs_when_crawl_is_fully_fetched():
 
     mock_pg = MagicMock()
     mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    mock_pg.get_active_document_texts = AsyncMock(return_value={})
     mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
     mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     mock_pg.upsert_crawled_page = AsyncMock()
@@ -227,6 +229,7 @@ async def test_page_that_is_gone_lets_stale_cleanup_retire_it_but_an_auth_error_
 
     mock_pg = MagicMock()
     mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    mock_pg.get_active_document_texts = AsyncMock(return_value={})
     mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
     mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     mock_pg.upsert_crawled_page = AsyncMock()
@@ -269,6 +272,7 @@ async def test_page_that_is_gone_lets_stale_cleanup_retire_it_but_an_auth_error_
 def _pg_mock(stale_paths: list[str], stored_count: int) -> MagicMock:
     mock_pg = MagicMock()
     mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+    mock_pg.get_active_document_texts = AsyncMock(return_value={})
     mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
     mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
     mock_pg.upsert_crawled_page = AsyncMock()

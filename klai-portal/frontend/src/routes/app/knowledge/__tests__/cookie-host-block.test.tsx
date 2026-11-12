@@ -12,6 +12,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { CookieRow } from '../$kbSlug/-kb-types'
 import type { AuthProbeResult } from '../-connector-types'
 import type { CrawlerAuthPayload } from '../-connector-shared/api'
+import { detectAuthChainHosts } from '../-connector-shared/api'
 import { CrawlerAuthSetupStep } from '../-connector-shared/CrawlerAuthSetupStep'
 
 vi.mock('../-connector-shared/api', async () => {
@@ -96,15 +97,48 @@ describe('cookies per sign-in host', () => {
     expect(screen.queryByText('other')).toBeNull()
   })
 
-  it('says whether Klai can sign in again by itself, with the reason when it cannot', async () => {
-    const result: AuthProbeResult = {
-      classification: 'auth_ok',
-      match_reasons: [],
-      word_count: 300,
-      auth_guard: null,
-      renewal: { can_renew: false, reason: 'no_cookies_for:idp.example.com' },
-    }
-    render(<Harness result={result} />)
-    expect(await screen.findByText(/could not sign in to this site again by itself \(no_cookies_for:idp\.example\.com\)/)).toBeTruthy()
+  const cannotRenew: AuthProbeResult = {
+    classification: 'auth_ok',
+    match_reasons: [],
+    word_count: 300,
+    auth_guard: null,
+    renewal: { can_renew: false, reason: 'no_cookies_for:idp.example.com' },
+  }
+
+  it('after a good login that cannot renew, says why in plain words and shows the host block with how to copy', async () => {
+    render(<Harness result={cannotRenew} />)
+    expect(await screen.findByText(/To stay logged in, Klai also needs the cookies of idp\.example\.com/)).toBeTruthy()
+    expect(screen.getByText(/Paste them in the field for idp\.example\.com above/)).toBeTruthy()
+    expect(screen.getByLabelText(/for idp\.example\.com/)).toBeTruthy()
+    expect(screen.getByText(/Open idp\.example\.com in the browser/)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('no_cookies_for')
+  })
+
+  it('shows the host block when only the test result names the sign-in host', async () => {
+    vi.mocked(detectAuthChainHosts).mockResolvedValueOnce([])
+    render(<Harness result={cannotRenew} />)
+    expect(await screen.findByLabelText(/for idp\.example\.com/)).toBeTruthy()
+  })
+
+  it('with saved cookies, points at Replace cookies because the host field only exists after it', async () => {
+    render(
+      <CrawlerAuthSetupStep
+        kbSlug="handbook"
+        baseUrl="https://app.example.com/"
+        authChainHosts={['idp.example.com']}
+        onAuthChainHostsDetected={() => {}}
+        testUrl=""
+        onTestUrlChange={() => {}}
+        mode={{ kind: 'saved', onReplace: () => {}, onUseWithoutLogin: () => {} }}
+        isPending={false}
+        error={null}
+        result={cannotRenew}
+        onProbe={() => {}}
+        onNext={() => {}}
+        onBack={() => {}}
+      />,
+    )
+    expect(await screen.findByText(/First choose 'Replace cookies'/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Replace cookies' })).toBeTruthy()
   })
 })

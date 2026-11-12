@@ -73,7 +73,7 @@ async def test_resume_prefers_episode_ids_list_without_reprocessing():
         patch("knowledge_ingest.backfill.cross_org_admin_connection", return_value=ctx),
         patch("knowledge_ingest.backfill.AsyncQdrantClient", return_value=qdrant),
     ):
-        await backfill.main(org_id="org-1")
+        await backfill.main(execute=True, org_id="org-1")
 
     qdrant.scroll.assert_not_awaited()
 
@@ -116,7 +116,7 @@ async def test_backfill_creates_and_records_every_episode_for_a_long_document():
         patch("knowledge_ingest.backfill._get_current_edge_count", return_value=0),
         patch("knowledge_ingest.backfill.retire_earlier_extractions", AsyncMock()),
     ):
-        await backfill.main(org_id="org-1")
+        await backfill.main(execute=True, org_id="org-1")
 
     parts = [call.kwargs["document_text"] for call in ingest_episode.await_args_list]
     assert len(parts) == 2
@@ -182,7 +182,7 @@ async def _backfill_two_part_document(extra: dict, episode_results: list[str]):
         patch("knowledge_ingest.backfill.retire_earlier_extractions", retire),
         patch("knowledge_ingest.backfill.load_entity_graph_data", AsyncMock()),
     ):
-        await backfill.main(org_id="org-1")
+        await backfill.main(execute=True, org_id="org-1")
     return ingest_episode, retire
 
 

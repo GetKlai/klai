@@ -74,9 +74,9 @@ def test_persist_skip_reason_values_match_migration_check_constraint() -> None:
         / "klai-connector"
         / "alembic"
         / "versions"
-        / "009_sync_runs_skip_reasons.py"
+        / "010_skip_reason_held.py"
     )
-    assert migration.exists(), f"Migration 009 missing at {migration}"
+    assert migration.exists(), f"Migration 010 (latest skip_reasons CHECK) missing at {migration}"
     text = migration.read_text(encoding="utf-8")
     for reason in CONNECTOR_PERSIST:
         # The literal lives in the ``_ALLOWED_SKIP_REASONS`` tuple
@@ -84,6 +84,6 @@ def test_persist_skip_reason_values_match_migration_check_constraint() -> None:
         # f-string composes it into single-quoted SQL. We accept either
         # form so the test stays robust to source-style refactors.
         assert (f'"{reason}"' in text) or (f"'{reason}'" in text), (
-            f"PersistSkipReason value '{reason}' missing from migration 009 "
+            f"PersistSkipReason value '{reason}' missing from migration 010 "
             "CHECK constraint allowed-set. Add it to _ALLOWED_SKIP_REASONS."
         )

@@ -34,23 +34,26 @@ connector and knowledge-ingest. A field's original purpose does not establish
 its current ownership: sync, image upload, deduplication, and ingest paths may
 all depend on the same shape. Change producer and consumer tests together.
 
-## chat system prompt — three locations, never duplicate (HIGH)
+## chat system prompt — two locations, never duplicate (HIGH)
 
-System-prompt content for chat lives in **three** canonical files,
+System-prompt content for chat lives in **two** canonical files,
 never two copies of the same content. Modifying one without considering
-the other two has been the recurring failure mode of
+the other has been the recurring failure mode of
 SPEC-RAG-MULTILINGUAL-CHAT-001.
 
 | Location | What lives here | Used by |
 |---|---|---|
-| `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` (`GROUNDED_CHAT_SYSTEM_PROMPT`) | The shared multilingual base prompt: detect substantive language, three guards, no translator disclaimers, [n] citation rules | imported by paths B (`knowledge_prompts.py`) and C (`synthesis.py`) |
+| `klai-libs/chat-prompts/klai_chat_prompts/__init__.py` (`GROUNDED_CHAT_SYSTEM_PROMPT`) | The shared multilingual base prompt: detect substantive language, three guards, no translator disclaimers, [n] citation rules | imported by path B (`knowledge_prompts.py`) |
 | `klai-portal/backend/app/services/retrieval_context.py::_build_system_prompt` | Adds the chunks-as-context block to the shared base | path B — Widget + Partner API |
 
-**Why more than one:** chat traffic in Klai takes concurrent paths. (B)
-portal-api `/partner/v1/chat/completions` → LiteLLM → Mistral, which
-also serves the internal chat (LibreChat) since 13 October 2026; (C)
-retrieval-api `POST /chat` (dormant). Path A (LibreChat → LiteLLM hook)
-was removed on 21 October 2026. v1.0/v1.1 of the SPEC landed
+**Why this matters:** chat traffic in Klai used to take concurrent paths.
+Today there is one: (B) portal-api `/partner/v1/chat/completions` →
+LiteLLM → Mistral, which also serves the internal chat (LibreChat) since
+13 October 2026. Path A (LibreChat → LiteLLM hook) was removed on
+21 October 2026; path C (retrieval-api `POST /chat`, with its own
+`synthesis.py` prompt wiring) was removed in November 2026 after 30 days
+without a call. A new chat surface is a new path: import the prompt, never
+copy it. v1.0/v1.1 of the SPEC landed
 multilingual on B + C only, leaving A still hardcoded NL — that
 mistake cost a full audit cycle to detect.
 
@@ -70,8 +73,8 @@ mistake cost a full audit cycle to detect.
 - The CI lint `scripts/lint-no-duplicate-chat-prompt.sh` enforces both
   rules. It checks two anchor sets — the GROUNDED prompt anchors and the
   KB prefix anchors (both canonical: `klai-libs/chat-prompts`).
-- Do NOT re-introduce explicit language allow-lists in any of the
-  three locations ("if the user writes Dutch", "if the user writes
+- Do NOT re-introduce explicit language allow-lists in either
+  location ("if the user writes Dutch", "if the user writes
   English"). The base prompt detects any language the LLM
   understands; the hook prefix and the chunks-context block must
   remain language-neutral. Hand-curated language lists break every
@@ -209,6 +212,31 @@ fences deleting, cancels crawl jobs by resource key, and cancels the live
 enrichment and graph jobs of the connector's documents by `artifact_id`.
 Cancellation uses `abort=True, delete_job=False`; never query or count the
 legacy `aborting` status.
+
+## Audit a run before it writes; a per-page verdict is not enough (CRIT)
+
+In 2026-11 a nightly crawl that ran without its login replaced 203 pages with
+versions missing 19% of their words. Logged out, the site left out protected
+sections without any login marker, so every per-page guard passed, and the
+run-level verdicts were computed after the pages had been written. No guard
+compared a new version with the stored one; hash inequality decided everything.
+
+- `run_crawl_job` judges the whole run in `_judge_run_before_write` before the
+  first write: session lost (saved cookies and any walled page), wall-dominant
+  (anonymous crawls), and a content regression against the stored text
+  (`content_retention.retention`). A run that fails the audit writes nothing.
+- `ingest_document` holds a version from an automated source that keeps under
+  half of the stored words until the same version arrives again on the next
+  run (12 to 36 hours). Uploads are never held.
+- A held or failed document must be offered again: keep it out of the sync
+  run's `synced_refs` and leave `crawled_pages` untouched, or the hold never ends.
+- A verdict that only sets the job status is not a guard. A guard that can stop
+  a write sits before the write loop, and its thresholds carry the measured
+  distribution in the comment next to the constant.
+
+**Rule:** before adding a path that replaces stored knowledge, name what
+compares the new version with the stored one. Hash inequality is not a
+comparison.
 
 ## Graph-first, content-second for bulk crawls (HIGH)
 

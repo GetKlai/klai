@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import * as m from '@/paraglide/messages'
 import type { CookieRow } from '../$kbSlug/-kb-types'
-import { AuthProbeFeedback } from '../-connector-feedback'
+import { AuthProbeFeedback, renewalHost } from '../-connector-feedback'
 import type { AuthGuardSuggestion, AuthProbeResult } from '../-connector-types'
 import { buildCrawlerCookies, detectAuthChainHosts, type CrawlerAuthPayload } from './api'
 import { hostOf, isManualRow } from './cookieHosts'
@@ -97,6 +97,17 @@ export function CrawlerAuthSetupStep({
     // it would re-check on each keystroke. The check depends on the site only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbSlug, baseUrl])
+
+  // The test can name a sign-in host the earlier check did not find; the
+  // warning tells the user to paste that host's cookies, so its block must exist.
+  const hostFromTest = result?.renewal?.can_renew === false ? renewalHost(result.renewal.reason) : null
+  useEffect(() => {
+    if (hostFromTest && !authChainHosts.includes(hostFromTest)) {
+      onAuthChainHostsDetected([...authChainHosts, hostFromTest])
+    }
+    // Same reasoning as the check above: the callback is a fresh closure per render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostFromTest, authChainHosts])
 
   const hasSavedCredentials = mode.kind === 'saved' || mode.savedCredentials !== undefined
   const allRowsRemoved =
@@ -202,6 +213,9 @@ export function CrawlerAuthSetupStep({
                 <p className="text-sm font-medium text-gray-900">
                   {m.admin_connectors_webcrawler_cookies_chain_title({ host })}
                 </p>
+                <p className="text-xs text-gray-600">
+                  {m.admin_connectors_webcrawler_cookies_chain_help({ host })}
+                </p>
                 <CookieHostPaste
                   host={host}
                   baseHost={baseHost}
@@ -251,7 +265,7 @@ export function CrawlerAuthSetupStep({
       </div>
 
       {error && <p className="text-sm text-[var(--color-destructive)]">{error}</p>}
-      {result && <AuthProbeFeedback result={result} />}
+      {result && <AuthProbeFeedback result={result} savedMode={mode.kind === 'saved'} />}
 
       <div className="flex gap-2 pt-1">
         <Button

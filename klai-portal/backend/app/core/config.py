@@ -282,7 +282,7 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
 
     # Vexa meeting API (agentic-runtime)
-    vexa_meeting_api_url: str = "http://vexa-meeting-api:8080"
+    vexa_meeting_api_url: str = "http://vexa12-meeting-api:8080"
     # vexa_admin_token was "reserved for a future admin surface" since SPEC-VEXA-003
     # and never gained a reader. Vexa 0.12 deploys its own admin-api with its own
     # VEXA12_ADMIN_TOKEN, so the reservation can no longer be redeemed by this
