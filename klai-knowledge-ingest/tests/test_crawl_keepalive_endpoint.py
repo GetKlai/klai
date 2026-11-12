@@ -116,7 +116,6 @@ class TestCrawlKeepaliveEndpoint:
             "ok": True,
             "reason": None,
             "login_required": False,
-            "reminted": False,
         }
 
     def test_root_redirect_to_language_path_then_ok(self) -> None:
@@ -152,7 +151,6 @@ class TestCrawlKeepaliveEndpoint:
             "ok": True,
             "reason": None,
             "login_required": False,
-            "reminted": False,
         }
 
     def test_redirect_to_login_page_returns_ok_false_with_reason(self) -> None:
@@ -367,7 +365,6 @@ class TestCrawlKeepaliveEndpoint:
             "ok": True,
             "reason": None,
             "login_required": False,
-            "reminted": False,
         }
 
     def test_allows_five_redirects_then_the_final_request(self) -> None:
@@ -399,7 +396,6 @@ class TestCrawlKeepaliveEndpoint:
             "ok": True,
             "reason": None,
             "login_required": False,
-            "reminted": False,
         }
         assert probe_mock.await_count == 6
 
@@ -489,7 +485,6 @@ class TestCrawlKeepaliveEndpoint:
             "ok": False,
             "reason": "cookie_load_failed",
             "login_required": False,
-            "reminted": False,
         }
 
     def test_no_saved_credentials_returns_ok_false(self) -> None:
@@ -509,7 +504,6 @@ class TestCrawlKeepaliveEndpoint:
             "ok": False,
             "reason": "no_saved_credentials",
             "login_required": False,
-            "reminted": False,
         }
 
     def test_pinned_fetch_error_returns_ok_false_no_500(self) -> None:
@@ -539,7 +533,6 @@ class TestCrawlKeepaliveEndpoint:
             "ok": False,
             "reason": "fetch_failed",
             "login_required": False,
-            "reminted": False,
         }
 
 
@@ -598,7 +591,7 @@ class TestKeepaliveStoresRefreshedSessionCookies:
             with_cookies=_probe(200, text=self._ARTICLE, set_cookies=["sid=issued; Path=/"]),
             anonymous=_probe(200, text=self._GATE),
         )
-        assert body == {"ok": True, "reason": None, "login_required": False, "reminted": False}
+        assert body == {"ok": True, "reason": None, "login_required": False}
         assert fetch_calls == [{"sid": "pasted-value"}, None]
         store.assert_awaited_once()
         kwargs = store.await_args.kwargs
@@ -610,7 +603,7 @@ class TestKeepaliveStoresRefreshedSessionCookies:
             with_cookies=_probe(200, text=self._ARTICLE, set_cookies=["sid=anonymous; Path=/"]),
             anonymous=_probe(200, text=self._ARTICLE),
         )
-        assert body == {"ok": True, "reason": None, "login_required": False, "reminted": False}
+        assert body == {"ok": True, "reason": None, "login_required": False}
         store.assert_not_awaited()
 
     def test_logged_out_probe_never_overwrites_the_stored_session(self) -> None:
