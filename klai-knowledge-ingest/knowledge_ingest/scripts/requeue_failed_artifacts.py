@@ -39,13 +39,16 @@ The script moves each document's enrichment back to pending
 (``queue_derived_work``); ``enrich_document_bulk`` records ``done`` or
 ``failed`` once the job completes.
 
-``--product graph`` does the same for the graph: it queues
-``ingest_graphiti_episode`` with the arguments and locks the ingest route uses,
-including ``replace_stale``, so the graph keeps only the current extraction.
+``--product graph`` hands each version to ``graph_refresh._refresh_stale_graph``
+as a reindex by a person would: it applies the ingest route's policy (a
+navigation page is recorded ``not_applicable``), queues
+``ingest_graphiti_episode`` with the route's locks and arguments including
+``replace_stale``, and answers ``None`` when the extraction is already current.
 ``--reason`` narrows either product to one failure reason (for example
-``missing_before_states``). A version without stored text is never queued,
-because its job could only fail again and alert; the preview counts those
-separately.
+``missing_before_states``). A version without stored text is never selected,
+and without ``--reason`` neither is a graph that failed for a reason a new job
+cannot change (``graph_refresh._cannot_succeed``): their jobs could only fail
+again and alert. The preview counts both separately.
 """
 
 from __future__ import annotations
@@ -53,13 +56,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
+from collections import Counter
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from knowledge_ingest import pg_store
 from knowledge_ingest.config import settings
-from knowledge_ingest.db import cross_org_admin_connection
+from knowledge_ingest.db import cross_org_admin_connection, tenant_scoped_connection
 from knowledge_ingest.derived_state import FAILED, Product, product_state, queue_derived_work
 from knowledge_ingest.operations import guard_cli
 from knowledge_ingest.pg_store import (  # single source of truth -- do not re-literal
@@ -78,6 +84,60 @@ DEFAULT_LIMIT = 1000
 _LOG_EVERY = 100
 
 
+# The rows a run looks at: current versions, not being purged, whose product
+# failed (for the reason, when one is given). Static SQL with
+# ``$N::text IS NULL OR ...`` clauses, so the text never varies with caller input.
+# Parameters: $1 sentinel, $2 org, $3 kb, $4 product, $5 reason, $6 purge-pending
+# status, $7 the current graph writer build.
+_FAILED_ROWS = """
+    FROM knowledge.artifacts a
+    WHERE (a.extra::jsonb->>($4 || '_state') = 'failed'
+           OR ($4 = 'enrichment' AND a.extra::jsonb->>'enrichment_state' IS NULL
+               AND a.index_status = 'failed'))
+      AND ($5::text IS NULL OR a.extra::jsonb->>($4 || '_reason') = $5
+           OR a.extra::jsonb->>($4 || '_state') IS NULL)
+      AND a.belief_time_end = $1
+      AND a.index_status <> $6
+      AND ($2::text IS NULL OR a.org_id = $2)
+      AND ($3::text IS NULL OR a.kb_slug = $3)
+"""
+_HAS_TEXT = "COALESCE(a.extra::jsonb->>'document_text', '') <> ''"
+# graph_refresh._cannot_succeed as a condition: a graph that failed for want of
+# text, or quarantined by the writer build that runs now, fails the same way
+# again. Held only when no reason is named; naming it is a deliberate choice.
+_HELD = """COALESCE($4 = 'graph' AND $5::text IS NULL
+    AND (a.extra::jsonb->>'graph_reason' = 'no_stored_text'
+         OR (a.extra::jsonb->>'graph_reason' = 'quarantined'
+             AND a.extra::jsonb->>'graphiti_quarantine_build' = $7::text)), false)"""
+_SELECT = (
+    """
+    SELECT a.id::text AS artifact_id, a.org_id AS org_id, a.kb_slug AS kb_slug,
+           a.path AS path, a.created_at AS created_at, a.index_status AS index_status,
+           a.extra::jsonb - 'document_text' AS extra
+    """
+    + _FAILED_ROWS
+    + f"  AND {_HAS_TEXT} AND NOT {_HELD}\n    ORDER BY a.created_at ASC\n    LIMIT $8"
+)
+_COUNT_LEFT_OUT = (
+    f"""
+    SELECT count(*) FILTER (WHERE NOT {_HAS_TEXT}) AS without_text,
+           count(*) FILTER (WHERE {_HAS_TEXT} AND {_HELD}) AS held
+    """
+    + _FAILED_ROWS
+)
+
+
+def _params(
+    product: Product, reason: str | None, org_id: str | None, kb_slug: str | None
+) -> list[Any]:
+    build = None
+    if product == "graph":
+        from knowledge_ingest.falkordb_probe import graph_writer_build
+
+        build = graph_writer_build()
+    return [_SENTINEL, org_id, kb_slug, product, reason, PURGE_PENDING, build]
+
+
 async def _select_failed_artifacts(
     conn: asyncpg.Connection,
     *,
@@ -87,55 +147,26 @@ async def _select_failed_artifacts(
     product: Product = "enrichment",
     reason: str | None = None,
 ) -> list[dict]:
-    """Select current versions whose ``product`` failed, oldest-``created_at``-first.
+    """Select current versions whose ``product`` failed and that can be queued.
 
-    Whether it failed, and why, is ``derived_state.product_state``'s answer,
-    legacy enrichment rows included; the SQL only narrows the rows the reader
-    has to look at. A row whose ``index_status`` is failed but whose
-    enrichment is done had its raw write fail, which a new enrichment does not
-    repair, so it is not selected.
+    Oldest ``created_at`` first. For the graph these are current versions with
+    an explicit failed state; for enrichment, whether it failed and why is
+    ``derived_state.product_state``'s answer, legacy rows included, and the
+    SQL only narrows the rows the reader has to look at. A row whose
+    ``index_status`` is failed but whose enrichment is done had its raw write
+    fail, which a new enrichment does not repair, so it is not selected.
 
     ``belief_time_end = _SENTINEL`` restricts to the currently-active
     belief-time row per artifact and a row being purged is skipped: a
-    superseded, soft-deleted or deleting row must never be requeued.
-    ``org_id`` / ``kb_slug`` are optional scoping
-    filters: a static query with ``$N::text IS NULL OR ...`` clauses is
-    used (rather than building the WHERE clause with an f-string) so the
-    SQL text itself never varies with caller input.
+    superseded, soft-deleted or deleting row must never be requeued. Rows
+    without stored text and held graphs are left out in the SQL, so the limit
+    counts only versions a job can do something for; otherwise they would
+    come back first on every run and a small limit would queue nothing.
     """
-    params: list[Any] = [_SENTINEL, org_id, kb_slug, limit, product, reason, PURGE_PENDING]
-
-    rows = await conn.fetch(
-        """
-        SELECT
-            a.id::text AS artifact_id,
-            a.org_id AS org_id,
-            a.kb_slug AS kb_slug,
-            a.path AS path,
-            a.content_type AS content_type,
-            a.belief_time_start AS belief_time_start,
-            a.created_at AS created_at,
-            a.index_status AS index_status,
-            a.extra::jsonb AS extra
-        FROM knowledge.artifacts a
-        WHERE (a.extra::jsonb->>($5 || '_state') = 'failed'
-               OR ($5 = 'enrichment' AND a.extra::jsonb->>'enrichment_state' IS NULL
-                   AND a.index_status = 'failed'))
-          AND ($6::text IS NULL OR a.extra::jsonb->>($5 || '_reason') = $6
-               OR a.extra::jsonb->>($5 || '_state') IS NULL)
-          AND a.belief_time_end = $1
-          AND a.index_status <> $7
-          AND ($2::text IS NULL OR a.org_id = $2)
-          AND ($3::text IS NULL OR a.kb_slug = $3)
-        ORDER BY a.created_at ASC
-        LIMIT $4
-        """,
-        *params,
-    )
+    rows = await conn.fetch(_SELECT, *_params(product, reason, org_id, kb_slug), limit)
     selected = []
     for row in rows:
-        extra = _extra(row["extra"])
-        state = product_state(extra, product, index_status=row["index_status"])
+        state = product_state(_extra(row["extra"]), product, index_status=row["index_status"])
         if state.state != FAILED or (reason is not None and state.reason != reason):
             continue
         selected.append(
@@ -144,14 +175,24 @@ async def _select_failed_artifacts(
                 "org_id": row["org_id"],
                 "kb_slug": row["kb_slug"],
                 "path": row["path"],
-                "content_type": row["content_type"],
-                "belief_time_start": row["belief_time_start"],
                 "created_at": row["created_at"],
                 "index_status": row["index_status"],
-                "has_text": bool(extra.get("document_text")),
             }
         )
     return selected
+
+
+async def _count_left_out(
+    conn: asyncpg.Connection,
+    *,
+    org_id: str | None,
+    kb_slug: str | None,
+    product: Product,
+    reason: str | None,
+) -> dict[str, int]:
+    """How many failed versions the selection leaves out: no stored text, or held."""
+    row = await conn.fetchrow(_COUNT_LEFT_OUT, *_params(product, reason, org_id, kb_slug))
+    return {"without_text": row["without_text"], "held": row["held"]}
 
 
 def _extra(value: Any) -> dict:
@@ -180,10 +221,10 @@ async def _procrastinate_app() -> AsyncIterator[Any]:
         yield app
 
 
-def _print_dry_run_summary(selected: list[dict]) -> None:
-    artifacts = [a for a in selected if a["has_text"]]
+def _print_dry_run_summary(artifacts: list[dict], left_out: dict[str, int]) -> None:
     print(f"[dry-run] {len(artifacts)} failed artifact(s) would be requeued")
-    print(f"  {len(selected) - len(artifacts)} without stored text, not requeued")
+    print(f"  {left_out['without_text']} without stored text, not requeued")
+    print(f"  {left_out['held']} held: a new job would fail the same way")
     groups: dict[tuple[str, str], int] = {}
     for artifact in artifacts:
         key = (artifact["org_id"], artifact["kb_slug"])
@@ -199,26 +240,51 @@ def _print_dry_run_summary(selected: list[dict]) -> None:
         )
 
 
-async def _queue(conn: Any, proc_app: Any, artifact: dict, product: Product) -> bool:
-    artifact_id = artifact["artifact_id"]
-    if product == "graph":
-        # The ingest route's job, locks and arguments (routes/ingest.py).
-        return await queue_derived_work(
+# What a run did with each version, as the done event reports it.
+_OUTCOMES = (
+    "enqueued",
+    "skipped_already_enqueued",
+    "not_applicable",
+    "extraction_current",
+    "not_current",
+)
+
+
+async def _queue_graph(artifact: dict) -> str:
+    """Hand the version to the graph refresh, as a reindex by a person does.
+
+    It applies the ingest route's policy and queues the route's job, so none
+    of that is repeated here; it raises when the job cannot be queued, which
+    stops the run.
+    """
+    from knowledge_ingest import graph_refresh
+
+    async with tenant_scoped_connection(artifact["org_id"]) as conn:
+        row = await pg_store.read_artifact_for_enrichment(conn, artifact["artifact_id"])
+        if row is None:
+            return "not_current"  # replaced or deleted since the selection
+        extra = row["extra"]
+        answer = await graph_refresh._refresh_stale_graph(
             conn,
-            artifact_id,
-            "graph",
-            proc_app.ingest_graphiti_episode.configure(
-                lock=f"graphiti:{artifact_id}",
-                queueing_lock=f"graphiti:{artifact_id}",
-            ),
-            artifact_id=artifact_id,
-            org_id=artifact["org_id"],
-            content_type=artifact["content_type"],
-            belief_time_start=artifact["belief_time_start"],
-            kb_slug=artifact["kb_slug"],
-            path=artifact["path"],
-            replace_stale=True,
+            artifact_id=artifact["artifact_id"],
+            extra=extra,
+            org_id=row["org_id"],
+            kb_slug=row["kb_slug"],
+            path=row["path"],
+            content_type=row["content_type"],
+            belief_time_start=row["belief_time_start"],
+            indexable_content=extra.get("document_text") or "",
+            user_requested=True,
         )
+    if answer is None:
+        return "extraction_current"
+    if answer.startswith("skipped:"):
+        return "not_applicable"
+    return {"queued": "enqueued", "already_queued": "skipped_already_enqueued"}[answer]
+
+
+async def _queue_enrichment(conn: Any, proc_app: Any, artifact: dict) -> str:
+    artifact_id = artifact["artifact_id"]
     if artifact["index_status"] == "failed":
         # A row from before the enrichment state kept its enrichment
         # failure in index_status. Back to pending, as a reindex does,
@@ -229,7 +295,7 @@ async def _queue(conn: Any, proc_app: Any, artifact: dict, product: Product) -> 
             "WHERE id = $1::uuid AND index_status = 'failed'",
             artifact_id,
         )
-    return await queue_derived_work(
+    queued = await queue_derived_work(
         conn,
         artifact_id,
         "enrichment",
@@ -238,44 +304,39 @@ async def _queue(conn: Any, proc_app: Any, artifact: dict, product: Product) -> 
         ),
         artifact_id=artifact_id,
     )
+    return "enqueued" if queued else "skipped_already_enqueued"
 
 
-async def _requeue(selected: list[dict], product: Product = "enrichment") -> tuple[int, int]:
-    """Queue the ``product`` job for every selected artifact that has stored text.
+async def _requeue(artifacts: list[dict], product: Product = "enrichment") -> dict[str, int]:
+    """Queue the ``product`` job for every selected artifact; counts per outcome.
 
-    Through ``queue_derived_work``: the document's product goes back to
-    pending, the one legal way out of failed, and a queue that fails marks it
-    failed again and stops the run. Returns ``(enqueued,
-    skipped_already_enqueued)``; an artifact a live job already covers is
-    skipped and must not abort the remaining batch.
+    The document's product goes back to pending first, the one legal way out
+    of failed, and a queue that fails marks it failed again and stops the run.
+    An artifact a live job already covers is skipped and must not abort the
+    remaining batch.
     """
-    artifacts = [a for a in selected if a["has_text"]]
     total = len(artifacts)
-    enqueued = 0
-    skipped = 0
+    outcomes: Counter[str] = Counter()
     async with _procrastinate_app() as proc_app, cross_org_admin_connection() as conn:
         for idx, artifact in enumerate(artifacts, start=1):
-            if await _queue(conn, proc_app, artifact, product):
-                enqueued += 1
+            if product == "graph":
+                outcome = await _queue_graph(artifact)
             else:
-                skipped += 1
+                outcome = await _queue_enrichment(conn, proc_app, artifact)
+            outcomes[outcome] += 1
+            if outcome != "enqueued":
                 logger.info(
-                    "requeue_failed_artifact_already_enqueued",
+                    "requeue_failed_artifact_not_queued",
+                    outcome=outcome,
                     artifact_id=artifact["artifact_id"],
                     org_id=artifact["org_id"],
                     kb_slug=artifact["kb_slug"],
                 )
-                continue
-
             if idx % _LOG_EVERY == 0 or idx == total:
                 logger.info(
-                    "requeue_failed_artifacts_progress",
-                    processed=idx,
-                    total=total,
-                    enqueued=enqueued,
-                    skipped_already_enqueued=skipped,
+                    "requeue_failed_artifacts_progress", processed=idx, total=total, **outcomes
                 )
-    return enqueued, skipped
+    return {key: outcomes[key] for key in _OUTCOMES}
 
 
 async def main(
@@ -287,10 +348,25 @@ async def main(
     product: Product = "enrichment",
     reason: str | None = None,
 ) -> None:
+    if product == "graph" and not settings.graphiti_enabled:
+        # Every queued job would retry for a day and fail again.
+        sys.stderr.write(
+            "requeue_failed_artifacts: the graph is switched off "
+            "(settings.graphiti_enabled is false); nothing was selected or queued\n"
+        )
+        raise SystemExit(2)
     async with cross_org_admin_connection() as conn:
         artifacts = await _select_failed_artifacts(
             conn, org_id=org_id, kb_slug=kb_slug, limit=limit, product=product, reason=reason
         )
+        if dry_run:
+            left_out = await _count_left_out(
+                conn, org_id=org_id, kb_slug=kb_slug, product=product, reason=reason
+            )
+
+    if dry_run:
+        _print_dry_run_summary(artifacts, left_out)
+        return
 
     if not artifacts:
         logger.info(
@@ -302,18 +378,9 @@ async def main(
         )
         return
 
-    if dry_run:
-        _print_dry_run_summary(artifacts)
-        return
-
-    enqueued, skipped = await _requeue(artifacts, product)
+    outcomes = await _requeue(artifacts, product)
     logger.info(
-        "requeue_failed_artifacts_done",
-        product=product,
-        selected=len(artifacts),
-        without_text=sum(1 for a in artifacts if not a["has_text"]),
-        enqueued=enqueued,
-        skipped_already_enqueued=skipped,
+        "requeue_failed_artifacts_done", product=product, selected=len(artifacts), **outcomes
     )
 
 

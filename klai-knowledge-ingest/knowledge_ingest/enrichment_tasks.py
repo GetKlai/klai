@@ -952,20 +952,20 @@ async def _link_graph_fields(org_id: str, artifact_id: str) -> None:
     """
     from knowledge_ingest import graph as graph_module
 
-    async with tenant_scoped_connection(org_id) as conn:
-        artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
-    if artifact is None:
-        return
-    extra = artifact["extra"]
-    if derived_state.product_state(extra, "graph").state != DONE:
-        return
-    # The episodes of the extraction that finished, as the graph job flushed them.
-    episode_ids = list(extra.get("graphiti_episode_ids") or [])[
-        int(extra.get("graphiti_episode_ids_from") or 0) :
-    ]
-    if not episode_ids:
-        return
     try:
+        async with tenant_scoped_connection(org_id) as conn:
+            artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
+        if artifact is None:
+            return
+        extra = artifact["extra"]
+        if derived_state.product_state(extra, "graph").state != DONE:
+            return
+        # The episodes of the extraction that finished, as the graph job flushed them.
+        episode_ids = list(extra.get("graphiti_episode_ids") or [])[
+            int(extra.get("graphiti_episode_ids_from") or 0) :
+        ]
+        if not episode_ids:
+            return
         entity_graph_data = graph_module.EntityGraphData()
         await graph_module.load_entity_graph_data(org_id, episode_ids, entity_graph_data)
         await graph_module.flush_entity_graph_data(artifact_id, org_id, entity_graph_data)

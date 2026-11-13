@@ -32,11 +32,8 @@ def _row(
         "org_id": org_id,
         "kb_slug": kb_slug,
         "path": path,
-        "content_type": "kb_article",
-        "belief_time_start": 1700000001,
         "created_at": created_at,
         "index_status": index_status,
-        "has_text": True,
     }
 
 
@@ -49,7 +46,9 @@ def _db_row(artifact_id: str, extra: dict | None = None, **kwargs) -> dict:
 def _make_conn(rows: list[dict]) -> MagicMock:
     conn = MagicMock()
     conn.fetch = AsyncMock(return_value=rows)
-    conn.fetchrow = AsyncMock(return_value={"org_id": "org1", "kb_slug": "kb1"})
+    conn.fetchrow = AsyncMock(
+        return_value={"org_id": "org1", "kb_slug": "kb1", "without_text": 0, "held": 0}
+    )
     conn.execute = AsyncMock()
     return conn
 
@@ -107,8 +106,8 @@ async def test_select_failed_artifacts_uses_expected_filters_no_scoping():
     assert "$2::text IS NULL OR a.org_id = $2" in sql
     assert "$3::text IS NULL OR a.kb_slug = $3" in sql
     assert "ORDER BY a.created_at ASC" in sql
-    assert "LIMIT $4" in sql
-    assert params == [_SENTINEL, None, None, 500, "enrichment", None, "deleting"]
+    assert "LIMIT $8" in sql
+    assert params == [_SENTINEL, None, None, "enrichment", None, "deleting", None, 500]
 
 
 @pytest.mark.asyncio
@@ -118,7 +117,7 @@ async def test_select_failed_artifacts_applies_org_and_kb_scoping():
     await script._select_failed_artifacts(conn, org_id="org1", kb_slug="kb1", limit=10)
 
     _sql, *params = conn.fetch.call_args.args
-    assert params == [_SENTINEL, "org1", "kb1", 10, "enrichment", None, "deleting"]
+    assert params == [_SENTINEL, "org1", "kb1", "enrichment", None, "deleting", None, 10]
 
 
 @pytest.mark.asyncio
@@ -236,59 +235,7 @@ async def test_already_enqueued_is_skipped_and_does_not_stop_the_batch():
         patch.object(script, "_procrastinate_app", return_value=_app_ctx(fake_app)),
         patch.object(script, "cross_org_admin_connection", side_effect=lambda: _conn_ctx(conn)),
     ):
-        enqueued, skipped = await script._requeue(rows)
+        outcomes = await script._requeue(rows)
 
     assert fake_app.enrich_document_bulk.defer_calls == ["a1", "a2", "a3"]
-    assert enqueued == 2
-    assert skipped == 1
-
-
-# ---------------------------------------------------------------------------
-# (e) a failed graph is queued as the ingest route queues it
-# ---------------------------------------------------------------------------
-
-
-class _FakeGraphTask:
-    def __init__(self) -> None:
-        self.configure_calls: list[dict] = []
-        self.defer_calls: list[dict] = []
-
-    def configure(self, **kwargs: object) -> _FakeGraphTask:
-        self.configure_calls.append(kwargs)
-        return self
-
-    async def defer_async(self, **kwargs: object) -> None:
-        self.defer_calls.append(kwargs)
-
-
-@pytest.mark.asyncio
-async def test_a_failed_graph_is_queued_with_the_ingest_routes_job_arguments():
-    rows = [_row("a1", path="docs/a.md"), {**_row("a2"), "has_text": False}]
-    graph_task = _FakeGraphTask()
-    fake_app = MagicMock(ingest_graphiti_episode=graph_task)
-    conn = _make_conn([])
-
-    with (
-        patch.object(script, "_procrastinate_app", return_value=_app_ctx(fake_app)),
-        patch.object(script, "cross_org_admin_connection", side_effect=lambda: _conn_ctx(conn)),
-    ):
-        enqueued, skipped = await script._requeue(rows, "graph")
-
-    assert (enqueued, skipped) == (1, 0)
-    assert graph_task.configure_calls == [{"lock": "graphiti:a1", "queueing_lock": "graphiti:a1"}]
-    assert graph_task.defer_calls == [
-        {
-            "artifact_id": "a1",
-            "org_id": "org1",
-            "content_type": "kb_article",
-            "belief_time_start": 1700000001,
-            "kb_slug": "kb1",
-            "path": "docs/a.md",
-            "replace_stale": True,
-        }
-    ]
-    # The version is moved back to pending through the one writer, and the
-    # legacy index_status repair of an enrichment requeue is not applied.
-    sql = " ".join(str(c.args[0]) for c in conn.fetchrow.await_args_list)
-    assert "UPDATE knowledge.artifacts" in sql
-    conn.execute.assert_not_awaited()
+    assert (outcomes["enqueued"], outcomes["skipped_already_enqueued"]) == (2, 1)

@@ -10,18 +10,20 @@ the model work is replaced.
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import structlog
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, VectorParams
 
-from knowledge_ingest import contextual, enrichment_tasks, qdrant_store, rebuild_tasks
+from knowledge_ingest import contextual, enrichment_tasks, pg_store, qdrant_store, rebuild_tasks
 from knowledge_ingest import graph as graph_module
-from knowledge_ingest.derived_state import set_product_state
+from knowledge_ingest.derived_state import ProductState, product_state, set_product_state
 from tests.graph_contract.conftest import Contract, seed_graph
 
 _TEXT = "The handset-source pairs with the handset-target over the local network."
@@ -146,8 +148,14 @@ async def store(graph_helpers: Contract, tenant_rows, monkeypatch, real_procrast
         assert found, "the version has no points"
         return [p.payload or {} for p in found]
 
+    async def state(artifact: str) -> ProductState:
+        extra = await conn.fetchval(
+            "SELECT extra::text FROM knowledge.artifacts WHERE id = $1", artifact
+        )
+        return product_state(json.loads(extra), "enrichment")
+
     return SimpleNamespace(
-        version=version, graph=graph, enrich=enrich, rebuild=rebuild, points=points
+        version=version, graph=graph, enrich=enrich, rebuild=rebuild, points=points, state=state
     )
 
 
@@ -195,3 +203,30 @@ async def test_a_version_whose_graph_is_not_done_gets_no_graph_fields(store) -> 
 
     payloads = await store.points(artifact)
     assert [p for p in payloads if any(f in p for f in _GRAPH_FIELDS)] == []
+
+
+async def test_a_failed_read_for_the_graph_fields_does_not_fail_the_written_enrichment(
+    store, monkeypatch
+) -> None:
+    artifact = await store.version()
+    await store.graph(artifact)
+    real_read = pg_store.read_artifact_for_enrichment
+    reads = 0
+
+    async def _second_read_fails(conn, artifact_id):
+        # The first read loads the job's version; the second is the check
+        # after the points were replaced.
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            raise ConnectionError("database connection lost")
+        return await real_read(conn, artifact_id)
+
+    monkeypatch.setattr(pg_store, "read_artifact_for_enrichment", _second_read_fails)
+
+    with structlog.testing.capture_logs() as logs:
+        await store.enrich(artifact)
+
+    assert reads == 2
+    assert await store.state(artifact) == ProductState("done")
+    assert "entity_graph_data_failed" in [e["event"] for e in logs]
