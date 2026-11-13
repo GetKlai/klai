@@ -175,7 +175,13 @@ def normalise_source_url(url: object) -> str:
     value = url.strip().strip("<>")
     if value.lower() in {"", "undefined", "null", "none"}:
         return ""
-    parsed = urlparse(value)
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        # urlparse rejects an address with an unclosed bracket ("Invalid IPv6
+        # URL"). Such an address can stand in an article; it is not a usable
+        # source URL, and raising here failed the whole answer for the visitor.
+        return ""
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
     hostname = (parsed.hostname or "").lower()
