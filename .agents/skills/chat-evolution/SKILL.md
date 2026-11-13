@@ -9,11 +9,11 @@ Design: `docs/architecture/conversation-retention-and-learning.md` §5. Real con
 
 ## 1. Pick the conversations of the past week
 
-Run the queries read-only through the database route of the private infrastructure runbook; this repository names no host. Per organisation (`:org_id`), `since = now() - interval '7 days'`. Preview and test conversations (`widget_conversations.is_preview`, `is_test`) and the E2E organisation (`portal_orgs.slug = 'e2e'`) never count. Re-check the column names against `app/models/answer_reviews.py`, `conversation_quality.py` and `widgets.py` before you rely on them.
+Run the queries read-only through the database route of the private infrastructure runbook; this repository names no host. Wrap them in `BEGIN READ ONLY; ... ROLLBACK;`. A read-only transaction cannot create a temp table or a view, so combine the sources with subqueries or CTEs. Per organisation (`:org_id`), `since = now() - interval '7 days'`. Preview and test conversations (`widget_conversations.is_preview`, `is_test`) and the E2E organisation (`portal_orgs.slug = 'e2e'`) never count. Re-check the column names against `app/models/answer_reviews.py`, `conversation_quality.py` and `widgets.py` before you rely on them.
 
 - Turns a colleague judged wrong: `answer_reviews` where `verdict IN ('wrong','incomplete')` and `reviewed_at >= since`. Join `widget_messages` on `message_id` for the turn; `message_id` is NULL once the conversation is purged, so skip those.
-- Conversations the nightly judge marked as failed: `conversation_quality_judgments` where `channel = 'webchat'`, `judged_at >= since` and (`outcome IN ('unresolved','partially_resolved')` or `failure_category IN ('retrieval_miss','retrieval_wrong','generation_error')`). `conversation_id` joins `widget_conversations.id`.
-- Turns the knowledge-gap list counts: assistant rows of `widget_messages` where `answer_signals->>'decision' IN ('refusal','clarifying_question','human_request','partial_answer')` or `answer_signals->>'gap_type' = 'soft'` (the rule is `is_gap` / `GAP_DECISIONS` in `app/services/knowledge_gap_report.py`).
+- Conversations the nightly judge marked as failed (keep only those that still have rows in `widget_messages`: a verdict outlives the conversation's text, and a conversation whose messages are gone cannot be read): `conversation_quality_judgments` where `channel = 'webchat'`, `judged_at >= since` and (`outcome IN ('unresolved','partially_resolved')` or `failure_category IN ('retrieval_miss','retrieval_wrong','generation_error')`). `conversation_id` joins `widget_conversations.id`.
+- Turns the knowledge-gap list counts: assistant rows of `widget_messages` where `answer_signals->>'decision' IN ('refusal','clarifying_question','human_request','partial_answer')` or `answer_signals->>'gap_type' = 'soft'` (the rule is `is_gap` / `GAP_DECISIONS` in `app/services/knowledge_gap_report.py`). `off_topic` is a decision of its own and is not a gap.
 - A random sample of the rest: assistant rows in none of the three sets, `ORDER BY random() LIMIT 5`, so what looks fine is read too.
 
 ```sql
@@ -41,7 +41,7 @@ Group the first-failure points into patterns. Compare each pattern with the exis
 - Rephrase the question in general words about the product. Take over no sentence or phrase of the visitor.
 - No name, e-mail address, phone number, customer number, address, visitor's company, date or amount from the conversation. If an example value is needed, invent it.
 - No conversation id, timestamp or other field that points back.
-- Format: the widget case meetlat reads: `id`, `messages` (last one a user turn), optional `class`/`expect`, `articles`, `variants`. See `docs/runbooks/meetlat.md`.
+- Format: the widget case meetlat reads, one JSON object per line: `id`, `messages` (a list of `{"role", "content"}`, the last one a user turn; earlier assistant replies are sent along as history, so write those newly too and keep what the next turn depends on), `expect` (or `class`) with one of `antwoord`, `vraag`, `niet_gevonden`, `doorverwijzing`, `afsluiting`, and optionally `articles` (the URLs of the articles that should carry the answer) and `variants`. A case whose expectation the product owner has not confirmed carries `"needs_owner": true`. See `docs/runbooks/meetlat.md`.
 
 Before a case is added, run it:
 
@@ -53,7 +53,7 @@ Exit 0 is required. A failure names the case and the rule (e-mail address, six-d
 
 ## 5. Where the test set lives
 
-Outside this repository: one file per organisation in the private infrastructure repository, in the format meetlat reads, so every addition is a line in its history. Add the new cases there, not here.
+Outside this repository: one file per organisation in the private repository that holds customer material, in the format meetlat reads, so every addition is a line in its history. Add the new cases there, not here, and copy the file to the server next to the widget description when a round needs it.
 
 ## 6. Write the reading into the evolution document
 
