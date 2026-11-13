@@ -250,8 +250,10 @@ Each organisation has `mfa_policy`: `optional` (default), `recommended` or
   session and cleared the mark. When the code has expired, `confirm` removes
   the unconfirmed factor and answers 410; a factor that is still unconfirmed at
   the next login is removed there (`auth.py:2169-2245`,
-  `email_otp_enrolment.py:38-59`). The mail for that code carries the code and
-  no button (`klai-mailer/app/renderer.py:46-51`).
+  `email_otp_enrolment.py:38-59`). The mailer writes the mail for that code itself, in the
+  reader's language (Dutch or English, English when it is unknown): the code,
+  how long it is valid, and no button (`klai-mailer/app/renderer.py:46-70`,
+  `:154-178`).
 
 ## 5. Single sign-on through an external identity provider
 

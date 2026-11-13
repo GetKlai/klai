@@ -40,6 +40,9 @@ class ZitadelArgs(BaseModel):
     Code: str | None = None
     Expiry: str | None = None
     ApplicationName: str | None = None
+    # session.otp.email.challenged: the code and its lifetime in nanoseconds.
+    oTP: str | None = None
+    expiry: int | None = None
 
 
 class ZitadelPayload(BaseModel):
