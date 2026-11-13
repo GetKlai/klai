@@ -337,16 +337,25 @@ class Settings(BaseSettings):
     # 450k tpm). Tokens bind first: over 7 days to 12 Nov 2026 a call averaged
     # 1,651 tokens (1,537 in, 114 out) and the busiest minute carried 87 calls
     # and 182,268 tokens, 2,095 per call. 2 rps is 120 calls a minute; with
-    # the burst of 10 on top that is 130 calls, 272k tokens at the busiest
-    # minute's call size: 61% of the tpm limit and 14% of the rpm limit, so a
-    # minute of unusually large calls (up to 3,460 tokens each, 1.65x the
-    # busiest minute) still fits. A night of 6,000-8,000 calls takes 50-67
-    # minutes at this rate instead of the 3-4 hours it took at 0.6 rps. The
-    # rate does not change what a document costs, only how fast the work
-    # runs. tests/test_llm_throttle.py pins this share against the alias.
+    # the burst of 40 on top that is at most 160 calls in a minute, 335k
+    # tokens at the busiest minute's call size: 74% of the tpm limit and 18%
+    # of the rpm limit, so a minute of unusually large calls (up to 2,812
+    # tokens each, 1.34x the busiest minute) still fits. The rate does not
+    # change what a document costs, only how fast the work runs.
+    # tests/test_llm_throttle.py pins this share against the alias.
+    #
+    # The burst is sized on one document's graph extraction. In the night of
+    # 13 Nov 2026 (346 documents) an extraction made 57 calls: one or two
+    # long ones that write out the entities and facts, then about 50 of under
+    # a second that graphiti sends at once to compare each with the graph.
+    # With a burst of 10 those left at the refill rate, 0.5 s apart (10,776
+    # of 13,674 calls in four hours), which was 27 s of a 60 s document while
+    # the tokens used stayed at 26% of the limit. 40 lets most of that
+    # fan-out through at once and refills in 20 s, before the next document
+    # reaches the same point.
     # The env names keep "klai_fast" so existing overrides stay valid.
     litellm_klai_fast_rps: float = 2.0
-    litellm_klai_fast_burst: float = 10.0
+    litellm_klai_fast_burst: float = 40.0
     # Model for the few calls made while a user waits on the response (crawl
     # preview / auth-probe selector detection, taxonomy bootstrap proposals,
     # the portal's /taxonomy/classify). They stay on the chat-side alias;

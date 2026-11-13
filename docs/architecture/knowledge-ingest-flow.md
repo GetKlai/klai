@@ -611,13 +611,17 @@ for the semaphore.
 2.41 s 95th-percentile call time, busiest minute 87 calls and 182,268 tokens.
 At 0.6 requests per second a night of 6,000 to 8,000 calls was pinned at the
 limiter from 02:00 to 05:00 and finished around eleven hours after it started.
-The limiter now runs at 2 requests per second (burst 10): 130 calls in the
-first minute is 272k tokens at the busiest minute's call size, 61% of the
-450k tpm limit and 14% of the 900 rpm limit, and the night takes 50 to 67
-minutes of limiter time. The rate counts requests only; at these call sizes
-that keeps tokens inside the limit (`llm_throttle.py` docstring).
-`tests/test_llm_throttle.py` fails when the rate leaves 50-65% of the tpm
-limit or the llm lane can no longer keep the limiter fed. The daily budget of
+The limiter now runs at 2 requests per second with a burst of 40: at most 160
+calls in a minute is 335k tokens at the busiest minute's call size, 74% of the
+450k tpm limit and 18% of the 900 rpm limit. The rate counts requests only; at
+these call sizes that keeps tokens inside the limit (`llm_throttle.py`
+docstring). `tests/test_llm_throttle.py` fails when the rate leaves 50-75% of
+the tpm limit or the llm lane can no longer keep the limiter fed. The burst is
+one document's graph fan-out: in the night of 13 November 2026 (346 documents)
+an extraction made 57 calls, about 50 of them under a second and sent at once,
+and with a burst of 10 they left 0.5 s apart, 27 s of a 60 s document while
+the tokens used stayed at 26% of the limit; that night the graph finished
+almost six hours after the last page arrived. The daily budget of
 20 USD is about 106k calls at the measured size, so a normal day stays at 1 to
 4 USD and only a backlog of more than ~15 hours flat out reaches it.
 
@@ -781,7 +785,7 @@ ingest does nothing per language; the chat language behaviour is described in
 ### 2.8 Settings and code that look active and are not
 
 - LLM pacing for enrichment, graph, taxonomy and labelling is the one shared
-  limiter, `litellm_klai_fast_rps` 2 and `litellm_klai_fast_burst` 10
+  limiter, `litellm_klai_fast_rps` 2 and `litellm_klai_fast_burst` 40
   (`config.py`, `llm_throttle.py`); there is no `graphiti_llm_rps` setting and
   the compose file does not set one.
 - `knowledge.embedding_queue` is never inserted into; only deleted from

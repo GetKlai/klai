@@ -9,8 +9,8 @@ described below; the rate itself (2 rps) is derived from the klai-ingest
 limits next to ``litellm_klai_fast_rps`` in config.py.
 
 It counts requests, not tokens. At the measured call size (1,651 tokens on
-average, 2,095 in the busiest minute of a week) the request rate keeps the
-token use at about 61% of the tpm limit. A minute would need calls of 3,460
+average, 2,095 in the busiest minute of a week) a minute that starts with a
+full burst stays at 74% of the tpm limit. A minute would need calls of 2,812
 tokens on average to reach it: the chunk prompts carry a two-line summary,
 the summary prompt at most ~2,000 document tokens, and the only larger
 calls, graph extraction over an episode of up to 30,000 characters, come
@@ -35,10 +35,10 @@ process-wide token bucket that every ``klai-fast`` chat call acquires from,
 tuned under the alias budget so sustained bulk work simply runs slower
 instead of erroring.
 
-Burst capacity keeps interactive work snappy: an idle bucket lets the first
-``litellm_klai_fast_burst`` calls through immediately (a single-document
-re-sync mostly fits in the burst), and only sustained load degrades to the
-refill rate.
+The burst lets one document's fan-out through at once: an idle bucket passes
+the first ``litellm_klai_fast_burst`` calls immediately (sized in config.py on
+the calls graph extraction sends concurrently for one document), and only
+sustained load degrades to the refill rate.
 
 Usage::
 

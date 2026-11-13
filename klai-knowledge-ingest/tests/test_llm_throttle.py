@@ -94,7 +94,7 @@ class TestPacingFitsTheKlaiIngestAlias:
         first_minute = settings.litellm_klai_fast_rps * 60 + settings.litellm_klai_fast_burst
 
         token_share = first_minute * self.BUSIEST_MINUTE_TOKENS_PER_CALL / alias["tpm"]
-        assert 0.5 <= token_share <= 0.65, token_share
+        assert 0.5 <= token_share <= 0.75, token_share
         assert first_minute / alias["rpm"] <= 0.2
         # The LLM lane keeps the limiter fed: rate x 2.41 s (95th percentile
         # call time) calls must be able to be in flight at once.
