@@ -97,7 +97,7 @@ groups:
             keeps all background LLM traffic under the `klai-ingest`
             alias limits (900 rpm / 450k tpm). The pacing rate is
             controlled by the `LITELLM_KLAI_FAST_RPS` env var
-            (`Settings.litellm_klai_fast_rps`, default 2.0, sized at ~61%
+            (`Settings.litellm_klai_fast_rps`, default 2.0, sized at ~74%
             of the tpm limit; see the comment next to it in config.py).
 
             Triage:

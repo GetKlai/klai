@@ -293,8 +293,8 @@ model_list:
   # Mistral's Vibe client (2.25.8) prices this model: $0.10 in / $0.30 out
   # per 1M tokens, cache reads at 10% of input like the other entries.
   # Budget: normal ingest is ~$1-4/day. knowledge-ingest paces itself at
-  # 2 rps (120 rpm, llm_throttle; ~61% of the tpm below at the busiest
-  # minute's call size), about 173k calls/day flat out; at the measured
+  # 2 rps with a burst of 40 (llm_throttle; at most ~74% of the tpm below
+  # at the busiest minute's call size), about 173k calls/day flat out; at the measured
   # 1,537 input / 114 output tokens per call (7 days to 12 Nov 2026) that is
   # ~$0.19 per 1,000 calls, so a normal night of 6,000-8,000 calls costs
   # ~$1.5 and $20 is reached after ~106k calls, ~15 hours flat out. A backlog
