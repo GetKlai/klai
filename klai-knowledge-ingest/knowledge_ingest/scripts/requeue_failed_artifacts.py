@@ -1,4 +1,4 @@
-"""Operator script: requeue failed artifacts for bulk enrichment.
+"""Operator script: requeue current versions whose enrichment or graph failed.
 
 Context: before the shared LiteLLM token bucket (``knowledge_ingest/llm_throttle.py``)
 existed, concurrent crawls/imports routinely burned through every retry on
@@ -38,6 +38,14 @@ of the same document.
 The script moves each document's enrichment back to pending
 (``queue_derived_work``); ``enrich_document_bulk`` records ``done`` or
 ``failed`` once the job completes.
+
+``--product graph`` does the same for the graph: it queues
+``ingest_graphiti_episode`` with the arguments and locks the ingest route uses,
+including ``replace_stale``, so the graph keeps only the current extraction.
+``--reason`` narrows either product to one failure reason (for example
+``missing_before_states``). A version without stored text is never queued,
+because its job could only fail again and alert; the preview counts those
+separately.
 """
 
 from __future__ import annotations
@@ -52,9 +60,12 @@ import structlog
 
 from knowledge_ingest.config import settings
 from knowledge_ingest.db import cross_org_admin_connection
-from knowledge_ingest.derived_state import FAILED, product_state, queue_derived_work
+from knowledge_ingest.derived_state import FAILED, Product, product_state, queue_derived_work
 from knowledge_ingest.operations import guard_cli
-from knowledge_ingest.pg_store import _SENTINEL  # single source of truth -- do not re-literal
+from knowledge_ingest.pg_store import (  # single source of truth -- do not re-literal
+    _SENTINEL,
+    PURGE_PENDING,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import AsyncIterator
@@ -73,22 +84,26 @@ async def _select_failed_artifacts(
     org_id: str | None,
     kb_slug: str | None,
     limit: int,
+    product: Product = "enrichment",
+    reason: str | None = None,
 ) -> list[dict]:
-    """Select active versions whose enrichment failed, oldest-``created_at``-first.
+    """Select current versions whose ``product`` failed, oldest-``created_at``-first.
 
-    Whether it failed is ``derived_state.product_state``'s answer, legacy rows
-    included; the SQL only narrows the rows the reader has to look at. A row
-    whose ``index_status`` is failed but whose enrichment is done had its raw
-    write fail, which a new enrichment does not repair, so it is not selected.
+    Whether it failed, and why, is ``derived_state.product_state``'s answer,
+    legacy enrichment rows included; the SQL only narrows the rows the reader
+    has to look at. A row whose ``index_status`` is failed but whose
+    enrichment is done had its raw write fail, which a new enrichment does not
+    repair, so it is not selected.
 
     ``belief_time_end = _SENTINEL`` restricts to the currently-active
-    belief-time row per artifact -- a superseded/soft-deleted row must
-    never be requeued. ``org_id`` / ``kb_slug`` are optional scoping
+    belief-time row per artifact and a row being purged is skipped: a
+    superseded, soft-deleted or deleting row must never be requeued.
+    ``org_id`` / ``kb_slug`` are optional scoping
     filters: a static query with ``$N::text IS NULL OR ...`` clauses is
     used (rather than building the WHERE clause with an f-string) so the
     SQL text itself never varies with caller input.
     """
-    params: list[Any] = [_SENTINEL, org_id, kb_slug, limit]
+    params: list[Any] = [_SENTINEL, org_id, kb_slug, limit, product, reason, PURGE_PENDING]
 
     rows = await conn.fetch(
         """
@@ -97,13 +112,19 @@ async def _select_failed_artifacts(
             a.org_id AS org_id,
             a.kb_slug AS kb_slug,
             a.path AS path,
+            a.content_type AS content_type,
+            a.belief_time_start AS belief_time_start,
             a.created_at AS created_at,
             a.index_status AS index_status,
             a.extra::jsonb AS extra
         FROM knowledge.artifacts a
-        WHERE (a.extra::jsonb->>'enrichment_state' = 'failed'
-               OR (a.extra::jsonb->>'enrichment_state' IS NULL AND a.index_status = 'failed'))
+        WHERE (a.extra::jsonb->>($5 || '_state') = 'failed'
+               OR ($5 = 'enrichment' AND a.extra::jsonb->>'enrichment_state' IS NULL
+                   AND a.index_status = 'failed'))
+          AND ($6::text IS NULL OR a.extra::jsonb->>($5 || '_reason') = $6
+               OR a.extra::jsonb->>($5 || '_state') IS NULL)
           AND a.belief_time_end = $1
+          AND a.index_status <> $7
           AND ($2::text IS NULL OR a.org_id = $2)
           AND ($3::text IS NULL OR a.kb_slug = $3)
         ORDER BY a.created_at ASC
@@ -111,19 +132,26 @@ async def _select_failed_artifacts(
         """,
         *params,
     )
-    return [
-        {
-            "artifact_id": row["artifact_id"],
-            "org_id": row["org_id"],
-            "kb_slug": row["kb_slug"],
-            "path": row["path"],
-            "created_at": row["created_at"],
-            "index_status": row["index_status"],
-        }
-        for row in rows
-        if product_state(_extra(row["extra"]), "enrichment", index_status=row["index_status"]).state
-        == FAILED
-    ]
+    selected = []
+    for row in rows:
+        extra = _extra(row["extra"])
+        state = product_state(extra, product, index_status=row["index_status"])
+        if state.state != FAILED or (reason is not None and state.reason != reason):
+            continue
+        selected.append(
+            {
+                "artifact_id": row["artifact_id"],
+                "org_id": row["org_id"],
+                "kb_slug": row["kb_slug"],
+                "path": row["path"],
+                "content_type": row["content_type"],
+                "belief_time_start": row["belief_time_start"],
+                "created_at": row["created_at"],
+                "index_status": row["index_status"],
+                "has_text": bool(extra.get("document_text")),
+            }
+        )
+    return selected
 
 
 def _extra(value: Any) -> dict:
@@ -152,8 +180,10 @@ async def _procrastinate_app() -> AsyncIterator[Any]:
         yield app
 
 
-def _print_dry_run_summary(artifacts: list[dict]) -> None:
+def _print_dry_run_summary(selected: list[dict]) -> None:
+    artifacts = [a for a in selected if a["has_text"]]
     print(f"[dry-run] {len(artifacts)} failed artifact(s) would be requeued")
+    print(f"  {len(selected) - len(artifacts)} without stored text, not requeued")
     groups: dict[tuple[str, str], int] = {}
     for artifact in artifacts:
         key = (artifact["org_id"], artifact["kb_slug"])
@@ -169,46 +199,69 @@ def _print_dry_run_summary(artifacts: list[dict]) -> None:
         )
 
 
-async def _requeue(artifacts: list[dict]) -> tuple[int, int]:
-    """Defer ``enrich_document_bulk`` for every artifact.
+async def _queue(conn: Any, proc_app: Any, artifact: dict, product: Product) -> bool:
+    artifact_id = artifact["artifact_id"]
+    if product == "graph":
+        # The ingest route's job, locks and arguments (routes/ingest.py).
+        return await queue_derived_work(
+            conn,
+            artifact_id,
+            "graph",
+            proc_app.ingest_graphiti_episode.configure(
+                lock=f"graphiti:{artifact_id}",
+                queueing_lock=f"graphiti:{artifact_id}",
+            ),
+            artifact_id=artifact_id,
+            org_id=artifact["org_id"],
+            content_type=artifact["content_type"],
+            belief_time_start=artifact["belief_time_start"],
+            kb_slug=artifact["kb_slug"],
+            path=artifact["path"],
+            replace_stale=True,
+        )
+    if artifact["index_status"] == "failed":
+        # A row from before the enrichment state kept its enrichment
+        # failure in index_status. Back to pending, as a reindex does,
+        # so the job's outcome moves it on.
+        await conn.execute(
+            "UPDATE knowledge.artifacts SET index_status = 'pending', "
+            "index_status_changed_at = extract(epoch from now())::bigint "
+            "WHERE id = $1::uuid AND index_status = 'failed'",
+            artifact_id,
+        )
+    return await queue_derived_work(
+        conn,
+        artifact_id,
+        "enrichment",
+        proc_app.enrich_document_bulk.configure(  # type: ignore[attr-defined]
+            queueing_lock=f"requeue:{artifact_id}",
+        ),
+        artifact_id=artifact_id,
+    )
 
-    Through ``queue_derived_work``: the document's enrichment goes back to
+
+async def _requeue(selected: list[dict], product: Product = "enrichment") -> tuple[int, int]:
+    """Queue the ``product`` job for every selected artifact that has stored text.
+
+    Through ``queue_derived_work``: the document's product goes back to
     pending, the one legal way out of failed, and a queue that fails marks it
     failed again and stops the run. Returns ``(enqueued,
     skipped_already_enqueued)``; an artifact a live job already covers is
     skipped and must not abort the remaining batch.
     """
+    artifacts = [a for a in selected if a["has_text"]]
     total = len(artifacts)
     enqueued = 0
     skipped = 0
     async with _procrastinate_app() as proc_app, cross_org_admin_connection() as conn:
         for idx, artifact in enumerate(artifacts, start=1):
-            artifact_id = artifact["artifact_id"]
-            if artifact["index_status"] == "failed":
-                # A row from before the enrichment state kept its enrichment
-                # failure in index_status. Back to pending, as a reindex does,
-                # so the job's outcome moves it on.
-                await conn.execute(
-                    "UPDATE knowledge.artifacts SET index_status = 'pending', "
-                    "index_status_changed_at = extract(epoch from now())::bigint "
-                    "WHERE id = $1::uuid AND index_status = 'failed'",
-                    artifact_id,
-                )
-            if await queue_derived_work(
-                conn,
-                artifact_id,
-                "enrichment",
-                proc_app.enrich_document_bulk.configure(  # type: ignore[attr-defined]
-                    queueing_lock=f"requeue:{artifact_id}",
-                ),
-                artifact_id=artifact_id,
-            ):
+            if await _queue(conn, proc_app, artifact, product):
                 enqueued += 1
             else:
                 skipped += 1
                 logger.info(
                     "requeue_failed_artifact_already_enqueued",
-                    artifact_id=artifact_id,
+                    artifact_id=artifact["artifact_id"],
                     org_id=artifact["org_id"],
                     kb_slug=artifact["kb_slug"],
                 )
@@ -231,10 +284,12 @@ async def main(
     limit: int,
     org_id: str | None,
     kb_slug: str | None,
+    product: Product = "enrichment",
+    reason: str | None = None,
 ) -> None:
     async with cross_org_admin_connection() as conn:
         artifacts = await _select_failed_artifacts(
-            conn, org_id=org_id, kb_slug=kb_slug, limit=limit
+            conn, org_id=org_id, kb_slug=kb_slug, limit=limit, product=product, reason=reason
         )
 
     if not artifacts:
@@ -242,6 +297,8 @@ async def main(
             "requeue_failed_artifacts_none_selected",
             org_id=org_id,
             kb_slug=kb_slug,
+            product=product,
+            reason=reason,
         )
         return
 
@@ -249,10 +306,12 @@ async def main(
         _print_dry_run_summary(artifacts)
         return
 
-    enqueued, skipped = await _requeue(artifacts)
+    enqueued, skipped = await _requeue(artifacts, product)
     logger.info(
         "requeue_failed_artifacts_done",
+        product=product,
         selected=len(artifacts),
+        without_text=sum(1 for a in artifacts if not a["has_text"]),
         enqueued=enqueued,
         skipped_already_enqueued=skipped,
     )
@@ -260,11 +319,18 @@ async def main(
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Requeue index_status='failed' artifacts for bulk enrichment "
-            "(recovery from LiteLLM 429 exhaustion prior to the shared "
-            "token-bucket fix)."
-        )
+        description="Requeue the enrichment or graph job of current versions where it failed."
+    )
+    parser.add_argument(
+        "--product",
+        choices=("enrichment", "graph"),
+        default="enrichment",
+        help="Which derived product to requeue (default: enrichment).",
+    )
+    parser.add_argument(
+        "--reason",
+        default=None,
+        help="Only versions that failed for this reason, e.g. missing_before_states.",
     )
     parser.add_argument(
         "--dry-run",
@@ -275,7 +341,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="Actually defer enrich_document_bulk for every selected artifact.",
+        help="Actually queue the product's job for every selected artifact.",
     )
     parser.add_argument(
         "--limit",
@@ -301,5 +367,7 @@ if __name__ == "__main__":
             limit=args.limit,
             org_id=args.org_id,
             kb_slug=args.kb_slug,
+            product=args.product,
+            reason=args.reason,
         )
     )

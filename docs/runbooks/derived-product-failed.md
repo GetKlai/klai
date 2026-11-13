@@ -59,5 +59,9 @@ knowledge base first.
 
 - Enrichment: `python -m knowledge_ingest.scripts.requeue_failed_artifacts --dry-run`
   selects active versions whose enrichment state is `failed`.
-- Graph: a new sync of the source document queues a fresh extraction. For a
-  quarantined document, first find out why FalkorDB dies on it.
+- Graph: `python -m knowledge_ingest.scripts.requeue_failed_artifacts --product graph --dry-run`
+  selects active versions whose graph state is `failed` and queues the job the
+  ingest route queues; `--reason <reason>` narrows either product to one
+  reason. Versions without stored text are counted, never queued. A new sync
+  of the source document also queues a fresh extraction. For a quarantined
+  document, first find out why FalkorDB dies on it.

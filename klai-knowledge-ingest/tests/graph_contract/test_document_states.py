@@ -604,6 +604,82 @@ async def test_the_requeue_script_selects_what_the_reader_calls_failed(jobs) -> 
     assert {row["artifact_id"] for row in selected} == {enrichment_failed, legacy_upload}
 
 
+async def _failed_versions(jobs) -> SimpleNamespace:
+    """Current and closed versions with failed products, for the requeue script."""
+
+    async def _version(*, active: bool = True, index_status: str = "synced", **extra) -> str:
+        artifact = await jobs.insert(extra, active=active, path=str(uuid.uuid4()))
+        await jobs.conn.execute(
+            "UPDATE knowledge.artifacts SET index_status = $2 WHERE id = $1", artifact, index_status
+        )
+        return artifact
+
+    text = {"document_text": "Text."}
+    missing = {"graph_state": "failed", "graph_reason": "missing_before_states"}
+    return SimpleNamespace(
+        missing=await _version(**text, **missing),
+        exhausted=await _version(**text, graph_state="failed", graph_reason="retries_exhausted"),
+        no_text=await _version(**missing),
+        enrichment_only=await _version(
+            **text, graph_state="done", enrichment_state="failed", enrichment_reason="legacy"
+        ),
+        replaced=await _version(**text, **missing, active=False),
+        being_purged=await _version(**text, **missing, index_status="deleting"),
+        org_id=await jobs.conn.fetchval("SELECT current_setting('app.current_org_id')"),
+    )
+
+
+async def test_the_requeue_script_selects_current_versions_by_product_and_reason(jobs) -> None:
+    from knowledge_ingest.scripts import requeue_failed_artifacts as script
+
+    v = await _failed_versions(jobs)
+
+    async def _selected(product: str, reason: str | None = None) -> set[str]:
+        rows = await script._select_failed_artifacts(
+            jobs.conn, org_id=v.org_id, kb_slug="docs", limit=10, product=product, reason=reason
+        )
+        return {row["artifact_id"] for row in rows}
+
+    assert await _selected("graph") == {v.missing, v.exhausted, v.no_text}
+    assert await _selected("graph", "missing_before_states") == {v.missing, v.no_text}
+    assert await _selected("enrichment", "legacy") == {v.enrichment_only}
+    assert await _selected("enrichment", "retries_exhausted") == set()
+
+
+async def test_the_requeue_preview_writes_nothing_and_counts_versions_without_text(
+    jobs, capsys
+) -> None:
+    from knowledge_ingest.scripts import requeue_failed_artifacts as script
+
+    v = await _failed_versions(jobs)
+    snapshot = "SELECT id, extra::text, index_status FROM knowledge.artifacts ORDER BY id"
+    before = await jobs.conn.fetch(snapshot)
+
+    @asynccontextmanager
+    async def _admin():
+        yield jobs.conn
+
+    with (
+        patch.object(script, "cross_org_admin_connection", _admin),
+        patch.object(script, "_procrastinate_app", side_effect=AssertionError("queued")),
+    ):
+        await script.main(
+            dry_run=True,
+            limit=10,
+            org_id=v.org_id,
+            kb_slug="docs",
+            product="graph",
+            reason="missing_before_states",
+        )
+
+    assert await jobs.conn.fetch(snapshot) == before
+    out = capsys.readouterr().out
+    assert "1 failed artifact(s) would be requeued" in out
+    assert "1 without stored text" in out
+    assert v.missing in out
+    assert v.no_text not in out
+
+
 async def test_a_rebuild_that_fails_after_deleting_the_parents_says_failed(
     jobs, monkeypatch
 ) -> None:
