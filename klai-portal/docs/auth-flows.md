@@ -253,7 +253,7 @@ Each organisation has `mfa_policy`: `optional` (default), `recommended` or
   `email_otp_enrolment.py:38-59`). The mailer writes the mail for that code itself, in the
   reader's language (Dutch or English, English when it is unknown): the code,
   how long it is valid, and no button (`klai-mailer/app/renderer.py:46-70`,
-  `:154-175`).
+  `:154-178`).
 
 ## 5. Single sign-on through an external identity provider
 

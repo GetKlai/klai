@@ -63,10 +63,13 @@ for the Slack key, none for the tenant's internal-chat key
 `partner_api_key_kb_access` rows, limited to the org's KBs and the creator's
 own personal KB (`partner_dependencies.py:299-310`). A per-key requests-per-minute
 limit answers 429 with `Retry-After` (`partner_dependencies.py:311-320`).
-A key belongs to the organisation, not to the admin who created it: the lookup
-does not read the creator's membership, so a key keeps working when its
-creator is suspended or offboarded, and it ends when an admin deletes it
-(`partner_dependencies.py:268-275`; decided by the owner on 13 November 2026).
+The lookup does not read the creator's membership, so a key keeps working
+while its creator is suspended (`partner_dependencies.py:268-275`; kept that
+way by the owner's decision of 13 November 2026). Offboarding or deleting the
+creator removes the keys that user created in the organisation
+(`revoke_user_credentials`,
+`klai-portal/backend/app/services/kb_offboarding.py:526-549`), and an admin can
+delete a key at any time.
 
 ### Widget
 
