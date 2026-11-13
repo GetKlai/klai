@@ -21,7 +21,7 @@ configuration variable names, not values.
 | Internal services calling `/internal/*` | `Authorization: Bearer <INTERNAL_SECRET>`; one route may accept a second, narrower secret | `_require_internal_token` (`klai-portal/backend/app/api/internal.py:305-345`) | No user; the handler resolves the org from path or body and sets the tenant itself |
 | Services verifying a user or tenant claim | `POST /internal/identity/verify`, `/internal/identity/verify-tenant`, `/internal/mcp-token/verify`, through `klai-libs/identity-assert` | `_require_internal_token` plus the identity verifier (`internal.py:2116`, `:2408`, `:2800`) | A verified or denied decision for the claimed user and org |
 | portal-api calling knowledge-ingest and retrieval-api | `X-Internal-Secret` with a separate secret per target | The target service | `org_id` as the Zitadel org id string (`klai-portal/backend/app/services/retrieval_context.py:830-840`) |
-| Docs app (klai-docs) | `X-Internal-Secret` matching `DOCS_INTERNAL_SECRET` together with the portal's `X-Klai-Verified-User-Id`, `-Org-Id` and `-Org-Slug` headers; or that secret with `X-User-ID` for service callers; or a Zitadel access token verified against the issuer's JWKS | `requireAuthOrService`, `callerMayAccessOrg` and `requireOrgAccess` (`klai-docs/lib/auth.ts:72-95`, `:102-108`, `:134-153`) | The verified user, limited to the verified organisation slug; or the service's acting user; or the token payload (`sub`) and the org row for the slug in the path |
+| Docs app (klai-docs) | `X-Internal-Secret` matching `DOCS_INTERNAL_SECRET` together with the portal's `X-Klai-Verified-User-Id`, `-Org-Id` and `-Org-Slug` headers; or that secret with `X-User-ID` for service callers | `requireAuthOrService`, `callerMayAccessOrg` and `requireOrgAccess` (`klai-docs/lib/auth.ts:43-62`, `:69-75`, `:101-120`) | The verified user, limited to the verified organisation slug; or the service's acting user and the org row for the slug in the path |
 | MCP clients (knowledge MCP) | An access token `klai_mcp_...` issued by portal-api acting as OAuth 2.1 authorisation server | `klai-knowledge-mcp` calls `/internal/mcp-token/verify` | The user, org and scope bound to the token row |
 | Slack (klai-slack) | Towards portal-api: `INTERNAL_SECRET` on `/internal/slack/*`; for questions: a partner key with the `slack` permission | `_require_internal_token` (`klai-portal/backend/app/api/internal_slack.py:115-182`); `get_partner_key` | Org from the signed link token; `PartnerAuthContext` for chat |
 | Shield browser extension | `Authorization: Bearer ks_live_...`, obtained through a one-time `ks_code_...` exchange | `get_shield_auth` (`klai-portal/backend/app/api/shield.py:162-200`) | The user in the platform org who created the token |
@@ -114,20 +114,21 @@ against `DOCS_INTERNAL_SECRET` in constant time. With the secret, a request
 that carries the `X-Klai-Verified-*` headers is a proxied user and reaches only
 the organisation slug the portal verified; a request with `X-User-ID` is a
 service caller, which is how portal-api's provisioning client calls it
-(`klai-portal/backend/app/services/docs_client.py:40`). Without the secret, the
-Bearer token is verified with `jose` against the issuer's JWKS
-(`klai-docs/lib/auth.ts:72-95`). `callerMayAccessOrg` compares the verified slug
-or the token's organisation with the organisation row, and `requireOrgAccess`
-resolves that row from the slug in the path (`klai-docs/lib/auth.ts:102-153`).
-Each identification through the assertion or the Bearer token logs one
-`docs_auth_identified` line with the kind only (`klai-docs/lib/auth.ts:40-42`).
-The portal proxy sends the internal secret setting of portal-api, not
-`DOCS_INTERNAL_SECRET` (`klai-portal/backend/app/api/proxy.py:191`,
+(`klai-portal/backend/app/services/docs_client.py:40`). Without the secret a
+request identifies nobody; a session token is not read
+(`klai-docs/lib/auth.ts:43-62`). `callerMayAccessOrg` compares the verified slug
+or the service caller's organisation with the organisation row, and
+`requireOrgAccess` resolves that row from the slug in the path
+(`klai-docs/lib/auth.ts:69-120`). Each identification through the assertion logs
+one `docs_auth_identified` line with the kind only (`klai-docs/lib/auth.ts:27-29`).
+The portal proxy sends `DOCS_INTERNAL_SECRET` on docs requests and the internal
+secret setting of portal-api on every other upstream
+(`klai-portal/backend/app/api/proxy.py:193`,
 `klai-portal/backend/app/core/config.py:129,169`), so a proxied editor request
-is identified by its Bearer token today; the portal also drops any
+is identified by the portal's verified identity; the portal also drops any
 client-supplied identity headers and refuses a path that names another
 organisation than the session's, answering 403 with the reason `org_mismatch`
-(`klai-portal/backend/app/api/proxy.py:79-102`, `:198-216`, `:320-335`).
+(`klai-portal/backend/app/api/proxy.py:79-102`, `:200-218`, `:322-337`).
 The public reader needs no login and returns 404 for personal KBs and KBs with
 `visibility = private`
 (`klai-docs/app/(reader)/[...path]/page.tsx:116`).
