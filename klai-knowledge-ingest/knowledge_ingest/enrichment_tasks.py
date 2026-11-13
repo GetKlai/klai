@@ -901,14 +901,6 @@ def _register_tasks(procrastinate_app: Any) -> None:
                         org_id=org_id,
                     )
 
-            try:
-                await graph_module.flush_entity_graph_data(
-                    artifact_id,
-                    org_id,
-                    entity_graph_data,
-                )
-            except Exception:
-                logger.exception("entity_graph_data_failed", artifact_id=artifact_id)
             final: dict[str, Any] = {
                 "graphiti_episode_complete": True,
                 "graphiti_extraction_version": GRAPHITI_EXTRACTION_VERSION,
@@ -931,8 +923,57 @@ def _register_tasks(procrastinate_app: Any) -> None:
                 )
             await pg_store.update_artifact_extra(conn, artifact_id, final)
             await derived_state.set_product_state(conn, artifact_id, "graph", DONE)
+            # The outcome and the episode ids are recorded before the fields
+            # go onto the points, and the enrichment job reads them after it
+            # replaces the points (_link_graph_fields): whichever of the two
+            # finishes last writes the fields, also when both end together.
+            try:
+                await graph_module.flush_entity_graph_data(
+                    artifact_id,
+                    org_id,
+                    entity_graph_data,
+                )
+            except Exception:
+                logger.exception("entity_graph_data_failed", artifact_id=artifact_id)
 
     procrastinate_app.ingest_graphiti_episode = ingest_graphiti_episode  # type: ignore[attr-defined]
+
+
+async def _link_graph_fields(org_id: str, artifact_id: str) -> None:
+    """Write the graph fields onto the points just replaced, when the graph is done.
+
+    Replacing a version's points drops the graph fields the graph job wrote
+    onto them. The graph job records ``done`` and its episode ids before it
+    writes the fields, so reading the row after the replacement either sees
+    ``done`` and writes them here, or the graph job's own write comes after
+    the replacement. Before the graph had its own worker lane this order
+    almost never happened; on 13 November 2026, 66 of 2,253 documents with a
+    finished graph had no point carrying the fields.
+    """
+    from knowledge_ingest import graph as graph_module
+
+    async with tenant_scoped_connection(org_id) as conn:
+        artifact = await pg_store.read_artifact_for_enrichment(conn, artifact_id)
+    if artifact is None:
+        return
+    extra = artifact["extra"]
+    if derived_state.product_state(extra, "graph").state != DONE:
+        return
+    # The episodes of the extraction that finished, as the graph job flushed them.
+    episode_ids = list(extra.get("graphiti_episode_ids") or [])[
+        int(extra.get("graphiti_episode_ids_from") or 0) :
+    ]
+    if not episode_ids:
+        return
+    try:
+        entity_graph_data = graph_module.EntityGraphData()
+        await graph_module.load_entity_graph_data(org_id, episode_ids, entity_graph_data)
+        await graph_module.flush_entity_graph_data(artifact_id, org_id, entity_graph_data)
+    except Exception:
+        # Logged as the graph job logs its own failed write: the enrichment
+        # itself landed, and retrying it would redo the model work for fields
+        # it does not produce.
+        logger.exception("entity_graph_data_failed", artifact_id=artifact_id)
 
 
 async def _enrich_document(
@@ -1167,6 +1208,7 @@ async def _enrich_document(
                 path=path,
                 org_id=org_id,
             )
+        await _link_graph_fields(org_id, artifact_id)
 
         if chunk_offset is None:
             await _finish("enrichment", artifact_id, DONE)
