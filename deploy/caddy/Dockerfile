@@ -15,7 +15,7 @@
 # its builder ships Go 1.27.3, which fixes four stdlib CVEs the 2.11.6 build
 # (Go 1.27.1) carried, and those findings block the Trivy gate that every
 # Caddy deploy has to pass.
-FROM caddy:2.11.8-builder-alpine AS builder
+FROM caddy:2.11.9-builder-alpine AS builder
 
 # The three --replace lines pin transitive dependencies, not plugins. Caddy
 # 2.11.4's own graph selects versions that Trivy flags with a fix available:
@@ -45,7 +45,7 @@ RUN xcaddy build \
     --replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2 \
     --replace github.com/go-jose/go-jose/v4=github.com/go-jose/go-jose/v4@v4.1.6
 
-FROM caddy:2.11.8-alpine
+FROM caddy:2.11.9-alpine
 
 # Apply Alpine package security updates that landed AFTER the
 # `caddy:2.11.4-alpine` image was published. These packages are exposed
