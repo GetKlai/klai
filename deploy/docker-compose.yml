@@ -1491,7 +1491,7 @@ services:
 
   grafana:
     logging: *log-rotation
-    image: grafana/grafana:13.3.0
+    image: grafana/grafana:13.3.1
     restart: unless-stopped
     volumes:
       - grafana-data:/var/lib/grafana
