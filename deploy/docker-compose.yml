@@ -320,7 +320,7 @@ services:
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
     logging: *log-rotation
-    image: ghcr.io/zitadel/zitadel:v4.20.1
+    image: ghcr.io/zitadel/zitadel:v4.20.3
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -1321,7 +1321,7 @@ services:
 
   victoriametrics:
     logging: *log-rotation
-    image: victoriametrics/victoria-metrics:v1.155.0
+    image: victoriametrics/victoria-metrics:v1.156.0
     restart: unless-stopped
     volumes:
       - victoriametrics-data:/storage
@@ -1460,7 +1460,7 @@ services:
 
   alloy:
     logging: *log-rotation
-    image: grafana/alloy:v1.21.3
+    image: grafana/alloy:v1.22.0
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -2455,7 +2455,7 @@ services:
 
   firecrawl-api:
     logging: *log-rotation
-    image: ghcr.io/firecrawl/firecrawl:2.11.704
+    image: ghcr.io/firecrawl/firecrawl:2.11.743
     restart: unless-stopped
     environment:
       PORT: "3002"
@@ -2729,7 +2729,7 @@ services:
   # 3.0.3 -> 3.4.0 in one run, 12 migrations), so no stepping is needed.
   umami:
     logging: *log-rotation
-    image: ghcr.io/umami-software/umami:3.4.1
+    image: ghcr.io/umami-software/umami:3.5.0
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://umami:${UMAMI_POSTGRES_PASSWORD}@umami-postgres:5432/umami
