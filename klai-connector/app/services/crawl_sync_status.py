@@ -36,8 +36,8 @@ def remote_crawl_documents_changed(live: dict[str, Any]) -> int | None:
 def remote_crawl_failure_status(error: str) -> SyncStatus:
     """The run status for a failed remote crawl.
 
-    ``login_required:`` means knowledge-ingest could not sign the site in
-    again before the crawl. Only the owner can fix that by logging in again,
+    ``login_required:`` means knowledge-ingest found the site's saved
+    session gone before the crawl. Only the owner can fix that by logging in again,
     which is what AUTH_ERROR tells the portal. Both the resolver and the
     reaper finalise runs, and a nightly run is usually finalised by the reaper.
     """

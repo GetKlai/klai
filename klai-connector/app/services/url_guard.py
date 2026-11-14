@@ -17,7 +17,7 @@ structurally impossible.
 
 from __future__ import annotations
 
-from typing import NoReturn, cast
+from typing import NoReturn
 
 from klai_image_storage.url_guard import (
     SsrfBlockedError,
@@ -103,18 +103,6 @@ def validate_web_crawler_config_strict(
             validate_url_pinned_sync(raw, log_as=None)
         except SsrfBlockedError as exc:
             _reject(field, exc.reason, str(exc), exc.hostname)
-
-    # The keep-alive and the crawl pre-flight fetch the sign-in hosts too.
-    hosts: object = config.get("auth_chain_hosts") or []
-    if not isinstance(hosts, list):
-        _reject("auth_chain_hosts", "invalid_type", "auth_chain_hosts must be a list", None)
-    for host in cast("list[object]", hosts):
-        if not isinstance(host, str) or "/" in host or "@" in host or ":" in host:
-            _reject("auth_chain_hosts", "invalid_host", "auth_chain_hosts holds a non-host value", None)
-        try:
-            validate_url_pinned_sync(f"https://{host}/", log_as=None)
-        except SsrfBlockedError as exc:
-            _reject("auth_chain_hosts", exc.reason, str(exc), exc.hostname)
 
 
 def validate_confluence_base_url_strict(base_url: str, *, connector_id: str | None = None) -> None:

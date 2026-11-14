@@ -226,7 +226,6 @@ class TestCrawlSyncEndpoint:
                     "login_indicator": "#login-form",
                     "canary_url": "https://help.example.com/index",
                     "canary_fingerprint": "deadbeef12345678",
-                    "auth_chain_hosts": ["login.example.org"],
                 },
             )
 
@@ -261,8 +260,6 @@ class TestCrawlSyncEndpoint:
                 assert plaintext["value"] not in str(value)
         assert kwargs["login_indicator_selector"] == "#login-form"
         assert kwargs["canary_url"] == "https://help.example.com/index"
-        # The pre-flight signs a lapsed session in again through these hosts.
-        assert kwargs["auth_chain_hosts"] == ["login.example.org"]
         assert kwargs["canary_fingerprint"] == "deadbeef12345678"
         assert kwargs["start_url"] == "https://help.example.com"
         assert kwargs["max_pages"] == 20

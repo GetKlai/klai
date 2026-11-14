@@ -18,72 +18,20 @@ import { adminLogger } from '@/lib/logger'
 import * as m from '@/paraglide/messages'
 import type { AuthProbeResult, PreviewClassification } from './-connector-types'
 
-const HOST_CODES = ['no_cookies_for', 'sign_in_required_at', 'keepalive_cannot_read_session_at']
-
-function splitReason(reason: string | null): [string, string] {
-  const [code, ...rest] = (reason ?? '').split(':')
-  return [code, rest.join(':')]
-}
-
-/** The sign-in host whose cookies a failed renewal asks for, if the reason names one. */
-export function renewalHost(reason: string | null): string | null {
-  const [code, host] = splitReason(reason)
-  return host && HOST_CODES.includes(code) ? host : null
-}
-
-function renewalMessage(reason: string | null, savedMode: boolean): string {
-  const [code, host] = splitReason(reason)
-  const action = savedMode
-    ? m.admin_connectors_webcrawler_auth_renewal_action_replace({ host })
-    : m.admin_connectors_webcrawler_auth_renewal_action_paste({ host })
-  switch (code) {
-    case 'no_cookies_for':
-      return `${m.admin_connectors_webcrawler_auth_renewal_no_cookies({ host })} ${action}`
-    case 'sign_in_required_at':
-    case 'keepalive_cannot_read_session_at':
-      return `${m.admin_connectors_webcrawler_auth_renewal_sign_in_required({ host })} ${action}`
-    default:
-      return m.admin_connectors_webcrawler_auth_renewal_no()
-  }
-}
-
 /**
  * SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 - render auth-probe outcome.
- * Shared by add-connector and edit-connector flows. `savedMode` is the edit
- * flow showing saved cookies, where the sign-in host's field only appears
- * after "Replace cookies".
+ * Shared by add-connector and edit-connector flows.
  */
-export function AuthProbeFeedback({ result, savedMode = false }: { result: AuthProbeResult; savedMode?: boolean }) {
+export function AuthProbeFeedback({ result }: { result: AuthProbeResult }) {
   // Raw detector output means nothing to a user; it stays in the debug log.
   useEffect(() => {
     adminLogger.debug('auth probe', {
       classification: result.classification,
       match_reasons: result.match_reasons,
-      renewal: result.renewal,
     })
   }, [result])
 
-  // Renewal only matters once the login itself works; before that the one
-  // verdict box says what to do.
-  const renewal = result.classification === 'auth_ok' ? result.renewal : null
-  return (
-    <div className="space-y-2">
-      <AuthProbeVerdict result={result} />
-      {renewal && (
-        // Proven on the real site when the cookies are tested: a sign-in with
-        // only the sign-in host's cookies. Without it the login lasts until the
-        // site ends its own session. Advice with a consequence: a warning, as
-        // in PreviewClassificationFeedback, never destructive.
-        <Alert variant={renewal.can_renew ? 'success' : 'warning'} size="sm">
-          <span>
-            {renewal.can_renew
-              ? m.admin_connectors_webcrawler_auth_renewal_yes()
-              : renewalMessage(renewal.reason, savedMode)}
-          </span>
-        </Alert>
-      )}
-    </div>
-  )
+  return <AuthProbeVerdict result={result} />
 }
 
 function AuthProbeVerdict({ result }: { result: AuthProbeResult }) {
