@@ -172,7 +172,7 @@ A chat turn or an MCP search whose result is empty or weak produces a gap event,
 | Docs reader | a knowledge base that is personal or `private` is not served | `klai-docs/app/(reader)/[...path]/page.tsx:116` |
 
 - **Listing and deleting personal items.** `GET /knowledge/v1/personal/items` and `DELETE /knowledge/v1/personal/items/{artifact_id}` (`routes/personal.py:31`, `:60`); the delete purges all versions as in section 3.
-- **Offboarding.** `kb_offboarding.apply_dispositions` (`klai-portal/backend/app/services/kb_offboarding.py:313`): a knowledge base the user owns alone is transferred or deleted as an administrator chooses, and the personal knowledge base is deleted (`kb.personal_purged_on_offboard`, :476), through the docs app, knowledge-ingest and the portal database; partner API keys and MCP tokens of the user are revoked. There is no export step (GAP-OFFBOARD-01).
+- **Offboarding.** `kb_offboarding.apply_dispositions` (`klai-portal/backend/app/services/kb_offboarding.py:315`): a knowledge base the user owns alone is transferred or deleted as an administrator chooses, and the personal knowledge base is deleted (`kb.personal_purged_on_offboard`, :499), through the docs app, knowledge-ingest and the portal database; the partner API keys the user created are handed over to an administrator (`transfer_user_api_keys`, :563) and the user's MCP tokens are revoked (:621). There is no export step (GAP-OFFBOARD-01).
 - **Not built.** Promotion of a personal note to the organisation (GAP-PERSONAL-01) and sharing between organisations (GAP-FED-01).
 
 ## 9. The publication layer (docs app)
