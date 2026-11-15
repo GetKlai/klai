@@ -26,7 +26,7 @@ De kolom "Pagina" noemt de documentatiepagina waar de uitspraak staat, als omsch
 2. Wie van gesprekken leert, scheidt de ruwe gesprekken (kort) van een bewust gekozen testset (lang). Bij de meetgereedschappen is dat de testset die buiten de termijn valt.
 3. Toezichthouders noemen geen termijn maar eisen doel en noodzaak, waarbij afgeschermde vrije tekst een persoonsgegeven blijft. Van de Nederlandse toezichthouder is hierover niets gevonden.
 
-Het derde patroon is de reden dat de testset van de meetlat geen afgeschermde kopieën bewaart maar nieuw geschreven gevallen.
+Het derde patroon is de reden dat er geen afgeschermde kopieën van gesprekken worden bewaard. De testset van de meetlat bevat echte gesprekken zonder naam en e-mailadres van de bezoeker, een bewuste uitzondering op de termijn.
 
 ## Beperkingen
 
