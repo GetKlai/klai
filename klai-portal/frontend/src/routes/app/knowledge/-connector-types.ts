@@ -46,9 +46,6 @@ export interface AuthProbeResult {
   match_reasons: string[]
   word_count: number
   auth_guard: AuthGuardSuggestion | null
-  // Present when sign-in hosts were sent: whether Klai signed in to the site
-  // again with only their cookies, i.e. can renew the login by itself.
-  renewal?: { can_renew: boolean; reason: string | null } | null
 }
 
 export type PreviewClassification =

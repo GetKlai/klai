@@ -29,14 +29,13 @@ async def preflight_session(
     org_id: str,
     connector_id: str,
     url: str,
-    auth_chain_hosts: list[str] | None,
 ) -> bool:
-    """Check the saved session right before a crawl, and sign it in again when it lapsed.
+    """Check the saved session right before a crawl.
 
     The nightly crawl must not depend on the keep-alive having caught the
     lapse first. Returns False, after failing the still-pending job with the
-    ``login_required:<reason>`` error, when the session is gone and signing in
-    again did not work; the sync run then shows the one "log in again" state
+    ``login_required:<reason>`` error, when the session is gone; the sync run
+    then shows the one "log in again" state
     and no page is fetched or written. Any other verdict (a connector without
     cookies, a site that did not answer) lets the crawl run: a crawl that
     meets a login wall with saved cookies writes nothing (run_crawl_job).
@@ -54,7 +53,6 @@ async def preflight_session(
         connector_id=uuid.UUID(connector_id),
         org_id=org_id,
         url=url,
-        auth_chain_hosts=auth_chain_hosts or [],
     )
     if not verdict.login_required:
         return True
@@ -107,7 +105,6 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
         canary_url: str | None = None,
         canary_fingerprint: str | None = None,
         discovery_seed_url: str | None = None,
-        auth_chain_hosts: list[str] | None = None,
         accept_content_regression: bool = False,
     ) -> None:
         if connector_id and not await preflight_session(
@@ -116,7 +113,6 @@ def register_crawl_tasks(procrastinate_app: Any) -> None:
             connector_id=connector_id,
             # The page the keep-alive probes, so both judge the same session.
             url=canary_url or discovery_seed_url or start_url,
-            auth_chain_hosts=auth_chain_hosts,
         ):
             return
 

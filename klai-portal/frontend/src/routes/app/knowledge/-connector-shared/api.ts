@@ -5,9 +5,6 @@ import type { AuthProbeResult, PreviewResult } from '../-connector-types'
 export type CrawlerAuthPayload = {
   cookies?: unknown[]
   use_saved_credentials?: boolean
-  // Hosts the site signs in through: the probe then also proves whether Klai
-  // can sign in again by itself (AuthProbeResult.renewal).
-  auth_chain_hosts?: string[]
 }
 
 export type CrawlerAuthProbeRequest = CrawlerAuthPayload & {
@@ -82,26 +79,15 @@ function savedCredentialFields(
   }
 }
 
-// Other hosts the site signs in through (SSO/OAuth), found server-side by
-// following /login without cookies. Rejects when the check itself fails, so
-// the wizard can say so instead of implying the site has no second host.
-export async function detectAuthChainHosts(kbSlug: string, url: string): Promise<string[]> {
-  const { hosts } = await apiFetch<{ hosts: string[] }>(
-    `/api/app/knowledge-bases/${kbSlug}/connectors/auth-chain`,
-    { method: 'POST', body: JSON.stringify({ url }) },
-  )
-  return hosts
-}
-
 export function probeCrawlerAuth(
   kbSlug: string,
   request: CrawlerAuthProbeRequest,
   connectorId?: string,
 ): Promise<AuthProbeResult> {
-  const { url, auth_chain_hosts, ...auth } = request
+  const { url, ...auth } = request
   return apiFetch<AuthProbeResult>(`/api/app/knowledge-bases/${kbSlug}/connectors/auth-probe`, {
     method: 'POST',
-    body: JSON.stringify({ url, auth_chain_hosts: auth_chain_hosts ?? [], ...savedCredentialFields(connectorId, auth) }),
+    body: JSON.stringify({ url, ...savedCredentialFields(connectorId, auth) }),
   })
 }
 

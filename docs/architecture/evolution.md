@@ -1,6 +1,6 @@
 # De evolutie van Klai
 
-**Stand: 12 november 2026.** Dit document beschrijft hoe het platform als geheel is geworden wat het nu is: welke onderdelen kwamen en gingen, welke besluiten de vorm bepaalden en waarom, en waar elk besluit vandaag staat. Het is het verhaal van de maanden maart tot en met november 2026, van de eerste commit op 4 maart tot nu. Wat er vandaag draait staat in de beschrijvende documenten; dit document zegt hoe het zover kwam.
+**Stand: 15 november 2026.** Dit document beschrijft hoe het platform als geheel is geworden wat het nu is: welke onderdelen kwamen en gingen, welke besluiten de vorm bepaalden en waarom, en waar elk besluit vandaag staat. Het is het verhaal van de maanden maart tot en met november 2026, van de eerste commit op 4 maart tot nu. Wat er vandaag draait staat in de beschrijvende documenten; dit document zegt hoe het zover kwam.
 
 Het detail zit elders:
 
@@ -126,6 +126,7 @@ De stilste maand: 22 commits op de hoofdlijn.
 - kennis-inname: een kennisbank of organisatie verwijderen haalt ook de afbeeldingen en de resterende kennisrijen weg (#2354, 12 november).
 - meten: vragen tegen persoonlijke kennis tellen niet meer als kennisgat van de organisatie en de nachtelijke evaluatie telt niet als vraag van een klant (#2368, 12 november).
 - opruiming: configuratie die niemand las en code die niemand aanriep is weg (#2371, 12 november).
+- meten: de widgetmeetlat test weer met echte gesprekken van bezoekers (15 november): de herschreven set van 142 gevallen week per geval af van de oorspronkelijke 109 (17 posities in beide rondes), dus de oorspronkelijke set staat weer onveranderd als testset en de controle `check-cases` is ingetrokken (deze wijziging).
 
 ## 3. Incidenten die de vorm veranderden
 

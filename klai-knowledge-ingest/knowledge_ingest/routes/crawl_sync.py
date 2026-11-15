@@ -20,9 +20,7 @@ route handler.
 
 from __future__ import annotations
 
-import copy
 import json
-import re
 import time
 import uuid
 from collections.abc import Mapping
@@ -56,12 +54,8 @@ from knowledge_ingest.connector_state import (
 from knowledge_ingest.db import get_pool, tenant_scoped_connection
 from knowledge_ingest.queues import CRAWL_JOBS
 from knowledge_ingest.resource_jobs import cancel_jobs_by_resource_key, connector_resource_key
-from knowledge_ingest.routes.crawl import RenewalProof, _probe_fetch, _ProbeResponse
-from knowledge_ingest.utils.auth_wall_classifier import (
-    _PASSWORD_INPUT_PATTERN,
-    LOGIN_PATH_REGEX,
-    classify_auth_wall,
-)
+from knowledge_ingest.routes.crawl import _probe_fetch, _ProbeResponse
+from knowledge_ingest.utils.auth_wall_classifier import classify_auth_wall
 from knowledge_ingest.utils.url_validator import validate_url_pinned
 
 logger = structlog.get_logger()
@@ -94,9 +88,6 @@ class CrawlSyncRequest(BaseModel):
     # Known-good interior page (validated in preview). Used as a fallback
     # crawl seed when base_url discovers no ingestable pages.
     discovery_seed_url: str | None = None
-    # Hosts the site signs in through; the crawl's pre-flight signs a lapsed
-    # session in again through them (see keep_session).
-    auth_chain_hosts: list[str] = Field(default_factory=list)
     # One-shot: a person accepts that this run's pages lost content because
     # the site really changed, so the run audit and the per-document hold let
     # it write (adapters/crawler.py _judge_run_before_write).
@@ -299,7 +290,6 @@ async def crawl_sync(req: CrawlSyncRequest) -> CrawlSyncResponse:
         resource_key=resource_key,
         canary_url=req.canary_url,
         canary_fingerprint=req.canary_fingerprint,
-        auth_chain_hosts=req.auth_chain_hosts,
         accept_content_regression=req.accept_content_regression,
     )
 
@@ -498,10 +488,6 @@ class CrawlKeepAliveRequest(BaseModel):
     connector_id: uuid.UUID
     org_id: str
     url: str
-    # The hosts the site signs in through (WebcrawlerConfig.auth_chain_hosts).
-    # Their sessions are kept alive too, and a lapsed session of the site is
-    # signed in again through them. Empty: only the site's own host is touched.
-    auth_chain_hosts: list[str] = Field(default_factory=list)
 
 
 class CrawlKeepAliveResponse(BaseModel):
@@ -510,16 +496,13 @@ class CrawlKeepAliveResponse(BaseModel):
     # error (connector id + reason) instead of a bare bool. One of:
     # "cookie_load_failed", "no_saved_credentials", "url_invalid",
     # "fetch_failed", "redirect_left_host:<netloc>", "too_many_redirects",
-    # "login_required:<why signing in again failed>", or a comma-joined
-    # classify_auth_wall match_reasons tuple (e.g. "redirect_to_login",
+    # or "login_required:<reason>" with a comma-joined classify_auth_wall
+    # match_reasons tuple (e.g. "redirect_to_login",
     # "end_of_body_login_marker").
     reason: str | None = None
-    # The site's session is gone and signing in again through
-    # auth_chain_hosts did not work: only the owner can fix this, by logging
-    # in again and saving fresh cookies.
+    # The site's session is gone: only the owner can fix this, by logging in
+    # again and saving fresh cookies.
     login_required: bool = False
-    # The session had lapsed and this call signed it in again.
-    reminted: bool = False
 
 
 # A same-host language/path redirect (the observed production failure: root
@@ -527,17 +510,6 @@ class CrawlKeepAliveResponse(BaseModel):
 # misconfigured site turn every tick into a long redirect chain -- the loop
 # below allows up to this many *followed* redirects, plus the final request.
 _MAX_KEEPALIVE_REDIRECTS = 5
-
-# The sign-in chain measured on 2026-11-12 (site /login -> sign-in host
-# /oauth/authorize?prompt=auto -> site /login/callback -> the page) is three
-# redirects; 10 leaves room for a consent or language hop without letting a
-# redirect loop run on.
-_MAX_CHAIN_HOPS = 10
-
-_HREF = re.compile(r"""href\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
-
-# A host name as it appears in a URL: no scheme, port, path or credentials.
-_HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 
 # Nav/header/footer boilerplate repeats on every page of a site regardless of
 # session state (e.g. a sitewide "Log in" link in the footer), so it must not
@@ -602,41 +574,34 @@ def _probe_markdown(html: str) -> str:
 
 
 async def _follow_redirects(
-    url: str,
-    jar: CookieJar,
-    allowed: set[tuple[str, int]],
-    max_redirects: int = _MAX_KEEPALIVE_REDIRECTS,
+    url: str, jar: CookieJar
 ) -> tuple[_ProbeResponse | None, str, str | None]:
     """Fetch ``url`` and follow its 3xx redirects the way a browser holding ``jar`` would.
 
     ``_probe_fetch`` runs with ``follow_redirects=False`` so a bare 3xx never
     silently escapes the SSRF pin; this drives the loop itself. Every hop
-    must be https onto an allowed ``(host, port)`` -- a page view allows only
-    the connector's own host, signing in again adds its ``auth_chain_hosts``
-    -- and anything else (a scheme downgrade, a port change, an apex/www
-    variant, any other site) ends the walk with
-    ``redirect_left_host:<netloc>`` before that host is contacted. A hop onto
-    a host other than the site's own that the jar holds no cookies for ends
-    with ``no_cookies_for:<host>``: without them that host can only show its
-    login form. Each hop is re-pinned with :func:`validate_url_pinned`, sends
-    only the cookies the jar holds for that host and folds the response's
-    Set-Cookie headers back into the jar.
+    must be https onto the connector's own host and port, and anything else
+    (a scheme downgrade, a port change, an apex/www variant, any other site)
+    ends the walk with ``redirect_left_host:<netloc>``. Saved cookies are
+    host-scoped credentials, so no other host is ever contacted with them.
+    Each hop is re-pinned with
+    :func:`validate_url_pinned`, sends the cookies the jar holds for its host
+    and folds the response's Set-Cookie headers back into the jar.
 
     Returns ``(final_response, final_url, last_redirect_target)`` when a
     non-redirect answer was reached -- ``last_redirect_target`` is the most
     recent ``Location`` followed, or ``None``, for ``classify_auth_wall`` --
     or ``(None, reason, refused_or_last_url)`` otherwise.
     """
+    allowed = (jar.base_host, urlparse(url).port or 443)
     current_url = url
     last_redirect_target: str | None = None
-    for hop in range(max_redirects + 1):
+    for hop in range(_MAX_KEEPALIVE_REDIRECTS + 1):
         parsed = urlparse(current_url)
         host = (parsed.hostname or "").lower()
-        if parsed.scheme != "https" or (host, parsed.port or 443) not in allowed:
+        if parsed.scheme != "https" or (host, parsed.port or 443) != allowed:
             return None, f"redirect_left_host:{parsed.netloc.lower()}", current_url
         cookies = jar.jar_for_host(host, parsed.path or "/")
-        if host != jar.base_host and not cookies:
-            return None, f"no_cookies_for:{host}", current_url
 
         validated = await validate_url_pinned(current_url)
         result = await _probe_fetch(
@@ -645,96 +610,10 @@ async def _follow_redirects(
         jar.merge_set_cookies(current_url, result.set_cookies)
         if not (300 <= result.status_code < 400 and result.location):
             return result, current_url, last_redirect_target
-        if hop == max_redirects:
+        if hop == _MAX_KEEPALIVE_REDIRECTS:
             break
         last_redirect_target = current_url = urljoin(current_url, result.location)
     return None, "too_many_redirects", last_redirect_target
-
-
-def _chain_hosts(auth_chain_hosts: list[str], base_host: str) -> list[str]:
-    """The configured sign-in hosts, lower case, without the site itself.
-
-    The portal validates them on save; an entry that is not a bare host name
-    (a stored row from before that check) is dropped here, never fetched.
-    """
-    hosts = [h.strip().lower() for h in auth_chain_hosts]
-    return [h for h in dict.fromkeys(hosts) if h != base_host and _HOSTNAME_RE.match(h)]
-
-
-def _login_link(html: str, page_url: str) -> str | None:
-    """The walled page's own login link on its own host, or ``None``.
-
-    The entry is discovered on the page rather than configured per site: the
-    gate a logged-out visitor sees links to the site's sign-in entry, with the
-    page to return to in its query.
-    """
-    page_host = urlparse(page_url).hostname
-    for href in _HREF.findall(html):
-        link = urljoin(page_url, unescape(href))
-        parsed = urlparse(link)
-        if (
-            parsed.scheme == "https"
-            and parsed.hostname == page_host
-            and LOGIN_PATH_REGEX.search(parsed.path)
-        ):
-            return link
-    return None
-
-
-async def _touch_sign_in_host(host: str, jar: CookieJar) -> bool | None:
-    """Touch a sign-in host's session with its own cookies, as an open browser tab does.
-
-    GETs the host's root and follows its same-host redirects. ``True``: the
-    session there is alive. ``False``: the host shows its login form (it
-    redirects to a login path, or answers with a password field; an
-    anonymous visitor of the measured sign-in host gets ``/`` -> 302
-    ``/login``). ``None``: nothing to touch (no cookies for it) or no
-    readable answer.
-    """
-    if not jar.jar_for_host(host):
-        return None
-    try:
-        result, final, _ = await _follow_redirects(f"https://{host}/", jar, {(host, 443)})
-    except Exception as exc:
-        logger.warning(
-            "crawl_keepalive_sign_in_touch_failed", host=host, error_type=type(exc).__name__
-        )
-        return None
-    if result is None:
-        return None
-    return (
-        200 <= result.status_code < 300
-        and not LOGIN_PATH_REGEX.search(urlparse(final).path)
-        and not _PASSWORD_INPUT_PATTERN.search(result.text)
-    )
-
-
-async def _sign_in_again(
-    url: str, jar: CookieJar, chain_hosts: list[str], start: str
-) -> str | None:
-    """Walk the site's sign-in chain from ``start`` and re-open ``url``.
-
-    The walk a browser makes when its session at the site lapsed but its
-    session at the sign-in host did not: the site's login entry -> authorize
-    on the sign-in host with that host's cookies -> the callback on the site
-    -> the page. The OAuth ``state`` is bound to the cookie the login entry
-    issued, so the walk keeps every host's Set-Cookie in ``jar`` from the
-    first hop to the last. Returns ``None`` when ``url`` opens logged in
-    afterwards, otherwise why not.
-    """
-    own = {(jar.base_host, urlparse(url).port or 443)}
-    allowed = own | {(host, 443) for host in chain_hosts}
-    end, end_url, _ = await _follow_redirects(start, jar, allowed, _MAX_CHAIN_HOPS)
-    if end is None:
-        return end_url
-    end_host = (urlparse(end_url).hostname or "").lower()
-    if end_host != jar.base_host:
-        return f"sign_in_required_at:{end_host}"
-    if end.status_code >= 400:
-        return f"callback_rejected:{end.status_code}"
-    result, final, target = await _follow_redirects(url, jar, own)
-    ok, reason = _classify_probe(result, target) if result else (False, final)
-    return None if ok else f"still_logged_out:{reason}"
 
 
 # Last-known ok/not-ok state per connector, keyed by connector_id string.
@@ -751,10 +630,6 @@ _last_probe_ok: dict[str, bool] = {}
 # visitors (so no cookie is ever stored for them); same per-process debounce
 # as _last_probe_ok.
 _public_probe_logged: set[str] = set()
-
-# (connector_id, sign-in host) pairs already logged as logged out there; same
-# per-process debounce.
-_sign_in_gone_logged: set[tuple[str, str]] = set()
 
 
 def _classify_probe(
@@ -831,24 +706,6 @@ async def _anonymous_page_walled(connector_id: str, final_url: str) -> bool:
     return True
 
 
-def _cookies_for_hosts(
-    stored_cookies: list[Any], jar: CookieJar, take: set[str], hosts: list[str]
-) -> list[dict[str, Any]]:
-    """The cookies to store: the jar's for the hosts in ``take``, the stored ones for the rest.
-
-    A host whose session this call could not confirm keeps exactly what was
-    stored, so a login form's fresh anonymous cookie never replaces the
-    owner's. A cookie is owned by the first of ``hosts`` its domain covers.
-    """
-
-    def owner(cookie: dict[str, Any]) -> str | None:
-        domain = str(cookie.get("domain") or jar.base_host).lower()
-        return next((h for h in hosts if cookie_covers_host(domain, h)), None)
-
-    kept = [c for c in stored_cookies if isinstance(c, dict) and owner(c) not in take]
-    return kept + [c for c in jar.cookies if owner(c) in take]
-
-
 def _log_probe_result(
     *, connector_id: str, org_id: str, url: str, ok: bool, reason: str | None, **fields: Any
 ) -> None:
@@ -876,26 +733,6 @@ def _log_probe_result(
         reason=reason,
         **fields,
     )
-
-
-def _log_sign_in_hosts(connector_id: str, org_id: str, alive: dict[str, bool | None]) -> None:
-    """Say once when a sign-in host's session is gone.
-
-    Signing in again will then fail at the next lapse of the site's session,
-    so this is the early warning; it does not change what the call returns.
-    """
-    for host, state in alive.items():
-        key = (connector_id, host)
-        if state is False and key not in _sign_in_gone_logged:
-            _sign_in_gone_logged.add(key)
-            logger.warning(
-                "crawl_keepalive_sign_in_session_gone",
-                connector_id=connector_id,
-                org_id=org_id,
-                host=host,
-            )
-        elif state:
-            _sign_in_gone_logged.discard(key)
 
 
 _COOKIE_EXPIRY_WARN = timedelta(days=7)
@@ -935,36 +772,20 @@ def _log_expiring_cookies(connector_id: str, org_id: str, jar: CookieJar) -> Non
 
 
 # @MX:ANCHOR: keep_session -- shared by the keep-alive tick and the crawl pre-flight
-# @MX:REASON: a crawl must never start logged out while signing in again was possible
-async def keep_session(
-    *,
-    connector_id: uuid.UUID,
-    org_id: str,
-    url: str,
-    auth_chain_hosts: list[str],
-    _second_attempt: bool = False,
-) -> CrawlKeepAliveResponse:
-    """Keep a connector's stored session alive, and sign it in again when it lapsed.
+# @MX:REASON: a crawl must never start logged out
+async def keep_session(*, connector_id: uuid.UUID, org_id: str, url: str) -> CrawlKeepAliveResponse:
+    """Keep a connector's stored session alive with one cheap authenticated page view.
 
     Never raises -- a failed touch is just ``ok=False``.
 
-    1. The page view a browser makes: GET ``url`` with the site's own
-       cookies, following same-host https redirects, and classify the final
-       page with :func:`classify_auth_wall`.
-    2. Touch every sign-in host with its own cookies. The site measured on
-       2026-11-12 ends its own session about 24 hours after the login however
-       often its sliding cookies are renewed, and signs in again silently
-       through a second host whose session slides for 2 hours; that second
-       session only survives the day if it is touched as often as the site's.
-    3. When the page is walled or redirects off the site, walk the sign-in
-       chain once (:func:`_sign_in_again`) from the gate's own login link.
-       When that fails the result is ``login_required`` with the reason, and
-       nothing is stored.
+    The page view a browser makes: GET ``url`` with the site's own cookies,
+    following same-host https redirects, and classify the final page with
+    :func:`classify_auth_wall`. A walled page is ``login_required`` with the
+    wall's reason, and nothing is stored.
 
-    Rotated cookies are stored in one compare-and-swap write, per host: the
-    site's when its page opened logged in (and is walled without cookies), a
-    sign-in host's when its session is alive, every host's after a
-    successful sign-in. Nothing logs a cookie value.
+    Rotated cookies are stored in one compare-and-swap write when the page
+    opened logged in and is walled without cookies. Nothing logs a cookie
+    value.
     """
     cid = str(connector_id)
     try:
@@ -993,38 +814,13 @@ async def keep_session(
         return CrawlKeepAliveResponse(ok=False, reason="url_invalid")
 
     jar = CookieJar(stored.payload["cookies"], validated.hostname)
-    chain_hosts = _chain_hosts(auth_chain_hosts, jar.base_host)
-    own = {(jar.base_host, urlparse(url).port or 443)}
-    sign_in_alive: dict[str, bool | None] = {}
-    renewal_failure: str | None = None
-    reminted = False
     try:
-        result, final, redirect_target = await _follow_redirects(url, jar, own)
+        result, final, redirect_target = await _follow_redirects(url, jar)
         ok, reason = _classify_probe(result, redirect_target) if result else (False, final)
-        for host in chain_hosts:
-            sign_in_alive[host] = await _touch_sign_in_host(host, jar)
-        walled = result is not None and not ok and not str(reason).startswith("status_")
-        # A site that sends a logged-out visitor straight to its sign-in host.
-        to_sign_in = result is None and urlparse(redirect_target or "").hostname in chain_hosts
-        if walled or to_sign_in:
-            start = _login_link(result.text, final) if result is not None else url
-            if not chain_hosts:
-                # Nothing to sign in through: the wall itself is the reason.
-                renewal_failure = str(reason)
-            elif start is None:
-                renewal_failure = "no_login_link"
-            else:
-                # A failed walk leaves the jar as it was: what it collected
-                # on the way (a login form's anonymous cookie) is never stored.
-                walk = copy.deepcopy(jar)
-                renewal_failure = await _sign_in_again(url, walk, chain_hosts, start)
-                if renewal_failure is None:
-                    jar, ok, reason, reminted = walk, True, None, True
-            if renewal_failure is not None:
-                reason = f"login_required:{renewal_failure}"
+        login_required = result is not None and not ok and not str(reason).startswith("status_")
+        if login_required:
+            reason = f"login_required:{reason}"
     except Exception as exc:
-        # Only the type: an httpx error on a hop of the sign-in walk can carry
-        # that hop's URL, and with it the OAuth code or state.
         logger.warning(
             "crawl_keepalive_fetch_failed",
             connector_id=cid,
@@ -1033,32 +829,9 @@ async def keep_session(
         )
         return CrawlKeepAliveResponse(ok=False, reason="fetch_failed")
 
-    if reminted:
-        take = {jar.base_host, *chain_hosts}
-    else:
-        take = {host for host, alive in sign_in_alive.items() if alive}
-        if ok and jar.base_host in jar.issued_hosts and await _anonymous_page_walled(cid, final):
-            take.add(jar.base_host)
     persisted = False
-    if take & jar.issued_hosts:
-        jar.cookies = _cookies_for_hosts(
-            stored.payload["cookies"], jar, take, [jar.base_host, *chain_hosts]
-        )
+    if ok and jar.base_host in jar.issued_hosts and await _anonymous_page_walled(cid, final):
         persisted = await _store_jar(connector_id, stored, jar)
-    if reminted and not persisted:
-        # The crawl reads its cookies from the store, so a session that was
-        # renewed but lost its write (a keep-alive tick or a cookie save got
-        # there first) is not one the crawl will have. Judge once more on
-        # what is stored now.
-        if _second_attempt:
-            return CrawlKeepAliveResponse(ok=False, reason="renewed_session_not_stored")
-        return await keep_session(
-            connector_id=connector_id,
-            org_id=org_id,
-            url=url,
-            auth_chain_hosts=auth_chain_hosts,
-            _second_attempt=True,
-        )
     # Expiry is judged on what is stored now: the jar when it was written,
     # otherwise the stored cookies as they were read.
     _log_expiring_cookies(
@@ -1066,27 +839,12 @@ async def keep_session(
         org_id,
         jar if persisted else CookieJar(stored.payload["cookies"], jar.base_host),
     )
-    _log_sign_in_hosts(cid, org_id, sign_in_alive)
-    if reminted:
-        logger.info(
-            "crawl_keepalive_session_reminted",
-            connector_id=cid,
-            org_id=org_id,
-            url=url,
-            hosts=sorted(jar.issued_hosts),
-            persisted=persisted,
-        )
 
     fields: dict[str, Any] = {}
     if result is not None:
         fields = {"final_url": final, "status_code": result.status_code}
     _log_probe_result(connector_id=cid, org_id=org_id, url=url, ok=ok, reason=reason, **fields)
-    return CrawlKeepAliveResponse(
-        ok=ok,
-        reason=reason,
-        login_required=renewal_failure is not None,
-        reminted=reminted,
-    )
+    return CrawlKeepAliveResponse(ok=ok, reason=reason, login_required=login_required)
 
 
 @router.post("/ingest/v1/crawl/keep-alive", response_model=CrawlKeepAliveResponse)
@@ -1096,57 +854,4 @@ async def crawl_keepalive(req: CrawlKeepAliveRequest) -> CrawlKeepAliveResponse:
         connector_id=req.connector_id,
         org_id=req.org_id,
         url=req.url,
-        auth_chain_hosts=req.auth_chain_hosts,
     )
-
-
-async def prove_renewal(url: str, cookies: list[dict], auth_chain_hosts: list[str]) -> RenewalProof:
-    """Sign in to the real site again, now, with only the sign-in hosts' cookies.
-
-    The proof the keep-alive cannot give until the site's session lapses a
-    day later: does the site's login entry, followed with the sign-in host's
-    session, hand out a new session that opens ``url``? The site's own
-    cookies are left out on purpose: with a live session there the login
-    entry may answer without consulting the sign-in host, and the walk would
-    prove nothing. It also requires the keep-alive's touch to read every
-    sign-in host as logged in, because a touch that misreads a live session
-    never stores its renewed cookies, and that session then lapses two hours
-    later. Nothing is stored; no cookie value is logged.
-    """
-    try:
-        validated = await validate_url_pinned(url)
-        base = validated.hostname.lower()
-        chain_hosts = _chain_hosts(auth_chain_hosts, base)
-        if not chain_hosts:
-            return RenewalProof(can_renew=False, reason="no_sign_in_host")
-        jar = CookieJar(
-            [
-                c
-                for c in cookies
-                if isinstance(c, dict)
-                and not cookie_covers_host(str(c.get("domain") or base).lower(), base)
-            ],
-            base,
-        )
-        alive: dict[str, bool | None] = {}
-        for host in chain_hosts:
-            if not jar.jar_for_host(host):
-                return RenewalProof(can_renew=False, reason=f"no_cookies_for:{host}")
-            alive[host] = await _touch_sign_in_host(host, jar)
-        own = {(base, urlparse(url).port or 443)}
-        result, final, target = await _follow_redirects(url, jar, own)
-        if result is not None and _classify_probe(result, target)[0]:
-            return RenewalProof(can_renew=False, reason="page_not_gated")
-        start = _login_link(result.text, final) if result is not None else url
-        if start is None:
-            return RenewalProof(can_renew=False, reason="no_login_link")
-        failure = await _sign_in_again(url, jar, chain_hosts, start)
-        if failure is None:
-            unread = next((h for h, state in alive.items() if state is not True), None)
-            if unread is not None:
-                failure = f"keepalive_cannot_read_session_at:{unread}"
-    except Exception as exc:
-        logger.warning("auth_probe_renewal_failed", url=url, error_type=type(exc).__name__)
-        return RenewalProof(can_renew=False, reason="fetch_failed")
-    logger.info("auth_probe_renewal_checked", url=url, can_renew=failure is None, reason=failure)
-    return RenewalProof(can_renew=failure is None, reason=failure)

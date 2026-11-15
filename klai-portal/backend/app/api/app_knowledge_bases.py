@@ -16,7 +16,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.connectors import _HOSTNAME_RE, _resolve_kept_cookies
+from app.api.connectors import _resolve_kept_cookies
 from app.api.dependencies import _load_org_or_500, get_kb_with_access, require_capability
 from app.core.config import settings
 from app.core.database import get_db
@@ -2424,34 +2424,18 @@ class AuthProbeRequest(BaseModel):
     cookies: list[dict] | None = None
     connector_id: str | None = None
     use_saved_credentials: bool = False
-    # Hosts the site signs in through. When set, knowledge-ingest also signs
-    # in to the real site again with only their cookies and reports whether
-    # that worked (``renewal``); every hop it makes is SSRF-pinned there.
-    auth_chain_hosts: list[str] = Field(default_factory=list)
-
-    @field_validator("auth_chain_hosts")
-    @classmethod
-    def _host_names_only(cls, hosts: list[str]) -> list[str]:
-        hosts = [host.strip().lower() for host in hosts]
-        if any(not _HOSTNAME_RE.match(host) for host in hosts):
-            raise ValueError("auth_chain_hosts must be host names")
-        return hosts
 
 
 class AuthProbeResponse(BaseModel):
     """Five-way classification of the seed-page fetch outcome.
 
     See SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 for full semantics.
-    ``renewal`` is ``{"can_renew": bool, "reason": str | None}`` when sign-in
-    hosts were sent: whether Klai can sign in again by itself once the site's
-    own session lapses.
     """
 
     classification: str
     match_reasons: list[str] = []
     word_count: int = 0
     auth_guard: dict | None = None
-    renewal: dict | None = None
 
 
 @router.post(
@@ -2488,52 +2472,13 @@ async def auth_probe(
         url=body.url,
         org_id=org.zitadel_org_id,
         cookies=cookies,
-        auth_chain_hosts=body.auth_chain_hosts,
     )
     return AuthProbeResponse(
         classification=result.get("classification", "auth_failed_unreachable"),
         match_reasons=result.get("match_reasons", []),
         word_count=result.get("word_count", 0),
         auth_guard=result.get("auth_guard"),
-        renewal=result.get("renewal"),
     )
-
-
-class AuthChainRequest(BaseModel):
-    url: str
-
-
-class AuthChainResponse(BaseModel):
-    hosts: list[str]
-
-
-@router.post(
-    "/knowledge-bases/{kb_slug}/connectors/auth-chain",
-    response_model=AuthChainResponse,
-    dependencies=[Depends(get_kb_with_access)],
-)
-async def auth_chain(
-    kb_slug: str,
-    body: AuthChainRequest,
-    perms: UserPermissions = Depends(get_caller),
-    db: AsyncSession = Depends(get_db),
-) -> AuthChainResponse:
-    """Other hosts the site signs in through, so the wizard can ask for their cookies.
-
-    Same access rule and org handling as auth_probe; no cookies are involved.
-    """
-    kb = await _get_kb_or_404(kb_slug, perms.org_id, db)
-    await require_connector_manage_access(kb, perms, db)
-    org = await _load_org_or_500(db, perms.org_id)
-    try:
-        hosts = await knowledge_ingest_client.auth_chain(url=body.url, org_id=org.zitadel_org_id)
-    except Exception as exc:
-        logger.warning("auth_chain_failed", url=body.url, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not check which hosts this site signs in through. Try again.",
-        ) from exc
-    return AuthChainResponse(hosts=hosts)
 
 
 # ---------------------------------------------------------------------------
