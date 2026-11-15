@@ -49,7 +49,7 @@ def _empty_result() -> MagicMock:
 
 def _offboard_db_mock(user: MagicMock, org: MagicMock) -> AsyncMock:
     """SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3 — offboard now hits the DB many
-    more times (preview SELECTs, apply_dispositions, revoke_user_credentials,
+    more times (preview SELECTs, apply_dispositions, the credential handover,
     membership delete). Build a flexible mock that returns the user / org
     for the first two SELECTs and empty results for everything else.
     """

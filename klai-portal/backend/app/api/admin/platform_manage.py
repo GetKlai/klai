@@ -702,7 +702,6 @@ async def _execute_user_delete(
             actor_user_id=perms.user_id,
             delete_global_identity=delete_global_identity,
             kb_dispositions=kb_dispositions,
-            api_keys_count=0,
             mcp_tokens_count=0,
             org=org,
             portal_user=user,
