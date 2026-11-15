@@ -78,6 +78,10 @@ def _patch_crawler_externals(crawl_results: list[CrawlResult], ingest_side_effec
             new=AsyncMock(return_value={}),
         ),
         patch(
+            "knowledge_ingest.adapters.crawler.pg_store.get_crawled_pages_markdown",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
             "knowledge_ingest.adapters.crawler.pg_store.get_active_document_texts",
             new=AsyncMock(return_value={}),
         ),

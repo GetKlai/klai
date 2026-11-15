@@ -33,7 +33,11 @@ from knowledge_ingest.crawl4ai_client import (
     _canonicalise_url,
     crawl_site,
 )
-from knowledge_ingest.crawl_change import crawl_change_hash, crawled_page_unchanged
+from knowledge_ingest.crawl_change import (
+    crawl_change_hash,
+    crawled_page_unchanged,
+    learn_site_lines,
+)
 from knowledge_ingest.crawl_checkpoint import (
     ConnectionFactory,
     CrawlExecutionBusy,
@@ -1467,6 +1471,12 @@ async def run_crawl_job(
         async with connection_factory() as conn:
             known_hashes = await pg_store.get_crawled_page_hashes(conn, org_id, kb_slug, urls)
 
+        # Recurring site lines are learned once per run from the stored pages.
+        async with connection_factory() as conn:
+            site_lines_by_host = learn_site_lines(
+                await pg_store.get_crawled_pages_markdown(conn, org_id, kb_slug)
+            )
+
         for result in pages_to_ingest:
             url = result.url
             if resource_key:
@@ -1503,6 +1513,7 @@ async def run_crawl_job(
                             authenticated_context=bool(cookies or login_indicator_selector),
                             connector_id=connector_id,
                             accept_shrink=accept_content_regression,
+                            site_lines=site_lines_by_host.get(urlparse(url).netloc, frozenset()),
                         )
                         pages_done += 1
                     except AnonymousAuthWallDetected as wall_exc:
@@ -1891,6 +1902,7 @@ async def _ingest_crawl_result(
     authenticated_context: bool = False,
     connector_id: str | None = None,
     accept_shrink: bool = False,
+    site_lines: frozenset[str] = frozenset(),
 ) -> bool:
     """Process a crawl result: dedup, extract links, ingest.
 
@@ -2032,6 +2044,8 @@ async def _ingest_crawl_result(
             url=url,
             stored_content_hash=stored_content,
             change_hash=content_hash,
+            new_markdown=text,
+            site_lines=site_lines,
         ):
             await pg_store.upsert_crawled_page(
                 conn,
