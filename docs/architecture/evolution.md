@@ -254,6 +254,7 @@ Elke rij is gecontroleerd op het bestaan van code of bestanden (`rg`, `ls`). Wat
 | Linkexpansie in retrieval | 23 oktober | #2009 | Niets; de graafzoekweg bleef (zoekopdracht op `klai-retrieval-api/retrieval_api` vindt geen linkexpansie) |
 | De oude citatiemodus `links` en het herschrijven van de zoekvraag na de controle | 13 oktober | #1856, #1853 | `widget_turn()` en `internal_turn()`. Zie het chatlogboek |
 | De tweede laag voor inloghosts in de crawlerwizard (gebouwd op 28 oktober in #2093) | 29 oktober | #2124 | Alleen sitecookies |
+| De verlenging van een crawlerlogin via een tweede inlogsite, dezelfde laag voor de tweede keer (opnieuw gebouwd op 12 november in #2356 en #2365) | 15 november | #2386 | Alleen sitecookies. De sessie van een bron met login eindigt bij de bron; de run stopt dan vóór het ophalen en vraagt een nieuwe login. Zie het kennisbanklogboek voor wat eerst moet zijn waargenomen voordat dit opnieuw wordt gebouwd |
 | De klantspecifieke evaluatiesets in de publieke repository | 23 oktober | #2028 | Een privé-locatie |
 | De widgetinstellingen `booking_url`, `contact_email`, `contact_phone`, `off_topic_subjects` en `off_topic_reply` | 11 november | #2324 | `contact_routes` per soort vraag |
 | Feitenranden van verwijderde graafepisodes en verouderde extracties | 12 november | #2339 | Eén huidige extractie per document |
