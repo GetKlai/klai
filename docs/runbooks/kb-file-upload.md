@@ -217,8 +217,8 @@ event=enrichment_batch_queued batch_offset=400
 event=enrichment_complete chunks=50 chunk_offset=400
 ```
 
-Only a document above `enrichment_hard_max_chunks` (2000 chunks, about 56
-minutes of the shared klai-ingest budget at 0.6 requests per second) is not
+Only a document above `enrichment_hard_max_chunks` (2000 chunks, about 17
+minutes of the shared klai-ingest budget at 2 requests per second) is not
 enriched. It keeps its raw chunks and its artifact extra carries:
 
 ```json

@@ -75,3 +75,43 @@ def test_session_email_code_is_mailed_with_the_code_and_without_a_link(
     assert sent["to_address"] == "erin@example.com"
     assert _CODE in sent["html_body"]
     assert "/ui/v2/login/" not in sent["html_body"]
+
+
+def _send(client, settings_env, stub_smtp) -> dict:
+    raw = json.dumps(_CHALLENGE).encode()
+    header, _ = sign(raw, settings_env["WEBHOOK_SECRET"])
+    resp = client.post("/notify", content=raw, headers={"ZITADEL-Signature": header})
+    assert resp.status_code == 200, resp.text
+    return stub_smtp.sent[-1]
+
+
+def test_session_email_code_mail_is_written_by_the_mailer_not_by_the_provider(
+    client, settings_env, stub_smtp
+):
+    """The provider's text points at a button this mail does not have and its
+    footer is an untranslated key; neither reaches the reader."""
+    sent = _send(client, settings_env, stub_smtp)
+
+    assert sent["subject"] == "Your Klai sign-in code"
+    assert "Enter it on the sign-in page" in sent["html_body"]
+    assert "valid for 5 minutes" in sent["html_body"]
+    assert f">{_CODE}</strong>" in sent["html_body"]
+    assert "Authenticate" not in sent["html_body"]
+    assert "VerifyEmailOTP" not in sent["html_body"]
+
+
+def test_session_email_code_mail_follows_the_readers_language(
+    client, settings_env, stub_smtp, monkeypatch
+):
+    main = sys.modules["app.main"]
+
+    async def _dutch(_email: str) -> str | None:
+        return "nl"
+
+    monkeypatch.setattr(main, "get_user_language", _dutch)
+
+    sent = _send(client, settings_env, stub_smtp)
+
+    assert sent["subject"] == "Je inlogcode voor Klai"
+    assert _CODE in sent["html_body"]
+    assert "5 minuten geldig" in sent["html_body"]

@@ -20,7 +20,13 @@ import asyncpg
 import structlog
 from klai_kb_slugs import personal_kb_slug
 
-from knowledge_ingest.derived_state import FAILED, PENDING, ProductState, product_state
+from knowledge_ingest.derived_state import (
+    FAILED,
+    PENDING,
+    ProductState,
+    born_pending,
+    product_state,
+)
 
 logger = structlog.get_logger()
 
@@ -222,7 +228,7 @@ async def create_artifact(
     """
     artifact_id = str(uuid.uuid4())
     now = int(time.time())
-    extra_json = json.dumps(extra) if extra else "{}"
+    extra_json = json.dumps({**(extra or {}), **born_pending()})
     parent_ids = _normalise_uuid_strings(derived_from)
 
     async def _insert_artifact_row() -> str:
@@ -2472,6 +2478,58 @@ async def mark_stale_pending_artifacts_failed(
         }
         for row in rows
     ]
+
+
+_PRODUCT_TASKS = {
+    "enrichment": [
+        "knowledge_ingest.enrichment_tasks.enrich_document_interactive",
+        "knowledge_ingest.enrichment_tasks.enrich_document_bulk",
+    ],
+    "graph": ["knowledge_ingest.enrichment_tasks.ingest_graphiti_episode"],
+}
+
+
+async def stale_pending_products(
+    conn: asyncpg.Connection, *, cutoff: int, limit: int = 500
+) -> list[dict]:
+    """Products of current versions pending since before ``cutoff`` with no job to finish them.
+
+    The age is the product's own ``_state_at``: a reindex, a graph refresh or a
+    rebuild puts an old version's product back to pending right before it
+    works on it. Whatever ``index_status`` says: a request can die after the
+    text was written and before the product was queued. Only current versions
+    are read, and the oldest wait comes first.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT artifact_id, org_id, kb_slug, product, pending_since
+        FROM (
+            SELECT a.id::text AS artifact_id, a.org_id, a.kb_slug, p.product,
+                   (a.extra->>(p.product || '_state_at'))::bigint AS pending_since
+            FROM knowledge.artifacts a
+            CROSS JOIN LATERAL (VALUES ('enrichment', $3::text[]), ('graph', $4::text[]))
+                AS p(product, tasks)
+            WHERE a.belief_time_end = $1 AND a.index_status <> $5
+              AND a.extra->>(p.product || '_state') = 'pending'
+              AND NOT EXISTS (
+                  SELECT 1 FROM procrastinate_jobs pj
+                  WHERE pj.task_name = ANY(p.tasks)
+                    AND pj.status IN ('todo', 'doing')
+                    AND pj.args->>'artifact_id' = a.id::text
+              )
+        ) AS waiting
+        WHERE pending_since < $2
+        ORDER BY pending_since
+        LIMIT $6
+        """,
+        _SENTINEL,
+        cutoff,
+        _PRODUCT_TASKS["enrichment"],
+        _PRODUCT_TASKS["graph"],
+        PURGE_PENDING,
+        limit,
+    )
+    return [dict(row) for row in rows]
 
 
 async def update_artifact_display_name(

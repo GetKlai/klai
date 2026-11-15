@@ -611,13 +611,17 @@ for the semaphore.
 2.41 s 95th-percentile call time, busiest minute 87 calls and 182,268 tokens.
 At 0.6 requests per second a night of 6,000 to 8,000 calls was pinned at the
 limiter from 02:00 to 05:00 and finished around eleven hours after it started.
-The limiter now runs at 2 requests per second (burst 10): 130 calls in the
-first minute is 272k tokens at the busiest minute's call size, 61% of the
-450k tpm limit and 14% of the 900 rpm limit, and the night takes 50 to 67
-minutes of limiter time. The rate counts requests only; at these call sizes
-that keeps tokens inside the limit (`llm_throttle.py` docstring).
-`tests/test_llm_throttle.py` fails when the rate leaves 50-65% of the tpm
-limit or the llm lane can no longer keep the limiter fed. The daily budget of
+The limiter now runs at 2 requests per second with a burst of 40: at most 160
+calls in a minute is 335k tokens at the busiest minute's call size, 74% of the
+450k tpm limit and 18% of the 900 rpm limit. The rate counts requests only; at
+these call sizes that keeps tokens inside the limit (`llm_throttle.py`
+docstring). `tests/test_llm_throttle.py` fails when the rate leaves 50-75% of
+the tpm limit or the llm lane can no longer keep the limiter fed. The burst is
+one document's graph fan-out: in the night of 13 November 2026 (346 documents)
+an extraction made 57 calls, about 50 of them under a second and sent at once,
+and with a burst of 10 they left 0.5 s apart, 27 s of a 60 s document while
+the tokens used stayed at 26% of the limit; that night the graph finished
+almost six hours after the last page arrived. The daily budget of
 20 USD is about 106k calls at the measured size, so a normal day stays at 1 to
 4 USD and only a backlog of more than ~15 hours flat out reaches it.
 
@@ -691,7 +695,9 @@ state per product (`enrichment`, `graph`) in `knowledge.artifacts.extra`
 `done`, `not_applicable` with a reason, or `failed` with a reason. They live in
 `extra` and not in columns because every reader already loads `extra`, the
 fields old rows are judged by are there too, and nothing queries by state on a
-hot path. `set_product_state` is the one writer. It writes only to the
+hot path. A version is born with both states `pending`: `pg_store.create_artifact`
+writes them in its INSERT (`derived_state.born_pending`), so no row the
+service writes is ever without a state. `set_product_state` is the one writer. It writes only to the
 current version, so an abandoned job leaves no state, and only legal moves:
 to `pending` from any state (queueing is always deliberate: a new version, a
 reindex, a graph refresh, an operator re-queue or rebuild), and from `pending`
@@ -739,7 +745,20 @@ whose text or enrichment failed (read through `product_state`); a failed graph
 extraction leaves the page searchable and is not counted there. The
 stale-pending reaper can still find one case: a version whose ingest request
 died between creating the row and finishing the raw write; it marks it failed
-and logs `stale_pending_artifacts_failed`, which has its own alert.
+and logs `stale_pending_artifacts_failed`, which has its own alert. The
+same run looks at the products, whatever `index_status` says: a product of a
+current version that has been `pending` for over 30 minutes (its own
+`_state_at`), with no queued or running job of that product and no operation
+holding its knowledge base (`operations.operation_running`; a rebuild works
+without a job per version, and 2,000 chunk calls at 2 per second already take
+17 minutes for one document), becomes `failed (interrupted)` through
+`set_product_state`, so `derived_product_failed` fires per product. That covers
+a request that died before the text was written and one that died after it but
+before the product was queued. `index_status` is only failed where it is still
+`pending`; an outcome already recorded is never selected. The query reads every
+current version each run, linear in current documents (3,265 on production in
+November 2026); a partial index on the pending states is the upgrade when that
+scan shows up in query time.
 
 ### 2.7 Periodic tasks
 
@@ -748,7 +767,7 @@ All in UTC, Procrastinate `@periodic`:
 | Schedule | Task | Queue | What it does |
 |---|---|---|---|
 | every minute | `recover_stalled_jobs_periodic` | maintenance | retries jobs whose worker heartbeat expired (`zombie_recovery.py:125-139`) |
-| `*/15 * * * *` | `reap_stale_pending_artifacts_periodic` | ingest-kb | marks versions whose raw write never finished (`pending` for over 30 minutes with no runnable job) as failed, at most 500 per run (`stale_pending_artifact_reaper.py`) |
+| `*/15 * * * *` | `reap_stale_pending_artifacts_periodic` | ingest-kb | marks versions whose raw write never finished (`pending` for over 30 minutes with no runnable job) as failed, and every product pending for over 30 minutes without a job or an operation `failed (interrupted)`, at most 500 of each per run (`stale_pending_artifact_reaper.py`) |
 | `17 * * * *` | `sweep_unclassified_kbs_periodic` | maintenance | queues one taxonomy backfill per KB that still has chunks without label or taxonomy (`taxonomy_tasks.py:34,88-102`) |
 | `0 2 * * *` | `evaluate_retrieval_quality_periodic_chat` and `_knowledge_org` | rag-eval | one evaluation run per suite (`eval/ragas_runner.py:604-706`) |
 | `30 2 * * *` | `evaluate_ingest_gap_canary_periodic` | rag-eval | probe queries derived from sources (at most 10, 5 minute budget) (`eval/ragas_runner.py:44-48,394-430,651-665`) |
@@ -766,7 +785,7 @@ ingest does nothing per language; the chat language behaviour is described in
 ### 2.8 Settings and code that look active and are not
 
 - LLM pacing for enrichment, graph, taxonomy and labelling is the one shared
-  limiter, `litellm_klai_fast_rps` 2 and `litellm_klai_fast_burst` 10
+  limiter, `litellm_klai_fast_rps` 2 and `litellm_klai_fast_burst` 40
   (`config.py`, `llm_throttle.py`); there is no `graphiti_llm_rps` setting and
   the compose file does not set one.
 - `knowledge.embedding_queue` is never inserted into; only deleted from
@@ -923,6 +942,7 @@ product rule does not need a rebuild: use `kb_patch`. Procedure:
 | `kb_patch` | `python -m knowledge_ingest.scripts.kb_patch --org [--kb] [--only aliases\|products] [--execute]` | recomputes the cheap layer (2.3) for points whose `cheap_layer_version` differs; batches of 200; no model call | dry run by default; `--execute` needs `INGEST_OK=1`; lock per knowledge base |
 | `sparse_backfill` | `python -m knowledge_ingest.scripts.sparse_backfill --org [--kb] [--execute]` | adds missing `vector_sparse` only | dry run by default; `--execute` needs `INGEST_OK=1`; lock per knowledge base |
 | `requeue_failed_artifacts` | `--dry-run` or `--execute [--org --kb --limit]` | re-defers `enrich_document_bulk` through `queue_derived_work` (state back to `pending`) for active artifacts whose enrichment is `failed` according to `derived_state.product_state`, legacy rows included, from chunk 0, oldest first (`klai-knowledge-ingest/knowledge_ingest/scripts/requeue_failed_artifacts.py`) | dry run by default; `--execute` needs `INGEST_OK=1`; no operation lock, because each job it defers has its own `queueing_lock` per artifact |
+| `convert_document_states` | `python -m knowledge_ingest.scripts.convert_document_states [--org] [--execute]` | writes, once, an explicit `enrichment_state` and `graph_state` on every artifact row (closed versions included) that has none: the reader's answer where its legacy branch knows, a live job's `pending`, and otherwise the truth from the vector index (`text_enriched` on every point means enriched), the graph and today's policy; a product that was never built gets `failed (missing_before_states)`, closed versions get `not_applicable (not_current)` for enrichment and `failed (missing_before_states)` for the graph, and an upload's old `index_status` gets its current meaning. Never touches a row with an explicit state, logs no `derived_product_failed`, and reports how many rows still have no state; zero is the condition for removing the reader's legacy branch (`klai-knowledge-ingest/knowledge_ingest/scripts/convert_document_states.py`) | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org |
 | `repair_pg_qdrant_drift` | `<artifact_id>... [--execute]` | per artifact: reindex, retire, delete points or skip, decided from the current state | dry run by default; `--execute` needs `INGEST_OK=1`; lock per artifact's knowledge base (its org for orphan points) |
 | `reextract_document_graph` | `python -m scripts.reextract_document_graph --org --artifact [--execute]` in a knowledge-ingest container (`klai-knowledge-ingest/scripts/reextract_document_graph.py:24-28`) | repairs one document whose finished graph extraction lost episodes: keeps the surviving episode ids, marks the extraction not complete with version 0 and queues the normal graph job as a user-requested refresh, without the daily cap or cool-off (`:97-117`; `graph_refresh.py:61-62`) | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org; refuses (exit 2) a document that is not found, not active, not finished, has no missing episode or no stored `document_text` (`:55-90`); when no job is queued the row is written back exactly as it was and the command exits 1 (`:123-134`); nothing runs it automatically |
 | graph `backfill` | `python -m knowledge_ingest.backfill --org-id [--kb-slug] [--limit] [--force] [--execute]` | builds graph episodes for existing artifacts (`backfill.py:1-30`) | dry run by default (counts, and the size estimate with its refusal); `--execute` needs `INGEST_OK=1`; lock per listed knowledge base, or per org |

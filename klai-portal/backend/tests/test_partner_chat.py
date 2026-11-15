@@ -1055,14 +1055,23 @@ def test_chunk_source_url_reads_nested_chunk_source_urls():
     assert _chunk_source_url(chunks[1]) == "https://getklai.com/dpa"
 
 
+def test_a_chunk_with_an_unparseable_address_has_no_source_url():
+    """A stored address with an unclosed bracket must not fail the turn: the chunk simply has no usable source URL."""
+    from app.services.chat_sources import _chunk_source_url
+
+    chunk = {"source_url": "http://[IP-adres", "metadata": {"url": "https://help.example.com/menu"}}
+
+    assert _chunk_source_url(chunk) == "https://help.example.com/menu"
+
+
 def test_placeholder_source_paths_are_not_valid_urls():
     """Source guards must reject browser-resolved placeholder paths like /undefined."""
-    from app.services.chat_sources import _normalise_guard_url
+    from app.services.chat_sources import normalise_source_url
 
-    assert _normalise_guard_url("undefined") == ""
-    assert _normalise_guard_url("https://getklai.com/undefined") == ""
-    assert _normalise_guard_url("https://getklai.com/null") == ""
-    assert _normalise_guard_url("https://getklai.com/none?x=1") == ""
+    assert normalise_source_url("undefined") == ""
+    assert normalise_source_url("https://getklai.com/undefined") == ""
+    assert normalise_source_url("https://getklai.com/null") == ""
+    assert normalise_source_url("https://getklai.com/none?x=1") == ""
 
 
 def test_build_system_prompt_includes_widget_system_prompt():

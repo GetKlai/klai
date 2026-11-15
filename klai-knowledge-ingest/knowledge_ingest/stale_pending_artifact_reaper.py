@@ -10,6 +10,17 @@ A reindex whose enrichment job is lost does not reach it, because every way
 such a job ends records the outcome (``derived_state.record_outcome``). Each
 run that marks rows logs ``stale_pending_artifacts_failed`` at warning level,
 which the ``knowledge_ingest_stale_pending_reaper_fired`` alert watches.
+
+A version is born with both product states ``pending``, and a reindex, a graph
+refresh or a rebuild sets a product pending again before it works on it. A
+product of a current version that has been ``pending`` longer than the cutoff
+(its own ``_state_at``), with no queued or running job that could finish it and
+no operation holding its knowledge base, will never be finished: the request
+died after the text was written, or before. It becomes ``failed
+(interrupted)`` through the one writer, which logs ``derived_product_failed``
+per product, whatever ``index_status`` says; ``index_status`` itself is only
+failed where it is still ``pending``. An outcome already recorded is never
+selected, and nothing is re-queued.
 """
 
 from __future__ import annotations
@@ -21,6 +32,8 @@ import structlog
 
 from knowledge_ingest import pg_store, queues
 from knowledge_ingest.db import cross_org_admin_connection
+from knowledge_ingest.derived_state import FAILED, set_product_state
+from knowledge_ingest.operations import operation_running
 
 logger = structlog.get_logger()
 
@@ -40,6 +53,28 @@ async def reap_stale_pending_artifacts(
             cutoff_created_at=cutoff,
             limit=limit,
         )
+        interrupted = [
+            product
+            for product in await pg_store.stale_pending_products(conn, cutoff=cutoff, limit=limit)
+            # A run holding the knowledge base (rebuild_kb) works on its
+            # versions without a job per version, and one large document can
+            # take longer than the cutoff: 2,000 chunk calls at the alias's 2
+            # requests per second take about 17 minutes alone, and four
+            # documents in parallel share that rate.
+            if not await operation_running(conn, product["org_id"], product["kb_slug"])
+        ]
+        for product in interrupted:
+            await set_product_state(
+                conn,
+                product["artifact_id"],
+                product["product"],
+                FAILED,
+                "interrupted",
+                # Only the wait that was read: work queued again since then
+                # has a new pending, and failing that would get its job's
+                # outcome refused.
+                pending_since=product["pending_since"],
+            )
     if rows:
         logger.warning(
             "stale_pending_artifacts_failed",

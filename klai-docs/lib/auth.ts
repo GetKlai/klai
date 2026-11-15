@@ -1,41 +1,28 @@
 /**
  * Caller identity for docs-app API routes.
  *
- * Three kinds of caller reach the API, all from inside the cluster (Caddy
- * answers 404 on /docs/api/*):
+ * Two kinds of caller reach the API, both from inside the cluster (Caddy
+ * answers 404 on /docs/api/*) and both with X-Internal-Secret set to
+ * DOCS_INTERNAL_SECRET:
  *
- * - portal-api's BFF proxy with X-Internal-Secret set to DOCS_INTERNAL_SECRET:
- *   the proxy has checked the user's active membership of the session's
- *   organisation and asserts it in X-Klai-Verified-User-Id / -Org-Id /
- *   -Org-Slug. That user reaches only the asserted organisation.
- * - service callers (portal-api provisioning, klai-knowledge-mcp) with the same
- *   secret, naming the acting user in X-User-ID and, when acting for one
- *   organisation, its Zitadel org id in X-Org-ID.
- * - a Zitadel Bearer token validated against the issuer's JWKS, with the
- *   organisation taken from its resourceowner claim when present.
+ * - portal-api's BFF proxy: it has checked the user's active membership of the
+ *   session's organisation and asserts it in X-Klai-Verified-User-Id /
+ *   -Org-Id / -Org-Slug. That user reaches only the asserted organisation.
+ * - service callers (portal-api provisioning, klai-knowledge-mcp), naming the
+ *   acting user in X-User-ID and, when acting for one organisation, its
+ *   Zitadel org id in X-Org-ID.
  *
- * Each identification through the proxy assertion or the Bearer token logs one
- * `docs_auth_identified` line with the kind only, so the share of each path is
- * visible in the logs.
+ * A request without that secret identifies nobody; a session token is not read.
+ * Each identification through the proxy assertion logs one
+ * `docs_auth_identified` line with the kind only.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import { NextResponse } from "next/server";
 import { db } from "./db";
 
-const ISSUER = process.env.AUTH_ZITADEL_ISSUER ?? "https://auth.getklai.com";
-
-// JWKS is fetched once and cached by the jose library
-const JWKS = createRemoteJWKSet(new URL(`${ISSUER}/oauth/v2/keys`));
-
-type ZitadelClaims = JWTPayload & {
-  /** Zitadel org ID claim */
-  "urn:zitadel:iam:user:resourceowner:id"?: string;
-};
-
 export type AuthPayload =
   | { kind: "proxy_assertion"; sub: string; org_id: string; org_slug: string }
-  | { kind: "service" | "bearer"; sub: string; org_id?: string };
+  | { kind: "service"; sub: string; org_id?: string };
 
 function logIdentified(kind: AuthPayload["kind"]): void {
   console.info(JSON.stringify({ event: "docs_auth_identified", kind }));
@@ -50,24 +37,8 @@ function matchesSecret(incoming: string | null, expected: string): boolean {
 }
 
 /**
- * Validate a Bearer token from the Authorization header.
- * Returns the JWT payload on success, null if missing or invalid.
- */
-async function validateBearer(authHeader: string | null): Promise<ZitadelClaims | null> {
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7);
-  try {
-    const { payload } = await jwtVerify(token, JWKS, { issuer: ISSUER });
-    return payload as ZitadelClaims;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Resolve the caller. With the docs secret, the proxy assertion or X-User-ID
- * names the caller; without it, the Bearer token does. Returns null when no
- * caller can be established.
+ * Resolve the caller: with the docs secret, the proxy assertion or X-User-ID
+ * names it. Returns null when no caller can be established.
  */
 export async function requireAuthOrService(
   request: Request
@@ -87,17 +58,13 @@ export async function requireAuthOrService(
     if (!sub) return null;
     return { kind: "service", sub, org_id: h.get("x-org-id") ?? undefined };
   }
-
-  const claims = await validateBearer(h.get("authorization"));
-  if (!claims?.sub) return null;
-  logIdentified("bearer");
-  return { kind: "bearer", sub: claims.sub, org_id: claims["urn:zitadel:iam:user:resourceowner:id"] };
+  return null;
 }
 
 /**
  * A caller identified by the proxy assertion reaches only the organisation the
- * portal verified their membership of. Service and Bearer callers reach any
- * organisation unless an org id binds them to one.
+ * portal verified their membership of. A service caller reaches any
+ * organisation unless an org id binds it to one.
  */
 export function callerMayAccessOrg(
   payload: AuthPayload,

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+
+from klai_citations import normalise_source_url
 
 PageContext = dict[str, Any]
 
@@ -16,27 +17,6 @@ _PAGE_CONTEXT_MAX_CHARS = {
 }
 
 
-def _normalise_guard_url(url: object) -> str:
-    if not isinstance(url, str):
-        return ""
-    value = url.strip().strip("<>")
-    if value.lower() in {"", "undefined", "null", "none"}:
-        return ""
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return ""
-    netloc = parsed.netloc.lower()
-    if netloc.startswith("www."):
-        netloc = netloc[4:]
-    hostname = (parsed.hostname or "").lower()
-    if hostname in {"undefined", "null", "none"}:
-        return ""
-    placeholder_path = (parsed.path or "").strip("/").lower()
-    if placeholder_path in {"undefined", "null", "none"}:
-        return ""
-    return urlunparse((parsed.scheme.lower(), netloc, parsed.path or "/", "", parsed.query, ""))
-
-
 def _chunk_source_url(chunk: dict) -> str:
     candidates = (
         chunk.get("source_url"),
@@ -47,21 +27,21 @@ def _chunk_source_url(chunk: dict) -> str:
         chunk.get("source_ref"),
     )
     for candidate in candidates:
-        normalised = _normalise_guard_url(candidate)
+        normalised = normalise_source_url(candidate)
         if normalised:
             return normalised
 
     metadata = chunk.get("metadata")
     if isinstance(metadata, dict):
         for key in ("source_url", "url", "sourceUrl", "canonical_url", "page_url", "source_ref"):
-            normalised = _normalise_guard_url(metadata.get(key))
+            normalised = normalise_source_url(metadata.get(key))
             if normalised:
                 return normalised
 
     source = chunk.get("source")
     if isinstance(source, dict):
         for key in ("url", "source_url", "href"):
-            normalised = _normalise_guard_url(source.get(key))
+            normalised = normalise_source_url(source.get(key))
             if normalised:
                 return normalised
 
@@ -113,7 +93,7 @@ def _filter_trusted_sources_for_chunks(
             if isinstance(evidence_ids, list)
             else set()
         )
-        source_url = _normalise_guard_url(source.get("url"))
+        source_url = normalise_source_url(source.get("url"))
         if source_evidence_ids.intersection(safe_evidence_ids) or source_url in safe_source_urls:
             filtered.append(source)
     return filtered

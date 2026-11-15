@@ -14,11 +14,11 @@ Browser (logged in to the portal, session cookie)
     │  /api/docs/...  ← editor calls from the portal SPA
     ▼
 portal-api BFF proxy  (klai-portal/backend/app/api/proxy.py)
-    │  Authorization: Bearer <session access token>
+    │  X-Internal-Secret: <docs secret>
     │  X-Klai-Verified-User-Id / Org-Id / Org-Slug
     ▼
 docs-app  (Next.js, port 3010, basePath: /docs)
-    │  requireOrgAccess() → Zitadel JWKS
+    │  requireOrgAccess() → docs secret + verified identity
     │  Gitea API for content CRUD
     ▼
 acme.example.com/docs/{kb}/...  ← Public reader (SSR, no login)
@@ -30,19 +30,11 @@ acme.example.com/docs/{kb}/...  ← Public reader (SSR, no login)
 
 ### Editor (authenticated)
 
-The editor lives in the portal SPA (`klai-portal`). The portal is a backend-for-frontend: the browser holds a session cookie, and portal-api keeps the Zitadel tokens server-side (`klai-portal/docs/auth-flows.md`). The editor calls docs-app through portal-api's proxy at `/api/docs/*` (`DOCS_BASE` in `klai-portal/frontend/src/lib/kb-editor/tree-utils.ts:5`). The proxy checks the session and the caller's membership, then forwards the request to `http://docs-app:3010/docs` with the session's access token as Bearer and the portal-verified identity headers (`klai-portal/backend/app/api/proxy.py:150-189`, `:386-394`). The reverse proxy answers 404 for docs-app's own `/docs/api/*` path, so the API is reached only through portal-api (`deploy/caddy/Caddyfile:504-510`).
+The editor lives in the portal SPA (`klai-portal`). The portal is a backend-for-frontend: the browser holds a session cookie, and portal-api keeps the Zitadel tokens server-side (`klai-portal/docs/auth-flows.md`). The editor calls docs-app through portal-api's proxy at `/api/docs/*` (`DOCS_BASE` in `klai-portal/frontend/src/lib/kb-editor/tree-utils.ts:5`). The proxy checks the session and the caller's membership, then forwards the request to `http://docs-app:3010/docs` with the docs secret and the portal-verified identity headers (`klai-portal/backend/app/api/proxy.py:148-197`). The reverse proxy answers 404 for docs-app's own `/docs/api/*` path, so the API is reached only through portal-api (`deploy/caddy/Caddyfile:504-510`).
 
-docs-app validates the Bearer token against Zitadel's JWKS endpoint with `jose` (`klai-docs/lib/auth.ts:13-45`):
+docs-app identifies a caller only with `X-Internal-Secret` equal to `DOCS_INTERNAL_SECRET`, compared in constant time (`klai-docs/lib/auth.ts:31-62`). With the secret, the `X-Klai-Verified-*` headers name the user and the one organisation the portal verified their membership of; a session token is not read, and a request without the secret identifies nobody.
 
-```typescript
-// lib/auth.ts in docs-app
-const JWKS = createRemoteJWKSet(new URL(`${ISSUER}/oauth/v2/keys`))
-
-const { payload } = await jwtVerify(token, JWKS, { issuer: ISSUER })
-// payload.sub = Zitadel user ID
-```
-
-Service callers can instead send `X-Internal-Secret` with `DOCS_INTERNAL_SECRET` and an `X-User-ID`, which `requireAuthOrService` accepts as the acting user (`klai-docs/lib/auth.ts:66-85`); portal-api's provisioning client uses this to create a tenant's repository. Org-scoped routes call `requireOrgAccess`, which authenticates the caller and resolves the organisation from the slug in the path (`klai-docs/lib/auth.ts:111-131`), and personal KBs are limited to their creator by `checkKBAccess` (`klai-docs/lib/auth.ts:92-100`).
+Service callers send the same secret with an `X-User-ID`, which `requireAuthOrService` accepts as the acting user (`klai-docs/lib/auth.ts:43-62`); portal-api's provisioning client uses this to create a tenant's repository. Org-scoped routes call `requireOrgAccess`, which identifies the caller and resolves the organisation from the slug in the path (`klai-docs/lib/auth.ts:101-120`), and personal KBs are limited to their creator by `checkKBAccess` (`klai-docs/lib/auth.ts:82-90`).
 
 **Advantage:** no double login. The portal session used for Chat and Scribe works for Docs as well.
 
@@ -111,7 +103,7 @@ klai-docs/
     (reader)/           ← Public KB reader (SSR, no auth)
       [...path]/
         page.tsx
-    api/                ← REST API (requires Bearer token)
+    api/                ← REST API (requires the docs secret)
       orgs/[org]/kbs/
         route.ts                      ← GET list KBs, POST create KB
         [kb]/
@@ -123,7 +115,7 @@ klai-docs/
           upload/route.ts             ← Upload .md file
           tree/route.ts               ← Nav tree (builds from _sidebar.yaml)
   lib/
-    auth.ts             ← Zitadel Bearer token validation (jose JWKS)
+    auth.ts             ← caller identity: docs secret with the portal's verified identity or a service user
     db.ts               ← PostgreSQL client (docs schema)
     gitea.ts            ← Gitea REST API client + nav tree builder
     markdown.ts         ← Frontmatter parse/serialize, _sidebar.yaml helpers, slugify

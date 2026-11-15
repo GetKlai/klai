@@ -385,7 +385,7 @@ def _reset_shared_klai_fast_limiter():
 
     ``knowledge_ingest.llm_throttle.shared_klai_fast_limiter()`` is a lazy
     singleton by design (one bucket per production process). Left
-    unreset across the test suite, its default burst capacity (10)
+    unreset across the test suite, its default burst capacity (40)
     would be exhausted after the first ~10 tests that exercise a real
     ``_call_litellm``/``_call_llm`` path, and every test after that
     would pay the 1/0.6s pacing delay -- silently multiplying suite

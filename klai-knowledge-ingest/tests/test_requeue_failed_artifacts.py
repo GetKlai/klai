@@ -39,13 +39,16 @@ def _row(
 
 def _db_row(artifact_id: str, extra: dict | None = None, **kwargs) -> dict:
     """A selected row as Postgres returns it: the reader decides from ``extra``."""
-    return {**_row(artifact_id, **kwargs), "extra": extra or {"enrichment_state": "failed"}}
+    extra = {"document_text": "Text.", "enrichment_state": "failed"} if extra is None else extra
+    return {**_row(artifact_id, **kwargs), "extra": extra}
 
 
 def _make_conn(rows: list[dict]) -> MagicMock:
     conn = MagicMock()
     conn.fetch = AsyncMock(return_value=rows)
-    conn.fetchrow = AsyncMock(return_value={"org_id": "org1", "kb_slug": "kb1"})
+    conn.fetchrow = AsyncMock(
+        return_value={"org_id": "org1", "kb_slug": "kb1", "without_text": 0, "held": 0}
+    )
     conn.execute = AsyncMock()
     return conn
 
@@ -103,8 +106,8 @@ async def test_select_failed_artifacts_uses_expected_filters_no_scoping():
     assert "$2::text IS NULL OR a.org_id = $2" in sql
     assert "$3::text IS NULL OR a.kb_slug = $3" in sql
     assert "ORDER BY a.created_at ASC" in sql
-    assert "LIMIT $4" in sql
-    assert params == [_SENTINEL, None, None, 500]
+    assert "LIMIT $8" in sql
+    assert params == [_SENTINEL, None, None, "enrichment", None, "deleting", None, 500]
 
 
 @pytest.mark.asyncio
@@ -114,7 +117,7 @@ async def test_select_failed_artifacts_applies_org_and_kb_scoping():
     await script._select_failed_artifacts(conn, org_id="org1", kb_slug="kb1", limit=10)
 
     _sql, *params = conn.fetch.call_args.args
-    assert params == [_SENTINEL, "org1", "kb1", 10]
+    assert params == [_SENTINEL, "org1", "kb1", "enrichment", None, "deleting", None, 10]
 
 
 @pytest.mark.asyncio
@@ -232,8 +235,7 @@ async def test_already_enqueued_is_skipped_and_does_not_stop_the_batch():
         patch.object(script, "_procrastinate_app", return_value=_app_ctx(fake_app)),
         patch.object(script, "cross_org_admin_connection", side_effect=lambda: _conn_ctx(conn)),
     ):
-        enqueued, skipped = await script._requeue(rows)
+        outcomes = await script._requeue(rows)
 
     assert fake_app.enrich_document_bulk.defer_calls == ["a1", "a2", "a3"]
-    assert enqueued == 2
-    assert skipped == 1
+    assert (outcomes["enqueued"], outcomes["skipped_already_enqueued"]) == (2, 1)

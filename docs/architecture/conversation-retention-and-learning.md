@@ -83,7 +83,7 @@ Er is geen opslag van afgeschermde gesprekken, geen tabel met gekozen gevallen e
 
 `meetlat.py check-cases` (`klai-portal/backend/scripts/meetlat.py:1303`, regels in `check_case_messages`, `:1258`) bewijst de eerste twee punten voor elk geval dat erbij komt: geen bericht van een geval bevat een e-mailadres (`:144`) of een reeks van zes of meer cijfers (`:1246`), en geen bericht deelt een reeks van zes of meer opeenvolgende woorden (`:1247`) met een bericht van een bezoeker dat nog in de database staat (`_visitor_texts`, `:1286`). Na de termijn is het gesprek weg en is er niets meer om mee te vergelijken. De werkwijze staat in [de meetlat](../runbooks/meetlat.md), paragraaf "Check that cases are newly written".
 
-De testset staat buiten deze repository, omdat de vragen over het product van een klant gaan en de verwachte artikelen op het helpcentrum van die klant staan. Ze hoort in de besloten infrastructuurrepository, per organisatie één bestand in het formaat dat de meetlat al leest, zodat elke toevoeging een regel in de geschiedenis is.
+De testset staat buiten deze repository, omdat de vragen over het product van een klant gaan en de verwachte artikelen op het helpcentrum van die klant staan. Ze staat in de besloten repository voor klantmateriaal, per organisatie één bestand in het formaat dat de meetlat al leest, zodat elke toevoeging een regel in de geschiedenis is.
 
 ### 5.2 De wekelijkse lezing als vaste werkwijze
 
@@ -105,4 +105,3 @@ De keuze welke gesprekken gelezen worden is automatisch en volgt uit wat het sys
 | Afgeschermde gesprekken langer bewaren dan de termijn | Afgeschermde vrije tekst blijft herleidbaar, en het zou weer een uitzondering zijn | Niet, zolang de testset het leren draagt |
 | Een tabel met gekozen gevallen in het product | Eén bestand per organisatie met geschiedenis doet hetzelfde | Als klanten hun eigen testset moeten kunnen beheren |
 | De wekelijkse lezing op een rooster zonder mens | De lezing heeft toegang tot productie nodig vanaf een ontwikkelmachine | Als de lezing als taak op de server kan draaien |
-| De bestaande kopieën van echte gesprekken van de meetlat omzetten | Dat is de eerste run van de skill en vraagt twee meetrondes op de hoofdversie om de nieuwe basis vast te leggen; tot dan staan de kopieën nog als losse bestanden op de server | Bij de eerste run van `chat-evolution`; daarna krijgt die map dezelfde termijn als de gesprekken |

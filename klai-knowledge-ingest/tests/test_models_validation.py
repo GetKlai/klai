@@ -7,6 +7,17 @@ from knowledge_ingest.models import IngestRequest, RetrieveRequest
 
 
 class TestIngestRequestValidation:
+    def test_extra_cannot_carry_a_product_state(self):
+        """``extra`` is merged into the artifact row, where these keys are the states."""
+        with pytest.raises(ValidationError, match="graph_state"):
+            IngestRequest(
+                org_id="org1",
+                kb_slug="test",
+                path="test.md",
+                content="x",
+                extra={"source_url": "https://example.com/a", "graph_state": "done"},
+            )
+
     def test_content_over_500k_rejected(self):
         with pytest.raises(ValidationError, match="content"):
             IngestRequest(

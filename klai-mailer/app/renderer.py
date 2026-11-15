@@ -50,6 +50,24 @@ def _append_lang_to_url(url: str, lang: str | None) -> str:
 # code and no button.
 _CODE_ONLY_EVENT_TYPES: frozenset[str] = frozenset({"session.otp.email.challenged"})
 
+# The mailer writes these mails itself. The provider's default text tells the
+# reader to click a button the mail does not have, names the provider instead
+# of Klai, and its footer is an untranslated key ("VerifyEmailOTP.Footer").
+_CODE_MAIL_TEXT: dict[str, dict[str, str]] = {
+    "nl": {
+        "subject": "Je inlogcode voor Klai",
+        "greeting": "Hallo,",
+        "text": "Je inlogcode is {code}. Vul deze code in op het inlogscherm.",
+        "validity": "De code is {minutes} minuten geldig.",
+    },
+    "en": {
+        "subject": "Your Klai sign-in code",
+        "greeting": "Hello,",
+        "text": "Your sign-in code is {code}. Enter it on the sign-in page.",
+        "validity": "The code is valid for {minutes} minutes.",
+    },
+}
+
 
 # Inline styles injected on plain-text-to-HTML converted elements.
 # Applied via regex so they survive Outlook's CSS stripping.
@@ -109,6 +127,9 @@ class Renderer:
         Always returns a dict — every notification type gets the same treatment.
         Raises on unexpected errors (FastAPI returns 500, Zitadel retries).
         """
+        if payload.event_type() in _CODE_ONLY_EVENT_TYPES and payload.args and payload.args.oTP:
+            return self._render_code_mail(payload.args.oTP, payload.args.expiry, lang)
+
         td = payload.templateData
 
         # Greeting and body are separate fields in Zitadel; combine them.
@@ -128,6 +149,33 @@ class Renderer:
             "button_text": payload.button_text(),
             "button_url": _append_lang_to_url(payload.button_url(), lang),
             "footer_note": payload.footer_note(),
+        }
+
+    def _render_code_mail(
+        self, code: str, expiry_ns: int | None, lang: str | None
+    ) -> dict[str, Any]:
+        if lang not in _CODE_MAIL_TEXT:
+            logger.warning("preferred_language unknown for a sign-in code mail; written in English")
+            lang = "en"
+        t = _CODE_MAIL_TEXT[lang]
+        text = t["text"].format(code=code)
+        if expiry_ns:
+            text += " " + t["validity"].format(minutes=expiry_ns // 60_000_000_000)
+        return {
+            "subject": t["subject"],
+            "preheader": t["subject"],
+            "body_html": _text_to_html(t["greeting"])
+            + "\n"
+            # The code stands out; the text around it stays escaped plain text.
+            + _text_to_html(text).replace(
+                html_lib.escape(code),
+                f'<strong style="font-weight:600;">{html_lib.escape(code)}</strong>',
+                1,
+            ),
+            "has_button": False,
+            "button_text": "",
+            "button_url": "",
+            "footer_note": "",
         }
 
     def wrap(self, render_result: dict[str, Any], branding: dict[str, Any]) -> str:

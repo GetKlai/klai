@@ -35,7 +35,6 @@ const MEMBER_A = "200000000000000001";
 const MEMBER_A2 = "200000000000000003";
 
 process.env.DOCS_INTERNAL_SECRET = DOCS_SECRET;
-process.env.AUTH_ZITADEL_ISSUER = ISSUER;
 
 // A locally generated key served as the issuer's JWKS, so tokens signed here
 // pass the Bearer validation without any network access.
@@ -63,10 +62,9 @@ function asserted(org: typeof ORG_A, user = MEMBER_A): Record<string, string> {
   return { "x-internal-secret": DOCS_SECRET, ...verified(org, user) };
 }
 
-// Exactly the header set the portal proxy forwards today (pinned by
-// test_docs_request_for_own_organisation_forwards_unchanged_headers): the
-// portal's own secret, the session's Bearer token and the verified headers.
-function liveProxy(org: typeof ORG_A, token: string): Record<string, string> {
+// A validly signed session token with a secret the docs app does not hold:
+// what a caller that is not the portal proxy or a service could present.
+function withTokenOnly(org: typeof ORG_A, token: string): Record<string, string> {
   return {
     Accept: "application/json",
     Authorization: `Bearer ${token}`,
@@ -141,26 +139,12 @@ describe("proxy assertion with the docs secret", () => {
   });
 });
 
-describe("requests from the portal proxy as it runs today", () => {
-  it("are identified from the Bearer token, as before", async () => {
-    const token = signedToken({ sub: MEMBER_A });
-    const { error, payload } = await auth.requireOrgAccess(req("/api/orgs/org-a/kbs", liveProxy(ORG_A, token)), "org-a");
-    expect(error).toBeUndefined();
-    expect(payload?.sub).toBe(MEMBER_A);
-    expect(identifiedKinds(info)).toEqual(["bearer"]);
-  });
-
-  it("keep the existing organisation-claim comparison of the Bearer path", async () => {
+describe("a login token without the docs secret", () => {
+  it("identifies nobody, however valid the token is", async () => {
     const token = signedToken({ sub: MEMBER_A, [CLAIM]: ORG_A.zitadel_org_id });
-    const own = await auth.requireOrgAccess(req("/api/orgs/org-a/kbs", liveProxy(ORG_A, token)), "org-a");
-    const other = await auth.requireOrgAccess(req("/api/orgs/org-b/kbs", liveProxy(ORG_B, token)), "org-b");
-    expect(own.error).toBeUndefined();
-    expect(other.error?.status).toBe(403);
-  });
-
-  it("are refused without a valid token, as before", async () => {
-    const { error } = await auth.requireOrgAccess(req("/api/orgs/org-a/kbs", liveProxy(ORG_A, "not-a-token")), "org-a");
+    const { error } = await auth.requireOrgAccess(req("/api/orgs/org-a/kbs", withTokenOnly(ORG_A, token)), "org-a");
     expect(error?.status).toBe(401);
+    expect(identifiedKinds(info)).toEqual([]);
   });
 });
 
