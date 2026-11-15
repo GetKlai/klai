@@ -969,6 +969,15 @@ async def _link_graph_fields(org_id: str, artifact_id: str) -> None:
         entity_graph_data = graph_module.EntityGraphData()
         await graph_module.load_entity_graph_data(org_id, episode_ids, entity_graph_data)
         await graph_module.flush_entity_graph_data(artifact_id, org_id, entity_graph_data)
+        # flush_entity_graph_data writes nothing for a graph without entities,
+        # so only a write that happened is logged.
+        if entity_graph_data.entity_uuids or entity_graph_data.entity_names:
+            logger.info(
+                "graph_fields_linked",
+                artifact_id=artifact_id,
+                org_id=org_id,
+                entities=len(entity_graph_data.entity_uuids),
+            )
     except Exception:
         # Logged as the graph job logs its own failed write: the enrichment
         # itself landed, and retrying it would redo the model work for fields
