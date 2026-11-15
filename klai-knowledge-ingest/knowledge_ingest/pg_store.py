@@ -1639,6 +1639,18 @@ async def get_crawled_page_markdown(
     return row["raw_markdown"] if row else None
 
 
+async def get_crawled_pages_markdown(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str
+) -> list[tuple[str, str]]:
+    rows = await conn.fetch(
+        "SELECT url, raw_markdown FROM knowledge.crawled_pages "
+        "WHERE org_id = $1 AND kb_slug = $2 AND raw_markdown IS NOT NULL",
+        org_id,
+        kb_slug,
+    )
+    return [(row["url"], row["raw_markdown"]) for row in rows]
+
+
 async def get_crawled_page_hashes(
     conn: asyncpg.Connection,
     org_id: str,

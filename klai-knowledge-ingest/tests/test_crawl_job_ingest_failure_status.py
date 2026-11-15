@@ -99,6 +99,7 @@ async def test_job_with_total_ingest_failure_is_not_reported_completed() -> None
             ],
         )
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
         mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
 
@@ -158,6 +159,7 @@ async def test_job_with_all_ingests_succeeding_is_still_completed() -> None:
             ],
         )
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
         mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.list_stale_connector_artifact_paths = AsyncMock(return_value=[])
 

@@ -1000,6 +1000,8 @@ async def crawl_url(request: CrawlRequest, http_request: Request) -> CrawlRespon
                 url=request.url,
                 stored_content_hash=stored_content,
                 change_hash=content_hash,
+                new_markdown=fit_md,
+                site_lines=frozenset(),
             ):
                 # HTML changed (JS / tracking pixel) but article content is identical
                 # → update raw_html_hash so future crawls hit the fast path, skip ingest

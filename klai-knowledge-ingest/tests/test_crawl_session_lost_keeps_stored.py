@@ -62,6 +62,10 @@ async def _run(pages: list[CrawlResult], **job_kwargs) -> tuple[AsyncMock, Magic
             "knowledge_ingest.adapters.crawler.pg_store.get_crawled_page_hashes",
             new=AsyncMock(return_value={}),
         ),
+        patch(
+            "knowledge_ingest.adapters.crawler.pg_store.get_crawled_pages_markdown",
+            new=AsyncMock(return_value=[]),
+        ),
         patch("knowledge_ingest.adapters.crawler._ingest_crawl_result", new=ingest),
         patch(
             "knowledge_ingest.adapters.crawler.get_domain_rate_limit_state",
