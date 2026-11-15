@@ -34,7 +34,7 @@ def _deletion_state(
     zitadel_user_id: str = "target-user",
     delete_global_identity: bool = True,
     kbs: int = 2,
-    api_keys: int = 1,
+    api_keys_transfer_to: str | None = None,
     mcp_tokens: int = 1,
 ):
     """Build a _UserDeletionState-like object for testing."""
@@ -46,7 +46,7 @@ def _deletion_state(
         actor_user_id="platform-admin",
         delete_global_identity=delete_global_identity,
         kb_dispositions=[MagicMock() for _ in range(kbs)],
-        api_keys_count=api_keys,
+        api_keys_transfer_to=api_keys_transfer_to,
         mcp_tokens_count=mcp_tokens,
     )
     return state
@@ -94,37 +94,85 @@ async def test_delete_user_steps_execute_in_order() -> None:
     assert call_order == ["zitadel_remove", "external_kb_delete", "portal_db_delete"]
 
 
+def _credential_mocks(call_order: list[str]):
+    def _recording(name: str, result: int) -> AsyncMock:
+        async def _record(*_args, **_kwargs):
+            call_order.append(name)
+            return result
+
+        return AsyncMock(side_effect=_record)
+
+    return (
+        patch("app.services.kb_offboarding.apply_dispositions", new=_recording("apply_dispositions", 0)),
+        patch("app.services.kb_offboarding.transfer_user_api_keys", new=_recording("transfer_user_api_keys", 3)),
+        patch("app.services.kb_offboarding.delete_user_api_keys", new=_recording("delete_user_api_keys", 4)),
+        patch("app.services.kb_offboarding.revoke_user_mcp_tokens", new=_recording("revoke_user_mcp_tokens", 2)),
+    )
+
+
 @pytest.mark.asyncio
-async def test_external_kb_delete_step_revokes_credentials_after_kb_dispositions() -> None:
-    """Credential revoke belongs to the external cleanup step, after Zitadel removal has succeeded."""
+async def test_tenant_delete_hands_the_api_keys_to_the_recipient_after_kb_dispositions() -> None:
+    """Credentials belong to the external cleanup step, after Zitadel removal has succeeded."""
     from app.services.user_deletion_steps import step_external_kb_delete
 
     call_order: list[str] = []
-
-    async def _apply_dispositions(*_args, **_kwargs):
-        call_order.append("apply_dispositions")
-
-    async def _revoke_user_credentials(*_args, **_kwargs):
-        call_order.append("revoke_user_credentials")
-        return (3, 2)
-
-    state = _deletion_state(api_keys=0, mcp_tokens=0)
+    state = _deletion_state(api_keys_transfer_to="tenant-admin", mcp_tokens=0)
     state.db_for_steps = AsyncMock()
-    state.org = MagicMock()
 
-    with (
-        patch("app.services.kb_offboarding.apply_dispositions", new=AsyncMock(side_effect=_apply_dispositions)),
-        patch(
-            "app.services.kb_offboarding.revoke_user_credentials",
-            new=AsyncMock(side_effect=_revoke_user_credentials),
-        ),
-    ):
+    apply, transfer, delete_keys, revoke = _credential_mocks(call_order)
+    with apply, transfer as mock_transfer, delete_keys, revoke:
         await step_external_kb_delete(state)
 
-    assert call_order == ["apply_dispositions", "revoke_user_credentials"]
+    assert call_order == ["apply_dispositions", "transfer_user_api_keys", "revoke_user_mcp_tokens"]
+    mock_transfer.assert_awaited_once_with("target-user", "tenant-admin", 42, state.db_for_steps)
     assert state.kbs_deleted_externally == len(state.kb_dispositions)
-    assert state.api_keys_count == 3
+    assert state.api_keys_transferred == 3
+    assert state.api_keys_deleted == 0
     assert state.mcp_tokens_count == 2
+
+
+@pytest.mark.asyncio
+async def test_the_recipient_chosen_by_the_tenant_admin_reaches_the_credentials_step() -> None:
+    from app.services.user_deletion_orchestrator import delete_user_with_state_machine
+
+    seen: list[str | None] = []
+
+    async def _run(state, _db):
+        seen.append(state.api_keys_transfer_to)
+
+    with patch("app.services.user_deletion_orchestrator._run_user_deletion", side_effect=_run):
+        await delete_user_with_state_machine(
+            org_id=42,
+            zitadel_user_id="target-user",
+            actor_user_id="tenant-admin",
+            delete_global_identity=True,
+            kb_dispositions=[],
+            mcp_tokens_count=0,
+            org=MagicMock(),
+            portal_user=MagicMock(),
+            db=AsyncMock(),
+            api_keys_transfer_to="other-admin",
+        )
+
+    assert seen == ["other-admin"]
+
+
+@pytest.mark.asyncio
+async def test_platform_delete_without_a_tenant_recipient_deletes_the_api_keys() -> None:
+    """The platform admin is not a tenant member, so nobody in the org can receive the keys."""
+    from app.services.user_deletion_steps import step_external_kb_delete
+
+    call_order: list[str] = []
+    state = _deletion_state(kbs=0)
+    state.db_for_steps = AsyncMock()
+
+    apply, transfer, delete_keys, revoke = _credential_mocks(call_order)
+    with apply, transfer, delete_keys, revoke:
+        await step_external_kb_delete(state)
+
+    assert call_order == ["delete_user_api_keys", "revoke_user_mcp_tokens"]
+    assert state.api_keys_deleted == 4
+    assert state.api_keys_transferred == 0
 
 
 @pytest.mark.asyncio
@@ -421,7 +469,7 @@ async def test_platform_delete_user_calls_orchestrator() -> None:
             ),
         ),
         patch("app.services.kb_offboarding.compute_offboard_preview", new=AsyncMock(return_value=preview)),
-        patch("app.services.kb_offboarding.revoke_user_credentials", new=AsyncMock(return_value=(2, 1))) as revoke,
+        patch("app.services.kb_offboarding.transfer_user_api_keys", new=AsyncMock(return_value=2)) as revoke,
         patch(
             "app.api.admin.platform_manage.delete_user_with_state_machine",
             new=orchestrator_mock,
@@ -484,7 +532,7 @@ async def test_retry_delete_endpoint_calls_orchestrator() -> None:
             ),
         ),
         patch("app.services.kb_offboarding.compute_offboard_preview", new=AsyncMock(return_value=preview)),
-        patch("app.services.kb_offboarding.revoke_user_credentials", new=AsyncMock(return_value=(0, 0))) as revoke,
+        patch("app.services.kb_offboarding.transfer_user_api_keys", new=AsyncMock(return_value=0)) as revoke,
         patch(
             "app.api.admin.platform_manage.delete_user_with_state_machine",
             new=orchestrator_mock,

@@ -66,10 +66,18 @@ limit answers 429 with `Retry-After` (`partner_dependencies.py:311-320`).
 The lookup does not read the creator's membership, so a key keeps working
 while its creator is suspended (`partner_dependencies.py:268-275`; kept that
 way by the owner's decision of 13 November 2026). Offboarding or deleting the
-creator removes the keys that user created in the organisation
-(`revoke_user_credentials`,
-`klai-portal/backend/app/services/kb_offboarding.py:526-549`), and an admin can
-delete a key at any time.
+creator hands the keys that user created in the organisation to a new owner,
+the acting admin unless that admin picks another active admin of the
+organisation (`api_keys_transfer_to`, checked by `check_api_keys_recipient`,
+`klai-portal/backend/app/services/kb_offboarding.py:537-560`). The key keeps its
+hash, permissions, rate limit and organisation KB access, so integrations keep
+working; its access rows on personal KBs are dropped, because after the
+handover the creator rule would otherwise open the new owner's personal KB
+(`transfer_user_api_keys`, `kb_offboarding.py:563-603`). The person who left may
+still know the key, so replace it when that matters. The platform-admin delete
+has no tenant member to hand the keys to and deletes them
+(`klai-portal/backend/app/services/user_deletion_steps.py:116-121`). An admin
+can delete a key at any time.
 
 ### Widget
 

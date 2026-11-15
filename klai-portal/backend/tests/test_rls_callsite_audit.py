@@ -129,7 +129,11 @@ ALLOWED_HELPER_FUNCTIONS: frozenset[str] = frozenset(
         "_load_kb_or_404",
         "_do_transfer",
         "_do_delete",
-        "revoke_user_credentials",
+        "_active_member_or_400",
+        "check_api_keys_recipient",
+        "transfer_user_api_keys",
+        "delete_user_api_keys",
+        "revoke_user_mcp_tokens",
         # app/core/system_groups.py — no-op stub after SPEC-PORTAL-RBAC-001.
         "create_system_groups",
         # app/api/app_knowledge_bases.py — all helpers take org_id and

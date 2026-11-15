@@ -159,7 +159,7 @@ The designed loop: users ask, low-confidence answers and support conversations b
 ### GAP-OFFBOARD-01: export of a personal knowledge base on offboarding  ·  M  ·  NOT BUILT
 
 - **Design.** When a user leaves, the personal scope is offered as a markdown archive; after the export window the Qdrant points and PostgreSQL rows of that user are deleted. Organisation artifacts the user contributed stay, attributed through an `author` field. The right to erasure for personal data is then one operation that does not touch organisation knowledge.
-- **Today.** `apply_dispositions` deletes the personal knowledge base through the purge chain (`klai-portal/backend/app/services/kb_offboarding.py:313`, personal case at :476) and revokes the user's partner keys and MCP tokens. There is no export step and no `author` field.
+- **Today.** `apply_dispositions` deletes the personal knowledge base through the purge chain (`klai-portal/backend/app/services/kb_offboarding.py:315`, personal case at :499); the offboard route hands the partner keys the user created over to an administrator and revokes the user's MCP tokens (`kb_offboarding.py:563`, `:621`). There is no export step and no `author` field.
 
 ### GAP-FED-01: knowledge shared between organisations  ·  XL  ·  NOT BUILT
 

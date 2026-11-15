@@ -67,7 +67,12 @@ class _UserDeletionState:
 
     # Pre-computed by the request handler before calling delete_user_with_state_machine.
     kb_dispositions: list[Any] = field(default_factory=list)
-    api_keys_count: int = 0
+    # The member who receives the user's partner API keys, already checked by
+    # check_api_keys_recipient. None only on the platform-admin delete, whose
+    # actor is not a tenant member; the keys are deleted there.
+    api_keys_transfer_to: str | None = None
+    api_keys_transferred: int = 0
+    api_keys_deleted: int = 0
     mcp_tokens_count: int = 0
 
     # Resolved by load_user_deletion_state from DB
@@ -170,7 +175,9 @@ async def _run_user_deletion(
                         "step": step_name,
                         "error": str(exc)[:200],
                         "kbs_deleted_externally": state.kbs_deleted_externally,
-                        "api_keys_revoked": state.api_keys_count,
+                        "api_keys_transferred": state.api_keys_transferred,
+                        "api_keys_transferred_to": state.api_keys_transfer_to,
+                        "api_keys_deleted": state.api_keys_deleted,
                         "mcp_tokens_revoked": state.mcp_tokens_count,
                         "group_memberships_deleted": state.group_memberships_deleted,
                         "zitadel_identity_deleted": state.zitadel_identity_deleted,
@@ -189,7 +196,9 @@ async def _run_user_deletion(
         details={
             "target_org_id": state.org_id,
             "kbs_deleted": state.kbs_deleted_externally,
-            "api_keys_revoked": state.api_keys_count,
+            "api_keys_transferred": state.api_keys_transferred,
+            "api_keys_transferred_to": state.api_keys_transfer_to,
+            "api_keys_deleted": state.api_keys_deleted,
             "mcp_tokens_revoked": state.mcp_tokens_count,
             "group_memberships_deleted": state.group_memberships_deleted,
             "global_identity_deleted": state.zitadel_identity_deleted,
@@ -206,13 +215,13 @@ async def delete_user_with_state_machine(
     actor_user_id: str,
     delete_global_identity: bool,
     kb_dispositions: list[Any],
-    api_keys_count: int,
     mcp_tokens_count: int,
     org: Any,
     portal_user: Any,
     db: AsyncSession,
     success_audit_action: str = "platform_admin.user_deleted",
     partial_failure_audit_action: str = "platform_admin.user_delete_partial_failure",
+    api_keys_transfer_to: str | None = None,
 ) -> bool:
     """Entry point called by the endpoint handler.
 
@@ -225,7 +234,7 @@ async def delete_user_with_state_machine(
         actor_user_id=actor_user_id,
         delete_global_identity=delete_global_identity,
         kb_dispositions=kb_dispositions,
-        api_keys_count=api_keys_count,
+        api_keys_transfer_to=api_keys_transfer_to,
         mcp_tokens_count=mcp_tokens_count,
         org=org,
         portal_user=portal_user,

@@ -48,15 +48,17 @@ export interface KbDisposition {
 export interface OffboardArgs {
   userId: string
   kb_dispositions: KbDisposition[]
+  // New owner of the user's partner API keys; the backend defaults to the acting admin.
+  api_keys_transfer_to?: string
 }
 
 export function useOffboardUser() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ userId, kb_dispositions }: OffboardArgs) => {
+    mutationFn: async ({ userId, kb_dispositions, api_keys_transfer_to }: OffboardArgs) => {
       await apiFetch(`/api/admin/users/${userId}/offboard`, {
         method: 'POST',
-        body: JSON.stringify({ kb_dispositions }),
+        body: JSON.stringify({ kb_dispositions, api_keys_transfer_to }),
         headers: { 'Content-Type': 'application/json' },
       })
     },
@@ -73,10 +75,10 @@ export function useOffboardUser() {
 export function useDeleteUserWithDispositions() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ userId, kb_dispositions }: OffboardArgs) => {
+    mutationFn: async ({ userId, kb_dispositions, api_keys_transfer_to }: OffboardArgs) => {
       await apiFetch(`/api/admin/users/${userId}/delete`, {
         method: 'POST',
-        body: JSON.stringify({ kb_dispositions }),
+        body: JSON.stringify({ kb_dispositions, api_keys_transfer_to }),
         headers: { 'Content-Type': 'application/json' },
       })
     },
