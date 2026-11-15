@@ -115,7 +115,7 @@ async def test_platform_delete_keeps_global_identity_when_other_memberships_exis
             ),
         ),
         patch("app.services.kb_offboarding.compute_offboard_preview", new=AsyncMock(return_value=preview)),
-        patch("app.services.kb_offboarding.revoke_user_credentials", new=AsyncMock(return_value=(0, 0))),
+        patch("app.services.kb_offboarding.delete_user_api_keys", new=AsyncMock(return_value=0)),
         patch(
             "app.api.admin.platform_manage.delete_user_with_state_machine",
             new=orchestrator_mock,

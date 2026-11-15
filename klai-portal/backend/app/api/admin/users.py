@@ -39,9 +39,11 @@ from app.services.kb_offboarding import (
     OffboardPreview,
     UserDeletePreview,
     apply_dispositions,
+    check_api_keys_recipient,
     compute_offboard_preview,
     compute_user_delete_preview,
-    revoke_user_credentials,
+    revoke_user_mcp_tokens,
+    transfer_user_api_keys,
 )
 from app.services.mcp_role_notifier import fire_role_change_notification
 from app.services.notifications import notify_user_join_approved
@@ -1194,7 +1196,7 @@ async def offboard_preview(
 
     Returns the org KBs the user is the sole owner of (admin must choose
     transfer-to or delete), the personal KBs (always purged on offboard),
-    and the count of API-keys / MCP-tokens that will be auto-revoked.
+    and the count of API keys (handed over) and MCP tokens (revoked).
     The frontend uses this to render the offboard wizard.
     """
     # Verify user belongs to caller's tenant before exposing any data.
@@ -1216,9 +1218,14 @@ class OffboardRequest(BaseModel):
     with an explicit disposition, otherwise we 400 with the missing list.
     No implicit defaults: silent-orphans are the failure mode this SPEC
     exists to prevent.
+
+    ``api_keys_transfer_to`` names the new owner of the user's partner API
+    keys; omitted, the acting admin receives them, the same default the
+    wizard uses for knowledge bases.
     """
 
     kb_dispositions: list[KbDisposition] = []
+    api_keys_transfer_to: str | None = None
 
 
 class DeleteUserRequest(BaseModel):
@@ -1226,9 +1233,11 @@ class DeleteUserRequest(BaseModel):
 
     Every KB returned by ``delete-preview`` must have an explicit disposition.
     Org KBs may be transferred or deleted; personal KBs remain delete-only.
+    ``api_keys_transfer_to`` works as on ``OffboardRequest``.
     """
 
     kb_dispositions: list[KbDisposition] = []
+    api_keys_transfer_to: str | None = None
 
 
 def _missing_disposition_slugs(
@@ -1261,7 +1270,8 @@ async def offboard_user(
 
       1. Validate body covers EVERY KB returned by the preview (REQ-2.5).
       2. Apply KB dispositions via ``apply_dispositions`` (REQ-2.2 .. 2.6 + 2.8).
-      3. Revoke partner API keys + MCP tokens via ``revoke_user_credentials`` (REQ-2.7).
+      3. Hand the partner API keys to the recipient (checked before step 2,
+         ``transfer_user_api_keys``) and revoke MCP tokens (REQ-2.7).
       4. Delete tenant-scoped group memberships (existing SEC-TENANT-001 logic).
       5. Flip user.status to 'offboarded' + emit user.offboarded audit.
       6. Commit DB transaction.
@@ -1314,6 +1324,11 @@ async def offboard_user(
             },
         )
 
+    # Checked before the dispositions, whose external deletes a rollback cannot undo.
+    api_keys_recipient = body.api_keys_transfer_to or perms.user_id
+    if preview.api_keys_count:
+        await check_api_keys_recipient(api_keys_recipient, zitadel_user_id, perms.org_id, db)
+
     # REQ-2.2 — KB dispositions inside the offboard tx.
     await apply_dispositions(
         target_user_id=zitadel_user_id,
@@ -1323,12 +1338,9 @@ async def offboard_user(
         db=db,
     )
 
-    # REQ-2.7 — token revoke inside the same tx.
-    api_keys_deleted, mcp_tokens_revoked = await revoke_user_credentials(
-        target_user_id=zitadel_user_id,
-        org_id=perms.org_id,
-        db=db,
-    )
+    # Same tx: the keys move to the recipient, MCP tokens are revoked (REQ-2.7).
+    api_keys_transferred = await transfer_user_api_keys(zitadel_user_id, api_keys_recipient, perms.org_id, db)
+    mcp_tokens_revoked = await revoke_user_mcp_tokens(zitadel_user_id, perms.org_id, db)
 
     # Cascade: remove group memberships.
     #
@@ -1362,7 +1374,8 @@ async def offboard_user(
         zitadel_user_id=zitadel_user_id,
         memberships_removed_count=memberships_removed_count,
         kb_dispositions_count=len(body.kb_dispositions),
-        api_keys_deleted=api_keys_deleted,
+        api_keys_transferred=api_keys_transferred,
+        api_keys_transferred_to=api_keys_recipient,
         mcp_tokens_revoked=mcp_tokens_revoked,
     )
     await log_event(
@@ -1373,7 +1386,8 @@ async def offboard_user(
         resource_id=zitadel_user_id,
         details={
             "kb_dispositions_count": len(body.kb_dispositions),
-            "api_keys_deleted": api_keys_deleted,
+            "api_keys_transferred": api_keys_transferred,
+            "api_keys_transferred_to": api_keys_recipient,
             "mcp_tokens_revoked": mcp_tokens_revoked,
         },
     )
@@ -1463,13 +1477,19 @@ async def delete_user_with_dispositions(
             },
         )
 
+    # Checked here because the state machine removes the Zitadel identity
+    # before it reaches the credentials step.
+    api_keys_recipient = body.api_keys_transfer_to or perms.user_id
+    if preview.api_keys_count:
+        await check_api_keys_recipient(api_keys_recipient, zitadel_user_id, perms.org_id, db)
+
     success = await delete_user_with_state_machine(
         org_id=perms.org_id,
         zitadel_user_id=zitadel_user_id,
         actor_user_id=perms.user_id,
         delete_global_identity=delete_global_identity,
         kb_dispositions=body.kb_dispositions,
-        api_keys_count=0,
+        api_keys_transfer_to=api_keys_recipient,
         mcp_tokens_count=0,
         org=org,
         portal_user=user,

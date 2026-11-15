@@ -7,7 +7,7 @@ The orchestrator drives two operations on user-offboarding:
 1. ``compute_offboard_preview(target_user_id, perms, db)`` — returns the
    set of org-owned KBs the target user is the SOLE owner of, plus all
    personal KBs the user owns, plus counts of partner API keys and MCP
-   tokens that will be revoked. The admin uses the preview to choose a
+   tokens that will be handed over or revoked. The admin uses the preview to choose a
    ``KbDisposition`` per KB before triggering ``offboard``.
 
 2. ``apply_dispositions(target_user_id, dispositions, actor, db)`` —
@@ -23,10 +23,11 @@ The orchestrator drives two operations on user-offboarding:
      ``kb.personal_purged_on_offboard`` (personal KB) with
      ``meta.reason='offboarding'``.
 
-3. ``revoke_user_credentials(target_user_id, org_id, db)`` — REQ-2.7:
-   deletes every ``partner_api_keys`` row created by the offboarded user
-   and soft-revokes every active ``portal_mcp_tokens`` row whose
-   ``user_id`` resolves to the offboarded portal_users row.
+3. ``transfer_user_api_keys`` hands every ``partner_api_keys`` row the
+   offboarded user created to a recipient (the acting admin unless the
+   admin picks another, checked by ``check_api_keys_recipient``), so
+   integrations keep working; ``revoke_user_mcp_tokens`` soft-revokes
+   every active ``portal_mcp_tokens`` row of the offboarded user (REQ-2.7).
 
 Failure in any step raises and rolls back the entire transaction —
 including the eventual ``user.status = 'offboarded'`` flip in the
@@ -47,9 +48,10 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import set_tenant
+from app.core.profiles import ProfileRole
 from app.models.knowledge_bases import PortalKnowledgeBase, PortalUserKBAccess
 from app.models.mcp_oauth import PortalMcpToken
-from app.models.partner_api_keys import PartnerAPIKey
+from app.models.partner_api_keys import PartnerAPIKey, PartnerApiKeyKbAccess
 from app.models.portal import PortalOrg, PortalUser
 from app.services import docs_client, knowledge_ingest_client
 from app.services.access import is_personal_kb
@@ -354,6 +356,33 @@ async def _load_kb_or_404(kb_id: int, org_id: int, db: AsyncSession) -> PortalKn
     return kb
 
 
+def _bad_recipient(error_code: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"error_code": error_code, "message": message},
+    )
+
+
+async def _active_member_or_400(user_id: str, org_id: int, db: AsyncSession) -> PortalUser:
+    """Whatever offboarding hands over goes to an active member of the same org.
+
+    A recipient in another tenant, or one who already left, would leave the
+    knowledge base or API key with an owner nobody can act as.
+    """
+    result = await db.execute(
+        select(PortalUser).where(
+            PortalUser.zitadel_user_id == user_id,
+            PortalUser.org_id == org_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        raise _bad_recipient("transfer_recipient_not_member", f"User {user_id} is not a member of this org")
+    if member.status != "active":
+        raise _bad_recipient("transfer_recipient_not_active", f"User {user_id} is not active (status={member.status})")
+    return member
+
+
 async def _do_transfer(
     kb: PortalKnowledgeBase,
     new_owner_id: str,
@@ -385,25 +414,7 @@ async def _do_transfer(
             detail=f"transfer_to is required for kb_id={kb.id}",
         )
 
-    # Verify the receiving user is in the same org and active. A transfer
-    # to a non-existent / different-tenant user would orphan the KB.
-    new_owner_result = await db.execute(
-        select(PortalUser).where(
-            PortalUser.zitadel_user_id == new_owner_id,
-            PortalUser.org_id == org_id,
-        )
-    )
-    new_owner = new_owner_result.scalar_one_or_none()
-    if new_owner is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"transfer_to user {new_owner_id} is not a member of this org",
-        )
-    if new_owner.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"transfer_to user {new_owner_id} is not active (status={new_owner.status})",
-        )
+    await _active_member_or_400(new_owner_id, org_id, db)
 
     previous_owner = kb.created_by
     kb.created_by = new_owner_id
@@ -519,35 +530,101 @@ async def _do_delete(
 
 
 # ---------------------------------------------------------------------------
-# Token revoke
+# Credentials: API keys are handed over, MCP tokens are revoked
 # ---------------------------------------------------------------------------
 
 
-async def revoke_user_credentials(
-    target_user_id: str,
+async def check_api_keys_recipient(
+    recipient_id: str,
+    leaving_user_id: str,
     org_id: int,
     db: AsyncSession,
-) -> tuple[int, int]:
-    """REQ-2.7 — auto-revoke partner API keys + MCP tokens for offboarded user.
+) -> None:
+    """Refuse a new owner for the leaving user's partner API keys who could not hold them.
 
-    Returns ``(api_keys_deleted, mcp_tokens_revoked)`` for the
-    offboard-event payload. Runs in the same transaction as
-    apply_dispositions / status flip so a failure rolls everything back.
-
-    API keys are HARD-deleted (matches the ``DELETE /admin/api-keys/{id}``
-    user-facing endpoint). MCP tokens are SOFT-revoked via ``revoked_at``
-    so the OAuth refresh-token replay-detection chain
-    (``replaced_by_token_id``) stays intact for forensics.
+    Called before anything in the offboard or delete is mutated, because the
+    KB dispositions call external services that a database rollback does not
+    undo, and the delete path removes the Zitadel identity before it reaches
+    the credentials step.
     """
-    # API keys — match by created_by + org_id (RLS-friendly).
-    api_keys_result = await db.execute(
+    if recipient_id == leaving_user_id:
+        raise _bad_recipient(
+            "api_keys_recipient_is_leaving_user", "API keys cannot be handed over to the user who is leaving"
+        )
+    recipient = await _active_member_or_400(recipient_id, org_id, db)
+    # Every /api/admin/api-keys route requires get_caller_at_least(ProfileRole.ADMIN),
+    # so an owner below admin could neither rotate nor revoke the keys they received.
+    if recipient.role != ProfileRole.ADMIN:
+        raise _bad_recipient(
+            "api_keys_recipient_not_admin", f"User {recipient_id} cannot manage API keys (role={recipient.role})"
+        )
+
+
+async def transfer_user_api_keys(
+    target_user_id: str,
+    recipient_id: str,
+    org_id: int,
+    db: AsyncSession,
+) -> int:
+    """Make ``recipient_id`` the creator of every partner API key the leaving user created.
+
+    The key row keeps its hash, permissions, rate limit and org KB access, so
+    every integration on it keeps authenticating. Access rows on personal
+    knowledge bases are dropped first: the lookup in partner_dependencies
+    admits a personal KB only when ``owner_user_id == created_by``, so after
+    the handover a row on the recipient's personal KB would open it to the
+    integration, and a row on the leaving user's personal KB has nothing left
+    to grant. The caller validates the recipient with ``check_api_keys_recipient``.
+    Returns the number of keys handed over.
+    """
+    user_keys = select(PartnerAPIKey.id).where(
+        PartnerAPIKey.org_id == org_id,
+        PartnerAPIKey.created_by == target_user_id,
+    )
+    await db.execute(
+        delete(PartnerApiKeyKbAccess).where(
+            PartnerApiKeyKbAccess.partner_api_key_id.in_(user_keys),
+            PartnerApiKeyKbAccess.kb_id.in_(
+                select(PortalKnowledgeBase.id).where(
+                    PortalKnowledgeBase.org_id == org_id,
+                    PortalKnowledgeBase.owner_type == "user",
+                )
+            ),
+        )
+    )
+    result = await db.execute(
+        update(PartnerAPIKey)
+        .where(
+            PartnerAPIKey.org_id == org_id,
+            PartnerAPIKey.created_by == target_user_id,
+        )
+        .values(created_by=recipient_id)
+    )
+    return getattr(result, "rowcount", 0) or 0
+
+
+async def delete_user_api_keys(target_user_id: str, org_id: int, db: AsyncSession) -> int:
+    """Hard-delete the user's partner API keys.
+
+    Only the platform-admin delete uses this: its actor is Klai staff, not a
+    member of the tenant, so there is nobody in the org to hand the keys to.
+    """
+    result = await db.execute(
         delete(PartnerAPIKey).where(
             PartnerAPIKey.org_id == org_id,
             PartnerAPIKey.created_by == target_user_id,
         )
     )
-    api_keys_deleted = getattr(api_keys_result, "rowcount", 0) or 0
+    return getattr(result, "rowcount", 0) or 0
 
+
+async def revoke_user_mcp_tokens(target_user_id: str, org_id: int, db: AsyncSession) -> int:
+    """REQ-2.7 — soft-revoke the leaving user's MCP tokens.
+
+    MCP tokens act as the person, not as an integration, so they end with the
+    person. Soft revoke via ``revoked_at`` keeps the OAuth refresh-token
+    replay-detection chain (``replaced_by_token_id``) intact for forensics.
+    """
     # MCP tokens use the int portal_users.id as FK. Look it up; if the
     # portal_users row is already gone we have nothing to revoke.
     user_pk_result = await db.execute(
@@ -557,17 +634,14 @@ async def revoke_user_credentials(
         )
     )
     portal_user_pk = user_pk_result.scalar_one_or_none()
-
-    mcp_tokens_revoked = 0
-    if portal_user_pk is not None:
-        mcp_revoke_result = await db.execute(
-            update(PortalMcpToken)
-            .where(
-                PortalMcpToken.user_id == portal_user_pk,
-                PortalMcpToken.revoked_at.is_(None),
-            )
-            .values(revoked_at=datetime.now(tz=UTC))
+    if portal_user_pk is None:
+        return 0
+    result = await db.execute(
+        update(PortalMcpToken)
+        .where(
+            PortalMcpToken.user_id == portal_user_pk,
+            PortalMcpToken.revoked_at.is_(None),
         )
-        mcp_tokens_revoked = getattr(mcp_revoke_result, "rowcount", 0) or 0
-
-    return api_keys_deleted, mcp_tokens_revoked
+        .values(revoked_at=datetime.now(tz=UTC))
+    )
+    return getattr(result, "rowcount", 0) or 0
