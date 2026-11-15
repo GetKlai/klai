@@ -204,9 +204,11 @@ async def test_ingest_client_rejects_oversized_content_before_http_request() -> 
     await client.aclose()
 
 
-def test_client_content_limit_matches_knowledge_ingest_request_contract() -> None:
-    models_path = Path(__file__).parents[2] / "klai-knowledge-ingest" / "knowledge_ingest" / "models.py"
-    namespace = run_path(str(models_path))
+def test_client_content_limit_matches_knowledge_ingest_request_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    ingest_root = Path(__file__).parents[2] / "klai-knowledge-ingest"
+    # models.py imports from its own package, so that package has to be importable here.
+    monkeypatch.syspath_prepend(str(ingest_root))
+    namespace = run_path(str(ingest_root / "knowledge_ingest" / "models.py"))
     ingest_request = namespace["IngestRequest"]
     content_field = ingest_request.model_fields["content"]
     downstream_limit = next(

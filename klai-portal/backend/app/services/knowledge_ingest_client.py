@@ -275,7 +275,6 @@ async def auth_probe(
     url: str,
     org_id: str = "",
     cookies: list[dict] | None = None,
-    auth_chain_hosts: list[str] | None = None,
 ) -> dict:
     """SPEC-CONNECTOR-INPUT-VALIDATION-001 REQ-2 — call knowledge-ingest
     auth-probe endpoint.
@@ -287,8 +286,6 @@ async def auth_probe(
     payload: dict = {"url": url, "org_id": org_id}
     if cookies:
         payload["cookies"] = cookies
-    if auth_chain_hosts:
-        payload["auth_chain_hosts"] = auth_chain_hosts
     try:
         async with httpx.AsyncClient(
             base_url=settings.knowledge_ingest_url,
@@ -297,9 +294,7 @@ async def auth_probe(
                 "X-Caller-Service": "portal-api",
                 **get_trace_headers(),
             },
-            # PC-1 budget: REQ-2 p95 < 30s; a renewal proof adds one sign-in
-            # walk of up to ten hops, each capped by the probe timeout.
-            timeout=35.0 if not auth_chain_hosts else 90.0,
+            timeout=35.0,  # PC-1 budget: REQ-2 p95 < 30s
         ) as client:
             resp = await client.post("/ingest/v1/crawl/auth-probe", json=payload)
             resp.raise_for_status()
@@ -312,26 +307,6 @@ async def auth_probe(
             "word_count": 0,
             "auth_guard": None,
         }
-
-
-async def auth_chain(url: str, org_id: str = "") -> list[str]:
-    """Hosts the site's sign-in redirects through, from knowledge-ingest.
-
-    Raises on transport errors: a silent empty list would read as "this site
-    has no second sign-in host" and the wizard would collect too few cookies.
-    """
-    async with httpx.AsyncClient(
-        base_url=settings.knowledge_ingest_url,
-        headers={
-            "X-Internal-Secret": settings.knowledge_ingest_secret,
-            "X-Caller-Service": "portal-api",
-            **get_trace_headers(),
-        },
-        timeout=35.0,  # up to two walks of six hops, each capped by the probe timeout
-    ) as client:
-        resp = await client.post("/ingest/v1/crawl/auth-chain", json={"url": url, "org_id": org_id})
-        resp.raise_for_status()
-        return list(resp.json()["hosts"])
 
 
 async def trigger_taxonomy_bootstrap(org_id: str, kb_slug: str) -> dict:
