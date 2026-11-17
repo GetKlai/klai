@@ -1,3 +1,13 @@
+/** What the last website crawl read and left for the next nights. */
+export interface CrawlCoverage {
+  pages_read: number
+  addresses_gone: number
+  addresses_waiting: number
+  addresses_known: number
+  max_pages: number
+  stopped_by: 'page_limit' | 'attempt_limit' | 'site_rate_limit' | 'blocked' | 'cancelled' | null
+}
+
 export interface Source {
   kind: 'connector' | 'upload'
   id: string
@@ -12,6 +22,8 @@ export interface Source {
   status: string | null
   last_sync_at: string | null
   created_at: string | null
+  /** Website-only: coverage of the last crawl, when knowledge-ingest reported it. */
+  sync_coverage?: CrawlCoverage | null
   /** Upload-only: pending / synced / failed from Track 3 backend. */
   index_status?: string | null
   /**
