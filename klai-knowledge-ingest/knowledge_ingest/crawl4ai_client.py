@@ -1221,6 +1221,7 @@ class CrawlLedger:
         self._by_canonical: dict[str, DiscoveredUrl] = {}
         self._order = 0
         self._stale_memory_keys: set[str] = set()
+        self._stored_pages: set[str] = set()
 
     @property
     def discovered_count(self) -> int:
@@ -1309,6 +1310,7 @@ class CrawlLedger:
             if item is None:
                 continue
             if stored_key is None:
+                self._stored_pages.add(canonical)
                 if item.first_seen_at is None:
                     item.first_seen_at = float("-inf")
                 continue
@@ -1483,7 +1485,9 @@ class CrawlLedger:
         only addresses never sent keep their place. A known-only address
         (no sitemap entry and no page read tonight refers to it) that answered
         404/410 is forgotten, so the memory does not keep what the site no
-        longer has.
+        longer has, unless a page is stored there: the next crawl would load it
+        again as a stored page without a row and try it first every night, so
+        it keeps its row and rotates until a fully fetched crawl retires it.
         """
         memory.rows, memory.forget = [], sorted(self._stale_memory_keys)
         memory.known_only = set()
@@ -1493,7 +1497,10 @@ class CrawlLedger:
             known_only = item.source_kind == "known"
             if known_only:
                 memory.known_only.add(item.canonical_url)
-                if item.reason_code == FetchReasonCode.GONE.value:
+                if (
+                    item.reason_code == FetchReasonCode.GONE.value
+                    and item.canonical_url not in self._stored_pages
+                ):
                     memory.forget.append(item.canonical_url)
                     continue
             memory.rows.append(

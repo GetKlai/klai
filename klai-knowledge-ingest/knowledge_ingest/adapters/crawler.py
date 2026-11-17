@@ -540,8 +540,8 @@ _OUT_OF_SCOPE_REASON_CODES = frozenset(
 def _crawl_coverage(fetch_outcomes: list[dict], *, max_pages: int) -> dict:
     """How far one crawl got through the addresses its source knows.
 
-    An address counts once even when the discovery-seed pass reported it too;
-    a tried address outranks a not-sent record of the same address. Every
+    An address counts once even when the discovery-seed pass reported it too:
+    a read outranks a failure or 404/410, which outranks a not-sent record. Every
     address that was sent was tried, whatever it answered; a failure was tried
     but read nothing. ``stopped_by`` is the stop that ended the loop, read from
     the labels of the addresses never sent.
@@ -553,7 +553,7 @@ def _crawl_coverage(fetch_outcomes: list[dict], *, max_pages: int) -> dict:
             continue
         canonical = _canonicalise_url(str(outcome.get("url") or ""))
         earlier = by_url.get(canonical)
-        if earlier is None or _reason_waits(str(earlier.get("reason_code") or "")):
+        if earlier is None or _coverage_rank(outcome) > _coverage_rank(earlier):
             by_url[canonical] = outcome
     reasons = [str(o.get("reason_code") or "") for o in by_url.values()]
     waiting = [r for r in reasons if _reason_waits(r)]
@@ -588,6 +588,15 @@ def _crawl_coverage(fetch_outcomes: list[dict], *, max_pages: int) -> dict:
         "max_pages": max_pages,
         "stopped_by": next((s for s in _STOPPED_BY_PRECEDENCE if s in stops), None),
     }
+
+
+def _coverage_rank(outcome: dict) -> int:
+    reason = str(outcome.get("reason_code") or "")
+    if _reason_waits(reason):
+        return 0
+    if reason == FetchReasonCode.GONE.value or reason in _FETCH_FAILURE_REASON_CODES:
+        return 1
+    return 2
 
 
 def _stopped_at_attempt_limit(outcome: dict) -> bool:

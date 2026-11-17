@@ -602,3 +602,44 @@ def test_a_preview_crawl_neither_reads_nor_writes_the_memory(client: TestClient)
     assert resp.status_code == 200, resp.text
     load.assert_not_awaited()
     record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_stored_page_that_answers_404_keeps_its_row_and_rotates(monkeypatch) -> None:
+    """F1 skips stored pages: forgetting one would bring it back first every night."""
+    stored = _address("stored")
+    others = [_address(i) for i in range(6)]
+    site = _Site(live=others, dead=[stored], sitemap=others)
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    memory.stored = [stored]
+    memory.rows[stored] = {
+        "canonical_url": stored,
+        "url": stored,
+        "depth": 1,
+        "first_seen_at": 0.0,
+        "last_visited_at": 0.0,
+    }
+
+    _results, _outcomes, state = await _night(site, memory, max_pages=3)
+    await _night(site, memory, max_pages=3)
+
+    assert stored not in state.forget
+    assert memory.rows[stored]["last_visited_at"] == 1.0
+    assert site.bulk_calls[0][0] != stored
+
+
+def test_a_page_the_seed_pass_read_counts_as_read() -> None:
+    """A read replaces a failure of the same address; nothing replaces a read."""
+    outcomes = [
+        {"url": _address(1), "reason_code": "timeout"},
+        {"url": _address(2), "reason_code": "success"},
+        {"url": _address(1), "reason_code": "success"},
+        {"url": _address(2), "reason_code": "timeout"},
+        {"url": _address(2), "reason_code": "not_fetched_budget_exhausted"},
+    ]
+
+    coverage = _crawl_coverage(outcomes, max_pages=500)
+
+    assert coverage["pages_read"] == 2
+    assert coverage["addresses_waiting"] == 0
