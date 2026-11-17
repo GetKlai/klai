@@ -107,7 +107,7 @@ async def _crawl(memory: PostgresCrawlMemory, **kwargs: Any) -> list[dict[str, A
     state = CrawlMemoryState(remembered=await memory.load())
     _results, outcomes = await crawl4ai_client.crawl_site(start_url=_START, memory=state, **kwargs)
     async with _connection_factory() as conn:
-        await memory.record(conn, state.rows, state.forget)
+        await memory.record(conn, state.rows, state.forget, replace=state.whole_site)
     return outcomes
 
 
@@ -162,8 +162,15 @@ async def test_memory_keeps_visits_and_ignores_stored_pages() -> None:
         row = {"url": _address(1), "canonical_url": _address(1), "depth": 2}
         dropped = {"url": _address(2), "canonical_url": _address(2), "depth": 1}
         async with _connection_factory() as conn:
-            await memory.record(conn, [{**row, "visited": True}, {**dropped, "visited": True}], [])
-            await memory.record(conn, [{**row, "depth": 1, "visited": False}], [_address(2)])
+            await memory.record(
+                conn,
+                [{**row, "visited": True}, {**dropped, "visited": True}],
+                [],
+                replace=False,
+            )
+            await memory.record(
+                conn, [{**row, "depth": 1, "visited": False}], [_address(2)], replace=False
+            )
 
         loaded = await memory.load()
         remembered = {r["canonical_url"]: r for r in loaded}
@@ -306,3 +313,37 @@ async def test_connector_purge_and_kb_delete_remove_the_memory(
     finally:
         await _cleanup(purged)
         await _cleanup(deleted_kb)
+
+
+@pytest.mark.asyncio
+async def test_a_whole_site_record_replaces_the_memory() -> None:
+    """Rows the frontier no longer holds go; an untried address loses its old try."""
+    connector_id = str(uuid.uuid4())
+    memory = _memory(connector_id)
+    kept, dropped = _address(1), _address(2)
+    try:
+        async with _connection_factory() as conn:
+            await memory.record(
+                conn,
+                [
+                    {"url": kept, "canonical_url": kept, "depth": 2, "visited": True},
+                    {"url": dropped, "canonical_url": dropped, "depth": 1, "visited": True},
+                ],
+                [],
+                replace=True,
+            )
+            await memory.record(
+                conn,
+                [{"url": kept, "canonical_url": kept, "depth": 3, "visited": False}],
+                [],
+                replace=True,
+            )
+
+        rows = {r["canonical_url"]: r for r in await memory.load()}
+
+        assert set(rows) == {kept}
+        assert rows[kept]["depth"] == 3
+        assert rows[kept]["last_visited_at"] is None
+        assert not CrawlMemoryState(remembered=list(rows.values())).whole_site
+    finally:
+        await _cleanup(connector_id)

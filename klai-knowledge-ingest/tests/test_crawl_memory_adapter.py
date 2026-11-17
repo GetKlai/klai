@@ -60,10 +60,13 @@ class _Memory:
     async def load(self) -> list[dict[str, Any]]:
         return [dict(row) for row in _Memory.rows]
 
-    async def record(self, _conn: Any, rows: list[dict[str, Any]], forget: list[str]) -> None:
+    async def record(
+        self, _conn: Any, rows: list[dict[str, Any]], forget: list[str], *, replace: bool
+    ) -> None:
         if self.fail:
             raise RuntimeError("memory write failed")
         self.recorded.append((rows, forget))
+        self.replaced = replace
 
 
 def _fake_crawl(
@@ -72,27 +75,24 @@ def _fake_crawl(
     *,
     rows: list[dict[str, Any]] | None = None,
     forget: list[str] | None = None,
-    known_only: set[str] | None = None,
 ):
     async def _crawl_site(**kwargs: Any) -> tuple[list[CrawlResult], list[dict[str, Any]]]:
         state = kwargs.get("memory")
         if state is not None:
             state.rows = rows or []
             state.forget = forget or []
-            state.known_only = known_only or set()
         return list(results), list(outcomes)
 
     return _crawl_site
 
 
-def _row(url: str, *, known_only: bool = False) -> dict[str, Any]:
+def _row(url: str) -> dict[str, Any]:
     return {
         "canonical_url": url,
         "url": url,
         "depth": 1,
         "visited": True,
         "reason_code": "success",
-        "known_only": known_only,
     }
 
 
@@ -258,45 +258,6 @@ async def test_a_failed_record_fails_the_job_after_the_pages_are_in() -> None:
     assert statuses == ["failed"]
 
 
-@pytest.mark.asyncio
-async def test_a_complete_crawl_forgets_unlisted_addresses_and_retires_their_pages() -> None:
-    """(F2) A page dropped from the site's navigation but still answering 200 is stale."""
-    unlisted = _url("unlisted")
-    crawl = _fake_crawl(
-        [_result(_START), _result(unlisted)],
-        [_outcome(_START, "success"), _outcome(unlisted, "success")],
-        rows=[_row(_START), _row(unlisted, known_only=True)],
-        known_only={unlisted},
-    )
-    run = await _run(crawl, stored=[_START, unlisted])
-
-    assert run["stale"].await_args.kwargs["current_paths"] == [_START]
-    assert run["purged"] == [[unlisted]]
-    rows, forget = run["memory"].recorded[0]
-    assert forget == [unlisted]
-    assert [r["canonical_url"] for r in rows] == [_START]
-
-
-@pytest.mark.asyncio
-async def test_an_incomplete_crawl_keeps_unlisted_addresses() -> None:
-    unlisted = _url("unlisted")
-    crawl = _fake_crawl(
-        [_result(_START), _result(unlisted)],
-        [
-            _outcome(_START, "success"),
-            _outcome(unlisted, "success"),
-            _outcome(_url("later"), "not_fetched_budget_exhausted"),
-        ],
-        rows=[_row(_START), _row(unlisted, known_only=True)],
-        known_only={unlisted},
-    )
-    run = await _run(crawl)
-
-    rows, forget = run["memory"].recorded[0]
-    assert forget == []
-    assert unlisted in [r["canonical_url"] for r in rows]
-
-
 _PAGES = [_outcome(_START, "success"), _outcome(_url("a"), "success")]
 _WAITING = [_url("w1"), _url("w2"), _url("w3")]
 
@@ -439,23 +400,68 @@ async def test_a_remembered_seed_page_still_runs_the_seed_pass_and_retires_nothi
     assert forget == []
 
 
+def _remembered(url: str, depth: int = 1, last: float | None = 0.0) -> dict[str, Any]:
+    return {
+        "canonical_url": url,
+        "url": url,
+        "depth": depth,
+        "first_seen_at": 0.0,
+        "last_visited_at": last,
+    }
+
+
 @pytest.mark.asyncio
-async def test_a_complete_crawl_that_would_retire_many_pages_read_tonight_retires_none() -> None:
-    """Pages answering tonight, read only because the memory knew them, are braked."""
-    unlisted = [_url(f"u{i}") for i in range(10)]
-    crawl = _fake_crawl(
-        [_result(_START), *[_result(u) for u in unlisted]],
-        [_outcome(_START, "success"), *[_outcome(u, "success") for u in unlisted]],
-        rows=[_row(_START), *[_row(u, known_only=True) for u in unlisted]],
-        known_only=set(unlisted),
-    )
-    stored = [_START, *unlisted, *[_url(f"kept{i}") for i in range(9)]]
+async def test_a_rotation_crawl_that_visits_everything_retires_nothing_and_says_why() -> None:
+    unlisted = _url("unlisted")
+    crawl = _fake_crawl([_result(_START)], [_outcome(_START, "success")], rows=[_row(_START)])
 
     with patch("knowledge_ingest.adapters.crawler.logger") as log:
-        run = await _run(crawl, stored=stored)
+        run = await _run(
+            crawl,
+            stored=[_START, unlisted],
+            remembered=[_remembered(_START), _remembered(unlisted, last=None)],
+        )
 
-    assert run["purged"] == [[]]
-    _rows, forget = run["memory"].recorded[0]
-    assert forget == []
-    warnings = [c for c in log.warning.call_args_list if c.kwargs.get("stale_count")]
-    assert warnings and warnings[0].kwargs["known_only_read_count"] == 10
+    assert run["purged"] == []
+    assert run["memory"].replaced is False
+    reasons = [c.kwargs.get("reason") for c in log.info.call_args_list]
+    assert "rotation_crawl" in reasons
+
+
+@pytest.mark.asyncio
+async def test_a_page_reached_tonight_only_through_a_new_page_is_not_retired(
+    monkeypatch,
+) -> None:
+    """Memory /a=1, /b=2, /p=3, /k=2; the site links S to A to B and S to N to P to K."""
+    from tests.test_crawl_frontier_rotation import _Site
+
+    a, b, n, p, k = (_url(name) for name in "abnpk")
+    links = {_START: [a, n], a: [b], n: [p], p: [k]}
+    _Site(live=[a, b, n, p, k], sitemap=[], links=links).install(monkeypatch)
+    remembered = [
+        _remembered(a, 1),
+        _remembered(b, 2),
+        _remembered(p, 3),
+        _remembered(k, 2, last=None),
+    ]
+
+    run = await _run(None, stored=[_START, a, b, n, p, k], remembered=remembered)
+
+    assert run["purged"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_whole_site_crawl_retires_an_unlinked_page_that_still_answers(
+    monkeypatch,
+) -> None:
+    """A site that fits: every remembered address was tried last night, purge as on main."""
+    from tests.test_crawl_frontier_rotation import _Site
+
+    unlinked = _url("unlinked")
+    _Site(live=[_url("listed"), unlinked], sitemap=[_url("listed")]).install(monkeypatch)
+    remembered = [_remembered(u, last=7.0) for u in (_START, _url("listed"), unlinked)]
+
+    run = await _run(None, stored=[_START, _url("listed"), unlinked], remembered=remembered)
+
+    assert run["purged"] == [[unlinked]]
+    assert run["memory"].replaced is True

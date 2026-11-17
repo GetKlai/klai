@@ -194,39 +194,47 @@ What the crawler does:
   does count toward a separate bound of twice `max_pages`
   (`_ATTEMPT_LIMIT_FACTOR` in `crawl4ai_client.py`); a crawl that reaches it
   first labels what is left `not_fetched_budget_exhausted` with
-  `"budget": "attempts"` and reports `crawl_addresses_mostly_gone`. A connector
-  crawl remembers per address when it last tried it, in
-  `knowledge.crawl_url_memory` (`crawl_memory.py`, migration 0016). `crawl_site`
-  only reads that memory; `run_crawl_job` records the run inside its guarded
-  completion, after the pages are written and only when they were accepted, so
-  a run judged "write nothing" or a superseded attempt leaves the rotation
-  where it was, and a failed record fails the job. Every address that was sent
-  counts as tried, whatever it answered. Only crawls fill the memory: every
-  in-scope address a crawl's frontier held is recorded with the depth it was
-  really found at, tried or not, and stored pages never join the frontier, so
-  discovery does not depend on what is stored. Remembered addresses join the
-  frontier at their remembered depth even when tonight's pages and sitemap do
-  not list them. After the start address, whoever has waited longest goes
-  first: an address waits since it was last tried or, never tried, since the
-  memory first saw it (`first_seen_at`); an address first found tonight goes
-  after everything remembered, and ties keep `(priority, depth, discovery
-  order)`. Every address known today is therefore tried within one round from
-  today, even on a site that mints new links every night. A resumed crawl
-  reads the same memory and keeps its order. An address is known-only when
-  neither the primary crawl nor the discovery-seed pass found it through the
-  sitemap or a link tonight; a page read as known-only does not count as
-  reaching the seed page, so the seed pass runs as before the memory. A
-  known-only address is forgotten when it answers 404/410, and every known-only address is forgotten after a fully
-  fetched crawl; it does not count toward "fully fetched" and a page fetched
-  that way is not current for the stale cleanup. When that cleanup would
-  retire pages that answered tonight as known-only, the bulk-retire limit
-  (`_GONE_RETIRE_MIN_PAGES`, `_GONE_RETIRE_MAX_FRACTION`) applies as it does
-  after 404s: above it nothing is retired or forgotten and
-  `crawl_connector_stale_reconcile_skipped` reports `known_only_read_count`.
-  Connector purge, knowledge-base delete and the org wipe delete the rows.
-  Previews and auth probes neither read nor write the memory. Ceiling: a site
-  that mints endless live addresses grows the memory by every address it
-  lists, without bound.
+  `"budget": "attempts"` and reports `crawl_addresses_mostly_gone`.
+- **Crawl memory and the two modes.** A connector crawl remembers per address
+  when it was first seen and last tried, in `knowledge.crawl_url_memory`
+  (`crawl_memory.py`, migration 0016). `crawl_site` only reads it;
+  `run_crawl_job` records the run inside its guarded completion, after the
+  pages are written and only when they were accepted, so a run judged "write
+  nothing" or a superseded attempt leaves the memory where it was, and a
+  failed record fails the job. Every address that was sent counts as tried,
+  whatever it answered. Before each crawl the memory alone decides the mode
+  (`CrawlMemoryState.whole_site`):
+  - *Whole-site mode*: the memory is empty, or the most recent recorded crawl
+    tried every remembered address (one recording is one transaction, so they
+    share one time). The crawl runs exactly as without memory: nothing
+    remembered joins the frontier, the order is `(priority, depth, discovery
+    order)`, and the fully-fetched test, the stale cleanup and the 404
+    bulk-retire guard are unchanged. At completion the memory is replaced by
+    tonight's frontier: every in-scope address with its real depth, tried
+    ones with tonight's time, never-sent ones without, and rows for addresses
+    the frontier no longer holds are deleted.
+  - *Rotation mode*: some remembered address was not tried by the most recent
+    recorded crawl. Remembered addresses join the frontier at their
+    remembered depth and whoever has waited longest goes first: since its
+    last try or, never tried, since it was first seen; an address first found
+    tonight goes after everything remembered, and ties keep `(priority, depth,
+    discovery order)`. Every address known today is therefore tried within
+    one round from today, even on a site that mints new links every night. A
+    rotation crawl never retires anything (`crawl_connector_stale_reconcile_skipped`
+    with reason `rotation_crawl`), even when it visited everything, because a
+    page read only through the memory says nothing about what the site still
+    lists. It adds to the memory, and an address only the memory knew that
+    answers 404/410 is forgotten (a later crawl rediscovers it if that was
+    wrong). A resumed crawl reads the same memory and keeps its order.
+
+  A site that fits in one crawl is in whole-site mode every night. A site
+  that does not leaves untried addresses after a stopped whole-site crawl, so
+  the next nights rotate; once a rotation crawl has tried everything it
+  knows, the following night is whole-site again and purges as before.
+  Connector purge, knowledge-base delete and the org wipe delete the rows;
+  previews, auth probes and the discovery-seed pass neither read nor write
+  the memory. Ceiling: in rotation mode a site that mints endless live
+  addresses grows the memory by every address it lists, without bound.
 - **Coverage.** Every finished connector crawl stores
   `coverage` (`pages_read`, `addresses_gone`, `addresses_waiting`,
   `addresses_known`, `max_pages`, `stopped_by`: `page_limit`, `attempt_limit`,

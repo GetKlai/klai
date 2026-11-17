@@ -628,9 +628,7 @@ def _is_http_login_wall(outcome: dict) -> bool:
     )
 
 
-def _crawl_fully_fetched(
-    fetch_outcomes: list[dict], known_only: frozenset[str] | set[str] = frozenset()
-) -> bool:
+def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
     """True only when every discovered candidate URL was actually fetched.
 
     2026-08-18 stop-the-bleeding fix: the stale-connector-artifact
@@ -655,15 +653,9 @@ def _crawl_fully_fetched(
     "gone" from "not reached this run" — the more precise three-way split
     (present / demonstrably gone / unknown) is a larger design left for a
     follow-up.
-
-    ``known_only`` addresses (in the frontier only because the crawl memory
-    remembered them) do not count: whether the site still lists everything
-    is judged on what it lists tonight, as before the memory existed.
     """
     for outcome in fetch_outcomes:
         if _outcome_is_deliberately_filtered(outcome):
-            continue
-        if _canonicalise_url(str(outcome.get("url") or "")) in known_only:
             continue
         reason = str(outcome.get("reason_code") or "")
         if reason in _FETCH_FAILURE_REASON_CODES:
@@ -1431,18 +1423,12 @@ async def run_crawl_job(
         # primary results kept, seed discoveries appended, dedup by canonical
         # URL, max_pages respected. The seed page itself is therefore
         # guaranteed to be ingested whenever it is fetchable.
-        #
-        # A page the primary crawl read only because the crawl memory knew it
-        # does not count as reached: whether the seed pass runs must not depend
-        # on the memory. ``known_only`` is decided over both passes: an address
-        # the seed pass found tonight is not known-only.
-        known_only = set(memory_state.known_only) if memory_state else set()
         seed_canon = _canonicalise_url(discovery_seed_url) if discovery_seed_url else None
         if (
             not job_cancelled
             and seed_canon is not None
             and seed_canon != _canonicalise_url(start_url)
-            and seed_canon not in {_canonicalise_url(r.url) for r in results} - known_only
+            and seed_canon not in {_canonicalise_url(r.url) for r in results}
         ):
             logger.info(
                 "crawl_retry_from_discovery_seed",
@@ -1478,7 +1464,6 @@ async def run_crawl_job(
                 < crawl_rate_limit_state.current_rate_limit
             ):
                 crawl_rate_limit_state.current_rate_limit = seed_rate_limit_state.current_rate_limit
-            known_only -= {_canonicalise_url(str(o.get("url") or "")) for o in seed_outcomes}
             seen = {_canonicalise_url(r.url) for r in results}
             for seed_result in seed_results:
                 canon = _canonicalise_url(seed_result.url)
@@ -1847,11 +1832,23 @@ async def run_crawl_job(
                 # Serialize all completion side effects with recovery. This keeps
                 # a superseded attempt from deleting connector artifacts or
                 # enqueueing follow-up work after a newer generation has started.
-                fully_fetched = _crawl_fully_fetched(fetch_outcomes, known_only)
+                # A rotation crawl reads remembered addresses the site may no
+                # longer list, so what it read cannot say what is stale: it
+                # never retires anything. A whole-site crawl runs and purges
+                # exactly as without memory.
+                rotating = memory_state is not None and not memory_state.whole_site
                 stale_paths: list[str] = []
-                reconcile = braked = False
+                reconcile = False
                 if connector_id and terminal_status == "completed" and pages_done > 0:
-                    if not fully_fetched:
+                    if rotating:
+                        logger.info(
+                            "crawl_connector_stale_reconcile_skipped",
+                            job_id=job_id,
+                            connector_id=connector_id,
+                            kb_slug=kb_slug,
+                            reason="rotation_crawl",
+                        )
+                    elif not _crawl_fully_fetched(fetch_outcomes):
                         skip_reason_counts = Counter(
                             reason
                             for outcome in fetch_outcomes
@@ -1869,13 +1866,7 @@ async def run_crawl_job(
                         )
                     else:
                         reconcile = True
-                        # A page fetched only because the memory knew it is
-                        # not listed by the site tonight, so it is not current.
-                        current_urls = [
-                            result.url
-                            for result in results
-                            if _canonicalise_url(result.url) not in known_only
-                        ]
+                        current_urls = [result.url for result in results]
                         stale_paths = await pg_store.list_stale_connector_artifact_paths(
                             conn,
                             org_id=org_id,
@@ -1888,15 +1879,7 @@ async def run_crawl_job(
                             for outcome in fetch_outcomes
                             if outcome.get("reason_code") == FetchReasonCode.GONE.value
                         )
-                        # Pages that answered tonight but count as stale only
-                        # because just the memory led the crawl to them. A
-                        # distorted discovery puts many pages here at once, so
-                        # they get the same bulk brake as a burst of 404s.
-                        read_known_only = {_canonicalise_url(r.url) for r in results} & known_only
-                        known_only_read_count = sum(
-                            1 for path in stale_paths if _canonicalise_url(path) in read_known_only
-                        )
-                        if (gone_count or known_only_read_count) and stale_paths:
+                        if gone_count and stale_paths:
                             stored_count = await pg_store.count_active_connector_artifact_paths(
                                 conn, org_id=org_id, kb_slug=kb_slug, connector_id=connector_id
                             )
@@ -1914,26 +1897,18 @@ async def run_crawl_job(
                                     stale_count=len(stale_paths),
                                     stored_count=stored_count,
                                     gone_count=gone_count,
-                                    known_only_read_count=known_only_read_count,
                                     retire_limit=retire_limit,
                                 )
                                 stale_paths = []
-                                braked = True
                 if memory is not None and memory_state is not None and not write_nothing:
                     # Recorded here, inside the fence, after the pages were
                     # written and before anything is retired, so a run judged
-                    # "write nothing" or superseded leaves the rotation where
-                    # it was, and a failed record fails the job before the
-                    # purge. A complete crawl forgets what only the memory
-                    # knew, unless the brake above held those pages back.
-                    seed_found = set(memory_state.known_only) - known_only
-                    forget = (set(memory_state.forget) - seed_found) | (
-                        known_only if fully_fetched and not braked else set()
-                    )
+                    # "write nothing" or superseded leaves the memory where it
+                    # was, and a failed record fails the job before the purge.
+                    # A whole-site crawl replaces the memory with tonight's
+                    # frontier; a rotation crawl adds to it.
                     await memory.record(
-                        conn,
-                        [r for r in memory_state.rows if r["canonical_url"] not in forget],
-                        sorted(forget),
+                        conn, memory_state.rows, memory_state.forget, replace=not rotating
                     )
                 retired_count = (
                     await _purge_stale_paths(conn, org_id, kb_slug, connector_id, stale_paths)

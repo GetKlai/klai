@@ -1374,8 +1374,11 @@ class CrawlLedger:
                 existing.discovered_from = discovered_from
             if depth < existing.depth:
                 existing.depth = depth
-                existing.discovered_from = discovered_from
-                existing.source_kind = source_kind
+                # A remembered depth lowers the depth but never turns an
+                # address tonight's crawl found back into a remembered one.
+                if source_kind != "known":
+                    existing.discovered_from = discovered_from
+                    existing.source_kind = source_kind
             existing.priority = min(existing.priority, priority)
             return False
         self._order += 1
@@ -1474,22 +1477,18 @@ class CrawlLedger:
         Every in-scope address is a row, so an address found tonight stays
         known even when no later crawl fetches the page that linked to it.
         An address counts as tried when it was sent, whatever it answered;
-        only addresses never sent keep their place. A known-only address
-        (no sitemap entry and no page read tonight refers to it) that answered
-        404/410 is forgotten, so the memory does not keep what the site no
-        longer has.
+        only addresses never sent keep their place. In a rotation crawl an
+        address only the memory knew (no sitemap entry and no page read
+        tonight refers to it) that answered 404/410 is forgotten; if that is
+        wrong, a later crawl rediscovers it as new.
         """
         memory.rows, memory.forget = [], sorted(self._stale_memory_keys)
-        memory.known_only = set()
         for item in self._by_canonical.values():
             if item.depth > self.max_depth:
                 continue
-            known_only = item.source_kind == "known"
-            if known_only:
-                memory.known_only.add(item.canonical_url)
-                if item.reason_code == FetchReasonCode.GONE.value:
-                    memory.forget.append(item.canonical_url)
-                    continue
+            if item.source_kind == "known" and item.reason_code == FetchReasonCode.GONE.value:
+                memory.forget.append(item.canonical_url)
+                continue
             memory.rows.append(
                 {
                     "canonical_url": item.canonical_url,
@@ -1497,7 +1496,6 @@ class CrawlLedger:
                     "depth": item.depth,
                     "visited": item.status == "fetched"
                     and not (item.reason_code or "").startswith("not_fetched_"),
-                    "known_only": known_only,
                 }
             )
 
@@ -1922,10 +1920,12 @@ async def _crawl_site_in_host_scope(
         outcomes = []
         fetched_count = 0
         attempted_count = 0
-    if memory is not None:
-        # Applied on a resume too: the checkpoint frontier does not store
-        # visit times, and the adapter records the memory only after this job
-        # completes, so a resumed crawl sees the same memory and keeps its order.
+    if memory is not None and not memory.whole_site:
+        # A rotation crawl: remembered addresses join the frontier. Applied on
+        # a resume too: the checkpoint frontier does not store visit times,
+        # and the adapter records the memory only after this job completes, so
+        # a resumed crawl sees the same memory and keeps its order. A
+        # whole-site crawl adds nothing and runs exactly as without memory.
         ledger.remember(memory.remembered)
     if restored is not None and restored.get("complete"):
         assert checkpoint is not None

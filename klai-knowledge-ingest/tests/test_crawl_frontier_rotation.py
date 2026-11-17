@@ -143,21 +143,35 @@ class _FakeMemory:
     async def load(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.rows.values()]
 
-    async def record(self, _conn: Any, rows: list[dict[str, Any]], forget: list[str]) -> None:
+    async def record(
+        self, _conn: Any, rows: list[dict[str, Any]], forget: list[str], *, replace: bool
+    ) -> None:
         self.clock += 1
+        previous = self.rows
+        if replace:
+            self.rows = {}
         for key in forget:
             self.rows.pop(key, None)
         for row in rows:
-            old = self.rows.get(row["canonical_url"])
+            old = previous.get(row["canonical_url"])
+            kept = None if replace or not old else old["last_visited_at"]
             self.rows[row["canonical_url"]] = {
                 "canonical_url": row["canonical_url"],
                 "url": row["url"],
-                "depth": min(row["depth"], old["depth"]) if old else row["depth"],
+                "depth": row["depth"] if replace or not old else min(row["depth"], old["depth"]),
                 "first_seen_at": old["first_seen_at"] if old else self.clock,
-                "last_visited_at": self.clock
-                if row["visited"]
-                else (old["last_visited_at"] if old else None),
+                "last_visited_at": self.clock if row["visited"] else kept,
             }
+
+
+def _remembered(url: str, depth: int = 1, last: float | None = 0.0) -> dict[str, Any]:
+    return {
+        "canonical_url": url,
+        "url": url,
+        "depth": depth,
+        "first_seen_at": 0.0,
+        "last_visited_at": last,
+    }
 
 
 class _FrontierTableCheckpoint:
@@ -217,7 +231,7 @@ async def _night(
     results, outcomes = await crawl4ai_client.crawl_site(
         start_url=_START, max_pages=max_pages, max_depth=max_depth, memory=state
     )
-    await memory.record(None, state.rows, state.forget)
+    await memory.record(None, state.rows, state.forget, replace=state.whole_site)
     return results, outcomes, state
 
 
@@ -367,8 +381,8 @@ async def test_endless_new_links_do_not_stop_the_refresh(monkeypatch) -> None:
     """A site minting 500 new addresses a night: what is known today is tried within a round.
 
     New addresses queue behind everything that waited longer. With 100 pages
-    a night, the 100 stored pages known after the first night are all tried
-    the next night, and the 600 known after that within the six nights after.
+    a night, the 600 addresses known after the second night (the first
+    stopped crawl) are all tried within the six nights after.
     """
     stored = [_address(f"s{i}") for i in range(100)]
     site = _Site(live=stored)
@@ -382,8 +396,7 @@ async def test_endless_new_links_do_not_stop_the_refresh(monkeypatch) -> None:
         site.sitemap = [*minted, *site.sitemap]
 
     mint(2)
-    _results, outcomes, _state = await _night(site, memory, max_pages=101)
-    assert _read(outcomes) - {_START} == set(stored)
+    await _night(site, memory, max_pages=101)
 
     known_today = set(memory.rows) - {_START}
     assert len(known_today) == 600
@@ -411,9 +424,8 @@ async def test_a_stored_chain_is_discovered_through_its_links(monkeypatch) -> No
     memory = _FakeMemory()
 
     for _ in range(2):
-        results, _outcomes, state = await _night(site, memory, max_depth=3)
+        results, _outcomes, _state = await _night(site, memory, max_depth=3)
         assert {r.url for r in results} == {_START, _DOCS, _GUIDE, _ARTICLE}
-        assert state.known_only == set()
 
     assert {url: row["depth"] for url, row in memory.rows.items()} == {
         _START: 0,
@@ -428,37 +440,27 @@ async def test_a_remembered_address_at_depth_two_has_its_links_followed(monkeypa
     site = _Site(live=[_GUIDE, _ARTICLE], sitemap=[], links={_GUIDE: [_ARTICLE]})
     site.install(monkeypatch)
     memory = _FakeMemory()
-    memory.rows[_GUIDE] = {
-        "canonical_url": _GUIDE,
-        "url": _GUIDE,
-        "depth": 2,
-        "first_seen_at": 0.0,
-        "last_visited_at": 0.0,
-    }
+    # An address still waiting makes this a rotation crawl.
+    memory.rows[_GUIDE] = _remembered(_GUIDE, depth=2)
+    memory.rows[_DOCS] = _remembered(_DOCS, last=None)
 
-    results, _outcomes, state = await _night(site, memory, max_depth=3)
+    results, _outcomes, _state = await _night(site, memory, max_depth=3)
 
     assert _ARTICLE in {r.url for r in results}
-    assert _ARTICLE not in state.known_only
 
 
 @pytest.mark.asyncio
 async def test_an_unlisted_remembered_address_that_answers_404_is_forgotten(
     monkeypatch,
 ) -> None:
-    """(F1) A known-only 404 leaves the memory; a listed 404 stays known."""
+    """(F1) In a rotation crawl a known-only 404 leaves the memory; a listed 404 stays."""
     unlisted = _address("unlisted")
     listed = _address("listed")
     site = _Site(live=[], dead=[unlisted, listed], sitemap=[listed])
     site.install(monkeypatch)
     memory = _FakeMemory()
-    memory.rows[unlisted] = {
-        "canonical_url": unlisted,
-        "url": unlisted,
-        "depth": 1,
-        "first_seen_at": 0.0,
-        "last_visited_at": 0.0,
-    }
+    memory.rows[unlisted] = _remembered(unlisted)
+    memory.rows[listed] = _remembered(listed, last=None)
 
     _results, _outcomes, state = await _night(site, memory)
 
@@ -476,18 +478,13 @@ async def test_a_remembered_address_on_the_old_host_is_moved_to_the_crawl_host(
     site.install(monkeypatch)
     memory = _FakeMemory()
     old_key = "https://www.example.com/p/1"
-    memory.rows[old_key] = {
-        "canonical_url": old_key,
-        "url": old_key,
-        "depth": 1,
-        "first_seen_at": 0.0,
-        "last_visited_at": 0.0,
-    }
+    memory.rows[old_key] = _remembered(old_key)
+    memory.rows[_address(2)] = _remembered(_address(2), last=None)
 
     _results, _outcomes, state = await _night(site, memory)
 
     assert old_key in state.forget
-    assert set(memory.rows) == {_START, _address(1)}
+    assert set(memory.rows) == {_START, _address(1), _address(2)}
 
 
 @pytest.mark.asyncio
@@ -633,3 +630,82 @@ def test_a_page_the_seed_pass_read_counts_as_read() -> None:
 
     assert coverage["pages_read"] == 2
     assert coverage["addresses_waiting"] == 0
+
+
+def test_a_remembered_depth_never_turns_a_found_address_into_a_remembered_one() -> None:
+    """On a resume the memory is applied after tonight's frontier is restored."""
+    ledger = crawl4ai_client.CrawlLedger(
+        start_url=_START,
+        base_domain="example.com",
+        include_patterns=None,
+        exclude_patterns=None,
+        max_depth=3,
+    )
+    ledger.add(_GUIDE, depth=3, discovered_from=_DOCS, source_kind="page_link", priority=50)
+    ledger.remember([_remembered(_GUIDE, depth=1)])
+
+    (item,) = [row for row in ledger.snapshot() if row["url"] == _GUIDE]
+    assert (item["depth"], item["source_kind"]) == (1, "page_link")
+
+
+@pytest.mark.asyncio
+async def test_a_whole_site_crawl_with_memory_runs_exactly_as_without(monkeypatch) -> None:
+    live = [_address(i) for i in range(30)]
+    links = {_START: [_DOCS], _DOCS: [_GUIDE]}
+    site = _Site(live=[*live, _DOCS, _GUIDE], sitemap=live, links=links)
+    site.install(monkeypatch)
+
+    site.new_night()
+    await crawl4ai_client.crawl_site(start_url=_START, max_pages=12, max_depth=3)
+    without = list(site.bulk_calls)
+
+    memory = _FakeMemory()
+    for index, url in enumerate(reversed([*live, _DOCS, _GUIDE])):
+        memory.rows[url] = _remembered(url, depth=1 + index % 3, last=5.0)
+    _results, _outcomes, state = await _night(site, memory, max_pages=12, max_depth=3)
+
+    assert state.whole_site
+    assert site.bulk_calls == without
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_crawl_makes_the_next_night_rotate(monkeypatch) -> None:
+    site = _Site(live=[_address(i) for i in range(10)])
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+
+    await _night(site, memory, max_pages=5)
+
+    assert not CrawlMemoryState(remembered=await memory.load()).whole_site
+
+
+@pytest.mark.asyncio
+async def test_a_rotation_crawl_that_tries_everything_makes_the_next_night_whole_site(
+    monkeypatch,
+) -> None:
+    site = _Site(live=[_address(i) for i in range(4)])
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    memory.rows[_address(0)] = _remembered(_address(0))
+    memory.rows[_address(9)] = _remembered(_address(9), last=None)
+
+    _results, _outcomes, state = await _night(site, memory)
+
+    assert not state.whole_site
+    assert CrawlMemoryState(remembered=await memory.load()).whole_site
+
+
+@pytest.mark.asyncio
+async def test_a_whole_site_crawl_replaces_the_memory(monkeypatch) -> None:
+    """An address the site no longer lists has no row afterwards."""
+    dropped = _address("dropped")
+    site = _Site(live=[_address(0), dropped], sitemap=[_address(0)])
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    memory.rows[_address(0)] = _remembered(_address(0))
+    memory.rows[dropped] = _remembered(dropped)
+
+    _results, _outcomes, state = await _night(site, memory)
+
+    assert state.whole_site
+    assert set(memory.rows) == {_START, _address(0)}

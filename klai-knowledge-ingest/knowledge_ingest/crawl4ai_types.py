@@ -32,17 +32,27 @@ class CrawlMemoryState:
     writes the memory itself, so the adapter can record a run only once its
     pages were accepted.
 
-    ``rows`` is every in-scope address with ``visited`` (actually sent this
-    crawl) and ``known_only``; ``forget`` holds stored keys to drop (a
-    known-only address that answered 404/410, an out-of-scope or re-keyed
-    row); ``known_only`` is the canonical URLs that tonight were in the
-    frontier only because the memory remembered them.
+    ``rows`` is every in-scope address the crawl's frontier held, with
+    ``visited`` (actually sent this crawl); ``forget`` holds memory keys to
+    drop in a rotation crawl (an address only the memory knew that answered
+    404/410, an out-of-scope or re-keyed row).
     """
 
     remembered: list[dict[str, Any]]
     rows: list[dict[str, Any]] = field(default_factory=list)
     forget: list[str] = field(default_factory=list)
-    known_only: set[str] = field(default_factory=set)
+
+    @property
+    def whole_site(self) -> bool:
+        """True when this crawl runs as a whole-site crawl, exactly as without memory.
+
+        That is the case when the memory is empty or the most recent recorded
+        crawl tried every remembered address (one recording is one
+        transaction, so they all carry the same time). Otherwise some address
+        still waits from an earlier crawl and this crawl rotates.
+        """
+        tried = {row["last_visited_at"] for row in self.remembered}
+        return not self.remembered or (len(tried) == 1 and None not in tried)
 
 
 @dataclass
