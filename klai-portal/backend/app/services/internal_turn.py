@@ -142,15 +142,11 @@ async def _run_turn(inputs: InternalInputs, wish: asyncio.Task[ActionOutcome] | 
     # rl:{org}:{user}, so the log is written before any route returns, or a
     # thumbs-down on a question would bind to the previous turn's passages.
     log_retrieval(auth.org_id, profile.user_id or f"partner:{auth.key_id}", found.chunks)
-    # The action turn is decided before the route in code: an employee who asks
-    # the chat to save something is not refused for lack of knowledge-base
-    # passages, the writer gets the tools instead.
-    action_turn = await _action_turn(inputs, wish)
     # 4. Route in code.
-    if routed := _route(inputs, turn, found, case, action_turn=action_turn):
+    if routed := _route(inputs, turn, found, case):
         return routed
     timing = {"started_at": inputs.turn_started, "retrieval_ms": retrieval_ms, "case_ms": case_ms}
-    return await _write(inputs, turn, found, timing, action_turn=action_turn)
+    return await _write(inputs, turn, found, timing, wish)
 
 
 def _read_case(inputs: InternalInputs) -> Awaitable[case_file.Case | None]:
@@ -234,14 +230,8 @@ async def _search(inputs: InternalInputs, turn: KnowledgeTurn, follow_up_variant
     return Found(chunks, system_prompt, trusted_sources, broad, None)
 
 
-def _route(
-    inputs: InternalInputs, turn: KnowledgeTurn, found: Found, case: case_file.Case | None, *, action_turn: bool
-) -> Reply | None:
+def _route(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, case: case_file.Case | None) -> Reply | None:
     language = fixed_language(inputs.request.messages, case, pasted_correspondence=inputs.pasted_correspondence)
-    if action_turn:
-        # Both Strict refusals below are about missing passages; an action turn
-        # does not need any.
-        return None
     if turn.refusal is not None:
         # Strict with nothing to search, no evidence, or the knowledge base
         # unreachable (retrieve_context): the fixed text, no model call. Logged,
@@ -287,8 +277,7 @@ async def _write(
     turn: KnowledgeTurn,
     found: Found,
     timing: dict[str, float],
-    *,
-    action_turn: bool,
+    wish: asyncio.Task[ActionOutcome] | None,
 ) -> Reply:
     """5. Write. Strict is held until the reply is composed and judged, as on the widget.
 
@@ -322,7 +311,7 @@ async def _write(
         profile=profile,
         tools=request.tools,
         tool_choice=request.tool_choice,
-        action_turn=action_turn,
+        action_turn=await _action_turn(inputs, wish),
         web_chunks=web_chunks,
         web_query=web_query,
         include_sources=knowledge is None or knowledge.include_sources,

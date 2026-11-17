@@ -1717,57 +1717,6 @@ async def test_a_request_without_tools_makes_no_action_call(monkeypatch):
     assert record["writer"]["action_turn"] is False
 
 
-NO_EVIDENCE = {"evidence_pack": {"items": [], "sources": []}, "confidence_band": "unknown"}
-
-
-@pytest.mark.parametrize(
-    ("action", "refused"), [(SAVE_WISH, False), (None, True)], ids=["action-wish", "no-action-wish"]
-)
-@pytest.mark.asyncio
-async def test_a_strict_turn_that_asks_to_save_something_reaches_the_tools_without_any_passage(
-    monkeypatch, action, refused
-):
-    llm = _LiteLLM(action=action)
-
-    turn = await _turn(
-        monkeypatch,
-        llm,
-        profile=_internal(),
-        retrieval=NO_EVIDENCE,
-        question=SAVE_ASK,
-        request_body=_with_tools(),
-    )
-
-    answers = llm.of("answer")
-    if refused:
-        assert turn.text == STRICT_REFUSAL
-        assert answers == []
-    else:
-        (answer,) = answers
-        assert [tool["function"]["name"] for tool in answer["tools"]] == ["kennis_opslaan"]
-
-
-@pytest.mark.asyncio
-async def test_a_strict_turn_that_answers_a_tool_result_is_not_refused_for_a_missing_passage(monkeypatch):
-    llm = _LiteLLM()
-    call = {"id": "call_1", "type": "function", "function": {"name": "kennis_opslaan", "arguments": "{}"}}
-
-    await _turn(
-        monkeypatch,
-        llm,
-        profile=_internal(),
-        retrieval=NO_EVIDENCE,
-        question=SAVE_ASK,
-        request_body=_with_tools(
-            {"role": "assistant", "content": None, "tool_calls": [call]},
-            {"role": "tool", "tool_call_id": "call_1", "content": "Opgeslagen."},
-        ),
-    )
-
-    (answer,) = llm.of("answer")
-    assert [tool["function"]["name"] for tool in answer["tools"]] == ["kennis_opslaan"]
-
-
 @pytest.mark.asyncio
 async def test_the_action_call_is_cancelled_when_a_later_step_of_the_turn_raises(monkeypatch):
     from app.services import internal_turn
@@ -1790,7 +1739,7 @@ async def test_the_action_call_is_cancelled_when_a_later_step_of_the_turn_raises
             monkeypatch,
             _LiteLLM(),
             profile=_internal(),
-            retrieval=NO_EVIDENCE,
+            retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
             question=SAVE_ASK,
             request_body=_with_tools(),
         )
