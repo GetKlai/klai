@@ -25,6 +25,10 @@ from app.services.widget_write import write_reply
 STEP = "Open het HR-portaal en kies in het menu de tegel Verlof aanvragen."
 OTHER = "Vul de begindatum en de einddatum in en sla de aanvraag op."
 RUNAWAY = f"- {STEP} {OTHER} {STEP} {OTHER} {STEP} {OTHER} {STEP}"
+COUNT = "Je hebt per jaar recht op vakantiedagen, in totaal 25."
+NUMBERED = f"1. {STEP}\n2. {COUNT} {OTHER}\n3. Vraag je leidinggevende om akkoord, dat duurt hooguit 2."
+SOURCE = {"label": "1", "title": "Verlof aanvragen", "url": "https://kb.example.com/verlof"}
+CHUNK = {"title": "Verlof aanvragen", "source_url": "https://kb.example.com/verlof", "text": STEP}
 VARIANTS = f"**Op kantoor**\n1. {STEP}\n2. {OTHER}\n\n**Thuis**\n1. {STEP}\n2. {OTHER}\nKlaar."
 
 
@@ -85,8 +89,12 @@ def _contents(frames: list[bytes]) -> str:
     return "".join(out)
 
 
-async def _write(settings, profile: ChatProfile, *, stream: bool = False, signals: dict | None = None):
+async def _write(
+    settings, profile: ChatProfile, *, stream: bool = False, signals: dict | None = None, sources: bool = False
+):
     return await write_reply(
+        citation_chunks=[CHUNK] if sources else None,
+        trusted_sources=[SOURCE] if sources else None,
         messages=[{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
         model="klai-primary",
         temperature=0.2,
@@ -173,3 +181,61 @@ async def test_a_reply_the_model_ended_at_its_token_limit_is_recorded_as_cut_by_
     await _write(_settings(), WIDGET, signals=signals)
 
     assert signals["writer"] == {"tools_offered": False, "action_turn": False, "cut": "length"}
+
+
+@pytest.mark.asyncio
+async def test_a_sentence_ending_in_a_number_that_comes_a_third_time_on_one_line_is_cut_before_it(monkeypatch):
+    _patch(monkeypatch, _Model(f"- {COUNT} {COUNT} {COUNT} {OTHER}"))
+    signals: dict = {}
+
+    reply = await _write(_settings(), ChatProfile(surface="internal", kb_mode="general"), signals=signals)
+
+    assert reply.text == f"- {COUNT} {COUNT}"
+    assert signals["writer"]["cut"] == "repeat"
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["held", "streamed"])
+@pytest.mark.asyncio
+async def test_a_numbered_list_of_different_steps_is_delivered_whole(monkeypatch, stream):
+    _patch(monkeypatch, _Model(NUMBERED))
+    signals: dict = {}
+
+    reply = await _write(
+        _settings(), ChatProfile(surface="internal", kb_mode="general"), stream=stream, signals=signals
+    )
+    text = _contents([frame async for frame in streamed_frames(reply)]) if stream else reply.text
+
+    assert text.startswith(NUMBERED)
+    assert signals["writer"]["cut"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_reply_ended_at_the_token_limit_is_delivered_and_recorded_as_cut_by_length(monkeypatch):
+    reply_text = "Je vraagt verlof aan in het HR-portaal onder"
+    _patch(monkeypatch, _Model(reply_text, finish_reason="length"))
+    signals: dict = {}
+
+    reply = await _write(_settings(), INTERNAL_OPEN, stream=True, signals=signals)
+    frames = [frame async for frame in streamed_frames(reply)]
+
+    assert _contents(frames).startswith(reply_text)
+    assert _payloads(frames)[-1] == "[DONE]"
+    assert signals["writer"]["cut"] == "length"
+
+
+@pytest.mark.asyncio
+async def test_after_a_streamed_cut_by_repetition_the_sources_and_the_footer_still_precede_done(monkeypatch):
+    _patch(monkeypatch, _Model(RUNAWAY))
+    signals: dict = {}
+
+    reply = await _write(_settings(), INTERNAL_OPEN, stream=True, signals=signals, sources=True)
+    frames = [frame async for frame in streamed_frames(reply)]
+
+    payloads = _payloads(frames)
+    assert payloads[-1] == "[DONE]"
+    sources_at = next(i for i, p in enumerate(payloads[:-1]) if "sources" in json.loads(p)["choices"][0]["delta"])
+    footer = _contents(frames)
+    assert "**Bronnen**\n- [Verlof aanvragen](https://kb.example.com/verlof)" in footer
+    assert footer.count(STEP) == 2
+    assert sources_at < len(payloads) - 1
+    assert signals["writer"]["cut"] == "repeat"
