@@ -37,6 +37,7 @@ from app.services.access import (
 from app.services.audit import log_event
 from app.services.connector_credentials import credential_store
 from app.services.kb_quota import assert_can_create_org_kb, assert_can_create_personal_kb
+from app.services.klai_connector_client import klai_connector_client
 from app.services.knowledge_gap_report import article_gap_group_count, knowledge_gap_clusters
 from app.services.zitadel import zitadel
 
@@ -1055,6 +1056,7 @@ class SourceOut(BaseModel):
     created_at: datetime | None = None  # for uploads — sort key
     index_status: str | None = None  # "synced", "pending", or "not_synced" for uploads; None for connectors
     can_replace: bool = False  # upload came from a file and can be overwritten by a newer file
+    sync_coverage: dict | None = None  # website sources: what the last crawl read and left for later
 
 
 class SourcesResponse(BaseModel):
@@ -1452,7 +1454,33 @@ async def list_kb_sources(
             )
         )
 
+    crawlers = [s for s in sources if s.connector_type == "web_crawler" and s.status == "completed"]
+    coverages = await asyncio.gather(*(_last_crawl_coverage(s.id, org.zitadel_org_id) for s in crawlers))
+    for source, coverage in zip(crawlers, coverages, strict=True):
+        source.sync_coverage = coverage
+
     return SourcesResponse(sources=sources)
+
+
+# Short on purpose: the sentence is optional and every website source asks on each page load.
+_COVERAGE_TIMEOUT_S = 2.0
+
+
+async def _last_crawl_coverage(connector_id: str, zitadel_org_id: str) -> dict | None:
+    """Coverage of a website source's last sync run, None when unknown.
+
+    It only adds a sentence to a row, so an unreachable connector service must
+    not take the whole sources list down with it.
+    """
+    try:
+        runs = await klai_connector_client.get_sync_runs(
+            connector_id, org_id=zitadel_org_id, limit=1, timeout=_COVERAGE_TIMEOUT_S
+        )
+    # ValueError covers a non-JSON body and a pydantic ValidationError; TypeError a body of the wrong shape.
+    except (httpx.HTTPError, ValueError, TypeError):
+        logger.warning("crawl_coverage_unavailable", connector_id=connector_id, exc_info=True)
+        return None
+    return runs[0].coverage if runs else None
 
 
 @router.get(

@@ -23,6 +23,12 @@ def is_failed_remote_crawl_status(status: str) -> bool:
     return status in FAILED_REMOTE_CRAWL_STATUSES
 
 
+def remote_crawl_coverage(live: dict[str, Any]) -> dict[str, Any] | None:
+    """The coverage object of a finished crawl, None for jobs from before it existed."""
+    coverage = live.get("coverage")
+    return coverage if isinstance(coverage, dict) else None
+
+
 def remote_crawl_documents_changed(live: dict[str, Any]) -> int | None:
     """Pages whose knowledge changed during the crawl, from the status payload.
 

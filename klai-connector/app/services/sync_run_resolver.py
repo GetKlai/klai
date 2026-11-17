@@ -38,6 +38,7 @@ from app.models.sync_run import SyncRun
 from app.services.crawl_sync_status import (
     is_completed_remote_crawl_status,
     is_terminal_remote_crawl_status,
+    remote_crawl_coverage,
     remote_crawl_documents_changed,
     remote_crawl_failure_error,
     remote_crawl_failure_status,
@@ -87,6 +88,7 @@ class ResolvedSyncRun:
     pages_done: int | None
     pages_total: int | None
     live_resolution_failed: bool
+    coverage: dict[str, Any] | None
 
 
 class SyncRunResolver:
@@ -227,6 +229,7 @@ class SyncRunResolver:
             ]
             quality_status = None
 
+        coverage = remote_crawl_coverage(live)
         completed_at = datetime.now(UTC)
         # Use tenant_scoped_session so the UPDATE passes the WITH CHECK
         # constraint (org_id = _rls_current_org_id()). SPEC-TI-002.
@@ -261,6 +264,7 @@ class SyncRunResolver:
             row.cursor_state = {
                 **existing_cursor,
                 "remote_status": live_status,
+                **({"coverage": coverage} if coverage else {}),
             }
             await session.commit()
             # No session.refresh after commit — expire_on_commit=False
@@ -319,4 +323,5 @@ class SyncRunResolver:
             pages_done=pages_done,
             pages_total=pages_total,
             live_resolution_failed=live_resolution_failed,
+            coverage=sync_run.cursor_state.get("coverage") if isinstance(sync_run.cursor_state, dict) else None,
         )

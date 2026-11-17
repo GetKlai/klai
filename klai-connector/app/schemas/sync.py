@@ -33,5 +33,8 @@ class SyncRunResponse(BaseModel):
     pages_done: int | None = None
     pages_total: int | None = None
     live_resolution_failed: bool = False
+    # What a finished website crawl read and left for the next nights, as
+    # knowledge-ingest reported it. None for other types and older crawls.
+    coverage: dict[str, Any] | None = None
 
     model_config = ConfigDict(from_attributes=True)

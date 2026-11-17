@@ -37,7 +37,7 @@ import {
 } from '@/lib/upload-error-messages'
 import { SourceContent } from './-sources-content'
 import { SourceRowActions } from './-sources-row-actions'
-import { FailedItemsWarning, SourceIcon, StatusBadge } from './-sources-helpers'
+import { CrawlCoverageNote, FailedItemsWarning, SourceIcon, StatusBadge } from './-sources-helpers'
 import { useSourceRename, useSourceReplace } from './-sources-hooks'
 import type { Source } from './-sources-types'
 
@@ -120,6 +120,7 @@ export function SourceRow({ source, expanded, onToggle, kbSlug, editablePageId }
               <ListRowTitle className="block min-w-0">{source.name}</ListRowTitle>
               <ListRowDescription>{meta}</ListRowDescription>
               <FailedItemsWarning source={source} />
+              <CrawlCoverageNote source={source} />
             </button>
           </InlineEdit>
         </ListRowContent>
