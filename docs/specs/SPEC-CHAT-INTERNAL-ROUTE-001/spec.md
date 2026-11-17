@@ -1,7 +1,7 @@
 ---
 id: SPEC-CHAT-INTERNAL-ROUTE-001
 version: "0.1.0"
-status: design, stap 1 gebouwd en nog niet gemeten; nog niets uitgerold
+status: design, stap 1 gebouwd en op het productiemodel bewezen (0 van 8 ontspoord), meetlatrondes lopen; nog niets uitgerold
 created: 2026-11-17
 updated: 2026-11-17
 priority: high
@@ -71,7 +71,7 @@ De interne meetlat stuurt mee wat de voorkant in productie meestuurt, zodat een 
 
 Contract:
 
-1. De schrijfaanroep draagt alleen gereedschappen op een handelingsbeurt. Een beurt is een handelingsbeurt als het verzoek gereedschappen meebrengt en ofwel het laatste bericht van het gesprek een gereedschapsresultaat is, ofwel een kleine losse aanroep een handelingswens meldt met een citaat dat letterlijk in het laatste bericht van de medewerker staat; code trekt dat citaat na, zoals bij de contactwens op de widget. Die aanroep loopt alleen als het verzoek gereedschappen meebrengt, naast het zoeken en de zaak. Bij twijfel is het geen handelingsbeurt. Als extra veld in de lezing van de zaak is dit gemeten en afgewezen: het veranderde de andere uitkomsten van de zaak en las geplakt materiaal in 16 van 19 gevallen als een gewone vraag [gemeten, 76 echte berichten].
+1. De schrijfaanroep draagt alleen gereedschappen op een handelingsbeurt. Een beurt is een handelingsbeurt als het verzoek gereedschappen meebrengt en ofwel het laatste bericht van het gesprek een gereedschapsresultaat is, ofwel een kleine losse aanroep een handelingswens meldt met een citaat dat letterlijk in het laatste bericht van de medewerker staat; code trekt dat citaat na, zoals bij de contactwens op de widget. Die aanroep loopt alleen als het verzoek gereedschappen meebrengt, naast het zoeken en de zaak. Een handeling is: iets opslaan in de kennisbank, een pagina maken, wijzigen of opvragen, of op internet zoeken. Van een lang bericht leest de aanroep het begin en het einde, omdat het verzoek voor of na het geplakte materiaal staat. Bij twijfel is het geen handelingsbeurt. Als extra veld in de lezing van de zaak is dit gemeten en afgewezen: het veranderde de andere uitkomsten van de zaak en las geplakt materiaal in 16 van 19 gevallen als een gewone vraag [gemeten, 76 echte berichten].
 2. Op een handelingsbeurt draagt de schrijfaanroep geen vast antwoordformaat. Op elke andere beurt draagt ze geen gereedschappen en geen gereedschapskeuze.
 3. Elke schrijfaanroep stuurt een grens op de lengte mee, instelbaar, standaard 2.000 tokens. Van 1.725 schrijfaanroepen in veertien dagen onder de 1.500 tokens was de 99e percentiel 618 tokens [gemeten]; een geldig antwoord wordt dus niet afgekapt.
 4. Komt in een antwoord een zin van meer dan veertig tekens voor de derde keer voor, dan eindigt het antwoord vóór die derde keer, ook als het gestreamd wordt. Een antwoord met twee varianten die dezelfde stappen hebben, wordt niet afgekapt.

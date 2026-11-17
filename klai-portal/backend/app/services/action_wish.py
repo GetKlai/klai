@@ -25,14 +25,15 @@ from app.services.turn_judge import every_field_required, structured_judge_call
 _PROMPT = (
     "You read the last message an employee sent to an assistant that can use tools. "
     "quote: the employee's own words, copied verbatim from that message, that ask the assistant to perform an "
-    "action with a tool: save something to the knowledge base, or create, change or list a page. Empty when the "
-    "message asks a question, asks for a text, or only pastes material.\n"
+    "action with a tool: save something to the knowledge base, create, change or list a page, or search the web. "
+    "Empty when the message asks a question, asks for a text, or only pastes material.\n"
     "action: true only when quote is not empty."
 )
 # The quote is one phrase; the measured call took 0.54 s median (17 November 2026).
 _MAX_TOKENS = 100
-# A pasted report can run to thousands of words; the wish is said in a sentence.
-_MAX_MESSAGE_CHARS = 4000
+# A pasted report can run to thousands of words; the wish is said in a sentence
+# before or after it, so the call reads this much of the start and of the end.
+_MAX_EDGE_CHARS = 2000
 
 ActionOutcome = Literal["action", "none", "quote_not_found", "failed"]
 
@@ -50,7 +51,7 @@ async def read_action_wish(messages: list[dict], settings: Settings, *, delegate
     wish = await structured_judge_call(
         name="action_wish",
         system_prompt=_PROMPT,
-        user_content=latest[:_MAX_MESSAGE_CHARS],
+        user_content=_edges(latest),
         schema=_ActionWish,
         timeout_seconds=CASE_TIMEOUT_SECONDS,
         settings=settings,
@@ -62,6 +63,13 @@ async def read_action_wish(messages: list[dict], settings: Settings, *, delegate
     if not wish.action or not wish.quote.strip():
         return "none"
     return "action" if _literal(wish.quote) in _literal(latest) else "quote_not_found"
+
+
+def _edges(message: str) -> str:
+    """The message, or its start and its end when it is longer than both together."""
+    if len(message) <= 2 * _MAX_EDGE_CHARS:
+        return message
+    return f"{message[:_MAX_EDGE_CHARS]}\n[...]\n{message[-_MAX_EDGE_CHARS:]}"
 
 
 def _literal(text: str) -> str:

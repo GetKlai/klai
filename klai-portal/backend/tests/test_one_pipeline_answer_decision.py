@@ -1681,6 +1681,25 @@ async def test_an_action_wish_makes_an_action_turn_only_when_its_quote_stands_in
 
 
 @pytest.mark.asyncio
+async def test_the_action_call_reads_a_wish_that_follows_long_pasted_material(monkeypatch):
+    """An employee pastes material and asks to save it at the end; the call must get to see that sentence."""
+    llm = _LiteLLM(action=SAVE_WISH)
+    pasted = "Notulen van het overleg van de voorbeeldafdeling. " * 120  # about 6,000 characters
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=pasted + SAVE_ASK,
+        request_body=_with_tools(),
+    )
+
+    (call,) = llm.of("action_wish")
+    assert SAVE_ASK in call["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_a_request_without_tools_makes_no_action_call(monkeypatch):
     llm = _LiteLLM(action=SAVE_WISH)
 
