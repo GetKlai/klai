@@ -28,6 +28,7 @@ from knowledge_ingest.chunker import noise_counts
 from knowledge_ingest.config import settings
 from knowledge_ingest.content_retention import retention
 from knowledge_ingest.crawl4ai_client import (
+    _UNVISITED_ANSWER_REASON_CODES,
     CrawlRateLimitState,
     CrawlResult,
     _canonicalise_url,
@@ -49,6 +50,7 @@ from knowledge_ingest.crawl_checkpoint import (
     finish_crawl_execution,
     guard_crawl_execution,
 )
+from knowledge_ingest.crawl_memory import PostgresCrawlMemory
 from knowledge_ingest.crawl_result_processing import html_has_element, parse_login_indicator
 from knowledge_ingest.domain_rate_limit_control import (
     DomainRateLimitState,
@@ -93,6 +95,9 @@ _VALID_LOGIN_WALL_MODES = ("reject", "degrade", "audit_only")
 # UI badge query, so it MUST stay stable.
 DIRTY_CONTENT_REASON = "boilerplate_or_authwall_dominant"
 CRAWL_BUDGET_EXHAUSTED_REASON = "crawl_budget_exhausted"
+# The crawl stopped at its attempt bound because most addresses it tried
+# answered 404/410; see crawl4ai_client._ATTEMPT_LIMIT_FACTOR.
+CRAWL_ADDRESSES_MOSTLY_GONE_REASON = "crawl_addresses_mostly_gone"
 CRAWL_FRONTIER_INCOMPLETE_REASON = "crawl_frontier_incomplete"
 CRAWL_FETCH_FAILED_REASON = "crawl_fetch_failed"
 AUTH_WALL_DETECTED_REASON = "auth_wall_detected"
@@ -503,11 +508,12 @@ def _build_crawl_outcome_warning(
         return None
 
     counts = Counter(str(outcome.get("reason_code") or "") for outcome in omitted)
-    reason = (
-        CRAWL_BUDGET_EXHAUSTED_REASON
-        if counts.get("not_fetched_budget_exhausted", 0) > 0
-        else CRAWL_FRONTIER_INCOMPLETE_REASON
-    )
+    if any(_stopped_at_attempt_limit(outcome) for outcome in omitted):
+        reason = CRAWL_ADDRESSES_MOSTLY_GONE_REASON
+    elif counts.get(FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value, 0) > 0:
+        reason = CRAWL_BUDGET_EXHAUSTED_REASON
+    else:
+        reason = CRAWL_FRONTIER_INCOMPLETE_REASON
     return {
         "reason": reason,
         "max_pages": max_pages,
@@ -517,6 +523,85 @@ def _build_crawl_outcome_warning(
             str(outcome.get("url") or "") for outcome in omitted[:10] if outcome.get("url")
         ],
     }
+
+
+# Which stop left addresses waiting, most specific first: a cancel or a block
+# explains a stop better than the limit the crawl was still under.
+_STOPPED_BY_PRECEDENCE = ("cancelled", "blocked", "site_rate_limit", "attempt_limit", "page_limit")
+_OUT_OF_SCOPE_REASON_CODES = frozenset(
+    {
+        FetchReasonCode.NOT_FETCHED_DEPTH_LIMIT.value,
+        FetchReasonCode.NOT_FETCHED_EXCLUDED.value,
+        FetchReasonCode.NOT_FETCHED_DUPLICATE.value,
+    }
+)
+
+
+def _crawl_coverage(fetch_outcomes: list[dict], *, max_pages: int) -> dict:
+    """How far one crawl got through the addresses its source knows.
+
+    An address counts once even when the discovery-seed pass reported it too;
+    a visit outranks a not-visited record of the same address. A 429, block
+    or refusal is not a visit (the address is still waiting), the same rule
+    the crawl memory uses; other failures were visited but read nothing.
+    """
+    by_url: dict[str, dict] = {}
+    for outcome in fetch_outcomes:
+        reason = str(outcome.get("reason_code") or "")
+        if reason in _OUT_OF_SCOPE_REASON_CODES or _outcome_is_deliberately_filtered(outcome):
+            continue
+        canonical = _canonicalise_url(str(outcome.get("url") or ""))
+        earlier = by_url.get(canonical)
+        if earlier is None or _reason_waits(str(earlier.get("reason_code") or "")):
+            by_url[canonical] = outcome
+    reasons = [str(o.get("reason_code") or "") for o in by_url.values()]
+    waiting = [r for r in reasons if _reason_waits(r)]
+    stops: set[str] = set()
+    if any(_stopped_at_attempt_limit(o) for o in by_url.values()):
+        stops.add("attempt_limit")
+    for reason in waiting:
+        if reason == FetchReasonCode.NOT_FETCHED_CANCELLED.value:
+            stops.add("cancelled")
+        elif reason in {
+            FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value,
+            FetchReasonCode.BLOCKED_ANTI_BOT.value,
+            FetchReasonCode.REFUSED.value,
+        }:
+            stops.add("blocked")
+        elif reason in {
+            FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
+            FetchReasonCode.RATE_LIMITED.value,
+        }:
+            stops.add("site_rate_limit")
+        elif reason == FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value:
+            stops.add("page_limit")
+    # A block stop leaves the unsent addresses labelled as a rate-limit stop;
+    # the blocked answers among the visits tell the two apart.
+    if "site_rate_limit" in stops and FetchReasonCode.BLOCKED_ANTI_BOT.value in reasons:
+        stops.add("blocked")
+    gone = reasons.count(FetchReasonCode.GONE.value)
+    return {
+        "pages_read": sum(
+            1
+            for r in reasons
+            if r != FetchReasonCode.GONE.value
+            and r not in _FETCH_FAILURE_REASON_CODES
+            and not _reason_waits(r)
+        ),
+        "addresses_gone": gone,
+        "addresses_waiting": len(waiting),
+        "addresses_known": len(reasons),
+        "max_pages": max_pages,
+        "stopped_by": next((s for s in _STOPPED_BY_PRECEDENCE if s in stops), None),
+    }
+
+
+def _stopped_at_attempt_limit(outcome: dict) -> bool:
+    return outcome.get("budget") == "attempts"
+
+
+def _reason_waits(reason: str) -> bool:
+    return reason.startswith(_NOT_FETCHED_REASON_PREFIX) or reason in _UNVISITED_ANSWER_REASON_CODES
 
 
 def _outcome_is_deliberately_filtered(outcome: dict) -> bool:
@@ -583,6 +668,7 @@ def _crawl_warning_terminal_status(crawl_warning: dict | None) -> str:
         return ""
     if crawl_warning.get("reason") in {
         CRAWL_BUDGET_EXHAUSTED_REASON,
+        CRAWL_ADDRESSES_MOSTLY_GONE_REASON,
         CRAWL_FRONTIER_INCOMPLETE_REASON,
         CRAWL_FETCH_FAILED_REASON,
     }:
@@ -1279,6 +1365,14 @@ async def run_crawl_job(
             cancel_check=cancel_check,
             checkpoint=primary_checkpoint,
             rate_limit_state=crawl_rate_limit_state,
+            # Only a connector's own crawl remembers and rotates; the
+            # discovery-seed pass below does not, since its pages are merged
+            # into this crawl and trimmed to max_pages.
+            memory=PostgresCrawlMemory(
+                connection_factory, org_id=org_id, kb_slug=kb_slug, connector_id=connector_id
+            )
+            if connector_id
+            else None,
         )
 
         # 2026-08-19 (crawl-cancel): detected purely from the reason code
@@ -1704,6 +1798,10 @@ async def run_crawl_job(
             summary_json = json.dumps(crawl_outcome_warning)
         else:
             terminal_status = "completed"
+        if connector_id:
+            summary_payload = json.loads(summary_json) if summary_json else {}
+            summary_payload["coverage"] = _crawl_coverage(fetch_outcomes, max_pages=max_pages)
+            summary_json = json.dumps(summary_payload)
 
         async with connection_factory() as conn:
             async with guard_crawl_execution(conn, job_id, execution_generation):

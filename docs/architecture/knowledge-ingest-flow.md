@@ -188,6 +188,30 @@ What the crawler does:
   `config.py:144-176`). A host circuit breaker stops fetching a failing host
   (`host_circuit_breaker.py`). `host_pacing.py:27-60` refuses to start with more
   than one uvicorn worker, because the pacing registry is in memory.
+- **Page limit and frontier order.** `max_pages` counts addresses that answered
+  with a page; an address answering 404/410 does not count toward it, so a
+  sitemap full of dead addresses no longer uses up the crawl. Every attempt
+  does count toward a separate bound of twice `max_pages`
+  (`_ATTEMPT_LIMIT_FACTOR` in `crawl4ai_client.py`); a crawl that reaches it
+  first labels what is left `not_fetched_budget_exhausted` with
+  `"budget": "attempts"` and reports `crawl_addresses_mostly_gone`. A connector
+  crawl remembers per address when it was last visited and what it answered,
+  in `knowledge.crawl_url_memory` (`crawl_memory.py`, migration 0016), written
+  once at the end of each crawl. Remembered addresses and the connector's
+  stored pages join the frontier even when tonight's pages and sitemap do not
+  list them. The order is: the start address, then addresses never visited and
+  those visited longest ago, then addresses that were 404/410 at their last
+  visit; ties keep the old `(priority, depth, discovery order)`. A 429, block or
+  refusal is not a visit, so a crawl the site slowed down or blocked continues
+  with those addresses next time. A resumed crawl reads the same memory, so it
+  keeps its order. The discovery-seed pass, previews and auth probes neither
+  read nor write the memory.
+- **Coverage.** Every finished connector crawl stores
+  `coverage` (`pages_read`, `addresses_gone`, `addresses_waiting`,
+  `addresses_known`, `max_pages`, `stopped_by`: `page_limit`, `attempt_limit`,
+  `site_rate_limit`, `blocked`, `cancelled` or null) in
+  `crawl_jobs.error_summary`, and the status route returns it to the connector
+  (`routes/crawl_sync.py`).
 - **Extraction.** The crawl configuration carries no page JavaScript:
   crawl4ai 0.9.5 answers HTTP 400 to `wait_for` and `js_code`
   (`crawl4ai_config.py:10-16`; the contract is tested by
@@ -813,7 +837,7 @@ list of what ingest writes, and by which step.
 | Postgres `knowledge.artifacts` | one row per document version: ids, organisation, KB, path, provenance, assertion mode, `synthesis_depth`, `belief_time_start` / `belief_time_end` (end `253402300800` while active), `superseded_by`, `content_hash`, `index_status` (`pending`, `synced`, `failed`, `deleting`), `extra` JSONB with `document_text`, title, connector provenance, graph episode ids and the per-product state (2.6) | phases 6, 11, 12, 13; workers |
 | `knowledge.parent_chunks` | parent text per artifact (cascade on delete) | phase 8; rewritten by whole-document enrichment |
 | `knowledge.artifact_images`, object storage | image references and bytes | phase 8, `klai-libs/image-storage` |
-| `knowledge.crawl_jobs`, `fetch_outcomes`, checkpoints, `crawl_job_frontier`, `crawled_pages`, `page_links`, `crawl_domains` | crawl state, link graph, selectors, pacing | crawler (1.4) |
+| `knowledge.crawl_jobs`, `fetch_outcomes`, checkpoints, `crawl_job_frontier`, `crawl_url_memory`, `crawled_pages`, `page_links`, `crawl_domains` | crawl state, visit memory, link graph, selectors, pacing | crawler (1.4) |
 | `knowledge.kb_config`, `org_config` | visibility, enrichment switch (LISTEN/NOTIFY, `app.py:42-45`) | portal and ingest |
 | `knowledge.connector_resource_fences`, `graph_refresh_budget`, `rag_eval_results` | generation fences, refresh budget, evaluation rows | phase 0, 2.5, 7.1 |
 | Qdrant `klai_knowledge` | one shared collection; dense `vector_chunk` and `vector_questions` (1024, cosine), sparse `vector_sparse`; keyword payload indexes include `org_id` (created as the partition key for new collections, `qdrant_store.py:94-125`) and `source_label` (`:145`); payload as in phases 9, 10 and 2.3 | phases 10 and 2.3 |
@@ -868,7 +892,7 @@ after its artifact was deleted removes what it wrote.
 | Reindex | `POST /knowledge/v1/artifacts/{id}/reindex` sets `pending` and defers `enrich_document_interactive` (`queueing_lock reindex:{org_id}:{id}`); it may reopen a closed head without successor and never a replaced version or a `deleting` row (`routes/kb_sources.py:243-325`, `pg_store.py:2204-2263`) | none |
 | Connector deleted | `connector_purge_task` to `purge_connector` (`connector_cleanup.py:150-360`): artifact ids captured, resource fences marked deleting, crawl jobs cancelled by resource key and the documents' enrichment and graph jobs by artifact id, Postgres artifacts and crawl rows deleted, graph episodes deleted, Qdrant points deleted by `source_connector_id`, orphaned image keys deleted from object storage, then a janitor pass; finally a callback to the portal (`portal_client.py:203-230`). It does not use `purge_documents` | Postgres, Qdrant, FalkorDB, object storage |
 | KB deleted | `DELETE /ingest/v1/kb` (`routes/ingest.py:1351-1376`): graph episodes of the KB, `qdrant_store.delete_kb`, the KB's images in object storage when an image store is configured (`ImageStore.delete_images(org_id, kb_slug)`, `klai-libs/image-storage/klai_image_storage/storage.py:176-205`), and last `pg_store.delete_kb` (artifacts and their aux tables including `embedding_queue`, `kb_config`, `crawl_jobs`, `crawled_pages`, `page_links` and the KB's `connector_resource_fences`; `pg_store.py:862-934`; `knowledge.entities` are organisation-wide and stay). The rows go last, so when an earlier store raises the portal keeps its KB and retries | Postgres, Qdrant, FalkorDB, object storage |
-| Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:285-468`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:72-182`; one transaction that deletes the org's `embedding_queue` rows (found through its artifacts), `page_links`, `crawled_pages`, `crawl_jobs`, `crawl_domains`, `kb_config`, `org_config`, `connector_resource_fences`, `graph_refresh_budget`, `entities` and `artifacts` rows, the last with the rows that cascade from it), then the step `_delete_kb_images`, which deletes everything under the organisation's `{org_id}/images/` prefix in object storage (`deprovisioning_steps.py:449-468`) | Postgres, Qdrant, FalkorDB, object storage |
+| Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:285-468`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:72-182`; one transaction that deletes the org's `embedding_queue` rows (found through its artifacts), `page_links`, `crawled_pages`, `crawl_jobs`, `crawl_domains`, `crawl_url_memory`, `kb_config`, `org_config`, `connector_resource_fences`, `graph_refresh_budget`, `entities` and `artifacts` rows, the last with the rows that cascade from it), then the step `_delete_kb_images`, which deletes everything under the organisation's `{org_id}/images/` prefix in object storage (`deprovisioning_steps.py:449-468`) | Postgres, Qdrant, FalkorDB, object storage |
 
 Scripts for documents deleted before `purge_documents` existed:
 `klai-knowledge-ingest/scripts/purge_deleted_documents.py` (reports closed-but-never-purged

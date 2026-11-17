@@ -33,6 +33,7 @@ from knowledge_ingest.crawl4ai_config import (
 from knowledge_ingest.crawl4ai_types import (
     ChunkedFetchResult,
     CrawlCheckpoint,
+    CrawlMemory,
     CrawlRateLimitState,
     CrawlResult,
     DiscoveredUrl,
@@ -103,6 +104,24 @@ _PRIORITY_LISTING_CHILD = 25
 _PRIORITY_PAGE_LINK = 50
 _LISTING_LINK_THRESHOLD = 50
 _CHECKPOINT_BATCH_SIZE = 8
+# Addresses answering 404/410 do not count toward max_pages, so one crawl may
+# try more addresses than it reads pages; this bounds how many more. Measured
+# 2026-11-17 on a handbook site: its sitemap lists 737 addresses of which about
+# 620 answer 404, and a crawl with max_pages 500 must get through all of them
+# in one night. Twice the page limit (1,000 attempts) covers that with room
+# for the list to grow by a third, and still ends a site whose list is endless
+# dead addresses after twice the work of a normal crawl.
+_ATTEMPT_LIMIT_FACTOR = 2
+# Answers that say something about the site, not the address (it slowed us
+# down, blocked or refused us). They are no visit: the address keeps its place
+# in the rotation and the next crawl tries it first again.
+_UNVISITED_ANSWER_REASON_CODES = frozenset(
+    {
+        FetchReasonCode.RATE_LIMITED.value,
+        FetchReasonCode.BLOCKED_ANTI_BOT.value,
+        FetchReasonCode.REFUSED.value,
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1267,6 +1286,27 @@ class CrawlLedger:
                 priority=_PRIORITY_SITEMAP,
             )
 
+    def remember(self, rows: list[dict[str, Any]]) -> None:
+        """Add the source's known addresses and when each was last visited.
+
+        Known addresses join the frontier whether or not tonight's pages link
+        to them, so what a crawl can reach does not depend on which pages the
+        previous crawl happened to fetch. Out-of-scope rows are dropped by
+        ``add`` like any discovered link.
+        """
+        for row in rows:
+            self.add(
+                row["url"],
+                depth=int(row["depth"]),
+                discovered_from=None,
+                source_kind="known",
+                priority=_priority_for_discovered_url(row["url"]),
+            )
+            item = self._by_canonical.get(row["canonical_url"])
+            if item is not None:
+                item.last_visited_at = row["last_visited_at"]
+                item.last_reason_code = row["last_reason_code"]
+
     def add_links_from_result(self, result: CrawlResult, *, source_depth: int) -> None:
         internal = (result.links or {}).get("internal") or []
         source_listing = _is_listing_source(result)
@@ -1350,7 +1390,7 @@ class CrawlLedger:
             for item in self._by_canonical.values()
             if item.status == "queued" and item.depth <= self.max_depth
         ]
-        queued.sort(key=lambda i: (i.priority, i.depth, i.order))
+        queued.sort(key=_rotation_key)
         return [item.url for item in queued[:remaining_budget]]
 
     def mark_outcome(self, outcome: FetchOutcome) -> None:
@@ -1364,9 +1404,7 @@ class CrawlLedger:
         item = self._by_canonical.get(_canonicalise_url(url))
         return item.depth if item else None
 
-    def mark_unfetched(
-        self, *, fetched_count: int, max_pages: int, stop_reason_code: str | None
-    ) -> None:
+    def mark_unfetched(self, *, budget_exhausted: bool, stop_reason_code: str | None) -> None:
         """Label every URL still queued with why it was never fetched.
 
         ``stop_reason_code`` is the not-fetched reason of the stop that ended
@@ -1375,7 +1413,6 @@ class CrawlLedger:
         queued within budget through such a stop, so labelling those
         ``not_fetched_discovery_limit`` blamed a limit that does not exist.
         """
-        budget_exhausted = fetched_count >= max_pages
         for item in self._by_canonical.values():
             if item.status != "queued":
                 continue
@@ -1411,6 +1448,47 @@ class CrawlLedger:
             )
             for item in omitted
         ]
+
+    def memory_rows(self) -> list[dict[str, Any]]:
+        """Rows for ``CrawlMemory.save``: every in-scope address, visited or not.
+
+        Unvisited addresses are saved too, so an address found tonight stays
+        known even when no later crawl fetches the page that linked to it.
+        """
+        return [
+            {
+                "canonical_url": item.canonical_url,
+                "url": item.url,
+                "depth": item.depth,
+                "visited": item.status == "fetched" and _is_visit(item.reason_code),
+                "reason_code": item.reason_code,
+            }
+            for item in self._by_canonical.values()
+            if item.depth <= self.max_depth
+        ]
+
+
+def _is_visit(reason_code: str | None) -> bool:
+    reason = reason_code or ""
+    return not reason.startswith("not_fetched_") and reason not in _UNVISITED_ANSWER_REASON_CODES
+
+
+def _rotation_key(item: DiscoveredUrl) -> tuple[bool, bool, float, int, int, int]:
+    """Visit what was visited longest ago first.
+
+    Never-visited addresses come first, then the oldest visits; an address
+    that answered 404/410 at its last visit goes after all others, so it is
+    still tried when the crawl has room and a page that came back is noticed.
+    Ties keep the discovery order of a crawl without memory.
+    """
+    return (
+        item.last_reason_code == FetchReasonCode.GONE.value,
+        item.last_visited_at is not None,
+        item.last_visited_at or 0.0,
+        item.priority,
+        item.depth,
+        item.order,
+    )
 
 
 def _priority_for_discovered_url(url: str) -> int:
@@ -1692,6 +1770,7 @@ async def crawl_site(
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
     checkpoint: CrawlCheckpoint | None = None,
     rate_limit_state: CrawlRateLimitState | None = None,
+    memory: CrawlMemory | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
     """Crawl one site through a host schedule shared by overlapping jobs.
 
@@ -1731,6 +1810,7 @@ async def crawl_site(
             cancel_check=cancel_check,
             checkpoint=checkpoint,
             rate_limit_state=rate_limit_state,
+            memory=memory,
         )
 
 
@@ -1746,6 +1826,7 @@ async def _crawl_site_in_host_scope(
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
     checkpoint: CrawlCheckpoint | None = None,
     rate_limit_state: CrawlRateLimitState | None = None,
+    memory: CrawlMemory | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
     """Crawl a site with a Klai-owned deterministic frontier.
 
@@ -1804,6 +1885,7 @@ async def _crawl_site_in_host_scope(
         crawl_results = [CrawlResult(**row) for row in restored.get("results") or []]
         outcomes = list(restored.get("outcomes") or [])
         fetched_count = int(restored.get("fetched_count") or 0)
+        attempted_count = int(restored.get("attempted_count", fetched_count))
         if restored.get("complete"):
             await checkpoint.ensure_active()
             return crawl_results, outcomes
@@ -1819,6 +1901,12 @@ async def _crawl_site_in_host_scope(
         crawl_results = []
         outcomes = []
         fetched_count = 0
+        attempted_count = 0
+    if memory is not None:
+        # Read on a resume too: the checkpoint frontier does not store visit
+        # times, and the memory is only written when this crawl completes, so
+        # a resumed crawl sees the same memory and keeps the same order.
+        ledger.remember(await memory.load())
     # Crawl-job-wide budgets for the bulk-5xx sequential-recovery fallback
     # (see _recover_bulk_5xx_batch / _MAX_SEQUENTIAL_RECOVERY). BOTH are
     # shared across every batch iteration below, not reset per batch — a
@@ -1889,6 +1977,7 @@ async def _crawl_site_in_host_scope(
                 ],
                 "outcomes_delta": outcomes[checkpointed_outcomes:],
                 "fetched_count": fetched_count,
+                "attempted_count": attempted_count,
                 "sequential_recovery_budget": sequential_recovery_budget,
                 "sequential_recovery_time_remaining": sequential_recovery_time_remaining,
                 "current_rate_limit": current_rate_limit,
@@ -1930,7 +2019,9 @@ async def _crawl_site_in_host_scope(
         start_outcome = _build_outcome_from_result(start_url, start_result)
         ledger.mark_outcome(start_outcome)
         outcomes.append(start_outcome)
-        fetched_count += 1
+        attempted_count += 1
+        if start_outcome["reason_code"] != FetchReasonCode.GONE.value:
+            fetched_count += 1
         if _result_is_ingestable(
             start_result, base_domain=base_domain
         ) and not _is_non_content_listing_page(start_result):
@@ -1939,8 +2030,12 @@ async def _crawl_site_in_host_scope(
             ledger.add_links_from_result(start_result, source_depth=0)
         await save_checkpoint()
 
-    while fetched_count < max_pages:
-        remaining_budget = max_pages - fetched_count
+    # ``fetched_count`` counts pages toward max_pages: every attempt except an
+    # address that answered 404/410. ``attempted_count`` counts every attempt
+    # and is what ends a crawl whose address list is mostly dead.
+    attempt_limit = max_pages * _ATTEMPT_LIMIT_FACTOR
+    while fetched_count < max_pages and attempted_count < attempt_limit:
+        remaining_budget = min(max_pages - fetched_count, attempt_limit - attempted_count)
         if checkpoint is not None:
             remaining_budget = min(remaining_budget, _CHECKPOINT_BATCH_SIZE)
         batch = ledger.next_batch(remaining_budget=remaining_budget)
@@ -1959,6 +2054,7 @@ async def _crawl_site_in_host_scope(
             cancel_check=cancel_check,
         )
         fetched_count += len(batch)
+        attempted_count += len(batch)
 
         # A1: URLs whose chunk was never even sent because an earlier chunk
         # in THIS attempt already saw a RATE_LIMITED/BLOCKED_ANTI_BOT
@@ -2082,6 +2178,7 @@ async def _crawl_site_in_host_scope(
                 carried_over_urls = not_attempted_urls
                 not_attempted_urls = []
                 fetched_count -= len(carried_over_urls)
+                attempted_count -= len(carried_over_urls)
                 # One slow-down per batch: the stealth retry already ran at
                 # the rate the plain 429 earned, so its own 429 does not
                 # halve again or spend another step of the ladder.
@@ -2234,6 +2331,8 @@ async def _crawl_site_in_host_scope(
             )
         for outcome in batch_outcomes:
             ledger.mark_outcome(outcome)
+            if outcome["reason_code"] == FetchReasonCode.GONE.value:
+                fetched_count -= 1
         outcomes.extend(batch_outcomes)
         crawl_results.extend(batch_results)
 
@@ -2258,10 +2357,20 @@ async def _crawl_site_in_host_scope(
             break
 
     ledger.mark_unfetched(
-        fetched_count=fetched_count, max_pages=max_pages, stop_reason_code=stop_reason_code
+        budget_exhausted=fetched_count >= max_pages or attempted_count >= attempt_limit,
+        stop_reason_code=stop_reason_code,
     )
     omitted_outcomes = ledger.omitted_outcomes()
+    if attempted_count >= attempt_limit and fetched_count < max_pages:
+        # The attempt bound is a budget too. Its outcomes say so through a
+        # ``budget`` field, like ``filter_reason`` on a filtered seed, instead
+        # of a new FetchReasonCode that klai-connector would have to mirror.
+        for outcome in omitted_outcomes:
+            if outcome["reason_code"] == FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value:
+                outcome["budget"] = "attempts"
     outcomes.extend(omitted_outcomes)
+    if memory is not None:
+        await memory.save(ledger.memory_rows())
     await save_checkpoint(complete=True)
 
     success_count = sum(1 for o in outcomes if o["reason_code"] == FetchReasonCode.SUCCESS.value)
@@ -2275,6 +2384,7 @@ async def _crawl_site_in_host_scope(
         discovered_urls=ledger.discovered_count,
         omitted_urls=len(omitted_outcomes),
         max_pages=max_pages,
+        attempted_urls=attempted_count,
     )
 
     return crawl_results, outcomes

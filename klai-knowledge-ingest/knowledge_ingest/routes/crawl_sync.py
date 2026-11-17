@@ -27,7 +27,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from html import unescape
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
 import structlog
@@ -99,6 +99,19 @@ class CrawlSyncResponse(BaseModel):
     status: str
 
 
+class CrawlCoverage(BaseModel):
+    """How far one finished crawl got through the addresses its source knows."""
+
+    pages_read: int
+    addresses_gone: int
+    addresses_waiting: int
+    addresses_known: int
+    max_pages: int
+    stopped_by: (
+        Literal["page_limit", "attempt_limit", "site_rate_limit", "blocked", "cancelled"] | None
+    )
+
+
 class CrawlSyncStatusResponse(BaseModel):
     job_id: str
     status: str
@@ -109,6 +122,9 @@ class CrawlSyncStatusResponse(BaseModel):
     # created before the column existed.
     pages_changed: int | None
     error: str | None
+    # Set once a connector crawl has finished; None while it runs and for a
+    # job that finished before coverage was recorded.
+    coverage: CrawlCoverage | None = None
 
 
 _FAILED_PARTIAL_STATUS = "failed_partial"
@@ -323,6 +339,14 @@ def _crawl_sync_error(row: Mapping[str, Any]) -> str | None:
     return str(row["status"])
 
 
+def _crawl_sync_coverage(row: Mapping[str, Any]) -> Any:
+    """Return the coverage object the crawl stored in its summary, if any."""
+    summary = row.get("error_summary")
+    if isinstance(summary, str):
+        summary = json.loads(summary)
+    return summary.get("coverage") if isinstance(summary, Mapping) else None
+
+
 @router.get(
     "/ingest/v1/crawl/sync/{job_id}/status",
     response_model=CrawlSyncStatusResponse,
@@ -347,6 +371,7 @@ async def crawl_sync_status(job_id: str) -> CrawlSyncStatusResponse:
         pages_done=row["pages_done"],
         pages_changed=row["pages_changed"],
         error=_crawl_sync_error(row),
+        coverage=_crawl_sync_coverage(row),
     )
 
 

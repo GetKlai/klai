@@ -20,6 +20,21 @@ class CrawlCheckpoint(Protocol):
     async def ensure_active(self) -> None: ...
 
 
+class CrawlMemory(Protocol):
+    """Per-source memory of when each address was last visited and what it answered.
+
+    ``load`` returns rows with ``canonical_url``, ``url``, ``depth``,
+    ``last_visited_at`` (epoch seconds or ``None``) and ``last_reason_code``.
+    ``save`` takes rows with ``canonical_url``, ``url``, ``depth``, ``visited``
+    and ``reason_code``; a row with ``visited`` false only makes the address
+    known and keeps its earlier visit.
+    """
+
+    async def load(self) -> list[dict[str, Any]]: ...
+
+    async def save(self, rows: list[dict[str, Any]]) -> None: ...
+
+
 @dataclass
 class CrawlResult:
     """Normalised result from a single-page crawl."""
@@ -53,7 +68,7 @@ class CrawlRateLimitState:
     current_rate_limit: float | None
 
 
-DiscoverySourceKind = Literal["start", "sitemap", "page_link"]
+DiscoverySourceKind = Literal["start", "sitemap", "page_link", "known"]
 DiscoveryStatus = Literal["queued", "fetched", "omitted"]
 
 
@@ -70,6 +85,10 @@ class DiscoveredUrl:
     order: int
     status: DiscoveryStatus = "queued"
     reason_code: str | None = None
+    # From the source's CrawlMemory; not stored in the checkpoint frontier,
+    # a resumed crawl reads them from the memory again.
+    last_visited_at: float | None = None
+    last_reason_code: str | None = None
 
 
 @dataclass

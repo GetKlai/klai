@@ -7,6 +7,7 @@ removed in SPEC-CRAWLER-005 REQ-05.1. See test_crawler_link_fields_complete.py
 for the two-phase pipeline tests.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -416,7 +417,7 @@ async def test_run_crawl_job_does_not_fail_when_stale_purge_fails():
     mock_purge.assert_awaited_once_with(mock_conn, "org-1", ["artifact-old"])
     mock_finish_execution.assert_awaited_once()
     assert mock_finish_execution.await_args.args[:2] == (mock_conn, "job-1")
-    assert mock_finish_execution.await_args.kwargs == {
-        "status": "completed",
-        "error_summary": None,
-    }
+    kwargs = mock_finish_execution.await_args.kwargs
+    assert kwargs["status"] == "completed"
+    # A connector crawl always stores its coverage; nothing else to report here.
+    assert set(json.loads(kwargs["error_summary"])) == {"coverage"}
