@@ -88,11 +88,22 @@ class InternalInputs:
 
 
 async def internal_turn(inputs: InternalInputs) -> Reply:
+    wish = _action_wish(inputs)
+    try:
+        return await _run_turn(inputs, wish)
+    finally:
+        # Every exit of the turn ends the action call: a reply decided in code
+        # offers no tools, and a step that raised leaves nobody to await it.
+        # Cancelling a finished task does nothing.
+        if wish is not None:
+            wish.cancel()
+
+
+async def _run_turn(inputs: InternalInputs, wish: asyncio.Task[ActionOutcome] | None) -> Reply:
     turn = KnowledgeTurn()
     messages = inputs.request.messages
     case: case_file.Case | None = None
     case_ms = 0
-    wish = _action_wish(inputs)
     with retrieval_upstream_errors(inputs.auth.org_id):
         if inputs.profile.kb_mode == "general":
             # General mode searches nothing, so no step would read the case;
@@ -133,9 +144,6 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
     log_retrieval(auth.org_id, profile.user_id or f"partner:{auth.key_id}", found.chunks)
     # 4. Route in code.
     if routed := _route(inputs, turn, found, case):
-        if wish is not None:
-            # A reply decided in code offers no tools.
-            wish.cancel()
         return routed
     timing = {"started_at": inputs.turn_started, "retrieval_ms": retrieval_ms, "case_ms": case_ms}
     return await _write(inputs, turn, found, timing, wish)

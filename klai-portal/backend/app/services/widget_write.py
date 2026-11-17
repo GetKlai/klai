@@ -99,9 +99,13 @@ _STREAM_GUARD_TAIL_CHARS = 32
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 # The end of a sentence: a line break, or a full stop, question or exclamation
-# mark (with any closing markup or quote) before whitespace. Not after a digit,
-# so a numbered step "1. Ga naar" stays one sentence.
-_SENTENCE_END = re.compile(r"\n|(?<![\d\s])[.!?][*_)\"'\u201d\u2019]*(?=\s)")
+# mark (with any closing markup or quote) before whitespace.
+_SENTENCE_END = re.compile(r"\n|(?<!\s)[.!?][*_)\"'\u201d\u2019]*(?=\s)")
+# A numbered list marker ("1." or "- 2.") and nothing else since the sentence
+# began: that full stop starts an item and does not end a sentence, so a numbered
+# step "1. Ga naar" stays one sentence. A full stop after a digit elsewhere
+# ("... tot 30 dagen.") does end one.
+_MARKER_ONLY = re.compile(r"\s*(?:[-*+•]\s+)?\d+\s*$")
 # Also a marker still being written ("1" before its "."), so a streamed third
 # occurrence is held back from its first character.
 _LIST_MARKER = re.compile(r"^(?:[-*+•]|\d+[.)]?)(?:\s+|$)")
@@ -824,7 +828,10 @@ class _RepeatStop:
         one reaches a streamed reader.
         """
         for match in _SENTENCE_END.finditer(text, self.scanned):
-            start, self.scanned = self.scanned, match.end()
+            start = self.scanned
+            if _MARKER_ONLY.fullmatch(text[start : match.start()]):
+                continue
+            self.scanned = match.end()
             key = _sentence_key(text[start : self.scanned])
             if len(key) <= _REPEAT_MIN_CHARS:
                 continue

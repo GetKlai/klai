@@ -1715,3 +1715,36 @@ async def test_a_request_without_tools_makes_no_action_call(monkeypatch):
     (record,) = turn.records
     assert "action_call" not in record
     assert record["writer"]["action_turn"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_action_call_is_cancelled_when_a_later_step_of_the_turn_raises(monkeypatch):
+    from app.services import internal_turn
+
+    started: list[asyncio.Task] = []
+
+    async def never_answers(*_: object, **__: object) -> str:
+        started.append(asyncio.current_task())
+        await asyncio.sleep(3600)
+        return "none"
+
+    async def search_fails(*_: object, **__: object) -> None:
+        raise RuntimeError("retrieval exploded")
+
+    monkeypatch.setattr(internal_turn, "read_action_wish", never_answers)
+    monkeypatch.setattr(internal_turn, "_search", search_fails)
+
+    with pytest.raises(RuntimeError, match="retrieval exploded"):
+        await _turn(
+            monkeypatch,
+            _LiteLLM(),
+            profile=_internal(),
+            retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+            question=SAVE_ASK,
+            request_body=_with_tools(),
+        )
+
+    (task,) = started
+    await asyncio.wait({task}, timeout=1)
+    assert task.cancelled()
+    task.cancel()
