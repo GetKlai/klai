@@ -204,37 +204,38 @@ What the crawler does:
   failed record fails the job. Every address that was sent counts as tried,
   whatever it answered. Before each crawl the memory alone decides the mode
   (`CrawlMemoryState.whole_site`):
-  - *Whole-site mode*: the memory is empty, or the most recent recorded crawl
-    tried every remembered address (one recording is one transaction, so they
-    share one time). The crawl runs exactly as without memory: nothing
-    remembered joins the frontier, the order is `(priority, depth, discovery
-    order)`, and the fully-fetched test, the stale cleanup and the 404
-    bulk-retire guard are unchanged. At completion the memory is replaced by
-    tonight's frontier: every in-scope address with its real depth, tried
-    ones with tonight's time, never-sent ones without, and rows for addresses
-    the frontier no longer holds are deleted.
-  - *Rotation mode*: some remembered address was not tried by the most recent
-    recorded crawl. Remembered addresses join the frontier at their
-    remembered depth and whoever has waited longest goes first: since its
-    last try or, never tried, since it was first seen; an address first found
-    tonight goes after everything remembered, and ties keep `(priority, depth,
-    discovery order)`. Every address known today is therefore tried within
-    one round from today, even on a site that mints new links every night. A
-    rotation crawl never retires anything (`crawl_connector_stale_reconcile_skipped`
-    with reason `rotation_crawl`), even when it visited everything, because a
-    page read only through the memory says nothing about what the site still
-    lists. It adds to the memory, and an address only the memory knew that
-    answers 404/410 is forgotten (a later crawl rediscovers it if that was
-    wrong). A resumed crawl reads the same memory and keeps its order.
+  - *Whole-site mode*: no remembered address is untried (an empty memory
+    included). The crawl runs exactly as without memory: nothing remembered
+    joins the frontier, the order is `(priority, depth, discovery order)`, and
+    the fully-fetched test, the stale cleanup and the 404 bulk-retire guard
+    are unchanged. At completion the memory is replaced by tonight's
+    frontier: every in-scope address with its real depth, tried ones with
+    tonight's time, never-sent ones untried, and rows for addresses the
+    frontier no longer holds are deleted.
+  - *Rotation mode*: some remembered address is untried, i.e. not tried since
+    the last whole-site crawl. Remembered addresses join the frontier at their
+    remembered depth; untried ones go first (by when they were first seen),
+    then tried ones, longest since their last try first; ties keep
+    `(priority, depth, discovery order)`. A rotation crawl records only what
+    the memory already held (an address it finds new waits for the next
+    whole-site crawl), forgets an address only the memory knew that answers
+    404/410 and every address the crawl no longer allows (deeper than
+    `max_depth`, outside the patterns), and never retires anything
+    (`crawl_connector_stale_reconcile_skipped` with reason `rotation_crawl`).
+    A resumed crawl reads the same memory and keeps its order.
 
-  A site that fits in one crawl is in whole-site mode every night. A site
-  that does not leaves untried addresses after a stopped whole-site crawl, so
-  the next nights rotate; once a rotation crawl has tried everything it
-  knows, the following night is whole-site again and purges as before.
+  Rotation is therefore a bounded phase: it ends once every address that was
+  untried at its start has been tried, and the next crawl is whole-site again,
+  discovering afresh, purging as before when fully fetched and replacing the
+  memory with what the site lists then. A source that fits in one crawl never
+  leaves whole-site mode; one that does not cycles through one whole-site
+  night and as many rotation nights as it takes to try what that night found.
   Connector purge, knowledge-base delete and the org wipe delete the rows;
   previews, auth probes and the discovery-seed pass neither read nor write
-  the memory. Ceiling: in rotation mode a site that mints endless live
-  addresses grows the memory by every address it lists, without bound.
+  the memory. Ceiling: the memory holds every address the last whole-site
+  crawl's frontier held, so a site that mints endless live addresses makes it
+  as large as one crawl's frontier, and a rotation reaches pages only through
+  what a whole-site night recorded.
 - **Coverage.** Every finished connector crawl stores
   `coverage` (`pages_read`, `addresses_gone`, `addresses_waiting`,
   `addresses_known`, `max_pages`, `stopped_by`: `page_limit`, `attempt_limit`,

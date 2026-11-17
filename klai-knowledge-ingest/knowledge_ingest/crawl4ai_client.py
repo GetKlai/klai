@@ -1394,16 +1394,15 @@ class CrawlLedger:
         return True
 
     def next_batch(self, *, remaining_budget: int) -> list[str]:
-        """Whoever has waited longest goes first.
+        """Untried addresses first, then whoever has waited longest.
 
-        A remembered address waits since it was last tried or, never tried,
-        since the memory first saw it; at the same moment a never-tried
-        address goes before a re-read. An address first found in this crawl
-        has waited the shortest and goes after everything remembered. Ties
-        keep the discovery order ``(priority, depth, order)``. New addresses
-        therefore queue behind everything known before them, so every address
-        known today is tried within one round from today, a round being the
-        crawls it takes to try what is known today.
+        Untried addresses go by when the memory first saw them; one first
+        found in this crawl goes after the remembered ones. Tried addresses
+        follow, longest since their last try first. Ties keep the discovery
+        order ``(priority, depth, order)``, which is the whole order of a
+        whole-site crawl. Every address untried at the start of a rotation is
+        therefore tried before anything is read twice, so the rotation ends
+        after as many crawls as it takes to try what it knows once.
         """
         if remaining_budget <= 0:
             return []
@@ -1474,8 +1473,12 @@ class CrawlLedger:
     def fill_memory(self, memory: CrawlMemoryState) -> None:
         """Hand back what this crawl tried, for the adapter to record.
 
-        Every in-scope address is a row, so an address found tonight stays
-        known even when no later crawl fetches the page that linked to it.
+        A whole-site crawl hands back every in-scope address, so an address
+        found tonight stays known even when no later crawl fetches the page
+        that linked to it. A rotation crawl hands back only what the memory
+        already held: an address it finds new waits for the next whole-site
+        crawl, which discovers afresh, so a site that mints addresses faster
+        than a crawl reads them cannot keep the connector in rotation.
         An address counts as tried when it was sent, whatever it answered;
         only addresses never sent keep their place. In a rotation crawl an
         address only the memory knew (no sitemap entry and no page read
@@ -1485,6 +1488,11 @@ class CrawlLedger:
         memory.rows, memory.forget = [], sorted(self._stale_memory_keys)
         for item in self._by_canonical.values():
             if item.depth > self.max_depth:
+                # No longer allowed (the depth limit was lowered): forgotten,
+                # so it cannot hold the connector in rotation untried.
+                memory.forget.append(item.canonical_url)
+                continue
+            if not memory.whole_site and item.first_seen_at is None:
                 continue
             if item.source_kind == "known" and item.reason_code == FetchReasonCode.GONE.value:
                 memory.forget.append(item.canonical_url)
@@ -1500,16 +1508,13 @@ class CrawlLedger:
             )
 
 
-def _waiting_key(item: DiscoveredUrl) -> tuple[bool, float, bool, int, int, int]:
-    waited_since = item.last_visited_at if item.last_visited_at is not None else item.first_seen_at
-    return (
-        waited_since is None,
-        waited_since or 0.0,
-        item.last_visited_at is not None,
-        item.priority,
-        item.depth,
-        item.order,
-    )
+def _waiting_key(item: DiscoveredUrl) -> tuple[bool, float, int, int, int]:
+    tried = item.last_visited_at is not None
+    if tried:
+        waited_since = item.last_visited_at
+    else:
+        waited_since = item.first_seen_at if item.first_seen_at is not None else float("inf")
+    return (tried, waited_since, item.priority, item.depth, item.order)
 
 
 def _priority_for_discovered_url(url: str) -> int:

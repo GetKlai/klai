@@ -46,13 +46,15 @@ class CrawlMemoryState:
     def whole_site(self) -> bool:
         """True when this crawl runs as a whole-site crawl, exactly as without memory.
 
-        That is the case when the memory is empty or the most recent recorded
-        crawl tried every remembered address (one recording is one
-        transaction, so they all carry the same time). Otherwise some address
-        still waits from an earlier crawl and this crawl rotates.
+        That is the case when no remembered address is untried. A whole-site
+        recording resets the try of every address it did not send, so untried
+        means "not tried since the last whole-site crawl", and rotation is a
+        bounded phase: it ends once every address it knows was tried once,
+        and the next crawl discovers afresh, purges as without memory and
+        replaces the memory with what the site lists then. A source that fits
+        in one crawl never leaves whole-site mode.
         """
-        tried = {row["last_visited_at"] for row in self.remembered}
-        return not self.remembered or (len(tried) == 1 and None not in tried)
+        return all(row["last_visited_at"] is not None for row in self.remembered)
 
 
 @dataclass

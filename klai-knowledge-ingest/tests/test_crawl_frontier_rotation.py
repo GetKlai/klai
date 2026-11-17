@@ -270,11 +270,14 @@ async def test_consecutive_crawls_rotate_through_a_site_larger_than_the_limit(
     site.install(monkeypatch)
     memory = _FakeMemory()
 
-    nights = []
+    nights, modes = [], []
     for _ in range(5):
-        _results, outcomes, _state = await _night(site, memory)
+        _results, outcomes, state = await _night(site, memory)
         nights.append(outcomes)
+        modes.append(state.whole_site)
 
+    # One whole-site night, rotation until nothing is untried, whole-site again.
+    assert modes == [True, False, False, False, True]
     reads = [_read(outcomes) - {_START} for outcomes in nights]
     assert [len(r) for r in reads[:4]] == [499, 499, 499, 499]
     assert set().union(*reads[:4]) == set(live)
@@ -378,11 +381,12 @@ async def test_a_dead_address_on_a_limit_filled_site_is_retried_within_a_round(
 
 @pytest.mark.asyncio
 async def test_endless_new_links_do_not_stop_the_refresh(monkeypatch) -> None:
-    """A site minting 500 new addresses a night: what is known today is tried within a round.
+    """A site minting 500 new addresses a night still ends its rotation and refreshes.
 
-    New addresses queue behind everything that waited longer. With 100 pages
-    a night, the 600 addresses known after the second night (the first
-    stopped crawl) are all tried within the six nights after.
+    The whole-site crawl of night 2 stops after 100 of 600 listed addresses.
+    The rotation then tries the other 500 in five nights; what it finds new on
+    the way waits for the next whole-site crawl, so the round ends and night 8
+    is whole-site again.
     """
     stored = [_address(f"s{i}") for i in range(100)]
     site = _Site(live=stored)
@@ -398,14 +402,18 @@ async def test_endless_new_links_do_not_stop_the_refresh(monkeypatch) -> None:
     mint(2)
     await _night(site, memory, max_pages=101)
 
-    known_today = set(memory.rows) - {_START}
-    assert len(known_today) == 600
+    untried = {url for url, row in memory.rows.items() if row["last_visited_at"] is None}
+    assert len(untried) == 500
     tried: set[str] = set()
+    modes = []
     for night in range(3, 9):
         mint(night)
-        _results, outcomes, _state = await _night(site, memory, max_pages=101)
-        tried |= _read(outcomes)
-    assert known_today <= tried
+        _results, outcomes, state = await _night(site, memory, max_pages=101)
+        modes.append(state.whole_site)
+        if not state.whole_site:
+            tried |= _read(outcomes)
+    assert modes == [False] * 5 + [True]
+    assert untried <= tried
 
 
 _DOCS, _GUIDE, _ARTICLE = (
@@ -484,7 +492,8 @@ async def test_a_remembered_address_on_the_old_host_is_moved_to_the_crawl_host(
     _results, _outcomes, state = await _night(site, memory)
 
     assert old_key in state.forget
-    assert set(memory.rows) == {_START, _address(1), _address(2)}
+    # A rotation crawl records only what the memory held, under tonight's key.
+    assert set(memory.rows) == {_address(1), _address(2)}
 
 
 @pytest.mark.asyncio
@@ -527,9 +536,9 @@ async def test_a_resumed_crawl_keeps_the_rotation_order(monkeypatch) -> None:
         }
         for url in addresses
     ]
-    # The never-tried addresses seen at 0, then those tried at 1, then what is
-    # new tonight.
-    expected = [*addresses[3:], *addresses[:3], found_tonight]
+    # Untried first: those the memory saw at 0, then what is new tonight;
+    # then those tried at 1.
+    expected = [*addresses[3:], found_tonight, *addresses[:3]]
 
     real_bulk = crawl4ai_client._chunked_bulk_fetch
     calls = 0
@@ -709,3 +718,51 @@ async def test_a_whole_site_crawl_replaces_the_memory(monkeypatch) -> None:
 
     assert state.whole_site
     assert set(memory.rows) == {_START, _address(0)}
+
+
+@pytest.mark.asyncio
+async def test_a_site_that_shrinks_ends_its_rotation_and_is_crawled_whole_again(
+    monkeypatch,
+) -> None:
+    """150 pages at 100 a night; then 60 linked pages and 60 unlinked that still answer.
+
+    The rotation ends once everything it knows was tried, and the whole-site
+    crawl after it reads only what the site lists, fully fetched, so the stale
+    cleanup retires the unlinked pages as on main.
+    """
+    from knowledge_ingest.adapters.crawler import _crawl_fully_fetched
+
+    pages = [_address(i) for i in range(150)]
+    site = _Site(live=pages)
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    await _night(site, memory, max_pages=101)
+    listed = pages[:60]
+    site.sitemap = listed
+
+    for _ in range(4):
+        results, outcomes, state = await _night(site, memory, max_pages=101)
+        if state.whole_site:
+            break
+    else:
+        pytest.fail("the connector never left rotation mode")
+
+    assert {r.url for r in results} == {_START, *listed}
+    assert _crawl_fully_fetched(outcomes)
+    assert set(memory.rows) == {_START, *listed}
+
+
+@pytest.mark.asyncio
+async def test_a_lowered_max_depth_forgets_the_deeper_rows(monkeypatch) -> None:
+    deep = _address("deep")
+    site = _Site(live=[_address(0), deep], sitemap=[_address(0)])
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    memory.rows[_address(0)] = _remembered(_address(0))
+    memory.rows[deep] = _remembered(deep, depth=3, last=None)
+
+    _results, _outcomes, state = await _night(site, memory, max_depth=2)
+
+    assert deep in state.forget
+    assert deep not in memory.rows
+    assert CrawlMemoryState(remembered=await memory.load()).whole_site

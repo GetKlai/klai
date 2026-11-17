@@ -278,13 +278,13 @@ async def test_resumed_crawl_keeps_rotation_order_through_real_checkpoint(
         await _attempt()
 
         requested = [url for call in bulk_calls for url in call]
-        # Never tried since January, tried in February, tried in March, then
-        # the address the memory did not know before tonight.
+        # Untried first (seen in January, then the address the memory did not
+        # know before tonight), then tried in February, then in March.
         assert list(dict.fromkeys(requested)) == [
             *sitemap[3:5],
+            sitemap[5],
             known_only,
             *sitemap[:3],
-            sitemap[5],
         ]
     finally:
         await _cleanup(connector_id, job_id)
