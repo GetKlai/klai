@@ -60,7 +60,9 @@ class _Model:
 
 @pytest.fixture
 def _settings():
-    return MagicMock(litellm_base_url="http://litellm.example.com", litellm_master_key="key")
+    return MagicMock(
+        litellm_base_url="http://litellm.example.com", litellm_master_key="key", chat_writer_max_tokens=2000
+    )
 
 
 def _patch(monkeypatch, model: _Model) -> None:
@@ -175,8 +177,9 @@ async def test_a_streamed_reply_shows_the_reply_field_as_it_is_written(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_a_streamed_reply_with_tools_is_still_asked_for_in_the_decided_language(monkeypatch, _settings):
-    """The internal chat forwards the employee's tools; the shape goes along, a tool call still comes as one."""
+async def test_a_streamed_action_turn_offers_the_tools_without_the_language_shape(monkeypatch, _settings):
+    """Tools beside the shape made the production model run away on 8 of 8 tries (17 November 2026),
+    so an action turn drops the shape; the slot instruction still names the language."""
     model = _Model(ENGLISH)
     _patch(monkeypatch, model)
 
@@ -186,10 +189,11 @@ async def test_a_streamed_reply_with_tools_is_still_asked_for_in_the_decided_lan
         profile=ChatProfile(surface="internal", kb_mode="open"),
         stream=True,
         tools=[{"type": "function", "function": {"name": "rooster", "parameters": {"type": "object"}}}],
+        action_turn=True,
     )
     frames = [frame async for frame in streamed_frames(reply)]
 
-    assert "tools" in model.requests[0] and "response_format" in model.requests[0]
+    assert "tools" in model.requests[0] and "response_format" not in model.requests[0]
     assert "".join(_contents(frames)).startswith(ENGLISH)
 
 

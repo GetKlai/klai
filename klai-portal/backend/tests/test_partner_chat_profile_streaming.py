@@ -69,6 +69,7 @@ def _settings() -> MagicMock:
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm"
     settings.litellm_master_key = "secret"
+    settings.chat_writer_max_tokens = 2000
     return settings
 
 
@@ -111,6 +112,7 @@ async def test_tool_call_delta_reaches_client_before_stream_ends(monkeypatch):
         system_prompt="prompt",
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
+        action_turn=True,
         profile=ChatProfile(surface="internal", kb_mode="open"),
     )
 
@@ -145,6 +147,7 @@ async def test_tool_call_content_never_enters_composed_text_or_grounding_input(m
         system_prompt="prompt",
         settings=_settings(),
         tools=[{"type": "function", "function": {"name": "lookup"}}],
+        action_turn=True,
         profile=ChatProfile(surface="internal", kb_mode="open"),
     )
 
@@ -208,6 +211,7 @@ async def test_strict_profile_strips_web_search_tool_before_forwarding(monkeypat
             {"type": "function", "function": {"name": "web_search"}},
             {"type": "function", "function": {"name": "lookup_kb"}},
         ],
+        action_turn=True,
     )
 
     (answer,) = [body for body in bodies if "stream" in body]

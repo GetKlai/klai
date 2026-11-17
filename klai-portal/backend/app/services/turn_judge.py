@@ -61,6 +61,7 @@ async def structured_judge_call[J: BaseModel](
     settings: Settings,
     model: str | None = None,
     delegated_org_id: str | None = None,
+    max_tokens: int | None = None,
 ) -> J | None:
     """One strict-json_schema call, on klai-fast unless ``model`` says otherwise;
     ``None`` and ``<name>_failed`` on any failure.
@@ -96,6 +97,8 @@ async def structured_judge_call[J: BaseModel](
         # llm_throttle.add_no_fallback for the verified reasoning).
         "fallbacks": [],
     }
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
     with_delegated_org(body, delegated_org_id)
     with_feature_tag(body, f"portal:{name.replace('_', '-')}")
     try:

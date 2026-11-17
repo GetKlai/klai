@@ -1,6 +1,6 @@
 """The chat quality measuring stick (docs/architecture/chat-quality-history-and-plan.md §6, §8) as one CLI.
 
-    meetlat run     --surface internal --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>] [--days <n>]
+    meetlat run     --surface internal --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>] [--days <n>] [--frontend <front-end.json>]
     meetlat run     --surface widget --org <slug> --widget <widget.json> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>]
     meetlat retrieval --surface internal|widget --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [same options as run]
     meetlat compare --cases <cases.jsonl> [--json] <round.jsonl>...
@@ -759,6 +759,9 @@ async def _run(args: argparse.Namespace) -> int:
         )
     if args.surface == "widget" and args.widget is None:
         raise UsageError("--surface widget needs --widget <json> with " + ", ".join(_WIDGET_FIELDS))
+    if args.frontend is not None and args.surface != "internal":
+        raise UsageError("--frontend is for --surface internal: a widget key refuses tools")
+    replay.use_frontend(args.frontend)
     widget = _read_widget(args.widget) if args.surface == "widget" else None
     if widget is not None:
         # The route and its middleware are part of what a widget round measures,
@@ -793,6 +796,7 @@ async def _run(args: argparse.Namespace) -> int:
         "command": args.command,
         "org": args.org,
         "surface": args.surface,
+        "frontend": str(args.frontend) if args.frontend else None,
         "cases": len(cases),
     }
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
@@ -1263,6 +1267,12 @@ def _parser() -> argparse.ArgumentParser:
             "--widget",
             type=Path,
             help="json with " + ", ".join(_WIDGET_FIELDS) + "; the widget a --surface widget round replays as",
+        )
+        replaying.add_argument(
+            "--frontend",
+            type=Path,
+            help='json {"tools": [...], "system": "..."} the internal front-end sends with every turn; '
+            "--surface internal only (docs/runbooks/meetlat.md)",
         )
     compare = commands.add_parser("compare", help="classify and compare rounds")
     compare.add_argument("--cases", type=Path, required=True)

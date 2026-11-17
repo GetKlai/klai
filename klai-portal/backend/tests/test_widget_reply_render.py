@@ -239,7 +239,7 @@ async def test_a_streamed_request_gets_the_upstream_failure_as_frames_and_a_plai
     ids=["unreachable", "status"],
 )
 async def test_the_writer_names_an_unreachable_or_failing_answer_model_with_the_turn_language(failure, message) -> None:
-    settings = MagicMock(litellm_base_url="http://litellm:4000", litellm_master_key="key")
+    settings = MagicMock(litellm_base_url="http://litellm:4000", litellm_master_key="key", chat_writer_max_tokens=2000)
     with respx.mock() as router:
         router.post("http://litellm:4000/v1/chat/completions").mock(
             **({"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure})

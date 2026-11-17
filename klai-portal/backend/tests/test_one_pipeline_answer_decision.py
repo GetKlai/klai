@@ -98,6 +98,7 @@ class _LiteLLM:
         repaired: str = "",
         selection: dict | str | None = None,
         case: dict | None = None,
+        action: dict | None = None,
     ) -> None:
         self.answer = answer
         self.question = question
@@ -108,6 +109,8 @@ class _LiteLLM:
         self.selection = selection
         # The case (case_file.py); without one the call fails and the turn runs without a case.
         self.case = case
+        # The action call (action_wish.py); without one it fails, which is no action turn.
+        self.action = action
         self.calls: list[dict] = []
 
     def of(self, kind: str) -> list[dict]:
@@ -140,6 +143,8 @@ class _LiteLLM:
             replies[kind] = selection_quoting_first_passage(body) if self.selection is None else self.selection
         if kind == "case_update" and self.case is not None:
             replies[kind] = self.case
+        if kind == "action_wish" and self.action is not None:
+            replies[kind] = self.action
         if kind in replies:
             return _reply(replies[kind])
         answer = self.answer
@@ -1493,6 +1498,7 @@ _GOLDEN_STRICT_RECORD = {
     "multi_question": False,
     "selection": {"verdict": "answers", "passages": [1]},
     "judge_failed": ["case"],
+    "writer": {"tools_offered": False, "action_turn": False, "cut": None},
     "grounding": "all_in_articles",
     "decision": "answer",
     "top_score": 0.82,
@@ -1575,3 +1581,137 @@ async def test_a_caption_beside_an_unreadable_file_and_two_pdfs_gets_the_pdf_onl
     assert reply["choices"][0]["message"]["content"] == "Klai kan nu alleen PDF-bestanden direct in chat verwerken."
     assert notice == ""
     convert.assert_not_awaited()
+
+
+# --- Tools reach the writer only on an action turn (SPEC-CHAT-INTERNAL-ROUTE-001 §4) ---
+
+SAVE_TOOL = {"type": "function", "function": {"name": "kennis_opslaan", "parameters": {"type": "object"}}}
+SAVE_ASK = "Sla dit op in mijn kennis: verlof vraag je aan in het HR-portaal."
+SAVE_WISH = {"quote": "Sla dit op in mijn kennis", "action": True}
+
+
+def _with_tools(*tail: dict) -> Callable[[list[dict]], dict]:
+    """The body LibreChat sends: the knowledge server's tool definitions with every turn."""
+    return lambda messages: {
+        "messages": [*messages, *tail],
+        "tools": [SAVE_TOOL],
+        "tool_choice": "auto",
+        "stream": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_internal_turn_with_tools_that_is_no_action_turn_writes_without_tools_in_the_reply_format(monkeypatch):
+    """Tools and the reply format together made the production model run away on 8 of 8 tries."""
+    from app.api import partner
+
+    llm = _LiteLLM(case=LEAVE_CASE)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        request_body=_with_tools(),
+    )
+
+    (answer,) = llm.of("answer")
+    assert "tools" not in answer and "tool_choice" not in answer
+    assert answer["response_format"]["json_schema"]["name"] == "reply_in_language"
+    assert answer["max_tokens"] == partner.settings.chat_writer_max_tokens
+    (record,) = turn.records
+    assert record["writer"] == {"tools_offered": False, "action_turn": False, "cut": None}
+    assert record["action_call"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_an_internal_turn_answering_a_tool_result_offers_the_writer_the_tools_without_the_reply_format(
+    monkeypatch,
+):
+    llm = _LiteLLM()
+    call = {"id": "call_1", "type": "function", "function": {"name": "kennis_opslaan", "arguments": "{}"}}
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(kb_mode="open"),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=SAVE_ASK,
+        request_body=_with_tools(
+            {"role": "assistant", "content": None, "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "Opgeslagen."},
+        ),
+    )
+
+    (answer,) = llm.of("answer")
+    assert [tool["function"]["name"] for tool in answer["tools"]] == ["kennis_opslaan"]
+    assert answer["tool_choice"] == "auto"
+    assert "response_format" not in answer
+    assert llm.of("action_wish") == [], "a tool result is an action turn without asking"
+    (record,) = turn.records
+    assert record["writer"] == {"tools_offered": True, "action_turn": True, "cut": None}
+
+
+@pytest.mark.parametrize(
+    ("question", "action_turn"),
+    [(SAVE_ASK, True), (QUESTION, False)],
+    ids=["quote-in-the-message", "quote-not-in-the-message"],
+)
+@pytest.mark.asyncio
+async def test_an_action_wish_makes_an_action_turn_only_when_its_quote_stands_in_the_employees_last_message(
+    monkeypatch, question, action_turn
+):
+    llm = _LiteLLM(action=SAVE_WISH)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=question,
+        request_body=_with_tools(),
+    )
+
+    (answer,) = llm.of("answer")
+    assert ("tools" in answer) is action_turn
+    assert ("response_format" in answer) is not action_turn
+    (record,) = turn.records
+    assert record["writer"]["action_turn"] is action_turn
+    assert record["action_call"] == ("action" if action_turn else "quote_not_found")
+
+
+@pytest.mark.asyncio
+async def test_the_action_call_reads_a_wish_that_follows_long_pasted_material(monkeypatch):
+    """An employee pastes material and asks to save it at the end; the call must get to see that sentence."""
+    llm = _LiteLLM(action=SAVE_WISH)
+    pasted = "Notulen van het overleg van de voorbeeldafdeling. " * 120  # about 6,000 characters
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=pasted + SAVE_ASK,
+        request_body=_with_tools(),
+    )
+
+    (call,) = llm.of("action_wish")
+    assert SAVE_ASK in call["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_request_without_tools_makes_no_action_call(monkeypatch):
+    llm = _LiteLLM(action=SAVE_WISH)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=SAVE_ASK,
+    )
+
+    assert llm.of("action_wish") == []
+    (record,) = turn.records
+    assert "action_call" not in record
+    assert record["writer"]["action_turn"] is False

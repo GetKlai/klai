@@ -456,6 +456,7 @@ async def test_stream_broad_answer_emits_answer_frame_with_marker(monkeypatch):
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
+    settings.chat_writer_max_tokens = 2000
 
     frames = await _collect(
         augmented_messages=[{"role": "user", "content": "wat kost het abonnement?"}],
@@ -486,6 +487,7 @@ async def test_stream_refusal_without_consent_emits_offer_frame(monkeypatch):
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
+    settings.chat_writer_max_tokens = 2000
 
     frames = await _collect(
         augmented_messages=[{"role": "user", "content": "wat kost het"}],
@@ -516,6 +518,7 @@ async def test_stream_safety_block_suppresses_broad_signal(monkeypatch):
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
+    settings.chat_writer_max_tokens = 2000
 
     frames = await _collect(
         augmented_messages=[{"role": "user", "content": "wat is dect"}],
@@ -567,6 +570,7 @@ async def _call_non_streaming(monkeypatch, model_text: str, **kwargs):
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
+    settings.chat_writer_max_tokens = 2000
     kwargs.setdefault("org_id", 42)
     kwargs.setdefault("messages", [{"role": "user", "content": "wat is dect?"}])
     kwargs.setdefault("source_query", "wat is dect?")
@@ -608,6 +612,7 @@ async def test_stream_refusal_language_follows_visitor_not_source_query(monkeypa
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
+    settings.chat_writer_max_tokens = 2000
 
     # Driven through the public entry, not the internal helper: the decision is
     # taken there now, so that is the only level where "source_query cannot
@@ -719,6 +724,7 @@ async def test_stream_refusal_speaks_the_conversation_language_not_the_latest_tu
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
+    settings.chat_writer_max_tokens = 2000
 
     frames = reply_frames(
         await write_reply(

@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
@@ -98,6 +98,16 @@ _STREAM_GUARD_TAIL_CHARS = 32
 # Word tokens, as the language module counts them.
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
+# The end of a sentence: a line break, or a full stop, question or exclamation
+# mark (with any closing markup or quote) before whitespace. Not after a digit,
+# so a numbered step "1. Ga naar" stays one sentence.
+_SENTENCE_END = re.compile(r"\n|(?<![\d\s])[.!?][*_)\"'\u201d\u2019]*(?=\s)")
+# Also a marker still being written ("1" before its "."), so a streamed third
+# occurrence is held back from its first character.
+_LIST_MARKER = re.compile(r"^(?:[-*+•]|\d+[.)]?)(?:\s+|$)")
+# A sentence longer than this ends the reply at its third occurrence (_RepeatStop).
+_REPEAT_MIN_CHARS = 40
+
 
 def without_dashes(text: str) -> str:
     """The widget owner wants no dash as punctuation in a reply; the model copies them from the prompt."""
@@ -129,6 +139,7 @@ async def write_reply(
     profile: ChatProfile = ChatProfile(surface="widget"),
     tools: list[dict] | None = None,
     tool_choice: Any | None = None,
+    action_turn: bool = False,
     web_chunks: list[dict] | None = None,
     web_query: str | None = None,
     include_sources: bool = True,
@@ -144,8 +155,12 @@ async def write_reply(
     answer on; it differs from ``citation_chunks`` on a broad turn, where the
     caller empties the citation list on purpose.
     ``profile`` is the widget's unless an internal turn is written; only that
-    turn sends ``tools`` (a widget key may not), and Strict never searches the
-    web, so a web-search tool is dropped there. ``web_chunks`` are the live web
+    turn sends ``tools`` (a widget key may not), and the model is offered them
+    only on an ``action_turn`` (internal_turn._action_turn), without the reply
+    format; Strict never searches the web, so a web-search tool is dropped
+    there. The turn's record says which it was (``answer_signals["writer"]``:
+    ``tools_offered``, ``action_turn``, and ``cut``, ``"length"`` or
+    ``"repeat"`` when the reply was cut). ``web_chunks`` are the live web
     results an internal Open or general turn read beside the passages, cited as
     their own tier against ``web_query``. ``include_sources`` is the caller's
     choice; it drops the sources from the internal footer, never its warning.
@@ -229,6 +244,7 @@ async def write_reply(
         profile=profile,
         include_sources=include_sources,
     )
+    offered = (_strip_web_search_tools(tools) if strict else tools) if action_turn else None
     generation: dict[str, Any] = {
         "model": model,
         "temperature": temperature,
@@ -237,20 +253,30 @@ async def write_reply(
         "delegated_org_id": delegated_org_id,
         "language": response_language,
         "language_schema": enforced_language,
-        "tools": _strip_web_search_tools(tools) if strict else tools,
+        "tools": offered,
         # A forced choice of a tool Strict just stripped would name a tool the
         # request no longer carries.
         "tool_choice": None
-        if strict and isinstance(tool_choice, dict) and _is_web_search_tool(tool_choice)
+        if not offered or (strict and isinstance(tool_choice, dict) and _is_web_search_tool(tool_choice))
         else tool_choice,
     }
+    writer: dict[str, Any] = {"tools_offered": bool(offered), "action_turn": action_turn, "cut": None}
+    reply.signals["writer"] = writer
     if stream:
+        ended: dict[str, str] = {}
         reply.deltas = _streamed(
-            _generate_streamed(augmented, **generation), pasted_correspondence=pasted_correspondence, settle=settle
+            _generate_streamed(augmented, ended=ended, **generation),
+            pasted_correspondence=pasted_correspondence,
+            settle=settle,
+            writer=writer,
+            ended=ended,
+            org_id=org_id,
         )
         return reply
     generation_started = time.perf_counter()
     completion, draft, tool_calls = await _generate(augmented, **generation)
+    draft, repeated = _without_repeats(draft)
+    _mark_cut(writer, "repeat" if repeated else completion.get("finish_reason"), org_id=org_id)
     if strict:
         # The widget, a partner key and internal Strict have sent only these
         # since the held writer replaced their two generation paths.
@@ -523,6 +549,7 @@ async def _generate(
         tools=tools,
         tool_choice=tool_choice,
         delegated_org_id=delegated_org_id,
+        max_tokens=settings.chat_writer_max_tokens,
         language_schema=language_schema,
     )
     try:
@@ -571,13 +598,15 @@ async def _generate_streamed(
     language: str | None,
     tools: list[dict] | None,
     tool_choice: Any | None,
+    ended: dict[str, str],
     language_schema: str | None = None,
-) -> AsyncIterator[str | list[dict]]:
+) -> AsyncGenerator[str | list[dict]]:
     """The answer model's text deltas, and its tool-call deltas, as they arrive.
 
     With ``language_schema`` the deltas are the ``reply`` field of the
     language-first shape, decoded as it streams (:class:`_ReplyField`), so the
     reader sees the model's words as it writes them and never the shape.
+    ``ended`` receives the model's ``finish_reason``.
 
     A tool-call delta never enters the text, so it can never reach the citation
     composer or the grounding check. Once the stream has started a failure
@@ -593,6 +622,7 @@ async def _generate_streamed(
         tools=tools,
         tool_choice=tool_choice,
         delegated_org_id=delegated_org_id,
+        max_tokens=settings.chat_writer_max_tokens,
         language_schema=language_schema,
     )
     field = _ReplyField() if "response_format" in request_json else None
@@ -618,7 +648,10 @@ async def _generate_streamed(
                 except json.JSONDecodeError:
                     logger.debug("partner_chat_sse_parse_skipped", exc_info=True)
                     continue
-                delta = (event.get("choices") or [{}])[0].get("delta") or {}
+                choice = (event.get("choices") or [{}])[0]
+                if reason := choice.get("finish_reason"):
+                    ended["finish_reason"] = reason
+                delta = choice.get("delta") or {}
                 if tool_calls := delta.get("tool_calls"):
                     yield tool_calls
                 text = delta.get("content")
@@ -760,6 +793,66 @@ class _ReplyField:
         return ""
 
 
+def _sentence_key(segment: str) -> str:
+    """A sentence as it is compared: without a list marker, whitespace collapsed, case folded."""
+    return " ".join(_LIST_MARKER.sub("", segment.strip()).split()).casefold()
+
+
+class _RepeatStop:
+    """Where a reply ends because one of its sentences comes a third time.
+
+    On 17 November 2026 the internal writer repeated the same sentences up to
+    eight times in one reply, inside one bullet line too, so list items count
+    like any sentence. A sentence of up to forty characters ("Ga naar
+    Instellingen.") may recur, and two variants that share their steps have
+    each step twice, so only a third occurrence of a longer one ends the
+    reply. Both numbers are deliberate simplifications
+    (SPEC-CHAT-INTERNAL-ROUTE-001 §4): a third variant with the same long
+    step would be cut, and is then the case for counting per variant.
+    """
+
+    def __init__(self) -> None:
+        self.counts: dict[str, int] = {}
+        # Where the sentence still being written starts.
+        self.scanned = 0
+
+    def scan(self, text: str) -> tuple[int | None, int]:
+        """``(cut, safe)``: where a third occurrence starts, if one completed, and how much of ``text`` may be shown.
+
+        ``text`` only grows between calls. The sentence still being written is
+        held back while it may still become a third occurrence, so no part of
+        one reaches a streamed reader.
+        """
+        for match in _SENTENCE_END.finditer(text, self.scanned):
+            start, self.scanned = self.scanned, match.end()
+            key = _sentence_key(text[start : self.scanned])
+            if len(key) <= _REPEAT_MIN_CHARS:
+                continue
+            if self.counts.get(key, 0) >= 2:
+                return start, start
+            self.counts[key] = self.counts.get(key, 0) + 1
+        twice = [key for key, count in self.counts.items() if count >= 2]
+        if twice:
+            open_key = _sentence_key(text[self.scanned :])
+            if any(key.startswith(open_key) for key in twice):
+                return None, self.scanned
+        return None, len(text)
+
+
+def _without_repeats(draft: str) -> tuple[str, bool]:
+    """A held draft up to a sentence's third occurrence, and whether it was cut there."""
+    cut, _ = _RepeatStop().scan(f"{draft}\n")
+    return (draft, False) if cut is None else (draft[:cut].rstrip(), True)
+
+
+def _mark_cut(writer: dict[str, Any], reason: str | None, *, org_id: int | str | None) -> None:
+    """Record why a reply was cut: ``repeat`` by :class:`_RepeatStop`, ``length`` by the output cap."""
+    if reason not in ("repeat", "length"):
+        return
+    writer["cut"] = reason
+    logger.warning("partner_chat_reply_cut", org_id=org_id, reason=reason)
+
+
 @dataclass
 class _StreamedText:
     """What the model has written so far on a streamed reply, and what of it the reader has seen."""
@@ -782,26 +875,51 @@ class _StreamedText:
 
 
 async def _streamed(
-    deltas: AsyncIterator[str | list[dict]],
+    deltas: AsyncGenerator[str | list[dict]],
     *,
     pasted_correspondence: bool,
     settle: Callable[..., Awaitable[None]],
+    writer: dict[str, Any],
+    ended: dict[str, str],
+    org_id: int | str | None,
 ) -> AsyncIterator[str | list[dict]]:
     """Pass the model's deltas on as the reader may see them, then settle the reply on the whole text.
 
     The text goes out with the model's own markers as written; citations are
     composed once, on the accumulated text, never re-rendered mid-stream, which
     is what keeps the footer's numbering in step with what the reader saw.
+
+    A sentence that may become a third occurrence is held back until it does
+    or diverges (:class:`_RepeatStop`). When it does, the model's stream is
+    closed and the reply settles on the text before it, so the reader gets the
+    same ending frames as after a model that stopped: sources, the unseen tail
+    with the footer, and DONE.
     """
     text = _StreamedText(pasted_correspondence=pasted_correspondence)
+    repeats = _RepeatStop()
+    written, passed, cut = "", 0, None
     tool_calls: list[dict] = []
     generation_started = time.perf_counter()
     async for delta in deltas:
         if isinstance(delta, list):
             tool_calls.extend(delta)
             yield delta
-        elif shown := text.take(delta):
+            continue
+        written += delta
+        cut, safe = repeats.scan(written)
+        if cut is not None:
+            break
+        if safe > passed and (shown := text.take(written[passed:safe])):
             yield shown
+        passed = max(passed, safe)
+    if cut is not None:
+        await deltas.aclose()
+    else:
+        cut, _ = repeats.scan(written + "\n")
+    end = len(written) if cut is None else cut
+    if end > passed and (shown := text.take(written[passed:end])):
+        yield shown
+    _mark_cut(writer, "repeat" if cut is not None else ended.get("finish_reason"), org_id=org_id)
     await settle(
         "".join(text.raw),
         generation_ms=_elapsed_ms(generation_started),

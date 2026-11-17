@@ -105,6 +105,12 @@ tenant and reaches Mistral unmasked.
    `--days` (default 365) bounds how far back the conversations are looked up.
    Leave out `--overlay` to measure the image as it is; the banner then says that nothing is checked.
 
+   `--frontend /out/frontend.json` (internal rounds only) sends what the internal chat's front-end sends with every
+   turn: `{"tools": [<OpenAI tool definitions>], "system": "<text of the front-end's system message>"}`, both keys
+   optional. The tools go in the request body and the text as a system message before the conversation. Without the
+   option a round sends neither, as before, and cannot see what the tools do to a reply (the runaway reply of
+   17 November 2026 needed them). The round's `.meta.json` names the file.
+
    A widget round replays as one widget, through the route itself (a preview session token, the answer held), so the
    widget's own settings and articles apply and nothing is recorded. Its cases carry their own conversation: `id`,
    `messages` (the visitor's turns and the earlier replies, ending in the turn to replay) and `expect` (`antwoord`,

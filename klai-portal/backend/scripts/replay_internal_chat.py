@@ -325,9 +325,25 @@ def _save_sample(out: Path, samples: list[Sample], count: int, max_turns: int, z
 _REQUEST_MODEL = "klai-primary"
 
 
+# What the internal chat's front-end adds to every request: its tool definitions
+# and its system message. Empty unless meetlat's --frontend names a file
+# (use_frontend); without them a round could not see the runaway reply of
+# 17 November 2026, which needed the tools beside the reply format.
+_frontend: dict[str, Any] = {}
+
+
+def use_frontend(path: Path | None) -> None:
+    """Send ``{"tools": [...], "system": "..."}`` from ``path`` with every replayed turn; ``None`` sends neither."""
+    _frontend.clear()
+    if path is not None:
+        _frontend.update(json.loads(path.read_text()))
+
+
 def _body(messages: list[dict]) -> dict:
-    """The same request body for both paths."""
-    return {"model": _REQUEST_MODEL, "stream": True, "messages": messages}
+    """The same request body for both paths, with what the front-end adds when a file named it."""
+    system = [{"role": "system", "content": _frontend["system"]}] if _frontend.get("system") else []
+    tools = {"tools": _frontend["tools"]} if _frontend.get("tools") else {}
+    return {"model": _REQUEST_MODEL, "stream": True, "messages": [*system, *messages], **tools}
 
 
 async def _old_answer(client: httpx.AsyncClient, tenant_key: str, librechat_user_id: str, messages: list[dict]) -> dict:
