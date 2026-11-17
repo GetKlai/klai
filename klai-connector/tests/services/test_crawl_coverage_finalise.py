@@ -42,13 +42,14 @@ async def test_resolver_completes_a_budget_stop_and_keeps_the_coverage() -> None
     row = _resolver_row()
     _register(resolver, row)
 
-    await resolver.resolve(row)
+    snapshot = await resolver.resolve(row)
 
     assert row.status == SyncStatus.COMPLETED
     assert row.error_details is None
     assert row.documents_failed == 0
     assert row.cursor_state["coverage"] == COVERAGE
-    assert portal.report_sync_status.await_args.kwargs["coverage"] == COVERAGE
+    assert snapshot.coverage == COVERAGE
+    assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -61,4 +62,4 @@ async def test_reaper_completes_a_budget_stop_and_keeps_the_coverage() -> None:
     assert row.status == SyncStatus.COMPLETED
     assert row.error_details is None
     assert row.cursor_state["coverage"] == COVERAGE
-    assert portal.report_sync_status.await_args.kwargs["coverage"] == COVERAGE
+    assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.COMPLETED

@@ -292,7 +292,6 @@ class SyncRunReaper:
             bytes_processed=0,
             error_details=None,
             documents_changed=documents_changed,
-            coverage=coverage,
         )
         logger.info(
             "sync_run_reaper_finalised_completed",

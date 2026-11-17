@@ -88,6 +88,7 @@ class ResolvedSyncRun:
     pages_done: int | None
     pages_total: int | None
     live_resolution_failed: bool
+    coverage: dict[str, Any] | None
 
 
 class SyncRunResolver:
@@ -286,7 +287,6 @@ class SyncRunResolver:
             bytes_processed=0,
             error_details=error_details,
             documents_changed=remote_crawl_documents_changed(live),
-            coverage=coverage,
         )
         logger.info(
             "sync_run_resolver_terminalized",
@@ -323,4 +323,5 @@ class SyncRunResolver:
             pages_done=pages_done,
             pages_total=pages_total,
             live_resolution_failed=live_resolution_failed,
+            coverage=sync_run.cursor_state.get("coverage") if isinstance(sync_run.cursor_state, dict) else None,
         )
