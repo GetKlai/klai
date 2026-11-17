@@ -1462,6 +1462,10 @@ async def list_kb_sources(
     return SourcesResponse(sources=sources)
 
 
+# Short on purpose: the sentence is optional and every website source asks on each page load.
+_COVERAGE_TIMEOUT_S = 2.0
+
+
 async def _last_crawl_coverage(connector_id: str, zitadel_org_id: str) -> dict | None:
     """Coverage of a website source's last sync run, None when unknown.
 
@@ -1469,8 +1473,11 @@ async def _last_crawl_coverage(connector_id: str, zitadel_org_id: str) -> dict |
     not take the whole sources list down with it.
     """
     try:
-        runs = await klai_connector_client.get_sync_runs(connector_id, org_id=zitadel_org_id, limit=1)
-    except httpx.HTTPError:
+        runs = await klai_connector_client.get_sync_runs(
+            connector_id, org_id=zitadel_org_id, limit=1, timeout=_COVERAGE_TIMEOUT_S
+        )
+    # ValueError covers a non-JSON body and a pydantic ValidationError; TypeError a body of the wrong shape.
+    except (httpx.HTTPError, ValueError, TypeError):
         logger.warning("crawl_coverage_unavailable", connector_id=connector_id, exc_info=True)
         return None
     return runs[0].coverage if runs else None

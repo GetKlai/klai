@@ -98,6 +98,7 @@ class KlaiConnectorClient:
         *,
         org_id: str,
         limit: int = 20,
+        timeout: float = 10.0,
     ) -> list[SyncRunData]:
         """Fetch sync history for a connector from klai-connector.
 
@@ -105,11 +106,12 @@ class KlaiConnectorClient:
             connector_id: Portal connector UUID.
             org_id: Zitadel resourceowner string (see ``trigger_sync``).
             limit: Max rows to return (capped at 100 by the connector).
+            timeout: Seconds before the request is given up.
 
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx from klai-connector.
         """
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(
                 f"{settings.klai_connector_url}/api/v1/connectors/{connector_id}/syncs",
                 params={"limit": min(limit, 100)},

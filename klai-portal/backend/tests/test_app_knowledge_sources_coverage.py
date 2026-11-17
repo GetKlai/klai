@@ -37,12 +37,12 @@ def _run(coverage: dict | None) -> SyncRunData:
     )
 
 
-async def _list_sources(get_sync_runs: AsyncMock) -> dict:
+async def _list_sources(get_sync_runs: AsyncMock, web_status: str = "completed") -> dict:
     from app.api.app_knowledge_bases import list_kb_sources
 
     db = _make_sources_db(
         [
-            _make_connector("conn-web", "web_crawler", "Docs site", status="completed"),
+            _make_connector("conn-web", "web_crawler", "Docs site", status=web_status),
             _make_connector("conn-notion", "notion", "Wiki", status="completed"),
         ]
     )
@@ -76,7 +76,7 @@ async def test_website_source_carries_the_coverage_of_its_last_run_and_others_do
 
     assert by_id["conn-web"].sync_coverage == COVERAGE
     assert by_id["conn-notion"].sync_coverage is None
-    get_sync_runs.assert_awaited_once_with("conn-web", org_id="zitadel-org-1", limit=1)
+    get_sync_runs.assert_awaited_once_with("conn-web", org_id="zitadel-org-1", limit=1, timeout=2.0)
 
 
 @pytest.mark.asyncio
@@ -87,3 +87,22 @@ async def test_unreachable_connector_service_leaves_the_list_intact_without_cove
 
     assert by_id["conn-web"].sync_coverage is None
     assert by_id["conn-web"].items_count == 80
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [ValueError("not json"), TypeError("unexpected shape")])
+async def test_a_malformed_connector_answer_leaves_the_list_intact(error: Exception) -> None:
+    by_id = await _list_sources(AsyncMock(side_effect=error))
+
+    assert by_id["conn-web"].sync_coverage is None
+    assert by_id["conn-web"].items_count == 80
+
+
+@pytest.mark.asyncio
+async def test_coverage_is_only_asked_for_a_website_whose_last_sync_completed() -> None:
+    get_sync_runs = AsyncMock(return_value=[_run(COVERAGE)])
+
+    by_id = await _list_sources(get_sync_runs, web_status="failed")
+
+    assert by_id["conn-web"].sync_coverage is None
+    get_sync_runs.assert_not_awaited()

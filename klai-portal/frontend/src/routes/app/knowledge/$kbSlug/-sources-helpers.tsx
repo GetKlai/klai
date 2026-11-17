@@ -191,8 +191,10 @@ export function FailedItemsWarning({ source }: { source: Source }) {
 }
 
 function crawlCoverageSentence(c: CrawlCoverage): string | null {
+  // Nothing was read, so there is no progress to report and no round length to estimate.
+  if (c.pages_read <= 0) return null
   // A round is every address the source knows that exists, read at pages_read per night.
-  const nights = c.pages_read > 0 ? String(Math.ceil((c.pages_read + c.addresses_waiting) / c.pages_read)) : '0'
+  const nights = String(Math.ceil((c.pages_read + c.addresses_waiting) / c.pages_read))
   const read = String(c.pages_read)
   if (c.stopped_by === 'page_limit') {
     return m.kb_crawl_coverage_page_limit({ read, total: String(c.pages_read + c.addresses_waiting), nights })

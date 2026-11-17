@@ -83,6 +83,15 @@ describe('CrawlCoverageNote', () => {
     expect(text(source({ addresses_waiting: 0, addresses_gone: 10, addresses_known: 90 }))).toBe('')
   })
 
+  it('adds nothing when exactly half of the known addresses do not exist', () => {
+    expect(text(source({ addresses_waiting: 0, addresses_gone: 100, addresses_known: 200 }))).toBe('')
+  })
+
+  it('adds nothing when no page was read, whatever the stop reason', () => {
+    expect(text(source({ stopped_by: 'page_limit', pages_read: 0 }))).toBe('')
+    expect(text(source({ stopped_by: 'site_rate_limit', pages_read: 0 }))).toBe('')
+  })
+
   it('adds nothing without coverage or for another source kind', () => {
     expect(text(source(null))).toBe('')
     expect(text(source({ stopped_by: 'page_limit' }, { kind: 'upload', connector_type: null }))).toBe('')
