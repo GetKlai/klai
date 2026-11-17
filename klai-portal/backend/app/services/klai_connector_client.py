@@ -35,6 +35,9 @@ class SyncRunData(BaseModel):
     pages_done: int | None = None
     pages_total: int | None = None
     live_resolution_failed: bool = False
+    # What a finished website crawl read and left for the next nights; None
+    # for other connector types and for crawls from before it was reported.
+    coverage: dict | None = None
 
 
 class KlaiConnectorClient:
