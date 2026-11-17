@@ -38,14 +38,9 @@ class PostgresCrawlMemory:
         self.connector_id = connector_id
 
     async def load(self) -> list[dict[str, Any]]:
-        """Remembered addresses, then the connector's stored pages.
-
-        A stored page comes back without a key or depth; the ledger
-        canonicalises it on the crawl's host and, when the memory has no row
-        for it, places it at ``max_depth``.
-        """
+        """The addresses earlier crawls of this connector discovered."""
         async with self.connection_factory() as conn:
-            remembered = await conn.fetch(
+            rows = await conn.fetch(
                 """
                 SELECT canonical_url, url, depth,
                        extract(epoch FROM first_seen_at)::float8 AS first_seen_at,
@@ -57,7 +52,16 @@ class PostgresCrawlMemory:
                 self.org_id,
                 self.connector_id,
             )
-            stored = await conn.fetch(
+        return [dict(row) for row in rows]
+
+    async def stored_addresses(self) -> list[str]:
+        """Addresses the connector has a stored page at.
+
+        Only used to keep such an address in the memory when it answers
+        404/410; stored pages never join the crawl frontier.
+        """
+        async with self.connection_factory() as conn:
+            rows = await conn.fetch(
                 """
                 SELECT DISTINCT COALESCE(extra::jsonb->>'source_url', path) AS url
                 FROM knowledge.artifacts
@@ -66,24 +70,13 @@ class PostgresCrawlMemory:
                   AND belief_time_end = $4
                   AND extra IS NOT NULL
                   AND extra::jsonb->>'source_connector_id' = $3
-                ORDER BY url
                 """,
                 self.org_id,
                 self.kb_slug,
                 self.connector_id,
                 _SENTINEL,
             )
-        return [dict(row) for row in remembered] + [
-            {
-                "canonical_url": None,
-                "url": url,
-                "depth": None,
-                "first_seen_at": None,
-                "last_visited_at": None,
-            }
-            for row in stored
-            if (url := str(row["url"])).startswith(("http://", "https://"))
-        ]
+        return [str(row["url"]) for row in rows]
 
     async def record(
         self, conn: asyncpg.Connection, rows: list[dict[str, Any]], forget: list[str]

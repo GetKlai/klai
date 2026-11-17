@@ -50,6 +50,8 @@ def _outcome(url: str, reason: str, **extra: Any) -> dict[str, Any]:
 
 class _Memory:
     instances: ClassVar[list[_Memory]] = []
+    rows: ClassVar[list[dict[str, Any]]] = []
+    stored: ClassVar[list[str]] = []
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         self.recorded: list[tuple[list[dict[str, Any]], list[str]]] = []
@@ -57,7 +59,10 @@ class _Memory:
         _Memory.instances.append(self)
 
     async def load(self) -> list[dict[str, Any]]:
-        return []
+        return [dict(row) for row in _Memory.rows]
+
+    async def stored_addresses(self) -> list[str]:
+        return list(_Memory.stored)
 
     async def record(self, _conn: Any, rows: list[dict[str, Any]], forget: list[str]) -> None:
         if self.fail:
@@ -102,8 +107,18 @@ async def _run(
     guard: Any = None,
     memory_fails: bool = False,
     stale: list[str] | None = None,
+    stored: list[str] | None = None,
+    remembered: list[dict[str, Any]] | None = None,
+    discovery_seed_url: str | None = None,
 ) -> dict[str, Any]:
+    """Run one crawl job; ``crawl`` None runs the real ``crawl_site``.
+
+    With ``stored`` the stale listing answers like the database: every stored
+    page that is not current.
+    """
     _Memory.instances = []
+    _Memory.rows = remembered or []
+    _Memory.stored = stored or []
     conn = MagicMock()
     conn.execute = AsyncMock(return_value=None)
     conn.executemany = AsyncMock(return_value=None)
@@ -114,6 +129,14 @@ async def _run(
     pg.get_crawled_page_hashes = AsyncMock(return_value={})
     pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
     pg.list_stale_connector_artifact_paths = AsyncMock(return_value=stale or [])
+    if stored is not None:
+
+        async def _stale(_conn: Any, **kwargs: Any) -> list[str]:
+            return [url for url in stored if url not in kwargs["current_paths"]]
+
+        pg.list_stale_connector_artifact_paths = AsyncMock(side_effect=_stale)
+    pg.count_active_connector_artifact_paths = AsyncMock(return_value=len(stored or stale or []))
+    purge = AsyncMock(return_value=0)
     finished = AsyncMock()
     ingest = AsyncMock(return_value=False)
 
@@ -125,7 +148,7 @@ async def _run(
     patches = [
         patch("knowledge_ingest.adapters.crawler.pg_store", pg),
         patch("knowledge_ingest.adapters.crawler.PostgresCrawlMemory", _FailingMemory),
-        patch("knowledge_ingest.adapters.crawler.crawl_site", crawl),
+        patch("knowledge_ingest.adapters.crawler.PostgresCrawlCheckpoint", _NoCheckpoint),
         patch(
             "knowledge_ingest.adapters.crawler._judge_run_before_write",
             new_callable=AsyncMock,
@@ -137,13 +160,11 @@ async def _run(
             new_callable=AsyncMock,
         ),
         patch("knowledge_ingest.adapters.crawler._build_link_graph", new_callable=AsyncMock),
-        patch(
-            "knowledge_ingest.adapters.crawler._purge_stale_paths",
-            new_callable=AsyncMock,
-            return_value=0,
-        ),
+        patch("knowledge_ingest.adapters.crawler._purge_stale_paths", purge),
         patch("knowledge_ingest.adapters.crawler.finish_crawl_execution", finished),
     ]
+    if crawl is not None:
+        patches.append(patch("knowledge_ingest.adapters.crawler.crawl_site", crawl))
     if guard is not None:
         patches.append(patch("knowledge_ingest.adapters.crawler.guard_crawl_execution", guard))
     with ExitStack() as stack:
@@ -160,14 +181,31 @@ async def _run(
             max_pages=500,
             rate_limit=100.0,
             connector_id="conn-1",
+            max_depth=3,
+            discovery_seed_url=discovery_seed_url,
         )
     return {
+        "purged": [list(c.args[4]) for c in purge.await_args_list],
         "memory": _Memory.instances[0],
         "finished": finished,
         "ingest": ingest,
         "stale": pg.list_stale_connector_artifact_paths,
         "conn": conn,
     }
+
+
+class _NoCheckpoint:
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def load(self) -> None:
+        return None
+
+    async def save(self, _snapshot: dict[str, Any]) -> None:
+        return None
+
+    async def ensure_active(self) -> None:
+        return None
 
 
 def _finished_status(run: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -235,9 +273,10 @@ async def test_a_complete_crawl_forgets_unlisted_addresses_and_retires_their_pag
         rows=[_row(_START), _row(unlisted, known_only=True)],
         known_only={unlisted},
     )
-    run = await _run(crawl, stale=[unlisted])
+    run = await _run(crawl, stored=[_START, unlisted])
 
     assert run["stale"].await_args.kwargs["current_paths"] == [_START]
+    assert run["purged"] == [[unlisted]]
     rows, forget = run["memory"].recorded[0]
     assert forget == [unlisted]
     assert [r["canonical_url"] for r in rows] == [_START]
@@ -349,3 +388,79 @@ async def test_a_clean_crawl_summary_carries_coverage() -> None:
             "stopped_by": None,
         }
     }
+
+
+_DOCS, _GUIDE, _ARTICLE = (
+    "https://example.com/docs",
+    "https://example.com/docs/guide",
+    "https://example.com/docs/guide/article",
+)
+
+
+@pytest.mark.asyncio
+async def test_a_stored_chain_keeps_every_page_through_the_purge(monkeypatch) -> None:
+    """The article only the guide links to is current, so nothing is retired."""
+    from tests.test_crawl_frontier_rotation import _Site
+
+    links = {_START: [_DOCS], _DOCS: [_GUIDE], _GUIDE: [_ARTICLE]}
+    _Site(live=[_DOCS, _GUIDE, _ARTICLE], sitemap=[], links=links).install(monkeypatch)
+    stored = [_START, _DOCS, _GUIDE, _ARTICLE]
+
+    run = await _run(None, stored=stored)
+
+    assert run["purged"] == [[]]
+    assert _ARTICLE in run["stale"].await_args.kwargs["current_paths"]
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_seed_page_still_runs_the_seed_pass_and_retires_nothing(
+    monkeypatch,
+) -> None:
+    """A client-rendered start page: the seed pass, not the memory, finds the site."""
+    from tests.test_crawl_frontier_rotation import _Site
+
+    site = _Site(
+        live=[_DOCS, _GUIDE, _ARTICLE],
+        sitemap=[],
+        links={_DOCS: [_GUIDE], _GUIDE: [_ARTICLE]},
+    )
+    site.install(monkeypatch)
+    stored = [_DOCS, _GUIDE, _ARTICLE]
+    remembered = [
+        {
+            "canonical_url": url,
+            "url": url,
+            "depth": depth,
+            "first_seen_at": 0.0,
+            "last_visited_at": 0.0,
+        }
+        for url, depth in ((_DOCS, 1), (_GUIDE, 2), (_ARTICLE, 3))
+    ]
+
+    run = await _run(None, stored=stored, remembered=remembered, discovery_seed_url=_DOCS)
+
+    assert run["purged"] == [[]]
+    _rows, forget = run["memory"].recorded[0]
+    assert forget == []
+
+
+@pytest.mark.asyncio
+async def test_a_complete_crawl_that_would_retire_many_pages_read_tonight_retires_none() -> None:
+    """Pages answering tonight, read only because the memory knew them, are braked."""
+    unlisted = [_url(f"u{i}") for i in range(10)]
+    crawl = _fake_crawl(
+        [_result(_START), *[_result(u) for u in unlisted]],
+        [_outcome(_START, "success"), *[_outcome(u, "success") for u in unlisted]],
+        rows=[_row(_START), *[_row(u, known_only=True) for u in unlisted]],
+        known_only=set(unlisted),
+    )
+    stored = [_START, *unlisted, *[_url(f"kept{i}") for i in range(9)]]
+
+    with patch("knowledge_ingest.adapters.crawler.logger") as log:
+        run = await _run(crawl, stored=stored)
+
+    assert run["purged"] == [[]]
+    _rows, forget = run["memory"].recorded[0]
+    assert forget == []
+    warnings = [c for c in log.warning.call_args_list if c.kwargs.get("stale_count")]
+    assert warnings and warnings[0].kwargs["known_only_read_count"] == 10

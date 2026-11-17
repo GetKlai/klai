@@ -201,25 +201,33 @@ What the crawler does:
   completion, after the pages are written and only when they were accepted, so
   a run judged "write nothing" or a superseded attempt leaves the rotation
   where it was, and a failed record fails the job. Every address that was sent
-  counts as tried, whatever it answered. Remembered addresses and the
-  connector's stored pages join the frontier even when tonight's pages and
-  sitemap do not list them; a stored page without a memory row joins at
-  `max_depth`. After the start address, whoever has waited longest goes
+  counts as tried, whatever it answered. Only crawls fill the memory: every
+  in-scope address a crawl's frontier held is recorded with the depth it was
+  really found at, tried or not, and stored pages never join the frontier, so
+  discovery does not depend on what is stored. Remembered addresses join the
+  frontier at their remembered depth even when tonight's pages and sitemap do
+  not list them. After the start address, whoever has waited longest goes
   first: an address waits since it was last tried or, never tried, since the
-  memory first saw it (`first_seen_at`); a stored page without a memory row
-  goes first, an address first found tonight goes after everything
-  remembered, and ties keep `(priority, depth, discovery order)`. Every
-  address known today is therefore tried within one round from today, even on
-  a site that mints new links every night. A resumed crawl
-  reads the same memory and keeps its order. An address that is in the
-  frontier only because the memory knew it is forgotten when it answers
-  404/410, and every such address is forgotten after a fully fetched crawl;
-  it does not count toward "fully fetched" and a page fetched that way is not
-  current for the stale cleanup, which keeps its meaning from before the
-  memory. Connector purge, knowledge-base delete and the org wipe delete the
-  rows. The discovery-seed pass, previews and auth probes neither read nor
-  write the memory. Ceiling: a site that mints endless live addresses grows the
-  memory by every address it lists, without bound.
+  memory first saw it (`first_seen_at`); an address first found tonight goes
+  after everything remembered, and ties keep `(priority, depth, discovery
+  order)`. Every address known today is therefore tried within one round from
+  today, even on a site that mints new links every night. A resumed crawl
+  reads the same memory and keeps its order. An address is known-only when
+  neither the primary crawl nor the discovery-seed pass found it through the
+  sitemap or a link tonight; a page read as known-only does not count as
+  reaching the seed page, so the seed pass runs as before the memory. A
+  known-only address is forgotten when it answers 404/410 (unless a page is
+  stored there), and every known-only address is forgotten after a fully
+  fetched crawl; it does not count toward "fully fetched" and a page fetched
+  that way is not current for the stale cleanup. When that cleanup would
+  retire pages that answered tonight as known-only, the bulk-retire limit
+  (`_GONE_RETIRE_MIN_PAGES`, `_GONE_RETIRE_MAX_FRACTION`) applies as it does
+  after 404s: above it nothing is retired or forgotten and
+  `crawl_connector_stale_reconcile_skipped` reports `known_only_read_count`.
+  Connector purge, knowledge-base delete and the org wipe delete the rows.
+  Previews and auth probes neither read nor write the memory. Ceiling: a site
+  that mints endless live addresses grows the memory by every address it
+  lists, without bound.
 - **Coverage.** Every finished connector crawl stores
   `coverage` (`pages_read`, `addresses_gone`, `addresses_waiting`,
   `addresses_known`, `max_pages`, `stopped_by`: `page_limit`, `attempt_limit`,

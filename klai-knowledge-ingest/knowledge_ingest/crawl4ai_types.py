@@ -25,10 +25,12 @@ class CrawlMemoryState:
     """Handoff between a connector's crawl memory and ``crawl_site``.
 
     ``remembered`` is what the memory held before this crawl: rows with
-    ``canonical_url`` (the stored key, ``None`` for a stored page the memory
-    has no row for), ``url``, ``depth`` (``None`` when unknown),
-    ``first_seen_at`` and ``last_visited_at`` (epoch seconds; ``None`` for a
-    stored page, and ``last_visited_at`` also for an address never tried).
+    ``canonical_url`` (the memory key), ``url``, ``depth`` (the depth a crawl
+    really found it at), ``first_seen_at`` and ``last_visited_at`` (epoch
+    seconds; ``last_visited_at`` is ``None`` for an address never tried).
+    ``stored`` is the addresses the connector has a stored page at; it only
+    keeps such an address in the memory when it answers 404/410, it never
+    adds anything to the frontier.
     ``crawl_site`` reads it and fills the rest when it completes; it never
     writes the memory itself, so the adapter can record a run only once its
     pages were accepted.
@@ -41,6 +43,7 @@ class CrawlMemoryState:
     """
 
     remembered: list[dict[str, Any]]
+    stored: set[str] = field(default_factory=set)
     rows: list[dict[str, Any]] = field(default_factory=list)
     forget: list[str] = field(default_factory=list)
     known_only: set[str] = field(default_factory=set)

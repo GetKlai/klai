@@ -1278,26 +1278,28 @@ class CrawlLedger:
                 priority=_PRIORITY_SITEMAP,
             )
 
-    def remember(self, rows: list[dict[str, Any]]) -> None:
-        """Add the connector's known addresses and how long each has waited.
+    def remember(self, rows: list[dict[str, Any]], stored: set[str]) -> None:
+        """Add the connector's remembered addresses and how long each has waited.
 
-        Known addresses join the frontier whether or not tonight's pages link
-        to them, so the rotation does not depend on which pages the previous
-        crawl happened to fetch. A row without a depth (a stored page the
-        memory has no row for) joins at ``max_depth``: it is read, but its
-        links are not followed beyond the connector's limit. A row that is out
-        of scope now, or whose address canonicalises to another key on this
-        crawl's host, is dropped from the memory when the crawl is recorded.
-        A stored page the memory has no row for was stored before the memory
-        existed, so it has waited longer than anything remembered.
+        Remembered addresses join the frontier whether or not tonight's pages
+        link to them, so the rotation does not depend on which pages the
+        previous crawl happened to fetch. Each joins at the depth a crawl
+        really found it at, so its links are followed exactly as for a page
+        discovered tonight at that depth. Only crawls fill the memory: stored
+        pages never join the frontier, so what a crawl discovers does not
+        depend on what is stored. A row that is out of scope now, or whose
+        address canonicalises to another key on this crawl's host, is dropped
+        from the memory when the crawl is recorded.
         """
-        # Remembered rows first, so a stored page that also has a row keeps it.
-        for row in sorted(rows, key=lambda r: r["canonical_url"] is None):
+        self._stored_pages = {
+            _canonicalise_url(_coerce_same_site_url_to_base_host(url, self.base_domain))
+            for url in stored
+        }
+        for row in rows:
             url = row["url"]
-            depth = self.max_depth if row["depth"] is None else int(row["depth"])
             self.add(
                 url,
-                depth=depth,
+                depth=int(row["depth"]),
                 discovered_from=None,
                 source_kind="known",
                 priority=_priority_for_discovered_url(url),
@@ -1305,14 +1307,9 @@ class CrawlLedger:
             canonical = _canonicalise_url(_coerce_same_site_url_to_base_host(url, self.base_domain))
             item = self._by_canonical.get(canonical)
             stored_key = row["canonical_url"]
-            if stored_key is not None and (item is None or stored_key != canonical):
+            if item is None or stored_key != canonical:
                 self._stale_memory_keys.add(stored_key)
             if item is None:
-                continue
-            if stored_key is None:
-                self._stored_pages.add(canonical)
-                if item.first_seen_at is None:
-                    item.first_seen_at = float("-inf")
                 continue
             first_seen, visited_at = row["first_seen_at"], row["last_visited_at"]
             item.first_seen_at = min(item.first_seen_at or first_seen, first_seen)
@@ -1939,7 +1936,7 @@ async def _crawl_site_in_host_scope(
         # Applied on a resume too: the checkpoint frontier does not store
         # visit times, and the adapter records the memory only after this job
         # completes, so a resumed crawl sees the same memory and keeps its order.
-        ledger.remember(memory.remembered)
+        ledger.remember(memory.remembered, memory.stored)
     if restored is not None and restored.get("complete"):
         assert checkpoint is not None
         await checkpoint.ensure_active()

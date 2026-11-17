@@ -95,7 +95,9 @@ class _Site:
                 word_count=2,
                 success=True,
                 status_code=200,
-                links={"internal": []},
+                links={
+                    "internal": [{"href": h, "text": ""} for h in self.links.get(start_url, [])]
+                },
             )
 
         async def _bulk(*, urls: list[str], **_kwargs: Any) -> ChunkedFetchResult:
@@ -140,16 +142,10 @@ class _FakeMemory:
         self.clock = 0.0
 
     async def load(self) -> list[dict[str, Any]]:
-        return [dict(row) for row in self.rows.values()] + [
-            {
-                "canonical_url": None,
-                "url": url,
-                "depth": None,
-                "first_seen_at": None,
-                "last_visited_at": None,
-            }
-            for url in self.stored
-        ]
+        return [dict(row) for row in self.rows.values()]
+
+    async def stored_addresses(self) -> list[str]:
+        return list(self.stored)
 
     async def record(self, _conn: Any, rows: list[dict[str, Any]], forget: list[str]) -> None:
         self.clock += 1
@@ -221,7 +217,9 @@ async def _night(
 ) -> tuple[list[CrawlResult], list[dict[str, Any]], CrawlMemoryState]:
     """One crawl, recorded the way the adapter records an accepted run."""
     site.new_night()
-    state = CrawlMemoryState(remembered=await memory.load())
+    state = CrawlMemoryState(
+        remembered=await memory.load(), stored=set(await memory.stored_addresses())
+    )
     results, outcomes = await crawl4ai_client.crawl_site(
         start_url=_START, max_pages=max_pages, max_depth=max_depth, memory=state
     )
@@ -316,9 +314,12 @@ async def test_crawl_after_a_rate_limited_crawl_reads_only_what_it_did_not(
     first_read = _read(first)
     _results, second, _state = await _night(site, memory)
 
+    assert set(memory.rows) == {_START, *live}
     assert len(first_read) == 30
     assert len(_read(second) - {_START}) == 29
     assert (_read(second) - {_START}).isdisjoint(first_read)
+    _results, third, _state = await _night(site, memory)
+    assert (_read(third) - {_START}).isdisjoint(first_read | _read(second))
     assert _crawl_coverage(first, max_pages=500) == {
         "pages_read": 30,
         "addresses_gone": 0,
@@ -400,22 +401,52 @@ async def test_endless_new_links_do_not_stop_the_refresh(monkeypatch) -> None:
     assert known_today <= tried
 
 
+_DOCS, _GUIDE, _ARTICLE = (
+    "https://example.com/docs",
+    "https://example.com/docs/guide",
+    "https://example.com/docs/guide/article",
+)
+_CHAIN = {_START: [_DOCS], _DOCS: [_GUIDE], _GUIDE: [_ARTICLE]}
+
+
 @pytest.mark.asyncio
-async def test_a_stored_page_without_memory_does_not_extend_the_crawl_depth(
-    monkeypatch,
-) -> None:
-    """Its depth is unknown, so it is read at max_depth and its links are not followed."""
-    stored = _address("stored")
-    child = _address("child")
-    site = _Site(live=[stored, child], sitemap=[], links={stored: [child]})
+async def test_a_stored_chain_is_discovered_through_its_links(monkeypatch) -> None:
+    """Stored pages do not join the frontier, so every link of the chain is followed."""
+    site = _Site(live=[_DOCS, _GUIDE, _ARTICLE], sitemap=[], links=_CHAIN)
     site.install(monkeypatch)
     memory = _FakeMemory()
-    memory.stored = [stored]
+    memory.stored = [_DOCS, _GUIDE, _ARTICLE]
 
-    results, _outcomes, _state = await _night(site, memory, max_depth=2)
+    for _ in range(2):
+        results, _outcomes, state = await _night(site, memory, max_depth=3)
+        assert {r.url for r in results} == {_START, _DOCS, _GUIDE, _ARTICLE}
+        assert state.known_only == set()
 
-    assert stored in {r.url for r in results}
-    assert child not in {url for call in site.bulk_calls for url in call}
+    assert {url: row["depth"] for url, row in memory.rows.items()} == {
+        _START: 0,
+        _DOCS: 1,
+        _GUIDE: 2,
+        _ARTICLE: 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_address_at_depth_two_has_its_links_followed(monkeypatch) -> None:
+    site = _Site(live=[_GUIDE, _ARTICLE], sitemap=[], links={_GUIDE: [_ARTICLE]})
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    memory.rows[_GUIDE] = {
+        "canonical_url": _GUIDE,
+        "url": _GUIDE,
+        "depth": 2,
+        "first_seen_at": 0.0,
+        "last_visited_at": 0.0,
+    }
+
+    results, _outcomes, state = await _night(site, memory, max_depth=3)
+
+    assert _ARTICLE in {r.url for r in results}
+    assert _ARTICLE not in state.known_only
 
 
 @pytest.mark.asyncio
@@ -492,9 +523,8 @@ async def test_a_list_of_only_dead_addresses_ends_at_the_attempt_bound(monkeypat
 async def test_a_resumed_crawl_keeps_the_rotation_order(monkeypatch) -> None:
     """(f) A deploy halfway through a crawl does not reset the order to discovery order."""
     addresses = [_address(i) for i in range(6)]
-    stored = _address("stored")
     found_tonight = _address("new")
-    site = _Site(live=[*addresses, stored, found_tonight], sitemap=[found_tonight, *addresses])
+    site = _Site(live=[*addresses, found_tonight], sitemap=[found_tonight, *addresses])
     site.install(monkeypatch)
     monkeypatch.setattr(crawl4ai_client, "_CHECKPOINT_BATCH_SIZE", 2)
     remembered = [
@@ -506,18 +536,10 @@ async def test_a_resumed_crawl_keeps_the_rotation_order(monkeypatch) -> None:
             "last_visited_at": 1.0 if url in addresses[:3] else None,
         }
         for url in addresses
-    ] + [
-        {
-            "canonical_url": None,
-            "url": stored,
-            "depth": None,
-            "first_seen_at": None,
-            "last_visited_at": None,
-        }
     ]
-    # The stored page without a row waited longest, then the never-tried
-    # addresses seen at 0, then those tried at 1, then what is new tonight.
-    expected = [stored, *addresses[3:], *addresses[:3], found_tonight]
+    # The never-tried addresses seen at 0, then those tried at 1, then what is
+    # new tonight.
+    expected = [*addresses[3:], *addresses[:3], found_tonight]
 
     real_bulk = crawl4ai_client._chunked_bulk_fetch
     calls = 0
