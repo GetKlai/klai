@@ -138,14 +138,10 @@ class _FakeMemory:
 
     def __init__(self) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
-        self.stored: list[str] = []
         self.clock = 0.0
 
     async def load(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.rows.values()]
-
-    async def stored_addresses(self) -> list[str]:
-        return list(self.stored)
 
     async def record(self, _conn: Any, rows: list[dict[str, Any]], forget: list[str]) -> None:
         self.clock += 1
@@ -217,9 +213,7 @@ async def _night(
 ) -> tuple[list[CrawlResult], list[dict[str, Any]], CrawlMemoryState]:
     """One crawl, recorded the way the adapter records an accepted run."""
     site.new_night()
-    state = CrawlMemoryState(
-        remembered=await memory.load(), stored=set(await memory.stored_addresses())
-    )
+    state = CrawlMemoryState(remembered=await memory.load())
     results, outcomes = await crawl4ai_client.crawl_site(
         start_url=_START, max_pages=max_pages, max_depth=max_depth, memory=state
     )
@@ -415,7 +409,6 @@ async def test_a_stored_chain_is_discovered_through_its_links(monkeypatch) -> No
     site = _Site(live=[_DOCS, _GUIDE, _ARTICLE], sitemap=[], links=_CHAIN)
     site.install(monkeypatch)
     memory = _FakeMemory()
-    memory.stored = [_DOCS, _GUIDE, _ARTICLE]
 
     for _ in range(2):
         results, _outcomes, state = await _night(site, memory, max_depth=3)
@@ -624,31 +617,6 @@ def test_a_preview_crawl_neither_reads_nor_writes_the_memory(client: TestClient)
     assert resp.status_code == 200, resp.text
     load.assert_not_awaited()
     record.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_a_stored_page_that_answers_404_keeps_its_row_and_rotates(monkeypatch) -> None:
-    """F1 skips stored pages: forgetting one would bring it back first every night."""
-    stored = _address("stored")
-    others = [_address(i) for i in range(6)]
-    site = _Site(live=others, dead=[stored], sitemap=others)
-    site.install(monkeypatch)
-    memory = _FakeMemory()
-    memory.stored = [stored]
-    memory.rows[stored] = {
-        "canonical_url": stored,
-        "url": stored,
-        "depth": 1,
-        "first_seen_at": 0.0,
-        "last_visited_at": 0.0,
-    }
-
-    _results, _outcomes, state = await _night(site, memory, max_pages=3)
-    await _night(site, memory, max_pages=3)
-
-    assert stored not in state.forget
-    assert memory.rows[stored]["last_visited_at"] == 1.0
-    assert site.bulk_calls[0][0] != stored
 
 
 def test_a_page_the_seed_pass_read_counts_as_read() -> None:

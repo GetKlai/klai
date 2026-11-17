@@ -1,8 +1,8 @@
 """The per-connector crawl memory against real PostgreSQL.
 
 Covers what the unit tests cannot: the upsert keeps an earlier try for an
-address that was only seen and forgets what it is told to, stored pages are
-reported apart from the frontier, a remembered address is crawled although
+address that was only seen and forgets what it is told to, the memory reads
+nothing but its own table (a stored page never comes back), a remembered address is crawled although
 tonight's sitemap no longer lists it, a resumed crawl keeps the rotation order
 through the real checkpoint tables (which do not store visit times and must
 accept the ``known`` source kind), and a connector purge or knowledge-base
@@ -104,9 +104,7 @@ def _memory(connector_id: str) -> PostgresCrawlMemory:
 
 async def _crawl(memory: PostgresCrawlMemory, **kwargs: Any) -> list[dict[str, Any]]:
     """One crawl, recorded the way the adapter records an accepted run."""
-    state = CrawlMemoryState(
-        remembered=await memory.load(), stored=set(await memory.stored_addresses())
-    )
+    state = CrawlMemoryState(remembered=await memory.load())
     _results, outcomes = await crawl4ai_client.crawl_site(start_url=_START, memory=state, **kwargs)
     async with _connection_factory() as conn:
         await memory.record(conn, state.rows, state.forget)
@@ -142,7 +140,7 @@ async def _cleanup(connector_id: str, job_id: str | None = None) -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_keeps_visits_and_knows_stored_pages() -> None:
+async def test_memory_keeps_visits_and_ignores_stored_pages() -> None:
     connector_id = str(uuid.uuid4())
     memory = _memory(connector_id)
     stored_url = _address(99)
@@ -177,10 +175,8 @@ async def test_memory_keeps_visits_and_knows_stored_pages() -> None:
         assert (
             remembered[_address(1)]["first_seen_at"] == (remembered[_address(1)]["last_visited_at"])
         )
-        # A stored page is known only as an address with a stored page; it
-        # never comes back as a frontier row.
+        # Only crawls fill the memory; a stored page never comes back from it.
         assert stored_url not in {r["url"] for r in loaded}
-        assert await memory.stored_addresses() == [stored_url]
     finally:
         await _cleanup(connector_id)
 

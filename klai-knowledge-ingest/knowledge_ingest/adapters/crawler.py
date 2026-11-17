@@ -1390,13 +1390,7 @@ async def run_crawl_job(
             if connector_id
             else None
         )
-        memory_state = (
-            CrawlMemoryState(
-                remembered=await memory.load(), stored=set(await memory.stored_addresses())
-            )
-            if memory
-            else None
-        )
+        memory_state = CrawlMemoryState(remembered=await memory.load()) if memory else None
         results, fetch_outcomes = await crawl_site(
             start_url=start_url,
             selector=content_selector,

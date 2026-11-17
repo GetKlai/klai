@@ -216,8 +216,7 @@ What the crawler does:
   neither the primary crawl nor the discovery-seed pass found it through the
   sitemap or a link tonight; a page read as known-only does not count as
   reaching the seed page, so the seed pass runs as before the memory. A
-  known-only address is forgotten when it answers 404/410 (unless a page is
-  stored there), and every known-only address is forgotten after a fully
+  known-only address is forgotten when it answers 404/410, and every known-only address is forgotten after a fully
   fetched crawl; it does not count toward "fully fetched" and a page fetched
   that way is not current for the stale cleanup. When that cleanup would
   retire pages that answered tonight as known-only, the bulk-retire limit

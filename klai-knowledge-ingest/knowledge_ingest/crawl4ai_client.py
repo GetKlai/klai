@@ -1221,7 +1221,6 @@ class CrawlLedger:
         self._by_canonical: dict[str, DiscoveredUrl] = {}
         self._order = 0
         self._stale_memory_keys: set[str] = set()
-        self._stored_pages: set[str] = set()
 
     @property
     def discovered_count(self) -> int:
@@ -1278,7 +1277,7 @@ class CrawlLedger:
                 priority=_PRIORITY_SITEMAP,
             )
 
-    def remember(self, rows: list[dict[str, Any]], stored: set[str]) -> None:
+    def remember(self, rows: list[dict[str, Any]]) -> None:
         """Add the connector's remembered addresses and how long each has waited.
 
         Remembered addresses join the frontier whether or not tonight's pages
@@ -1291,10 +1290,6 @@ class CrawlLedger:
         address canonicalises to another key on this crawl's host, is dropped
         from the memory when the crawl is recorded.
         """
-        self._stored_pages = {
-            _canonicalise_url(_coerce_same_site_url_to_base_host(url, self.base_domain))
-            for url in stored
-        }
         for row in rows:
             url = row["url"]
             self.add(
@@ -1482,9 +1477,7 @@ class CrawlLedger:
         only addresses never sent keep their place. A known-only address
         (no sitemap entry and no page read tonight refers to it) that answered
         404/410 is forgotten, so the memory does not keep what the site no
-        longer has, unless a page is stored there: the next crawl would load it
-        again as a stored page without a row and try it first every night, so
-        it keeps its row and rotates until a fully fetched crawl retires it.
+        longer has.
         """
         memory.rows, memory.forget = [], sorted(self._stale_memory_keys)
         memory.known_only = set()
@@ -1494,10 +1487,7 @@ class CrawlLedger:
             known_only = item.source_kind == "known"
             if known_only:
                 memory.known_only.add(item.canonical_url)
-                if (
-                    item.reason_code == FetchReasonCode.GONE.value
-                    and item.canonical_url not in self._stored_pages
-                ):
+                if item.reason_code == FetchReasonCode.GONE.value:
                     memory.forget.append(item.canonical_url)
                     continue
             memory.rows.append(
@@ -1936,7 +1926,7 @@ async def _crawl_site_in_host_scope(
         # Applied on a resume too: the checkpoint frontier does not store
         # visit times, and the adapter records the memory only after this job
         # completes, so a resumed crawl sees the same memory and keeps its order.
-        ledger.remember(memory.remembered, memory.stored)
+        ledger.remember(memory.remembered)
     if restored is not None and restored.get("complete"):
         assert checkpoint is not None
         await checkpoint.ensure_active()

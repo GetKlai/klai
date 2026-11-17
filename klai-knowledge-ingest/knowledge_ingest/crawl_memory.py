@@ -18,7 +18,6 @@ from typing import Any
 import asyncpg
 
 from knowledge_ingest.crawl_checkpoint import ConnectionFactory
-from knowledge_ingest.pg_store import _SENTINEL
 
 
 class PostgresCrawlMemory:
@@ -53,30 +52,6 @@ class PostgresCrawlMemory:
                 self.connector_id,
             )
         return [dict(row) for row in rows]
-
-    async def stored_addresses(self) -> list[str]:
-        """Addresses the connector has a stored page at.
-
-        Only used to keep such an address in the memory when it answers
-        404/410; stored pages never join the crawl frontier.
-        """
-        async with self.connection_factory() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT DISTINCT COALESCE(extra::jsonb->>'source_url', path) AS url
-                FROM knowledge.artifacts
-                WHERE org_id = $1
-                  AND kb_slug = $2
-                  AND belief_time_end = $4
-                  AND extra IS NOT NULL
-                  AND extra::jsonb->>'source_connector_id' = $3
-                """,
-                self.org_id,
-                self.kb_slug,
-                self.connector_id,
-                _SENTINEL,
-            )
-        return [str(row["url"]) for row in rows]
 
     async def record(
         self, conn: asyncpg.Connection, rows: list[dict[str, Any]], forget: list[str]

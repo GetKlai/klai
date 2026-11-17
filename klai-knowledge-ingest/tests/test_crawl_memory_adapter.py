@@ -51,7 +51,6 @@ def _outcome(url: str, reason: str, **extra: Any) -> dict[str, Any]:
 class _Memory:
     instances: ClassVar[list[_Memory]] = []
     rows: ClassVar[list[dict[str, Any]]] = []
-    stored: ClassVar[list[str]] = []
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         self.recorded: list[tuple[list[dict[str, Any]], list[str]]] = []
@@ -60,9 +59,6 @@ class _Memory:
 
     async def load(self) -> list[dict[str, Any]]:
         return [dict(row) for row in _Memory.rows]
-
-    async def stored_addresses(self) -> list[str]:
-        return list(_Memory.stored)
 
     async def record(self, _conn: Any, rows: list[dict[str, Any]], forget: list[str]) -> None:
         if self.fail:
@@ -118,7 +114,6 @@ async def _run(
     """
     _Memory.instances = []
     _Memory.rows = remembered or []
-    _Memory.stored = stored or []
     conn = MagicMock()
     conn.execute = AsyncMock(return_value=None)
     conn.executemany = AsyncMock(return_value=None)
