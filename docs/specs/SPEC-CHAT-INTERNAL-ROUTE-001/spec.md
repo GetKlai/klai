@@ -1,7 +1,7 @@
 ---
 id: SPEC-CHAT-INTERNAL-ROUTE-001
 version: "0.1.0"
-status: design, stap 1 gebouwd en op het productiemodel bewezen (0 van 8 ontspoord), meetlatrondes lopen; nog niets uitgerold
+status: design, stap 1 gebouwd en gemeten (productiemodel 0 van 8 ontspoord tegen 8 van 8; meetlat binnen de ruis op beide oppervlakken); nog niet uitgerold
 created: 2026-11-17
 updated: 2026-11-17
 priority: high
