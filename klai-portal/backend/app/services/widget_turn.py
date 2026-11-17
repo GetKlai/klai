@@ -41,6 +41,7 @@ from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import _response_language
 from app.services.chat_safety import _last_user_message, output_safety_violation
 from app.services.chat_sources import PageContext
+from app.services.citations import source_url_key
 from app.services.clarify_gate import already_asked
 from app.services.contact_routes import ContactRoute, pick_exit, pick_route
 from app.services.gap_classification import classify_gap
@@ -155,7 +156,7 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
                 return await _contact_request_reply(inputs, turn, case)
             # 3-4. Search, and select inside retrieve_context (passage_selection.py).
             variants = case.search_variants(latest) if case else []
-            found, retrieval_ms = await timed(_search(inputs, turn, variants, product))
+            found, retrieval_ms = await timed(_search(inputs, turn, variants, product, _rejected_urls(inputs, case)))
         else:
             # A first question keeps its two paraphrases and runs the case
             # beside the search: the case's queries narrow (product, problem,
@@ -173,7 +174,9 @@ async def widget_turn(inputs: TurnInputs) -> Reply:
     # is written before any route returns.
     log_retrieval(inputs.auth.org_id, f"partner:{inputs.auth.key_id}", found.chunks)
     if turn.passages_chosen:
-        inputs.answer_signals["kept_passages"] = kept_passages_of(found.chunks, inputs.kept_passages)
+        inputs.answer_signals["kept_passages"] = kept_passages_of(
+            found.chunks, inputs.kept_passages, mark_answered=True
+        )
     # 5. Route in code what the case and the selection decided.
     routed = await _route(inputs, turn, found, case)
     if isinstance(routed, Reply):
@@ -217,13 +220,37 @@ def fixed_language(
     return _response_language(messages, pasted_correspondence=pasted_correspondence)
 
 
-async def _search(inputs: TurnInputs, turn: KnowledgeTurn, follow_up_variants: list[str], product: str) -> Found:
+def _rejected_urls(inputs: TurnInputs, case: case_file.Case | None) -> frozenset[str] | None:
+    """The articles the previous answer cited, on a turn that reports it did not help; None on any other turn.
+
+    The case's negative sentiment is the signal: ``tried`` accumulates over the
+    conversation and was no signal (39 to 60 false alarms on 69 turns). The
+    previous answer's articles are the passages flagged ``answered`` when it
+    stored them (``kept_passages_of``), compared by the url key.
+    """
+    if case is None or case.sentiment != "negative" or inputs.previous_decision not in _ANSWER_DECISIONS:
+        return None
+    return frozenset(
+        key
+        for passage in inputs.kept_passages
+        if passage.get("answered") and (key := source_url_key(passage.get("source_url")))
+    )
+
+
+async def _search(
+    inputs: TurnInputs,
+    turn: KnowledgeTurn,
+    follow_up_variants: list[str],
+    product: str,
+    rejected_urls: frozenset[str] | None = None,
+) -> Found:
     request, auth = inputs.request, inputs.auth
     knowledge = request.knowledge
     chunks, system_prompt, trusted_sources, broad = await retrieve_context(
         follow_up_variants=follow_up_variants,
         product=product,
         kept_passages=inputs.kept_passages,
+        rejected_urls=rejected_urls,
         answer_signals=inputs.answer_signals,
         org_id=auth.org_id,
         zitadel_org_id=auth.zitadel_org_id,

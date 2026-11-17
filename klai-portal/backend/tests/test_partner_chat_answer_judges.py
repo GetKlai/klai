@@ -2226,6 +2226,93 @@ def test_the_kept_passages_are_a_rolling_window_of_three():
     assert [item["chunk_id"] for item in kept] == ["c2", "c1", "c3"]
 
 
+# ─── A rejected answer is not offered again ───
+
+
+_REJECTED = {**_KEPT, "answered": True}
+# The search brings the rejected article back under a url that differs only by a trailing slash.
+_REJECTED_AGAIN = {**CHUNK_900, "source_url": _KEPT["source_url"] + "/"}
+_REJECTION = {**_case(), "sentiment": "negative"}
+_OTHER_PASSAGE = "Een incasso storneer je binnen acht weken via je eigen bank."
+
+
+async def _rejection_turn(monkeypatch, *, items: list[dict], case: dict, selection: dict | None = None):
+    """A follow-up straight after an answer whose passage turn 1 kept; returns the turn and the record's signals."""
+    from app.services import retrieval_context
+
+    signals: dict = {}
+    original = retrieval_context._choose_and_prompt
+
+    async def spy(t, found):
+        signals.update(t.answer_signals)
+        result = await original(t, found)
+        signals.update(t.answer_signals)
+        return result
+
+    monkeypatch.setattr(retrieval_context, "_choose_and_prompt", spy)
+    stored = case_file.StoredTurn(_case(), _FOLLOW_UP[1]["content"], [_REJECTED], "answer")
+    litellm = _LiteLLM(
+        model_text=_OTHER_PASSAGE,
+        case=case,
+        selection=selection or _selection("answers", (1, _OTHER_PASSAGE)),
+    )
+    turn = await _route_turn(monkeypatch, band="high", items=items, litellm=litellm, messages=_FOLLOW_UP, stored=stored)
+    return (*turn, signals)
+
+
+async def test_after_a_rejection_the_selection_is_not_offered_the_article_the_previous_answer_cited(monkeypatch):
+    """17 of 69 turns after a rejection repeated or contradicted the advice: the search brought the same
+    article back and nothing used the rejection. The article is withheld from memory and from the new
+    search alike (compared on the url key), another article still goes in."""
+    litellm, _, _, _ = await _rejection_turn(monkeypatch, items=[_REJECTED_AGAIN, _two_articles()[1]], case=_REJECTION)
+
+    passages = _selection_passages(litellm)
+    assert _KEPT["title"] not in passages
+    assert "Factuur betalen" not in passages
+    assert "Incasso storneren" in passages
+
+
+async def test_after_a_rejection_with_only_the_rejected_article_available_the_visitor_is_told_there_is_no_more(
+    monkeypatch,
+):
+    litellm, text, extras, signals = await _rejection_turn(monkeypatch, items=[_REJECTED_AGAIN], case=_REJECTION)
+
+    assert text == not_further_message("nl")
+    assert litellm.answer_requests == []
+    assert extras["escalation"] == [_NO_ROUTE_BOOKING]
+    assert signals["rejection"] == {"withheld_articles": 1}
+
+
+async def test_the_writer_is_told_not_to_repeat_the_answer_the_visitor_rejected(monkeypatch):
+    litellm, text, _, signals = await _rejection_turn(
+        monkeypatch, items=[_REJECTED_AGAIN, _two_articles()[1]], case=_REJECTION
+    )
+
+    assert "did not help" in _system_prompt_sent(litellm)
+    assert text.startswith(_OTHER_PASSAGE)
+    assert signals["rejection"] == {"withheld_articles": 1}
+
+
+async def test_a_follow_up_with_neutral_sentiment_is_offered_the_remembered_passage_as_before(monkeypatch):
+    litellm, _, _, signals = await _rejection_turn(
+        monkeypatch, items=[_two_articles()[1]], case=_case(), selection=_selection("answers", (1, _KEPT["text"]))
+    )
+
+    assert _selection_passages(litellm).startswith(f"[1] {_KEPT['title']}")
+    assert "did not help" not in _system_prompt_sent(litellm)
+    assert "rejection" not in signals
+
+
+def test_a_widget_turn_flags_the_passages_it_answered_from_and_not_the_older_ones():
+    chosen = {**_KEPT, "chunk_id": "c9", "text": "Nieuw."}
+    older = {**_KEPT, "answered": True}
+
+    flagged = kept_passages_of([chosen], [older], mark_answered=True)
+
+    assert [(item["chunk_id"], item.get("answered")) for item in flagged] == [("c9", True), ("c7", None)]
+    assert all("answered" not in item for item in kept_passages_of([chosen], [older]))
+
+
 async def test_a_short_follow_up_in_a_dutch_conversation_gets_the_dutch_not_found_text(monkeypatch):
     """Detected per message, a two-word follow-up got an English refusal in a
     Dutch conversation; the case judges the language on the whole conversation."""

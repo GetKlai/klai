@@ -780,6 +780,7 @@ async def _two_internal_turns(
     searchable_next: tuple[str, ...] = ("handboek",),
     conversation_next: str | None = CONVERSATION,
     cases: dict | None = None,
+    case_next: dict = LEAVE_CASE,
 ) -> tuple[_Turn, _Turn, _LiteLLM]:
     """Turn 1 chooses KEPT_ARTICLE; turn 2's search finds only an unrelated article, or ``found_next``."""
     cases = {} if cases is None else cases
@@ -791,7 +792,7 @@ async def _two_internal_turns(
         retrieval=_one_article(KEPT_ARTICLE, "c-leave", "Verlof goedkeuren"),
         cases=cases,
     )
-    llm = _LiteLLM(case=LEAVE_CASE)
+    llm = _LiteLLM(case=case_next)
     second = await _turn(
         monkeypatch,
         llm,
@@ -819,6 +820,19 @@ async def test_an_internal_follow_up_offers_the_passage_the_previous_turn_chose(
     assert KEPT_ARTICLE in _system_prompt(llm)
     (case_call,) = llm.of("case_update")
     assert LEAVE_CASE["problem"] in case_call["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_an_internal_follow_up_with_negative_sentiment_still_reads_the_kept_passage_and_writes_no_rejection(
+    monkeypatch,
+):
+    """Rejection handling is the widget's: the internal chat's selection, brief and record stay as they were."""
+    _, second, llm = await _two_internal_turns(monkeypatch, case_next={**LEAVE_CASE, "sentiment": "negative"})
+
+    (selection,) = llm.of("passage_selection")
+    assert f"[1] Verlof goedkeuren\n{KEPT_ARTICLE}" in selection["messages"][1]["content"]
+    assert "did not help" not in _system_prompt(llm)
+    assert "rejection" not in second.records[0]
 
 
 @pytest.mark.asyncio

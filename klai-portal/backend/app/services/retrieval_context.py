@@ -64,6 +64,7 @@ from app.services.chat_turn_rules import (
 from app.services.citations import (
     evidence_pack_items_as_chunks,
     render_evidence_context,
+    source_url_key,
     trusted_sources_from_evidence_pack,
 )
 from app.services.gap_classification import classify_gap
@@ -428,6 +429,12 @@ _KEPT_PASSAGES = 3
 _KEPT_PASSAGE_CHARS = 2500
 
 
+_REJECTED_BRIEF = (
+    "\n\n[This turn] The visitor reports that your previous answer did not help. Do not repeat that answer or its "
+    "steps; build this reply on the lines above only."
+)
+
+
 @dataclass
 class KnowledgeTurn:
     """What retrieve_context decided for this turn besides the prompt.
@@ -629,6 +636,7 @@ class _Turn:
     answer_signals: dict[str, Any] | None
     follow_up_variants: list[str] | None
     kept_passages: list[dict]
+    rejected_urls: frozenset[str] | None
     prompt: Callable[..., str]
     product: str
 
@@ -673,6 +681,7 @@ def _read_turn(
     knowledge_turn: KnowledgeTurn | None,
     follow_up_variants: list[str] | None,
     kept_passages: list[dict],
+    rejected_urls: frozenset[str] | None,
     product: str,
 ) -> _Turn:
     """Step 1: read the request once. The query, the page context, the turn's sink and the prompt builder."""
@@ -747,6 +756,7 @@ def _read_turn(
         answer_signals=answer_signals,
         follow_up_variants=follow_up_variants,
         kept_passages=kept_passages,
+        rejected_urls=rejected_urls,
         prompt=prompt,
         product=product,
     )
@@ -1044,13 +1054,17 @@ async def _search(t: _Turn) -> _Found | _Result:
     )
 
 
-def kept_passages_of(chosen: list[dict], previous: list[dict]) -> list[dict]:
+def kept_passages_of(chosen: list[dict], previous: list[dict], *, mark_answered: bool = False) -> list[dict]:
     """What a widget turn stores for the next turn's selection: the passages it chose, then the ones it kept.
 
     The article that answered turn 1 was gone from the search in turn 4,
     which then answered "not found" (week of 14 to 21 October): the
     conversation had the evidence and the search threw it away. A rolling
     window, so turn 1's passage survives turn 2 choosing another.
+
+    ``mark_answered`` (the widget) flags the passages chosen this turn, the
+    ones the reply was written from, so that the next turn can tell them from
+    the older ones when the visitor says the answer did not help.
     """
     return [
         {
@@ -1059,6 +1073,7 @@ def kept_passages_of(chosen: list[dict], previous: list[dict]) -> list[dict]:
             "title": chunk.get("title"),
             "source_url": chunk.get("source_url"),
             "text": str(chunk.get("text") or "")[:_KEPT_PASSAGE_CHARS],
+            **({"answered": True} if mark_answered and any(chunk is item for item in chosen) else {}),
         }
         for chunk in _new_passages([], [*chosen, *previous])[:_KEPT_PASSAGES]
     ]
@@ -1104,6 +1119,24 @@ def _with_kept(t: _Turn, chunks: list[dict]) -> list[dict]:
             for chunk in kept
         ]
     return kept + chunks
+
+
+def _without_rejected(t: _Turn, chunks: list[dict]) -> tuple[list[dict], int]:
+    """On a rejection turn, the chunks of the articles the previous answer cited taken out, and how many articles that were.
+
+    The visitor says that answer did not help, so those articles are not
+    offered again, from memory and from this search alike. 17 of 69 turns
+    after such a report repeated or contradicted the advice, in 14 of them
+    because the search brought the same article back.
+    """
+    if t.rejected_urls is None:
+        return chunks, 0
+    keys = {source_url_key(chunk.get("source_url")) for chunk in chunks}
+    remaining = [chunk for chunk in chunks if source_url_key(chunk.get("source_url")) not in t.rejected_urls]
+    withheld = len(keys & t.rejected_urls)
+    if t.answer_signals is not None:
+        t.answer_signals["rejection"] = {"withheld_articles": withheld}
+    return remaining, withheld
 
 
 def _register_gap(t: _Turn, found: _Found) -> None:
@@ -1172,6 +1205,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     # candidates, also when the search found nothing; broad mode and the gap
     # read the search's own chunks.
     selection_chunks = _with_kept(t, chunks)
+    selection_chunks, withheld = _without_rejected(t, selection_chunks)
     if t.internal and profile.kb_mode == "strict" and not selection_chunks:
         if not isinstance(found.evidence_pack, dict):
             logger.error("retrieval_response_missing_evidence_pack", org_id=t.org_id)
@@ -1195,12 +1229,16 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     # widget's "not found", the internal Strict refusal); an internal Open
     # turn without chosen passages keeps every passage (see below).
     source_only = not t.internal or profile.kb_mode == "strict"
-    if (
-        selection_chunks
-        and not turn.user_provided_content
+    selectable = (
+        not turn.user_provided_content
         and not turn.pasted_correspondence
         and not _broad_mode_active(chunks, broad_consent=t.broad_consent)
-    ):
+    )
+    if withheld and not selection_chunks and selectable:
+        # Only the rejected article was available: nothing answers, which the
+        # caller routes as "the articles get no further" (widget_turn).
+        turn.not_in_passages = True
+    if selection_chunks and selectable:
         turn.selection = await select_passages(
             t.messages,
             selection_chunks,
@@ -1268,6 +1306,8 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             unchecked=bool(turn.unchecked_questions),
             open_parts=turn.open_parts,
         )
+        if t.rejected_urls is not None:
+            system_prompt += _REJECTED_BRIEF
         # The parts beyond the search limit were never searched; the writer
         # must still see them so it does not answer them from other lines.
         if unchecked := unchecked_question_blocks(turn.unchecked_questions, start_index=len(found.sub_queries) + 1):
@@ -1325,6 +1365,10 @@ async def retrieve_context(
     # Help widget: the passages the previous turn chose (kept_passages_of),
     # offered to this turn's selection when the search lost them or found nothing.
     kept_passages: list[dict] | None = None,
+    # Help widget, a turn on which the visitor reports that the previous answer
+    # did not help: the url keys (source_url_key) of the articles that answer
+    # cited. None on every other turn, and always on the internal chat.
+    rejected_urls: frozenset[str] | None = None,
     # The product the user names, one of the org's product labels
     # (case_file.product_from_messages), or "": preferred by retrieval-api and named to the
     # selection step (knowledge-base plan, step 7).
@@ -1390,6 +1434,7 @@ async def retrieve_context(
         knowledge_turn=knowledge_turn,
         follow_up_variants=follow_up_variants,
         kept_passages=kept_passages or [],
+        rejected_urls=rejected_urls,
         product=product,
     )
     without_search = _without_search(t, retrieval_enabled=retrieval_enabled)
