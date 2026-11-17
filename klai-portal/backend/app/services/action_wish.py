@@ -25,8 +25,10 @@ from app.services.turn_judge import every_field_required, structured_judge_call
 _PROMPT = (
     "You read the last message an employee sent to an assistant that can use tools. "
     "quote: the employee's own words, copied verbatim from that message, that ask the assistant to perform an "
-    "action with a tool: save something to the knowledge base, create, change or list a page, or search the web. "
-    "Empty when the message asks a question, asks for a text, or only pastes material.\n"
+    "action with a tool: save something to the knowledge base, create, change or list a page, or look something up "
+    "on the web. A request counts as a web lookup only when the message itself names the web, the internet or an "
+    "online search, in any language, also when it is phrased as a question. Empty when the message asks a question "
+    "without naming the web or the internet, asks for a text, or only pastes material.\n"
     "action: true only when quote is not empty."
 )
 # The quote is one phrase; the measured call took 0.54 s median (17 November 2026).
