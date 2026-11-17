@@ -79,6 +79,7 @@ _LEAF_TABLE_DELETES: tuple[tuple[str, str], ...] = (
     ("crawled_pages", "DELETE FROM knowledge.crawled_pages WHERE org_id = $1"),
     ("crawl_jobs", "DELETE FROM knowledge.crawl_jobs WHERE org_id = $1"),
     ("crawl_domains", "DELETE FROM knowledge.crawl_domains WHERE org_id = $1"),
+    ("crawl_url_memory", "DELETE FROM knowledge.crawl_url_memory WHERE org_id = $1"),
     ("kb_config", "DELETE FROM knowledge.kb_config WHERE org_id = $1"),
     ("org_config", "DELETE FROM knowledge.org_config WHERE org_id = $1"),
     (

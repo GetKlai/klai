@@ -25,6 +25,7 @@ from knowledge_ingest.adapters.crawler import (
     DIRTY_CONTENT_REASON,
     FETCH_FAILURE_DOMINANT_REASON,
     _build_crawl_outcome_warning,
+    _crawl_coverage,
     _crawl_warning_terminal_status,
     decide_fetch_failure_terminal_status,
     decide_terminal_status,
@@ -140,52 +141,51 @@ def test_summary_contains_actionable_suggestion() -> None:
     assert "authentication" in suggestion.lower() or "content_selector" in suggestion.lower()
 
 
-def test_budget_exhausted_outcomes_build_failed_partial_warning() -> None:
-    warning = _build_crawl_outcome_warning(
-        [
-            {
-                "url": "https://example.com/fetched",
-                "reason_code": "success",
-                "status_code": 200,
-                "content_length": 100,
-            },
-            {
-                "url": "https://example.com/not-fetched",
-                "reason_code": "not_fetched_budget_exhausted",
-                "status_code": None,
-                "content_length": 0,
-            },
-        ],
-        max_pages=200,
-    )
+def test_budget_exhausted_outcomes_build_a_warning_on_a_completed_crawl() -> None:
+    """A crawl that read pages and stopped at the page limit is a rotating crawl."""
+    outcomes = [
+        {
+            "url": "https://example.com/fetched",
+            "reason_code": "success",
+            "status_code": 200,
+            "content_length": 100,
+        },
+        {
+            "url": "https://example.com/not-fetched",
+            "reason_code": "not_fetched_budget_exhausted",
+            "status_code": None,
+            "content_length": 0,
+        },
+    ]
+    warning = _build_crawl_outcome_warning(outcomes, max_pages=200)
 
     assert warning is not None
     assert warning["reason"] == CRAWL_BUDGET_EXHAUSTED_REASON
     assert warning["omitted_count"] == 1
     assert warning["omitted_reason_counts"] == {"not_fetched_budget_exhausted": 1}
     assert warning["sample_omitted_urls"] == ["https://example.com/not-fetched"]
-    assert _crawl_warning_terminal_status(warning) == "failed_partial"
+    coverage = _crawl_coverage(outcomes, max_pages=200)
+    assert _crawl_warning_terminal_status(warning, coverage) == ""
 
 
 def test_all_failed_outcomes_build_failed_partial_warning() -> None:
-    warning = _build_crawl_outcome_warning(
-        [
-            {
-                "url": "https://example.com/",
-                "reason_code": "unknown_exception",
-                "status_code": None,
-                "content_length": 0,
-            },
-        ],
-        max_pages=500,
-    )
+    outcomes = [
+        {
+            "url": "https://example.com/",
+            "reason_code": "unknown_exception",
+            "status_code": None,
+            "content_length": 0,
+        },
+    ]
+    warning = _build_crawl_outcome_warning(outcomes, max_pages=500)
 
     assert warning is not None
     assert warning["reason"] == CRAWL_FETCH_FAILED_REASON
     assert warning["failed_count"] == 1
     assert warning["failed_reason_counts"] == {"unknown_exception": 1}
     assert warning["sample_failed_urls"] == ["https://example.com/"]
-    assert _crawl_warning_terminal_status(warning) == "failed_partial"
+    coverage = _crawl_coverage(outcomes, max_pages=500)
+    assert _crawl_warning_terminal_status(warning, coverage) == "failed_partial"
 
 
 @pytest.mark.parametrize("trip_rate_input", [0.31, 0.5, 0.7, 1.0])
