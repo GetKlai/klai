@@ -160,6 +160,7 @@ class PortalClient:
         bytes_processed: int,
         error_details: list[dict[str, Any]] | None,
         documents_changed: int | None,
+        coverage: dict[str, Any] | None = None,
     ) -> None:
         """Report sync run results to portal.
 
@@ -180,6 +181,9 @@ class PortalClient:
                 this run (real ingests plus deletions), or None when the path
                 cannot know. The portal reanalyses support cases only for a
                 positive count, so an unchanged sync costs no LLM calls.
+            coverage: What a website crawl read and left for the next nights,
+                as knowledge-ingest reports it; None for other connector types
+                and for crawls from before coverage existed.
         """
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -196,6 +200,7 @@ class PortalClient:
                         "bytes_processed": bytes_processed,
                         "error_details": error_details,
                         "documents_changed": documents_changed,
+                        "coverage": coverage,
                     },
                 )
                 response.raise_for_status()
