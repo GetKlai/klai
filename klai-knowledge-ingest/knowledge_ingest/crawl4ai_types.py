@@ -20,19 +20,28 @@ class CrawlCheckpoint(Protocol):
     async def ensure_active(self) -> None: ...
 
 
-class CrawlMemory(Protocol):
-    """Per-source memory of when each address was last visited and what it answered.
+@dataclass
+class CrawlMemoryState:
+    """Handoff between a connector's crawl memory and ``crawl_site``.
 
-    ``load`` returns rows with ``canonical_url``, ``url``, ``depth``,
-    ``last_visited_at`` (epoch seconds or ``None``) and ``last_reason_code``.
-    ``save`` takes rows with ``canonical_url``, ``url``, ``depth``, ``visited``
-    and ``reason_code``; a row with ``visited`` false only makes the address
-    known and keeps its earlier visit.
+    ``remembered`` is what the memory held before this crawl: rows with
+    ``canonical_url`` (the stored key, ``None`` for a stored page the memory
+    has no row for), ``url``, ``depth`` (``None`` when unknown) and
+    ``last_visited_at`` (epoch seconds or ``None``). ``crawl_site`` reads it and
+    fills the rest when it completes; it never writes the memory itself, so
+    the adapter can record a run only once its pages were accepted.
+
+    ``rows`` is every in-scope address with ``visited`` (actually sent this
+    crawl) and ``known_only``; ``forget`` holds stored keys to drop (a
+    known-only address that answered 404/410, an out-of-scope or re-keyed
+    row); ``known_only`` is the canonical URLs that tonight were in the
+    frontier only because the memory remembered them.
     """
 
-    async def load(self) -> list[dict[str, Any]]: ...
-
-    async def save(self, rows: list[dict[str, Any]]) -> None: ...
+    remembered: list[dict[str, Any]]
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    forget: list[str] = field(default_factory=list)
+    known_only: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -85,10 +94,9 @@ class DiscoveredUrl:
     order: int
     status: DiscoveryStatus = "queued"
     reason_code: str | None = None
-    # From the source's CrawlMemory; not stored in the checkpoint frontier,
-    # a resumed crawl reads them from the memory again.
+    # From the connector's crawl memory; not stored in the checkpoint
+    # frontier, a resumed crawl reads it from the memory again.
     last_visited_at: float | None = None
-    last_reason_code: str | None = None
 
 
 @dataclass

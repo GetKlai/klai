@@ -195,23 +195,38 @@ What the crawler does:
   (`_ATTEMPT_LIMIT_FACTOR` in `crawl4ai_client.py`); a crawl that reaches it
   first labels what is left `not_fetched_budget_exhausted` with
   `"budget": "attempts"` and reports `crawl_addresses_mostly_gone`. A connector
-  crawl remembers per address when it was last visited and what it answered,
-  in `knowledge.crawl_url_memory` (`crawl_memory.py`, migration 0016), written
-  once at the end of each crawl. Remembered addresses and the connector's
-  stored pages join the frontier even when tonight's pages and sitemap do not
-  list them. The order is: the start address, then addresses never visited and
-  those visited longest ago, then addresses that were 404/410 at their last
-  visit; ties keep the old `(priority, depth, discovery order)`. A 429, block or
-  refusal is not a visit, so a crawl the site slowed down or blocked continues
-  with those addresses next time. A resumed crawl reads the same memory, so it
-  keeps its order. The discovery-seed pass, previews and auth probes neither
-  read nor write the memory.
+  crawl remembers per address when it last tried it, in
+  `knowledge.crawl_url_memory` (`crawl_memory.py`, migration 0016). `crawl_site`
+  only reads that memory; `run_crawl_job` records the run inside its guarded
+  completion, after the pages are written and only when they were accepted, so
+  a run judged "write nothing" or a superseded attempt leaves the rotation
+  where it was, and a failed record fails the job. Every address that was sent
+  counts as tried, whatever it answered. Remembered addresses and the
+  connector's stored pages join the frontier even when tonight's pages and
+  sitemap do not list them; a stored page without a memory row joins at
+  `max_depth`. After the start address the frontier alternates one for one
+  between never-tried addresses (in `(priority, depth, discovery order)`) and
+  tried ones (oldest try first), so a tried address is tried again within two
+  rounds even on a site that mints new links every night. A resumed crawl
+  reads the same memory and keeps its order. An address that is in the
+  frontier only because the memory knew it is forgotten when it answers
+  404/410, and every such address is forgotten after a fully fetched crawl;
+  it does not count toward "fully fetched" and a page fetched that way is not
+  current for the stale cleanup, which keeps its meaning from before the
+  memory. Connector purge, knowledge-base delete and the org wipe delete the
+  rows. The discovery-seed pass, previews and auth probes neither read nor
+  write the memory. Ceiling: a site that mints endless live addresses grows the
+  memory by every address it lists, without bound.
 - **Coverage.** Every finished connector crawl stores
   `coverage` (`pages_read`, `addresses_gone`, `addresses_waiting`,
   `addresses_known`, `max_pages`, `stopped_by`: `page_limit`, `attempt_limit`,
   `site_rate_limit`, `blocked`, `cancelled` or null) in
   `crawl_jobs.error_summary`, and the status route returns it to the connector
-  (`routes/crawl_sync.py`).
+  (`routes/crawl_sync.py`). A crawl that read pages and stopped at the page
+  limit, the attempt bound or the site's rate limit ends `completed` with its
+  warning reason in the summary; nothing read, a block or the circuit breaker
+  ends `failed_partial`. `knowledge.crawl_job_health` exposes
+  `addresses_waiting`, `addresses_known` and `stopped_by` for the alert rules.
 - **Extraction.** The crawl configuration carries no page JavaScript:
   crawl4ai 0.9.5 answers HTTP 400 to `wait_for` and `js_code`
   (`crawl4ai_config.py:10-16`; the contract is tested by

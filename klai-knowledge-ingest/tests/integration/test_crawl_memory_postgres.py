@@ -1,10 +1,12 @@
 """The per-connector crawl memory against real PostgreSQL.
 
-Covers what the unit tests cannot: the upsert keeps an earlier visit for an
-address that was only seen, stored pages join the frontier, a remembered
-address is crawled although tonight's sitemap no longer lists it, and a
-resumed crawl keeps the rotation order through the real checkpoint tables
-(which do not store visit times and must accept the ``known`` source kind).
+Covers what the unit tests cannot: the upsert keeps an earlier try for an
+address that was only seen and forgets what it is told to, stored pages come
+back without a key or depth, a remembered address is crawled although
+tonight's sitemap no longer lists it, a resumed crawl keeps the rotation order
+through the real checkpoint tables (which do not store visit times and must
+accept the ``known`` source kind), and a connector purge or knowledge-base
+delete removes the connector's rows.
 """
 
 from __future__ import annotations
@@ -21,8 +23,8 @@ from typing import Any
 import asyncpg
 import pytest
 
-from knowledge_ingest import crawl4ai_client
-from knowledge_ingest.crawl4ai_client import ChunkedFetchResult, CrawlResult
+from knowledge_ingest import crawl4ai_client, pg_store
+from knowledge_ingest.crawl4ai_client import ChunkedFetchResult, CrawlMemoryState, CrawlResult
 from knowledge_ingest.crawl_checkpoint import PostgresCrawlCheckpoint, claim_crawl_execution
 from knowledge_ingest.crawl_memory import PostgresCrawlMemory
 
@@ -99,6 +101,26 @@ def _memory(connector_id: str) -> PostgresCrawlMemory:
     )
 
 
+async def _crawl(memory: PostgresCrawlMemory, **kwargs: Any) -> list[dict[str, Any]]:
+    """One crawl, recorded the way the adapter records an accepted run."""
+    state = CrawlMemoryState(remembered=await memory.load())
+    _results, outcomes = await crawl4ai_client.crawl_site(start_url=_START, memory=state, **kwargs)
+    async with _connection_factory() as conn:
+        await memory.record(conn, state.rows, state.forget)
+    return outcomes
+
+
+async def _memory_keys(connector_id: str) -> set[str]:
+    async with _connection_factory() as conn:
+        rows = await conn.fetch(
+            "SELECT canonical_url FROM knowledge.crawl_url_memory "
+            "WHERE org_id=$1 AND connector_id=$2",
+            _ORG,
+            connector_id,
+        )
+    return {row["canonical_url"] for row in rows}
+
+
 async def _cleanup(connector_id: str, job_id: str | None = None) -> None:
     async with _connection_factory() as conn:
         await conn.execute(
@@ -137,16 +159,23 @@ async def test_memory_keeps_visits_and_knows_stored_pages() -> None:
                 json.dumps({"source_connector_id": connector_id, "source_url": stored_url}),
             )
         row = {"url": _address(1), "canonical_url": _address(1), "depth": 2}
-        await memory.save([{**row, "visited": True, "reason_code": "gone"}])
-        await memory.save([{**row, "depth": 1, "visited": False, "reason_code": None}])
+        dropped = {"url": _address(2), "canonical_url": _address(2), "depth": 1}
+        async with _connection_factory() as conn:
+            await memory.record(conn, [{**row, "visited": True}, {**dropped, "visited": True}], [])
+            await memory.record(conn, [{**row, "depth": 1, "visited": False}], [_address(2)])
 
-        rows = {r["canonical_url"]: r for r in await memory.load()}
+        loaded = await memory.load()
+        remembered = {r["canonical_url"]: r for r in loaded if r["canonical_url"]}
 
-        assert rows[_address(1)]["depth"] == 1
-        assert rows[_address(1)]["last_reason_code"] == "gone"
-        assert rows[_address(1)]["last_visited_at"] is not None
-        assert rows[stored_url]["last_visited_at"] is None
-        assert rows[stored_url]["depth"] == 1
+        assert set(remembered) == {_address(1)}
+        assert remembered[_address(1)]["depth"] == 1
+        assert remembered[_address(1)]["last_visited_at"] is not None
+        assert {
+            "canonical_url": None,
+            "url": stored_url,
+            "depth": None,
+            "last_visited_at": None,
+        } in loaded
     finally:
         await _cleanup(connector_id)
 
@@ -159,19 +188,18 @@ async def test_second_crawl_reaches_remembered_addresses_the_sitemap_dropped(
     addresses = [_address(i) for i in range(10)]
     try:
         _install_site(monkeypatch, addresses)
-        _results, first = await crawl4ai_client.crawl_site(
-            start_url=_START, max_pages=6, memory=_memory(connector_id)
-        )
+        first = await _crawl(_memory(connector_id), max_pages=6)
         _install_site(monkeypatch, [])
-        _results, second = await crawl4ai_client.crawl_site(
-            start_url=_START, max_pages=6, memory=_memory(connector_id)
-        )
+        second = await _crawl(_memory(connector_id), max_pages=6)
+        third = await _crawl(_memory(connector_id), max_pages=6)
 
         def read(outcomes: list[dict[str, Any]]) -> set[str]:
             return {o["url"] for o in outcomes if o["reason_code"] == "success"} - {_START}
 
         assert len(read(first)) == 5
-        assert read(first) | read(second) == set(addresses)
+        # Never-tried and tried addresses alternate, so the five the first
+        # crawl did not reach take two more crawls of five.
+        assert read(first) | read(second) | read(third) == set(addresses)
     finally:
         await _cleanup(connector_id)
 
@@ -199,9 +227,8 @@ async def test_resumed_crawl_keeps_rotation_order_through_real_checkpoint(
             await conn.executemany(
                 """
                 INSERT INTO knowledge.crawl_url_memory (
-                    org_id, connector_id, canonical_url, url, depth,
-                    last_visited_at, last_reason_code
-                ) VALUES ($1, $2, $3, $3, 1, $4, 'success')
+                    org_id, kb_slug, connector_id, canonical_url, url, depth, last_visited_at
+                ) VALUES ($1, 'docs', $2, $3, $3, 1, $4)
                 """,
                 [
                     (_ORG, connector_id, known_only, datetime(2026, 1, 1, tzinfo=UTC)),
@@ -239,7 +266,7 @@ async def test_resumed_crawl_keeps_rotation_order_through_real_checkpoint(
                     scope="primary",
                     generation=generation,
                 ),
-                memory=_memory(connector_id),
+                memory=CrawlMemoryState(remembered=await _memory(connector_id).load()),
             )
 
         with pytest.raises(asyncio.CancelledError):
@@ -247,6 +274,40 @@ async def test_resumed_crawl_keeps_rotation_order_through_real_checkpoint(
         await _attempt()
 
         requested = [url for call in bulk_calls for url in call]
-        assert list(dict.fromkeys(requested)) == [*sitemap[3:], known_only, *sitemap[:3]]
+        never, tried = sitemap[3:], [known_only, *sitemap[:3]]
+        assert list(dict.fromkeys(requested)) == [
+            never[0],
+            tried[0],
+            never[1],
+            tried[1],
+            never[2],
+            tried[2],
+            tried[3],
+        ]
     finally:
         await _cleanup(connector_id, job_id)
+
+
+@pytest.mark.asyncio
+async def test_connector_purge_and_kb_delete_remove_the_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    purged, deleted_kb = str(uuid.uuid4()), str(uuid.uuid4())
+    try:
+        _install_site(monkeypatch, [_address(1)])
+        await _crawl(_memory(purged), max_pages=5)
+        await _crawl(_memory(deleted_kb), max_pages=5)
+        assert await _memory_keys(purged)
+        assert await _memory_keys(deleted_kb)
+
+        async with _connection_factory() as conn:
+            await pg_store.delete_connector_crawl_jobs(conn, _ORG, "docs", purged)
+        assert await _memory_keys(purged) == set()
+        assert await _memory_keys(deleted_kb)
+
+        async with _connection_factory() as conn:
+            await pg_store.delete_kb(conn, _ORG, "docs")
+        assert await _memory_keys(deleted_kb) == set()
+    finally:
+        await _cleanup(purged)
+        await _cleanup(deleted_kb)

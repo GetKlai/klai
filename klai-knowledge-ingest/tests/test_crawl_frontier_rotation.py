@@ -1,14 +1,17 @@
 """A crawl that cannot visit everything continues where the previous one stopped.
 
-Three rules, each pinned below against a fake fetch layer and an in-memory
-stand-in for the per-source visit memory:
+Pinned here against a fake fetch layer and an in-memory stand-in for the
+per-connector crawl memory (``crawl_site`` reads the remembered addresses and
+hands back what it tried; the adapter records it, see
+``test_crawl_memory_adapter.py``):
 
 1. ``max_pages`` counts addresses that answered with a page. An address that
-   answered "does not exist" (404/410) is free against it, and a separate
-   attempt bound ends a crawl whose address list is mostly dead.
-2. The frontier visits what was visited longest ago first; an address that was
-   dead at its last visit goes after all others.
-3. Every finished connector crawl reports a ``coverage`` object.
+   answered 404/410 is free against it, and a separate attempt bound ends a
+   crawl whose address list is mostly dead.
+2. Every address that was sent counts as tried, whatever it answered. The
+   frontier alternates never-tried addresses with tried ones, oldest first.
+3. A remembered address that no sitemap entry or page links to tonight is
+   forgotten when it answers 404/410.
 """
 
 from __future__ import annotations
@@ -16,40 +19,44 @@ from __future__ import annotations
 import asyncio
 import copy
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from knowledge_ingest import crawl4ai_client
 from knowledge_ingest.adapters.crawler import _build_crawl_outcome_warning, _crawl_coverage
-from knowledge_ingest.crawl4ai_client import ChunkedFetchResult, CrawlResult
+from knowledge_ingest.crawl4ai_client import ChunkedFetchResult, CrawlMemoryState, CrawlResult
 from knowledge_ingest.reason_codes import FetchReasonCode
 
 _START = "https://example.com/"
 
 
-def _address(index: int) -> str:
+def _address(index: int | str) -> str:
     return f"https://example.com/p/{index}"
 
 
-def _page(url: str, status: int) -> dict[str, Any]:
+def _page(url: str, status: int, links: list[str] | None = None) -> dict[str, Any]:
     ok = status == 200
-    return {
+    page = {
         "url": url,
         "success": ok,
         "status_code": status,
         "error_message": "" if ok else f"HTTP {status}",
         "html": f"<html><body>{url}</body></html>" if ok else "",
         "markdown": f"Page body for {url}" if ok else "",
-        "links": {"internal": []},
+        "links": {"internal": [{"href": h, "text": ""} for h in links or []]},
         "media": {},
     }
+    if status == 0:
+        page.update(status_code=None, error_message="Blocked by anti-bot protection: JS challenge")
+    return page
 
 
 class _Site:
     """A site whose sitemap lists ``live`` and ``dead`` addresses.
 
+    ``blocked`` addresses always answer with an anti-bot block.
     ``rate_limit_after`` makes the site answer 429 once it has served that many
     pages in one night, the way a site that slows crawlers down behaves.
     """
@@ -61,11 +68,15 @@ class _Site:
         dead: list[str] | None = None,
         sitemap: list[str] | None = None,
         rate_limit_after: int | None = None,
+        blocked: list[str] | None = None,
+        links: dict[str, list[str]] | None = None,
     ) -> None:
         self.live = set(live)
         self.dead = set(dead or [])
-        self.sitemap = sitemap if sitemap is not None else [*(dead or []), *live]
+        self.blocked = set(blocked or [])
+        self.sitemap = sitemap if sitemap is not None else [*(dead or []), *(blocked or []), *live]
         self.rate_limit_after = rate_limit_after
+        self.links = links or {}
         self.served = 0
         self.bulk_calls: list[list[str]] = []
 
@@ -99,9 +110,11 @@ class _Site:
                     )
                 if url in self.dead:
                     raw.append(_page(url, 404))
+                elif url in self.blocked:
+                    raw.append(_page(url, 0))
                 else:
                     self.served += 1
-                    raw.append(_page(url, 200))
+                    raw.append(_page(url, 200, self.links.get(url)))
             return ChunkedFetchResult(raw_results=raw)
 
         async def _no_sleep(_seconds: float) -> None:
@@ -118,21 +131,23 @@ class _Site:
 
 
 class _FakeMemory:
-    """Same semantics as ``PostgresCrawlMemory``; one save is one point in time."""
+    """Same semantics as ``PostgresCrawlMemory``; one record is one point in time."""
 
     def __init__(self) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
+        self.stored: list[str] = []
         self.clock = 0.0
-        self.loads = 0
-        self.saves = 0
 
     async def load(self) -> list[dict[str, Any]]:
-        self.loads += 1
-        return [dict(row) for row in self.rows.values()]
+        return [dict(row) for row in self.rows.values()] + [
+            {"canonical_url": None, "url": url, "depth": None, "last_visited_at": None}
+            for url in self.stored
+        ]
 
-    async def save(self, rows: list[dict[str, Any]]) -> None:
-        self.saves += 1
+    async def record(self, _conn: Any, rows: list[dict[str, Any]], forget: list[str]) -> None:
         self.clock += 1
+        for key in forget:
+            self.rows.pop(key, None)
         for row in rows:
             old = self.rows.get(row["canonical_url"])
             self.rows[row["canonical_url"]] = {
@@ -142,9 +157,6 @@ class _FakeMemory:
                 "last_visited_at": self.clock
                 if row["visited"]
                 else (old["last_visited_at"] if old else None),
-                "last_reason_code": row["reason_code"]
-                if row["visited"]
-                else (old["last_reason_code"] if old else None),
             }
 
 
@@ -196,9 +208,17 @@ def _read(outcomes: list[dict[str, Any]]) -> set[str]:
     return {o["url"] for o in outcomes if o["reason_code"] == FetchReasonCode.SUCCESS.value}
 
 
-async def _night(site: _Site, memory: _FakeMemory, *, max_pages: int = 500) -> Any:
+async def _night(
+    site: _Site, memory: _FakeMemory, *, max_pages: int = 500, max_depth: int = 2
+) -> tuple[list[CrawlResult], list[dict[str, Any]], CrawlMemoryState]:
+    """One crawl, recorded the way the adapter records an accepted run."""
     site.new_night()
-    return await crawl4ai_client.crawl_site(start_url=_START, max_pages=max_pages, memory=memory)
+    state = CrawlMemoryState(remembered=await memory.load())
+    results, outcomes = await crawl4ai_client.crawl_site(
+        start_url=_START, max_pages=max_pages, max_depth=max_depth, memory=state
+    )
+    await memory.record(None, state.rows, state.forget)
+    return results, outcomes, state
 
 
 @pytest.mark.asyncio
@@ -209,11 +229,10 @@ async def test_dead_addresses_do_not_use_up_the_page_limit(monkeypatch) -> None:
     site = _Site(live=live, dead=dead)
     site.install(monkeypatch)
 
-    results, outcomes = await _night(site, _FakeMemory())
+    results, outcomes, _state = await _night(site, _FakeMemory())
 
     assert {r.url for r in results} == {_START, *live}
-    coverage = _crawl_coverage(outcomes, max_pages=500)
-    assert coverage == {
+    assert _crawl_coverage(outcomes, max_pages=500) == {
         "pages_read": 117,
         "addresses_gone": 620,
         "addresses_waiting": 0,
@@ -224,29 +243,25 @@ async def test_dead_addresses_do_not_use_up_the_page_limit(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_consecutive_crawls_rotate_through_a_site_larger_than_the_limit(
-    monkeypatch,
-) -> None:
-    """(b) Four crawls of 500 together visit every address once; the fifth starts over.
-
-    The start address is read every night, so the rotating part of each crawl
-    is 499 addresses: 1,996 addresses take exactly four nights.
-    """
+async def test_every_address_comes_round_within_two_rounds(monkeypatch) -> None:
+    """(b) 1,996 addresses at 499 a night: one round is four nights, none waits over eight."""
     live = [_address(i) for i in range(1996)]
     site = _Site(live=live)
     site.install(monkeypatch)
     memory = _FakeMemory()
 
+    last_read: dict[str, int] = {}
     nights = []
-    for _ in range(5):
-        _results, outcomes = await _night(site, memory)
+    for night in range(1, 11):
+        _results, outcomes, _state = await _night(site, memory)
         nights.append(outcomes)
+        for url in _read(outcomes) - {_START}:
+            last_read[url] = night
+        if night >= 8:
+            assert set(last_read) == set(live)
+            assert min(last_read.values()) > night - 8
 
-    reads = [_read(outcomes) - {_START} for outcomes in nights]
-    assert [len(r) for r in reads[:4]] == [499, 499, 499, 499]
-    assert set().union(*reads[:4]) == set(live)
-    assert sum(len(r) for r in reads[:4]) == len(live)
-    assert reads[4] == reads[0]
+    assert [len(_read(o) - {_START}) for o in nights] == [499] * 10
     assert _crawl_coverage(nights[0], max_pages=500) == {
         "pages_read": 500,
         "addresses_gone": 0,
@@ -258,27 +273,25 @@ async def test_consecutive_crawls_rotate_through_a_site_larger_than_the_limit(
 
 
 @pytest.mark.asyncio
-async def test_crawl_after_a_rate_limited_crawl_starts_with_what_it_did_not_reach(
-    monkeypatch,
-) -> None:
-    """(c) A site that answers 429 after 30 pages every night still gets fully read."""
+async def test_crawl_after_a_rate_limited_crawl_reaches_what_it_did_not(monkeypatch) -> None:
+    """(c) A site that answers 429 after 30 pages every night is still read further."""
     live = [_address(i) for i in range(99)]
     site = _Site(live=live, rate_limit_after=30)
     site.install(monkeypatch)
     memory = _FakeMemory()
 
-    _results, first = await _night(site, memory)
+    _results, first, _state = await _night(site, memory)
     first_read = _read(first)
-    _results, second = await _night(site, memory)
+    _results, second, _state = await _night(site, memory)
 
     unreached = set(live) - first_read
     assert len(first_read) == 30
-    assert set(site.bulk_calls[0][: len(unreached)]) == unreached
-    assert (_read(second) - {_START}).isdisjoint(first_read)
+    assert site.bulk_calls[0][0] in unreached
+    assert len(_read(second) & unreached) >= 14
     assert _crawl_coverage(first, max_pages=500) == {
         "pages_read": 30,
         "addresses_gone": 0,
-        "addresses_waiting": 70,
+        "addresses_waiting": 66,
         "addresses_known": 100,
         "max_pages": 500,
         "stopped_by": "site_rate_limit",
@@ -286,23 +299,121 @@ async def test_crawl_after_a_rate_limited_crawl_starts_with_what_it_did_not_reac
 
 
 @pytest.mark.asyncio
-async def test_an_address_dead_at_its_last_visit_goes_last_and_returns_when_it_answers(
+async def test_an_always_blocked_address_is_not_first_the_next_night(monkeypatch) -> None:
+    """A block is an answer: the address was tried and goes round like the others."""
+    blocked = _address("blocked")
+    others = [_address(i) for i in range(9)]
+    site = _Site(live=others, blocked=[blocked], sitemap=[blocked, *others])
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+
+    await _night(site, memory, max_pages=4)
+    await _night(site, memory, max_pages=4)
+
+    assert site.bulk_calls[0][0] != blocked
+
+
+@pytest.mark.asyncio
+async def test_a_dead_address_on_a_limit_filled_site_is_retried_within_a_round(
     monkeypatch,
 ) -> None:
-    """(d) A 404 is retried after the others, and stored again once it is back."""
-    returning = _address(0)
-    others = [_address(i) for i in range(1, 4)]
+    """A 404 rotates like any address and is stored again once it answers a page."""
+    returning = _address("returning")
+    others = [_address(i) for i in range(8)]
     site = _Site(live=others, dead=[returning], sitemap=[returning, *others])
     site.install(monkeypatch)
     memory = _FakeMemory()
 
-    await _night(site, memory)
+    await _night(site, memory, max_pages=5)
     site.dead.clear()
     site.live.add(returning)
-    results, _outcomes = await _night(site, memory)
+    results, _outcomes, _state = await _night(site, memory, max_pages=5)
 
-    assert site.bulk_calls[0] == [*others, returning]
     assert returning in {r.url for r in results}
+
+
+@pytest.mark.asyncio
+async def test_endless_new_links_do_not_stop_the_refresh(monkeypatch) -> None:
+    """A site minting 500 new addresses a night still has its stored pages refreshed."""
+    stored = [_address(f"s{i}") for i in range(100)]
+    site = _Site(live=stored)
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    await _night(site, memory, max_pages=101)
+
+    refreshed: set[str] = set()
+    for night in range(2):
+        minted = [_address(f"n{night}-{i}") for i in range(500)]
+        site.live |= set(minted)
+        site.sitemap = [*minted, *stored]
+        _results, outcomes, _state = await _night(site, memory, max_pages=101)
+        refreshed |= _read(outcomes) & set(stored)
+
+    assert refreshed == set(stored)
+
+
+@pytest.mark.asyncio
+async def test_a_stored_page_without_memory_does_not_extend_the_crawl_depth(
+    monkeypatch,
+) -> None:
+    """Its depth is unknown, so it is read at max_depth and its links are not followed."""
+    stored = _address("stored")
+    child = _address("child")
+    site = _Site(live=[stored, child], sitemap=[], links={stored: [child]})
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    memory.stored = [stored]
+
+    results, _outcomes, _state = await _night(site, memory, max_depth=2)
+
+    assert stored in {r.url for r in results}
+    assert child not in {url for call in site.bulk_calls for url in call}
+
+
+@pytest.mark.asyncio
+async def test_an_unlisted_remembered_address_that_answers_404_is_forgotten(
+    monkeypatch,
+) -> None:
+    """(F1) A known-only 404 leaves the memory; a listed 404 stays known."""
+    unlisted = _address("unlisted")
+    listed = _address("listed")
+    site = _Site(live=[], dead=[unlisted, listed], sitemap=[listed])
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    memory.rows[unlisted] = {
+        "canonical_url": unlisted,
+        "url": unlisted,
+        "depth": 1,
+        "last_visited_at": 0.0,
+    }
+
+    _results, _outcomes, state = await _night(site, memory)
+
+    assert unlisted in state.forget
+    assert unlisted not in memory.rows
+    assert listed in memory.rows
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_address_on_the_old_host_is_moved_to_the_crawl_host(
+    monkeypatch,
+) -> None:
+    """A start-URL host change re-keys the memory instead of orphaning it."""
+    site = _Site(live=[_address(1)], sitemap=[])
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+    old_key = "https://www.example.com/p/1"
+    memory.rows[old_key] = {
+        "canonical_url": old_key,
+        "url": old_key,
+        "depth": 1,
+        "last_visited_at": 0.0,
+    }
+
+    _results, _outcomes, state = await _night(site, memory)
+
+    assert old_key in state.forget
+    assert set(memory.rows) == {_START, _address(1)}
 
 
 @pytest.mark.asyncio
@@ -312,7 +423,7 @@ async def test_a_list_of_only_dead_addresses_ends_at_the_attempt_bound(monkeypat
     site = _Site(live=[], dead=dead)
     site.install(monkeypatch)
 
-    _results, outcomes = await _night(site, _FakeMemory())
+    _results, outcomes, _state = await _night(site, _FakeMemory())
 
     attempted = [url for call in site.bulk_calls for url in call]
     assert len(attempted) == 999
@@ -334,16 +445,18 @@ async def test_a_resumed_crawl_keeps_the_rotation_order(monkeypatch) -> None:
     site = _Site(live=addresses)
     site.install(monkeypatch)
     monkeypatch.setattr(crawl4ai_client, "_CHECKPOINT_BATCH_SIZE", 2)
-    memory = _FakeMemory()
-    for url in addresses[:3]:
-        memory.rows[url] = {
-            "canonical_url": url,
-            "url": url,
-            "depth": 1,
-            "last_visited_at": 0.0,
-            "last_reason_code": FetchReasonCode.SUCCESS.value,
-        }
-    expected = [*addresses[3:], *addresses[:3]]
+    remembered = [
+        {"canonical_url": url, "url": url, "depth": 1, "last_visited_at": 0.0}
+        for url in addresses[:3]
+    ]
+    expected = [
+        addresses[3],
+        addresses[0],
+        addresses[4],
+        addresses[1],
+        addresses[5],
+        addresses[2],
+    ]
 
     real_bulk = crawl4ai_client._chunked_bulk_fetch
     calls = 0
@@ -360,93 +473,20 @@ async def test_a_resumed_crawl_keeps_the_rotation_order(monkeypatch) -> None:
     checkpoint = _FrontierTableCheckpoint()
     with pytest.raises(asyncio.CancelledError):
         await crawl4ai_client.crawl_site(
-            start_url=_START, max_pages=500, checkpoint=checkpoint, memory=memory
+            start_url=_START,
+            max_pages=500,
+            checkpoint=checkpoint,
+            memory=CrawlMemoryState(remembered=copy.deepcopy(remembered)),
         )
-    assert memory.saves == 0
     await crawl4ai_client.crawl_site(
-        start_url=_START, max_pages=500, checkpoint=checkpoint, memory=memory
+        start_url=_START,
+        max_pages=500,
+        checkpoint=checkpoint,
+        memory=CrawlMemoryState(remembered=copy.deepcopy(remembered)),
     )
 
     requested = [url for call in site.bulk_calls for url in call]
     assert list(dict.fromkeys(requested)) == expected
-
-
-@pytest.mark.asyncio
-async def test_the_crawl_job_summary_carries_coverage_for_a_clean_crawl() -> None:
-    """(g) A crawl with nothing to warn about still reports how far it got."""
-    from tests.conftest import connection_factory_for
-
-    conn = MagicMock()
-    conn.execute = AsyncMock(return_value=None)
-    conn.executemany = AsyncMock(return_value=None)
-    conn.fetch = AsyncMock(return_value=[])
-    conn.fetchval = AsyncMock(return_value=0)
-    conn.fetchrow = AsyncMock(return_value=None)
-    outcomes = [
-        {"url": _START, "reason_code": "success", "status_code": 200},
-        {"url": _address(1), "reason_code": "gone", "status_code": 404},
-    ]
-    result = CrawlResult(
-        url=_START,
-        fit_markdown="Start page",
-        raw_markdown="Start page",
-        html="<html></html>",
-        word_count=2,
-        success=True,
-    )
-    finished = AsyncMock()
-    pg = MagicMock()
-    pg.get_crawled_page_hashes = AsyncMock(return_value={})
-    pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
-    pg.get_active_document_texts = AsyncMock(return_value={})
-    with (
-        patch("knowledge_ingest.adapters.crawler.pg_store", pg),
-        patch("knowledge_ingest.adapters.crawler.finish_crawl_execution", finished),
-        patch(
-            "knowledge_ingest.adapters.crawler.crawl_site",
-            new_callable=AsyncMock,
-            return_value=([result], outcomes),
-        ),
-        patch(
-            "knowledge_ingest.adapters.crawler._ingest_crawl_result",
-            new_callable=AsyncMock,
-            return_value=False,
-        ),
-        patch(
-            "knowledge_ingest.adapters.crawler._enqueue_taxonomy_backfill_after_crawl",
-            new_callable=AsyncMock,
-        ),
-        patch("knowledge_ingest.adapters.crawler._build_link_graph", new_callable=AsyncMock),
-        patch(
-            "knowledge_ingest.adapters.crawler._crawl_fully_fetched",
-            return_value=False,
-        ),
-    ):
-        from knowledge_ingest.adapters.crawler import run_crawl_job
-
-        await run_crawl_job(
-            connection_factory=connection_factory_for(conn),
-            job_id="job-1",
-            org_id="org-1",
-            kb_slug="docs",
-            start_url=_START,
-            max_pages=500,
-            rate_limit=100.0,
-            connector_id="conn-1",
-        )
-
-    import json
-
-    kwargs = finished.await_args.kwargs
-    assert kwargs["status"] == "completed"
-    assert json.loads(kwargs["error_summary"])["coverage"] == {
-        "pages_read": 1,
-        "addresses_gone": 1,
-        "addresses_waiting": 0,
-        "addresses_known": 2,
-        "max_pages": 500,
-        "stopped_by": None,
-    }
 
 
 def test_the_status_payload_exposes_coverage() -> None:
@@ -463,11 +503,11 @@ def test_the_status_payload_exposes_coverage() -> None:
     }
     pool = _make_pool(
         job_row={
-            "status": "failed_partial",
+            "status": "completed",
             "pages_total": 30,
             "pages_done": 30,
             "error": None,
-            "error_summary": {"reason": "crawl_budget_exhausted", "coverage": coverage},
+            "error_summary": {"reason": "crawl_frontier_incomplete", "coverage": coverage},
         },
     )
     with _client_with_patches(pool) as (client, _defer):
@@ -493,11 +533,11 @@ def test_a_preview_crawl_neither_reads_nor_writes_the_memory(client: TestClient)
             "knowledge_ingest.crawl_memory.PostgresCrawlMemory.load", new_callable=AsyncMock
         ) as load,
         patch(
-            "knowledge_ingest.crawl_memory.PostgresCrawlMemory.save", new_callable=AsyncMock
-        ) as save,
+            "knowledge_ingest.crawl_memory.PostgresCrawlMemory.record", new_callable=AsyncMock
+        ) as record,
     ):
         resp = client.post("/ingest/v1/crawl/preview", json={"url": "https://example.com/docs"})
 
     assert resp.status_code == 200, resp.text
     load.assert_not_awaited()
-    save.assert_not_awaited()
+    record.assert_not_awaited()

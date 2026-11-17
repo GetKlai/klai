@@ -1,8 +1,9 @@
-"""Add knowledge.crawl_url_memory: when each connector address was last visited.
+"""Add knowledge.crawl_url_memory: when each connector address was last tried.
 
 A crawl that cannot visit every known address continues the next night with
-what was visited longest ago (knowledge_ingest.crawl_memory). One row per
-address and connector, written once at the end of each crawl.
+what was tried longest ago (knowledge_ingest.crawl_memory). One row per
+address and connector, recorded once per accepted crawl. ``kb_slug`` is kept
+so a knowledge-base delete can remove the rows.
 
 The crawl frontier checkpoint gains the source kind ``known`` for an address
 that is in the frontier because the source remembered it, not because tonight's
@@ -28,12 +29,12 @@ def upgrade() -> None:
         """
         CREATE TABLE IF NOT EXISTS knowledge.crawl_url_memory (
           org_id text NOT NULL,
+          kb_slug text NOT NULL,
           connector_id text NOT NULL,
           canonical_url text NOT NULL,
           url text NOT NULL,
           depth integer NOT NULL CHECK (depth >= 0),
           last_visited_at timestamptz,
-          last_reason_code text,
           PRIMARY KEY (org_id, connector_id, canonical_url)
         )
         """

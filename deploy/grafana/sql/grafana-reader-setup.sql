@@ -141,6 +141,11 @@ GRANT SELECT ON portal_meeting_transcript_health TO grafana_reader;
 --                          for a slower pace.
 --   top_signature          the most frequent error_type:status_code
 --   top_signature_share    its share of fetch_total
+--   addresses_waiting      known addresses this crawl did not reach, and
+--   addresses_known        all addresses the source knows, from the crawl's
+--   stopped_by             coverage object: a source that needs several
+--                          nights per round ends 'completed', and these show
+--                          how far it got and which limit stopped it
 --
 -- New columns go last so CREATE OR REPLACE keeps working on an existing view.
 -- 30 days of jobs is the horizon: it keeps the jsonb expansion cheap and covers
@@ -160,7 +165,10 @@ WITH (security_invoker = false, security_barrier = true) AS
            o.fetch_total,
            o.crawler_side_failures,
            t.signature AS top_signature,
-           round(t.n::numeric / NULLIF(o.fetch_total, 0), 3) AS top_signature_share
+           round(t.n::numeric / NULLIF(o.fetch_total, 0), 3) AS top_signature_share,
+           (j.error_summary -> 'coverage' ->> 'addresses_waiting')::integer AS addresses_waiting,
+           (j.error_summary -> 'coverage' ->> 'addresses_known')::integer AS addresses_known,
+           j.error_summary -> 'coverage' ->> 'stopped_by' AS stopped_by
       FROM knowledge.crawl_jobs j
      CROSS JOIN LATERAL (
            SELECT count(*)::integer AS fetch_total,

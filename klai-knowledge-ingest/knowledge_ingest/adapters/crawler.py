@@ -28,7 +28,7 @@ from knowledge_ingest.chunker import noise_counts
 from knowledge_ingest.config import settings
 from knowledge_ingest.content_retention import retention
 from knowledge_ingest.crawl4ai_client import (
-    _UNVISITED_ANSWER_REASON_CODES,
+    CrawlMemoryState,
     CrawlRateLimitState,
     CrawlResult,
     _canonicalise_url,
@@ -541,9 +541,10 @@ def _crawl_coverage(fetch_outcomes: list[dict], *, max_pages: int) -> dict:
     """How far one crawl got through the addresses its source knows.
 
     An address counts once even when the discovery-seed pass reported it too;
-    a visit outranks a not-visited record of the same address. A 429, block
-    or refusal is not a visit (the address is still waiting), the same rule
-    the crawl memory uses; other failures were visited but read nothing.
+    a tried address outranks a not-sent record of the same address. Every
+    address that was sent was tried, whatever it answered; a failure was tried
+    but read nothing. ``stopped_by`` is the stop that ended the loop, read from
+    the labels of the addresses never sent.
     """
     by_url: dict[str, dict] = {}
     for outcome in fetch_outcomes:
@@ -562,23 +563,16 @@ def _crawl_coverage(fetch_outcomes: list[dict], *, max_pages: int) -> dict:
     for reason in waiting:
         if reason == FetchReasonCode.NOT_FETCHED_CANCELLED.value:
             stops.add("cancelled")
-        elif reason in {
-            FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value,
-            FetchReasonCode.BLOCKED_ANTI_BOT.value,
-            FetchReasonCode.REFUSED.value,
-        }:
+        elif reason == FetchReasonCode.NOT_FETCHED_CIRCUIT_BREAKER_STOP.value:
             stops.add("blocked")
-        elif reason in {
-            FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value,
-            FetchReasonCode.RATE_LIMITED.value,
-        }:
-            stops.add("site_rate_limit")
+        elif reason == FetchReasonCode.NOT_FETCHED_RATE_LIMIT_STOP.value:
+            # The one ambiguous label: crawl_site gives the addresses an
+            # anti-bot block left unsent the same code as a rate-limit stop,
+            # so a blocked answer in this crawl tells the two apart.
+            blocked = FetchReasonCode.BLOCKED_ANTI_BOT.value in reasons
+            stops.add("blocked" if blocked else "site_rate_limit")
         elif reason == FetchReasonCode.NOT_FETCHED_BUDGET_EXHAUSTED.value:
             stops.add("page_limit")
-    # A block stop leaves the unsent addresses labelled as a rate-limit stop;
-    # the blocked answers among the visits tell the two apart.
-    if "site_rate_limit" in stops and FetchReasonCode.BLOCKED_ANTI_BOT.value in reasons:
-        stops.add("blocked")
     gone = reasons.count(FetchReasonCode.GONE.value)
     return {
         "pages_read": sum(
@@ -601,7 +595,7 @@ def _stopped_at_attempt_limit(outcome: dict) -> bool:
 
 
 def _reason_waits(reason: str) -> bool:
-    return reason.startswith(_NOT_FETCHED_REASON_PREFIX) or reason in _UNVISITED_ANSWER_REASON_CODES
+    return reason.startswith(_NOT_FETCHED_REASON_PREFIX)
 
 
 def _outcome_is_deliberately_filtered(outcome: dict) -> bool:
@@ -625,7 +619,9 @@ def _is_http_login_wall(outcome: dict) -> bool:
     )
 
 
-def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
+def _crawl_fully_fetched(
+    fetch_outcomes: list[dict], known_only: frozenset[str] | set[str] = frozenset()
+) -> bool:
     """True only when every discovered candidate URL was actually fetched.
 
     2026-08-18 stop-the-bleeding fix: the stale-connector-artifact
@@ -650,9 +646,15 @@ def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
     "gone" from "not reached this run" — the more precise three-way split
     (present / demonstrably gone / unknown) is a larger design left for a
     follow-up.
+
+    ``known_only`` addresses (in the frontier only because the crawl memory
+    remembered them) do not count: whether the site still lists everything
+    is judged on what it lists tonight, as before the memory existed.
     """
     for outcome in fetch_outcomes:
         if _outcome_is_deliberately_filtered(outcome):
+            continue
+        if _canonicalise_url(str(outcome.get("url") or "")) in known_only:
             continue
         reason = str(outcome.get("reason_code") or "")
         if reason in _FETCH_FAILURE_REASON_CODES:
@@ -662,16 +664,32 @@ def _crawl_fully_fetched(fetch_outcomes: list[dict]) -> bool:
     return True
 
 
-def _crawl_warning_terminal_status(crawl_warning: dict | None) -> str:
-    """Return the terminal status implied by a crawl warning, if any."""
+# Stops after which waiting addresses are normal operation: the rotation picks
+# them up on the next crawls, and coverage says how many wait.
+_ROTATING_STOPS = frozenset({"page_limit", "attempt_limit", "site_rate_limit"})
+
+
+def _crawl_warning_terminal_status(crawl_warning: dict | None, coverage: dict) -> str:
+    """Return the terminal status implied by a crawl warning, if any.
+
+    A crawl that read pages and left addresses waiting because of the page
+    limit, the attempt bound or the site's rate limit is how a source larger
+    than one crawl is read, so it ends ``completed`` with the warning still in
+    its summary. Nothing read, a block, the circuit breaker or any other stop
+    stays ``failed_partial``.
+    """
     if crawl_warning is None:
         return ""
-    if crawl_warning.get("reason") in {
+    reason = crawl_warning.get("reason")
+    if reason in {
         CRAWL_BUDGET_EXHAUSTED_REASON,
         CRAWL_ADDRESSES_MOSTLY_GONE_REASON,
         CRAWL_FRONTIER_INCOMPLETE_REASON,
-        CRAWL_FETCH_FAILED_REASON,
     }:
+        if coverage["pages_read"] > 0 and coverage["stopped_by"] in _ROTATING_STOPS:
+            return ""
+        return "failed_partial"
+    if reason == CRAWL_FETCH_FAILED_REASON:
         return "failed_partial"
     return ""
 
@@ -1353,6 +1371,17 @@ async def run_crawl_job(
         # ``crawl_jobs.fetch_outcomes`` so operators can answer "where did
         # the missing pages go?" without log forensics.
         crawl_rate_limit_state = CrawlRateLimitState(effective_rate_limit)
+        # Only a connector's own crawl rotates; the discovery-seed pass below
+        # does not, since its pages are merged into this crawl and trimmed to
+        # max_pages.
+        memory = (
+            PostgresCrawlMemory(
+                connection_factory, org_id=org_id, kb_slug=kb_slug, connector_id=connector_id
+            )
+            if connector_id
+            else None
+        )
+        memory_state = CrawlMemoryState(remembered=await memory.load()) if memory else None
         results, fetch_outcomes = await crawl_site(
             start_url=start_url,
             selector=content_selector,
@@ -1365,14 +1394,7 @@ async def run_crawl_job(
             cancel_check=cancel_check,
             checkpoint=primary_checkpoint,
             rate_limit_state=crawl_rate_limit_state,
-            # Only a connector's own crawl remembers and rotates; the
-            # discovery-seed pass below does not, since its pages are merged
-            # into this crawl and trimmed to max_pages.
-            memory=PostgresCrawlMemory(
-                connection_factory, org_id=org_id, kb_slug=kb_slug, connector_id=connector_id
-            )
-            if connector_id
-            else None,
+            memory=memory_state,
         )
 
         # 2026-08-19 (crawl-cancel): detected purely from the reason code
@@ -1718,6 +1740,7 @@ async def run_crawl_job(
                     total_count=wall_decision_count,
                     wall_rate=round(wall_fraction, 3),
                 )
+        coverage = _crawl_coverage(fetch_outcomes, max_pages=max_pages)
         summary_json: str | None = None
         if job_cancelled:
             # 2026-08-19 (crawl-cancel): an operator cancel outranks every
@@ -1764,8 +1787,8 @@ async def run_crawl_job(
                     crawl_outcome_warning,
                 )
             )
-        elif _crawl_warning_terminal_status(crawl_outcome_warning):
-            terminal_status = _crawl_warning_terminal_status(crawl_outcome_warning)
+        elif _crawl_warning_terminal_status(crawl_outcome_warning, coverage):
+            terminal_status = _crawl_warning_terminal_status(crawl_outcome_warning, coverage)
             summary_payload = dict(crawl_outcome_warning or {})
             if auth_wall_pages:
                 summary_payload["login_walls_skipped"] = len(auth_wall_pages)
@@ -1800,7 +1823,7 @@ async def run_crawl_job(
             terminal_status = "completed"
         if connector_id:
             summary_payload = json.loads(summary_json) if summary_json else {}
-            summary_payload["coverage"] = _crawl_coverage(fetch_outcomes, max_pages=max_pages)
+            summary_payload["coverage"] = coverage
             summary_json = json.dumps(summary_payload)
 
         async with connection_factory() as conn:
@@ -1808,8 +1831,23 @@ async def run_crawl_job(
                 # Serialize all completion side effects with recovery. This keeps
                 # a superseded attempt from deleting connector artifacts or
                 # enqueueing follow-up work after a newer generation has started.
+                known_only = memory_state.known_only if memory_state else set()
+                fully_fetched = _crawl_fully_fetched(fetch_outcomes, known_only)
+                if memory is not None and memory_state is not None and not write_nothing:
+                    # Recorded here, inside the fence and after the pages were
+                    # written, so a run judged "write nothing" or superseded
+                    # leaves the rotation where it was. A complete crawl
+                    # forgets what only the memory knew; the stale cleanup
+                    # below then treats those pages as it did before the
+                    # memory existed. A failed record fails the job.
+                    forget = set(memory_state.forget) | (known_only if fully_fetched else set())
+                    await memory.record(
+                        conn,
+                        [r for r in memory_state.rows if r["canonical_url"] not in forget],
+                        sorted(forget),
+                    )
                 if connector_id and terminal_status == "completed" and pages_done > 0:
-                    if not _crawl_fully_fetched(fetch_outcomes):
+                    if not fully_fetched:
                         skip_reason_counts = Counter(
                             reason
                             for outcome in fetch_outcomes
@@ -1826,7 +1864,13 @@ async def run_crawl_job(
                             skip_reason_counts=dict(skip_reason_counts),
                         )
                     else:
-                        current_urls = [result.url for result in results]
+                        # A page fetched only because the memory knew it is
+                        # not listed by the site tonight, so it is not current.
+                        current_urls = [
+                            result.url
+                            for result in results
+                            if _canonicalise_url(result.url) not in known_only
+                        ]
                         stale_paths = await pg_store.list_stale_connector_artifact_paths(
                             conn,
                             org_id=org_id,

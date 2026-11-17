@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import asdict
 from html import unescape
+from itertools import zip_longest
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -33,7 +34,7 @@ from knowledge_ingest.crawl4ai_config import (
 from knowledge_ingest.crawl4ai_types import (
     ChunkedFetchResult,
     CrawlCheckpoint,
-    CrawlMemory,
+    CrawlMemoryState,
     CrawlRateLimitState,
     CrawlResult,
     DiscoveredUrl,
@@ -112,16 +113,6 @@ _CHECKPOINT_BATCH_SIZE = 8
 # for the list to grow by a third, and still ends a site whose list is endless
 # dead addresses after twice the work of a normal crawl.
 _ATTEMPT_LIMIT_FACTOR = 2
-# Answers that say something about the site, not the address (it slowed us
-# down, blocked or refused us). They are no visit: the address keeps its place
-# in the rotation and the next crawl tries it first again.
-_UNVISITED_ANSWER_REASON_CODES = frozenset(
-    {
-        FetchReasonCode.RATE_LIMITED.value,
-        FetchReasonCode.BLOCKED_ANTI_BOT.value,
-        FetchReasonCode.REFUSED.value,
-    }
-)
 
 
 # ---------------------------------------------------------------------------
@@ -1230,6 +1221,7 @@ class CrawlLedger:
         self.max_depth = max_depth
         self._by_canonical: dict[str, DiscoveredUrl] = {}
         self._order = 0
+        self._stale_memory_keys: set[str] = set()
 
     @property
     def discovered_count(self) -> int:
@@ -1287,25 +1279,34 @@ class CrawlLedger:
             )
 
     def remember(self, rows: list[dict[str, Any]]) -> None:
-        """Add the source's known addresses and when each was last visited.
+        """Add the connector's known addresses and when each was last tried.
 
         Known addresses join the frontier whether or not tonight's pages link
-        to them, so what a crawl can reach does not depend on which pages the
-        previous crawl happened to fetch. Out-of-scope rows are dropped by
-        ``add`` like any discovered link.
+        to them, so the rotation does not depend on which pages the previous
+        crawl happened to fetch. A row without a depth (a stored page the
+        memory has no row for) joins at ``max_depth``: it is read, but its
+        links are not followed beyond the connector's limit. A row that is out
+        of scope now, or whose address canonicalises to another key on this
+        crawl's host, is dropped from the memory when the crawl is recorded.
         """
         for row in rows:
+            url = row["url"]
+            depth = self.max_depth if row["depth"] is None else int(row["depth"])
             self.add(
-                row["url"],
-                depth=int(row["depth"]),
+                url,
+                depth=depth,
                 discovered_from=None,
                 source_kind="known",
-                priority=_priority_for_discovered_url(row["url"]),
+                priority=_priority_for_discovered_url(url),
             )
-            item = self._by_canonical.get(row["canonical_url"])
-            if item is not None:
-                item.last_visited_at = row["last_visited_at"]
-                item.last_reason_code = row["last_reason_code"]
+            canonical = _canonicalise_url(_coerce_same_site_url_to_base_host(url, self.base_domain))
+            item = self._by_canonical.get(canonical)
+            stored_key = row["canonical_url"]
+            if stored_key is not None and (item is None or stored_key != canonical):
+                self._stale_memory_keys.add(stored_key)
+            visited_at = row["last_visited_at"]
+            if item is not None and visited_at is not None:
+                item.last_visited_at = max(item.last_visited_at or visited_at, visited_at)
 
     def add_links_from_result(self, result: CrawlResult, *, source_depth: int) -> None:
         internal = (result.links or {}).get("internal") or []
@@ -1364,6 +1365,10 @@ class CrawlLedger:
         canonical = _canonicalise_url(url)
         existing = self._by_canonical.get(canonical)
         if existing is not None:
+            if existing.source_kind == "known" and source_kind != "known":
+                # Tonight's sitemap or a page read tonight lists it too.
+                existing.source_kind = source_kind
+                existing.discovered_from = discovered_from
             if depth < existing.depth:
                 existing.depth = depth
                 existing.discovered_from = discovered_from
@@ -1383,6 +1388,15 @@ class CrawlLedger:
         return True
 
     def next_batch(self, *, remaining_budget: int) -> list[str]:
+        """Alternate never-tried addresses with tried ones, oldest try first.
+
+        Never-tried addresses keep the discovery order ``(priority, depth,
+        order)``; tried addresses go by when they were last tried. Taking one
+        of each in turn while both exist gives tried addresses at least half
+        of every crawl, so a site that mints new links every night cannot
+        starve the refresh: a tried address is tried again within two rounds,
+        a round being the crawls it takes to try every known address once.
+        """
         if remaining_budget <= 0:
             return []
         queued = [
@@ -1390,8 +1404,16 @@ class CrawlLedger:
             for item in self._by_canonical.values()
             if item.status == "queued" and item.depth <= self.max_depth
         ]
-        queued.sort(key=_rotation_key)
-        return [item.url for item in queued[:remaining_budget]]
+        never = sorted(
+            (i for i in queued if i.last_visited_at is None),
+            key=lambda i: (i.priority, i.depth, i.order),
+        )
+        tried = sorted(
+            (i for i in queued if i.last_visited_at is not None),
+            key=lambda i: (i.last_visited_at, i.priority, i.depth, i.order),
+        )
+        order = [item for pair in zip_longest(never, tried) for item in pair if item is not None]
+        return [item.url for item in order[:remaining_budget]]
 
     def mark_outcome(self, outcome: FetchOutcome) -> None:
         item = self._by_canonical.get(_canonicalise_url(str(outcome.get("url") or "")))
@@ -1449,46 +1471,38 @@ class CrawlLedger:
             for item in omitted
         ]
 
-    def memory_rows(self) -> list[dict[str, Any]]:
-        """Rows for ``CrawlMemory.save``: every in-scope address, visited or not.
+    def fill_memory(self, memory: CrawlMemoryState) -> None:
+        """Hand back what this crawl tried, for the adapter to record.
 
-        Unvisited addresses are saved too, so an address found tonight stays
+        Every in-scope address is a row, so an address found tonight stays
         known even when no later crawl fetches the page that linked to it.
+        An address counts as tried when it was sent, whatever it answered;
+        only addresses never sent keep their place. A known-only address
+        (no sitemap entry and no page read tonight refers to it) that answered
+        404/410 is forgotten, so the memory does not keep what the site no
+        longer has.
         """
-        return [
-            {
-                "canonical_url": item.canonical_url,
-                "url": item.url,
-                "depth": item.depth,
-                "visited": item.status == "fetched" and _is_visit(item.reason_code),
-                "reason_code": item.reason_code,
-            }
-            for item in self._by_canonical.values()
-            if item.depth <= self.max_depth
-        ]
-
-
-def _is_visit(reason_code: str | None) -> bool:
-    reason = reason_code or ""
-    return not reason.startswith("not_fetched_") and reason not in _UNVISITED_ANSWER_REASON_CODES
-
-
-def _rotation_key(item: DiscoveredUrl) -> tuple[bool, bool, float, int, int, int]:
-    """Visit what was visited longest ago first.
-
-    Never-visited addresses come first, then the oldest visits; an address
-    that answered 404/410 at its last visit goes after all others, so it is
-    still tried when the crawl has room and a page that came back is noticed.
-    Ties keep the discovery order of a crawl without memory.
-    """
-    return (
-        item.last_reason_code == FetchReasonCode.GONE.value,
-        item.last_visited_at is not None,
-        item.last_visited_at or 0.0,
-        item.priority,
-        item.depth,
-        item.order,
-    )
+        memory.rows, memory.forget = [], sorted(self._stale_memory_keys)
+        memory.known_only = set()
+        for item in self._by_canonical.values():
+            if item.depth > self.max_depth:
+                continue
+            known_only = item.source_kind == "known"
+            if known_only:
+                memory.known_only.add(item.canonical_url)
+                if item.reason_code == FetchReasonCode.GONE.value:
+                    memory.forget.append(item.canonical_url)
+                    continue
+            memory.rows.append(
+                {
+                    "canonical_url": item.canonical_url,
+                    "url": item.url,
+                    "depth": item.depth,
+                    "visited": item.status == "fetched"
+                    and not (item.reason_code or "").startswith("not_fetched_"),
+                    "known_only": known_only,
+                }
+            )
 
 
 def _priority_for_discovered_url(url: str) -> int:
@@ -1770,7 +1784,7 @@ async def crawl_site(
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
     checkpoint: CrawlCheckpoint | None = None,
     rate_limit_state: CrawlRateLimitState | None = None,
-    memory: CrawlMemory | None = None,
+    memory: CrawlMemoryState | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
     """Crawl one site through a host schedule shared by overlapping jobs.
 
@@ -1826,7 +1840,7 @@ async def _crawl_site_in_host_scope(
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
     checkpoint: CrawlCheckpoint | None = None,
     rate_limit_state: CrawlRateLimitState | None = None,
-    memory: CrawlMemory | None = None,
+    memory: CrawlMemoryState | None = None,
 ) -> tuple[list[CrawlResult], list[FetchOutcome]]:
     """Crawl a site with a Klai-owned deterministic frontier.
 
@@ -1886,9 +1900,6 @@ async def _crawl_site_in_host_scope(
         outcomes = list(restored.get("outcomes") or [])
         fetched_count = int(restored.get("fetched_count") or 0)
         attempted_count = int(restored.get("attempted_count", fetched_count))
-        if restored.get("complete"):
-            await checkpoint.ensure_active()
-            return crawl_results, outcomes
     else:
         ledger = CrawlLedger(
             start_url=start_url,
@@ -1903,10 +1914,16 @@ async def _crawl_site_in_host_scope(
         fetched_count = 0
         attempted_count = 0
     if memory is not None:
-        # Read on a resume too: the checkpoint frontier does not store visit
-        # times, and the memory is only written when this crawl completes, so
-        # a resumed crawl sees the same memory and keeps the same order.
-        ledger.remember(await memory.load())
+        # Applied on a resume too: the checkpoint frontier does not store
+        # visit times, and the adapter records the memory only after this job
+        # completes, so a resumed crawl sees the same memory and keeps its order.
+        ledger.remember(memory.remembered)
+    if restored is not None and restored.get("complete"):
+        assert checkpoint is not None
+        await checkpoint.ensure_active()
+        if memory is not None:
+            ledger.fill_memory(memory)
+        return crawl_results, outcomes
     # Crawl-job-wide budgets for the bulk-5xx sequential-recovery fallback
     # (see _recover_bulk_5xx_batch / _MAX_SEQUENTIAL_RECOVERY). BOTH are
     # shared across every batch iteration below, not reset per batch — a
@@ -2370,7 +2387,7 @@ async def _crawl_site_in_host_scope(
                 outcome["budget"] = "attempts"
     outcomes.extend(omitted_outcomes)
     if memory is not None:
-        await memory.save(ledger.memory_rows())
+        ledger.fill_memory(memory)
     await save_checkpoint(complete=True)
 
     success_count = sum(1 for o in outcomes if o["reason_code"] == FetchReasonCode.SUCCESS.value)
