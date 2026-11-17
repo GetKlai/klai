@@ -44,6 +44,7 @@ from app.models.sync_run import SyncRun
 from app.services.crawl_sync_status import (
     is_completed_remote_crawl_status,
     is_failed_remote_crawl_status,
+    remote_crawl_coverage,
     remote_crawl_documents_changed,
     remote_crawl_failure_error,
     remote_crawl_failure_status,
@@ -222,6 +223,7 @@ class SyncRunReaper:
                 pages_done=pages_done,
                 pages_total=pages_total,
                 documents_changed=remote_crawl_documents_changed(live),
+                coverage=remote_crawl_coverage(live),
             )
             return True
         if is_failed_remote_crawl_status(live_status):
@@ -252,6 +254,7 @@ class SyncRunReaper:
         pages_done: int,
         pages_total: int,
         documents_changed: int | None,
+        coverage: dict[str, Any] | None,
     ) -> None:
         completed_at = datetime.now(UTC)
         # Use tenant_scoped_session so the UPDATE passes the WITH CHECK
@@ -272,7 +275,11 @@ class SyncRunReaper:
             db_row.error_details = None
             db_row.quality_status = "healthy"
             existing_cursor = db_row.cursor_state if isinstance(db_row.cursor_state, dict) else {}
-            db_row.cursor_state = {**existing_cursor, "remote_status": "completed"}
+            db_row.cursor_state = {
+                **existing_cursor,
+                "remote_status": "completed",
+                **({"coverage": coverage} if coverage else {}),
+            }
             await session.commit()
         await self._portal_client.report_sync_status(
             connector_id=row.connector_id,
