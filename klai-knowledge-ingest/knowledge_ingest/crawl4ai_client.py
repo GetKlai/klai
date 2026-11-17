@@ -17,7 +17,6 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import asdict
 from html import unescape
-from itertools import zip_longest
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -1279,7 +1278,7 @@ class CrawlLedger:
             )
 
     def remember(self, rows: list[dict[str, Any]]) -> None:
-        """Add the connector's known addresses and when each was last tried.
+        """Add the connector's known addresses and how long each has waited.
 
         Known addresses join the frontier whether or not tonight's pages link
         to them, so the rotation does not depend on which pages the previous
@@ -1288,8 +1287,11 @@ class CrawlLedger:
         links are not followed beyond the connector's limit. A row that is out
         of scope now, or whose address canonicalises to another key on this
         crawl's host, is dropped from the memory when the crawl is recorded.
+        A stored page the memory has no row for was stored before the memory
+        existed, so it has waited longer than anything remembered.
         """
-        for row in rows:
+        # Remembered rows first, so a stored page that also has a row keeps it.
+        for row in sorted(rows, key=lambda r: r["canonical_url"] is None):
             url = row["url"]
             depth = self.max_depth if row["depth"] is None else int(row["depth"])
             self.add(
@@ -1304,8 +1306,15 @@ class CrawlLedger:
             stored_key = row["canonical_url"]
             if stored_key is not None and (item is None or stored_key != canonical):
                 self._stale_memory_keys.add(stored_key)
-            visited_at = row["last_visited_at"]
-            if item is not None and visited_at is not None:
+            if item is None:
+                continue
+            if stored_key is None:
+                if item.first_seen_at is None:
+                    item.first_seen_at = float("-inf")
+                continue
+            first_seen, visited_at = row["first_seen_at"], row["last_visited_at"]
+            item.first_seen_at = min(item.first_seen_at or first_seen, first_seen)
+            if visited_at is not None:
                 item.last_visited_at = max(item.last_visited_at or visited_at, visited_at)
 
     def add_links_from_result(self, result: CrawlResult, *, source_depth: int) -> None:
@@ -1388,14 +1397,16 @@ class CrawlLedger:
         return True
 
     def next_batch(self, *, remaining_budget: int) -> list[str]:
-        """Alternate never-tried addresses with tried ones, oldest try first.
+        """Whoever has waited longest goes first.
 
-        Never-tried addresses keep the discovery order ``(priority, depth,
-        order)``; tried addresses go by when they were last tried. Taking one
-        of each in turn while both exist gives tried addresses at least half
-        of every crawl, so a site that mints new links every night cannot
-        starve the refresh: a tried address is tried again within two rounds,
-        a round being the crawls it takes to try every known address once.
+        A remembered address waits since it was last tried or, never tried,
+        since the memory first saw it; at the same moment a never-tried
+        address goes before a re-read. An address first found in this crawl
+        has waited the shortest and goes after everything remembered. Ties
+        keep the discovery order ``(priority, depth, order)``. New addresses
+        therefore queue behind everything known before them, so every address
+        known today is tried within one round from today, a round being the
+        crawls it takes to try what is known today.
         """
         if remaining_budget <= 0:
             return []
@@ -1404,16 +1415,8 @@ class CrawlLedger:
             for item in self._by_canonical.values()
             if item.status == "queued" and item.depth <= self.max_depth
         ]
-        never = sorted(
-            (i for i in queued if i.last_visited_at is None),
-            key=lambda i: (i.priority, i.depth, i.order),
-        )
-        tried = sorted(
-            (i for i in queued if i.last_visited_at is not None),
-            key=lambda i: (i.last_visited_at, i.priority, i.depth, i.order),
-        )
-        order = [item for pair in zip_longest(never, tried) for item in pair if item is not None]
-        return [item.url for item in order[:remaining_budget]]
+        queued.sort(key=_waiting_key)
+        return [item.url for item in queued[:remaining_budget]]
 
     def mark_outcome(self, outcome: FetchOutcome) -> None:
         item = self._by_canonical.get(_canonicalise_url(str(outcome.get("url") or "")))
@@ -1503,6 +1506,18 @@ class CrawlLedger:
                     "known_only": known_only,
                 }
             )
+
+
+def _waiting_key(item: DiscoveredUrl) -> tuple[bool, float, bool, int, int, int]:
+    waited_since = item.last_visited_at if item.last_visited_at is not None else item.first_seen_at
+    return (
+        waited_since is None,
+        waited_since or 0.0,
+        item.last_visited_at is not None,
+        item.priority,
+        item.depth,
+        item.order,
+    )
 
 
 def _priority_for_discovered_url(url: str) -> int:

@@ -48,6 +48,7 @@ class PostgresCrawlMemory:
             remembered = await conn.fetch(
                 """
                 SELECT canonical_url, url, depth,
+                       extract(epoch FROM first_seen_at)::float8 AS first_seen_at,
                        extract(epoch FROM last_visited_at)::float8 AS last_visited_at
                 FROM knowledge.crawl_url_memory
                 WHERE org_id = $1 AND connector_id = $2
@@ -73,7 +74,13 @@ class PostgresCrawlMemory:
                 _SENTINEL,
             )
         return [dict(row) for row in remembered] + [
-            {"canonical_url": None, "url": url, "depth": None, "last_visited_at": None}
+            {
+                "canonical_url": None,
+                "url": url,
+                "depth": None,
+                "first_seen_at": None,
+                "last_visited_at": None,
+            }
             for row in stored
             if (url := str(row["url"])).startswith(("http://", "https://"))
         ]
@@ -84,7 +91,8 @@ class PostgresCrawlMemory:
         """Record one crawl on the caller's fenced connection, in one transaction.
 
         Tried addresses share one ``now()``; an address that was only seen
-        keeps its earlier try. ``forget`` keys are deleted.
+        keeps its earlier try. ``first_seen_at`` is set when a row is first
+        written and never changed. ``forget`` keys are deleted.
         """
         if not rows and not forget:
             return
@@ -101,8 +109,9 @@ class PostgresCrawlMemory:
             await conn.executemany(
                 """
                 INSERT INTO knowledge.crawl_url_memory AS m (
-                    org_id, kb_slug, connector_id, canonical_url, url, depth, last_visited_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $7 THEN now() END)
+                    org_id, kb_slug, connector_id, canonical_url, url, depth,
+                    first_seen_at, last_visited_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, now(), CASE WHEN $7 THEN now() END)
                 ON CONFLICT (org_id, connector_id, canonical_url) DO UPDATE SET
                     url = EXCLUDED.url,
                     depth = LEAST(m.depth, EXCLUDED.depth),

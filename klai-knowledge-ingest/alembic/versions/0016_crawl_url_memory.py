@@ -1,7 +1,8 @@
 """Add knowledge.crawl_url_memory: when each connector address was last tried.
 
 A crawl that cannot visit every known address continues the next night with
-what was tried longest ago (knowledge_ingest.crawl_memory). One row per
+what has waited longest: since its last try, or since it was first seen
+(knowledge_ingest.crawl_memory). One row per
 address and connector, recorded once per accepted crawl. ``kb_slug`` is kept
 so a knowledge-base delete can remove the rows.
 
@@ -34,6 +35,7 @@ def upgrade() -> None:
           canonical_url text NOT NULL,
           url text NOT NULL,
           depth integer NOT NULL CHECK (depth >= 0),
+          first_seen_at timestamptz NOT NULL,
           last_visited_at timestamptz,
           PRIMARY KEY (org_id, connector_id, canonical_url)
         )

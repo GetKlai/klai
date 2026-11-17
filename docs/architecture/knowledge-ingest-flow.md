@@ -204,10 +204,13 @@ What the crawler does:
   counts as tried, whatever it answered. Remembered addresses and the
   connector's stored pages join the frontier even when tonight's pages and
   sitemap do not list them; a stored page without a memory row joins at
-  `max_depth`. After the start address the frontier alternates one for one
-  between never-tried addresses (in `(priority, depth, discovery order)`) and
-  tried ones (oldest try first), so a tried address is tried again within two
-  rounds even on a site that mints new links every night. A resumed crawl
+  `max_depth`. After the start address, whoever has waited longest goes
+  first: an address waits since it was last tried or, never tried, since the
+  memory first saw it (`first_seen_at`); a stored page without a memory row
+  goes first, an address first found tonight goes after everything
+  remembered, and ties keep `(priority, depth, discovery order)`. Every
+  address known today is therefore tried within one round from today, even on
+  a site that mints new links every night. A resumed crawl
   reads the same memory and keeps its order. An address that is in the
   frontier only because the memory knew it is forgotten when it answers
   404/410, and every such address is forgotten after a fully fetched crawl;

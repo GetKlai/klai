@@ -30,6 +30,7 @@ from knowledge_ingest.crawl_memory import PostgresCrawlMemory
 
 _DSN = os.environ.get("CRAWL_CHECKPOINT_TEST_DSN")
 _ORG = "org-memory-test"
+_JAN, _FEB, _MAR = (datetime(2026, month, 1, tzinfo=UTC) for month in (1, 2, 3))
 _START = "https://example.com/"
 
 pytestmark = [
@@ -170,10 +171,15 @@ async def test_memory_keeps_visits_and_knows_stored_pages() -> None:
         assert set(remembered) == {_address(1)}
         assert remembered[_address(1)]["depth"] == 1
         assert remembered[_address(1)]["last_visited_at"] is not None
+        # Both come from the first record; the second moves neither.
+        assert (
+            remembered[_address(1)]["first_seen_at"] == (remembered[_address(1)]["last_visited_at"])
+        )
         assert {
             "canonical_url": None,
             "url": stored_url,
             "depth": None,
+            "first_seen_at": None,
             "last_visited_at": None,
         } in loaded
     finally:
@@ -191,15 +197,12 @@ async def test_second_crawl_reaches_remembered_addresses_the_sitemap_dropped(
         first = await _crawl(_memory(connector_id), max_pages=6)
         _install_site(monkeypatch, [])
         second = await _crawl(_memory(connector_id), max_pages=6)
-        third = await _crawl(_memory(connector_id), max_pages=6)
 
         def read(outcomes: list[dict[str, Any]]) -> set[str]:
             return {o["url"] for o in outcomes if o["reason_code"] == "success"} - {_START}
 
         assert len(read(first)) == 5
-        # Never-tried and tried addresses alternate, so the five the first
-        # crawl did not reach take two more crawls of five.
-        assert read(first) | read(second) | read(third) == set(addresses)
+        assert read(second) == set(addresses) - read(first)
     finally:
         await _cleanup(connector_id)
 
@@ -227,15 +230,14 @@ async def test_resumed_crawl_keeps_rotation_order_through_real_checkpoint(
             await conn.executemany(
                 """
                 INSERT INTO knowledge.crawl_url_memory (
-                    org_id, kb_slug, connector_id, canonical_url, url, depth, last_visited_at
-                ) VALUES ($1, 'docs', $2, $3, $3, 1, $4)
+                    org_id, kb_slug, connector_id, canonical_url, url, depth,
+                    first_seen_at, last_visited_at
+                ) VALUES ($1, 'docs', $2, $3, $3, 1, $4, $5)
                 """,
                 [
-                    (_ORG, connector_id, known_only, datetime(2026, 1, 1, tzinfo=UTC)),
-                    *[
-                        (_ORG, connector_id, url, datetime(2026, 2, 1, tzinfo=UTC))
-                        for url in sitemap[:3]
-                    ],
+                    (_ORG, connector_id, known_only, _JAN, _FEB),
+                    *[(_ORG, connector_id, url, _JAN, _MAR) for url in sitemap[:3]],
+                    *[(_ORG, connector_id, url, _JAN, None) for url in sitemap[3:5]],
                 ],
             )
         bulk_calls = _install_site(monkeypatch, sitemap)
@@ -274,15 +276,13 @@ async def test_resumed_crawl_keeps_rotation_order_through_real_checkpoint(
         await _attempt()
 
         requested = [url for call in bulk_calls for url in call]
-        never, tried = sitemap[3:], [known_only, *sitemap[:3]]
+        # Never tried since January, tried in February, tried in March, then
+        # the address the memory did not know before tonight.
         assert list(dict.fromkeys(requested)) == [
-            never[0],
-            tried[0],
-            never[1],
-            tried[1],
-            never[2],
-            tried[2],
-            tried[3],
+            *sitemap[3:5],
+            known_only,
+            *sitemap[:3],
+            sitemap[5],
         ]
     finally:
         await _cleanup(connector_id, job_id)

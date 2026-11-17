@@ -26,10 +26,12 @@ class CrawlMemoryState:
 
     ``remembered`` is what the memory held before this crawl: rows with
     ``canonical_url`` (the stored key, ``None`` for a stored page the memory
-    has no row for), ``url``, ``depth`` (``None`` when unknown) and
-    ``last_visited_at`` (epoch seconds or ``None``). ``crawl_site`` reads it and
-    fills the rest when it completes; it never writes the memory itself, so
-    the adapter can record a run only once its pages were accepted.
+    has no row for), ``url``, ``depth`` (``None`` when unknown),
+    ``first_seen_at`` and ``last_visited_at`` (epoch seconds; ``None`` for a
+    stored page, and ``last_visited_at`` also for an address never tried).
+    ``crawl_site`` reads it and fills the rest when it completes; it never
+    writes the memory itself, so the adapter can record a run only once its
+    pages were accepted.
 
     ``rows`` is every in-scope address with ``visited`` (actually sent this
     crawl) and ``known_only``; ``forget`` holds stored keys to drop (a
@@ -97,6 +99,7 @@ class DiscoveredUrl:
     # From the connector's crawl memory; not stored in the checkpoint
     # frontier, a resumed crawl reads it from the memory again.
     last_visited_at: float | None = None
+    first_seen_at: float | None = None
 
 
 @dataclass

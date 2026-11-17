@@ -8,8 +8,9 @@ hands back what it tried; the adapter records it, see
 1. ``max_pages`` counts addresses that answered with a page. An address that
    answered 404/410 is free against it, and a separate attempt bound ends a
    crawl whose address list is mostly dead.
-2. Every address that was sent counts as tried, whatever it answered. The
-   frontier alternates never-tried addresses with tried ones, oldest first.
+2. Every address that was sent counts as tried, whatever it answered. Whoever
+   has waited longest goes first: since its last try, or since the memory
+   first saw it.
 3. A remembered address that no sitemap entry or page links to tonight is
    forgotten when it answers 404/410.
 """
@@ -140,7 +141,13 @@ class _FakeMemory:
 
     async def load(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.rows.values()] + [
-            {"canonical_url": None, "url": url, "depth": None, "last_visited_at": None}
+            {
+                "canonical_url": None,
+                "url": url,
+                "depth": None,
+                "first_seen_at": None,
+                "last_visited_at": None,
+            }
             for url in self.stored
         ]
 
@@ -154,6 +161,7 @@ class _FakeMemory:
                 "canonical_url": row["canonical_url"],
                 "url": row["url"],
                 "depth": min(row["depth"], old["depth"]) if old else row["depth"],
+                "first_seen_at": old["first_seen_at"] if old else self.clock,
                 "last_visited_at": self.clock
                 if row["visited"]
                 else (old["last_visited_at"] if old else None),
@@ -243,25 +251,28 @@ async def test_dead_addresses_do_not_use_up_the_page_limit(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_every_address_comes_round_within_two_rounds(monkeypatch) -> None:
-    """(b) 1,996 addresses at 499 a night: one round is four nights, none waits over eight."""
+async def test_consecutive_crawls_rotate_through_a_site_larger_than_the_limit(
+    monkeypatch,
+) -> None:
+    """(b) Four crawls of 500 together read every address once; the fifth starts over.
+
+    The start address is read every night, so the rotating part of each crawl
+    is 499 addresses: 1,996 addresses take exactly four nights.
+    """
     live = [_address(i) for i in range(1996)]
     site = _Site(live=live)
     site.install(monkeypatch)
     memory = _FakeMemory()
 
-    last_read: dict[str, int] = {}
     nights = []
-    for night in range(1, 11):
+    for _ in range(5):
         _results, outcomes, _state = await _night(site, memory)
         nights.append(outcomes)
-        for url in _read(outcomes) - {_START}:
-            last_read[url] = night
-        if night >= 8:
-            assert set(last_read) == set(live)
-            assert min(last_read.values()) > night - 8
 
-    assert [len(_read(o) - {_START}) for o in nights] == [499] * 10
+    reads = [_read(outcomes) - {_START} for outcomes in nights]
+    assert [len(r) for r in reads[:4]] == [499, 499, 499, 499]
+    assert set().union(*reads[:4]) == set(live)
+    assert reads[4] == reads[0]
     assert _crawl_coverage(nights[0], max_pages=500) == {
         "pages_read": 500,
         "addresses_gone": 0,
@@ -273,7 +284,28 @@ async def test_every_address_comes_round_within_two_rounds(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_crawl_after_a_rate_limited_crawl_reaches_what_it_did_not(monkeypatch) -> None:
+async def test_a_known_page_never_read_is_read_before_any_page_is_re_read(
+    monkeypatch,
+) -> None:
+    """100 known addresses at 30 a night: nothing is read twice before all are read."""
+    live = [_address(i) for i in range(100)]
+    site = _Site(live=live)
+    site.install(monkeypatch)
+    memory = _FakeMemory()
+
+    reads = []
+    for _ in range(4):
+        _results, outcomes, _state = await _night(site, memory, max_pages=31)
+        reads.append(_read(outcomes) - {_START})
+
+    assert sum(len(r) for r in reads[:3]) == len(set().union(*reads[:3])) == 90
+    assert set(live) - set().union(*reads[:3]) <= reads[3]
+
+
+@pytest.mark.asyncio
+async def test_crawl_after_a_rate_limited_crawl_reads_only_what_it_did_not(
+    monkeypatch,
+) -> None:
     """(c) A site that answers 429 after 30 pages every night is still read further."""
     live = [_address(i) for i in range(99)]
     site = _Site(live=live, rate_limit_after=30)
@@ -284,10 +316,9 @@ async def test_crawl_after_a_rate_limited_crawl_reaches_what_it_did_not(monkeypa
     first_read = _read(first)
     _results, second, _state = await _night(site, memory)
 
-    unreached = set(live) - first_read
     assert len(first_read) == 30
-    assert site.bulk_calls[0][0] in unreached
-    assert len(_read(second) & unreached) >= 14
+    assert len(_read(second) - {_START}) == 29
+    assert (_read(second) - {_START}).isdisjoint(first_read)
     assert _crawl_coverage(first, max_pages=500) == {
         "pages_read": 30,
         "addresses_gone": 0,
@@ -327,29 +358,46 @@ async def test_a_dead_address_on_a_limit_filled_site_is_retried_within_a_round(
     await _night(site, memory, max_pages=5)
     site.dead.clear()
     site.live.add(returning)
-    results, _outcomes, _state = await _night(site, memory, max_pages=5)
+    # Nine known addresses at four a night: one round is three nights.
+    read: set[str] = set()
+    for _ in range(2):
+        results, _outcomes, _state = await _night(site, memory, max_pages=5)
+        read |= {r.url for r in results}
 
-    assert returning in {r.url for r in results}
+    assert returning in read
 
 
 @pytest.mark.asyncio
 async def test_endless_new_links_do_not_stop_the_refresh(monkeypatch) -> None:
-    """A site minting 500 new addresses a night still has its stored pages refreshed."""
+    """A site minting 500 new addresses a night: what is known today is tried within a round.
+
+    New addresses queue behind everything that waited longer. With 100 pages
+    a night, the 100 stored pages known after the first night are all tried
+    the next night, and the 600 known after that within the six nights after.
+    """
     stored = [_address(f"s{i}") for i in range(100)]
     site = _Site(live=stored)
     site.install(monkeypatch)
     memory = _FakeMemory()
     await _night(site, memory, max_pages=101)
 
-    refreshed: set[str] = set()
-    for night in range(2):
+    def mint(night: int) -> None:
         minted = [_address(f"n{night}-{i}") for i in range(500)]
         site.live |= set(minted)
-        site.sitemap = [*minted, *stored]
-        _results, outcomes, _state = await _night(site, memory, max_pages=101)
-        refreshed |= _read(outcomes) & set(stored)
+        site.sitemap = [*minted, *site.sitemap]
 
-    assert refreshed == set(stored)
+    mint(2)
+    _results, outcomes, _state = await _night(site, memory, max_pages=101)
+    assert _read(outcomes) - {_START} == set(stored)
+
+    known_today = set(memory.rows) - {_START}
+    assert len(known_today) == 600
+    tried: set[str] = set()
+    for night in range(3, 9):
+        mint(night)
+        _results, outcomes, _state = await _night(site, memory, max_pages=101)
+        tried |= _read(outcomes)
+    assert known_today <= tried
 
 
 @pytest.mark.asyncio
@@ -384,6 +432,7 @@ async def test_an_unlisted_remembered_address_that_answers_404_is_forgotten(
         "canonical_url": unlisted,
         "url": unlisted,
         "depth": 1,
+        "first_seen_at": 0.0,
         "last_visited_at": 0.0,
     }
 
@@ -407,6 +456,7 @@ async def test_a_remembered_address_on_the_old_host_is_moved_to_the_crawl_host(
         "canonical_url": old_key,
         "url": old_key,
         "depth": 1,
+        "first_seen_at": 0.0,
         "last_visited_at": 0.0,
     }
 
@@ -442,21 +492,32 @@ async def test_a_list_of_only_dead_addresses_ends_at_the_attempt_bound(monkeypat
 async def test_a_resumed_crawl_keeps_the_rotation_order(monkeypatch) -> None:
     """(f) A deploy halfway through a crawl does not reset the order to discovery order."""
     addresses = [_address(i) for i in range(6)]
-    site = _Site(live=addresses)
+    stored = _address("stored")
+    found_tonight = _address("new")
+    site = _Site(live=[*addresses, stored, found_tonight], sitemap=[found_tonight, *addresses])
     site.install(monkeypatch)
     monkeypatch.setattr(crawl4ai_client, "_CHECKPOINT_BATCH_SIZE", 2)
     remembered = [
-        {"canonical_url": url, "url": url, "depth": 1, "last_visited_at": 0.0}
-        for url in addresses[:3]
+        {
+            "canonical_url": url,
+            "url": url,
+            "depth": 1,
+            "first_seen_at": 0.0,
+            "last_visited_at": 1.0 if url in addresses[:3] else None,
+        }
+        for url in addresses
+    ] + [
+        {
+            "canonical_url": None,
+            "url": stored,
+            "depth": None,
+            "first_seen_at": None,
+            "last_visited_at": None,
+        }
     ]
-    expected = [
-        addresses[3],
-        addresses[0],
-        addresses[4],
-        addresses[1],
-        addresses[5],
-        addresses[2],
-    ]
+    # The stored page without a row waited longest, then the never-tried
+    # addresses seen at 0, then those tried at 1, then what is new tonight.
+    expected = [stored, *addresses[3:], *addresses[:3], found_tonight]
 
     real_bulk = crawl4ai_client._chunked_bulk_fetch
     calls = 0
