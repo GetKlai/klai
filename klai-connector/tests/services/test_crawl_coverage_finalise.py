@@ -1,7 +1,7 @@
-"""Resolver and reaper finalise a crawl that left addresses for later as a succeeded sync.
+"""Resolver and reaper carry the crawl coverage and finalise on the remote status alone.
 
-Both finalisers must apply the same decision (``remote_crawl_succeeded``): the
-reaper ends most nightly runs, the resolver ends those someone opens live.
+knowledge-ingest decides whether a crawl that left addresses for later is
+``completed``; the connector only stores the coverage it reports.
 """
 
 from __future__ import annotations
@@ -26,40 +26,53 @@ COVERAGE = {
     "max_pages": 80,
     "stopped_by": "page_limit",
 }
-LIVE = {
+COMPLETED = {"job_id": "abc123", "status": "completed", "pages_done": 80, "pages_total": 80, "coverage": COVERAGE}
+FAILED = {
     "job_id": "abc123",
-    "status": "failed",
+    "status": "failed_partial",
     "pages_done": 80,
     "pages_total": 80,
-    "error": "crawl_budget_exhausted",
+    "error": "auth_wall",
     "coverage": COVERAGE,
 }
 
 
 @pytest.mark.asyncio
-async def test_resolver_completes_a_budget_stop_and_keeps_the_coverage() -> None:
-    resolver, _, _, portal = _make_resolver(status_responses=[LIVE])
+async def test_resolver_keeps_the_coverage_of_a_completed_crawl() -> None:
+    resolver, _, _, _ = _make_resolver(status_responses=[COMPLETED])
     row = _resolver_row()
     _register(resolver, row)
 
     snapshot = await resolver.resolve(row)
 
     assert row.status == SyncStatus.COMPLETED
-    assert row.error_details is None
-    assert row.documents_failed == 0
+    assert row.cursor_state["remote_status"] == "completed"
     assert row.cursor_state["coverage"] == COVERAGE
     assert snapshot.coverage == COVERAGE
-    assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.COMPLETED
 
 
 @pytest.mark.asyncio
-async def test_reaper_completes_a_budget_stop_and_keeps_the_coverage() -> None:
+async def test_reaper_keeps_the_coverage_of_a_completed_crawl() -> None:
     row = _reaper_row(started_at=datetime.now(UTC) - timedelta(hours=25))
-    reaper, _, _, portal, _ = _make_reaper(candidate_rows=[row], status_responses=[LIVE])
+    reaper, _, _, _, _ = _make_reaper(candidate_rows=[row], status_responses=[COMPLETED])
 
     await reaper.tick()
 
     assert row.status == SyncStatus.COMPLETED
-    assert row.error_details is None
+    assert row.cursor_state["remote_status"] == "completed"
     assert row.cursor_state["coverage"] == COVERAGE
-    assert portal.report_sync_status.await_args.kwargs["sync_status"] == SyncStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_a_failed_crawl_stays_failed_whatever_its_coverage_says() -> None:
+    resolver, _, _, _ = _make_resolver(status_responses=[FAILED])
+    row = _resolver_row()
+    _register(resolver, row)
+    await resolver.resolve(row)
+
+    reaper_row = _reaper_row(started_at=datetime.now(UTC) - timedelta(hours=25))
+    reaper, _, _, _, _ = _make_reaper(candidate_rows=[reaper_row], status_responses=[FAILED])
+    await reaper.tick()
+
+    assert row.status == SyncStatus.FAILED
+    assert reaper_row.status == SyncStatus.FAILED

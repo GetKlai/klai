@@ -36,12 +36,12 @@ from app.core.enums import SyncStatus
 from app.core.logging import get_logger
 from app.models.sync_run import SyncRun
 from app.services.crawl_sync_status import (
+    is_completed_remote_crawl_status,
     is_terminal_remote_crawl_status,
     remote_crawl_coverage,
     remote_crawl_documents_changed,
     remote_crawl_failure_error,
     remote_crawl_failure_status,
-    remote_crawl_succeeded,
 )
 from app.services.portal_client import PortalClient
 
@@ -207,7 +207,7 @@ class SyncRunResolver:
         live_status = str(live.get("status"))
         pages_total = int(live.get("pages_total") or 0)
         pages_done = int(live.get("pages_done") or 0)
-        if remote_crawl_succeeded(live):
+        if is_completed_remote_crawl_status(live_status):
             new_status = SyncStatus.COMPLETED
             documents_total = pages_total
             documents_ok = pages_done
