@@ -305,6 +305,11 @@ class Settings(BaseSettings):
     litellm_base_url: str = "http://litellm:4000"
     extraction_model: str = "klai-fast"
     synthesis_model: str = "klai-primary"
+    # The output cap of every chat writer call (widget_write.write_reply). Of
+    # 1,725 writer calls in fourteen days below 1,500 tokens the 99th
+    # percentile was 618 tokens, so a valid reply is not cut; a reply that
+    # does not stop is (SPEC-CHAT-INTERNAL-ROUTE-001 §4).
+    chat_writer_max_tokens: int = 2000
     feedback_triage_model: str = "klai-fast"
     # SPEC-CHAT-QUALITY-LOOP-001 REQ-2: same underlying model as klai-medium
     # (Mistral Medium 3.5, same reason RAGAS faithfulness moved off klai-fast:

@@ -85,6 +85,7 @@ def test_llm_request_body_carries_the_feature_tag():
         tools=None,
         tool_choice=None,
         delegated_org_id=None,
+        max_tokens=2000,
     )
 
     assert body["metadata"]["tags"] == ["portal:partner-chat-answer"]
@@ -953,6 +954,7 @@ async def test_non_streaming_blocks_hazardous_model_output(monkeypatch):
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm"
     settings.litellm_master_key = "secret"
+    settings.chat_writer_max_tokens = 2000
 
     body = await held_reply_body(
         profile=ChatProfile(surface="internal", kb_mode="open"),
@@ -1012,6 +1014,7 @@ async def test_streaming_refusal_language_follows_visitor_not_rewritten_query(mo
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm"
     settings.litellm_master_key = "secret"
+    settings.chat_writer_max_tokens = 2000
 
     chunks = await streamed_reply_frames(
         profile=ChatProfile(surface="internal", kb_mode="open"),

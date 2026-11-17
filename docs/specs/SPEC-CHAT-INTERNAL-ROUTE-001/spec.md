@@ -1,7 +1,7 @@
 ---
 id: SPEC-CHAT-INTERNAL-ROUTE-001
 version: "0.1.0"
-status: design, stap 1 in bouw; nog niets uitgerold
+status: design, stap 1 gebouwd en nog niet gemeten; nog niets uitgerold
 created: 2026-11-17
 updated: 2026-11-17
 priority: high
@@ -71,7 +71,7 @@ De interne meetlat stuurt mee wat de voorkant in productie meestuurt, zodat een 
 
 Contract:
 
-1. De schrijfaanroep draagt alleen gereedschappen op een handelingsbeurt. Een beurt is een handelingsbeurt als het verzoek gereedschappen meebrengt en ofwel het laatste bericht van het gesprek een gereedschapsresultaat is, ofwel de lezing van de zaak een handelingswens meldt met een citaat dat letterlijk in het laatste bericht van de medewerker staat. Dat is hetzelfde patroon als de contactwens op de widget, waar code het citaat natrekt. Bij twijfel is het geen handelingsbeurt.
+1. De schrijfaanroep draagt alleen gereedschappen op een handelingsbeurt. Een beurt is een handelingsbeurt als het verzoek gereedschappen meebrengt en ofwel het laatste bericht van het gesprek een gereedschapsresultaat is, ofwel een kleine losse aanroep een handelingswens meldt met een citaat dat letterlijk in het laatste bericht van de medewerker staat; code trekt dat citaat na, zoals bij de contactwens op de widget. Die aanroep loopt alleen als het verzoek gereedschappen meebrengt, naast het zoeken en de zaak. Bij twijfel is het geen handelingsbeurt. Als extra veld in de lezing van de zaak is dit gemeten en afgewezen: het veranderde de andere uitkomsten van de zaak en las geplakt materiaal in 16 van 19 gevallen als een gewone vraag [gemeten, 76 echte berichten].
 2. Op een handelingsbeurt draagt de schrijfaanroep geen vast antwoordformaat. Op elke andere beurt draagt ze geen gereedschappen en geen gereedschapskeuze.
 3. Elke schrijfaanroep stuurt een grens op de lengte mee, instelbaar, standaard 2.000 tokens. Van 1.725 schrijfaanroepen in veertien dagen onder de 1.500 tokens was de 99e percentiel 618 tokens [gemeten]; een geldig antwoord wordt dus niet afgekapt.
 4. Komt in een antwoord een zin van meer dan veertig tekens voor de derde keer voor, dan eindigt het antwoord vóór die derde keer, ook als het gestreamd wordt. Een antwoord met twee varianten die dezelfde stappen hebben, wordt niet afgekapt.
@@ -85,7 +85,7 @@ Meting: aandeel ontspoorde antwoorden op het nagebouwde productieverzoek, produc
 
 ## 5. Stap 2: werken met geplakte tekst
 
-Voorwaarde vooraf: het kleine model dat de zaak leest, herkent de soort werk betrouwbaar. Dat wordt getoetst op echte eerste berichten voordat er iets gebouwd wordt [aanname tot de toets er is].
+De toets vooraf is gedaan op 76 echte berichten en het productiemodel [gemeten]. Als los verzoek herkent het kleine model geplakt materiaal goed (16 van 17 keer terecht, 16 van de 20 gevonden), maar "overig" slecht (1 van 7), en als veld in de lezing van de zaak werkt het niet. Een regel die code kan natrekken (meer dan 120 woorden, een geplakte mailkop of een logpatroon) wijst nooit ten onrechte materiaal aan en vindt 13 van de 20; zes van de zeven missers zijn korte geplakte mails en vervolgbeurten als "schrijf de mail". De soort werk komt daarom uit die regel plus het geheugen van het gesprek (een gesprek dat met materiaal begon, blijft materiaal), en niet uit een veld van het model. Een echte handeling kwam in de 76 berichten niet voor.
 
 Contract in hoofdlijnen, definitief na die toets: de lezing van de zaak krijgt een veld voor de soort werk. Bij geplakt materiaal komen de zoekvragen uit het materiaal, kiest de keuzestap passages bij de vragen die het materiaal stelt, en schrijft de schrijver een concept of analyse met de bronnen erbij. De controle op onderbouwing meet, zoals nu, en verandert het antwoord niet. In Strict blijft gelden dat een bewering over het product uit de artikelen komt; wat het materiaal zelf zegt, mag de schrijver gebruiken.
 

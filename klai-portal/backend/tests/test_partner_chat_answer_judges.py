@@ -79,6 +79,7 @@ def _settings() -> MagicMock:
     settings = MagicMock()
     settings.litellm_base_url = LITELLM
     settings.litellm_master_key = "key"
+    settings.chat_writer_max_tokens = 2000
     settings.extraction_model = "klai-fast"
     settings.answer_grounding_model = "klai-medium"
     return settings

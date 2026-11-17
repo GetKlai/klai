@@ -51,6 +51,7 @@ def _settings() -> MagicMock:
     settings = MagicMock()
     settings.litellm_base_url = "http://litellm:4000"
     settings.litellm_master_key = "key"
+    settings.chat_writer_max_tokens = 2000
     return settings
 
 
