@@ -64,7 +64,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -209,7 +209,6 @@ class Thread:
 
     cid: str
     profile: ChatProfile | None
-    mode: str
     turns: list[dict]
 
 
@@ -349,7 +348,7 @@ async def _fetch_threads(org: Any, prefixes: list[str], days: int) -> dict[str, 
     for prefix, conversation in unique.items():
         profile = profiles[conversation["user"]]
         turns = replay._turns_from_messages(messages.get(conversation["conversationId"], []))
-        threads[prefix] = Thread(conversation["conversationId"], profile, profile.kb_mode if profile else "", turns)
+        threads[prefix] = Thread(conversation["conversationId"], profile, turns)
     return threads
 
 
@@ -534,9 +533,12 @@ async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
         return {"cid": case["cid"], "u": u, "error": "turn_out_of_range"}
     k = user_turns[u]
     messages = [{"role": t["role"], "content": t["content"]} for t in thread.turns[: k + 1]]
-    row = {"cid": case["cid"], "k": k, "u": u, "mode": thread.mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
     profile = thread.profile
     assert profile is not None and profile.user_id is not None, "replay_internal skips a thread without an employee"
+    # The mode the case was answered in, not the one the employee's profile has today.
+    if case.get("mode") in ("strict", "open"):
+        profile = replace(profile, kb_mode=case["mode"])
+    row = {"cid": case["cid"], "k": k, "u": u, "mode": profile.kb_mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
     return await _replayed(
         row,
         _from_the_same_memory(
@@ -560,13 +562,18 @@ async def _replay_internal_conversation(
     needs to write one. The named turns' rows say where the expected articles
     stood (:func:`_stage_row`).
     """
-    named = {case["turn"] for case in cases}
+    by_turn = {case["turn"]: case for case in cases}
+    named = set(by_turn)
     from_reply = {case["turn"] for case in cases if "articles" not in case}
     failed: list[dict] = []
     for u in range(max(named) + 1):
         if expected is not None:
             _arm()
-        row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u})
+        # A named turn runs in its own case's mode, and a turn before it in the
+        # mode of the named turn it stores the case for: one conversation can
+        # hold an Open case and a Strict case.
+        mode = by_turn[min(turn for turn in named if turn >= u)].get("mode")
+        row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u, "mode": mode})
         if expected is not None:
             record = _take()
             if u in named:

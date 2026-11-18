@@ -170,9 +170,7 @@ def _thread(full_id: str, asks: list[str]) -> meetlat.Thread:
     turns = []
     for ask in asks:
         turns += [{"role": "user", "content": ask}, {"role": "assistant", "content": f"earlier reply to {ask}"}]
-    return meetlat.Thread(
-        full_id, ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee"), "open", turns
-    )
+    return meetlat.Thread(full_id, ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee"), turns)
 
 
 def _run(tmp_path, cases_rows, overlay, *extra):
@@ -204,6 +202,50 @@ def test_run_replays_each_named_user_turn_with_its_history_and_writes_one_row_pe
     assert meta["org"] == "brightwater"
     assert meta["modules"]["app.services.internal_turn"].startswith(str(overlay))
     assert "app.services.internal_turn" in capsys.readouterr().out
+
+
+def test_run_answers_every_turn_of_a_case_in_the_mode_the_case_names(monkeypatch, tmp_path):
+    """The profile's mode today is not the mode the turn was answered in when the case was named."""
+    threads = {"aaaaaaaa": _thread("aaaaaaaa-1111", ["first", "second"])}
+    overlay = _stub_run_environment(monkeypatch, tmp_path, threads, [])
+    modes: list[str] = []
+
+    async def new_answer(_org, profile, messages, _conversation_id):
+        modes.append(profile.kb_mode)
+        return {"text": "an answer", "total_ms": 1000, "signals": {"decision": "answer"}}
+
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+
+    code = _run(tmp_path, [{"cid": "aaaaaaaa", "turn": 1, "mode": "strict"}], overlay)
+
+    rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert code == 0
+    assert modes == ["strict", "strict"], "the earlier turn that stores the case runs in the case's mode too"
+    assert rows[0]["mode"] == "strict"
+
+
+def test_run_answers_each_named_turn_of_one_conversation_in_its_own_mode(monkeypatch, tmp_path):
+    """One real conversation held an Open case and a Strict case; the Strict one was replayed in Open."""
+    threads = {"aaaaaaaa": _thread("aaaaaaaa-1111", ["first", "second"])}
+    overlay = _stub_run_environment(monkeypatch, tmp_path, threads, [])
+    modes: list[str] = []
+
+    async def new_answer(_org, profile, messages, _conversation_id):
+        modes.append(profile.kb_mode)
+        return {"text": "an answer", "total_ms": 1000, "signals": {"decision": "answer"}}
+
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+
+    code = _run(
+        tmp_path,
+        [{"cid": "aaaaaaaa", "turn": 0, "mode": "open"}, {"cid": "aaaaaaaa", "turn": 1, "mode": "strict"}],
+        overlay,
+    )
+
+    rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert code == 0
+    assert modes == ["open", "strict"]
+    assert [row["mode"] for row in rows] == ["open", "strict"]
 
 
 def test_run_resumes_rows_already_in_the_output_and_replays_only_the_rest(monkeypatch, tmp_path):
@@ -916,7 +958,7 @@ def test_a_named_internal_turn_reads_the_case_its_replayed_earlier_turns_stored(
     overlay, opened = _measuring_with_memory(monkeypatch, tmp_path)
     profile = ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee")
     thread = meetlat.Thread(
-        "aaaaaaaa-0000-4000-8000-000000000001", profile, "open", _thread("x", ["first", "second", "third"]).turns
+        "aaaaaaaa-0000-4000-8000-000000000001", profile, _thread("x", ["first", "second", "third"]).turns
     )
     org = type("Org", (), {"id": 7, "slug": "brightwater", "zitadel_org_id": "zorg"})()
     seen: list[dict | None] = []
@@ -1042,7 +1084,6 @@ def test_a_retried_internal_turn_reads_the_case_of_the_turn_before_not_its_own_f
     thread = meetlat.Thread(
         "aaaaaaaa-0000-4000-8000-000000000001",
         ChatProfile(surface="internal", kb_mode="open", user_id="sub-employee"),
-        "open",
         _thread("x", ["first", "second"]).turns,
     )
     org = type("Org", (), {"id": 7, "slug": "brightwater", "zitadel_org_id": "zorg"})()

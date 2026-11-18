@@ -77,7 +77,11 @@ from app.services.knowledge_prompts import (
     unchecked_question_blocks,
 )
 from app.services.passage_selection import PassageSelection, select_passages, writer_brief
-from app.services.pasted_correspondence import PASTED_CORRESPONDENCE_SCOPE, latest_user_turn_has_correspondence
+from app.services.pasted_correspondence import (
+    MATERIAL_BRIEF_AFTER_PASSAGES,
+    PASTED_CORRESPONDENCE_SCOPE,
+    latest_user_turn_has_correspondence,
+)
 from app.services.query_paraphrase import first_question_variants
 from app.services.user_provided_content import has_user_provided_content
 from app.services.widget_audit import find_conversation_id
@@ -142,6 +146,7 @@ def _build_system_prompt(
     multi_question: bool = False,
     sub_query_results: list[dict] | None = None,
     unchecked_questions: list[str] | None = None,
+    material: bool = False,
 ) -> str:
     """Build a grounded system prompt augmented with retrieved context chunks.
 
@@ -193,6 +198,7 @@ def _build_system_prompt(
             else "",
             retrieval_failure=retrieval_failure,
             web_search_available=web_search_available,
+            material=material,
         )
     if broad_mode:
         default_prompt = SUPPORT_BROAD_CHAT_SYSTEM_PROMPT
@@ -476,6 +482,11 @@ class KnowledgeTurn:
     # exception and by the internal Strict writer's check bypass (widget_write._judge).
     user_provided_content: bool = False
     pasted_correspondence: bool = False
+    # Internal only, set by internal_turn: the employee pasted material to work
+    # on (pasted_correspondence.material_rules). The writer gets the material
+    # brief, Strict does not refuse in code for missing passages, and the
+    # statement check reads the pasted text as one more article.
+    material: bool = False
 
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -721,6 +732,7 @@ def _read_turn(
             templates_block=templates_block,
             web_search_available=web_search_available,
             images_base_url=settings.kb_images_base_url,
+            material=turn.material,
             **extra,
         )
 
@@ -764,7 +776,9 @@ def _without_search(t: _Turn, *, retrieval_enabled: bool) -> _Result | None:
     query, profile, turn = t.query, t.profile, t.turn
     if t.internal and profile.kb_mode == "general":
         return [], t.prompt([], "meta" if query and is_meta_query(query) else "general"), [], False
-    trivial = bool(query) and not t.pasted_correspondence and is_trivial_turn(t.messages, query or "")
+    trivial = (
+        bool(query) and not (t.pasted_correspondence or turn.material) and is_trivial_turn(t.messages, query or "")
+    )
     if t.internal and (not query or trivial or is_meta_query(query)):
         # What the hook never searched it never judged either: a missing source
         # is no reason to refuse a thank-you or a question about Klai itself.
@@ -773,7 +787,7 @@ def _without_search(t: _Turn, *, retrieval_enabled: bool) -> _Result | None:
     if not retrieval_enabled or not query or trivial:
         return [], t.prompt([]), [], False
     if t.internal and profile.kb_mode == "strict" and profile.kb_slugs == ():
-        if not turn.user_provided_content:
+        if not (turn.user_provided_content or turn.material):
             # Strict with nothing to search refuses without a model call: a
             # prompt that asks the model to refuse let a non-compliant model
             # answer from general knowledge (the hook's strict_no_kb branch).
@@ -781,7 +795,8 @@ def _without_search(t: _Turn, *, retrieval_enabled: bool) -> _Result | None:
             return [], "", [], False
         # The user's own attachment is still readable even with no KB scope to
         # search; answer as a zero-chunks Strict turn instead of refusing.
-        return [], t.prompt([], "zero_chunks"), [], False
+        # Pasted material searched nothing, so its brief takes the contract's place.
+        return [], t.prompt([], "no_retrieval" if turn.material else "zero_chunks"), [], False
     return None
 
 
@@ -1175,7 +1190,7 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
     if t.internal and profile.kb_mode == "strict" and not selection_chunks:
         if not isinstance(found.evidence_pack, dict):
             logger.error("retrieval_response_missing_evidence_pack", org_id=t.org_id)
-        if not turn.user_provided_content:
+        if not (turn.user_provided_content or turn.material):
             # Strict with no evidence refuses without a model call, as the hook
             # did for zero chunks and for a response without an evidence pack: a
             # prompt that asks the model to refuse let a non-compliant model
@@ -1183,8 +1198,8 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
             _register_gap(t, found)
             turn.refusal = partial(_no_citable_sources_message, suggest_open_mode=True)
             return [], "", [], False
-        # The user's own attachment is still readable with zero KB evidence;
-        # fall through to the zero_chunks prompt below instead of refusing.
+        # The user's own attachment or pasted material is still readable with
+        # zero KB evidence; fall through to the zero_chunks prompt below.
 
     # Every surface: the writer reads only the passages that answer the
     # question (passage_selection.py has the numbers), a multi-part message
@@ -1232,6 +1247,13 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         # of 21 answers the owner expected from the knowledge base, because the
         # selection's "not in the passages" is wrong more often on an
         # employee's long, relayed question than on a visitor's.
+    if turn.material and source_only and turn.not_in_passages:
+        # A Strict material turn is written although no passage answers it
+        # (internal_turn._route). Handed every passage, the writer could cite
+        # one on a related subject, and a cited reply is shown whatever the
+        # statement check finds. Without passages the reply cites nothing and
+        # the check decides: the pasted text supports it or it is refused.
+        chunks, trusted_sources = [], []
     if not (turn.passages_chosen and any(chunk.get("kept") for chunk in chunks)):
         # A kept passage answered: the knowledge base had the answer.
         _register_gap(t, found)
@@ -1272,6 +1294,8 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         # must still see them so it does not answer them from other lines.
         if unchecked := unchecked_question_blocks(turn.unchecked_questions, start_index=len(found.sub_queries) + 1):
             system_prompt += "\n\n" + "\n\n".join(unchecked)
+    if turn.material:
+        system_prompt += MATERIAL_BRIEF_AFTER_PASSAGES
 
     return chunks, system_prompt, ([] if broad else trusted_sources), broad
 
