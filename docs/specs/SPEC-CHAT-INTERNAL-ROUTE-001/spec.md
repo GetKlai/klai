@@ -102,7 +102,7 @@ Nog niet gebouwd: zoekvragen uit het materiaal, en het vierdelige contract wegha
 
 Gemeten vóór de bouw [gemeten]: de twintig echte interne beurten met geplakte tekst nagespeeld op de server, hoofdversie tegen kandidaat, twee rondes elk, blind gelezen, met tien gewone vraagbeurten als controle. Volledig geleverd 4 en 5 van 20 op de hoofdversie tegen 9 en 9 op de kandidaat; een concept waar een concept gevraagd was 2 en 2 tegen 8 en 9 van 12; een bewering van de afzender als feit 1 en 1 tegen 1 en 1; weigeringen in Strict 3 en 3 tegen 1 en 0; de tien controlevragen namen 0 keer de nieuwe route en veranderden niet. De bestaande maildetector ging op 0 van de 20 beurten af en op 0 van 1.127 opgeslagen widgetberichten.
 
-Meting: volledig geleverde beurten met geplakte tekst, naspeling van de twintig echte beurten, blind gelezen · nu 4 en 5 van 20 (18 november 2026) · verwacht 9 van 20 · bewezen 9 en 9 van 20 op de kandidaat vóór de bouw; na uitrol op echt verkeer het aandeel materiaalbeurten in het record en de weigeringen in Strict, terug als een bewering van de afzender vaker als feit verschijnt dan op de hoofdversie.
+Meting: volledig geleverde beurten met geplakte tekst, naspeling van de twintig echte beurten, blind gelezen · nu 4 en 5 van 20 (18 november 2026) · verwacht 9 van 20 · bewezen 9 en 9 van 20 op de kandidaat vóór de bouw en 8 en 10 van 20 op de gebouwde versie tegen 3 en 2 op de hoofdversie in dezelfde lezing, met de interne meetlat gelijk (22 van 31 in alle vier de rondes); na uitrol op echt verkeer het aandeel materiaalbeurten in het record en de weigeringen in Strict, terug als een bewering van de afzender vaker als feit verschijnt dan op de hoofdversie.
 
 ## 6. Stap 3: handelingen
 
