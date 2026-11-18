@@ -164,7 +164,14 @@ async def _call_llm(prompt: str, path: str) -> dict:
     payload = {
         "model": settings.enrichment_model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 300,
+        # Room for the answer the prompt asks for (one sentence of at most 120
+        # tokens and three to five questions). The model stops at the cap, and
+        # a cut-off answer is unparseable JSON that every retry repeats. With
+        # 300 a table-heavy page failed for good: measured 18 Nov 2026, 7 of
+        # its 11 chunk answers needed 301 to 381 tokens, and 82 calls in a
+        # week hit 300 exactly. 600 leaves that page half its room again and
+        # still bounds a model that does not stop.
+        "max_tokens": 600,
     }
     headers = {"Content-Type": "application/json"}
     if settings.litellm_api_key:
