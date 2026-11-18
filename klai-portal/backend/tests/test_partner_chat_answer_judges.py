@@ -2343,3 +2343,48 @@ async def test_the_checks_cannot_hand_the_visitor_the_ungated_draft(monkeypatch)
     text, _, _ = await _answer(litellm, stream=False)
 
     assert "303 4020" not in text
+
+
+# ─── After a rejection: one line for the writer, and the record says so ──
+
+_REJECTED_ANSWER = "Open de app en kies Instellingen en dan Nummerweergave."
+_REJECTION_MESSAGES = [
+    {"role": "user", "content": "Ik bel via de app en de klant ziet een anonieme beller. Hoe los ik dit op?"},
+    {"role": "assistant", "content": _REJECTED_ANSWER},
+    {"role": "user", "content": "Dat heb ik al gedaan, het helpt niet"},
+]
+
+
+async def _rejection_turn(monkeypatch, sentiment: str, *, first_turn: bool = False):
+    """One widget turn; returns the writer's system prompt and the signals the turn recorded."""
+    from app.api import partner
+
+    inputs: list[Any] = []
+    real = partner.TurnInputs
+    monkeypatch.setattr(partner, "TurnInputs", lambda **kw: inputs.append(real(**kw)) or inputs[-1])
+    case = {**_case(), "sentiment": sentiment}
+    messages = _REJECTION_MESSAGES[:1] if first_turn else _REJECTION_MESSAGES
+    stored = case_file.StoredTurn(_case(), _REJECTED_ANSWER, [], "answer")
+    litellm = _LiteLLM(model_text=ANSWER_900, case=case)
+    await _route_turn(
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages, stored=stored
+    )
+    return _system_prompt_sent(litellm), inputs[0].answer_signals
+
+
+async def test_a_widget_follow_up_after_an_answer_with_a_negative_tone_gets_the_rejection_line(monkeypatch):
+    prompt, signals = await _rejection_turn(monkeypatch, "negative")
+
+    # The writer appends its own language rule after the turn's addenda, so the line is checked in place.
+    assert widget_turn.REJECTION_TURN_ADDENDUM in prompt
+    # The line points at the button the escalation addendum describes, and that one is always there.
+    assert prompt.index("under this reply") < prompt.index("did not help")
+    assert signals["rejection_turn"] is True
+
+
+@pytest.mark.parametrize(("sentiment", "first_turn"), [("neutral", False), ("negative", True)])
+async def test_a_neutral_follow_up_and_a_negative_first_turn_get_no_rejection_line(monkeypatch, sentiment, first_turn):
+    prompt, signals = await _rejection_turn(monkeypatch, sentiment, first_turn=first_turn)
+
+    assert "did not help" not in prompt
+    assert "rejection_turn" not in signals
