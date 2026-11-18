@@ -1454,6 +1454,59 @@ async def test_a_strict_material_turn_without_a_knowledge_base_is_written_not_re
 
 
 @pytest.mark.asyncio
+async def test_a_strict_material_turn_gets_no_passage_when_none_answers_so_no_reply_can_cite_one(monkeypatch):
+    """Handed every passage, the writer cited one on a related subject, and a
+    cited reply is shown whatever the statement check finds."""
+    llm = _LiteLLM(PRODUCT_CLAIM, grounding=_unsupported(PRODUCT_CLAIM), selection=NOT_IN_PASSAGES)
+
+    turn = await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": _pack(), "confidence_band": "high"},
+        question=LETTER,
+    )
+
+    prompt = _system_prompt(llm)
+    assert ARTICLE not in prompt and "[Pasted material]" in prompt
+    assert turn.text.startswith(STRICT_REFUSAL)
+
+
+@pytest.mark.asyncio
+async def test_a_short_follow_up_on_pasted_material_is_still_checked_in_strict(monkeypatch):
+    """ "Korter." after a pasted letter rewrites the reply to the customer; as a
+    trivial turn it skipped the search and the statement check."""
+    llm = _LiteLLM(RESTATED, grounding=_supported(RESTATED))
+
+    await _turn(
+        monkeypatch,
+        llm,
+        profile=_internal(),
+        retrieval={"evidence_pack": {"items": [], "sources": []}, "confidence_band": "unknown"},
+        question="Korter.",
+        history=({"role": "user", "content": LETTER}, {"role": "assistant", "content": RESTATED}),
+    )
+
+    assert len(llm.of("grounding_check")) == 1
+
+
+def test_the_check_reads_the_pasted_text_and_not_the_employees_own_short_sentences():
+    from app.services.pasted_correspondence import material_article
+
+    premise = "Klopt het dat doorschakelen in het beheerportaal zit?"
+    _, text = material_article(
+        [
+            {"role": "user", "content": LETTER},
+            {"role": "assistant", "content": RESTATED},
+            {"role": "user", "content": premise},
+        ]
+    )
+
+    assert "Sinds vorige week gaat mijn vaste toestel" in text
+    assert premise not in text
+
+
+@pytest.mark.asyncio
 async def test_a_widget_message_of_more_than_120_words_gets_no_material_brief(monkeypatch):
     llm = _LiteLLM()
 

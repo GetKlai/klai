@@ -776,7 +776,9 @@ def _without_search(t: _Turn, *, retrieval_enabled: bool) -> _Result | None:
     query, profile, turn = t.query, t.profile, t.turn
     if t.internal and profile.kb_mode == "general":
         return [], t.prompt([], "meta" if query and is_meta_query(query) else "general"), [], False
-    trivial = bool(query) and not t.pasted_correspondence and is_trivial_turn(t.messages, query or "")
+    trivial = (
+        bool(query) and not (t.pasted_correspondence or turn.material) and is_trivial_turn(t.messages, query or "")
+    )
     if t.internal and (not query or trivial or is_meta_query(query)):
         # What the hook never searched it never judged either: a missing source
         # is no reason to refuse a thank-you or a question about Klai itself.
@@ -1245,6 +1247,13 @@ async def _choose_and_prompt(t: _Turn, found: _Found) -> _Result:
         # of 21 answers the owner expected from the knowledge base, because the
         # selection's "not in the passages" is wrong more often on an
         # employee's long, relayed question than on a visitor's.
+    if turn.material and source_only and turn.not_in_passages:
+        # A Strict material turn is written although no passage answers it
+        # (internal_turn._route). Handed every passage, the writer could cite
+        # one on a related subject, and a cited reply is shown whatever the
+        # statement check finds. Without passages the reply cites nothing and
+        # the check decides: the pasted text supports it or it is refused.
+        chunks, trusted_sources = [], []
     if not (turn.passages_chosen and any(chunk.get("kept") for chunk in chunks)):
         # A kept passage answered: the knowledge base had the answer.
         _register_gap(t, found)

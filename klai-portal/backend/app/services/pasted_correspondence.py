@@ -293,8 +293,15 @@ def material_rules(messages: list[dict]) -> list[str]:
 
 
 def material_article(messages: list[dict]) -> tuple[str, str]:
-    """The employee's own messages as the one extra article the Strict statement check reads."""
-    text = "\n\n".join(text for text in _user_texts(messages) if text.strip())
+    """The pasted texts as the one extra article the Strict statement check reads.
+
+    Only the messages that meet a rule themselves: a short sentence of the
+    employee around them ("is it true that ...") is a question, and handing
+    it to the check would make its premise count as supported. Known limit:
+    the check cannot tell "the customer says X" from "X", so a product claim
+    inside the pasted text counts as supported when the reply repeats it.
+    """
+    text = "\n\n".join(text for text in _user_texts(messages) if _material_rules(text))
     return ("Text the employee pasted into the conversation", text[-_MATERIAL_ARTICLE_CHARS:])
 
 
