@@ -27,6 +27,16 @@ from app.services.chat_profile import ChatProfile
 _ORG = SimpleNamespace(id=7, slug="brightwater", zitadel_org_id="zorg-brightwater")
 
 
+@pytest.fixture(autouse=True)
+def _own_pending_tasks(monkeypatch):
+    # The replay waits up to 120 s for the background tasks the chat path keeps
+    # in partner._pending. A task an earlier test file left there belongs to a
+    # closed event loop and never finishes, so every replayed answer waited the
+    # full 120 s: this file after test_partner_chat_answer_judges.py ran past
+    # 420 s, and takes seconds with a set of its own.
+    monkeypatch.setattr(partner, "_pending", set())
+
+
 def _verdict(better: str, *, invented: bool = False) -> str:
     flags = {"refused": False, "asked": False, "invented": invented}
     return json.dumps({"better": better, "A": flags, "B": flags})
