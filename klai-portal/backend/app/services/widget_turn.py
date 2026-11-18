@@ -68,6 +68,21 @@ logger = structlog.get_logger()
 _NOT_A_KNOWLEDGE_QUESTION = frozenset({"chat", *case_file.CONTACT_WANTS})
 _ANSWER_DECISIONS = frozenset({"answer", "partial_answer"})
 
+# Written after the escalation addendum, whose appointment button the last
+# sentence refers to; a negative sentiment always makes that addendum part of
+# the prompt (_escalation). Replayed on 38 real rejection turns on the
+# production writer, two answers each, read blind by two readers: the rejected
+# advice came back in 36 and 32 of 76 answers without the line and in 14 and 16
+# with it, and an honest "the articles give nothing else" went from 6 and 3 to
+# 23 and 21 of 76. It cannot help where the lines hold nothing but the rejected
+# advice (21 of the 38 turns); that is a gap in the knowledge base or the search.
+REJECTION_TURN_ADDENDUM = (
+    "\n\n[This turn] The visitor says the previous answer did not help. Do not give the steps or the cause "
+    "from that answer again, also not in other words. If the lines above hold a different step or a different "
+    "cause, give that one. If they hold nothing else, say in one sentence that the help articles give no other "
+    "step, and offer the appointment button as described above."
+)
+
 # Hold references to fire-and-forget tasks to prevent GC (same pattern as partner_dependencies)
 _pending: set[asyncio.Task] = set()  # type: ignore[type-arg]
 
@@ -636,6 +651,22 @@ async def _write(
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[writing.escalation]
     if writing.conversational:
         system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
+    # A follow-up straight after an answer on which the visitor reads as
+    # negative: the answer did not help. Only where it was measured and where
+    # its wording holds: the writer has chosen lines to look in, the turn
+    # carries the frustration addendum whose button the line names (a request
+    # for a person says "no steps", the opposite), and it is not small talk.
+    # A partner key keeps no previous turn, so it never gets the line.
+    # Recorded so these turns can be counted.
+    if (
+        sentiment == "negative"
+        and inputs.previous_decision in _ANSWER_DECISIONS
+        and writing.escalation == escalation_service.FRUSTRATION
+        and not writing.conversational
+        and turn.passages_chosen
+    ):
+        system_prompt += REJECTION_TURN_ADDENDUM
+        inputs.answer_signals["rejection_turn"] = True
     # A request that asks for the default alias is written by the widget
     # writer model; one that names another model keeps it. The requested alias
     # is also where a failed call is retried once.

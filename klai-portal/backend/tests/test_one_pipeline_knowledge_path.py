@@ -818,3 +818,35 @@ async def test_strict_zero_chunks_attachment_answer_is_not_refused_or_repaired(i
     assert len(recorder.side_bodies) == 1
 
     assert len(recorder.retrieve_bodies) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_internal_follow_up_with_a_negative_tone_gets_no_rejection_line(internal_pipeline):
+    """The line is for the help widget's writer; the internal chat's writer never gets it."""
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+    recorder.case = {
+        "problem": "",
+        "product": "",
+        "variant": "",
+        "tried": [],
+        "wants_quote": "",
+        "wants": "knowledge",
+        "out_of_scope_quote": "",
+        "out_of_scope": False,
+        "sentiment": "negative",
+        "language": "",
+        "queries": [],
+    }
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [
+            {"role": "user", "content": "Hoe reset ik mijn wachtwoord?"},
+            {"role": "assistant", "content": ANSWER},
+            {"role": "user", "content": "Dat helpt niet"},
+        ],
+    )
+
+    assert recorder.model_bodies
+    assert "did not help" not in _system_prompt(recorder)
