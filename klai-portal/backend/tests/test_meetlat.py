@@ -224,6 +224,30 @@ def test_run_answers_every_turn_of_a_case_in_the_mode_the_case_names(monkeypatch
     assert rows[0]["mode"] == "strict"
 
 
+def test_run_answers_each_named_turn_of_one_conversation_in_its_own_mode(monkeypatch, tmp_path):
+    """One real conversation held an Open case and a Strict case; the Strict one was replayed in Open."""
+    threads = {"aaaaaaaa": _thread("aaaaaaaa-1111", ["first", "second"])}
+    overlay = _stub_run_environment(monkeypatch, tmp_path, threads, [])
+    modes: list[str] = []
+
+    async def new_answer(_org, profile, messages, _conversation_id):
+        modes.append(profile.kb_mode)
+        return {"text": "an answer", "total_ms": 1000, "signals": {"decision": "answer"}}
+
+    monkeypatch.setattr(replay, "_new_answer", new_answer)
+
+    code = _run(
+        tmp_path,
+        [{"cid": "aaaaaaaa", "turn": 0, "mode": "open"}, {"cid": "aaaaaaaa", "turn": 1, "mode": "strict"}],
+        overlay,
+    )
+
+    rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text().splitlines()]
+    assert code == 0
+    assert modes == ["open", "strict"]
+    assert [row["mode"] for row in rows] == ["open", "strict"]
+
+
 def test_run_resumes_rows_already_in_the_output_and_replays_only_the_rest(monkeypatch, tmp_path):
     answered: list[str] = []
     threads = {
