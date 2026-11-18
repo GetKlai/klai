@@ -526,7 +526,7 @@ aborts when it is gone, superseded or its connector inactive.
   prompts on the document context window (`enrichment_tasks.py`,
   `contextual.py`, `tests/integration/test_document_summary_postgres.py`).
 - **Per-chunk call.** One LLM call per chunk returns the context sentence and
-  the generated questions: `klai-ingest`, `max_tokens` 300, 15 s, without
+  the generated questions: `klai-ingest`, `max_tokens` 600, 15 s, without
   fallback to larger models (`add_no_fallback`). Concurrency is 2 chunks
   (`enrichment_max_concurrent`) and every call takes a token from the shared
   limiter, 2 requests per second with a burst of 10
