@@ -22,15 +22,15 @@ Leave a watched phrase alone inside a quotation, a title, a proper name, or a pa
 ## A. Staging instead of stating
 
 ### 1. Not X but Y
-**Watch for:** not X but Y; not just / not only / not merely X, but Y; it's not X, it's Y; X rather than Y; the same contrast split across sentences ("This does not mean X. It means Y."); a clipped negative tail ("..., no guessing")
-**Fix:** State the point directly. Keep a contrast only when the negative half corrects a belief the reader actually holds.
+**Watch for:** not X but Y; not just / not only / not merely X, but Y; it's not X, it's Y; X rather than Y; the same contrast split across sentences ("This does not mean X. It means Y."); a clipped negative tail ("..., no guessing"). The formula exists in every language: treat "niet X maar Y", "geen X, wel Y" and "het gaat niet om X, het gaat om Y" the same way.
+**Fix:** State the point directly. Keep a contrast only when the negative half corrects a belief the reader actually holds, or when both halves carry information.
 
 ### 2. One-line closers and dramatic fragments
-**Watch for:** a one-sentence paragraph that restates the one before; "That is the real win."; "That distinction matters."; "Let that sink in."; the same closer after several sections; a sentence that explains an example the reader just saw
-**Fix:** Cut a closer that repeats. Keep a short sentence only when it carries a new fact.
+**Watch for:** a one-sentence paragraph that restates the one before; "That is the real win."; "That distinction matters."; "Let that sink in."; the same closer after several sections; a sentence that explains an example the reader just saw ("The message was clear:"); a row of fragments ("No setup. No waiting."); one word in ALL CAPS or with periods between words (every. single. day.)
+**Fix:** Cut a closer that repeats. Keep a short sentence only when it carries a new fact. Merge a row of fragments into one sentence with a specific claim.
 
 ### 3. Sayings that sound deep
-**Watch for:** the real question is, at its core, what really matters, fundamentally, the heart of the matter, X is the Y of Z, X becomes a trap, the language of, the currency of
+**Watch for:** the real question is, at its core, in reality, what really matters, fundamentally, the deeper issue, the heart of the matter, X is the Y of Z, X becomes a trap, the language of, the currency of, the architecture of
 **Fix:** Replace the saying with the specific claim.
 
 ### 4. Staged run-up before the point
@@ -52,15 +52,15 @@ Leave a watched phrase alone inside a quotation, a title, a proper name, or a pa
 **Fix:** Merge them, change the subject, or begin with the action. A deliberate repeat stays.
 
 ### 8. Dashes as the universal connector
-**Fix:** No em or en dashes in the final text: use a comma, colon, parentheses or a new sentence, whichever fits the relation between the clauses. One dash is *weak alone*; a text full of them is not.
+**Fix:** No em or en dashes in the final text, and no double hyphens (" -- ") used as dashes: use a comma, colon, parentheses or a new sentence, whichever fits the relation between the clauses. One dash is *weak alone*; a text full of them is not.
 
 ### 9. Stacked qualifiers and filler
 **Pattern:** "could potentially possibly be argued", "to be fair", "it's also possible"; filler such as "in order to", "due to the fact that", "at this point in time", "the system has the ability to", "it is important to note that"
-**Fix:** "The policy may affect outcomes." / "To", "Because", "Now", "can"; remove the last one entirely. Keep a qualifier only when the source supports it and the meaning needs it.
+**Fix:** "The policy may affect outcomes." / "To", "Because", "Now", "can"; remove the last one entirely. Filler goes on sight. Keep a qualifier only when the source supports it and the meaning needs it, and keep scope statements and legal or safety notices; a single qualifier is *weak alone*, and ordinary hedges such as "perhaps" or "tends to" are not tells.
 
 ### 10. Hyphenated pairs everywhere
 **Watch for:** high-quality, well-documented, long-term, real-time after the noun they describe
-**Fix:** Keep the hyphen before a noun ("a high-quality report"), drop it after ("the report is high quality"). Words always spelled with a hyphen keep it.
+**Fix:** Keep the hyphen before a noun ("a high-quality report"), drop it after ("the report is high quality"). Words always spelled with a hyphen keep it. *Weak alone.*
 
 ### 11. Passive voice and missing subjects
 **Fix:** Use the active voice where it makes the actor clear. *Weak alone.*
@@ -70,11 +70,11 @@ Leave a watched phrase alone inside a quotation, a title, a proper name, or a pa
 The fact underneath is usually sound. Keep it and remove the dressing.
 
 ### 12. Overused AI words
-**Remove or reduce:** actually, additionally, align with, crucial, deep dive, delve, enduring, enhance, fostering, garner, gate/gated (figurative), highlight (verb), interplay, intricate/intricacies, key (adjective), landscape (abstract noun), pivotal, showcase, tapestry, testament, underscore, valuable, vibrant
+**Remove or reduce:** actually, additionally, align with, bolstered, crucial, deep dive, delve, enduring, enhance, garner, gate/gated (figurative), highlight (verb), interplay, intricate/intricacies, key (adjective), landscape (abstract noun), meticulous/meticulously, pivotal, quietly, robust (figurative), showcase, tapestry, testament, underscore, valuable, vibrant
 **Fix:** Use the plain word. One such word outside a group is *weak alone*.
 
 ### 13. Inflated significance
-**Watch for:** stands as a testament, a pivotal/crucial moment, plays a key role, underscores its importance, reflects a broader, enduring/lasting legacy, setting the stage for, evolving landscape, indelible mark; "Despite these challenges... continues to thrive"; "The future looks bright", "Exciting times lie ahead"
+**Watch for:** stands as a testament, a pivotal/crucial moment, plays a key role, underscores its importance, reflects a broader, enduring/lasting legacy, setting the stage for, evolving landscape, indelible mark; "Despite these challenges... continues to thrive"; "The future looks bright", "Exciting times lie ahead", "a step in the right direction"
 **Fix:** Keep the fact, drop the significance. Cut a stock challenges-and-outlook section or a bright-future closing paragraph; end on the last concrete fact.
 
 ### 14. Vague connection or association
@@ -82,11 +82,11 @@ The fact underneath is usually sound. Keep it and remove the dressing.
 **Fix:** Name the relationship (founded, leads, advises). If it is unknown, keep the vague wording.
 
 ### 15. Shallow -ing phrases
-**Watch for:** highlighting, underscoring, emphasizing, ensuring, reflecting, symbolizing, contributing to, fostering, encompassing, showcasing
+**Watch for:** highlighting, underscoring, emphasizing, ensuring, reflecting, symbolizing, contributing to, cultivating, fostering, encompassing, showcasing
 **Fix:** Keep the fact; drop the -ing phrase unless the source supports what it claims.
 
 ### 16. Sales language
-**Watch for:** boasts a, rich (figurative), profound, exemplifies, commitment to, nestled, in the heart of, groundbreaking, renowned, diverse array, breathtaking, stunning, must-visit
+**Watch for:** rich (figurative), profound, exemplifies, commitment to, natural beauty, nestled, in the heart of, groundbreaking, renowned, featuring, diverse array, breathtaking, stunning, must-visit
 **Fix:** State what the thing is, with specific facts.
 
 ### 17. Borrowed authority
@@ -94,7 +94,7 @@ The fact underneath is usually sound. Keep it and remove the dressing.
 **Fix:** Name the real source, with date, and what it said. Otherwise cut the claim or the list.
 
 ### 18. Avoiding is, are and has
-**Watch for:** serves as, stands as, functions as, marks, represents; boasts, features, offers
+**Watch for:** serves as, stands as, functions as, operates as, marks, represents; boasts, features, offers, maintains; refers to
 **Fix:** Use "is", "are", "has".
 
 ## D. Formatting by rule
@@ -104,8 +104,8 @@ The fact underneath is usually sound. Keep it and remove the dressing.
 **Fix:** Bold only what is genuinely critical. Turn a labeled list into prose when the labels carry no information of their own.
 
 ### 20. Decorative headings
-**Pattern:** Title Case headings; emojis or arrows in headings and bullets; a horizontal rule between every section; an opening heading that repeats the title
-**Fix:** Sentence case only: "Strategic negotiations and global partnerships". No emojis in headings or bullets; at most 1-2 per article, in body text.
+**Pattern:** Title Case headings; emojis or arrows in headings and bullets; a horizontal rule between every section; an opening heading that repeats the title; a heading written for effect ("The decision, on one screen")
+**Fix:** Sentence case only: "Strategic negotiations and global partnerships". A heading names what the section holds ("How the six options compare"). No emojis in headings or bullets; at most 1-2 per article, in body text.
 
 ### 21. Curly quotation marks
 **Fix:** Use straight quotes where the target format does. *Weak alone.*
