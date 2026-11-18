@@ -81,6 +81,7 @@ from app.services.chat_safety import (
 )
 from app.services.chat_sources import PageContext, _chunk_source_title
 from app.services.knowledge_prompts import unchecked_questions_notice
+from app.services.llm_capacity import is_llm_capacity_error
 from app.services.pasted_correspondence import material_article
 from app.services.retrieval_context import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
 from app.services.widget_reply import AnswerUpstreamError, Reply
@@ -562,13 +563,17 @@ def _retry_on(
 ) -> str | None:
     """The alias to retry the writer call on once, or None when the failure stands.
 
-    The gateway has no fallback for klai-medium: a spent daily budget answers
-    500 "crossed budget", and the visitor must not see that. Only a failure of
-    the server side or of the quota is retried; a 4xx on the request itself
-    would fail the same on the requested alias.
+    The gateway has no fallback for klai-medium, and the visitor must not see
+    its spent daily budget: the gateway answered that with 429 "No deployments
+    available - crossed budget" on 23 October 2026 (llm_capacity has both
+    capacity answers). A capacity answer, a failure of the server side and a
+    call that never got an answer are retried; any other 4xx would fail the
+    same on the requested alias, and an ordinary rate-limit 429 was already
+    retried by the gateway.
     """
     status = _failed_upstream_status(exc)
-    if fallback_model is None or fallback_model == model or (status is not None and status < 500 and status != 402):
+    retryable = status is None or status >= 500 or is_llm_capacity_error(exc)
+    if fallback_model is None or fallback_model == model or not retryable:
         return None
     logger.warning(
         "partner_chat_writer_fallback", org_id=org_id, model=model, fallback=fallback_model, status_code=status

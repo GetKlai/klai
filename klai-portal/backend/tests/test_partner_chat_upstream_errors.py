@@ -210,9 +210,13 @@ def _answer(text: str = "Dat regel je onder Instellingen.") -> MagicMock:
     return response
 
 
-def _failing(status: int) -> httpx.HTTPStatusError:
+def _failing(status: int, text: str = "") -> httpx.HTTPStatusError:
     request = httpx.Request("POST", "http://litellm.example.com/v1/chat/completions")
-    return httpx.HTTPStatusError("failed", request=request, response=httpx.Response(status, request=request))
+    return httpx.HTTPStatusError("failed", request=request, response=httpx.Response(status, request=request, text=text))
+
+
+# What the gateway answers when an alias has spent its daily budget.
+BUDGET_SPENT = (429, "No deployments available - crossed budget")
 
 
 async def _write_on_medium(side_effect: list, signals: dict) -> tuple[dict, MagicMock]:
@@ -239,13 +243,15 @@ async def _write_on_medium(side_effect: list, signals: dict) -> tuple[dict, Magi
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", [402, 500, 503])
+@pytest.mark.parametrize(
+    "failure", [BUDGET_SPENT, (402, ""), (500, ""), (503, "")], ids=["budget", "402", "500", "503"]
+)
 async def test_a_medium_alias_that_is_out_of_budget_is_retried_once_on_the_requested_alias_and_the_record_says_so(
-    status,
+    failure,
 ):
     signals: dict = {}
 
-    body, client = await _write_on_medium([_failing(status), _answer()], signals)
+    body, client = await _write_on_medium([_failing(*failure), _answer()], signals)
 
     assert [call.kwargs["json"]["model"] for call in client.post.call_args_list] == ["klai-medium", "klai-primary"]
     assert body["choices"][0]["message"]["content"]
@@ -266,8 +272,9 @@ async def test_a_reply_written_by_the_medium_alias_is_recorded_as_such():
 
 
 @pytest.mark.asyncio
-async def test_a_bad_request_is_not_retried_on_the_requested_alias():
+@pytest.mark.parametrize("failure", [(400, ""), (429, "Rate limit exceeded")], ids=["bad_request", "rate_limit"])
+async def test_a_failure_the_requested_alias_would_repeat_is_not_retried(failure):
     with pytest.raises(HTTPException) as exc:
-        await _write_on_medium([_failing(400), _answer()], {})
+        await _write_on_medium([_failing(*failure), _answer()], {})
 
     assert exc.value.status_code == 502

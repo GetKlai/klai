@@ -584,15 +584,15 @@ async def test_internal_follow_up_takes_its_product_from_the_employee_s_words_no
 
 
 class _BudgetSpentOnMedium(_Recorder):
-    """The gateway at klai-medium's daily cap: 500 on the answer call for that alias, no fallback of its own."""
+    """The gateway at klai-medium's daily cap: 429 on the answer call for that alias, no fallback of its own."""
 
     async def post(self, url: str, *, json: dict, headers: dict | None = None) -> Any:
         if "stream" in json and json["model"] == "klai-medium":
             self.model_bodies.append(json)
-            response = httpx.Response(500, request=httpx.Request("POST", url))
-            raise httpx.HTTPStatusError(
-                "No deployments available - crossed budget", request=response.request, response=response
+            response = httpx.Response(
+                429, request=httpx.Request("POST", url), text="No deployments available - crossed budget"
             )
+            raise httpx.HTTPStatusError("429", request=response.request, response=response)
         return await super().post(url, json=json, headers=headers)
 
 
