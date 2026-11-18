@@ -2355,7 +2355,9 @@ _REJECTION_MESSAGES = [
 ]
 
 
-async def _rejection_turn(monkeypatch, sentiment: str, *, first_turn: bool = False):
+async def _rejection_turn(
+    monkeypatch, sentiment: str, *, first_turn: bool = False, previous: str = "answer", last: str | None = None
+):
     """One widget turn; returns the writer's system prompt and the signals the turn recorded."""
     from app.api import partner
 
@@ -2364,7 +2366,9 @@ async def _rejection_turn(monkeypatch, sentiment: str, *, first_turn: bool = Fal
     monkeypatch.setattr(partner, "TurnInputs", lambda **kw: inputs.append(real(**kw)) or inputs[-1])
     case = {**_case(), "sentiment": sentiment}
     messages = _REJECTION_MESSAGES[:1] if first_turn else _REJECTION_MESSAGES
-    stored = case_file.StoredTurn(_case(), _REJECTED_ANSWER, [], "answer")
+    if last is not None:
+        messages = [*messages[:-1], {"role": "user", "content": last}]
+    stored = case_file.StoredTurn(_case(), _REJECTED_ANSWER, [], previous)
     litellm = _LiteLLM(model_text=ANSWER_900, case=case)
     await _route_turn(
         monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages, stored=stored
@@ -2382,9 +2386,20 @@ async def test_a_widget_follow_up_after_an_answer_with_a_negative_tone_gets_the_
     assert signals["rejection_turn"] is True
 
 
-@pytest.mark.parametrize(("sentiment", "first_turn"), [("neutral", False), ("negative", True)])
-async def test_a_neutral_follow_up_and_a_negative_first_turn_get_no_rejection_line(monkeypatch, sentiment, first_turn):
-    prompt, signals = await _rejection_turn(monkeypatch, sentiment, first_turn=first_turn)
+@pytest.mark.parametrize(
+    ("sentiment", "options"),
+    [
+        ("neutral", {}),
+        ("negative", {"first_turn": True}),
+        # The chat's previous reply was a refusal, so there is no rejected advice to keep away from.
+        ("negative", {"previous": "refusal"}),
+        # A request for a person gets the instruction to give no steps; the line would ask for one.
+        ("negative", {"last": "Dat helpt niet, ik wil een medewerker spreken"}),
+    ],
+    ids=["neutral", "first_turn", "after_a_refusal", "asks_for_a_person"],
+)
+async def test_a_turn_that_is_not_a_rejection_of_an_answer_gets_no_rejection_line(monkeypatch, sentiment, options):
+    prompt, signals = await _rejection_turn(monkeypatch, sentiment, **options)
 
     assert "did not help" not in prompt
     assert "rejection_turn" not in signals

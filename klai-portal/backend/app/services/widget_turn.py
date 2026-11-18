@@ -652,11 +652,18 @@ async def _write(
     if writing.conversational:
         system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
     # A follow-up straight after an answer on which the visitor reads as
-    # negative: the answer did not help. Recorded so these turns can be counted.
+    # negative: the answer did not help. Only where it was measured and where
+    # its wording holds: the writer has chosen lines to look in, the turn
+    # carries the frustration addendum whose button the line names (a request
+    # for a person says "no steps", the opposite), and it is not small talk.
+    # A partner key keeps no previous turn, so it never gets the line.
+    # Recorded so these turns can be counted.
     if (
         sentiment == "negative"
         and inputs.previous_decision in _ANSWER_DECISIONS
-        and case_file.is_follow_up(request.messages)
+        and writing.escalation == escalation_service.FRUSTRATION
+        and not writing.conversational
+        and turn.passages_chosen
     ):
         system_prompt += REJECTION_TURN_ADDENDUM
         inputs.answer_signals["rejection_turn"] = True
