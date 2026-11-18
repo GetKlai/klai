@@ -1,7 +1,7 @@
 ---
 id: SPEC-CHAT-INTERNAL-ROUTE-001
 version: "0.1.0"
-status: design, stap 1 gebouwd en gemeten (productiemodel 0 van 8 ontspoord tegen 8 van 8; meetlat binnen de ruis op beide oppervlakken), stap 2 gebouwd (naspeling vooraf 9 en 9 van 20 tegen 4 en 5); nog niet uitgerold
+status: stap 1 live sinds 17 november 2026 (#2429, restpunten #2432); stap 2 live sinds 18 november 2026 (#2435; twintig echte beurten nagespeeld, volledig geleverd 3 en 2 van 20 op de hoofdversie tegen 8 en 10); stap 3 niet gebouwd
 created: 2026-11-17
 updated: 2026-11-18
 priority: high
@@ -87,7 +87,7 @@ Meting: aandeel ontspoorde antwoorden op het nagebouwde productieverzoek, produc
 
 De toets vooraf is gedaan op 76 echte berichten en het productiemodel [gemeten]. Als los verzoek herkent het kleine model geplakt materiaal goed (16 van 17 keer terecht, 16 van de 20 gevonden), maar "overig" slecht (1 van 7), en als veld in de lezing van de zaak werkt het niet. Een regel die code kan natrekken (meer dan 120 woorden, een geplakte mailkop of een logpatroon) wijst nooit ten onrechte materiaal aan en vindt 13 van de 20; zes van de zeven missers zijn korte geplakte mails en vervolgbeurten als "schrijf de mail". De soort werk komt daarom uit die regel plus het geheugen van het gesprek (een gesprek dat met materiaal begon, blijft materiaal), en niet uit een veld van het model. Een echte handeling kwam in de 76 berichten niet voor.
 
-Contract, zoals gebouwd op 18 november 2026 (nog niet uitgerold):
+Contract, zoals gebouwd en live sinds 18 november 2026:
 
 1. Alleen de interne chat. Een beurt is een materiaalbeurt als code in het laatste bericht van de medewerker vindt: meer dan 120 woorden, of de bestaande maildetector gaat af, of minstens drie regels die eruitzien als een log of trace (een tijdstempel aan het begin van de regel, een SIP-verzoekregel, een SIP-statusregel), of een korte brief (een aanhef of groet op een eigen regel in een bericht van minstens drie regels en 30 woorden); of als een eerder bericht van de medewerker in het gesprek aan een van deze regels voldeed. Geen model beslist dit.
 2. Het record van de beurt zegt welke regels afgingen: `answer_signals.material`, een lijst (`words`, `mail`, `trace`, `letter` of `earlier`; leeg op een gewone beurt).
