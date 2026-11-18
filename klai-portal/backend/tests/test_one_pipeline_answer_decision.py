@@ -1673,7 +1673,7 @@ _GOLDEN_STRICT_RECORD = {
     "multi_question": False,
     "selection": {"verdict": "answers", "passages": [1]},
     "judge_failed": ["case"],
-    "writer": {"tools_offered": False, "action_turn": False, "cut": None},
+    "writer": {"tools_offered": False, "action_turn": False, "model": "klai-primary", "fallback": False, "cut": None},
     "grounding": "all_in_articles",
     "decision": "answer",
     "top_score": 0.82,
@@ -1795,7 +1795,13 @@ async def test_an_internal_turn_with_tools_that_is_no_action_turn_writes_without
     assert answer["response_format"]["json_schema"]["name"] == "reply_in_language"
     assert answer["max_tokens"] == partner.settings.chat_writer_max_tokens
     (record,) = turn.records
-    assert record["writer"] == {"tools_offered": False, "action_turn": False, "cut": None}
+    assert record["writer"] == {
+        "tools_offered": False,
+        "action_turn": False,
+        "model": "klai-primary",
+        "fallback": False,
+        "cut": None,
+    }
     assert record["action_call"] == "failed"
 
 
@@ -1824,7 +1830,13 @@ async def test_an_internal_turn_answering_a_tool_result_offers_the_writer_the_to
     assert "response_format" not in answer
     assert llm.of("action_wish") == [], "a tool result is an action turn without asking"
     (record,) = turn.records
-    assert record["writer"] == {"tools_offered": True, "action_turn": True, "cut": None}
+    assert record["writer"] == {
+        "tools_offered": True,
+        "action_turn": True,
+        "model": "klai-primary",
+        "fallback": False,
+        "cut": None,
+    }
 
 
 @pytest.mark.parametrize(

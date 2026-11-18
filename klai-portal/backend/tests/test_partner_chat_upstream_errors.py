@@ -199,3 +199,75 @@ async def test_streaming_markers_upstream_status_error_emits_error_frame():
     body = b"".join(chunks).decode()
     assert "upstream_error" in body
     assert "data: [DONE]" in body
+
+
+def _answer(text: str = "Dat regel je onder Instellingen.") -> MagicMock:
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(
+        return_value={"id": "c1", "choices": [{"message": {"content": text}, "finish_reason": "stop"}]}
+    )
+    return response
+
+
+def _failing(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://litellm.example.com/v1/chat/completions")
+    return httpx.HTTPStatusError("failed", request=request, response=httpx.Response(status, request=request))
+
+
+async def _write_on_medium(side_effect: list, signals: dict) -> tuple[dict, MagicMock]:
+    client = MagicMock()
+    client.post = AsyncMock(side_effect=side_effect)
+
+    @asynccontextmanager
+    async def fake_client(*_args, **_kwargs):
+        yield client
+
+    with patch("app.services.widget_write.httpx.AsyncClient", fake_client):
+        body = await held_reply_body(
+            messages=[{"role": "user", "content": "hi"}],
+            model="klai-medium",
+            fallback_model="klai-primary",
+            temperature=0.7,
+            system_prompt="system",
+            settings=_settings(),
+            org_id=1,
+            answer_signals=signals,
+            profile=ChatProfile(surface="internal", kb_mode="open"),
+        )
+    return body, client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [402, 500, 503])
+async def test_a_medium_alias_that_is_out_of_budget_is_retried_once_on_the_requested_alias_and_the_record_says_so(
+    status,
+):
+    signals: dict = {}
+
+    body, client = await _write_on_medium([_failing(status), _answer()], signals)
+
+    assert [call.kwargs["json"]["model"] for call in client.post.call_args_list] == ["klai-medium", "klai-primary"]
+    assert body["choices"][0]["message"]["content"]
+    assert (signals["model"], signals["writer"]["model"], signals["writer"]["fallback"]) == (
+        "klai-primary",
+        "klai-primary",
+        True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_reply_written_by_the_medium_alias_is_recorded_as_such():
+    signals: dict = {}
+
+    await _write_on_medium([_answer()], signals)
+
+    assert (signals["model"], signals["writer"]["fallback"]) == ("klai-medium", False)
+
+
+@pytest.mark.asyncio
+async def test_a_bad_request_is_not_retried_on_the_requested_alias():
+    with pytest.raises(HTTPException) as exc:
+        await _write_on_medium([_failing(400), _answer()], {})
+
+    assert exc.value.status_code == 502

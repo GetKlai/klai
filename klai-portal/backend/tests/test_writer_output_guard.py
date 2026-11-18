@@ -180,7 +180,13 @@ async def test_a_reply_the_model_ended_at_its_token_limit_is_recorded_as_cut_by_
 
     await _write(_settings(), WIDGET, signals=signals)
 
-    assert signals["writer"] == {"tools_offered": False, "action_turn": False, "cut": "length"}
+    assert signals["writer"] == {
+        "tools_offered": False,
+        "action_turn": False,
+        "model": "klai-primary",
+        "fallback": False,
+        "cut": "length",
+    }
 
 
 @pytest.mark.asyncio

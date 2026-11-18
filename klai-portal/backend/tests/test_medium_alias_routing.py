@@ -34,6 +34,7 @@ _BACKGROUND_MEDIUM_MODULES = (
 def test_in_turn_medium_calls_stay_on_the_regular_route() -> None:
     assert Settings.model_fields["answer_grounding_model"].default == "klai-medium"
     assert Settings.model_fields["retrieval_paraphrase_model"].default == "klai-medium"
+    assert Settings.model_fields["widget_writer_model"].default == "klai-medium"
 
 
 def test_no_background_caller_names_a_chat_route_alias_or_in_turn_setting() -> None:

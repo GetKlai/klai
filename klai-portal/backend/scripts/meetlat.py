@@ -310,6 +310,9 @@ def _apply_measurement_patches() -> None:
     replay._REQUEST_MODEL = _FAST_ALIAS
     replay.partner._ALLOWED_MODELS = replay.partner._ALLOWED_MODELS | {_FAST_ALIAS}
     replay.settings.extraction_model = _FAST_ALIAS
+    # The widget writer's own setting (widget_turn._write): a replayed request already names _FAST_ALIAS, which the
+    # widget keeps, and this keeps a request for klai-primary from reaching klai-medium with the measuring key.
+    replay.settings.widget_writer_model = _FAST_ALIAS
     replay.settings.answer_grounding_model = _MEDIUM_ALIAS
     replay.settings.retrieval_paraphrase_model = _MEDIUM_ALIAS
 

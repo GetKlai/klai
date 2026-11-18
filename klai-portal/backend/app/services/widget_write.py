@@ -126,6 +126,7 @@ async def write_reply(
     temperature: float,
     system_prompt: str,
     settings: Settings,
+    fallback_model: str | None = None,
     org_id: int | str | None = None,
     page_context: PageContext | None = None,
     citation_chunks: list[dict] | None = None,
@@ -164,8 +165,10 @@ async def write_reply(
     only on an ``action_turn`` (internal_turn._action_turn), without the reply
     format; Strict never searches the web, so a web-search tool is dropped
     there. The turn's record says which it was (``answer_signals["writer"]``:
-    ``tools_offered``, ``action_turn``, and ``cut``, ``"length"`` or
-    ``"repeat"`` when the reply was cut). ``web_chunks`` are the live web
+    ``tools_offered``, ``action_turn``, ``model`` (the model that wrote the
+    reply), ``fallback`` (true when it is ``fallback_model``, the retry after
+    the first call failed), and ``cut``, ``"length"`` or ``"repeat"`` when the
+    reply was cut). ``web_chunks`` are the live web
     results an internal Open or general turn read beside the passages, cited as
     their own tier against ``web_query``. ``include_sources`` is the caller's
     choice; it drops the sources from the internal footer, never its warning.
@@ -218,11 +221,20 @@ async def write_reply(
         language=response_language,
         turn=turn,
     )
+    offered = (_strip_web_search_tools(tools) if strict else tools) if action_turn else None
+    writer: dict[str, Any] = {
+        "tools_offered": bool(offered),
+        "action_turn": action_turn,
+        "model": model,
+        "fallback": False,
+        "cut": None,
+    }
+    reply.signals["writer"] = writer
     settle = partial(
         _settle,
         reply,
         messages=messages,
-        model=model,
+        writer=writer,
         settings=settings,
         org_id=org_id,
         citation_chunks=citation_chunks,
@@ -249,7 +261,6 @@ async def write_reply(
         profile=profile,
         include_sources=include_sources,
     )
-    offered = (_strip_web_search_tools(tools) if strict else tools) if action_turn else None
     generation: dict[str, Any] = {
         "model": model,
         "temperature": temperature,
@@ -265,8 +276,6 @@ async def write_reply(
         if not offered or (strict and isinstance(tool_choice, dict) and _is_web_search_tool(tool_choice))
         else tool_choice,
     }
-    writer: dict[str, Any] = {"tools_offered": bool(offered), "action_turn": action_turn, "cut": None}
-    reply.signals["writer"] = writer
     if stream:
         ended: dict[str, str] = {}
         reply.deltas = _streamed(
@@ -279,7 +288,11 @@ async def write_reply(
         )
         return reply
     generation_started = time.perf_counter()
-    completion, draft, tool_calls = await _generate(augmented, **generation)
+    # Only the held writer retries: a widget turn is never streamed, and it is
+    # the only caller that names a fallback.
+    completion, draft, tool_calls = await _generate(
+        augmented, fallback_model=fallback_model, writer=writer, **generation
+    )
     draft, repeated = _without_repeats(draft)
     _mark_cut(writer, "repeat" if repeated else completion.get("finish_reason"), org_id=org_id)
     if strict:
@@ -305,7 +318,7 @@ async def _settle(
     tool_calls: list[dict] | None,
     shown: _StreamedText | None,
     messages: list[dict],
-    model: str,
+    writer: dict[str, Any],
     settings: Settings,
     org_id: int | str | None,
     citation_chunks: list[dict] | None,
@@ -332,6 +345,7 @@ async def _settle(
     """
     turn, response_language = reply.turn, reply.language
     helpdesk = profile.surface != "internal"
+    model = writer["model"]
     reply.completion, reply.tool_calls = completion, tool_calls
     if tool_calls and not draft.strip():
         # A turn that only calls a tool is not an answer yet: the client runs
@@ -341,7 +355,12 @@ async def _settle(
         if answer_signals is not None:
             answer_signals.update(decision="tool_calls", model=model, sources_count=0, refused=False)
         _log_turn_timing(
-            turn_timing, org_id=org_id, generation_ms=generation_ms, answer_judge_ms=0, answer_signals=answer_signals
+            turn_timing,
+            org_id=org_id,
+            generation_ms=generation_ms,
+            answer_judge_ms=0,
+            answer_signals=answer_signals,
+            model=model,
         )
         return
     if pasted_correspondence:
@@ -421,6 +440,7 @@ async def _settle(
         generation_ms=generation_ms,
         answer_judge_ms=_elapsed_ms(judge_started),
         answer_signals=answer_signals,
+        model=model,
     )
     # Consumed before the decision is logged so that event keeps its exact
     # payload: the marker only travels to the audit sink.
@@ -526,7 +546,55 @@ def _sent_text(
     return tail.rstrip() + "".join(f"\n\n{part}" for part in extras) if extras else tail
 
 
+def _failed_upstream_status(exc: AnswerUpstreamError) -> int | None:
+    """The gateway's status behind an upstream error, None when it was never reached."""
+    response = getattr(exc.__cause__, "response", None)
+    return response.status_code if response is not None else None
+
+
+def _retry_on(
+    exc: AnswerUpstreamError,
+    *,
+    model: str,
+    fallback_model: str | None,
+    writer: dict[str, Any],
+    org_id: int | str | None,
+) -> str | None:
+    """The alias to retry the writer call on once, or None when the failure stands.
+
+    The gateway has no fallback for klai-medium: a spent daily budget answers
+    500 "crossed budget", and the visitor must not see that. Only a failure of
+    the server side or of the quota is retried; a 4xx on the request itself
+    would fail the same on the requested alias.
+    """
+    status = _failed_upstream_status(exc)
+    if fallback_model is None or fallback_model == model or (status is not None and status < 500 and status != 402):
+        return None
+    logger.warning(
+        "partner_chat_writer_fallback", org_id=org_id, model=model, fallback=fallback_model, status_code=status
+    )
+    writer.update(model=fallback_model, fallback=True)
+    return fallback_model
+
+
 async def _generate(
+    messages: list[dict],
+    *,
+    fallback_model: str | None,
+    writer: dict[str, Any],
+    **call: Any,
+) -> tuple[dict[str, Any], str, list[dict] | None]:
+    """The writer call, retried once on ``fallback_model`` when the first alias failed upstream."""
+    try:
+        return await _generate_once(messages, **call)
+    except AnswerUpstreamError as exc:
+        retry = _retry_on(exc, model=call["model"], fallback_model=fallback_model, writer=writer, org_id=call["org_id"])
+        if retry is None:
+            raise
+    return await _generate_once(messages, **{**call, "model": retry})
+
+
+async def _generate_once(
     messages: list[dict],
     *,
     model: str,

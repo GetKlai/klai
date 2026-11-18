@@ -928,6 +928,8 @@ def _measuring_with_memory(monkeypatch, tmp_path) -> tuple[Path, list[str]]:
         (answer_grounding, "_INTERNAL_CHECK_TIMEOUT_SECONDS"),
     ):
         monkeypatch.setattr(owner, name, getattr(owner, name))
+    for name in ("extraction_model", "widget_writer_model", "answer_grounding_model", "retrieval_paraphrase_model"):
+        monkeypatch.setattr(replay.settings, name, getattr(replay.settings, name))
     monkeypatch.setattr(meetlat, "_internal_cases", {})
     monkeypatch.setattr(meetlat, "_widget_cases", {})
     monkeypatch.setattr(meetlat, "_make_database_read_only", lambda _db: None)
@@ -1592,7 +1594,7 @@ async def test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance(monkeyp
     from tests.test_one_pipeline_answer_decision import _internal, _LiteLLM, _pack, _turn
 
     _measuring_with_memory(monkeypatch, tmp_path)
-    for name in ("extraction_model", "answer_grounding_model", "retrieval_paraphrase_model"):
+    for name in ("extraction_model", "widget_writer_model", "answer_grounding_model", "retrieval_paraphrase_model"):
         monkeypatch.setattr(replay.settings, name, getattr(replay.settings, name))
     monkeypatch.setattr(replay, "_REQUEST_MODEL", replay._REQUEST_MODEL)
     monkeypatch.setattr(partner, "_ALLOWED_MODELS", partner._ALLOWED_MODELS)
@@ -1619,6 +1621,7 @@ async def test_a_replayed_turn_calls_no_model_outside_the_vibe_allowance(monkeyp
     assert all((body.get("metadata") or {}).get("_klai_delegated_org_id") for body in llm.calls)
     # The paraphrases run on first widget questions only, so the turn above may not have made that call.
     assert replay.settings.retrieval_paraphrase_model in _VIBE_ALLOWANCE
+    assert replay.settings.widget_writer_model in _VIBE_ALLOWANCE
     if widget:
         await _a_widget_contact_request_picks_its_route_on_the_vibe_allowance(monkeypatch, _turn, _LiteLLM)
         await _a_widget_not_found_reads_its_exit_kind_on_the_vibe_allowance(monkeypatch, _turn, _LiteLLM)

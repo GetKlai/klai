@@ -636,9 +636,14 @@ async def _write(
         system_prompt += escalation_service.ESCALATION_TURN_ADDENDUM[writing.escalation]
     if writing.conversational:
         system_prompt += turn_judge.CONVERSATIONAL_TURN_ADDENDUM
+    # A request that asks for the default alias is written by the widget
+    # writer model; one that names another model keeps it. The requested alias
+    # is also where a failed call is retried once.
+    model = inputs.settings.widget_writer_model if request.model == "klai-primary" else request.model
     reply = await write_reply(
         messages=request.messages,
-        model=request.model,
+        model=model,
+        fallback_model=request.model if model != request.model else None,
         temperature=request.temperature,
         system_prompt=system_prompt,
         settings=inputs.settings,
