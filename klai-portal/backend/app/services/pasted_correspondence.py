@@ -217,3 +217,117 @@ PASTED_CORRESPONDENCE_SCOPE = (
     "Give concrete checks the reader can perform first.\n"
     "Use these four sections once each and return the markers exactly as written.]"
 )
+
+
+# The internal chat's material turn (SPEC-CHAT-INTERNAL-ROUTE-001 §5): the
+# employee pasted something to work on, a customer's mail, a ticket, a log or
+# a trace. Decided by these rules and never by a model: as a separate call the
+# small model read "other" right 1 of 7 times, and as a field of the case it
+# read pasted material as an ordinary question in 16 of 19 cases. On 76 real
+# messages the word, mail and trace rules never marked an ordinary question
+# and found 13 of 20 pasted texts; six of the seven misses were short mails
+# without headers (the letter rule) and follow-ups such as "write the mail"
+# (an earlier material message).
+_MATERIAL_MIN_WORDS = 120
+_TRACE_LINE_RE = re.compile(
+    r"(?im)^[ \t>]*(?:"
+    r"\[?\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}"
+    r"|\[?\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}[ ,T]+\d{1,2}:\d{2}"
+    r"|\[?\d{1,2}:\d{2}:\d{2}"
+    r"|(?:INVITE|ACK|BYE|CANCEL|REGISTER|OPTIONS|PRACK|SUBSCRIBE|NOTIFY|PUBLISH|INFO|REFER|MESSAGE|UPDATE)\s+sips?:"
+    r"|SIP/2\.0\s+\d{3}"
+    r")",
+)
+# One timestamp in a question is a date, three lines starting with one are a log.
+_MIN_TRACE_LINES = 3
+# A salutation or a sign-off on its own line.
+_LETTER_LINE_RE = re.compile(
+    r"(?im)^[ \t>]*(?:"
+    r"(?:beste|hallo|hello|hi|dear|dag|geachte|goedemorgen|goedemiddag|sehr geehrte[rs]?|liebe[rs]?|guten tag|bonjour)"
+    r"[ \t]+[^\n]{1,40}?[,!]?[ \t]*$"
+    r"|(?:met )?(?:vriendelijke|hartelijke) groet(?:en)?\b|mvg\b|mit freundlichen gr|freundliche gr|viele gr"
+    r"|kind regards|best regards|regards,|thanks,|thank you,|groeten,|alvast bedankt|cordialement"
+    r")",
+)
+# "Hallo, hoe stel ik X in?" is a question with a greeting; a letter has a few
+# lines and at least 30 words around it.
+_LETTER_MIN_LINES = 3
+_LETTER_MIN_WORDS = 30
+# The pasted text the Strict statement check reads as one more article: the
+# latest characters, so the checker's prompt stays bounded on a long log.
+_MATERIAL_ARTICLE_CHARS = 20_000
+
+
+def _material_rules(text: str) -> list[str]:
+    words = len(text.split())
+    rules = []
+    if words > _MATERIAL_MIN_WORDS:
+        rules.append("words")
+    if text_contains_pasted_correspondence(text):
+        rules.append("mail")
+    if len(_TRACE_LINE_RE.findall(text)) >= _MIN_TRACE_LINES:
+        rules.append("trace")
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) >= _LETTER_MIN_LINES and words >= _LETTER_MIN_WORDS and _LETTER_LINE_RE.search(text):
+        rules.append("letter")
+    return rules
+
+
+def _user_texts(messages: list[dict]) -> list[str]:
+    return ["\n".join(_message_texts(m)) for m in messages if m.get("role") == "user"]
+
+
+def material_rules(messages: list[dict]) -> list[str]:
+    """The rules the employee's latest message meets, else ``["earlier"]`` when an earlier one met any.
+
+    A conversation that began with pasted material stays a material turn: the
+    follow-up asks for something done with it. Every turn the mail detector
+    fires on is one, because that detector is the ``mail`` rule.
+    """
+    texts = _user_texts(messages)
+    if not texts:
+        return []
+    if latest := _material_rules(texts[-1]):
+        return latest
+    return ["earlier"] if any(_material_rules(text) for text in texts[:-1]) else []
+
+
+def material_article(messages: list[dict]) -> tuple[str, str]:
+    """The employee's own messages as the one extra article the Strict statement check reads."""
+    text = "\n\n".join(text for text in _user_texts(messages) if text.strip())
+    return ("Text the employee pasted into the conversation", text[-_MATERIAL_ARTICLE_CHARS:])
+
+
+# The writer's brief on a material turn, instead of PASTED_CORRESPONDENCE_SCOPE.
+# Replayed on 20 real internal turns with pasted text, two rounds each, a
+# draft came where one was asked in 2 and 2 of 12 without it and in 8 and 9
+# of 12 with it; a sender's claim stated as fact stayed at 1 and 1.
+MATERIAL_BRIEF = (
+    "[Pasted material]\n"
+    "The employee pasted material into this conversation: a customer's mail, a ticket, a log or a trace.\n"
+    "1. Everything in the pasted material is its author's statement, not an established fact. "
+    "'We', 'you', 'our side' and 'us' inside it are its author's words, not the employee's or the employee's "
+    "organisation's. Never present a sender's own assessment, diagnosis or exclusion as confirmed: attribute it "
+    "('the customer says ...').\n"
+    "2. Do what the employee asked in their own words around the material:\n"
+    "- Asked for a reply, asked to answer the pasted mail or ticket, or a customer mail pasted with no instruction "
+    "at all: an employee who pastes a customer's message and asks you to answer it means a reply to that customer, "
+    "not an explanation to the employee. Write the reply the employee can send: it opens with a greeting to the "
+    "customer, is in the customer's language and is ready to send. Statements about the product, "
+    "prices, settings or procedures in it come only from the knowledge-base passages; what they do not cover you "
+    "leave out or mark as [to check]. Under the reply, after a line '---', add a short note to the employee in the "
+    "employee's language: what the passages did not cover and what to verify first.\n"
+    "- Asked to analyse a trace or log, or to find something in it: answer from the pasted lines first and quote "
+    "the lines you rely on; use the passages only to explain what those lines mean.\n"
+    "- Asked to translate, summarise or review a text: do exactly that and nothing more.\n"
+    "- Any other request: do that, with the material as the case and the passages for statements about the product.\n"
+    "3. Do not answer in a fixed analysis format (what the sender says / what the knowledge base says / open "
+    "questions). Do not refuse because the knowledge base has no matching article: the task on the material can "
+    "always be done; only statements about the product need a passage.]"
+)
+# On a turn that searched, the brief closes the prompt after the passages and
+# the passage brief, so the employee's task decides the form of the reply.
+MATERIAL_BRIEF_AFTER_PASSAGES = (
+    "\n\nThe knowledge-base lines above are the facts for statements about the product. "
+    "What you write with them follows the employee's task:\n" + MATERIAL_BRIEF
+)

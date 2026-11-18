@@ -1,9 +1,9 @@
 ---
 id: SPEC-CHAT-INTERNAL-ROUTE-001
 version: "0.1.0"
-status: design, stap 1 gebouwd en gemeten (productiemodel 0 van 8 ontspoord tegen 8 van 8; meetlat binnen de ruis op beide oppervlakken); nog niet uitgerold
+status: design, stap 1 gebouwd en gemeten (productiemodel 0 van 8 ontspoord tegen 8 van 8; meetlat binnen de ruis op beide oppervlakken), stap 2 gebouwd (naspeling vooraf 9 en 9 van 20 tegen 4 en 5); nog niet uitgerold
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-18
 priority: high
 tenant_scope: platform-wide voor de interne chat; de helpwidget en de partnersleutel veranderen niet van gedrag
 related:
@@ -87,9 +87,22 @@ Meting: aandeel ontspoorde antwoorden op het nagebouwde productieverzoek, produc
 
 De toets vooraf is gedaan op 76 echte berichten en het productiemodel [gemeten]. Als los verzoek herkent het kleine model geplakt materiaal goed (16 van 17 keer terecht, 16 van de 20 gevonden), maar "overig" slecht (1 van 7), en als veld in de lezing van de zaak werkt het niet. Een regel die code kan natrekken (meer dan 120 woorden, een geplakte mailkop of een logpatroon) wijst nooit ten onrechte materiaal aan en vindt 13 van de 20; zes van de zeven missers zijn korte geplakte mails en vervolgbeurten als "schrijf de mail". De soort werk komt daarom uit die regel plus het geheugen van het gesprek (een gesprek dat met materiaal begon, blijft materiaal), en niet uit een veld van het model. Een echte handeling kwam in de 76 berichten niet voor.
 
-Contract in hoofdlijnen, definitief na die toets: de lezing van de zaak krijgt een veld voor de soort werk. Bij geplakt materiaal komen de zoekvragen uit het materiaal, kiest de keuzestap passages bij de vragen die het materiaal stelt, en schrijft de schrijver een concept of analyse met de bronnen erbij. De controle op onderbouwing meet, zoals nu, en verandert het antwoord niet. In Strict blijft gelden dat een bewering over het product uit de artikelen komt; wat het materiaal zelf zegt, mag de schrijver gebruiken.
+Contract, zoals gebouwd op 18 november 2026 (nog niet uitgerold):
 
-Meting: per soort werk echte gevallen in de interne meetlat met de verwachting van de eigenaar, twee rondes hoofdversie tegen twee rondes kandidaat.
+1. Alleen de interne chat. Een beurt is een materiaalbeurt als code in het laatste bericht van de medewerker vindt: meer dan 120 woorden, of de bestaande maildetector gaat af, of minstens drie regels die eruitzien als een log of trace (een tijdstempel aan het begin van de regel, een SIP-verzoekregel, een SIP-statusregel), of een korte brief (een aanhef of groet op een eigen regel in een bericht van minstens drie regels en 30 woorden); of als een eerder bericht van de medewerker in het gesprek aan een van deze regels voldeed. Geen model beslist dit.
+2. Het record van de beurt zegt welke regels afgingen: `answer_signals.material`, een lijst (`words`, `mail`, `trace`, `letter` of `earlier`; leeg op een gewone beurt).
+3. Op een materiaalbeurt krijgt de schrijver de materiaalopdracht: de geplakte tekst is de bewering van de schrijver ervan en nooit een vaststaand feit; doe wat de medewerker vraagt, met een verzendklaar antwoord aan de klant in de taal van de klant als een antwoord gewenst is en een notitie aan de medewerker eronder; geen vast analyseformaat en geen weigering om een ontbrekend artikel. Op een beurt die zocht sluit de opdracht de systeemprompt af, na de opdracht van de keuzestap; op een beurt die niets zocht staat ze waar het vierdelige contract stond.
+4. Een materiaalbeurt krijgt nooit ook het vierdelige contract, ook niet als er passages zijn en de maildetector afgaat.
+5. Strict weigert een materiaalbeurt niet in code om ontbrekende passages (geen kennisbank om te doorzoeken, nul passages, "staat er niet in"). De controle op onderbouwing draait wel, met de geplakte tekst als artikel extra: een bewering die het materiaal navertelt is onderbouwd, een bewering over het product die geen passage draagt geeft de bestaande weigering.
+6. De antwoordtaal van een materiaalbeurt wordt niet door de uitvoervorm opgelegd, zoals bij geplakte correspondentie.
+7. De helpwidget en de partnersleutel veranderen niet. Open houdt het label voor algemene kennis.
+8. De interne meetlat speelt een geval na in de modus die het geval noemt (`mode`: strict of open), niet in de huidige modus van het profiel, ook de eerdere beurten van het gesprek; de rij legt die modus vast.
+
+Nog niet gebouwd: zoekvragen uit het materiaal, en het vierdelige contract weghalen voor de widget en de partnersleutel (een opruimronde zodra dit live bewezen is).
+
+Gemeten vóór de bouw [gemeten]: de twintig echte interne beurten met geplakte tekst nagespeeld op de server, hoofdversie tegen kandidaat, twee rondes elk, blind gelezen, met tien gewone vraagbeurten als controle. Volledig geleverd 4 en 5 van 20 op de hoofdversie tegen 9 en 9 op de kandidaat; een concept waar een concept gevraagd was 2 en 2 tegen 8 en 9 van 12; een bewering van de afzender als feit 1 en 1 tegen 1 en 1; weigeringen in Strict 3 en 3 tegen 1 en 0; de tien controlevragen namen 0 keer de nieuwe route en veranderden niet. De bestaande maildetector ging op 0 van de 20 beurten af en op 0 van 1.127 opgeslagen widgetberichten.
+
+Meting: volledig geleverde beurten met geplakte tekst, naspeling van de twintig echte beurten, blind gelezen · nu 4 en 5 van 20 (18 november 2026) · verwacht 9 van 20 · bewezen 9 en 9 van 20 op de kandidaat vóór de bouw; na uitrol op echt verkeer het aandeel materiaalbeurten in het record en de weigeringen in Strict, terug als een bewering van de afzender vaker als feit verschijnt dan op de hoofdversie.
 
 ## 6. Stap 3: handelingen
 

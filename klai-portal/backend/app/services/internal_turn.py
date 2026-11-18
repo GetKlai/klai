@@ -32,6 +32,7 @@ from app.services.action_wish import ActionOutcome, read_action_wish
 from app.services.chat_profile import ChatProfile
 from app.services.chat_prompting import _is_web_search_tool
 from app.services.chat_safety import _last_user_message
+from app.services.pasted_correspondence import material_rules
 from app.services.retrieval_context import (
     INTERNAL_RETRIEVE_TOP_K,
     KnowledgeTurn,
@@ -102,6 +103,10 @@ async def internal_turn(inputs: InternalInputs) -> Reply:
 async def _run_turn(inputs: InternalInputs, wish: asyncio.Task[ActionOutcome] | None) -> Reply:
     turn = KnowledgeTurn()
     messages = inputs.request.messages
+    # Decided in code before anything searches (SPEC-CHAT-INTERNAL-ROUTE-001 §5);
+    # the record keeps which rules fired, so the misses can be counted.
+    inputs.answer_signals["material"] = material_rules(messages)
+    turn.material = bool(inputs.answer_signals["material"])
     case: case_file.Case | None = None
     case_ms = 0
     with retrieval_upstream_errors(inputs.auth.org_id):
@@ -248,10 +253,12 @@ def _route(inputs: InternalInputs, turn: KnowledgeTurn, found: Found, case: case
         )
         return _refusal(inputs, turn, turn.refusal(language), language)
     mark_knowledge_turn_without_evidence(turn, case)
-    if turn.not_in_passages and inputs.profile.kb_mode == "strict":
+    if turn.not_in_passages and inputs.profile.kb_mode == "strict" and not turn.material:
         # Strict promised knowledge-base-only answers, and no passage answers
         # this question: the same fixed refusal as with zero passages, decided
         # before any model writes (step N). Open writes from general knowledge.
+        # A material turn is written: the task on the pasted text needs no
+        # passage, and the statement check refuses a product claim none carries.
         logger.info(
             "partner_chat_not_in_passages",
             org_id=inputs.auth.org_id,
@@ -307,7 +314,10 @@ async def _write(
         turn_timing=timing,
         delegated_org_id=auth.zitadel_org_id,
         knowledge_turn=turn,
-        pasted_correspondence=inputs.pasted_correspondence,
+        # Every turn the mail detector fires on is a material turn, and on all
+        # of them the reply format does not force a language: a reply to the
+        # customer is in the customer's language.
+        pasted_correspondence=turn.material,
         profile=profile,
         tools=request.tools,
         tool_choice=request.tool_choice,

@@ -81,6 +81,7 @@ from app.services.chat_safety import (
 )
 from app.services.chat_sources import PageContext, _chunk_source_title
 from app.services.knowledge_prompts import unchecked_questions_notice
+from app.services.pasted_correspondence import material_article
 from app.services.retrieval_context import _CHOSEN_PASSAGE_KEY, KnowledgeTurn
 from app.services.widget_reply import AnswerUpstreamError, Reply
 from app.trace import get_trace_headers
@@ -1129,12 +1130,11 @@ async def _judge(
     if not safe_text:
         return content, sources, decision
     searched_nothing = knowledge_turn.answer_mode == "general"
-    own_input = knowledge_turn.user_provided_content or knowledge_turn.pasted_correspondence
-    if not helpdesk and (searched_nothing or own_input):
+    if not helpdesk and (searched_nothing or knowledge_turn.user_provided_content):
         # An internal Strict turn that searched nothing (a thank-you, a
         # question about Klai itself) has no article to miss, and one that
-        # rests on what the employee attached or pasted is not judged against
-        # the articles: two correct observations from a screenshot read as two
+        # rests on what the employee attached is not judged against the
+        # articles: two correct observations from a screenshot read as two
         # unsupported statements. Without a source the model's own words go
         # out; a turn that searched nothing keeps its links, they are the
         # model's or the employee's own.
@@ -1148,6 +1148,11 @@ async def _judge(
             else (safe_text, [], {"reason": "user_provided_content"})
         )
     articles = [(_chunk_source_title(chunk), str(chunk.get("text") or "")) for chunk in citation_chunks or []]
+    if knowledge_turn.material:
+        # Pasted material (a mail, a ticket, a log) is checked, with the pasted
+        # text as one more article: a reply that restates it is supported, and
+        # a statement about the product that no passage carries is not.
+        articles = [*articles, material_article(messages)]
     # The checker only sees the question, the articles and the reply, so it cannot
     # know a booking button is really attached and flagged "Klik op de knop hieronder
     # om een afspraak in te plannen" as an unsupported claim about the company. Handing
