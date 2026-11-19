@@ -2442,7 +2442,7 @@ services:
   # contract harness passes against it.
   firecrawl-rabbitmq:
     logging: *log-rotation
-    image: rabbitmq:4.4.0-alpine
+    image: rabbitmq:4.4.1-alpine
     restart: unless-stopped
     networks:
       - klai-net
