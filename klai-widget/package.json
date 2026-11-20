@@ -19,7 +19,7 @@
   "devDependencies": {
     "@solidjs/testing-library": "^0.8.10",
     "@types/dompurify": "^3.2.0",
-    "jsdom": "^30.0.1",
+    "jsdom": "^31.0.0",
     "terser": "^5.48.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.3",
