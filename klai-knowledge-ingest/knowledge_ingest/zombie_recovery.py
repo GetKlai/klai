@@ -36,12 +36,6 @@ logger = structlog.get_logger()
 # false-positive pruning.
 STALLED_WORKER_TIMEOUT_SECONDS = 120.0
 
-# The unique index procrastinate's own ``procrastinate_retry_job_v2`` UPDATE
-# can violate: a newer job already sits in ``todo`` with the same
-# ``queueing_lock`` as the zombie being retried, so the zombie cannot go back
-# to ``todo``.
-QUEUEING_LOCK_UNIQUE_CONSTRAINT = "procrastinate_jobs_queueing_lock_idx_v1"
-
 # The document product a task builds. Every queueing lock of these tasks names
 # the artifact (``{org}:{kb}:{path}:{artifact}``, ``reindex:{org}:{artifact}``,
 # ``requeue:{artifact}``, ``graphiti:{artifact}``), so a job holding a zombie's
@@ -58,10 +52,18 @@ def _product_work(job: Any) -> tuple[str, Any] | None:
     return (product, job.task_kwargs.get("artifact_id")) if product else None
 
 
-async def _queued_twin_covers(proc_app: Any, job: Any, queueing_lock: str | None) -> bool:
-    """Whether the live job holding the zombie's queueing lock covers its work.
+async def _twins(proc_app: Any, job: Any) -> list[Any]:
+    """The other jobs sharing the zombie's queueing lock."""
+    if not job.queueing_lock:
+        return []
+    jobs = await proc_app.job_manager.list_jobs_async(queueing_lock=job.queueing_lock)
+    return [twin for twin in jobs if twin.id != job.id]
 
-    For a document product it does when it builds the same product of the same
+
+def _twins_cover(job: Any, twins: list[Any]) -> bool:
+    """Whether the live jobs sharing the zombie's queueing lock cover its work.
+
+    For a document product they do when one builds the same product of the same
     artifact, whatever its other arguments: every such job reloads the version
     from Postgres, and it either redoes the zombie's work (a capacity re-queue,
     the same batch, an old-shape job with ``resource_key``) or exists only
@@ -72,11 +74,7 @@ async def _queued_twin_covers(proc_app: Any, job: Any, queueing_lock: str | None
     work = _product_work(job)
     if work is None:
         return True
-    twins = await proc_app.job_manager.list_jobs_async(queueing_lock=queueing_lock)
-    return any(
-        twin.id != job.id and twin.status in ("todo", "doing") and _product_work(twin) == work
-        for twin in twins
-    )
+    return any(twin.status in ("todo", "doing") and _product_work(twin) == work for twin in twins)
 
 
 async def _record_lost_work(job: Any) -> None:
@@ -101,7 +99,6 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
 
     Returns counts for observability/tests.
     """
-    from procrastinate.exceptions import UniqueViolation
     from procrastinate.jobs import Status
 
     jobs = list(
@@ -118,42 +115,13 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
     for job in jobs:
         job_id = job.id
         try:
-            await proc_app.job_manager.retry_job_by_id_async(job_id=job_id, retry_at=retry_at)
-            retried += 1
-        except UniqueViolation as exc:
-            if exc.constraint_name != QUEUEING_LOCK_UNIQUE_CONSTRAINT:
-                logger.exception(
-                    "procrastinate_zombie_retry_failed",
-                    job_id=job_id,
-                    queue=job.queue,
-                    task=job.task_name,
-                )
+            twins = await _twins(proc_app, job)
+            # Only a todo job holds the queueing lock (its unique index covers
+            # todo rows), so without one the zombie can go back to todo.
+            if not any(twin.status == "todo" for twin in twins):
+                await proc_app.job_manager.retry_job_by_id_async(job_id=job_id, retry_at=retry_at)
+                retried += 1
                 continue
-            covered = await _queued_twin_covers(proc_app, job, exc.queueing_lock)
-            try:
-                await proc_app.job_manager.finish_job_by_id_async(
-                    job_id=job_id,
-                    status=Status.ABORTED if covered else Status.FAILED,
-                    delete_job=False,
-                )
-                if not covered:
-                    await _record_lost_work(job)
-            except Exception:
-                # Keep recovering the other zombies in this pass.
-                logger.exception(
-                    "procrastinate_zombie_finish_failed",
-                    job_id=job_id,
-                    queue=job.queue,
-                    task=job.task_name,
-                )
-                continue
-            (logger.info if covered else logger.error)(
-                "zombie_superseded_by_queued_job" if covered else "zombie_work_not_covered",
-                job_id=job_id,
-                queue=job.queue,
-                task=job.task_name,
-                queueing_lock=exc.queueing_lock,
-            )
         except Exception:
             logger.exception(
                 "procrastinate_zombie_retry_failed",
@@ -161,6 +129,35 @@ async def recover_zombie_jobs(proc_app: Any) -> dict[str, int]:
                 queue=job.queue,
                 task=job.task_name,
             )
+            continue
+        # A retry now would end the zombie failed (procrastinate 3.12 closes a
+        # doing job whose queueing lock a todo job holds) whether or not that
+        # job does its work, so decide here which of the two it is.
+        covered = _twins_cover(job, twins)
+        try:
+            await proc_app.job_manager.finish_job_by_id_async(
+                job_id=job_id,
+                status=Status.ABORTED if covered else Status.FAILED,
+                delete_job=False,
+            )
+            if not covered:
+                await _record_lost_work(job)
+        except Exception:
+            # Keep recovering the other zombies in this pass.
+            logger.exception(
+                "procrastinate_zombie_finish_failed",
+                job_id=job_id,
+                queue=job.queue,
+                task=job.task_name,
+            )
+            continue
+        (logger.info if covered else logger.error)(
+            "zombie_superseded_by_queued_job" if covered else "zombie_work_not_covered",
+            job_id=job_id,
+            queue=job.queue,
+            task=job.task_name,
+            queueing_lock=job.queueing_lock,
+        )
 
     logger.info(
         "procrastinate_zombies_retried",

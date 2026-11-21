@@ -529,12 +529,14 @@ def _register_tasks(procrastinate_app: Any) -> None:
         """``inner``, except for the two ways a job ends without trying the work.
 
         A recorded or quarantined failure fails for good. A job cancelled from
-        outside (a worker shutting down, a user abort; ``CancelledError``) did
-        not fail at all, so it is always retried, whatever its attempt count:
-        otherwise a cancellation on the last attempt would end the job
-        ``aborted`` with no retry left and the document pending for ever. The
-        retried job then does the work, or abandons it when its version or
-        connector has gone.
+        outside (``CancelledError``) did not fail at all, so a retry is always
+        asked for, whatever its attempt count. After a worker shutdown that
+        retry puts the job back in ``todo``: otherwise a shutdown on the last
+        attempt would end the job ``aborted`` with no retry left and the
+        document pending for ever. The retried job then does the work, or
+        abandons it when its version or connector has gone. After a user abort
+        procrastinate's retry ends the job ``failed`` instead, because its
+        abort was requested.
         """
 
         def __init__(self, inner: Any) -> None:
