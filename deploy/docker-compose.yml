@@ -269,7 +269,7 @@ services:
   # ─── listmonk PostgreSQL (mailing.getklai.com) ───────────────────────────
   listmonk-db:
     logging: *log-rotation
-    image: postgres:18.7-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -291,7 +291,7 @@ services:
   # ─── Meilisearch ──────────────────────────────────────────────────────────
   meilisearch:
     logging: *log-rotation
-    image: getmeili/meilisearch:v1.56.2
+    image: getmeili/meilisearch:v1.57.0
     restart: unless-stopped
     volumes:
       - meilisearch-data:/meili_data
@@ -320,7 +320,7 @@ services:
   # ─── Zitadel ──────────────────────────────────────────────────────────────
   zitadel:
     logging: *log-rotation
-    image: ghcr.io/zitadel/zitadel:v4.20.1
+    image: ghcr.io/zitadel/zitadel:v4.20.5
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -1321,7 +1321,7 @@ services:
 
   victoriametrics:
     logging: *log-rotation
-    image: victoriametrics/victoria-metrics:v1.155.0
+    image: victoriametrics/victoria-metrics:v1.156.0
     restart: unless-stopped
     volumes:
       - victoriametrics-data:/storage
@@ -1433,7 +1433,7 @@ services:
 
   cadvisor:
     logging: *log-rotation
-    image: ghcr.io/google/cadvisor:v0.60.6
+    image: ghcr.io/google/cadvisor:v0.61.1
     restart: unless-stopped
     privileged: false
     cap_add:
@@ -1460,7 +1460,7 @@ services:
 
   alloy:
     logging: *log-rotation
-    image: grafana/alloy:v1.21.3
+    image: grafana/alloy:v1.22.0
     restart: unless-stopped
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
@@ -1681,7 +1681,7 @@ services:
 
   gitea:
     logging: *log-rotation
-    image: gitea/gitea:28.3.0
+    image: gitea/gitea:28.4.0
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -2116,7 +2116,7 @@ services:
   # ─── Qdrant (vector store for Klai Knowledge) ────────────────────────────
   qdrant:
     logging: *log-rotation
-    image: qdrant/qdrant:v1.20.0
+    image: qdrant/qdrant:v1.20.2
     restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
@@ -2410,7 +2410,7 @@ services:
   # candidate first, then editing here.
   firecrawl-postgres:
     logging: *log-rotation
-    image: postgres:18.7-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: firecrawl
@@ -2442,7 +2442,7 @@ services:
   # contract harness passes against it.
   firecrawl-rabbitmq:
     logging: *log-rotation
-    image: rabbitmq:4.4.0-alpine
+    image: rabbitmq:4.4.1-alpine
     restart: unless-stopped
     networks:
       - klai-net
@@ -2455,7 +2455,7 @@ services:
 
   firecrawl-api:
     logging: *log-rotation
-    image: ghcr.io/firecrawl/firecrawl:2.11.704
+    image: ghcr.io/firecrawl/firecrawl:2.11.804
     restart: unless-stopped
     environment:
       PORT: "3002"
@@ -2569,7 +2569,7 @@ services:
   # worker running (verified locally 2026-10-22).
   crm-postgres:
     logging: *log-rotation
-    image: postgres:18.7-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -2618,7 +2618,7 @@ services:
   # schema that the restored dump would collide with.
   umami-postgres:
     logging: *log-rotation
-    image: postgres:18.7-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -2650,7 +2650,7 @@ services:
   # 17 -> 18 went the same way, rehearsed against fider v0.38.2.
   fider-postgres:
     logging: *log-rotation
-    image: postgres:18.7-alpine
+    image: postgres:19.0-alpine
     restart: unless-stopped
     volumes:
       # PG18 keeps PGDATA in /var/lib/postgresql/18/docker and will not start
@@ -2684,7 +2684,7 @@ services:
   # health check.
   fider:
     logging: *log-rotation
-    image: getfider/fider:v0.39.0
+    image: getfider/fider:v0.40.0
     restart: unless-stopped
     environment:
       BASE_URL: https://feedback.${DOMAIN}
@@ -2729,7 +2729,7 @@ services:
   # 3.0.3 -> 3.4.0 in one run, 12 migrations), so no stepping is needed.
   umami:
     logging: *log-rotation
-    image: ghcr.io/umami-software/umami:3.4.1
+    image: ghcr.io/umami-software/umami:3.5.0
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://umami:${UMAMI_POSTGRES_PASSWORD}@umami-postgres:5432/umami
@@ -2775,7 +2775,7 @@ services:
   # SPEC-INFRA-COOLIFY-EXIT-001 T2 has the procedure and why it took four hops.
   crm:
     logging: *log-rotation
-    image: twentycrm/twenty:v2.57.1
+    image: twentycrm/twenty:v2.59.3
     restart: unless-stopped
     environment:
       SERVER_URL: https://crm.${DOMAIN}
@@ -2817,7 +2817,7 @@ services:
 
   crm-worker:
     logging: *log-rotation
-    image: twentycrm/twenty:v2.57.1
+    image: twentycrm/twenty:v2.59.3
     restart: unless-stopped
     command: ["yarn", "worker:prod"]
     environment:

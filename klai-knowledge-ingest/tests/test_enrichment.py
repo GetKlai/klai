@@ -336,3 +336,48 @@ async def test_enrich_chunk_falls_back_to_legacy_when_summary_empty():
     assert "<document>" in prompt
     assert "<document_summary>" not in prompt
     assert "Het volledige documentlichaam" in prompt
+
+
+@pytest.mark.asyncio
+async def test_an_answer_of_the_length_a_table_page_needs_is_not_cut_off():
+    """The model stops at ``max_tokens``; a cut-off answer is unparseable JSON.
+
+    Measured 18 Nov 2026 on a table-heavy page: 7 of its 11 chunk answers
+    needed more than 300 tokens (275 to 381), so with a cap of 300 the
+    document failed every retry. The fake model below cuts its answer where a
+    real one would: at four characters per token of the cap it was given.
+    """
+    long_answer = json.dumps(
+        {
+            "context_prefix": "Deze tabel beschrijft de instellingen per profiel. " * 4,
+            "questions": [
+                f"Welke waarde heeft instelling {n} in elk van de profielen?" for n in range(5)
+            ]
+            + ["Hoe verschillen de profielen van elkaar in de genoemde instellingen? " * 12],
+        }
+    )
+    assert 1100 < len(long_answer) < 1600  # about 381 tokens, the longest measured
+
+    async def _answer_up_to_the_cap(url, json, headers):
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = {
+            "choices": [{"message": {"content": long_answer[: json["max_tokens"] * 4]}}]
+        }
+        return response
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=_answer_up_to_the_cap)
+        mock_client_cls.return_value = mock_client
+
+        result = await enrich_chunk(
+            document_text="Een pagina met tabellen.",
+            chunk_text="| profiel | instelling |",
+            title="Profielen",
+            path="help/profielen.md",
+        )
+
+    assert len(result.questions) == 6

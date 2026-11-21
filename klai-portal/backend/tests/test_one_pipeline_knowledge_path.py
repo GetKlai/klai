@@ -17,6 +17,7 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from helpers import selection_quoting_first_passage
 
@@ -579,6 +580,72 @@ async def test_internal_follow_up_takes_its_product_from_the_employee_s_words_no
     assert body.get("product", "") == expected
 
 
+# --- the widget writer model -------------------------------------------------------
+
+
+class _BudgetSpentOnMedium(_Recorder):
+    """The gateway at klai-medium's daily cap: 429 on the answer call for that alias, no fallback of its own."""
+
+    async def post(self, url: str, *, json: dict, headers: dict | None = None) -> Any:
+        if "stream" in json and json["model"] == "klai-medium":
+            self.model_bodies.append(json)
+            response = httpx.Response(
+                429, request=httpx.Request("POST", url), text="No deployments available - crossed budget"
+            )
+            raise httpx.HTTPStatusError("429", request=response.request, response=response)
+        return await super().post(url, json=json, headers=headers)
+
+
+async def _widget_chat(model: str) -> Any:
+    return await _chat(
+        _auth(key_id="wgt_golden"),
+        ChatProfile(surface="widget"),
+        [{"role": "user", "content": "Hoe zet ik doorschakelen aan?"}],
+        model=model,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_widget_turn_asking_for_the_default_alias_is_written_by_the_medium_alias(pipeline):
+    recorder = pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _widget_chat("klai-primary")
+
+    assert recorder.model_bodies[-1]["model"] == "klai-medium"
+
+
+@pytest.mark.asyncio
+async def test_a_widget_turn_naming_another_model_keeps_it(pipeline):
+    recorder = pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _widget_chat("klai-fast")
+
+    assert recorder.model_bodies[-1]["model"] == "klai-fast"
+
+
+@pytest.mark.asyncio
+async def test_an_internal_turn_is_still_written_by_the_requested_alias(internal_pipeline):
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [{"role": "user", "content": "Hoe vraag ik verlof aan?"}],
+    )
+
+    assert recorder.model_bodies[-1]["model"] == "klai-primary"
+
+
+@pytest.mark.asyncio
+async def test_a_visitor_gets_a_reply_from_the_requested_alias_when_the_medium_budget_is_spent(pipeline):
+    recorder = pipeline(_BudgetSpentOnMedium({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+
+    body = await _widget_chat("klai-primary")
+
+    assert [b["model"] for b in recorder.model_bodies] == ["klai-medium", "klai-primary"]
+    assert body["choices"][0]["message"]["content"]
+
+
 # --- one trivial gate --------------------------------------------------------------
 
 
@@ -751,3 +818,35 @@ async def test_strict_zero_chunks_attachment_answer_is_not_refused_or_repaired(i
     assert len(recorder.side_bodies) == 1
 
     assert len(recorder.retrieve_bodies) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_internal_follow_up_with_a_negative_tone_gets_no_rejection_line(internal_pipeline):
+    """The line is for the help widget's writer; the internal chat's writer never gets it."""
+    recorder = internal_pipeline(_Recorder({"evidence_pack": _evidence_pack(), "confidence_band": "high"}))
+    recorder.case = {
+        "problem": "",
+        "product": "",
+        "variant": "",
+        "tried": [],
+        "wants_quote": "",
+        "wants": "knowledge",
+        "out_of_scope_quote": "",
+        "out_of_scope": False,
+        "sentiment": "negative",
+        "language": "",
+        "queries": [],
+    }
+
+    await _chat(
+        _auth(key_id="key-internal", permissions=INTERNAL_KEY),
+        _internal(),
+        [
+            {"role": "user", "content": "Hoe reset ik mijn wachtwoord?"},
+            {"role": "assistant", "content": ANSWER},
+            {"role": "user", "content": "Dat helpt niet"},
+        ],
+    )
+
+    assert recorder.model_bodies
+    assert "did not help" not in _system_prompt(recorder)

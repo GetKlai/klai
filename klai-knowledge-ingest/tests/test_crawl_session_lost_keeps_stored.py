@@ -44,6 +44,8 @@ def _page(url: str, markdown: str, html: str = "<html><body></body></html>") -> 
 async def _run(pages: list[CrawlResult], **job_kwargs) -> tuple[AsyncMock, MagicMock]:
     conn = MagicMock()
     conn.execute = AsyncMock(return_value=None)
+    # The crawl memory is read before the crawl; this connector has none.
+    conn.fetch = AsyncMock(return_value=[])
     outcomes = [
         {"url": p.url, "reason_code": "success", "status_code": 200, "content_length": 1}
         for p in pages
@@ -61,6 +63,10 @@ async def _run(pages: list[CrawlResult], **job_kwargs) -> tuple[AsyncMock, Magic
         patch(
             "knowledge_ingest.adapters.crawler.pg_store.get_crawled_page_hashes",
             new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "knowledge_ingest.adapters.crawler.pg_store.get_crawled_pages_markdown",
+            new=AsyncMock(return_value=[]),
         ),
         patch("knowledge_ingest.adapters.crawler._ingest_crawl_result", new=ingest),
         patch(

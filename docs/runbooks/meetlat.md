@@ -89,7 +89,7 @@ tenant and reaches Mistral unmasked.
      "$stage"/klai-libs/chat-prompts/klai_chat_prompts <deploy-dir>/oneoff/meetlat/ov-candidate/
    ```
 
-   Put the case file next to it as `<deploy-dir>/oneoff/meetlat/cases.jsonl`. The container user must be able to read both. Case files hold newly written cases only, never a copy of a real conversation; `check-cases` below proves it.
+   Put the case file next to it as `<deploy-dir>/oneoff/meetlat/cases.jsonl`. The container user must be able to read both. The widget case file holds real conversations chosen as test cases, each with the owner's expectation; it lives outside this repository next to the widget description, and a candidate case whose expectation the owner has not confirmed carries `"needs_owner": true`.
 
 2. Start a retrieval-api one-off for the round (the checkout's code, or `main`'s when only the portal changes; the
    command is in [Measure the retrieval](#measure-the-retrieval)), then run through the portal one-off, with the
@@ -104,6 +104,12 @@ tenant and reaches Mistral unmasked.
 
    `--days` (default 365) bounds how far back the conversations are looked up.
    Leave out `--overlay` to measure the image as it is; the banner then says that nothing is checked.
+
+   `--frontend /out/frontend.json` (internal rounds only) sends what the internal chat's front-end sends with every
+   turn: `{"tools": [<OpenAI tool definitions>], "system": "<text of the front-end's system message>"}`, both keys
+   optional. The tools go in the request body and the text as a system message before the conversation. Without the
+   option a round sends neither, as before, and cannot see what the tools do to a reply (the runaway reply of
+   17 November 2026 needed them). The round's `.meta.json` names the file.
 
    A widget round replays as one widget, through the route itself (a preview session token, the answer held), so the
    widget's own settings and articles apply and nothing is recorded. Its cases carry their own conversation: `id`,
@@ -180,22 +186,6 @@ never judged automatically: it is counted as "te lezen". The reading section lis
 the text, plus any e-mail addresses, amounts and URLs in it. `--json` prints the same as one JSON object.
 
 Keep the output in the output directory: the rows hold real answers.
-
-## Check that cases are newly written
-
-`check-cases` proves a widget case does not trace back to a real visitor. Run it on every case file before a case is
-added, from a portal one-off like a round (same `PYTHONPATH`, read access to the portal database):
-
-```bash
-python /out/ov-candidate/scripts/meetlat.py check-cases --org <org-slug> --cases /out/widget-cases.jsonl
-```
-
-It fails a case when any message contains an e-mail address or six or more digits (spaces, dots and dashes between
-digits do not break the run), or shares six or more consecutive words with a visitor message of that organisation that is
-still in the database (lowercased, punctuation removed). It prints one line per failing case: the case id and the rule,
-for an overlap with the number of shared words, and never any stored text. Exit code 0 means every case passed, 1 that at
-least one failed. Internal cases are skipped and counted. To fix a failure, rewrite the message in general words about the
-product; an overlap of six words means the phrasing was taken over, so change the sentence, not one word of it.
 
 ## Measure the retrieval
 

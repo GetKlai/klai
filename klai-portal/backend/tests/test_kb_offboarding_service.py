@@ -16,7 +16,7 @@ from app.services.kb_offboarding import (
     KbDisposition,
     apply_dispositions,
     compute_user_delete_preview,
-    revoke_user_credentials,
+    revoke_user_mcp_tokens,
 )
 
 
@@ -344,45 +344,31 @@ class TestApplyDispositionsDelete:
         db.delete.assert_not_awaited()
 
 
-class TestRevokeUserCredentials:
-    """REQ-2.7 — auto-revoke API keys + MCP tokens."""
+class TestRevokeUserMcpTokens:
+    """REQ-2.7 — MCP tokens act as the person, so they end with the person."""
 
     @pytest.mark.asyncio
-    async def test_revoke_deletes_api_keys_and_soft_revokes_mcp_tokens(self) -> None:
+    async def test_active_mcp_tokens_of_the_leaving_user_are_soft_revoked(self) -> None:
         db = AsyncMock()
-        # Sequence of execute() calls inside revoke_user_credentials:
-        # 1. DELETE FROM partner_api_keys → rowcount=2
-        # 2. SELECT portal_users.id → 99
-        # 3. UPDATE portal_mcp_tokens → rowcount=3
-        api_delete_result = MagicMock()
-        api_delete_result.rowcount = 2
-        user_pk_result = _scalar_result(99)
         mcp_update_result = MagicMock()
         mcp_update_result.rowcount = 3
-        db.execute.side_effect = [api_delete_result, user_pk_result, mcp_update_result]
+        db.execute.side_effect = [_scalar_result(99), mcp_update_result]
 
-        api_deleted, mcp_revoked = await revoke_user_credentials(
-            target_user_id="uid-leaving",
-            org_id=101,
-            db=db,
-        )
-        assert api_deleted == 2
-        assert mcp_revoked == 3
+        revoked = await revoke_user_mcp_tokens("uid-leaving", 101, db)
+
+        assert revoked == 3
+        update_stmt = db.execute.await_args_list[1].args[0]
+        compiled = update_stmt.compile()
+        assert update_stmt.table.name == "portal_mcp_tokens"
+        assert "revoked_at" in compiled.params
+        assert compiled.params["user_id_1"] == 99
+        # Already-revoked tokens keep their original revoked_at for forensics.
+        assert "portal_mcp_tokens.revoked_at IS NULL" in str(compiled)
 
     @pytest.mark.asyncio
-    async def test_revoke_handles_missing_portal_user_row(self) -> None:
-        """If the portal_users row is already gone (race or pre-cleanup),
-        MCP token revoke is a no-op (no FK to update)."""
+    async def test_no_portal_user_row_means_nothing_to_revoke(self) -> None:
         db = AsyncMock()
-        api_delete_result = MagicMock()
-        api_delete_result.rowcount = 0
-        user_pk_result = _scalar_result(None)
-        db.execute.side_effect = [api_delete_result, user_pk_result]
+        db.execute.side_effect = [_scalar_result(None)]
 
-        api_deleted, mcp_revoked = await revoke_user_credentials(
-            target_user_id="uid-gone",
-            org_id=101,
-            db=db,
-        )
-        assert api_deleted == 0
-        assert mcp_revoked == 0
+        assert await revoke_user_mcp_tokens("uid-gone", 101, db) == 0
+        assert db.execute.await_count == 1

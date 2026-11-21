@@ -447,8 +447,11 @@ def _log_turn_timing(
     generation_ms: int,
     answer_judge_ms: int,
     answer_signals: dict[str, Any] | None = None,
+    model: str | None = None,
 ) -> None:
     """REQ-4: one line per judged turn with where its wall-clock went, also kept in the record.
+
+    ``model`` is the model that wrote the reply.
 
     ``turn_timing`` comes from the route: ``started_at`` (perf_counter at the
     start of the request), ``retrieval_ms`` and ``case_ms``, which ran
@@ -471,6 +474,7 @@ def _log_turn_timing(
         generation_ms=generation_ms,
         answer_judge_ms=answer_judge_ms,
         total_ms=timings["total_ms"],
+        model=model,
     )
     if answer_signals is not None:
         answer_signals["timings"] = timings

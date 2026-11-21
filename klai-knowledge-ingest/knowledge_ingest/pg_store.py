@@ -871,7 +871,7 @@ async def delete_kb(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> None
     """Hard-delete all PostgreSQL records for a knowledge base.
 
     Removes: artifacts, artifact_entities, derivations, embedding_queue,
-    kb_config, crawl_jobs, crawled_pages, page_links and
+    kb_config, crawl_jobs, crawl_url_memory, crawled_pages, page_links and
     connector_resource_fences — all scoped to (org_id, kb_slug). Parent
     chunks, image rows and crawl frontiers follow through ON DELETE CASCADE.
 
@@ -921,6 +921,11 @@ async def delete_kb(conn: asyncpg.Connection, org_id: str, kb_slug: str) -> None
         )
         await conn.execute(
             "DELETE FROM knowledge.crawl_jobs WHERE org_id = $1 AND kb_slug = $2",
+            org_id,
+            kb_slug,
+        )
+        await conn.execute(
+            "DELETE FROM knowledge.crawl_url_memory WHERE org_id = $1 AND kb_slug = $2",
             org_id,
             kb_slug,
         )
@@ -1503,8 +1508,14 @@ async def delete_connector_crawl_jobs(
     Counterpart to ``delete_connector_artifacts``. Without this, every
     connector delete left an audit trail of orphan crawl_jobs that the
     UI cannot reach but that the next deployment Sentry alert / dashboard
-    audit treats as live history. Returns the number of rows deleted.
+    audit treats as live history. The connector's crawl memory goes with its
+    job history. Returns the number of crawl_jobs rows deleted.
     """
+    await conn.execute(
+        "DELETE FROM knowledge.crawl_url_memory WHERE org_id = $1 AND connector_id = $2",
+        org_id,
+        connector_id,
+    )
     result = await conn.fetchval(
         """WITH deleted AS (
              DELETE FROM knowledge.crawl_jobs
@@ -1637,6 +1648,18 @@ async def get_crawled_page_markdown(
         url,
     )
     return row["raw_markdown"] if row else None
+
+
+async def get_crawled_pages_markdown(
+    conn: asyncpg.Connection, org_id: str, kb_slug: str
+) -> list[tuple[str, str]]:
+    rows = await conn.fetch(
+        "SELECT url, raw_markdown FROM knowledge.crawled_pages "
+        "WHERE org_id = $1 AND kb_slug = $2 AND raw_markdown IS NOT NULL",
+        org_id,
+        kb_slug,
+    )
+    return [(row["url"], row["raw_markdown"]) for row in rows]
 
 
 async def get_crawled_page_hashes(

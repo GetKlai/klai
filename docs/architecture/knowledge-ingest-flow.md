@@ -188,6 +188,64 @@ What the crawler does:
   `config.py:144-176`). A host circuit breaker stops fetching a failing host
   (`host_circuit_breaker.py`). `host_pacing.py:27-60` refuses to start with more
   than one uvicorn worker, because the pacing registry is in memory.
+- **Page limit and frontier order.** `max_pages` counts addresses that answered
+  with a page; an address answering 404/410 does not count toward it, so a
+  sitemap full of dead addresses no longer uses up the crawl. Every attempt
+  does count toward a separate bound of twice `max_pages`
+  (`_ATTEMPT_LIMIT_FACTOR` in `crawl4ai_client.py`); a crawl that reaches it
+  first labels what is left `not_fetched_budget_exhausted` with
+  `"budget": "attempts"` and reports `crawl_addresses_mostly_gone`.
+- **Crawl memory and the two modes.** A connector crawl remembers per address
+  when it was first seen and last tried, in `knowledge.crawl_url_memory`
+  (`crawl_memory.py`, migration 0016). `crawl_site` only reads it;
+  `run_crawl_job` records the run inside its guarded completion, after the
+  pages are written and only when they were accepted, so a run judged "write
+  nothing" or a superseded attempt leaves the memory where it was, and a
+  failed record fails the job. Every address that was sent counts as tried,
+  whatever it answered. Before each crawl the memory alone decides the mode
+  (`CrawlMemoryState.whole_site`):
+  - *Whole-site mode*: no remembered address is untried (an empty memory
+    included). The crawl runs exactly as without memory: nothing remembered
+    joins the frontier, the order is `(priority, depth, discovery order)`, and
+    the fully-fetched test, the stale cleanup and the 404 bulk-retire guard
+    are unchanged. At completion the memory is replaced by tonight's
+    frontier: every in-scope address with its real depth, tried ones with
+    tonight's time, never-sent ones untried, and rows for addresses the
+    frontier no longer holds are deleted.
+  - *Rotation mode*: some remembered address is untried, i.e. not tried since
+    the last whole-site crawl. Remembered addresses join the frontier at their
+    remembered depth; untried ones go first (by when they were first seen),
+    then tried ones, longest since their last try first; ties keep
+    `(priority, depth, discovery order)`. A rotation crawl records only what
+    the memory already held (an address it finds new waits for the next
+    whole-site crawl), forgets an address only the memory knew that answers
+    404/410 and every address the crawl no longer allows (deeper than
+    `max_depth`, outside the patterns), and never retires anything
+    (`crawl_connector_stale_reconcile_skipped` with reason `rotation_crawl`).
+    A resumed crawl reads the same memory and keeps its order.
+
+  Rotation is therefore a bounded phase: it ends once every address that was
+  untried at its start has been tried, and the next crawl is whole-site again,
+  discovering afresh, purging as before when fully fetched and replacing the
+  memory with what the site lists then. A source that fits in one crawl never
+  leaves whole-site mode; one that does not cycles through one whole-site
+  night and as many rotation nights as it takes to try what that night found.
+  Connector purge, knowledge-base delete and the org wipe delete the rows;
+  previews, auth probes and the discovery-seed pass neither read nor write
+  the memory. Ceiling: the memory holds every address the last whole-site
+  crawl's frontier held, so a site that mints endless live addresses makes it
+  as large as one crawl's frontier, and a rotation reaches pages only through
+  what a whole-site night recorded.
+- **Coverage.** Every finished connector crawl stores
+  `coverage` (`pages_read`, `addresses_gone`, `addresses_waiting`,
+  `addresses_known`, `max_pages`, `stopped_by`: `page_limit`, `attempt_limit`,
+  `site_rate_limit`, `blocked`, `cancelled` or null) in
+  `crawl_jobs.error_summary`, and the status route returns it to the connector
+  (`routes/crawl_sync.py`). A crawl that read pages and stopped at the page
+  limit, the attempt bound or the site's rate limit ends `completed` with its
+  warning reason in the summary; nothing read, a block or the circuit breaker
+  ends `failed_partial`. `knowledge.crawl_job_health` exposes
+  `addresses_waiting`, `addresses_known` and `stopped_by` for the alert rules.
 - **Extraction.** The crawl configuration carries no page JavaScript:
   crawl4ai 0.9.5 answers HTTP 400 to `wait_for` and `js_code`
   (`crawl4ai_config.py:10-16`; the contract is tested by
@@ -235,7 +293,7 @@ What the crawler does:
   connector's `SessionKeepAlive` calls `POST /ingest/v1/crawl/keep-alive` every
   1800 s for scheduled crawlers with saved credentials
   (`klai-connector/app/services/session_keepalive.py:24`,
-  `routes/crawl_sync.py:759`).
+  `routes/crawl_sync.py:850`).
 - **Outcomes.** `crawl_site` returns results and per-URL outcomes
   (`crawl4ai_client.py:1683-1694`), stored as `fetch_outcomes`. Reason codes are
   in `reason_codes.py:25-60`. Alerts and triage: [crawl-failures.md](../runbooks/crawl-failures.md).
@@ -468,7 +526,7 @@ aborts when it is gone, superseded or its connector inactive.
   prompts on the document context window (`enrichment_tasks.py`,
   `contextual.py`, `tests/integration/test_document_summary_postgres.py`).
 - **Per-chunk call.** One LLM call per chunk returns the context sentence and
-  the generated questions: `klai-ingest`, `max_tokens` 300, 15 s, without
+  the generated questions: `klai-ingest`, `max_tokens` 600, 15 s, without
   fallback to larger models (`add_no_fallback`). Concurrency is 2 chunks
   (`enrichment_max_concurrent`) and every call takes a token from the shared
   limiter, 2 requests per second with a burst of 10
@@ -813,7 +871,7 @@ list of what ingest writes, and by which step.
 | Postgres `knowledge.artifacts` | one row per document version: ids, organisation, KB, path, provenance, assertion mode, `synthesis_depth`, `belief_time_start` / `belief_time_end` (end `253402300800` while active), `superseded_by`, `content_hash`, `index_status` (`pending`, `synced`, `failed`, `deleting`), `extra` JSONB with `document_text`, title, connector provenance, graph episode ids and the per-product state (2.6) | phases 6, 11, 12, 13; workers |
 | `knowledge.parent_chunks` | parent text per artifact (cascade on delete) | phase 8; rewritten by whole-document enrichment |
 | `knowledge.artifact_images`, object storage | image references and bytes | phase 8, `klai-libs/image-storage` |
-| `knowledge.crawl_jobs`, `fetch_outcomes`, checkpoints, `crawl_job_frontier`, `crawled_pages`, `page_links`, `crawl_domains` | crawl state, link graph, selectors, pacing | crawler (1.4) |
+| `knowledge.crawl_jobs`, `fetch_outcomes`, checkpoints, `crawl_job_frontier`, `crawl_url_memory`, `crawled_pages`, `page_links`, `crawl_domains` | crawl state, visit memory, link graph, selectors, pacing | crawler (1.4) |
 | `knowledge.kb_config`, `org_config` | visibility, enrichment switch (LISTEN/NOTIFY, `app.py:42-45`) | portal and ingest |
 | `knowledge.connector_resource_fences`, `graph_refresh_budget`, `rag_eval_results` | generation fences, refresh budget, evaluation rows | phase 0, 2.5, 7.1 |
 | Qdrant `klai_knowledge` | one shared collection; dense `vector_chunk` and `vector_questions` (1024, cosine), sparse `vector_sparse`; keyword payload indexes include `org_id` (created as the partition key for new collections, `qdrant_store.py:94-125`) and `source_label` (`:145`); payload as in phases 9, 10 and 2.3 | phases 10 and 2.3 |
@@ -868,7 +926,7 @@ after its artifact was deleted removes what it wrote.
 | Reindex | `POST /knowledge/v1/artifacts/{id}/reindex` sets `pending` and defers `enrich_document_interactive` (`queueing_lock reindex:{org_id}:{id}`); it may reopen a closed head without successor and never a replaced version or a `deleting` row (`routes/kb_sources.py:243-325`, `pg_store.py:2204-2263`) | none |
 | Connector deleted | `connector_purge_task` to `purge_connector` (`connector_cleanup.py:150-360`): artifact ids captured, resource fences marked deleting, crawl jobs cancelled by resource key and the documents' enrichment and graph jobs by artifact id, Postgres artifacts and crawl rows deleted, graph episodes deleted, Qdrant points deleted by `source_connector_id`, orphaned image keys deleted from object storage, then a janitor pass; finally a callback to the portal (`portal_client.py:203-230`). It does not use `purge_documents` | Postgres, Qdrant, FalkorDB, object storage |
 | KB deleted | `DELETE /ingest/v1/kb` (`routes/ingest.py:1351-1376`): graph episodes of the KB, `qdrant_store.delete_kb`, the KB's images in object storage when an image store is configured (`ImageStore.delete_images(org_id, kb_slug)`, `klai-libs/image-storage/klai_image_storage/storage.py:176-205`), and last `pg_store.delete_kb` (artifacts and their aux tables including `embedding_queue`, `kb_config`, `crawl_jobs`, `crawled_pages`, `page_links` and the KB's `connector_resource_fences`; `pg_store.py:862-934`; `knowledge.entities` are organisation-wide and stay). The rows go last, so when an earlier store raises the portal keeps its KB and retries | Postgres, Qdrant, FalkorDB, object storage |
-| Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:285-468`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:72-182`; one transaction that deletes the org's `embedding_queue` rows (found through its artifacts), `page_links`, `crawled_pages`, `crawl_jobs`, `crawl_domains`, `kb_config`, `org_config`, `connector_resource_fences`, `graph_refresh_budget`, `entities` and `artifacts` rows, the last with the rows that cascade from it), then the step `_delete_kb_images`, which deletes everything under the organisation's `{org_id}/images/` prefix in object storage (`deprovisioning_steps.py:449-468`) | Postgres, Qdrant, FalkorDB, object storage |
+| Organisation deprovisioned | portal steps (`klai-portal/backend/app/services/provisioning/deprovisioning_steps.py:285-468`): Qdrant points by `org_id`, then ingest `wipe-graph` and `wipe-postgres` (`routes/internal.py:72-182`; one transaction that deletes the org's `embedding_queue` rows (found through its artifacts), `page_links`, `crawled_pages`, `crawl_jobs`, `crawl_domains`, `crawl_url_memory`, `kb_config`, `org_config`, `connector_resource_fences`, `graph_refresh_budget`, `entities` and `artifacts` rows, the last with the rows that cascade from it), then the step `_delete_kb_images`, which deletes everything under the organisation's `{org_id}/images/` prefix in object storage (`deprovisioning_steps.py:449-468`) | Postgres, Qdrant, FalkorDB, object storage |
 
 Scripts for documents deleted before `purge_documents` existed:
 `klai-knowledge-ingest/scripts/purge_deleted_documents.py` (reports closed-but-never-purged
@@ -943,6 +1001,7 @@ product rule does not need a rebuild: use `kb_patch`. Procedure:
 | `sparse_backfill` | `python -m knowledge_ingest.scripts.sparse_backfill --org [--kb] [--execute]` | adds missing `vector_sparse` only | dry run by default; `--execute` needs `INGEST_OK=1`; lock per knowledge base |
 | `requeue_failed_artifacts` | `--dry-run` or `--execute [--org --kb --limit]` | re-defers `enrich_document_bulk` through `queue_derived_work` (state back to `pending`) for active artifacts whose enrichment is `failed` according to `derived_state.product_state`, legacy rows included, from chunk 0, oldest first (`klai-knowledge-ingest/knowledge_ingest/scripts/requeue_failed_artifacts.py`) | dry run by default; `--execute` needs `INGEST_OK=1`; no operation lock, because each job it defers has its own `queueing_lock` per artifact |
 | `convert_document_states` | `python -m knowledge_ingest.scripts.convert_document_states [--org] [--execute]` | writes, once, an explicit `enrichment_state` and `graph_state` on every artifact row (closed versions included) that has none: the reader's answer where its legacy branch knows, a live job's `pending`, and otherwise the truth from the vector index (`text_enriched` on every point means enriched), the graph and today's policy; a product that was never built gets `failed (missing_before_states)`, closed versions get `not_applicable (not_current)` for enrichment and `failed (missing_before_states)` for the graph, and an upload's old `index_status` gets its current meaning. Never touches a row with an explicit state, logs no `derived_product_failed`, and reports how many rows still have no state; zero is the condition for removing the reader's legacy branch (`klai-knowledge-ingest/knowledge_ingest/scripts/convert_document_states.py`) | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org |
+| `relink_graph_fields` | `python -m knowledge_ingest.scripts.relink_graph_fields [--org] [--execute]` | writes the single `graphiti_episode_id` of every row with a finished graph (closed versions included, sentinels excluded) as a one-element `graphiti_episode_ids`, keeping the scalar key, so `_link_graph_fields` can read it; then calls `_link_graph_fields` for every current version with a finished graph, points, and no point carrying `entity_uuids`. Per org it reports rows moved to the list, versions missing the fields, how many of those have their episodes in the graph, and apart from failures those whose episodes mention no entity (`no_entities`) or are gone from the graph (`episodes_missing`); a second preview shows nothing to do (`klai-knowledge-ingest/knowledge_ingest/scripts/relink_graph_fields.py`) | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org |
 | `repair_pg_qdrant_drift` | `<artifact_id>... [--execute]` | per artifact: reindex, retire, delete points or skip, decided from the current state | dry run by default; `--execute` needs `INGEST_OK=1`; lock per artifact's knowledge base (its org for orphan points) |
 | `reextract_document_graph` | `python -m scripts.reextract_document_graph --org --artifact [--execute]` in a knowledge-ingest container (`klai-knowledge-ingest/scripts/reextract_document_graph.py:24-28`) | repairs one document whose finished graph extraction lost episodes: keeps the surviving episode ids, marks the extraction not complete with version 0 and queues the normal graph job as a user-requested refresh, without the daily cap or cool-off (`:97-117`; `graph_refresh.py:61-62`) | dry run by default; `--execute` needs `INGEST_OK=1`; lock per org; refuses (exit 2) a document that is not found, not active, not finished, has no missing episode or no stored `document_text` (`:55-90`); when no job is queued the row is written back exactly as it was and the command exits 1 (`:123-134`); nothing runs it automatically |
 | graph `backfill` | `python -m knowledge_ingest.backfill --org-id [--kb-slug] [--limit] [--force] [--execute]` | builds graph episodes for existing artifacts (`backfill.py:1-30`) | dry run by default (counts, and the size estimate with its refusal); `--execute` needs `INGEST_OK=1`; lock per listed knowledge base, or per org |

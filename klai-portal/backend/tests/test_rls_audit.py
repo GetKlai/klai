@@ -90,7 +90,7 @@ _ALLOWLIST: dict[str, str] = {
     ),
     # SPEC-PORTAL-KB-OWNERSHIP-001 Phase 3 offboard orchestrator. Every entry
     # point (compute_offboard_preview, apply_dispositions,
-    # revoke_user_credentials) is called from admin/users.py routes that gate
+    # the credential handover) is called from admin/users.py routes that gate
     # on Depends(get_caller_at_least(ProfileRole.ADMIN)) — the upstream auth
     # dep runs set_tenant before any of these execute().
     "app/services/kb_offboarding.py": (

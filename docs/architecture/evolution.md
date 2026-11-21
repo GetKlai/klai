@@ -1,6 +1,6 @@
 # De evolutie van Klai
 
-**Stand: 12 november 2026.** Dit document beschrijft hoe het platform als geheel is geworden wat het nu is: welke onderdelen kwamen en gingen, welke besluiten de vorm bepaalden en waarom, en waar elk besluit vandaag staat. Het is het verhaal van de maanden maart tot en met november 2026, van de eerste commit op 4 maart tot nu. Wat er vandaag draait staat in de beschrijvende documenten; dit document zegt hoe het zover kwam.
+**Stand: 15 november 2026.** Dit document beschrijft hoe het platform als geheel is geworden wat het nu is: welke onderdelen kwamen en gingen, welke besluiten de vorm bepaalden en waarom, en waar elk besluit vandaag staat. Het is het verhaal van de maanden maart tot en met november 2026, van de eerste commit op 4 maart tot nu. Wat er vandaag draait staat in de beschrijvende documenten; dit document zegt hoe het zover kwam.
 
 Het detail zit elders:
 
@@ -126,6 +126,7 @@ De stilste maand: 22 commits op de hoofdlijn.
 - kennis-inname: een kennisbank of organisatie verwijderen haalt ook de afbeeldingen en de resterende kennisrijen weg (#2354, 12 november).
 - meten: vragen tegen persoonlijke kennis tellen niet meer als kennisgat van de organisatie en de nachtelijke evaluatie telt niet als vraag van een klant (#2368, 12 november).
 - opruiming: configuratie die niemand las en code die niemand aanriep is weg (#2371, 12 november).
+- meten: de widgetmeetlat test weer met echte gesprekken van bezoekers (15 november): de herschreven set van 142 gevallen week per geval af van de oorspronkelijke 109 (17 posities in beide rondes), dus de oorspronkelijke set staat weer onveranderd als testset en de controle `check-cases` is ingetrokken (deze wijziging).
 
 ## 3. Incidenten die de vorm veranderden
 
@@ -253,6 +254,7 @@ Elke rij is gecontroleerd op het bestaan van code of bestanden (`rg`, `ls`). Wat
 | Linkexpansie in retrieval | 23 oktober | #2009 | Niets; de graafzoekweg bleef (zoekopdracht op `klai-retrieval-api/retrieval_api` vindt geen linkexpansie) |
 | De oude citatiemodus `links` en het herschrijven van de zoekvraag na de controle | 13 oktober | #1856, #1853 | `widget_turn()` en `internal_turn()`. Zie het chatlogboek |
 | De tweede laag voor inloghosts in de crawlerwizard (gebouwd op 28 oktober in #2093) | 29 oktober | #2124 | Alleen sitecookies |
+| De verlenging van een crawlerlogin via een tweede inlogsite, dezelfde laag voor de tweede keer (opnieuw gebouwd op 12 november in #2356 en #2365) | 15 november | #2386 | Alleen sitecookies. De sessie van een bron met login eindigt bij de bron; de run stopt dan vóór het ophalen en vraagt een nieuwe login. Zie het kennisbanklogboek voor wat eerst moet zijn waargenomen voordat dit opnieuw wordt gebouwd |
 | De klantspecifieke evaluatiesets in de publieke repository | 23 oktober | #2028 | Een privé-locatie |
 | De widgetinstellingen `booking_url`, `contact_email`, `contact_phone`, `off_topic_subjects` en `off_topic_reply` | 11 november | #2324 | `contact_routes` per soort vraag |
 | Feitenranden van verwijderde graafepisodes en verouderde extracties | 12 november | #2339 | Eén huidige extractie per document |

@@ -21,6 +21,43 @@ class CrawlCheckpoint(Protocol):
 
 
 @dataclass
+class CrawlMemoryState:
+    """Handoff between a connector's crawl memory and ``crawl_site``.
+
+    ``remembered`` is what the memory held before this crawl: rows with
+    ``canonical_url`` (the memory key), ``url``, ``depth`` (the depth a crawl
+    really found it at), ``first_seen_at`` and ``last_visited_at`` (epoch
+    seconds; ``last_visited_at`` is ``None`` for an address never tried).
+    ``crawl_site`` reads it and fills the rest when it completes; it never
+    writes the memory itself, so the adapter can record a run only once its
+    pages were accepted.
+
+    ``rows`` is every in-scope address the crawl's frontier held, with
+    ``visited`` (actually sent this crawl); ``forget`` holds memory keys to
+    drop in a rotation crawl (an address only the memory knew that answered
+    404/410, an out-of-scope or re-keyed row).
+    """
+
+    remembered: list[dict[str, Any]]
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    forget: list[str] = field(default_factory=list)
+
+    @property
+    def whole_site(self) -> bool:
+        """True when this crawl runs as a whole-site crawl, exactly as without memory.
+
+        That is the case when no remembered address is untried. A whole-site
+        recording resets the try of every address it did not send, so untried
+        means "not tried since the last whole-site crawl", and rotation is a
+        bounded phase: it ends once every address it knows was tried once,
+        and the next crawl discovers afresh, purges as without memory and
+        replaces the memory with what the site lists then. A source that fits
+        in one crawl never leaves whole-site mode.
+        """
+        return all(row["last_visited_at"] is not None for row in self.remembered)
+
+
+@dataclass
 class CrawlResult:
     """Normalised result from a single-page crawl."""
 
@@ -53,7 +90,7 @@ class CrawlRateLimitState:
     current_rate_limit: float | None
 
 
-DiscoverySourceKind = Literal["start", "sitemap", "page_link"]
+DiscoverySourceKind = Literal["start", "sitemap", "page_link", "known"]
 DiscoveryStatus = Literal["queued", "fetched", "omitted"]
 
 
@@ -70,6 +107,10 @@ class DiscoveredUrl:
     order: int
     status: DiscoveryStatus = "queued"
     reason_code: str | None = None
+    # From the connector's crawl memory; not stored in the checkpoint
+    # frontier, a resumed crawl reads it from the memory again.
+    last_visited_at: float | None = None
+    first_seen_at: float | None = None
 
 
 @dataclass

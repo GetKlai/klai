@@ -7,6 +7,7 @@ removed in SPEC-CRAWLER-005 REQ-05.1. See test_crawler_link_fields_complete.py
 for the two-phase pipeline tests.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -240,6 +241,7 @@ async def test_run_crawl_job_calls_build_link_graph_before_ingest():
         ),
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
         mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
@@ -306,6 +308,7 @@ async def test_run_crawl_job_retires_stale_connector_artifacts():
         patch("knowledge_ingest.routes.ingest.ingest_document", side_effect=_fake_ingest),
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
         mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
@@ -385,6 +388,7 @@ async def test_run_crawl_job_does_not_fail_when_stale_purge_fails():
         patch("knowledge_ingest.routes.ingest.ingest_document", side_effect=_fake_ingest),
     ):
         mock_pg.get_crawled_page_hashes = AsyncMock(return_value={})
+        mock_pg.get_crawled_pages_markdown = AsyncMock(return_value=[])
         mock_pg.get_active_document_texts = AsyncMock(return_value={})
         mock_pg.get_crawled_page_stored = AsyncMock(return_value=None)
         mock_pg.has_active_connector_artifact_for_url = AsyncMock(return_value=True)
@@ -413,7 +417,7 @@ async def test_run_crawl_job_does_not_fail_when_stale_purge_fails():
     mock_purge.assert_awaited_once_with(mock_conn, "org-1", ["artifact-old"])
     mock_finish_execution.assert_awaited_once()
     assert mock_finish_execution.await_args.args[:2] == (mock_conn, "job-1")
-    assert mock_finish_execution.await_args.kwargs == {
-        "status": "completed",
-        "error_summary": None,
-    }
+    kwargs = mock_finish_execution.await_args.kwargs
+    assert kwargs["status"] == "completed"
+    # A connector crawl always stores its coverage; nothing else to report here.
+    assert set(json.loads(kwargs["error_summary"])) == {"coverage"}

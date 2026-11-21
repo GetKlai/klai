@@ -97,13 +97,10 @@ export const adminUsersMessages = {
   admin_users_wizard_personal_kbs_label: () => 'Personal KBs',
   admin_users_wizard_tokens_label: () => 'Tokens',
   admin_users_wizard_tokens_title: () => 'Tokens',
-  admin_users_wizard_tokens_description: ({
-    apiKeys,
-    mcpTokens,
-  }: {
-    apiKeys: number
-    mcpTokens: number
-  }) => `${apiKeys} keys ${mcpTokens} tokens`,
+  admin_users_wizard_tokens_description: ({ mcpTokens }: { mcpTokens: number }) => `${mcpTokens} tokens`,
+  admin_users_wizard_api_keys_label: () => 'API keys',
+  admin_users_wizard_api_keys_recipient_label: () => 'New owner of the API keys',
+  admin_users_wizard_api_keys_description: ({ apiKeys }: { apiKeys: number }) => `${apiKeys} keys keep working`,
   admin_users_wizard_team_kbs: ({ count }: { count: number }) => `Team KBs (${count})`,
   admin_users_wizard_transfer_kbs: ({ count }: { count: number }) => `Transfer team KBs (${count})`,
   admin_users_wizard_personal_kbs: ({ count }: { count: number }) => `Personal KBs (${count})`,

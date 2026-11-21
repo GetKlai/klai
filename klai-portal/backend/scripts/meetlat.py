@@ -1,10 +1,9 @@
 """The chat quality measuring stick (docs/architecture/chat-quality-history-and-plan.md §6, §8) as one CLI.
 
-    meetlat run     --surface internal --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>] [--days <n>]
+    meetlat run     --surface internal --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>] [--days <n>] [--frontend <front-end.json>]
     meetlat run     --surface widget --org <slug> --widget <widget.json> --cases <cases.jsonl> --out <rows.jsonl> [--overlay <dir>]
     meetlat retrieval --surface internal|widget --org <slug> --cases <cases.jsonl> --out <rows.jsonl> [same options as run]
     meetlat compare --cases <cases.jsonl> [--json] <round.jsonl>...
-    meetlat check-cases --org <slug> --cases <cases.jsonl>
 
 The script holds no case data. An internal case is one JSON object per line
 with ``cid`` (the first 8 characters of a conversation id) and ``turn`` (the
@@ -65,7 +64,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -73,7 +72,6 @@ from urllib.parse import urlparse
 
 import httpx
 import replay_internal_chat as replay
-from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core import database
@@ -211,7 +209,6 @@ class Thread:
 
     cid: str
     profile: ChatProfile | None
-    mode: str
     turns: list[dict]
 
 
@@ -313,6 +310,9 @@ def _apply_measurement_patches() -> None:
     replay._REQUEST_MODEL = _FAST_ALIAS
     replay.partner._ALLOWED_MODELS = replay.partner._ALLOWED_MODELS | {_FAST_ALIAS}
     replay.settings.extraction_model = _FAST_ALIAS
+    # The widget writer's own setting (widget_turn._write): a replayed request already names _FAST_ALIAS, which the
+    # widget keeps, and this keeps a request for klai-primary from reaching klai-medium with the measuring key.
+    replay.settings.widget_writer_model = _FAST_ALIAS
     replay.settings.answer_grounding_model = _MEDIUM_ALIAS
     replay.settings.retrieval_paraphrase_model = _MEDIUM_ALIAS
 
@@ -351,7 +351,7 @@ async def _fetch_threads(org: Any, prefixes: list[str], days: int) -> dict[str, 
     for prefix, conversation in unique.items():
         profile = profiles[conversation["user"]]
         turns = replay._turns_from_messages(messages.get(conversation["conversationId"], []))
-        threads[prefix] = Thread(conversation["conversationId"], profile, profile.kb_mode if profile else "", turns)
+        threads[prefix] = Thread(conversation["conversationId"], profile, turns)
     return threads
 
 
@@ -536,9 +536,12 @@ async def _replay_turn(org: Any, thread: Thread, case: dict) -> dict:
         return {"cid": case["cid"], "u": u, "error": "turn_out_of_range"}
     k = user_turns[u]
     messages = [{"role": t["role"], "content": t["content"]} for t in thread.turns[: k + 1]]
-    row = {"cid": case["cid"], "k": k, "u": u, "mode": thread.mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
     profile = thread.profile
     assert profile is not None and profile.user_id is not None, "replay_internal skips a thread without an employee"
+    # The mode the case was answered in, not the one the employee's profile has today.
+    if case.get("mode") in ("strict", "open"):
+        profile = replace(profile, kb_mode=case["mode"])
+    row = {"cid": case["cid"], "k": k, "u": u, "mode": profile.kb_mode, "ask": messages[-1]["content"][:_ASK_CHARS]}
     return await _replayed(
         row,
         _from_the_same_memory(
@@ -562,13 +565,18 @@ async def _replay_internal_conversation(
     needs to write one. The named turns' rows say where the expected articles
     stood (:func:`_stage_row`).
     """
-    named = {case["turn"] for case in cases}
+    by_turn = {case["turn"]: case for case in cases}
+    named = set(by_turn)
     from_reply = {case["turn"] for case in cases if "articles" not in case}
     failed: list[dict] = []
     for u in range(max(named) + 1):
         if expected is not None:
             _arm()
-        row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u})
+        # A named turn runs in its own case's mode, and a turn before it in the
+        # mode of the named turn it stores the case for: one conversation can
+        # hold an Open case and a Strict case.
+        mode = by_turn[min(turn for turn in named if turn >= u)].get("mode")
+        row = await _replay_turn(org, thread, {"cid": cases[0]["cid"], "turn": u, "mode": mode})
         if expected is not None:
             record = _take()
             if u in named:
@@ -761,6 +769,9 @@ async def _run(args: argparse.Namespace) -> int:
         )
     if args.surface == "widget" and args.widget is None:
         raise UsageError("--surface widget needs --widget <json> with " + ", ".join(_WIDGET_FIELDS))
+    if args.frontend is not None and args.surface != "internal":
+        raise UsageError("--frontend is for --surface internal: a widget key refuses tools")
+    replay.use_frontend(args.frontend)
     widget = _read_widget(args.widget) if args.surface == "widget" else None
     if widget is not None:
         # The route and its middleware are part of what a widget round measures,
@@ -795,6 +806,7 @@ async def _run(args: argparse.Namespace) -> int:
         "command": args.command,
         "org": args.org,
         "surface": args.surface,
+        "frontend": str(args.frontend) if args.frontend else None,
         "cases": len(cases),
     }
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
@@ -1240,77 +1252,6 @@ def _compare(args: argparse.Namespace) -> int:
     return 0
 
 
-# --- check-cases -----------------------------------------------------------------------------------------------
-
-# Six digits with any spaces, dots or dashes between them: a phone or customer number however it is typed.
-_DIGIT_RUN = re.compile(r"\d(?:[ .\-]*\d){5,}")
-_OVERLAP_WORDS = 6
-
-
-def _words(text: str) -> list[str]:
-    return re.sub(r"[\W_]+", " ", text.lower()).split()
-
-
-def _shingles(words: list[str]) -> Iterable[tuple[str, ...]]:
-    return (tuple(words[i : i + _OVERLAP_WORDS]) for i in range(len(words) - _OVERLAP_WORDS + 1))
-
-
-def check_case_messages(cases: list[dict], visitor_texts: Iterable[str]) -> list[tuple[str, str]]:
-    """The (case id, reason) of every widget case that is not newly written; reasons never quote a stored text.
-
-    A run of six words is looked up as a shingle, and a longer shared run shows as consecutive hits.
-    """
-    stored = {shingle for text in visitor_texts for shingle in _shingles(_words(text))}
-    failures = []
-    for case in cases:
-        reasons = []
-        for message in case["messages"]:
-            content = message.get("content") if isinstance(message, dict) else None
-            if not isinstance(content, str):
-                continue
-            if _EMAIL.search(content):
-                reasons.append("contains an e-mail address")
-            if _DIGIT_RUN.search(content):
-                reasons.append("contains a run of six or more digits")
-            hits = [shingle in stored for shingle in _shingles(_words(content))]
-            run = longest = 0
-            for hit in hits:
-                run = run + 1 if hit else 0
-                longest = max(longest, run)
-            if longest:
-                reasons.append(f"shares {longest + _OVERLAP_WORDS - 1} consecutive words with a stored visitor message")
-        failures.extend((case["id"], reason) for reason in dict.fromkeys(reasons))
-    return failures
-
-
-async def _visitor_texts(org_slug: str) -> list[str]:
-    """Every visitor message of the org still in the database, previews and tests included: the strictest reading."""
-    async with database.cross_org_session() as db:
-        org_id = (
-            await db.execute(
-                sql_text("SELECT id FROM portal_orgs WHERE slug = :slug AND deleted_at IS NULL"), {"slug": org_slug}
-            )
-        ).scalar_one_or_none()
-    if org_id is None:
-        raise UsageError(f"no organisation with slug {org_slug}")
-    async with database.tenant_scoped_session(org_id) as db:
-        rows = await db.execute(
-            sql_text("SELECT content FROM widget_messages WHERE org_id = :org_id AND role = 'user'"), {"org_id": org_id}
-        )
-        return [row[0] for row in rows]
-
-
-def _check_cases(args: argparse.Namespace) -> int:
-    cases = _read_cases(args.cases)
-    widget = [c for c in cases if isinstance(c.get("messages"), list)]
-    failures = check_case_messages(widget, asyncio.run(_visitor_texts(args.org)) if widget else [])
-    for case_id, reason in failures:
-        print(f"{case_id}: {reason}")
-    failed = len({case_id for case_id, _ in failures})
-    print(f"{len(widget)} widget cases checked, {len(cases) - len(widget)} internal skipped, {failed} failed")
-    return 1 if failures else 0
-
-
 # --- command line ----------------------------------------------------------------------------------------------
 
 
@@ -1337,9 +1278,12 @@ def _parser() -> argparse.ArgumentParser:
             type=Path,
             help="json with " + ", ".join(_WIDGET_FIELDS) + "; the widget a --surface widget round replays as",
         )
-    check = commands.add_parser("check-cases", help="prove widget cases are newly written, not copied from visitors")
-    check.add_argument("--org", required=True, help="org slug")
-    check.add_argument("--cases", type=Path, required=True)
+        replaying.add_argument(
+            "--frontend",
+            type=Path,
+            help='json {"tools": [...], "system": "..."} the internal front-end sends with every turn; '
+            "--surface internal only (docs/runbooks/meetlat.md)",
+        )
     compare = commands.add_parser("compare", help="classify and compare rounds")
     compare.add_argument("--cases", type=Path, required=True)
     compare.add_argument("--json", action="store_true")
@@ -1352,7 +1296,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "compare":
             return _compare(args)
-        return _check_cases(args) if args.command == "check-cases" else asyncio.run(_run(args))
+        return asyncio.run(_run(args))
     except UsageError as exc:
         print(f"meetlat: {exc}", file=sys.stderr)
         return 2

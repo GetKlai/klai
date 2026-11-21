@@ -79,6 +79,7 @@ def _settings() -> MagicMock:
     settings = MagicMock()
     settings.litellm_base_url = LITELLM
     settings.litellm_master_key = "key"
+    settings.chat_writer_max_tokens = 2000
     settings.extraction_model = "klai-fast"
     settings.answer_grounding_model = "klai-medium"
     return settings
@@ -2342,3 +2343,63 @@ async def test_the_checks_cannot_hand_the_visitor_the_ungated_draft(monkeypatch)
     text, _, _ = await _answer(litellm, stream=False)
 
     assert "303 4020" not in text
+
+
+# ─── After a rejection: one line for the writer, and the record says so ──
+
+_REJECTED_ANSWER = "Open de app en kies Instellingen en dan Nummerweergave."
+_REJECTION_MESSAGES = [
+    {"role": "user", "content": "Ik bel via de app en de klant ziet een anonieme beller. Hoe los ik dit op?"},
+    {"role": "assistant", "content": _REJECTED_ANSWER},
+    {"role": "user", "content": "Dat heb ik al gedaan, het helpt niet"},
+]
+
+
+async def _rejection_turn(
+    monkeypatch, sentiment: str, *, first_turn: bool = False, previous: str = "answer", last: str | None = None
+):
+    """One widget turn; returns the writer's system prompt and the signals the turn recorded."""
+    from app.api import partner
+
+    inputs: list[Any] = []
+    real = partner.TurnInputs
+    monkeypatch.setattr(partner, "TurnInputs", lambda **kw: inputs.append(real(**kw)) or inputs[-1])
+    case = {**_case(), "sentiment": sentiment}
+    messages = _REJECTION_MESSAGES[:1] if first_turn else _REJECTION_MESSAGES
+    if last is not None:
+        messages = [*messages[:-1], {"role": "user", "content": last}]
+    stored = case_file.StoredTurn(_case(), _REJECTED_ANSWER, [], previous)
+    litellm = _LiteLLM(model_text=ANSWER_900, case=case)
+    await _route_turn(
+        monkeypatch, band="high", items=_two_articles(), litellm=litellm, messages=messages, stored=stored
+    )
+    return _system_prompt_sent(litellm), inputs[0].answer_signals
+
+
+async def test_a_widget_follow_up_after_an_answer_with_a_negative_tone_gets_the_rejection_line(monkeypatch):
+    prompt, signals = await _rejection_turn(monkeypatch, "negative")
+
+    # The writer appends its own language rule after the turn's addenda, so the line is checked in place.
+    assert widget_turn.REJECTION_TURN_ADDENDUM in prompt
+    # The line points at the button the escalation addendum describes, and that one is always there.
+    assert prompt.index("under this reply") < prompt.index("did not help")
+    assert signals["rejection_turn"] is True
+
+
+@pytest.mark.parametrize(
+    ("sentiment", "options"),
+    [
+        ("neutral", {}),
+        ("negative", {"first_turn": True}),
+        # The chat's previous reply was a refusal, so there is no rejected advice to keep away from.
+        ("negative", {"previous": "refusal"}),
+        # A request for a person gets the instruction to give no steps; the line would ask for one.
+        ("negative", {"last": "Dat helpt niet, ik wil een medewerker spreken"}),
+    ],
+    ids=["neutral", "first_turn", "after_a_refusal", "asks_for_a_person"],
+)
+async def test_a_turn_that_is_not_a_rejection_of_an_answer_gets_no_rejection_line(monkeypatch, sentiment, options):
+    prompt, signals = await _rejection_turn(monkeypatch, sentiment, **options)
+
+    assert "did not help" not in prompt
+    assert "rejection_turn" not in signals

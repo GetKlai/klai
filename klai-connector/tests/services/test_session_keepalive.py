@@ -32,7 +32,7 @@ def _scheduled(
     )
 
 
-def _config(config: dict[str, object]) -> PortalConnectorConfig:
+def _config(config: dict[str, str]) -> PortalConnectorConfig:
     return PortalConnectorConfig(
         connector_id="conn-1",
         kb_id=1,
@@ -75,7 +75,7 @@ class TestTickPingsEligibleConnectors:
     @pytest.mark.asyncio
     async def test_pings_web_crawler_with_saved_credentials_using_base_url(self) -> None:
         item = _scheduled()
-        cfg = _config({"base_url": "https://help.example.com", "auth_chain_hosts": ["login.example.org"]})
+        cfg = _config({"base_url": "https://help.example.com"})
         keepalive, _, crawl_client = _make_keepalive(
             scheduled=[item],
             config_by_connector={item.connector_id: cfg},
@@ -84,13 +84,10 @@ class TestTickPingsEligibleConnectors:
         pinged = await keepalive.tick()
 
         assert pinged == 1
-        # The sign-in hosts travel with the ping: their sessions are kept
-        # alive too, and a lapsed site session is signed in again through them.
         crawl_client.crawl_keepalive.assert_awaited_once_with(
             connector_id=str(item.connector_id),
             org_id=item.org_id,
             url="https://help.example.com",
-            auth_chain_hosts=["login.example.org"],
         )
 
     @pytest.mark.asyncio
@@ -108,7 +105,6 @@ class TestTickPingsEligibleConnectors:
             connector_id=str(item.connector_id),
             org_id=item.org_id,
             url="https://help.example.com/index",
-            auth_chain_hosts=[],
         )
 
     @pytest.mark.asyncio
@@ -134,7 +130,6 @@ class TestTickPingsEligibleConnectors:
             connector_id=str(item.connector_id),
             org_id=item.org_id,
             url="https://wiki.example.com/en/handbook",
-            auth_chain_hosts=[],
         )
 
     @pytest.mark.asyncio

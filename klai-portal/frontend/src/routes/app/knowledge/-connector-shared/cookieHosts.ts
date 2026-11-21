@@ -21,17 +21,10 @@ export function hostOf(url: string): string {
   }
 }
 
-// The host a row belongs to. A row typed by hand has no domain and belongs to
-// the base host, as do old rows; a prefilled or imported row follows its domain.
-export function ownerHost(row: CookieRow, baseHost: string, chainHosts: string[]): string {
-  if (!row.domain || cookieCoversHost(row.domain, baseHost)) return baseHost
-  return chainHosts.find((host) => cookieCoversHost(row.domain as string, host)) ?? baseHost
-}
-
-// Rows the name/value inputs show: typed by hand for the base host. Everything
-// else is listed by name under the host it belongs to, never with its value.
-export function isManualRow(row: CookieRow, baseHost: string, chainHosts: string[]): boolean {
-  return !row.imported && ownerHost(row, baseHost, chainHosts) === baseHost
+// Rows the name/value inputs show: typed by hand. An imported row is listed
+// by name under the paste box instead, never with its value.
+export function isManualRow(row: CookieRow): boolean {
+  return !row.imported
 }
 
 function expiryOf(entry: Record<string, unknown>): string | undefined {

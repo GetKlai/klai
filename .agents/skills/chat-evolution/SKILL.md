@@ -5,7 +5,7 @@ description: The weekly reading of real widget conversations for the chat measur
 
 # Chat evolution: the weekly reading
 
-Design: `docs/architecture/conversation-retention-and-learning.md` §5. Real conversations exist only in the database, for the retention term. What survives a reading is a newly written case in the test set and an entry in the evolution document, never a conversation.
+Design: `docs/architecture/conversation-retention-and-learning.md` §5. The test set of the measuring stick consists of real conversations chosen as test cases, a deliberate exception to the retention term (decided 15 November 2026). What survives a reading is a candidate case in the test set, which lives outside this repository, and an entry in the evolution document without conversation ids or quotes.
 
 ## 1. Pick the conversations of the past week
 
@@ -34,26 +34,19 @@ For each conversation, trace the path the answer took (question, search, selecti
 
 ## 3. Group into patterns and compare with the test set
 
-Group the first-failure points into patterns. Compare each pattern with the existing test set (one file per organisation, see below). A pattern that already has a case gets no new one. Write one new case per new pattern, not one per conversation. If the lesson can only be told with one visitor's circumstances, write no case.
+Group the first-failure points into patterns. Compare each pattern with the existing test set (one file per organisation, outside this repository). One case per pattern: a pattern that already has a case gets none.
 
-## 4. Rules for a case (design §5.1)
+## 4. Make a candidate case from the real conversation
 
-- Rephrase the question in general words about the product. Take over no sentence or phrase of the visitor.
-- No name, e-mail address, phone number, customer number, address, visitor's company, date or amount from the conversation. If an example value is needed, invent it.
-- No conversation id, timestamp or other field that points back.
-- Format: the widget case meetlat reads, one JSON object per line: `id`, `messages` (a list of `{"role", "content"}`, the last one a user turn; earlier assistant replies are sent along as history, so write those newly too and keep what the next turn depends on), `expect` (or `class`) with one of `antwoord`, `vraag`, `niet_gevonden`, `doorverwijzing`, `afsluiting`, and optionally `articles` (the URLs of the articles that should carry the answer) and `variants`. A case whose expectation the product owner has not confirmed carries `"needs_owner": true`. See `docs/runbooks/meetlat.md`.
+A new failure pattern becomes a candidate case made from the real conversation as it was: the visitor's turns and the replies up to the turn to replay, not reworded.
 
-Before a case is added, run it:
-
-```bash
-python scripts/meetlat.py check-cases --org <org-slug> --cases <cases.jsonl>
-```
-
-Exit 0 is required. A failure names the case and the rule (e-mail address, six-digit run, or the number of words shared with a stored visitor message). Rewrite the message until it passes; do not shorten the check.
+- The visitor's name and e-mail address never go into a case.
+- Format: the widget case meetlat reads, one JSON object per line: `id`, `messages` (a list of `{"role", "content"}`, the last one a user turn), `expect` with one of `antwoord`, `vraag`, `niet_gevonden`, `doorverwijzing`, `afsluiting`, and optionally `articles` (the URLs of the articles that should carry the answer). See `docs/runbooks/meetlat.md`.
+- The case carries `"needs_owner": true` until the product owner confirms the expectation.
 
 ## 5. Where the test set lives
 
-Outside this repository: one file per organisation in the private repository that holds customer material, in the format meetlat reads, so every addition is a line in its history. Add the new cases there, not here, and copy the file to the server next to the widget description when a round needs it.
+Outside this repository, next to the widget description; copy the file to the server when a round needs it. Add the candidate cases there, not here.
 
 ## 6. Write the reading into the evolution document
 
@@ -61,4 +54,4 @@ Add one entry to §8a of `docs/architecture/chat-quality-history-and-plan.md` wi
 
 ## 7. Clean up
 
-Working files with real conversations stay outside the repository and are deleted when the reading is done.
+Working copies of conversations made on a development machine are deleted when the reading is done.

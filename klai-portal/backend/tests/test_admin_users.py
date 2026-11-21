@@ -71,6 +71,7 @@ async def test_offboard_user_does_not_wipe_other_org_memberships() -> None:
     perms = make_perms(role="admin", user_id="admin-1", org_id=101)
 
     with (
+        patch("app.api.admin.users.check_api_keys_recipient", new=AsyncMock()),
         patch("app.api.admin.users.sync_identity_login", new=AsyncMock()),
         patch("app.api.admin.users.log_event", new=AsyncMock()),
         patch("app.api.admin.users.remove_github_org_member", new=AsyncMock()),
