@@ -1,6 +1,6 @@
 # Build context is the repo root so the `../klai-libs/log-utils` path dep
 # resolves within the workspace (uv-pip-install-skips-uv-sources pitfall).
-FROM python:3.12-slim AS deps
+FROM python:3.13-slim AS deps
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
@@ -13,7 +13,7 @@ WORKDIR /repo/klai-docker-authz
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 RUN uv sync --frozen --no-dev --no-install-project
 
-FROM python:3.12-slim AS runtime
+FROM python:3.13-slim AS runtime
 
 # Apply security patches to base image OS packages (Trivy blocks the deploy
 # on unfixed CVEs shipped by python:3.12-slim, e.g. CVE-2026-53615)
