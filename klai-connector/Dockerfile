@@ -4,7 +4,7 @@
 # Switched from `pip install .` to uv because pip does not read
 # `[tool.uv.sources]` and would fall through to a PyPI lookup that fails.
 
-FROM python:3.12-slim AS deps
+FROM python:3.13-slim AS deps
 
 # uv from the official distroless image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
@@ -36,7 +36,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 
 # Stage 2: Application
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 WORKDIR /repo/klai-connector
 
@@ -69,6 +69,9 @@ RUN chmod +x /repo/klai-connector/entrypoint.sh
 RUN adduser --disabled-password --gecos "" klai
 
 EXPOSE 8200
+
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
 
 USER klai
 

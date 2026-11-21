@@ -5,7 +5,7 @@
 # from `pip install` to uv because pip does not read [tool.uv.sources]
 # and would fall through to a PyPI lookup that fails for klai-log-utils.
 
-FROM python:3.12-slim AS deps
+FROM python:3.13-slim AS deps
 
 # uv from the official distroless image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
@@ -32,7 +32,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 
 # Stage 2: Application
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # Apply security patches to base image OS packages before installing
 # runtime deps (Trivy blocks the deploy on unfixed CVEs, e.g. CVE-2026-53615)
@@ -72,6 +72,9 @@ RUN adduser --disabled-password --gecos "" klai && \
     mkdir -p /data/audio && chown klai:klai /data/audio
 
 EXPOSE 8020
+
+# The base image's pip vendors libraries with open HIGH advisories and nothing in this image uses pip at runtime.
+RUN pip uninstall -y pip
 
 USER klai
 
