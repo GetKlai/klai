@@ -875,7 +875,7 @@ async def test_confluence_space_removed_from_config_removes_its_pages_and_keeps_
 # pyairtable's Table.iterate follows every ``offset`` and lets request errors
 # propagate; that is what makes an Airtable listing complete. Verified in the
 # installed source (pyairtable/api/api.py::iterate_requests) for this version.
-VERIFIED_PYAIRTABLE = "3.5.0.post1"
+VERIFIED_PYAIRTABLE = "3.5.1"
 
 
 def test_pyairtable_version_is_the_one_verified_for_complete_listings() -> None:
