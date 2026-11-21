@@ -14,7 +14,7 @@
     "@microsoft/fetch-event-source": "^2.0.1",
     "dompurify": "^3.4.11",
     "marked": "^18.0.12",
-    "solid-js": "^1.9.14"
+    "solid-js": "^2.0.0"
   },
   "devDependencies": {
     "@solidjs/testing-library": "^0.8.10",
